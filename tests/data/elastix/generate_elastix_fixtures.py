@@ -1,40 +1,24 @@
-"""Regenerate the elastix fixtures in this directory.
+"""Regenerate the elastix fixtures stored next to this script.
 
-Run it with ITK-Elastix installed (`pip install itk-elastix`), from
-anywhere:
+The script needs itk-elastix, which the tests themselves do not require.
+It can be run from any directory::
 
     python tests/data/elastix/generate_elastix_fixtures.py
 
-For every case it writes a transform parameter file *as elastix itself
-writes it* (through `ParameterObject.WriteParameterFile`, so the keys
-come out sorted, and the values formatted, the way elastix formats
-them), and a `<name>_expected.npz` holding what transformix computes for
-that file:
-
-- `vox2lps`: the `(D, D + 1)` voxel-to-LPS affine of the deformation
-  field that transformix returns, read off the ITK image itself -- the
-  fixed-image grid, as elastix understands `Size`, `Origin`, `Spacing`
-  and `Direction`;
-- `disp`: the deformation field, `(X, Y[, Z], D)` (x first), in LPS
-  millimetres: transformix maps the fixed-image point `p` to `p + disp`.
-
-The tests assert against those stored arrays, so the suite needs
-ITK-Elastix only to regenerate the fixtures, never to run.
-
-The parameters are deliberately awkward: a fixed-image direction that is
-not symmetric (so that reading elastix's column-major `Direction` as
-row-major gives a different, wrong grid), centers of rotation away from
-the origin, and B-spline grids with a non-zero `GridIndex` and an
-oblique `GridDirection`.
+Each case is a parameter file written by elastix itself and an archive
+`<name>_expected.npz` with the transformix result: `vox2lps`, the (D, D+1)
+voxel-to-LPS affine of the deformation field, and `disp`, the (X, Y[, Z], D)
+displacement in LPS millimeters. The parameters are deliberately awkward:
+an asymmetric fixed direction, centers of rotation away from the origin,
+and B-spline grids with a nonzero `GridIndex` and an oblique
+`GridDirection`.
 """
 
-# stdlib
 import math
 import os
 import tempfile
 from pathlib import Path
 
-# dependencies
 import itk
 import numpy as np
 
@@ -55,8 +39,9 @@ def rotation2d(a: float) -> np.ndarray:
     return np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
 
 
-#: An oblique, non-symmetric direction matrix (with a flip of the last
-#: axis, which is still a valid ITK direction).
+# Oblique, non-symmetric and flipping the last axis, so that a transposed
+#
+# direction is detected.
 DIRECTION = {
     2: rotation2d(0.3) @ np.diag([1, -1]),
     3: rotation3d(0.2, -0.1, 0.4) @ np.diag([1, 1, -1]),
@@ -64,7 +49,7 @@ DIRECTION = {
 
 
 def column_major(matrix: np.ndarray) -> list:
-    """elastix writes a direction matrix column by column."""
+    """Flatten a matrix column by column, as elastix stores `Direction`."""
     return [float(v) for v in np.asarray(matrix).T.ravel()]
 
 
@@ -76,7 +61,7 @@ def fmt(values: list) -> list:
 
 
 def fixed_map(ndim: int) -> dict:
-    """The fixed-image part of a transform parameter map."""
+    """Return the fixed-image part of a parameter map."""
     size = [4, 5, 6][:ndim]
     spacing = [1.5, 2.0, 2.5][:ndim]
     origin = [-3.0, 4.0, 5.5][:ndim]
@@ -116,18 +101,17 @@ def transform_map(ndim: int, name: str, params: list, **extra) -> dict:
 def bspline_map(
     ndim: int, degree: int, seed: int, grid_size: tuple = (10, 11, 12)
 ) -> dict:
-    """A B-spline whose valid region covers the fixed grid.
+    """Return a B-spline map whose valid region covers the fixed grid.
 
-    elastix evaluates a B-spline only where the whole support of the
-    spline is inside the control-point grid, and returns the input point
-    elsewhere. The fixed grid is placed well inside that region.
+    Elastix evaluates a B-spline only where the whole spline support lies
+    inside the control grid, so the fixed grid is placed well inside it.
     """
     rng = np.random.default_rng(seed)
     grid_size = list(grid_size)[:ndim]
     grid_index = [1, -2, 0][:ndim]
     grid_spacing = [2.0, 2.5, 3.0][:ndim]
     direction = rotation2d(-0.2) if ndim == 2 else rotation3d(0.1, 0.2, -0.3)
-    # Center the control grid on the center of the fixed grid.
+    # Centre the control grid on the center of the fixed grid.
     fixed = fixed_map(ndim)
     size = np.array([float(v) for v in fixed["Size"]])
     spacing = np.array([float(v) for v in fixed["Spacing"]])
@@ -152,7 +136,7 @@ def bspline_map(
 
 
 def cases() -> dict:
-    """Every single-file case, by name."""
+    """Return all single-file cases, keyed by name."""
     c3 = ["4.5", "-2", "7.25"]
     c2 = ["4.5", "-2"]
     return {
@@ -239,8 +223,7 @@ def cases() -> dict:
 
 
 def transformix(maps: list, ndim: int) -> dict:
-    """What transformix computes for a chain of maps (first applies
-    first)."""
+    """Run transformix on a chain of maps, applied first to last."""
     parameter_object = itk.ParameterObject.New()
     for pmap in maps:
         parameter_object.AddParameterMap(pmap)
@@ -258,7 +241,7 @@ def transformix(maps: list, ndim: int) -> dict:
 
 
 def write(name: str, maps: list, files: dict, suffix: str = ".txt") -> None:
-    """Write the files of a case, and transformix's answer for it."""
+    """Write the parameter files and expected transformix output of a case."""
     ndim = int(maps[-1]["FixedImageDimension"][0])
     for filename, pmap in files.items():
         _write_map(pmap, HERE / filename)
@@ -272,28 +255,25 @@ def _object(pmap: dict) -> "itk.ParameterObject":
 
 
 def _write_map(pmap: dict, filename: Path) -> None:
-    # `WriteParameterFile(filename)` writes every map of the object, and
-    # picks the text or the TOML syntax from the extension.
+    # The file extension selects the text or TOML syntax.
     _object(pmap).WriteParameterFile(str(filename))
 
 
 def main() -> None:
-    # transformix writes its deformation field into the working directory.
+    # Transformix writes its deformation field into the working directory.
     os.chdir(tempfile.mkdtemp())
     for name, pmap in cases().items():
         write(name, [pmap], {f"{name}.txt": pmap})
 
-    # The same Euler file in elastix's TOML syntax.
+    # The same Euler file in the elastix TOML syntax.
     euler = cases()["euler3d"]
     write("euler3d_toml", [euler], {"euler3d.toml": euler})
 
-    # A chain: an affine, then a B-spline that names it as its initial
-    # transform, by a path relative to its own directory -- which is
-    # where elastix looks when the path does not exist from the working
-    # directory.
+    # An affine, then a B-spline naming it as initial transform by a path
+    #
+    # relative to the B-spline file.
     affine = cases()["affine3d"]
-    # The affine moves the fixed grid, so the B-spline grid is made large
-    # enough for its valid region to cover the moved points too.
+    # Enlarge the B-spline grid so that it still covers the moved points.
     bspline = bspline_map(3, 3, seed=4, grid_size=(16, 14, 18))
     bspline["InitialTransformParameterFileName"] = [
         "chain_TransformParameters.0.txt"
@@ -307,7 +287,9 @@ def main() -> None:
         },
     )
 
-    # A three-link chain through the deprecated spelling of the key.
+    # Three-link chain using the deprecated key spelling
+    #
+    # `InitialTransformParametersFileName`.
     translation = cases()["translation3d"]
     euler = dict(cases()["euler3d"])
     euler["InitialTransformParameterFileName"] = [

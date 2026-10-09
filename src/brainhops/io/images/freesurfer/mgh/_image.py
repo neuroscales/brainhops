@@ -1,10 +1,8 @@
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 from nibabel.freesurfer import mghformat as _mgh
 
-# internals
 from brainhops._core import path
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
@@ -41,7 +39,6 @@ _RAS_ORIENTATION = {
     "z": "inferior-to-superior",
 }
 
-# The voxel types MGH stores, by numpy dtype.
 _MGH_DTYPES = {
     np.dtype(np.uint8),
     np.dtype(np.int16),
@@ -52,41 +49,31 @@ _MGH_DTYPES = {
 
 @register_format
 class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
-    """
-    An image that is encoded by a FreeSurfer MGH or MGZ file.
+    """An image stored in a FreeSurfer MGH or MGZ file.
 
-    The voxels are stored x fastest (F order), so `data` has shape
-    `(x, y, z)` or, for a multi-frame volume, `(x, y, z, frames)`, with
-    the frames read as a time axis.
+    The voxels are in Fortran order, and the data are indexed `(x, y, z)`
+    or `(x, y, z, frames)`, where the frames form a time axis.
 
-    The transformations are, in order:
-
-    1. a [`Scaling`][brainhops.datamodel.transformations.Scaling] from
-       voxels to the scaled voxel space `"physical"`: the voxel size in
-       mm, and, for a multi-frame volume, the repetition time in ms (or 1,
-       with no unit, when the footer records none);
-    2. the voxel-to-tkr (surface) RAS affine, whose output is named
-       `"tkr"` (`header.get_vox2ras_tkr()`);
-    3. the voxel-to-scanner RAS affine, whose output is named
-       `"scanner"` (`header.get_vox2ras()`). It is the last one, so it is
-       the preferred transformation.
-
-    FreeSurfer-specific header content -- the MRI acquisition parameters
-    of the footer, the raw `goodRASFlag` and the trailing tags -- is kept
-    on the object ([`mri_params`][brainhops.io.common.mgh.MghParser.
-    mri_params], the private `_good_ras` and
-    [`tags`][brainhops.io.common.mgh.MghParser.tags]) and written back.
+    The transformations are, in order, a [`Scaling`][] to `"physical"` by
+    the voxel size in millimeters and the TR in milliseconds, an
+    [`Affine`][] to `"tkr"` (`header.get_vox2ras_tkr()`), and the
+    preferred [`Affine`][] to `"scanner"` (`header.get_vox2ras()`). The
+    footer parameters
+    ([`mri_params`][brainhops.io.common.mgh.MghParser.mri_params]), the raw
+    `goodRASFlag` and the trailing tags
+    ([`tags`][brainhops.io.common.mgh.MghParser.tags]) are kept on the
+    object and written back.
 
     !!! note "`goodRASFlag`"
-        When the header's `goodRASFlag` is not positive, FreeSurfer
-        ignores the stored geometry and uses 1 mm voxels, coronal (LIA)
-        direction cosines and a zero centre. So does this reader. A file
-        written back always records its geometry, with `goodRASFlag = 1`.
+        When the flag is not positive, FreeSurfer and the reader assume 1
+        mm voxels, LIA direction cosines and a zero centre. Written files
+        always set the flag.
 
     !!! note "Why the bases are in this order"
-        As for [`NiftiImage`][brainhops.io.images.nifti.NiftiImage]:
-        `SingleScaleImage.data` has no default, so it comes last, and
-        `MghParser` leads so that its lazy `data`/`system` properties win.
+        As for [`NiftiImage`][brainhops.io.images.nifti.NiftiImage],
+        [`SingleScaleImage`][] comes last because its `data` field has no
+        default, and [`MghParser`][] comes first so that its lazy
+        properties take precedence.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (
@@ -97,11 +84,11 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
 
     @property
     def transformations(self) -> tx.List[Transformation]:
-        """The voxel-to-world transformations recorded by the header,
-        decoded on first access unless set explicitly.
+        """Voxel-to-world transformations, decoded from the header.
 
-        An image built from data alone has no header, so it records no
-        transformation and the list is empty.
+        Transformations that were set explicitly are returned as they are.
+        An image built from data alone has no header and no
+        transformations.
         """
         if getattr(self, "_transformations", None):
             return self._transformations
@@ -114,50 +101,40 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         self._transformations = value
 
     def to_nibabel(self, like: tx.Any = None, **overrides) -> _mgh.MGHImage:
-        """
-        Build the `nibabel` image that encodes this image.
+        """Build the nibabel MGH image that encodes this image.
 
-        The image data becomes the voxels. The voxel-to-scanner RAS
-        matrix is taken from the transformation whose output is named
-        `"scanner"`, or else from the preferred transformation unless it
-        maps to tkr RAS (which MGH cannot store, as it follows from the
-        shape and the voxel size). It is converted to millimetres and
-        decomposed into voxel sizes, direction cosines and a centre. An
-        image with no transformation is written with 1 mm voxels and RAS
-        axes. A transformation with no affine representation raises
-        `UnrepresentableTransformationError`.
+        The voxel-to-scanner matrix comes from the `"scanner"`
+        transformation, or else from the preferred one unless it maps to
+        tkr RAS, which MGH cannot store. Without a transformation, the
+        voxels are 1 mm along the RAS axes. The data are transposed to put
+        the spatial axes first and at most one frame axis after them (see
+        [`plan_axes`][brainhops.io.common._geometry.plan_axes]). The TR of
+        a time axis is stored in milliseconds.
 
-        The axes are placed by the types and names the voxel space of
-        that transformation declares, as NIfTI places them (see
-        [`plan_axes`][brainhops.io.common._geometry.plan_axes]): the
-        spatial axes first (`x, y, z` in that order when they are so
-        named), then the one axis MGH stores besides them, its frames.
-        The data is transposed to match (lazily, for a lazy array), and a
-        slice with frames is given a `z` axis of size one. A second axis
-        besides the spatial ones has no place in MGH, and raises
-        `UnrepresentableTransformationError`. A voxel space that declares
-        nothing is written in the order it has.
+        Parameters
+        ----------
+        like : path, nibabel MGH image or header, or MGH object, optional
+            Template whose MRI parameters override those of this image. A
+            TR stated by the transformation overrides both.
+        **overrides : Any
+            Header fields set last. `dtype` sets the stored voxel type,
+            which by default is the type of the data if MGH can store it
+            (uint8, int16, int32, float32), or else the nearest one.
 
-        The frames of a time axis are spaced by the repetition time,
-        which MGH stores in milliseconds (`tr`): it is taken from the
-        time axis of the transformation, converted from its unit (a time
-        axis with no unit is taken to be in milliseconds already). A time
-        axis that still counts frames states no repetition time. MGH
-        stores no origin for the frames, so a time axis with one raises
-        `UnrepresentableTransformationError`, as do frames of another
-        kind that are scaled or shifted.
+        Returns
+        -------
+        nibabel.freesurfer.mghformat.MGHImage
+            The encoded image.
 
-        The MRI parameters of the footer (`tr`, `flip_angle`, `te`, `ti`,
-        `fov`) are copied from this image's header, then from `like` when
-        it is given (a path to an MGH/MGZ file, a `nibabel` MGH image or
-        header, or another object read from MGH); the repetition time the
-        transformation states replaces theirs; then the keyword arguments
-        apply. `dtype` sets the stored voxel type. Without it, the
-        array's type is kept when MGH can store it (uint8, int16, int32,
-        float32), and otherwise converted to the nearest one MGH can:
-        booleans to uint8, other floats to float32, other integers to
-        int16 or int32. Integers that int32 cannot hold raise
-        `WriterError`.
+        Raises
+        ------
+        WriterError
+            If there is no data, the data have more than four dimensions,
+            or the voxel type cannot be stored.
+        UnrepresentableTransformationError
+            If the transformation has no affine form, has a second
+            non-spatial axis, or shifts or scales frames in a way that MGH
+            cannot store.
         """
         data = self.data
         if data is None:
@@ -199,21 +176,17 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
 
 
 def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
-    """
-    Convert the header of an MGH image to its list of transformations:
-    voxel-to-physical scaling, voxel-to-tkr RAS and voxel-to-scanner RAS.
-    """
+    """Return the scaling, tkr RAS and scanner RAS transformations."""
     voxel_space = image.system
     axes = list(voxel_space.axes)
     tr = image.mri_params["tr"]
 
-    # >> Physical space: the same axes, in mm (and ms for the frames,
-    # when the repetition time is known -- it is never invented).
+    # Frames are in milliseconds only when the TR is known; a unit is
+    # never invented.
     units = {"space": "mm", "time": "ms" if tr > 0 else None}
     phys_axes = [replace(axis, unit=units.get(axis.type)) for axis in axes]
     phys_space = CoordinateSystem(name=_PHYSICAL, axes=phys_axes)
 
-    # >> RAS space: the spatial axes run along R, A, S.
     ras_axes = [
         replace(
             axis,
@@ -254,22 +227,17 @@ def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
 
 
 _MGH_POLICY = dict(fill_space=True, max_nonspatial=1)
-"""
-Where MGH stores the axes of an array (see
-[`plan_axes`][brainhops.io.common._geometry.plan_axes]): three spatial axes,
-then the frames.
-"""
+"""Placement of axes in MGH files: three spatial axes, then frames."""
 
 
 def _scanner_transformation(
     transformations: tx.Sequence[Transformation],
 ) -> tx.Optional[Transformation]:
-    """
-    The transformation that gives the voxel-to-scanner RAS matrix to store.
+    """Pick the transformation that gives the voxel-to-scanner matrix.
 
-    The transformation named `"scanner"` wins; failing that, the
-    preferred one, unless it maps to tkr RAS, in which case the last
-    transformation that does not. `None` when there is none.
+    A transformation named `"scanner"` wins. Otherwise the last
+    transformation that does not map to tkr RAS is used, or `None` if
+    there is none.
     """
     transformations = list(transformations or [])
     chosen = None
@@ -288,13 +256,11 @@ def _scanner_transformation(
 def _scanner_geometry(
     transformations: tx.Sequence[Transformation], data: tx.Any
 ) -> tx.Tuple[np.ndarray, tx.Any, tx.Optional[float]]:
-    """
-    The `(4, 4)` voxel-to-scanner RAS matrix, in mm, to store, where each
-    axis of the data is stored, and the repetition time, in ms, the
-    transformation states (see `MghImage.to_nibabel`).
+    """Return the scanner matrix, the axis layout and the TR to store.
 
-    No transformation gives the identity, the data as it is, and no
-    repetition time.
+    The matrix is in millimeters and the TR in milliseconds (see
+    [`MghImage.to_nibabel`][]). Without a transformation, the result is
+    the identity, no layout and no TR.
     """
     chosen = _scanner_transformation(transformations)
     if chosen is None:
@@ -310,17 +276,11 @@ def _scanner_geometry(
 
 
 def _frame_tr(arranged: Arrangement) -> tx.Optional[float]:
-    """
-    The repetition time, in ms, of the frames of an arranged geometry, or
-    `None` when it states none.
+    """Return the TR in milliseconds of the frame axis, or `None`.
 
-    The frames are the one axis stored after the spatial ones. Frames of
-    a time axis are spaced by the repetition time; MGH has no origin to
-    store for them. A time axis that still counts frames (scale one, and
-    no time unit) states no repetition time. Frames that the spaces
-    declare as another kind of axis are neither scaled nor shifted, as
-    MGH stores neither. A space that declares nothing is read as the MGH
-    reader reads it: the frames are time.
+    A time axis that still counts frames, with a scale of one and no time
+    unit, states no TR. Frames that are not time can be neither scaled
+    nor shifted.
     """
     if not arranged.others:
         return None
@@ -353,14 +313,13 @@ def _frame_tr(arranged: Arrangement) -> tx.Optional[float]:
     if is_physicalunit(unit) and is_timeunit(unit):
         return float(scale) * float(unit.scale) * 1000.0
     if scale == 1.0:
-        # Still a frame index, as the reader reads frames with no
-        # repetition time: none is stated.
+        # Still a frame index, as read from a file without a TR.
         return None
     return float(scale)
 
 
 def _mgh_dtype(data: tx.Any, dtype: tx.Any = None) -> np.dtype:
-    """The voxel type to store an array as (see `MghImage.to_nibabel`)."""
+    """Return the voxel type to store (see [`MghImage.to_nibabel`][])."""
     if dtype is not None:
         dtype = np.dtype(dtype)
         if dtype not in _MGH_DTYPES:

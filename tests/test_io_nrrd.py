@@ -1,10 +1,8 @@
-"""
-Tests for the NRRD image formats (`.nrrd`, `.nhdr` + data files).
+"""Tests for NRRD images (.nrrd, and .nhdr with data files).
 
-The fixtures are hand-written headers, following the specification
-(https://teem.sourceforge.net/nrrd/format.html), with data encoded by
-`struct` / `gzip` / `bz2` independently of the writer. When `pynrrd` is
-installed, it cross-checks both directions.
+Headers are written by hand from the specification, and the data is encoded
+independently of the writer. pynrrd cross-checks both directions when it is
+installed.
 """
 
 import bz2
@@ -37,13 +35,12 @@ from brainhops.io.images.nrrd import (
 
 
 def _values(shape, dtype="int16"):  # noqa: ANN001, ANN202
-    """An array indexed in NRRD axis order, with distinct values."""
+    """An array in NRRD axis order with distinct values."""
     n = int(np.prod(shape))
     return np.arange(n).reshape(shape, order="F").astype(dtype)
 
 
 def _pack(array, fmt):  # noqa: ANN001, ANN202
-    """Encode with `struct`, fastest axis first, one value at a time."""
     flat = np.asarray(array).ravel(order="F")
     return b"".join(struct.pack(fmt, v.item()) for v in flat)
 
@@ -245,7 +242,7 @@ def test_read_encodings(tmp_path, encoding, encode) -> None:  # noqa: ANN001
     (tmp_path / "a.nrrd").write_bytes(content)
     image = io.load(tmp_path / "a.nrrd")
     np.testing.assert_array_equal(image.data, values)
-    # no space: unit-less identity scaling
+    # Without a space, the transformation is a unit-less identity scaling.
     (xform,) = image.transformations
     assert isinstance(xform, Scaling)
     np.testing.assert_array_equal(xform.scale, [1, 1])
@@ -360,10 +357,9 @@ def test_read_kinds_and_roles(tmp_path) -> None:  # noqa: ANN001
 @pytest.mark.parametrize(
     "center,scale,first",
     [
-        # cell: the samples fill [min, max]; the first is centred at
-        # min + spacing / 2, or at max - spacing / 2 - (n - 1) * spacing
+        # Cell centring: the samples fill [min, max].
         ("cell", [0.5, 2], [0.25, 0]),
-        # node: the first and last samples are at min and max
+        # Node centring: the first and last samples lie at min and max.
         ("node", [2.0 / 3, 2], [0, 1]),
     ],
 )
@@ -438,7 +434,7 @@ def test_sniff_and_hints(lps_file, tmp_path) -> None:  # noqa: ANN001
     assert DetachedNrrdImage.sniff(name) == Confidence.NO
     assert FileBasedImage.sniff(name) is AttachedNrrdImage
     assert isinstance(io.load(name, hint="nrrd"), AttachedNrrdImage)
-    # content decides, whatever the name
+    # The content decides, not the name.
     renamed = tmp_path / "renamed.bin"
     renamed.write_bytes(name.read_bytes())
     assert type(io.load(renamed)) is AttachedNrrdImage

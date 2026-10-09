@@ -1,15 +1,19 @@
-"""Semantic format families used to derive qualified dispatch hints."""
+"""Semantic families of transformation formats.
+
+Qualified dispatch hints of the form `"xform.<family>"` are derived from
+these marker classes.
+"""
 
 __all__ = ["TransformationFormat", "AffineTransformationFormat"]
 
 
 class TransformationFormat:
-    """A stored transformation format."""
+    """Marker of any stored transformation format."""
 
     HINTS = ("xform",)
 
 
 class AffineTransformationFormat(TransformationFormat):
-    """A format that stores an affine transformation."""
+    """Marker of formats that store an affine transformation."""
 
     HINTS = ("affine",)

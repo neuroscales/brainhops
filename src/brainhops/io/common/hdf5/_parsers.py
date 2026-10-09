@@ -33,7 +33,7 @@ def _raise_or(
     message: str,
     cause: tx.Optional[BaseException] = None,
 ) -> float:
-    """Raise `error` (or `default` if `error is True`), or return NO."""
+    """Raise `error`, or `default` if `error` is true, or return NO."""
     if error:
         if error is True:
             error = default
@@ -43,21 +43,13 @@ def _raise_or(
 
 class Hdf5Parser(BinaryFileParser):
     """
-    Reads a format stored in an HDF5 file.
+    A mixin that reads a format stored in HDF5.
 
-    A concrete format implements two class methods, both of which take an
-    open `h5py.File`:
-
-    - `sniff_h5(h5file, error=False) -> float`
-    - `from_h5(h5file, keep_open=False, load=True, **kwargs) -> Self`
-
-    and this mixin routes paths, streams and bytes to them. A path is
-    handed to `h5py` by name rather than as a stream, so that a dataset
-    read lazily (`load=False`) can reopen the file long after it was
-    parsed.
+    A concrete format implements the class methods `sniff_h5` and
+    `from_h5`, which take an open `h5py.File`, and the mixin routes paths,
+    streams and bytes to them. A path is handed to h5py by name, so that a
+    lazily read dataset can reopen the file long after parsing.
     """
-
-    # --- to implement -------------------------------------------------
 
     @classmethod
     def sniff_h5(
@@ -65,16 +57,13 @@ class Hdf5Parser(BinaryFileParser):
         h5file: h5py.File,
         error: tx.Union[bool, tx.Type[Exception]] = False,
     ) -> float:
-        """Score how confident the format is that an open HDF5 file is
-        one of its files."""
+        """Return the confidence that an open HDF5 file is of this format."""
         raise NotImplementedError
 
     @classmethod
     def from_h5(cls, h5file: h5py.File, **kwargs) -> tx.Self:
         """Build an object from an open HDF5 file."""
         raise NotImplementedError
-
-    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_file(
@@ -83,7 +72,7 @@ class Hdf5Parser(BinaryFileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score a path, open HDF5 file, or binary stream."""
+        """Score a path, an open HDF5 file or a binary stream."""
         if isinstance(file, h5py.File):
             return cls.sniff_h5(file, error=error)
         if isinstance(file, (str, path.PathLike)):
@@ -97,7 +86,7 @@ class Hdf5Parser(BinaryFileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score the HDF5 file found at a path."""
+        """Score the HDF5 file at a path."""
         if isinstance(filename, str):
             filename = path.Path(filename)
         if not path.exists(filename):
@@ -148,8 +137,6 @@ class Hdf5Parser(BinaryFileParser):
         """Score the bytes of an HDF5 file."""
         return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
 
-    # --- from ---------------------------------------------------------
-
     @classmethod
     def from_file(
         cls,
@@ -159,20 +146,11 @@ class Hdf5Parser(BinaryFileParser):
         **kwargs,
     ) -> tx.Self:
         """
-        Build an object from a file (path, file-like object, or HDF5 file).
+        Build an object from a path, a binary stream or an open HDF5 file.
 
-        Parameters
-        ----------
-        file : str | PathLike | IO | h5py.File
-            Input file.
-        keep_open : bool, optional
-            If True, keep the HDF5 file open after loading.
-            If False, close the file after loading.
-            If `load=False` and `keep_open=False`, the file is reopened
-            every time a lazily read dataset is accessed.
-        load : bool, optional
-            If True, read large datasets into memory.
-            If False, keep them on disk.
+        With `load`, large datasets are read into memory; otherwise they stay
+        on disk. With `keep_open`, the file stays open after loading; otherwise
+        it is closed, and a lazy dataset reopens it on each access.
         """
         if isinstance(file, h5py.File):
             return cls.from_h5(file, keep_open=keep_open, load=load, **kwargs)
@@ -190,7 +168,7 @@ class Hdf5Parser(BinaryFileParser):
         load: bool = True,
         **kwargs,
     ) -> tx.Self:
-        """Build an object from the HDF5 file found at a path."""
+        """Build an object from the HDF5 file at a path."""
         if isinstance(filename, str):
             filename = path.Path(filename)
         if not path.exists(filename):
@@ -222,35 +200,32 @@ class Hdf5Parser(BinaryFileParser):
 
 class Hdf5ParserWriter(Hdf5Parser, BinaryFileParserWriter):
     """
-    Reads and writes a format stored in an HDF5 file.
+    A mixin that reads and writes a format stored in HDF5.
 
-    On top of what [`Hdf5Parser`][] asks for, a concrete format
-    implements `to_h5(self, h5file, **kwargs)`, which fills a new, empty
-    HDF5 file open for writing.
+    The format also implements `to_h5`, which fills a new, empty HDF5 file.
     """
 
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
-        """Write this object into an empty HDF5 file open for writing."""
+        """Write the object into an empty HDF5 file open for writing."""
         raise NotImplementedError
 
     def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
         """
-        The function that fills an HDF5 file with this object.
+        Return a function that fills an HDF5 file with the object.
 
-        It is asked for *before* the file is opened, so a format that
-        encodes its content here refuses an object it cannot write
-        without creating or truncating the file.
+        The function is obtained before the file is opened, so that a format
+        can refuse an unwritable object without truncating the file.
         """
         return lambda h5file: self.to_h5(h5file, **kwargs)
 
     def to_file(self, file: H5Like, **kwargs) -> None:
-        """Write to a path, an open binary stream, or an HDF5 file."""
+        """Write to a path, a binary stream or an open HDF5 file."""
         if isinstance(file, h5py.File):
             return self._h5_writer(**kwargs)(file)
         return super().to_file(file, **kwargs)
 
     def to_filename(self, filename: tx.Union[str, PathLike], **kwargs) -> None:
-        """Write to the file found at a path, replacing it."""
+        """Write to the file at a path, replacing it."""
         writer = self._h5_writer(**kwargs)
         with h5py.File(str(filename), "w") as f:
             writer(f)
@@ -260,7 +235,7 @@ class Hdf5ParserWriter(Hdf5Parser, BinaryFileParserWriter):
         file.write(self.to_bytes(**kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
-        """The bytes of the HDF5 file that encodes this object."""
+        """Return the bytes of an HDF5 file that encodes the object."""
         writer = self._h5_writer(**kwargs)
         buffer = BytesIO()
         with h5py.File(buffer, "w") as f:
@@ -275,11 +250,15 @@ class Hdf5ParserWriter(Hdf5Parser, BinaryFileParserWriter):
 
 def read_string(value: tx.Any) -> tx.Optional[str]:
     """
-    Decode a string stored in HDF5, whatever its storage.
+    Decode an HDF5 string, whatever its storage.
 
-    HDF5 strings come back from `h5py` as `str` (variable-length UTF-8
-    attributes), as `bytes` (fixed-length or ASCII ones), as `numpy`
-    scalars, or wrapped in a one-element array or dataset.
+    The value may be `str`, `bytes`, a NumPy scalar, or a one-element array
+    or dataset wrapping one of these. `None` is returned unchanged.
+
+    Raises
+    ------
+    ValueError
+        If the value is an array of more than one element.
     """
     if value is None:
         return None

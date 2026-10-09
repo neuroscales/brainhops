@@ -28,16 +28,15 @@ from ._constants import (
 )
 
 _Source = tx.Union[str, bytes]
-"""Where the voxels are read from: a local path, or the file's bytes."""
+"""The source of the voxels: a local path, or the file bytes."""
 
 
 def minc_version(head: bytes) -> tx.Optional[int]:
     """
-    The MINC version that the leading bytes of a file suggest: 1 for a
-    NetCDF classic file, 2 for an HDF5 file, `None` otherwise.
+    Return the MINC version that the leading bytes suggest, or `None`.
 
-    An HDF5 file is only a MINC2 candidate: it must still hold a
-    `/minc-2.0` group.
+    NetCDF content suggests version 1, and HDF5 content version 2, although
+    a MINC2 file also needs the `/minc-2.0` group.
     """
     head = bytes(head[:8])
     if head[:4] in _NETCDF_MAGICS:
@@ -53,13 +52,13 @@ def minc_version(head: bytes) -> tx.Optional[int]:
 
 
 def _axis(name: str) -> Axis:
-    """The voxel axis that a MINC dimension stands for."""
+    """Return the voxel axis that a MINC dimension stands for."""
     axis_name, axis_type = _AXES.get(name, (name, None))
     return Axis(axis_name, axis_type, unit="index")
 
 
 def _score(score: float, error: tx.Union[bool, tx.Type[Exception]]) -> float:
-    """Return a score, or raise when it is zero and asked to."""
+    """Return a score, or raise if it is zero and the caller asks to."""
     if score or not error:
         return score
     if error is True:
@@ -68,7 +67,7 @@ def _score(score: float, error: tx.Union[bool, tx.Type[Exception]]) -> float:
 
 
 def _sniff_minc1(head: bytes) -> float:
-    """Score the leading bytes of a NetCDF file as a MINC1 file."""
+    """Score the leading bytes of a NetCDF file as MINC1."""
     named = any(name.encode() in head for name in SPATIAL_DIMENSIONS)
     if named and b"image" in head:
         return Confidence.CERTAIN
@@ -76,7 +75,7 @@ def _sniff_minc1(head: bytes) -> float:
 
 
 def _sniff_minc2(file: tx.Union[str, tx.IO]) -> float:
-    """Score an HDF5 file (a path or a stream) as a MINC2 file."""
+    """Score an HDF5 file, given by path or stream, as MINC2."""
     import h5py
 
     try:
@@ -93,13 +92,10 @@ def _read_minc(
     read: tx.Callable[[tx.Any, _minc1.Minc1File, int], tx.Any],
 ) -> tx.Any:
     """
-    Open a MINC file with `nibabel`, read it, and close it.
+    Open a MINC file with nibabel, apply `read` to it, and close it.
 
-    `read(container, mfile, version)` is handed the container (the
-    NetCDF or HDF5 file) and the `nibabel` MINC file that reads the
-    voxels from it. What it returns must not refer to the file's
-    content: a MINC1 file on disk is memory-mapped (so that its header is
-    read without its voxels), and the map is closed on return.
+    The result of `read` must not refer to the file content, because a
+    MINC1 file on disk is memory-mapped and the map is closed on return.
     """
     try:
         if version == 1:
@@ -126,8 +122,8 @@ def _read_minc(
             ValueError,
             _minc1.MincError,
         ) as e:
-            # Raised outside of this block: the traceback would otherwise
-            # keep the (memory-mapped) variables alive past `close`.
+            # Raise outside this block: a held traceback would keep
+            # memory-mapped variables alive past close.
             failure = repr(e)
         if failure is not None:
             raise ParserContentError(
@@ -145,8 +141,8 @@ def _read_minc(
 def _read_voxels(
     container: tx.Any, mfile: _minc1.Minc1File, version: int
 ) -> np.ndarray:
-    """The voxels of an open MINC file, scaled, in file (C) order."""
+    """Read the scaled voxels of an open file, in file (C) order."""
     array = mfile.get_scaled_data()
-    # Native byte order (MINC1 is big-endian), in a copy that outlives the
-    # (possibly memory-mapped) file.
+    # Copy into native byte order (MINC1 is big-endian), so that the result
+    # outlives a memory-mapped file.
     return np.array(array, dtype=array.dtype.newbyteorder("="))

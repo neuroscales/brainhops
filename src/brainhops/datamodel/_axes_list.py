@@ -1,111 +1,70 @@
-# stdlib
 import abc
 import sys
 from numbers import Integral
 
-# datamodel
 import typing_extensions as tx
 from bagof.converters import Converter
 from bagof.magic import ConvertTo, fields
 
-# datamodel
 from .axes import Axis
 
 if tx.TYPE_CHECKING:
     from types import EllipsisType as _Ellipsis
 
 else:
+    # `types.EllipsisType` exists from Python 3.10.
     _Ellipsis: tx.TypeAlias = type(Ellipsis)
-    # The type of `...`. Python 3.10 names it `types.EllipsisType`.
 
-# typing
 
+# Type of the items of an `AxisSequence`.
 AXIS = tx.TypeVar("AXIS")
-# The type of the items of an `AxisSequence`, and of an `AxisList`.
 
+# Types of the items of an `AxisTuple`, in order.
 AXES = tx.TypeVarTuple("AXES")
-# The type of each item of an `AxisTuple`, in order.
 
 
 class AxisSequence(tx.Sequence[AXIS]):
-    """The axes of a coordinate system, which may leave some unknown.
+    """Axes of a coordinate system, some of which may be unknown.
 
-    An `AxisSequence` is a sequence of [`Axis`][] that may hold one `...`
-    ([`Ellipsis`][]), anywhere in it. `...` stands for *zero or more axes
-    about which nothing is known*.
+    An axis sequence holds [`Axis`][] objects and at most one `...`, which
+    stands for zero or more unknown axes. A sequence that holds `...` is
+    open, because its number of axes is unknown; otherwise it is closed and
+    lists every axis. The `...` is an entry but never counts as an axis. A
+    sequence with more than one `...` describes no axes: the methods that
+    read axes raise `ValueError`, and coordinate systems refuse it. For
+    example, `[..., TimeAxis()]` says that the last axis is a time axis,
+    and `[...]` says nothing.
 
-    * A sequence that holds `...` is *open*: its number of axes is
-      unknown.
-    * A sequence without it is *closed*: it lists every axis.
-    * `...` is an entry of the sequence, but never counts as an axis.
-    * A sequence that holds `...` more than once describes no axes:
-      every method that reads the axes raises a `ValueError` on it. A
-      coordinate system refuses such a sequence when it is built.
-
-    `[..., TimeAxis()]` says that the last axis is time, and nothing
-    about the others. `[Axis(name="x"), ...]` says that the first axis
-    is `x`. `[...]` says nothing at all.
-
-    This is the read-only base of two containers, which share all of its
-    API, and whose methods that build a new sequence (a slice,
-    [`expand`][], [`restrict`][], [`embed`][]) build one of their own
-    type:
-
-    * [`AxisList`][], a `list`, is mutable. A coordinate system whose
-      number of axes is not fixed by its class stores its axes as one.
-    * [`AxisTuple`][], a `tuple`, is immutable. A coordinate system
-      with a fixed number of axes, such as an `RASCoordinateSystem`,
-      stores its axes as one.
+    This class is the read-only base of [`AxisList`][], which is mutable,
+    and [`AxisTuple`][], which is immutable. Slicing and the methods that
+    build new sequences return the type of the original sequence. The type
+    parameter is the item type, so `AxisSequence[Axis]` is closed.
 
     !!! note "Entries and axes"
-        `len()`, iteration, equality, `repr`, `[i]` (an integer or a
-        slice) and [`index`][] are about the *entries* of the sequence,
-        `...` included, as in the `list` or `tuple` it is.
-
-        [`ndim`][] counts the *axes* the sequence describes, and
-        [`at`][], [`expand`][], [`restrict`][], [`embed`][] and
-        [`compatible_with`][] place them in the space, where `...` stands
-        for as many axes as needed. A position in the space is counted
-        from the first axis when it is non-negative, and from the last
-        one when it is negative.
-
-        In a closed sequence, the entries are the axes, in order. In an
-        open one, they are not: in `[x, ..., t]`, entry 2 (`axes[2]`) is
-        `t`, which is the last axis, and the axis at position 2
-        (`axes.at(2)`) is one of the axes that `...` stands for, which
-        has no entry. So `for i in range(len(axes)): axes[i]` walks the
-        entries, not the axes.
+        Length, iteration, equality, `axes[i]` and [`index`][] work on
+        entries, including `...`. [`ndim`][] counts axes, and [`at`][],
+        [`expand`][], [`restrict`][], [`embed`][] and [`compatible_with`][]
+        work on positions in the space, where `...` stands for as many axes
+        as needed. Non-negative positions count from the first axis and
+        negative positions from the last. In a closed sequence, entries and
+        axes coincide. In `[x, ..., t]`, however, `axes[2]` is `t` while
+        `axes.at(2)` is one of the axes that `...` stands for.
 
     !!! note "Finding an axis"
-        [`index`][] finds the first entry that matches a query, as
-        `list.index` finds the first entry equal to a value. The query is
-        an [`Axis`][brainhops.datamodel.axes.Axis], or a name, which
-        stands for `Axis(name=...)`. An entry matches when it is an
-        instance of the class of the query, and has every field that the
-        query sets (not `None`), with the same value. The fields that the
-        query leaves unset are not compared. So:
-
-        * `axes.index("t")` finds the first axis named `"t"`;
-        * `axes.index(TimeAxis())` finds the first time axis, whatever
-          its unit: a `TimeAxis()` sets its type, and leaves its unit
-          unspecified;
-        * `axes.index(Axis())` finds the first axis;
-        * `...` matches nothing. An unknown `Axis()` matches no query
-          that sets a field, so neither does any of the axes that `...`
-          stands for.
+        [`index`][] finds the first entry that matches a query, given as an
+        axis or as a name, which stands for `Axis(name=...)`. An entry
+        matches when it is an instance of the class of the query and has
+        the same value for every field that the query sets. Thus
+        `axes.index(TimeAxis())` finds the first time axis whatever its
+        unit, and `axes.index(Axis())` finds the first axis. The `...`
+        matches nothing, and an unknown `Axis()` matches no query that sets
+        a field.
 
     !!! note "Names"
-        An axis can also be read by its name, as in a `dict`:
-        `axes["t"]` is the explicit axis named `"t"`, `"t" in axes` says
-        whether there is one, and [`names`][] lists the names. A name
-        only ever matches an explicit axis, never one of the axes that
-        `...` stands for. `axes["t"]` is `axes[axes.index("t")]`, but it
-        also refuses a name that more than one axis has.
-
-        There is no `keys()`, `values()`, `items()`, `update()` or
-        `pop()` by name: an axis may be unnamed, a name may be shared,
-        and `...` has no name, so a mapping view would misrepresent the
-        sequence, and changing an axis by its name would be a trap.
+        `axes["t"]` returns the explicit axis named `"t"`, `"t" in axes`
+        tests for one, and [`names`][] lists the names. A name that several
+        axes share is refused. There is no mapping interface, because axes
+        may be unnamed or share names.
 
     !!! example
         ```pycon
@@ -124,18 +83,13 @@ class AxisSequence(tx.Sequence[AXIS]):
         >>> axes.restrict([-1, 0, 1])[1:]
         [Axis(name='x'), Axis()]
         ```
-
-    The type parameter is the type of the items:
-    `AxisSequence[Union[Axis, EllipsisType]]` may be open, and
-    `AxisSequence[Axis]` is closed.
     """
 
     __slots__ = ()
 
     @abc.abstractmethod
     def _entry(self, key: tx.Any) -> tx.Any:
-        # The builtin storage, read: `list.__getitem__` in an `AxisList`,
-        # `tuple.__getitem__` in an `AxisTuple`.
+        # Read the underlying list or tuple storage.
         ...
 
     @tx.overload
@@ -148,13 +102,10 @@ class AxisSequence(tx.Sequence[AXIS]):
     def __getitem__(self, key: str) -> Axis: ...
 
     def __getitem__(self, key: tx.Any) -> tx.Any:
-        """An entry (`int`), some entries (`slice`), or the axis with a
-        name (`str`).
+        """Return an entry, a slice, or the explicit axis with a name.
 
-        An integer or a slice indexes the *entries* of the sequence, as
-        in any `list` or `tuple`, and a slice gives a sequence of the same
-        type. A name gives the one explicit axis that has it. The axis at
-        a *position* in the space is [`at`][] that position.
+        Integers and slices index entries, as for a list; [`at`][] reads the
+        axis at a position in the space.
 
         !!! example
             ```pycon
@@ -168,11 +119,9 @@ class AxisSequence(tx.Sequence[AXIS]):
         Raises
         ------
         KeyError
-            If no explicit axis has the name.
+            If no axis has the name.
         ValueError
-            If more than one explicit axis has the name.
-        IndexError, TypeError
-            As `list` indexing does.
+            If several axes have the name.
         """
         if isinstance(key, str):
             return self._entry(self._entry_named(key))
@@ -181,8 +130,7 @@ class AxisSequence(tx.Sequence[AXIS]):
         return self._entry(key)
 
     def __contains__(self, item: object) -> bool:
-        """Whether an explicit axis has a name (`str`), or whether an
-        entry equals `item` (anything else, as in any `list`)."""
+        """Return whether an item is an entry, or a string names an axis."""
         if isinstance(item, str):
             return bool(self._entries_named(item))
         return any(entry is item or entry == item for entry in self)
@@ -193,14 +141,10 @@ class AxisSequence(tx.Sequence[AXIS]):
         start: tx.SupportsIndex = 0,
         stop: tx.SupportsIndex = sys.maxsize,
     ) -> int:
-        """The first entry that matches an axis, or a name.
+        """Return the index of the first entry that matches an axis or a name.
 
-        This is `list.index`, with a looser test than equality: an entry
-        *matches* the query when it is an instance of the class of the
-        query, and has every field that the query sets (not `None`), with
-        the same value. The fields that the query leaves unset are not
-        compared. A name stands for `Axis(name=...)`, so it matches the
-        axes with that name, whatever their class. `...` matches nothing.
+        The test is looser than equality: unset fields of the query are not
+        compared, as described in the class documentation.
 
         !!! example
             ```pycon
@@ -219,24 +163,24 @@ class AxisSequence(tx.Sequence[AXIS]):
         Parameters
         ----------
         query : Axis or str
-            The axis to find, or its name.
-        start, stop : int, optional
-            Only the entries `start` to `stop` are searched, as in
-            `list.index`.
+            An axis, or the name of an axis.
+        start : int, default=0
+            Start of the search window, as for `list.index`.
+        stop : int, default=sys.maxsize
+            End of the search window, as for `list.index`.
 
         Returns
         -------
         int
-            The index of the first entry that matches. It is an entry
-            index, which is a position in the space only in a closed list
-            (see the class notes).
+            Index of the entry, which is a position in the space only when the
+            sequence is closed.
 
         Raises
         ------
         ValueError
             If no entry matches.
         TypeError
-            If `query` is neither an `Axis` nor a string.
+            If the query is neither an axis nor a string.
         """
         if isinstance(query, str):
             query = Axis(name=query)
@@ -253,8 +197,7 @@ class AxisSequence(tx.Sequence[AXIS]):
 
     @property
     def names(self) -> tx.Tuple[tx.Union[str, None, _Ellipsis], ...]:
-        """The name of each entry: `None` for an unnamed axis, and `...`
-        in the place of `...`.
+        """Name of each entry, or `None` for an unnamed axis.
 
         !!! example
             ```pycon
@@ -264,14 +207,9 @@ class AxisSequence(tx.Sequence[AXIS]):
         """
         return tuple(... if axis is ... else _name(axis) for axis in self)
 
-    # --- axes ---------------------------------------------------------
-
     @property
     def ndim(self) -> tx.Optional[int]:
-        """The number of axes, or `None` when the list is open.
-
-        A closed list has one axis per entry. An open list has an
-        unknown number of axes.
+        """Number of axes, or `None` when the sequence is open.
 
         !!! example
             ```pycon
@@ -286,20 +224,17 @@ class AxisSequence(tx.Sequence[AXIS]):
 
     @property
     def is_open(self) -> bool:
-        """Whether the list holds `...`, so that its number of axes is
-        unknown.
+        """Whether the sequence holds `...`, so its number of axes is unknown.
 
-        `AxisList([...])`, which says nothing at all, is open. The empty
-        list is closed: it has no axis.
+        `AxisList([...])` is open, and an empty list is closed.
         """
         return self._split()[1] is not None
 
     def expand(self, ndim: int) -> tx.Self:
-        """The closed list of `ndim` axes that this list describes.
+        """Return a closed sequence of `ndim` axes.
 
-        In an open list, `...` is replaced with as many unknown `Axis()`
-        as needed to reach `ndim` axes. Use it once the number of axes is
-        known, for instance from the shape of the data.
+        In an open sequence, `...` is replaced by as many unknown axes as
+        needed. A closed sequence is returned as a copy.
 
         !!! example
             ```pycon
@@ -309,22 +244,11 @@ class AxisSequence(tx.Sequence[AXIS]):
             [Axis(), Axis()]
             ```
 
-        Parameters
-        ----------
-        ndim : int
-            The number of axes.
-
-        Returns
-        -------
-        AxisList
-            A new, closed list of `ndim` axes. A closed list is returned
-            as a copy of itself.
-
         Raises
         ------
         ValueError
-            If `ndim` is less than the number of explicit axes of an open
-            list, or differs from the number of axes of a closed one.
+            If `ndim` is smaller than the number of explicit axes of an open
+            sequence, or differs from the length of a closed sequence.
         TypeError
             If `ndim` is not an integer.
         """
@@ -347,19 +271,13 @@ class AxisSequence(tx.Sequence[AXIS]):
         return type(self)(prefix + fill + suffix)
 
     def restrict(self, refs: tx.Iterable[tx.Union[int, str]]) -> tx.Self:
-        """The axes at some positions, or with some names, of this list.
+        """Return the axes at some positions or with some names, in that order.
 
-        A reference is the position of an axis in the space (`int`), or
-        the name of an explicit axis (`str`), as `axes[name]` reads it.
-
-        * In a closed list of `n` axes, a position lies in `[-n, n)`.
-        * In an open list, every position is valid, because `...` stands
-          for any number of axes. A non-negative position reads the
-          explicit axes before `...`, and a negative one the explicit
-          axes after it. Any other position falls among the axes that
-          `...` stands for, and gives an unknown `Axis()`.
-
-        The axes are listed in the order of `refs`.
+        A position is an integer in the space, and a name refers to an
+        explicit axis as in `axes[name]`. In a closed sequence of `n` axes,
+        positions lie in `[-n, n)`. In an open sequence, every position is
+        valid, and the positions that fall among the axes of `...` give
+        unknown axes.
 
         !!! example
             ```pycon
@@ -370,28 +288,22 @@ class AxisSequence(tx.Sequence[AXIS]):
             [Axis(name='x'), Axis()]
             ```
 
-        Parameters
-        ----------
-        refs : iterable of int or str
-            The positions or names of the axes to keep.
-
         Returns
         -------
-        AxisList
-            A new, closed list of `len(refs)` axes.
+        AxisSequence
+            A new closed sequence with one axis per reference.
 
         Raises
         ------
         IndexError
-            If a position lies outside a closed list.
+            If a position lies outside a closed sequence.
         KeyError
             If no explicit axis has a name.
         ValueError
-            If more than one explicit axis has a name, or if two
-            references name the same axis.
+            If a name is shared, or two references designate the same axis.
         TypeError
-            If a reference is neither an integer nor a string, or if
-            `refs` is a string rather than a list of references.
+            If a reference is neither an integer nor a string, or `refs` is a
+            string.
         """
         positions = []
         for ref in _as_list(refs, "refs"):
@@ -408,15 +320,12 @@ class AxisSequence(tx.Sequence[AXIS]):
         positions: tx.Iterable[int],
         ndim: tx.Optional[int] = None,
     ) -> tx.Self:
-        """The axes of a larger space in which this list's axes sit.
+        """Return the axes of a larger space in which these axes sit.
 
-        This is the inverse of [`restrict`][]: axis `j` of this list sits
-        at `positions[j]` of the result, and every other position holds
-        an unknown `Axis()`. An open list is first closed to
-        `len(positions)` axes, as by [`expand`][].
-
-        The positions are absolute positions in the larger space, which
-        does not exist yet, so they cannot be names.
+        This is the inverse of [`restrict`][]: axis `j` sits at `positions[j]`,
+        and the other axes are unknown. An open sequence is first closed to
+        `len(positions)` axes, as by [`expand`][]. Positions refer to a space
+        that does not exist yet, so names are not accepted.
 
         !!! example
             ```pycon
@@ -430,22 +339,16 @@ class AxisSequence(tx.Sequence[AXIS]):
         Parameters
         ----------
         positions : iterable of int
-            The non-negative position of each axis in the larger space.
+            Non-negative position of each axis.
         ndim : int, optional
-            The number of axes of the larger space. When it is not given,
-            the number is unknown, and the result ends with `...` after
-            the last embedded axis.
-
-        Returns
-        -------
-        AxisList
-            A new list, closed when `ndim` is given and open otherwise.
+            Number of axes of the larger space. When it is omitted, the result
+            is open and ends with `...`.
 
         Raises
         ------
         ValueError
-            If a position is negative or repeated, if `ndim` does not
-            exceed every position, or if this list cannot be closed to
+            If a position is negative or repeated, if `ndim` does not exceed
+            every position, or if the sequence cannot be closed to
             `len(positions)` axes.
         TypeError
             If a position or `ndim` is not an integer.
@@ -487,16 +390,13 @@ class AxisSequence(tx.Sequence[AXIS]):
         return type(self)(full)
 
     def compatible_with(self, other: tx.Sequence[tx.Any]) -> bool:
-        """Whether `self` and `other` could describe the same axes.
+        """Return whether two sequences could describe the same axes.
 
-        Two lists are compatible when some choice of the axes that each
-        `...` stands for makes them match axis by axis, each pair being
-        [`compatible`][brainhops.datamodel.axes.Axis.compatible_with].
-
-        For two closed lists, this asks for the same number of axes,
-        pairwise compatible. Unlike `==`, an unknown `Axis()` matches
-        any axis, and `[...]` matches every list. The relation is
-        symmetric, but not transitive.
+        The sequences are compatible when some choice of what each `...` stands
+        for makes them match axis by axis, with each pair compatible in the
+        sense of [`Axis.compatible_with`][].
+        Unlike equality, an unknown axis matches any axis and `[...]` matches
+        every sequence. The relation is symmetric but not transitive.
 
         !!! example
             ```pycon
@@ -506,17 +406,6 @@ class AxisSequence(tx.Sequence[AXIS]):
             >>> AxisList([..., t]).compatible_with([x])
             False
             ```
-
-        Parameters
-        ----------
-        other : AxisSequence, or list or tuple of Axis
-            The axes to compare with. A plain list or tuple is read as
-            an axis sequence.
-
-        Returns
-        -------
-        bool
-            Whether the two lists could describe the same axes.
 
         Raises
         ------
@@ -533,39 +422,35 @@ class AxisSequence(tx.Sequence[AXIS]):
         if s1 is None and s2 is None:
             return len(p1) == len(p2) and _pairwise(p1, p2)
         if s1 is None:
-            # Let the first list be the open one.
+            # Make the first sequence the open one.
             (p1, s1), (p2, s2) = (p2, s2), (p1, s1)
         assert s1 is not None
         if s2 is None:
-            # Open against closed: the explicit axes of the open list must
-            # fit, and match the axes at the start and at the end.
+            # The explicit axes of the open sequence must fit at the start and
+            # at the end of the closed one.
             n = len(p2)
             if len(p1) + len(s1) > n:
                 return False
             return _pairwise(p1, p2[: len(p1)]) and _pairwise(
                 s1, p2[n - len(s1) :]
             )
-        # Open against open: with enough axes in each `...`, only the axes
-        # that both lists state at the start, or both at the end, meet.
+        # With enough axes behind each `...`, only the axes that both state at
+        # the start, or both at the end, meet.
         k = min(len(p1), len(p2))
         m = min(len(s1), len(s2))
         return _pairwise(p1[:k], p2[:k]) and _pairwise(
             s1[len(s1) - m :], s2[len(s2) - m :]
         )
 
-    # --- private helpers ----------------------------------------------
-    # Positions in the space, as opposed to entries of the list, are only
-    # handled here. A position is counted from the first axis when it is
-    # non-negative, and from the last one when it is negative.
+    # Positions in the space count from the first axis when non-negative and
+    # from the last axis when negative.
 
     def _split(self) -> tx.Tuple[tx.List[Axis], tx.Optional[tx.List[Axis]]]:
         return _split(self)
 
     def _position(self, position: int) -> int:
-        # Check a position against the list, and normalize it. In a closed
-        # list of `n` axes, it must lie in `[-n, n)`, and a negative one is
-        # returned as its non-negative equivalent. In an open list, every
-        # position is valid, and is returned as given: never clamped.
+        # In a closed sequence, a negative position is made non-negative. In an
+        # open sequence, every position is valid and returned unchanged.
         if isinstance(position, bool) or not isinstance(position, Integral):
             raise TypeError(
                 f"An axis is referred to by its position (int) or its name "
@@ -584,9 +469,8 @@ class AxisSequence(tx.Sequence[AXIS]):
         return position + n if position < 0 else position
 
     def _position_of_entry(self, entry: int) -> int:
-        # The position of the axis that an entry holds. An entry after
-        # `...` is counted from the end, because its distance from the
-        # start is unknown. Any other entry is its own position.
+        # An entry after `...` counts from the end, since its distance from the
+        # start is unknown.
         entries = list(self)
         entry = range(len(entries))[entry]
         if entries[entry] is ...:
@@ -595,20 +479,13 @@ class AxisSequence(tx.Sequence[AXIS]):
         return entry - len(entries) if after else entry
 
     def at(self, position: int) -> Axis:
-        """The axis at a position in the space.
+        """Return the axis at a position in the space.
 
-        Where `axes[i]` reads *entry* `i` of the sequence, `axes.at(i)`
-        reads the axis at *position* `i` of the space it describes:
-        counted from the first axis when `i` is non-negative, and from
-        the last one when it is negative.
-
-        * In a closed sequence, the two are the same, and a position lies
-          in `[-ndim, ndim)`.
-        * In an open sequence, every position is valid, because `...`
-          stands for any number of axes. A non-negative position reads
-          the explicit axes before `...`, and a negative one the explicit
-          axes after it. Any other position falls among the axes that
-          `...` stands for, and gives a new, unknown `Axis()`.
+        Non-negative positions count from the first axis and negative positions
+        from the last. In a closed sequence, `axes.at(i)` equals `axes[i]` and
+        the position lies in `[-ndim, ndim)`. In an open sequence, every
+        position is valid, and a position that falls among the axes of `...`
+        gives a new unknown axis.
 
         !!! example
             ```pycon
@@ -620,20 +497,10 @@ class AxisSequence(tx.Sequence[AXIS]):
             (True, Axis())
             ```
 
-        Parameters
-        ----------
-        position : int
-            The position of the axis in the space.
-
-        Returns
-        -------
-        Axis
-            The explicit axis at that position, or a new `Axis()`.
-
         Raises
         ------
         IndexError
-            If the sequence is closed, and the position lies outside it.
+            If the position lies outside a closed sequence.
         TypeError
             If the position is not an integer.
         """
@@ -646,11 +513,9 @@ class AxisSequence(tx.Sequence[AXIS]):
         return Axis()
 
     def _entries_named(self, name: str) -> tx.List[int]:
-        # The entries of the explicit axes that have exactly this name.
         return [i for i, axis in enumerate(self) if _name(axis) == name]
 
     def _entry_named(self, name: str) -> int:
-        # The entry of the one explicit axis that has exactly this name.
         entries = self._entries_named(name)
         if not entries:
             raise KeyError(f"No axis of the list is named {name!r}.")
@@ -663,20 +528,12 @@ class AxisSequence(tx.Sequence[AXIS]):
 
 
 class AxisTuple(tuple, AxisSequence, tx.Generic[tx.Unpack[AXES]]):
-    """An immutable [`AxisSequence`][brainhops.datamodel.systems.AxisSequence].
+    """Immutable [`AxisSequence`][] for systems with a fixed number of axes.
 
-    It is a `tuple`, with all the API of an `AxisSequence`: indexing by
-    name, [`at`][], [`expand`][] and so on. A slice, and every method that
-    builds a new sequence, gives an `AxisTuple`.
-
-    A coordinate system with a fixed number of axes, such as an
-    `RASCoordinateSystem`, stores its axes as one, so they are closed.
-    The type parameters are the type of each item, in order, and fix the
-    number of items: `AxisTuple[SpaceAxis, SpaceAxis]` is two spatial
-    axes. A field of that type converts what it is given item by item,
-    each to the type of its position, and refuses a wrong number of
-    items, `None`, or `...` (which is not an axis). A bare `AxisTuple`
-    holds any number of items, `...` included.
+    The type parameters fix the item type at each position, and thereby the
+    number of items. A field typed `AxisTuple[SpaceAxis, SpaceAxis]`
+    converts each item to the type of its position and refuses a wrong
+    count, `None` and `...`. A bare `AxisTuple` holds any items.
 
     !!! example
         ```pycon
@@ -688,8 +545,8 @@ class AxisTuple(tuple, AxisSequence, tx.Generic[tx.Unpack[AXES]]):
         ```
     """
 
-    # The `tuple` comes first, for its storage, but its own reading of an
-    # item or of a name is not the one this class means.
+    # `tuple` comes first for storage, so the item and name reading of
+    # `AxisSequence` is bound explicitly.
     __getitem__ = AxisSequence.__getitem__
     __contains__ = AxisSequence.__contains__
     index = AxisSequence.index
@@ -697,21 +554,11 @@ class AxisTuple(tuple, AxisSequence, tx.Generic[tx.Unpack[AXES]]):
 
 
 class AxisList(AxisSequence[AXIS], list):
-    """A mutable [`AxisSequence`][brainhops.datamodel.systems.AxisSequence].
+    """Mutable [`AxisSequence`][] for systems with any number of axes.
 
-    It is a `list`, with all the API of an `AxisSequence`: indexing by
-    name, [`at`][], [`expand`][] and so on. A slice, and every method that
-    builds a new sequence, gives an `AxisList`.
-
-    A coordinate system whose number of axes is not fixed by its class
-    stores its axes as one: a list or a tuple given to the system is
-    converted to one, item by item, to the type of axis the class
-    declares. Its default, `[...]`, says nothing about the axes, and
-    `axes=None` reads as that default.
-
-    The type parameter is the type of the items:
-    `AxisList[Union[Axis, EllipsisType]]` may be open, and
-    `AxisList[Axis]` is closed.
+    A list or tuple given to such a system is converted item by item to the
+    axis type of the system. The default, `[...]`, says nothing, and
+    `axes=None` reads as that default. `AxisList[Axis]` is closed.
 
     !!! example
         ```pycon
@@ -724,10 +571,8 @@ class AxisList(AxisSequence[AXIS], list):
         ```
     """
 
-    # `AxisSequence` comes first, for its reading of an item or of a name.
-    # The rest is the `list`'s: `collections.abc.Sequence`, between the
-    # two in the method resolution order, would otherwise answer with its
-    # generic mixins (and its abstract `__len__`).
+    # `collections.abc.Sequence` sits between the bases in the MRO and would
+    # supply generic mixins and an abstract `__len__`.
     __len__ = list.__len__
     __iter__ = list.__iter__
     __reversed__ = list.__reversed__
@@ -735,23 +580,15 @@ class AxisList(AxisSequence[AXIS], list):
     _entry = list.__getitem__
 
 
-# ---- converter -------------------------------------------------------
-
-
 class _NoneReadsAsDefault:
-    """A field's converter, with `None` read as the field's default.
+    """Field converter that reads `None` as the default of the field.
 
-    `None` is not a sequence of axes, and what a caller who writes
-    `axes=None` means is "say nothing about them", which is what the
-    default says: `[...]` for an open system, its own axes for a system
-    whose number of axes is fixed. The field knows that default and the
-    converter does not, so each `axes` field gets a converter of its own,
-    which `bind_axes_default` points at the field. Everything else is
-    handed to the converter the hint would have had.
-
-    It is *not* registered for `AxisSequence`: it converts the one field
-    it is attached to, and a converter registered for the sequence class
-    would be asked to convert itself.
+    Other values go to the converter that the type hint would have had.
+    `axes=None` means the default, which is `[...]` for an open system and
+    its own axes for a fixed system. Only the field knows its default, so
+    each field gets its own converter, which `bind_axes_default` points at
+    the field. The converter is not registered for `AxisSequence`, since a
+    registered converter would be asked to convert itself.
     """
 
     def __init__(self, hint: tx.Any) -> None:
@@ -769,17 +606,14 @@ class _NoneReadsAsDefault:
 
 
 class Axes:
-    """
-    `Axes[hint]` types an `axes` field as `hint`, with `None` reading as
-    the field's default (see `_NoneReadsAsDefault`).
-    """
+    """`Axes[hint]` types a field whose `None` reads as its default."""
 
     def __class_getitem__(cls, hint: tx.Any) -> tx.Any:
         return tx.Annotated[hint, ConvertTo(_NoneReadsAsDefault(hint))]
 
 
 def bind_axes_default(cls: type) -> None:
-    """Point the converter of the `axes` field of `cls` at that field."""
+    """Point the converter of the `axes` field of `cls` at the field."""
     for field in fields(cls):
         if field.name == "axes" and isinstance(
             field.converter, _NoneReadsAsDefault
@@ -787,14 +621,11 @@ def bind_axes_default(cls: type) -> None:
             field.converter.field = field
 
 
-# ---- private helpers -------------------------------------------------
-
-
 def _split(
     entries: tx.Iterable[tx.Any],
 ) -> tx.Tuple[tx.List[Axis], tx.Optional[tx.List[Axis]]]:
-    # The explicit axes before and after `...`. The second list is `None`
-    # for a closed sequence, whose axes are then all in the first.
+    # Explicit axes before and after `...`; the second is `None` for a closed
+    # sequence.
     entries = list(entries)
     ellipses = [i for i, axis in enumerate(entries) if axis is ...]
     if not ellipses:
@@ -809,9 +640,6 @@ def _split(
 
 
 def _matches(candidate: tx.Any, query: Axis) -> bool:
-    # Whether an entry matches a query of `AxisList.index`: it is an
-    # instance of the class of the query, and has every field that the
-    # query sets, with the same value.
     if not isinstance(candidate, type(query)):
         return False
     for field in fields(type(query)):

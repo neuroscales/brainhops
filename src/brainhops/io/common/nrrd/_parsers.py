@@ -35,16 +35,10 @@ from ._header import NrrdHeader
 
 
 class NrrdParser(DataModelBase, BinaryFileParserWriter):
-    """
-    Base class for objects that are encoded by a NRRD file.
+    """Base class for objects stored as NRRD files.
 
-    It reads and writes the container -- the header and the sample
-    values -- for every NRRD-based format. What the values mean is for
-    the concrete format to say, through `_nrrd_header` and `_nrrd_data`
-    when writing.
-
-    Reading a `raw` file from a local path memory-maps the values, so
-    nothing but the header is read until they are indexed.
+    Concrete formats give the values a meaning and provide [`_nrrd_header`][]
+    and [`_nrrd_data`][] for writing.
     """
 
     HINTS = ("nrrd",)
@@ -74,25 +68,25 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
 
     @property
     def header(self) -> tx.Optional[NrrdHeader]:
-        """The NRRD header this object was read from, if any."""
+        """The header that the object was read from, if any."""
         return getattr(self, "_header", None)
 
     @header.setter
     def header(self, value: tx.Optional[NrrdHeader]) -> None:
         self._header = value
 
-    # --- reading ------------------------------------------------------
-
     @classmethod
     def _from_header(
         cls, header: NrrdHeader, dataobj: tx.Any, **kwargs
     ) -> tx.Self:
-        """Build the object from a decoded header and its stored values."""
+        """Build an object from a header and its values; formats override this
+        hook.
+        """
         return cls(header=header, dataobj=dataobj, **kwargs)
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
-        """Build the object from a NRRD file (path or file object)."""
+        """Read an object from a path or a file object."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):
@@ -103,12 +97,9 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
     def from_filename(
         cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
     ) -> tx.Self:
-        """
-        Build the object from the path of a `.nrrd` or `.nhdr` file.
+        """Read an object from a `.nrrd` or `.nhdr` path.
 
-        The values of a `raw` local data file are memory-mapped unless
-        `mmap` is false. Detached data files are found relative to the
-        header's directory.
+        Raw local data are memory-mapped unless `mmap` is false.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -121,11 +112,9 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
-        """
-        Build the object from an open NRRD file object.
+        """Read an object from a file object, without memory mapping.
 
-        Detached data files are resolved against the stream's `name`,
-        when it has one.
+        Detached data files are resolved against the name of the stream.
         """
         kwargs.pop("mmap", None)
         name = getattr(file, "name", None)
@@ -141,14 +130,12 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        """Build the object from the bytes of an attached NRRD file."""
+        """Read an object from the bytes of a NRRD file with attached data."""
         kwargs.pop("mmap", None)
         content = bytes(content)
         header, offset = NrrdHeader.from_fileobj(BytesIO(content))
         data = read_data(header, content, offset, mmap=False)
         return cls._from_header(header, data, **kwargs)
-
-    # --- sniffing -----------------------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -157,8 +144,10 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that a stream holds a NRRD
-        file of its own kind."""
+        """Return the confidence that a stream holds this kind of NRRD file.
+
+        The parsed header is scored with [`_score_header`][].
+        """
         base_error = None
         score = Confidence.NO
         try:
@@ -183,43 +172,43 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold a NRRD file of
-        its own kind."""
+        """Return the confidence that bytes hold this kind of NRRD file."""
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def _score_header(cls, header: NrrdHeader) -> float:
-        """
-        How well a valid NRRD header matches *this* class.
+        """Return how well a valid header matches this class.
 
-        Called once the header has been parsed, so the answer is never
-        "not NRRD". A concrete format overrides it.
+        Concrete formats override this hook; the base implementation returns
+        `Confidence.MAYBE`.
         """
         return Confidence.MAYBE
 
-    # --- writing ------------------------------------------------------
-
     def _nrrd_header(self, **kwargs) -> NrrdHeader:
-        """The header to write. Each concrete format builds its own."""
+        """Return the header to write; the base implementation raises
+        `WriterError`.
+        """
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to NRRD."
         )
 
     def _nrrd_data(self, header: NrrdHeader) -> tx.Any:
-        """The array, in the header's axis order, to write."""
+        """Return the array to write; the base implementation raises
+        `WriterError`.
+        """
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to NRRD."
         )
 
     def to_bytes(self, **kwargs) -> bytes:
-        """The bytes of an attached NRRD file."""
+        """Return the bytes of a NRRD file with attached data."""
         kwargs.pop("data_file", None)
         header = self._nrrd_header(**kwargs)
         data = encode_data(header, self._nrrd_data(header))
         return header.to_text().encode("utf-8") + b"\n" + data
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write an attached NRRD file to a stream."""
+        """Write a NRRD file with attached data to a stream."""
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(
@@ -228,14 +217,10 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
         data_file: tx.Optional[str] = None,
         **kwargs,
     ) -> None:
-        """
-        Write to a path: an attached file, or, for a `.nhdr` name (or when
-        `data_file` is given), a detached header and its data file.
+        """Write the object to a path.
 
-        The data file of a detached header is named after it, with an
-        extension that says its encoding (`.raw`, `.raw.gz`, `.raw.bz2`,
-        `.txt`, `.hex`), unless `data_file` names it (relative to the
-        header's directory).
+        The data are written to a separate file when the name ends with `.nhdr`
+        or `data_file` is given.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -265,7 +250,7 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
             f.write(header.to_text().encode("utf-8"))
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path (variant chosen by extension) or a stream."""
+        """Write the object to a path or a stream."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):

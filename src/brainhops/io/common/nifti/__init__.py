@@ -1,5 +1,8 @@
-"""The shared NIfTI-reading and NIfTI-writing machinery behind every
-NIfTI-based image and transformation format."""
+"""Reading and writing machinery shared by all NIfTI-based formats.
+
+The image formats and the transformation formats stored as NIfTI files are both
+built on [`NiftiParser`][].
+"""
 
 __all__ = [
     "NiftiParser",

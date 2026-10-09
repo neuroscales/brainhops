@@ -1,7 +1,10 @@
 # ruff: disable[E501]
 """
-ITK "TFM" transformations are saved in a text format and support a
-variety of (chained) transformations.
+Transformations stored in ITK text `.tfm` files.
+
+A `.tfm` file is a text file that holds one or more transformations, each
+written as a block of tagged lines. A file can hold several independent
+transformations or a single composite transformation built from several blocks.
 
 !!! example "2D rotation encoded by Euler angles"
     ```text
@@ -31,87 +34,56 @@ variety of (chained) transformations.
     FixedParameters: 128.0 128.0 64.0
     ```
 
-    ITK applies the blocks of a composite last to first: this file
-    rotates a point, then translates it. The reader lists the blocks in
-    the order they apply, `[Euler3D, Translation]`.
+    ITK applies the blocks of a composite transformation from last to first, so
+    this file rotates a point and then translates it. The reader therefore
+    lists the blocks in application order, as `[Euler3D, Translation]`.
 
 ## Composite transformations
 
-ITK writes a `CompositeTransform` as a header block of class
-`CompositeTransform`, which has no parameters, followed by the blocks of
-its transform queue, front to back. `CompositeTransform::TransformPoint`
-applies the queue back to front: a file `[Composite, T0, T1]` maps `x`
-to `T0(T1(x))`. A brainhops
+ITK writes a composite transformation as a `CompositeTransform` header block,
+which has no parameters, followed by the blocks of its queue from front to
+back. Its `TransformPoint` method applies the queue from back to front, so the
+file `[Composite, T0, T1]` maps a point `x` to `T0(T1(x))`. A brainhops
 [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
-transformations in the order they apply, so the reader lists the blocks
-of a composite in reverse file order, `[T1, T0]`.
+transformations in application order, so the reader reverses the queue and
+returns `[T1, T0]`.
 
-A file with several blocks but no `CompositeTransform` header is a list
-of separate transforms, which ITK does not compose. The reader loads one
-of them: the first, as SimpleITK's `ReadTransform` does, with a warning
-that the file holds several, or the one at `position=`
-(`TfmTransform.from_file(path, position=1)`). A composite file holds a
-single transform, the composite, at position 0. A `CompositeTransform`
-that is not the first block is refused, as ITK never writes one there.
+A file with several blocks but no composite header holds separate
+transformations that are not composed. By default, the reader loads the first
+one, as SimpleITK's `ReadTransform` does, and warns that the file holds
+several. Another one is selected by its position, as in
+`TfmTransform.from_file(path, position=1)`. A composite file holds a single
+transformation, at position 0. A `CompositeTransform` block that is not the
+first block of the file is refused, since ITK never writes one.
 
-## Approximate specification
+## File format
 
-### 1. The Header Line
+1. The first non-blank line must be exactly `# Insight Transform File V1.0`,
+   otherwise ITK rejects the file.
+2. Each block is made of three case-sensitive tagged lines:
+    - `Transform: {ClassName}_{Precision}_{InputDim}_{OutputDim}` names the
+      class of the transformation, its precision (`double` or `float`) and its
+      input and output dimensions, such as `_3_3`.
+    - `Parameters:` lists the optimizable parameters as space-separated
+      numbers.
+    - `FixedParameters:` lists the constant parameters, which are typically the
+      center of rotation.
 
-The very first non-blank line of the file must be a strict match for the
-format version header:
+    In a transformation block, both parameter lines are present, and a line is
+    left empty when there are no values. A `CompositeTransform` header block
+    has neither line. The reader accepts any block in which either line is
+    missing and reads the missing values as empty.
+3. Lines that start with `#` are comments, and blank lines between blocks are
+   ignored.
 
-```text
-# Insight Transform File V1.0
-```
+All values are expressed in LPS coordinates, and matrices are stored in
+row-major order. Software that works in RAS coordinates, such as 3D Slicer,
+converts its transformations to LPS when it saves them.
 
-If this header is missing or altered, the ITK parser will immediately
-reject the file.
+## Transformation classes
 
-### 2. The Transform Block
-
-Every transform in the file is parsed sequentially as an object. A block
-contains exactly three required, case-sensitive tags:
-
-* `Transform: {ClassName}_{Precision}_{InputDim}_{OutputDim}`
-    - Specifies the RTTI (Run-Time Type Information) class name.
-    - Precision must be double or float.
-    - Dimensions specify the spatial manipulation (e.g., _3_3 for 3D-to-3D).
-* `Parameters: {Space-separated floating-point numbers}`
-    - The variable, optimizable values.
-    - If a transform type does not have variable parameters (like an
-      identity block), this line must still exist but can be left empty.
-* `FixedParameters: {Space-separated floating-point numbers}`
-    - Parameter constants that do not change during registration
-      optimization (typically the center of rotation coordinates).
-    - If none exist, this tag must still be explicitly typed out and left blank.
-
-### 3. Comments and Whitespace
-
-Any line starting with a `#` is treated as a comment and skipped by the
-parser.
-
-Empty lines between blocks are ignored.
-
-### Implicit Geometrical Specifications
-
-Beyond text formatting, the data inside the file must adhere to ITK's
-structural physics guidelines:
-
-* Coordinate System: The numerical values inside a .tfm file are
-  strictly calculated using the LPS (Left-Posterior-Superior) coordinate
-  system. If you export a transform from software that defaults to RAS
-  (Right-Anterior-Superior), like 3D Slicer, the values are automatically
-  matrix-converted to LPS before saving to the .tfm file.
-
-* Array Ordering: Multi-dimensional matrices (such as the rotation
-  elements in an AffineTransform) are written out in row-major order
-  (linearized row by row).
-
-### Transformation types
-
-The text-based .tfm standard is intended only for linear, rigid, or
-affine transformations.
+The `.tfm` format is intended for linear transformations, such as rigid and
+affine ones. The classes below are the most common.
 
 | Transform Class Name   | Variable Parameters (Optimisable)                 | Length | FixedParameters |                          | Description / Note |
 | -----------------------|---------------------------------------------------|--------|-----------------|--------------------------|--------------------|

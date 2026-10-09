@@ -1,4 +1,4 @@
-"""The format-independent base of every file-based transformation."""
+"""Format-independent base of all file-based transformations."""
 
 __all__ = [
     "FileBasedTransformation",

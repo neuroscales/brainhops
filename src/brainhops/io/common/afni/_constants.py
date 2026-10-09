@@ -9,7 +9,7 @@ import typing_extensions as tx
 # ----------------------------------------------------------------------
 
 AFNI_VIEWS: tx.Tuple[str, ...] = ("orig", "acpc", "tlrc")
-"""The views, by their `SCENE_DATA[0]` code."""
+"""The AFNI views, indexed by their `SCENE_DATA[0]` code."""
 
 AFNI_ORIENTATIONS: tx.Tuple[str, ...] = (
     "right-to-left",
@@ -19,27 +19,23 @@ AFNI_ORIENTATIONS: tx.Tuple[str, ...] = (
     "inferior-to-superior",
     "superior-to-inferior",
 )
-"""The anatomical orientation of each `ORIENT_SPECIFIC` code."""
+"""The anatomical orientation name of each `ORIENT_SPECIFIC` code."""
 
-# The DICOM axis an orientation code runs along is `code // 2`, and its
-# direction is positive in DICOM (LPS) for R2L, A2P and I2S
-# (`ORIENT_sign = "+--++-"` in `3ddata.h`).
+# DICOM axis of a code is code // 2; R2L, A2P and I2S point toward +LPS.
 _ORIENT_SIGN = (1, -1, -1, 1, 1, -1)
 
-# The orientation code of a voxel axis that runs along a DICOM axis
-# (0 = x, 1 = y, 2 = z), in the positive DICOM direction (towards L, P
-# or S) or not.
+# (DICOM axis, points toward positive LPS) -> orientation code.
 _ORIENT_CODE = {
-    (0, True): 0,  # R2L
-    (0, False): 1,  # L2R
-    (1, True): 3,  # A2P
-    (1, False): 2,  # P2A
-    (2, True): 4,  # I2S
-    (2, False): 5,  # S2I
+    (0, True): 0,
+    (0, False): 1,
+    (1, True): 3,
+    (1, False): 2,
+    (2, True): 4,
+    (2, False): 5,
 }
 
-# The attributes AFNI holds as floats, so that one given with integer
-# values is still written as a float attribute.
+# AFNI stores these attributes as floats, so integer values are still
+# written as a float attribute.
 _FLOAT_ATTRIBUTES = frozenset(
     {
         "ORIGIN",
@@ -63,11 +59,10 @@ _FLOAT_ATTRIBUTES = frozenset(
 )
 
 DICOM_TO_RAS: np.ndarray = np.diag([-1.0, -1.0, 1.0, 1.0])
-"""The `(4, 4)` matrix from AFNI's DICOM (LPS) coordinates to RAS. It is
-its own inverse."""
+"""The `(4, 4)` matrix from DICOM (LPS) to RAS, its own inverse."""
 
-# The data types of `BRICK_TYPES` (`MRI_TYPE` in `mrilib.h`), without
-# byte order. RGB (6) and RGBA (7) are not read.
+# BRICK_TYPES code -> dtype without byte order (MRI_TYPE in mrilib.h).
+# RGB (6) and RGBA (7) are not read.
 _BRICK_DTYPES = {
     0: np.dtype(np.uint8),
     1: np.dtype(np.int16),
@@ -88,18 +83,15 @@ _BRICK_NAMES = {
 
 _BYTEORDERS = {"LSB_FIRST": "<", "MSB_FIRST": ">"}
 
-# The suffixes AFNI tries after `.BRIK` (`COMPRESS_suffix` in
-# `thd_compress.h`), the uncompressed file first. Only gzip and bzip2
-# can be decompressed here.
+# Suffixes AFNI tries after .BRIK, uncompressed first; only gzip and
+# bzip2 can be decompressed.
 _BRIK_SUFFIXES = ("", ".gz", ".bz2", ".Z", ".briz")
 _READABLE_SUFFIXES = ("", ".gz", ".bz2")
 
 _TAXIS_UNITS = {77001: "millisecond", 77002: "second", 77003: "hertz"}
-"""The time units of `TAXIS_NUMS[2]`."""
+"""The time units of the `TAXIS_NUMS[2]` codes."""
 
-# Names a world space may carry, and the view they mean. NIfTI's
-# template references go to `tlrc`, as AFNI reads them
-# (`thd_niftiread.c`).
+# Like AFNI (thd_niftiread.c), template world spaces map to the tlrc view.
 _VIEW_NAMES = {
     "orig": "orig",
     "acpc": "acpc",

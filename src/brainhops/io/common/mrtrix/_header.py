@@ -34,7 +34,7 @@ from ._constants import (
 
 
 def _format_float(value: float) -> str:
-    """A float spelled the shortest way that reads back exactly."""
+    """Spell a float in the shortest way that reads back exactly."""
     value = float(value)
     if math.isnan(value):
         return "nan"
@@ -58,14 +58,10 @@ class MrtrixHeader:
     """
     The content of an MRtrix image header.
 
-    The keys MRtrix decodes are held decoded: `dim`, `vox`, `layout`,
-    `datatype`, `transform`, `scaling` and `file`. Every other key is
-    kept in `keyval`, in the order it was read, with the lines of a
-    repeated key joined by newlines, so the header writes back as it was
-    read.
-
-    The header is plain data: building or changing one never touches a
-    file.
+    Keys other than `dim`, `vox`, `layout`, `datatype`, `transform`,
+    `scaling` and `file` are kept in `keyval`, in order and with the lines
+    of a repeated key joined by newlines, so that the header is written
+    back as read. A header is plain data, which never touches a file.
     """
 
     def __init__(
@@ -106,8 +102,6 @@ class MrtrixHeader:
         self.keyval = OrderedDict(keyval or {})
         """Every other key, with its lines joined by newlines."""
 
-    # --- derived ------------------------------------------------------
-
     @property
     def ndim(self) -> int:
         """The number of axes."""
@@ -115,7 +109,7 @@ class MrtrixHeader:
 
     @property
     def dtype(self) -> tx.Optional[np.dtype]:
-        """The numpy data type of the stored values, `None` for `Bit`."""
+        """The NumPy dtype of the stored values, or `None` for `Bit`."""
         return mrtrix_dtype(self.datatype)
 
     @property
@@ -140,9 +134,8 @@ class MrtrixHeader:
         """
         The voxel size of each axis, as MRtrix uses it.
 
-        Missing entries are `nan`. A spatial voxel size that is not
-        finite is replaced by the mean of the finite spatial ones (or 1
-        when there is none), which is what MRtrix does.
+        Missing sizes are `nan`, and a non-finite spatial size is replaced by
+        the mean of the finite ones (or 1).
         """
         vox = list(self.vox[: self.ndim])
         vox += [math.nan] * (self.ndim - len(vox))
@@ -157,12 +150,10 @@ class MrtrixHeader:
 
     def default_transform(self) -> np.ndarray:
         """
-        The `(3, 4)` transform MRtrix assumes when the header has none.
+        Return the `(3, 4)` transform MRtrix assumes when the header has none.
 
-        The rotation is the identity, and the field of view is centred
-        on the origin: the translation is `-0.5 * (size - 1) * vox` along
-        each of the first three axes (an axis the image does not have
-        counts as one voxel).
+        The rotation is the identity, and the field of view is centred on the
+        origin.
         """
         dim = list(self.dim[:3]) + [1] * (3 - min(3, self.ndim))
         vox = list(self.spacing[:3]) + [1.0] * (3 - min(3, self.ndim))
@@ -173,13 +164,10 @@ class MrtrixHeader:
 
     def voxel_to_scanner(self) -> np.ndarray:
         """
-        The `(4, 4)` matrix from voxel indices to scanner RAS+ mm.
+        Return the `(4, 4)` matrix from voxel indices to scanner RAS.
 
-        The stored transform maps coordinates scaled by the voxel sizes,
-        so the matrix is `transform @ diag(vox[0], vox[1], vox[2], 1)`.
-        An image with fewer than three axes is given unit-size extra
-        axes, as MRtrix does. A missing or non-finite transform is
-        replaced by `default_transform`.
+        The matrix is `transform @ diag(vox[0], vox[1], vox[2], 1)`, with
+        [`default_transform`][] replacing a missing or non-finite transform.
         """
         transform = self.transform
         if transform is None or not np.all(np.isfinite(transform)):
@@ -189,21 +177,18 @@ class MrtrixHeader:
         matrix[:3, :4] = transform
         return matrix @ np.diag(vox + [1.0])
 
-    # --- reading ------------------------------------------------------
-
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str]) -> "MrtrixHeader":
         """
-        Parse header lines, from `mrtrix image` up to `END`.
+        Parse the header lines from `mrtrix image` to `END`.
 
-        Lines after `END` are ignored, so the decoded text of a whole
-        file can be handed over.
+        Lines after `END` are ignored.
 
         Raises
         ------
         ParserContentError
-            If the first line is not `mrtrix image`, or a compulsory key
-            (`dim`, `vox`, `datatype`) is missing, or a key is malformed.
+            If the first line is wrong, if `END`, `dim`, `vox` or `datatype` is
+            missing, or if an entry is malformed.
         """
         lines = iter(lines)
         first = next(lines, None)
@@ -226,7 +211,7 @@ class MrtrixHeader:
             key, colon, value = line.partition(":")
             key, value = key.strip(), value.strip()
             if not colon or not key:
-                # MRtrix ignores a malformed line.
+                # MRtrix ignores malformed lines.
                 continue
             lkey = key.lower()
             if lkey == "dim":
@@ -265,9 +250,9 @@ class MrtrixHeader:
             raise ParserContentError(f"Invalid MRtrix voxel sizes: {vox}")
         if not datatype:
             raise ParserContentError("The MRtrix header has no 'datatype'.")
-        mrtrix_dtype(datatype)  # validate
-        # MRtrix requires a layout. A header without one is read as a
-        # Fortran-ordered array, the layout MRtrix gives a new image.
+        mrtrix_dtype(datatype)
+        # MRtrix requires a layout; without one, read the Fortran order that
+        # MRtrix gives a new image.
         strides = (
             parse_layout(layout, len(dim))
             if layout
@@ -314,16 +299,16 @@ class MrtrixHeader:
 
     @classmethod
     def from_text(cls, text: str) -> "MrtrixHeader":
-        """Parse a header from its text."""
+        """Parse a header from text."""
         return cls.from_lines(text.splitlines())
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO) -> tx.Tuple["MrtrixHeader", int]:
         """
-        Read a header from a binary stream, up to its `END` line.
+        Read a header from a binary stream, and return it with the number of
+        bytes read.
 
-        The stream is left just after the `END` line. Returns the header
-        and the number of bytes it took.
+        The stream is left just after the `END` line.
 
         Raises
         ------
@@ -347,18 +332,14 @@ class MrtrixHeader:
         text = b"".join(raw).decode("utf-8", "replace")
         return cls.from_text(text), nbytes
 
-    # --- writing ------------------------------------------------------
-
     def to_lines(
         self, file: tx.Optional[tx.Tuple[str, tx.Optional[int]]] = None
     ) -> tx.List[str]:
         """
-        The header's lines, from `mrtrix image` up to `END`.
+        Return the header lines, from `mrtrix image` to `END`.
 
-        `file` is the `(name, offset)` of the data, written in the
-        `file:` line; an offset of `None` is left out. It defaults to the
-        header's own `file`, and no `file:` line is written when there
-        is none.
+        The `file` argument, which defaults to the `file` of the header, is the
+        `(name, offset)` of the `file:` line; an offset of `None` is omitted.
         """
         lines = [MRTRIX_MAGIC]
         lines.append("dim: " + ",".join(str(d) for d in self.dim))
@@ -388,17 +369,15 @@ class MrtrixHeader:
         return lines
 
     def to_text(self, *args, **kwargs) -> str:
-        """The header's text, newline-terminated."""
+        """Return the header text, terminated by a newline."""
         return "\n".join(self.to_lines(*args, **kwargs)) + "\n"
 
     def embedded(self, align: int = 4) -> bytes:
         """
-        The header of a single-file image, padded up to its data.
+        Return the header of a single-file image, padded up to its data.
 
-        The `file: . <offset>` line points just past the header, at an
-        offset aligned on `align` bytes (MRtrix aligns on four). The
-        offset is part of the header it measures, so it is found by
-        iteration.
+        The data offset is aligned on `align` bytes. Since the offset is part
+        of the header it measures, it is found by iteration.
         """
         offset = 0
         while True:
@@ -409,7 +388,7 @@ class MrtrixHeader:
             offset = needed
 
     def copy(self) -> "MrtrixHeader":
-        """A copy that can be changed without changing this one."""
+        """Return an independent copy."""
         return MrtrixHeader(
             dim=self.dim,
             vox=self.vox,

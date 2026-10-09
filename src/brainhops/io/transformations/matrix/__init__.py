@@ -1,14 +1,13 @@
-"""Plain affine matrices stored in text, NumPy (`.npy`, `.npz`) or MATLAB
-(`.mat`) files.
+"""
+Plain affine matrices stored in text, NumPy or MATLAB files.
 
-The file stores only the numbers; what they mean (spaces, index base,
-direction, vector convention) is given by the caller when reading. See
-[`MatrixAffine`][brainhops.io.transformations.matrix.MatrixAffine], the
-abstract base of one reader per container: [`TxtMatrixAffine`][],
-[`CsvMatrixAffine`][], [`TsvMatrixAffine`][], [`NpyMatrixAffine`][],
-[`NpzMatrixAffine`][], and [`MatMatrixAffine`][], which dispatches to
-[`MatLegacyMatrixAffine`][] (MATLAB v4-v7) or [`Mat73MatrixAffine`][]
-(MATLAB v7.3).
+The file holds only numbers, so the caller states their meaning when the file
+is read, as described in
+[`MatrixAffine`][brainhops.io.transformations.matrix.MatrixAffine]. Each
+container has its own reader: [`TxtMatrixAffine`][], [`CsvMatrixAffine`][],
+[`TsvMatrixAffine`][], [`NpyMatrixAffine`][], [`NpzMatrixAffine`][] and
+[`MatMatrixAffine`][], which dispatches to [`MatLegacyMatrixAffine`][] or
+[`Mat73MatrixAffine`][] by MATLAB version.
 
 !!! example "Reading a 1-based voxel-to-voxel matrix saved by MATLAB"
     ```python

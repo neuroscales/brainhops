@@ -5,8 +5,8 @@ if tx.TYPE_CHECKING:
 
 
 class _Pipe:
-    # This is an idea to implement a pipe-like syntax `a |p> b`.
-    # It's not very pythonic!
+    # TODO: experimental `a |p> b` pipe syntax. It is unpythonic and possibly
+    # dead code.
 
     def __init__(
         self,

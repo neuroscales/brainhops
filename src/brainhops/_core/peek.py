@@ -1,10 +1,7 @@
-# stdlib
 from collections.abc import Iterator
 
-# dependencies
 import typing_extensions as tx
 
-# typing
 T = tx.TypeVar("T")
 
 
@@ -28,13 +25,21 @@ EMPTY = EMPTY_TYPE()
 
 
 class peekable(Iterator, tx.Generic[T]):
-    """A peekable iterator."""
+    """Iterator with a lookahead of one item.
+
+    The `peek` method returns the next item without consuming it, and the
+    `next` method consumes it. Subclasses may override two hooks: `preproc`
+    transforms each item, and `is_valid` rejects items that are then
+    skipped. Both hooks can be bypassed with the `preproc` and `valid`
+    arguments of `peek`, `next` and `iter`. When the iterator is exhausted,
+    `peek` returns the [`EMPTY`][] sentinel and `next` raises
+    `StopIteration`.
+    """
 
     EMPTY = EMPTY_TYPE()
 
     def __init__(self, iterable: tx.Iterable[T]) -> None:
         if not hasattr(iterable, "__next__"):
-            # make an iterator (with a state)
             iterable = iter(iterable)
         self._iterator: tx.Iterator[T] = iterable
         self._peeked: tx.Union[T, EMPTY_TYPE] = EMPTY
@@ -86,7 +91,13 @@ class peekable(Iterator, tx.Generic[T]):
 
 
 class peekable_lines(peekable[str]):
-    """A peekable iterator over lines of text."""
+    """Peekable iterator over the lines of a text.
+
+    Each line is preprocessed by removing its line terminator, cutting it at
+    the comment marker and stripping the surrounding whitespace. The comment
+    marker is `#` by default and is disabled by `comment=None`. Lines that
+    are empty after preprocessing are skipped.
+    """
 
     def __init__(
         self, lines: tx.Iterable[str], comment: tx.Optional[str] = "#"

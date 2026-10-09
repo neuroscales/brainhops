@@ -14,8 +14,10 @@ from ._constants import (
 
 
 def _read_prefix(fileobj: tx.BinaryIO) -> tx.Optional[tuple]:
-    """Read and unpack the leading header fields of a (decompressed)
-    stream, or `None` when there are too few bytes."""
+    """
+    Read the leading header fields of a decompressed stream, or `None` if
+    the stream is too short.
+    """
     raw = fileobj.read(_PREFIX.size)
     if len(raw) < _PREFIX.size:
         return None
@@ -23,7 +25,7 @@ def _read_prefix(fileobj: tx.BinaryIO) -> tx.Optional[tuple]:
 
 
 def _valid_prefix(prefix: tx.Optional[tuple]) -> bool:
-    """Whether the leading header fields describe an MGH volume."""
+    """Tell whether the leading fields describe an MGH volume."""
     if prefix is None:
         return False
     version, *dims, dtype, _dof, _flag = prefix
@@ -31,8 +33,10 @@ def _valid_prefix(prefix: tx.Optional[tuple]) -> bool:
 
 
 def _good_ras(prefix: tx.Optional[tuple]) -> tx.Optional[bool]:
-    """Whether the `goodRASFlag` of the leading header fields is
-    positive, or `None` when they could not be read."""
+    """
+    Tell whether the `goodRASFlag` of the leading fields is positive, or
+    `None` if they could not be read.
+    """
     return None if prefix is None else prefix[-1] > 0
 
 
@@ -43,14 +47,10 @@ def _mgh_from_filename(
     keep_file_open: tx.Optional[bool] = None,
 ) -> _mgh.MGHImage:
     """
-    `nibabel`'s `MGHImage.from_filename`, but closing the file the header
-    is read from.
+    Load an image like nibabel's `MGHImage.from_filename`, but close the
+    file the header is read from, which nibabel leaks.
 
-    `nibabel`'s `MGHImage.from_file_map` opens the file to read the
-    header and never closes it, which leaks a file handle (and emits a
-    `ResourceWarning` when it is collected). The voxels are still read
-    lazily: the array proxy holds the file name, and opens the file
-    itself when they are read.
+    The voxels stay lazy, because the array proxy opens the file itself.
     """
     klass = _mgh.MGHImage
     if mmap not in (True, False, "c", "r"):
@@ -69,7 +69,7 @@ def _mgh_from_filename(
 
 
 def _seekable(fileobj: tx.IO) -> bool:
-    """Whether a stream can seek (a stream that cannot say cannot)."""
+    """Tell whether a stream can seek (no answer means no)."""
     try:
         return bool(fileobj.seekable())
     except Exception:
@@ -77,9 +77,12 @@ def _seekable(fileobj: tx.IO) -> bool:
 
 
 def _read_tags(stream: tx.BinaryIO, header: _mgh.MGHHeader) -> bytes:
-    """Read the raw bytes after the footer of a decompressed stream.
+    """
+    Read the raw bytes after the footer of a decompressed stream.
 
-    Offsets are from the start of the stream, as `nibabel` takes them."""
+    Offsets are counted from the start of the stream, as nibabel counts
+    them.
+    """
     offset = int(header.get_footer_offset()) + MGH_FOOTER_SIZE
     try:
         stream.seek(offset)

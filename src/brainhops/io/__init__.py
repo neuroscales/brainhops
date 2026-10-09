@@ -1,13 +1,8 @@
-"""
-This module implements a generic API for interacting with
-transformations, images, meshes, or streamlines that are stored in
-some format on disk or on the cloud.
+"""Transformations, images, meshes and streamlines stored in files.
 
-Each format also implements the more general
-transformations/images/meshes/streamlines API that does not assume that
-the data is stored at a specific path. In other words, a file-backed
-object is a special case of a generic object, and the file-backed API
-is a special case of the generic API.
+Each file format also implements the generic interface of the object it holds,
+whether the file is on a local disk or in a cloud store, so a file-backed
+object can be used wherever the generic object is expected.
 """
 
 __all__ = [

@@ -41,15 +41,13 @@ _Value = tx.Union[str, tx.Tuple[int, ...], tx.Tuple[float, ...]]
 
 
 def _decode_string(chars: str) -> str:
-    """The value of a string attribute from its characters in the file:
-    `~` is a NUL, and the final NUL is dropped."""
+    """Decode a string attribute (`~` to NUL, final NUL dropped)."""
     value = chars.replace("~", "\0")
     return value[:-1] if value.endswith("\0") else value
 
 
 def _encode_string(value: str) -> str:
-    """The characters of a string attribute in the file, final NUL
-    included: a `~` becomes `*` (AFNI's own rule) and a NUL a `~`."""
+    """Encode a string attribute (`~` to `*`, NUL to `~`)."""
     return (value.replace("~", "*") + "\0").replace("\0", "~")
 
 
@@ -68,8 +66,7 @@ def _parse_attributes(text: str) -> "OrderedDict[str, _Value]":
         match = _ATTRIBUTE.match(text, pos)
         if match is None:
             if attributes:
-                # AFNI stops at what it cannot read, and keeps the
-                # attributes before it (`THD_read_all_atr`).
+                # As AFNI does, keep what was read before unreadable content.
                 break
             snippet = text[pos : pos + 40].strip()
             raise ParserContentError(
@@ -124,12 +121,12 @@ def _parse_attributes(text: str) -> "OrderedDict[str, _Value]":
 
 
 def _format_float(value: float) -> str:
-    """A float, with enough digits to give back the float32 AFNI holds."""
+    """Format a float with enough digits to round-trip a float32."""
     return f"{float(value):.9g}"
 
 
 def _format_attribute(name: str, value: _Value) -> str:
-    """One attribute, as AFNI writes it (`thd_writeatr.c`)."""
+    """Format one attribute as AFNI writes it (`thd_writeatr.c`)."""
     if isinstance(value, str):
         chars = _encode_string(value)
         return (
@@ -162,18 +159,14 @@ class AfniHeader(Magic, frozen=True, eq=False):
     """
     The attributes of an AFNI `.HEAD` file.
 
-    The attributes are kept in the order of the file, by name: a string
-    attribute as a `str` (its sub-strings separated by NUL characters),
-    a numeric one as a tuple of `int` or of `float`. The properties decode
-    the ones that describe the data and the geometry; the others
-    (`HISTORY_NOTE`, `BRICK_LABS`, `BRICK_STATAUX`, ...) are kept as they
-    are and written back.
+    String attributes are strings, with substrings separated by NUL, and
+    numeric attributes are tuples. The properties decode the attributes
+    that describe the data and the geometry. All others, such as
+    `HISTORY_NOTE` or `BRICK_LABS`, are written back unchanged.
     """
 
     attributes: tx.Dict[str, _Value]
-    """Every attribute of the header, by name, in the order of the file."""
-
-    # --- access -------------------------------------------------------
+    """All attributes by name, in file order."""
 
     def __getitem__(self, name: str) -> _Value:
         return self.attributes[name]
@@ -182,7 +175,7 @@ class AfniHeader(Magic, frozen=True, eq=False):
         return name in self.attributes
 
     def get(self, name: str, default: tx.Any = None) -> tx.Any:
-        """The value of an attribute, or `default` if it is absent."""
+        """Return the value of an attribute, or `default` if it is absent."""
         return self.attributes.get(name, default)
 
     def _ints(self, name: str, n: int) -> tx.Tuple[int, ...]:
@@ -203,8 +196,6 @@ class AfniHeader(Magic, frozen=True, eq=False):
             )
         return tuple(float(v) for v in value[:n])
 
-    # --- shape and storage -------------------------------------------
-
     @property
     def shape(self) -> tx.Tuple[int, int, int]:
         """The number of voxels along each axis, `(nx, ny, nz)`."""
@@ -217,8 +208,10 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
     @property
     def brick_types(self) -> tx.Tuple[int, ...]:
-        """The type code of each sub-brick (`int16` when absent; a short
-        list repeats its last code)."""
+        """
+        The `BRICK_TYPES` code of each sub-brick (int16 when absent; a short
+        list repeats its last code).
+        """
         codes = self.attributes.get("BRICK_TYPES")
         if isinstance(codes, str) or not codes:
             codes = (1,)
@@ -227,8 +220,10 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
     @property
     def byteorder(self) -> str:
-        """The byte order of the BRIK: `"<"`, `">"`, or `"="` (native)
-        when the header does not say."""
+        """
+        The byte order of the BRIK: `"<"`, `">"`, or `"="` (native) when the
+        header does not give one.
+        """
         value = self.attributes.get("BYTEORDER_STRING")
         if isinstance(value, str):
             return _BYTEORDERS.get(value.split("\0")[0].strip(), "=")
@@ -236,7 +231,7 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
     @property
     def dtypes(self) -> tx.Tuple[np.dtype, ...]:
-        """The stored data type of each sub-brick, with its byte order."""
+        """The stored dtype of each sub-brick, with its byte order."""
         dtypes = []
         for code in self.brick_types:
             if code not in _BRICK_DTYPES:
@@ -250,13 +245,13 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
     @property
     def nbytes(self) -> int:
-        """The size of the (uncompressed) BRIK, in bytes."""
+        """The size of the uncompressed BRIK, in bytes."""
         nvox = int(np.prod(self.shape))
         return sum(nvox * dtype.itemsize for dtype in self.dtypes)
 
     @property
     def float_facs(self) -> tx.Tuple[float, ...]:
-        """The scaling factor of each sub-brick; 0 means "not scaled"."""
+        """The scale factor of each sub-brick, 0 for an unscaled sub-brick."""
         facs = self.attributes.get("BRICK_FLOAT_FACS")
         facs = () if isinstance(facs, str) or facs is None else facs
         facs = tuple(float(f) for f in facs[: self.nvals])
@@ -264,18 +259,15 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
     @property
     def labels(self) -> tx.Optional[tx.List[str]]:
-        """The label of each sub-brick (`BRICK_LABS`), or `None`."""
+        """The sub-brick labels (`BRICK_LABS`), or `None`."""
         value = self.attributes.get("BRICK_LABS")
         if not isinstance(value, str):
             return None
         return value.split("\0")
 
-    # --- geometry -----------------------------------------------------
-
     @property
     def view(self) -> str:
-        """The view: `"orig"`, `"acpc"` or `"tlrc"` (`SCENE_DATA[0]`);
-        `"orig"` when the header does not say."""
+        """The view given by `SCENE_DATA[0]`, `"orig"` by default."""
         scene = self.attributes.get("SCENE_DATA")
         if isinstance(scene, str) or not scene:
             return "orig"
@@ -284,8 +276,7 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
     @property
     def real_matrix(self) -> tx.Optional[np.ndarray]:
-        """The `(4, 4)` voxel-to-DICOM matrix of `IJK_TO_DICOM_REAL`, or
-        `None` when the header has none."""
+        """The `IJK_TO_DICOM_REAL` matrix, or `None` if absent or singular."""
         value = self.attributes.get("IJK_TO_DICOM_REAL")
         if isinstance(value, str) or value is None or len(value) < 12:
             return None
@@ -297,31 +288,28 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
     @property
     def orient(self) -> tx.Tuple[int, int, int]:
-        """The orientation code of each axis (`ORIENT_SPECIFIC`)."""
+        """The `ORIENT_SPECIFIC` code of each axis."""
         if "ORIENT_SPECIFIC" not in self and self.real_matrix is not None:
             return afni_geometry_from_matrix(self.real_matrix)[0]
         return self._ints("ORIENT_SPECIFIC", 3)
 
     @property
     def origin(self) -> tx.Tuple[float, float, float]:
-        """The DICOM coordinate of the centre of voxel 0 along each axis
-        (`ORIGIN`)."""
+        """The DICOM coordinate of the first voxel centre along each axis."""
         if "ORIGIN" not in self and self.real_matrix is not None:
             return afni_geometry_from_matrix(self.real_matrix)[1]
         return self._floats("ORIGIN", 3)
 
     @property
     def delta(self) -> tx.Tuple[float, float, float]:
-        """The signed voxel size along each axis (`DELTA`)."""
+        """The signed voxel size along each axis."""
         if "DELTA" not in self and self.real_matrix is not None:
             return afni_geometry_from_matrix(self.real_matrix)[2]
         return self._floats("DELTA", 3)
 
     @property
     def cardinal_matrix(self) -> np.ndarray:
-        """The `(4, 4)` cardinal voxel-to-DICOM matrix, from
-        `ORIENT_SPECIFIC`, `ORIGIN` and `DELTA`: the grid AFNI programs
-        compute on."""
+        """The cardinal voxel-to-DICOM matrix, the grid AFNI computes on."""
         try:
             return afni_cardinal_matrix(self.orient, self.origin, self.delta)
         except ValueError as e:
@@ -329,26 +317,28 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
     @property
     def voxel_to_dicom(self) -> np.ndarray:
-        """The `(4, 4)` true voxel-to-DICOM matrix: `IJK_TO_DICOM_REAL`
-        when the header has one, else the cardinal matrix."""
+        """
+        The true voxel-to-DICOM matrix: the real matrix if any, else the
+        cardinal one.
+        """
         real = self.real_matrix
         return self.cardinal_matrix if real is None else real
 
     @property
     def is_oblique(self) -> bool:
-        """Whether the true matrix differs from the cardinal one."""
+        """Whether the true matrix differs from the cardinal matrix."""
         real = self.real_matrix
         if real is None:
             return False
         return not np.allclose(real, self.cardinal_matrix, atol=1e-4)
 
-    # --- time ---------------------------------------------------------
-
     @property
     def taxis(self) -> tx.Optional[tx.Tuple[float, tx.Optional[str]]]:
-        """`(TR, unit)` of a time series, or `None` when the header has
-        no time axis. The unit is `"millisecond"`, `"second"`,
-        `"hertz"`, or `None` when unknown."""
+        """
+        The repetition time and its unit, or `None` without a time axis.
+
+        The unit is `"millisecond"`, `"second"`, `"hertz"`, or `None`.
+        """
         nums = self.attributes.get("TAXIS_NUMS")
         floats = self.attributes.get("TAXIS_FLOATS")
         if isinstance(nums, str) or isinstance(floats, str):
@@ -358,11 +348,9 @@ class AfniHeader(Magic, frozen=True, eq=False):
         unit = _TAXIS_UNITS.get(int(nums[2])) if len(nums) > 2 else None
         return float(floats[1]), unit
 
-    # --- validation and text -----------------------------------------
-
     def validate(self) -> "AfniHeader":
         """
-        Check that the header describes a dataset that can be read.
+        Check that the header describes a readable, non-empty dataset.
 
         Raises
         ------
@@ -387,18 +375,18 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
     @classmethod
     def from_bytes(cls, content: bytes) -> "AfniHeader":
-        """Parse the bytes of a `.HEAD` file."""
+        """Parse the content of a `.HEAD` file."""
         return cls.from_text(bytes(content).decode("latin-1"))
 
     def to_text(self) -> str:
-        """The text of the `.HEAD` file, as AFNI writes it."""
+        """Format the `.HEAD` file as AFNI writes it."""
         return "".join(
             _format_attribute(name, value)
             for name, value in self.attributes.items()
         )
 
     def replace(self, **attributes: tx.Optional[_Value]) -> "AfniHeader":
-        """A copy with some attributes set, or removed when `None`."""
+        """Return a copy with attributes set, or removed when given `None`."""
         merged = OrderedDict(self.attributes)
         for name, value in attributes.items():
             if value is None:
@@ -409,7 +397,7 @@ class AfniHeader(Magic, frozen=True, eq=False):
 
 
 def _looks_like_head(head: str) -> bool:
-    """Whether text starts the way a `.HEAD` file does."""
+    """Tell whether a text starts like a `.HEAD` file."""
     return re.match(r"\s*type\s*=\s*\S+-attribute\s", head) is not None
 
 
@@ -419,8 +407,10 @@ def _read_head(file: tx.Any) -> AfniHeader:
 
 
 def _read_header_stream(file: tx.IO) -> AfniHeader:
-    """Read a header from a stream, giving up early on content that does
-    not start like one (a BRIK, another format)."""
+    """
+    Read a header from a stream, giving up early on content that does not
+    start like one.
+    """
     start = file.read(256)
     if isinstance(start, bytes):
         start = start.decode("latin-1")

@@ -3,10 +3,8 @@
 # internals
 from brainhops.datamodel.axes import Axis
 
-# The axes of a NIfTI array, by position. They are the axes of its voxel
-# space, so they count samples (`IndexUnit`): reversing one shifts its
-# origin by one less than its extent. A reader that builds a physical space
-# from them gives them its own unit.
+# The array axes are axes of voxel space, so they count samples. A reader that
+# builds a physical space gives the axes its own unit.
 _INDEX = "index"
 _NIFTI_AXES = [
     Axis("x", "space", unit=_INDEX),
@@ -18,7 +16,7 @@ _NIFTI_AXES = [
     Axis("dim6", unit=_INDEX),
 ]
 _FLAT_AXES = {
-    # number of points / vertices / triangles / ...
+    # The number of points, vertices, triangles and so on.
     0: Axis("n", unit=_INDEX),
     1: Axis("x", unit=_INDEX),
     2: Axis("y", unit=_INDEX),
@@ -32,13 +30,13 @@ _NIFTI_SPECIFIC_AXES = {
     1006: _AXES_DISP,  # DISPVECT
     1008: _FLAT_AXES_CHANNEL,  # POINTSET
     1009: _FLAT_AXES_CHANNEL,  # TRIANGLE
-    # --- GIFTI ---
+    # GIFTI intents
     2001: _FLAT_AXES_TIME,  # TIME_SERIES
     2002: _FLAT_AXES_CHANNEL,  # NODE_INDEX
     2003: _FLAT_AXES_CHANNEL,  # RGB_VECTOR
     2004: _FLAT_AXES_CHANNEL,  # RGBA_VECTOR
     2005: _FLAT_AXES_CHANNEL,  # SHAPE
-    # --- FSL ---
+    # FSL intents
     2006: _AXES_DISP,  # FSL_FNIRT_DISPLACEMENT_FIELD
     2007: _AXES_DISP,  # FSL_CUBIC_SPLINE_COEFFICIENTS
     2008: _AXES_DISP,  # FSL_DCT_COEFFICIENTS
@@ -56,68 +54,52 @@ _NIFTI_FIELD_INTENTS = frozenset(
         2009,  # FSL_QUADRATIC_SPLINE_COEFFICIENTS
     }
 )
-"""
-Intent codes that mark a NIfTI file as holding a deformation field.
+"""Intent codes that mark a file as holding a deformation field.
 
-A NIfTI file is legitimately an image *and* a set of affines *and*,
-sometimes, a field -- so the container alone cannot say which object the
-caller wants. The intent code can, and is what lets sniffers score
-themselves instead of relying on an arbitrary precedence between kinds.
+A NIfTI file can hold an image, affine maps or a field, so the container alone
+does not say which object is wanted. The intent code does, which lets each
+sniffer score itself instead of relying on an arbitrary precedence.
 """
 
 _NIFTI_FSL_INTENTS = frozenset({2006, 2007, 2008, 2009})
-"""FSL-specific field intent codes, decoded by the FSL readers.
-
-A file with one of these codes is left to the FSL readers rather than
-claimed by the generic field reader, which does not decode FSL's storage
-conventions.
+"""FSL field intent codes, left to the FSL readers because the generic field
+reader does not decode FSL storage conventions.
 """
 
 _NIFTI_INTENT_NONE = 0
-"""Intent code of a plain image: no specialized interpretation."""
+"""Intent code of a plain image."""
 
 _NIFTI_INTENT_DISPVECT = 1006
-"""
-Intent code of a field of displacement vectors.
+"""Intent code of a displacement field.
 
-The NIfTI-1 standard reserves it "specifically for displacements", and
-ITK 5.4 and later reads a three-component `DISPVECT` image as RAS
-displacements in millimetres. brainhops reads it the same way, and
-writes it only for displacement fields.
+ITK 5.4 and later read a three-component `DISPVECT` image as RAS displacements
+in millimetres. brainhops reads it in the same way and writes it only for
+displacement fields.
 """
 
 _NIFTI_INTENT_VECTOR = 1007
-"""
-Intent code of a generic vector image.
+"""Intent code of a generic vector image.
 
-The NIfTI-1 standard reserves it "for any other type of vector" than a
-displacement. brainhops writes its fields of RAS coordinates with it,
-as SPM writes its `y_` deformations (coordinate maps), and ITK writes it
-for every vector image unless told otherwise, so it is also the code of
-ITK's (LPS) displacement fields. It says nothing about the frame its
-vectors are in; the intent name `"Mapping"` (see below) marks the RAS
-coordinate maps.
+brainhops writes coordinate fields in RAS with this code, as SPM does for its
+`y_` deformations. ITK writes it for every vector image, including its LPS
+displacement fields, so the code says nothing about the frame; the intent name
+[`_NIFTI_INTENT_NAME_MAPPING`][] marks RAS coordinate maps.
 """
 
 _NIFTI_INTENT_NAME_NIFTYREG = "NREG_TRANS"
-"""
-The intent name NiftyReg gives every transformation it writes.
+"""Intent name of every NiftyReg transformation.
 
-NiftyReg stores its deformation and displacement fields and its
-control-point grids as `VECTOR` (1007) images named `"NREG_TRANS"`, and
-tells them apart with `intent_p1` (`reg-lib/cpu/Maths.hpp`,
-`NREG_TRANS_TYPE`). The name is evidence of a NiftyReg file, which only
-the NiftyReg readers decode, so the generic `VECTOR` readers decline it.
+NiftyReg stores its transformations as `VECTOR` images with this name and tells
+them apart by `intent_p1`. Only the NiftyReg readers decode such files, so the
+generic vector readers decline them.
 """
 
 _NIFTI_INTENT_NAME_MAPPING = "Mapping"
-"""
-The intent name SPM gives a field of coordinates (`y_` files).
+"""Intent name of SPM coordinate fields (`y_` files).
 
-brainhops writes it next to `VECTOR` on a field of RAS coordinates, so
-the file says what its vectors are, not only that they are vectors. ITK's
-`NiftiImageIO` never writes an intent name, so neither ITK nor ANTs
-files carry it, and it also tells such a map from an ITK (LPS) field.
+brainhops writes it with `VECTOR` on RAS coordinate fields. ITK never writes an
+intent name, so the name also distinguishes such a map from an ITK or ANTs
+field in LPS.
 """
 
 
@@ -129,35 +111,24 @@ _NIFTI_XCODES = {
     4: "mni",
     5: "template",
 }
-"""
-The world space each NIfTI xform code names.
+"""World-space name of each xform code.
 
-A qform or sform code labels the world space its matrix maps voxels into.
-The reader names each affine after its code, and the writer reads that
-name back to choose the code to store.
+The reader names each affine map after its code, and the writer reads that name
+back to choose the stored code.
 """
 
 _NIFTI_XFORM_CODE_BY_NAME = {
     name: code for code, name in _NIFTI_XCODES.items()
 }
-"""The xform code for a world-space name, the reverse of `_NIFTI_XCODES`."""
+"""Xform code of each world-space name."""
 
 _QFORM_NAME = "qform"
-"""The name the reader gives the rigid voxel-to-RAS affine of the qform."""
+"""Name that the reader gives to the world space of the qform."""
 
 _NIFTI_DEFAULT_XFORM_CODE = 2
-"""
-The xform code stored when the world space names no known reference.
-
-NIfTI ignores a form whose code is zero, so a form that carries real
-geometry is stored with a non-zero code. The value `2` is NIfTI's
-"aligned" code.
+"""Xform code (`aligned`) stored for a world space without a known reference,
+because NIfTI ignores forms with a zero code.
 """
 
 _NIFTI1_MAX_DIM = 2**15 - 1
-"""
-The largest array dimension NIfTI-1 can store.
-
-NIfTI-1 records each dimension in a signed 16-bit field. An array with a
-larger extent along any axis is written as NIfTI-2 instead.
-"""
+"""Largest extent that NIfTI-1 stores; larger images are written as NIfTI-2."""

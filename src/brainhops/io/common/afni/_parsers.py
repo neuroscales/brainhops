@@ -47,12 +47,9 @@ from ._header import (
 
 class AfniFormat:
     """
-    A format of the AFNI family, whatever it stores.
+    The base format of the AFNI family, images and transformations.
 
-    It is the shared base of the AFNI image formats (BRIK/HEAD datasets)
-    and transformation formats, and carries the `"afni"` hint they all
-    answer to. Each format adds its own hints (`"brik"`, ...), which are
-    then also reachable as `"afni.brik"`, ...
+    Subclass hints such as `"brik"` can also be reached as `"afni.brik"`.
     """
 
     HINTS = ("afni",)
@@ -65,18 +62,13 @@ class AfniFormat:
 
 class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
     """
-    Base class for objects that are encoded by an AFNI dataset
-    (`.HEAD` + `.BRIK`).
+    The base class of objects stored as an AFNI dataset.
 
-    It reads and writes the container -- the header and the sub-bricks --
-    for every AFNI dataset-based format: an image, and later a warp. What
-    the values mean is for the concrete format to say, through
-    `_from_header` when reading, and `_afni_header` and `_afni_data` when
-    writing.
-
-    Reading from a local path memory-maps an uncompressed BRIK, so
-    nothing but the header is read until the data are indexed. A
-    compressed BRIK is read into memory.
+    The class reads and writes the container, a header and its sub-bricks.
+    A concrete format gives it a meaning by defining `_from_header` for
+    reading, and `_afni_header` and `_afni_data` for writing. A local
+    uncompressed BRIK is memory-mapped, so only the header is read until
+    the data are indexed.
     """
 
     HINTS = ("brik",)
@@ -112,19 +104,19 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
             return raw
         return scale_bricks(self.header, raw)
 
-    # --- reading ------------------------------------------------------
-
     @classmethod
     def _from_header(
         cls, header: AfniHeader, bricks: np.ndarray, **kwargs
     ) -> tx.Self:
-        """Build the object from a header and its `(x, y, z, sub-brick)`
-        stored values."""
+        """
+        Build an object from a header and its `(x, y, z, sub-brick)` stored
+        values.
+        """
         return cls(header=header, dataobj=bricks, **kwargs)
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
-        """Build the object from an AFNI dataset (path or file object)."""
+        """Build an object from an AFNI dataset, by path or file object."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):
@@ -136,11 +128,8 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
         cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
     ) -> tx.Self:
         """
-        Build the object from the path of a `.HEAD`, of a `.BRIK`
-        (`.BRIK.gz`, `.BRIK.bz2`), or of the dataset without extension.
-
-        An uncompressed local BRIK is memory-mapped unless `mmap` is
-        false.
+        Build an object from the path of a `.HEAD`, a `.BRIK` or a bare
+        dataset.
         """
         head, brik, _ = afni_dataset_files(filename)
         if not path.exists(head):
@@ -152,10 +141,10 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
         """
-        Build the object from an open `.HEAD` (or `.BRIK`) file object.
+        Build an object from an open `.HEAD` or `.BRIK` file.
 
-        The other file of the dataset is found from the stream's `name`,
-        which it must therefore have.
+        The other file is found from the name of the stream, which must have
+        one.
         """
         kwargs.pop("mmap", None)
         name = getattr(file, "name", None)
@@ -183,13 +172,11 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        """An AFNI dataset is two files, so bytes alone cannot hold one."""
+        """Refuse to read bytes, which cannot hold a dataset of two files."""
         raise ParserContentError(
             "An AFNI dataset is two files (.HEAD and .BRIK), which bytes "
             "alone cannot hold. Read it from its path instead."
         )
-
-    # --- sniffing -----------------------------------------------------
 
     @classmethod
     def _sniff_header(
@@ -218,8 +205,10 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that a path names an AFNI
-        dataset: its `.HEAD` is read, whichever of its files is named."""
+        """
+        Return the confidence that a path names an AFNI dataset, from its
+        `.HEAD` file.
+        """
         head, _, _ = afni_dataset_files(filename)
 
         def _read() -> AfniHeader:
@@ -237,8 +226,7 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that a stream holds an AFNI
-        header."""
+        """Return the confidence that a stream holds an AFNI header."""
 
         def _read() -> AfniHeader:
             with preserve_position(file):
@@ -253,44 +241,38 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold an AFNI
-        header."""
+        """Return the confidence that bytes hold an AFNI header."""
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def _score_header(cls, header: AfniHeader) -> float:
         """
-        How well a valid AFNI header matches *this* class.
+        Score how well a valid header matches this class.
 
-        Called once the header has been parsed and validated, so the
-        answer is never "not AFNI". A concrete format overrides it to tell
-        its own kind of dataset (an image, a warp) from the others.
+        A concrete format overrides the score to recognise its own kind of
+        dataset, such as an image or a warp.
         """
         return Confidence.MAYBE
 
-    # --- writing ------------------------------------------------------
-
     def _afni_header(self, **kwargs) -> AfniHeader:
-        """The header to write. Each concrete format builds its own."""
+        """Build the header to write; each concrete format defines it."""
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to AFNI."
         )
 
     def _afni_data(self) -> tx.Any:
-        """The `(x, y, z[, sub-brick])` array to write."""
+        """Return the `(x, y, z[, sub-brick])` array to write."""
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to AFNI."
         )
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """
-        Write the dataset: its `.HEAD` and its `.BRIK`.
+        Write the `.HEAD` and `.BRIK` files of a dataset.
 
-        The path may name the `.HEAD`, the `.BRIK` (`.BRIK.gz` or
-        `.BRIK.bz2` to compress it), or the dataset without extension
-        (`out+orig`). Another BRIK of the same dataset, compressed
-        differently, is removed (as AFNI does), so that it cannot be read
-        in place of the new one.
+        The path may name the `.HEAD` file, the `.BRIK` file (a `.gz` or `.bz2`
+        suffix compresses it) or the bare dataset. As AFNI does, a sibling BRIK
+        with another suffix is removed, so that it cannot shadow the new one.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -312,8 +294,7 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
                     os.remove(local)
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path; an AFNI dataset cannot be written to a
-        stream."""
+        """Write to a path; AFNI datasets cannot be written to a stream."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):
@@ -321,14 +302,14 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
         return self.to_fileobj(file, **kwargs)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """An AFNI dataset is two files, which a stream cannot hold."""
+        """Refuse a stream, which cannot hold a dataset of two files."""
         raise WriterError(
             "An AFNI dataset is two files (.HEAD and .BRIK), which a "
             "single stream cannot hold. Write it to a path instead."
         )
 
     def to_bytes(self, **kwargs) -> bytes:
-        """An AFNI dataset is two files, which bytes cannot hold."""
+        """Refuse to write bytes, which cannot hold a dataset of two files."""
         raise WriterError(
             "An AFNI dataset is two files (.HEAD and .BRIK), which bytes "
             "alone cannot hold. Write it to a path instead."

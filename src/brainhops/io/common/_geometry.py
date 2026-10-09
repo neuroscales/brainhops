@@ -1,14 +1,9 @@
-"""
-Voxel-to-world geometry helpers shared by file formats.
+"""Voxel-to-RAS geometry shared by formats that store a 3D affine.
 
-Several formats (NIfTI, MGH, MRtrix, ...) store the geometry of an image
-as a three-dimensional voxel-to-RAS affine. The helpers here reduce a
-transformation to that matrix, and split off the axes that follow the
-spatial ones (such as time), which those formats store apart. They also
-place the axes of an image where such a format stores them, by the types
-and names its spaces declare (see [`arrange_voxel_to_ras`][]). They
-depend only on the datamodel and NumPy -- not on nibabel -- so that
-formats that do not need nibabel can use them.
+Formats such as NIfTI, MGH and MRtrix store a three-dimensional voxel-to-RAS
+matrix, with trailing axes such as time stored apart. These helpers reduce a
+transformation to that matrix and place image axes where the format stores
+them; [`arrange_voxel_to_ras`][] combines them. They do not need nibabel.
 """
 
 __all__ = [
@@ -29,11 +24,9 @@ __all__ = [
     "split_spatial",
 ]
 
-# externals
 import numpy as np
 import typing_extensions as tx
 
-# internals
 from brainhops.backends import get_array_backend
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
@@ -58,33 +51,18 @@ RAS_FROM_ORIENTATION = {
     "inferior-to-superior": (2, 1.0),
     "superior-to-inferior": (2, -1.0),
 }
-"""
-The RAS axis and sign that an anatomical orientation points along.
-
-Each key is the value of an anatomical orientation carried by an axis. The
-first element of the pair is the index of the RAS axis the orientation runs
-along, and the second is its sign. This drives the conversion of a
-voxel-to-world affine into voxel-to-RAS from the axes themselves, rather
-than from the world space's name.
-"""
+"""The RAS axis index and sign of each anatomical orientation."""
 
 
 def ras_conversion(system: tx.Optional[CoordinateSystem]) -> np.ndarray:
-    """
-    The `(4, 4)` matrix that maps a world space's coordinates into RAS.
+    """Return the (4, 4) matrix that maps world coordinates to RAS.
 
-    The matrix is built from the anatomical orientation carried by each
-    axis, not from the world space's name. An LPS space becomes a flip of
-    the first two axes, an RSA space becomes a permutation, and a space
-    already in RAS becomes the identity.
-
-    The conversion is derived only when all three leading axes carry a
-    recognized anatomical orientation. When any of them does not, the
-    identity is returned, so a space with no orientation is stored as it
-    is.
+    The matrix follows the anatomical orientations of the first three axes, not
+    the name of the space: LPS flips two axes, RSA permutes them. If an axis
+    has no recognized orientation, the identity is returned.
     """
-    # An axis about which nothing is known, including the `...` of a
-    # missing space, carries no orientation.
+    # An axis about which nothing is known, such as the ... of a missing space,
+    # has no orientation.
     axes = get_axes(system)[:3]
     mapping = []
     for axis in axes:
@@ -104,28 +82,25 @@ def ras_conversion(system: tx.Optional[CoordinateSystem]) -> np.ndarray:
 def reduce_to_affine(
     xform: Transformation, fmt: str, world: str = "world"
 ) -> Affine:
-    """
-    Reduce a voxel-to-world transformation to an `Affine`.
+    """Reduce a voxel-to-world transformation to an [`Affine`][].
 
-    An affine transformation is used directly. A transformation of any
-    other kind that reduces to an affine, such as a `Scaling` or a
-    `Sequence` of affines, is converted.
+    An affine is returned as it is, and a transformation that reduces to one,
+    such as a `Scaling` or a `Sequence` of affines, is converted.
 
     Parameters
     ----------
     xform : Transformation
         The voxel-to-world transformation.
     fmt : str
-        The name of the format, used in error messages.
-    world : str
-        The name the format gives its world space, used in error
-        messages.
+        The name of the format, for error messages.
+    world : str, default="world"
+        The name of the world space, for error messages.
 
     Raises
     ------
     UnrepresentableTransformationError
-        If the transformation has no affine representation, such as a
-        displacement field.
+        If the transformation has no affine representation, as a displacement
+        field has not.
     """
     reduced = xform.compute() if isinstance(xform, Sequence) else xform
     error = None
@@ -136,9 +111,8 @@ def reduce_to_affine(
         except ConversionError as exc:
             error = exc
     if not isinstance(affine, Affine):
-        # A field returns itself from a conversion to `Affine`, and a
-        # `Sequence` of a non-affine reduces to one, so the result has to
-        # be checked rather than trusted.
+        # A field returns itself from conversion to Affine, and a Sequence of a
+        # non-affine reduces to one, so the result must be checked.
         raise UnrepresentableTransformationError(
             f"A {type(xform).__name__} cannot be written as {fmt} "
             f"geometry: {fmt} stores an affine voxel-to-{world} matrix, "
@@ -150,35 +124,17 @@ def reduce_to_affine(
 def embed_affine(
     matrix: np.ndarray, fmt: str, world: str = "world"
 ) -> np.ndarray:
-    """
-    Embed a homogeneous voxel-to-world matrix in a `(4, 4)` matrix.
+    """Embed a homogeneous voxel-to-world matrix in a (4, 4) matrix.
 
-    A two-dimensional map yields a `(3, 3)` homogeneous matrix, whose
-    rotation and translation are placed in a `(4, 4)` matrix whose extra
-    axis is the identity. A three-dimensional map is already `(4, 4)` and
-    is returned unchanged.
-
-    A map from fewer than three voxel axes into a three-dimensional world
-    (a slice placed in space) already fixes the world origin of its
-    missing voxel axes, but not their directions. Each is given a unit
-    direction orthogonal to the voxel axes the map has (see
-    [`complete_basis`][]): the normal of a slice, as DICOM and ITK give
-    it, so the stored matrix is never singular.
-
-    Parameters
-    ----------
-    matrix : ndarray
-        The homogeneous voxel-to-world matrix.
-    fmt : str
-        The name of the format, used in error messages.
-    world : str
-        The name the format gives its world space, used in error
-        messages.
+    Missing dimensions are completed by the identity. When fewer than three
+    voxel axes map into a 3D world, as for a slice, the missing voxel axes get
+    orthogonal unit directions from [`complete_basis`][], so that the matrix is
+    never singular.
 
     Raises
     ------
     WriterError
-        If the map has more than three spatial dimensions.
+        If either side has more than three dimensions.
     """
     out_dim = matrix.shape[0] - 1
     in_dim = matrix.shape[1] - 1
@@ -198,19 +154,12 @@ def embed_affine(
 
 
 def complete_basis(columns: np.ndarray) -> np.ndarray:
-    """
-    Unit directions that complete the columns of a `(3, k)` block, `k < 3`.
+    """Complete the k < 3 columns of a (3, k) block with unit directions.
 
-    They are the directions of the voxel axes that a map from `k` voxel
-    axes into a three-dimensional world does not state, with a spacing of
-    one. Two columns that span a plane determine their complement up to
-    its sense: it is their normalised cross product, the slice normal of
-    DICOM and ITK, which makes the voxel axes right-handed. One column,
-    or two that do not span a plane, do not determine it; the complement
-    is then built from the world axes, `x`, `y` then `z`, each with the
-    part along the columns (and the directions already chosen) removed,
-    keeping the ones that remain longest. A column that is a world axis
-    is thus completed by the other two, in order.
+    Two columns spanning a plane are completed by their normalized cross
+    product, the slice normal of DICOM and ITK, which makes the axes
+    right-handed. Otherwise, each new direction is the world axis with the
+    longest part outside what is already spanned.
     """
     columns = np.asarray(columns, dtype=float).reshape(3, -1)
     missing = 3 - columns.shape[1]
@@ -221,14 +170,14 @@ def complete_basis(columns: np.ndarray) -> np.ndarray:
         scale = np.linalg.norm(columns[:, 0]) * np.linalg.norm(columns[:, 1])
         if np.linalg.norm(normal) > 1e-8 * max(scale, 1e-300):
             return (normal / np.linalg.norm(normal))[:, None]
-    # >> An orthonormal basis of what the columns span.
+    # Orthonormal basis of what the columns span.
     basis: tx.List[np.ndarray] = []
     for column in columns.T:
         residual = column - sum((b @ column) * b for b in basis)
         norm = np.linalg.norm(residual)
         if norm > 1e-8 * max(np.linalg.norm(column), 1e-300):
             basis.append(residual / norm)
-    # >> The world axes, less what is already spanned, longest first.
+    # World axes minus what is already spanned, longest first.
     found = []
     while len(found) < missing:
         best = None
@@ -240,8 +189,7 @@ def complete_basis(columns: np.ndarray) -> np.ndarray:
         direction = best[1] / best[0]
         basis.append(direction)
         found.append(direction)
-    # The directions are kept in the order of the world axes they come
-    # from, so a column along `x` is completed by `y` then `z`.
+    # Keep the order of the world axes the directions come from.
     found.sort(key=lambda d: int(np.argmax(np.abs(d))))
     return np.stack(found, axis=1)
 
@@ -249,47 +197,25 @@ def complete_basis(columns: np.ndarray) -> np.ndarray:
 def split_spatial(
     matrix: np.ndarray, fmt: str, world: str = "world", nspace: int = 3
 ) -> tx.Tuple[np.ndarray, tx.List[tx.Tuple[float, float]]]:
-    """
-    Split a homogeneous voxel-to-world matrix into its spatial block and
-    the scale and offset of each axis that follows the spatial ones.
+    """Split a voxel-to-world matrix into its spatial block and other axes.
 
-    A format that stores a spatial affine stores the axes that follow the
-    `nspace` spatial ones -- the time axis of a time series -- apart, each
-    by a spacing and, for some, an origin. A map over more axes splits
-    into those only when it does not couple the spatial axes with the
-    others, and maps each other axis onto itself alone: its matrix is
-    block-diagonal, with a diagonal second block.
-
-    A map over at most `nspace` axes is returned unchanged, with no other
-    axis.
-
-    Parameters
-    ----------
-    matrix : ndarray
-        The homogeneous voxel-to-world matrix, of shape
-        `(n_out + 1, n_in + 1)`.
-    fmt : str
-        The name of the format, used in error messages.
-    world : str
-        The name the format gives its world space, used in error
-        messages.
-    nspace : int
-        The number of leading axes that are spatial.
+    Formats store the axes after the `nspace` spatial ones, such as time, as a
+    spacing and an offset. The map must keep spatial axes and other axes apart,
+    and map each other axis onto itself. A map over at most `nspace` axes is
+    returned unchanged.
 
     Returns
     -------
     spatial : ndarray
-        The homogeneous matrix of the spatial axes, of shape
-        `(nspace + 1, nspace + 1)`, or `matrix` unchanged.
+        The (nspace + 1, nspace + 1) spatial block, or the unchanged matrix.
     others : list of (float, float)
-        The scale and the offset of each axis that follows the spatial
-        ones, in order.
+        The scale and offset of each trailing axis.
 
     Raises
     ------
     UnrepresentableTransformationError
-        If the map couples the spatial axes with the others, mixes two of
-        the others, or maps different numbers of axes in and out.
+        If the numbers of input and output axes differ, or the map couples axes
+        that must stay apart.
     """
     n_out, n_in = matrix.shape[0] - 1, matrix.shape[1] - 1
     if n_out <= nspace and n_in <= nspace:
@@ -329,23 +255,23 @@ def split_spatial(
 # ----------------------------------------------------------------------
 
 STORAGE_GROUPS = ("space", "time", "channel", "other")
-"""
-The order in which a format that stores a spatial affine stores the axes
-of an array, by group: the spatial axes first, then time, then the
-components of a vector or the channels, then any other axis.
+"""The order in which formats store array axes, by group.
+
+Spatial axes come first, then time, then channels or vector components, then
+any other.
 """
 
 CHANNEL_TYPES = ("channel", "displacement", "coordinate")
-"""The axis types stored where the components of a vector are."""
+"""Axis types stored where channels are stored."""
 
 _SPACE_NAMES = ("x", "y", "z")
-"""The names that put spatial axes in their own order (see `plan_axes`)."""
+"""Names that put spatial axes in their own order, used by [`plan_axes`][]."""
 
 _INDEX = "index"
 
 
 def axis_group(axis: tx.Any) -> str:
-    """The group of `STORAGE_GROUPS` that an axis is stored in."""
+    """Return the storage group of an axis, one of [`STORAGE_GROUPS`][]."""
     type_ = getattr(axis, "type", None)
     if type_ in CHANNEL_TYPES:
         return "channel"
@@ -357,18 +283,12 @@ def axis_group(axis: tx.Any) -> str:
 def declared_axes(
     system: tx.Optional[CoordinateSystem], ndim: int
 ) -> tx.Optional[tx.List[Axis]]:
-    """
-    The axes of a system, when they say where each of them is stored.
+    """Return the axes of a system if they say where each axis is stored.
 
-    They are the axes of `system` when it states exactly `ndim` of them
-    and gives a type to at least one. Otherwise -- a missing or open
-    system, one with another number of axes, or one whose axes carry no
-    type at all, such as the `dim0, dim1, ...` of a plain array -- the
-    system says nothing about where its axes go, and `None` is returned:
-    the axes are then taken in the format's positional order.
-
-    An axis with no type, in a system that types others, is neither
-    spatial nor temporal: it is stored after them.
+    This requires exactly `ndim` axes, at least one of them typed. Otherwise
+    the result is `None`, and the axes follow the positional order of the
+    format. An untyped axis among typed ones is stored after the spatial and
+    time axes.
     """
     axes = getattr(system, "axes", None)
     if axes is None:
@@ -382,10 +302,10 @@ def declared_axes(
 
 
 def _groups(axes: tx.Sequence[Axis]) -> tx.List[str]:
-    """
-    The group of each axis. When there is a time axis, the first axes of
-    no type fill the spatial slots the spatial axes leave before it: an
-    axis of no type may be spatial.
+    """Return the group of each axis.
+
+    When a time axis is present, the first untyped axes fill the spatial slots
+    left before it.
     """
     groups = [axis_group(axis) for axis in axes]
     if "time" in groups:
@@ -397,16 +317,11 @@ def _groups(axes: tx.Sequence[Axis]) -> tx.List[str]:
 
 
 class AxisLayout(tx.NamedTuple):
-    """
-    Where a format stores each axis of an array.
+    """Where a format stores each axis of an array.
 
-    `order[i]` is the axis of the array stored at position `i`, before
-    the singleton axes are inserted; `inserted` lists the positions, in
-    the stored array, of the singleton axes the format needs to place the
-    others (a `z` of size one for a slice that has other axes, or a time
-    axis before the channels), in increasing order. `axes` and `groups`
-    are the axes stored at every position, inserted ones included, and
-    their groups (`STORAGE_GROUPS`).
+    `order[i]` is the array axis stored at position `i`, and `inserted` lists
+    the increasing positions of singleton axes the format needs, such as the
+    `z` of a slice. `axes` and `groups` describe every stored position.
     """
 
     order: tx.List[int]
@@ -420,10 +335,10 @@ class AxisLayout(tx.NamedTuple):
         return not self.inserted and self.order == sorted(self.order)
 
     def apply(self, data: tx.Any) -> tx.Any:
-        """
-        Put an array in this layout: transpose it, then insert the
-        singleton axes. Both are views, so a lazy (dask) array stays
-        lazy.
+        """Arrange an array as the layout stores it.
+
+        Transposition and singleton insertion are views, so lazy arrays such as
+        dask arrays stay lazy.
         """
         if self.order != sorted(self.order):
             data = get_array_backend(data).transpose(data, self.order)
@@ -442,35 +357,28 @@ def plan_axes(
     time_slot: tx.Optional[int] = None,
     max_nonspatial: tx.Optional[int] = None,
 ) -> AxisLayout:
-    """
-    Place declared axes in the order a format stores them.
+    """Place declared axes in the storage order of a format.
 
-    The spatial axes come first, then the time axis, then the channel-like
-    axes, then the others (`STORAGE_GROUPS`), each group in its declared
-    order -- except that spatial axes that are all named among `x`, `y`
-    and `z` are put in that order. A format stores at most three spatial
-    axes and one time axis.
+    Axes are stored by group, in the order of [`STORAGE_GROUPS`][], and in
+    declared order within a group, except that spatial axes all named among
+    `x`, `y` and `z` are sorted.
 
     Parameters
     ----------
-    axes : sequence of Axis
-        The declared axes.
     side : str
-        `"voxel"` or `"world"`, used in error messages.
+        The side, `"voxel"` or `"world"`, for error messages.
     fmt : str
-        The name of the format, used in error messages.
-    fill_space : bool
-        When there are one or two spatial axes and any other axis, insert
-        singleton spatial axes so the others follow three spatial ones,
-        as the format reads them.
-    fill_time : bool
-        When there is no time axis and any channel or other axis, insert
-        a singleton time axis before them, so they are not read as time.
+        The format, for error messages.
+    fill_space : bool, default=True
+        With one or two spatial axes and other axes, insert singleton spatial
+        axes up to three.
+    fill_time : bool, default=False
+        With no time axis and other non-spatial axes, insert a singleton time
+        axis before them.
     time_slot : int, optional
-        The position the format stores time at. A time axis that cannot
-        be put there raises `UnrepresentableTransformationError`.
+        The position at which the format stores time.
     max_nonspatial : int, optional
-        The number of axes, besides the spatial ones, the format stores.
+        The number of non-spatial axes the format can store.
 
     Raises
     ------
@@ -532,14 +440,10 @@ def plan_axes(
 def closed_world(
     system: tx.Optional[CoordinateSystem], ndim: int, fmt: str
 ) -> tx.Optional[CoordinateSystem]:
-    """
-    The world space, closed to the `ndim` axes the affine maps into.
+    """Close an open world space, whose axes hold `...`, to `ndim` axes.
 
-    A format cannot store an open world space, one whose axes hold `...`,
-    so it is closed from the shape of the voxel-to-world matrix. The axes
-    that `...` stands for carry no orientation, as any axis the format
-    knows nothing about. A world space that states more axes than the
-    matrix has rows raises `WriterError`.
+    Formats cannot store open spaces. The added axes carry no orientation, and
+    a world that states more than `ndim` axes raises [`WriterError`][].
     """
     if system is None or system.ndim is not None:
         return system
@@ -554,18 +458,12 @@ def closed_world(
 
 
 class Arrangement(tx.NamedTuple):
-    """
-    The geometry of an image, with its axes placed where a format stores
-    them (see [`arrange_voxel_to_ras`][]).
+    """Geometry of an image with its axes placed where a format stores them.
 
-    `matrix` is the `(4, 4)` voxel-to-RAS matrix of the spatial axes, and
-    `others` the scale and offset of each axis stored after them, in
-    order. `layout` says where each axis of the data is stored, or is
-    `None` when the data is stored as it is, by the format's positional
-    convention. `voxel_groups` and `world_groups` are the groups of the
-    stored voxel and world axes, when known, and `world` the world space
-    with its axes in stored order. `filled_time` says whether the time
-    axis is a singleton the layout inserted.
+    `matrix` is the (4, 4) voxel-to-RAS matrix of the spatial axes, and
+    `others` the scale and offset of each later axis. `layout` is `None` when
+    the data is stored as it is, and `filled_time` tells whether the time axis
+    was inserted.
     """
 
     matrix: np.ndarray
@@ -587,14 +485,10 @@ _ANATOMICAL_POSITIVE = (
 def _filled_world_axis(
     world_axes: tx.Sequence[Axis], groups: tx.Sequence[str], voxel_axis: Axis
 ) -> Axis:
-    """
-    The world axis of a spatial axis a layout inserted, in a world space
-    whose spatial axes are fewer than three.
+    """Create the world axis of an inserted spatial axis.
 
-    It has the unit of the other spatial axes, and, when they carry
-    anatomical orientations along two different RAS axes, the orientation
-    along the third, in its positive sense, so the space still turns into
-    RAS.
+    It takes the unit of the other spatial axes and, if two of them are
+    oriented along different RAS axes, the orientation along the third.
     """
     spatial = [a for a, g in zip(world_axes, groups) if g == "space"]
     unit = next(
@@ -628,54 +522,43 @@ def arrange_voxel_to_ras(
     world_name: str = "world",
     **policy: tx.Any,
 ) -> Arrangement:
-    """
-    The voxel-to-RAS geometry of a transformation, with the axes placed
-    where a format stores them.
+    """Compute the voxel-to-RAS geometry of a transformation for a format.
 
-    The transformation is reduced to an affine (see [`reduce_to_affine`][]).
-    The axes are placed by what the spaces declare, not by position. The
-    voxel axes are `voxel_axes`, the axes of the data (see
-    [`declared_axes`][]), and the world axes are those of the affine's
-    output space. Each side is put in the order the format stores (see
-    [`plan_axes`][], which `policy` is passed to): its spatial axes, then
-    its time axis, then the others. A side that declares nothing is taken
-    in the format's positional order -- except a world space that declares
-    nothing, of as many axes as the voxel space, which is taken to list
-    its axes as the voxel space does.
+    The transformation is reduced by [`reduce_to_affine`][], and axes are
+    placed by what the spaces declare: the voxel side by [`plan_axes`][] with
+    `policy`, and the world side, the output space of the affine, without
+    filling. A side that declares nothing keeps its positional order; an
+    undeclared world with as many axes as the voxel space is assumed to list
+    them in the same way.
 
-    When the layout inserts singleton axes in the data, the matrix gains
-    their columns, and the world the rows it lacks:
+    Singleton data axes inserted by the layout gain matrix columns, and the
+    world gains rows as needed:
 
-    * A spatial axis inserted next to the spatial axes of a world that has
-      as few is mapped onto a world axis of its own, by the identity:
-      scale one, offset zero.
-    * A spatial axis inserted in a voxel space whose map already reaches a
-      three-dimensional world (an injective map, such as a slice placed in
-      space) takes its world origin from the map, which states it, and
-      its direction from [`complete_basis`][], with a spacing of one.
-    * An inserted time axis is mapped onto a world time axis by the
-      identity, when the world has none, and counts frames
-      (`filled_time`).
+    - an inserted spatial axis next to the spatial axes of a world with as few
+      is mapped to a new world axis by the identity;
+    - an inserted spatial axis of a map already reaching a 3D world, such as a
+      slice, takes its direction from [`complete_basis`][];
+    - an inserted time axis is mapped to a new world time axis when the world
+      has none, which sets `filled_time`.
 
-    The spatial block is then split from the other axes (see
-    [`split_spatial`][]), embedded in a `(4, 4)` matrix (see
-    [`embed_affine`][]), and turned into RAS from the anatomical
-    orientation of the world axes (see [`ras_conversion`][]).
+    The matrix is then split by [`split_spatial`][], embedded by
+    [`embed_affine`][] and converted by [`ras_conversion`][].
 
     Raises
     ------
     UnrepresentableTransformationError
-        If the transformation has no affine form, the axes do not fit the
-        format, or the map mixes the spatial axes with the others.
+        If the transformation has no affine form or its axes do not fit the
+        format.
     WriterError
-        If the data, reordered, does not have as many axes as the map.
+        If the data must be reordered but has another number of axes than the
+        map.
     """
     affine = reduce_to_affine(xform, fmt, world_name)
     matrix = affine.homogeneous_matrix
     matrix = np.eye(4) if matrix is None else np.asarray(matrix, float)
     n_out, n_in = matrix.shape[0] - 1, matrix.shape[1] - 1
 
-    # >> The voxel side, in the order the data is stored in.
+    # Voxel side, in data storage order.
     layout = None
     if voxel_axes is not None:
         layout = plan_axes(voxel_axes, "voxel", fmt, **policy)
@@ -686,8 +569,8 @@ def arrange_voxel_to_ras(
                     f"reordered to be written as {fmt}, but this "
                     f"voxel-to-{world_name} transformation maps {n_in}."
                 )
-            # The map does not say where the data's axes go: the data is
-            # stored as it is.
+            # The map does not say where the data axes go, so the data is
+            # stored as is.
             layout = None
         else:
             matrix = matrix[:, layout.order + [n_in]]
@@ -697,7 +580,7 @@ def arrange_voxel_to_ras(
             g for k, g in enumerate(layout.groups) if k not in layout.inserted
         ]
 
-    # >> The world side, in the same order.
+    # World side, in the same order.
     world = closed_world(getattr(affine, "output", None), n_out, fmt)
     world_axes = declared_axes(world, n_out)
     stated = list(getattr(world, "axes", None) or [])
@@ -714,8 +597,8 @@ def arrange_voxel_to_ras(
         if len(stated) == n_out and Ellipsis not in stated:
             world_axes = [stated[i] for i in rows]
     elif vgroups is not None:
-        # The world lists its axes by position: as many non-spatial axes
-        # as the voxel space, after its spatial ones.
+        # A positional world lists as many non-spatial axes as the voxel space,
+        # after its spatial ones.
         nonspatial = [g for g in vgroups if g != "space"]
         nspace = n_out - len(nonspatial)
         if 0 < nspace <= 3:
@@ -723,7 +606,7 @@ def arrange_voxel_to_ras(
     if rows is not None:
         matrix = matrix[rows + [n_out], :]
 
-    # >> The singleton axes the layout inserts.
+    # Singleton axes inserted by the layout.
     filled_time = False
     unplaced = []
     if layout is not None and layout.inserted:
@@ -754,8 +637,9 @@ def arrange_voxel_to_ras(
                 if world_axes is not None:
                     world_axes.insert(wspace, Axis("t", "time", unit=_INDEX))
         if unplaced and wgroups is not None and wgroups.count("space") == 3:
-            # The map reaches a three-dimensional world from fewer voxel
-            # axes: the missing ones point away from those it has.
+            # The map reaches a 3D world from fewer voxel axes: the missing
+            # ones point
+            # away from those it has.
             given = [k for k in range(3) if k not in unplaced]
             matrix[:3, unplaced] = complete_basis(matrix[:3, given])
         vgroups = list(layout.groups)

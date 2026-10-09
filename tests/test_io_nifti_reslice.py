@@ -1,11 +1,7 @@
-"""
-Tests for the geometry of a space-and-time (4D) NIfTI image, and for
-reslicing one.
+"""Tests of the geometry and reslicing of 4-D (space and time) NIfTI images.
 
-A NIfTI voxel-to-world affine applies to the spatial axes, and the time
-axis of a 4D image is mapped by its own spacing and origin. Reslicing such
-an image applies the spatial affine to every frame, and maps the frames in
-time on their own.
+The affine applies to the spatial axes, while time is mapped by its own
+spacing and origin.
 """
 
 import numpy as np
@@ -31,7 +27,6 @@ SHAPE = (6, 7, 5, 4)
 
 
 def _save(path: object, data: np.ndarray, affine: np.ndarray) -> str:
-    """Write a 4D NIfTI with spatial units in mm and time units in s."""
     nii = nb.Nifti1Image(data, affine)
     nii.header.set_xyzt_units("mm", "sec")
     nb.save(nii, str(path))
@@ -41,7 +36,6 @@ def _save(path: object, data: np.ndarray, affine: np.ndarray) -> str:
 def _save_timed(
     path: object, affine: np.ndarray, tr: float, toffset: float
 ) -> str:
-    """Write a 4D NIfTI with a repetition time and a time offset."""
     nii = nb.Nifti1Image(np.zeros(SHAPE, dtype="float32"), affine)
     nii.header.set_xyzt_units("mm", "sec")
     nii.header.set_zooms(nii.header.get_zooms()[:3] + (tr,))
@@ -53,14 +47,7 @@ def _save_timed(
 def test_a_4d_geometry_is_a_spatial_and_a_temporal_subspace(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """
-    The NIfTI affine maps the spatial axes, and time is mapped apart.
-
-    The voxel-to-world transformation of a 4D image is a sequence of two
-    subspace transforms: the affine over (x, y, z), and the time step over
-    (t), which scales the frame index by the repetition time into the
-    physical time since the first frame, then shifts it by `toffset`.
-    """
+    """The affine maps (x, y, z), and TR then toffset map the frame index."""
     affine = _rotation(0.4)
     affine[:3, -1] += [3.0, -2.0, 1.0]
     img = io.load(_save_timed(tmp_path / "bold.nii", affine, 2.5, 0.75))
@@ -80,14 +67,13 @@ def test_a_4d_geometry_is_a_spatial_and_a_temporal_subspace(
     )
     assert np.allclose(scaling.scale, [2.5])
     assert np.allclose(translation.translation, [0.75])
-    # The frame index, the time since the first frame, the world time.
+    # frame index, then time since the first frame, then world time
     assert str(scaling.input.axes[0].unit) == "index"
     assert str(scaling.output.axes[0].unit) == "second"
     assert translation.input.axes == scaling.output.axes
     assert str(translation.output.axes[0].unit) == "second"
 
-    # The space between the two steps is in world coordinates in space,
-    # and still counts frames in time.
+    # Between the steps, space is in world units and time is still frames.
     middle = spatial.output
     assert middle.axes[:3] == xform.output.axes[:3]
     assert middle.axes[3] == xform.input.axes[3]
@@ -111,9 +97,7 @@ def test_a_3d_geometry_is_still_a_plain_affine(tmp_path) -> None:  # noqa: ANN00
 
 
 def test_the_geometry_is_decoded_once_per_header(tmp_path) -> None:  # noqa: ANN001
-    """
-    The same header gives the same transformations, a new one new ones.
-    """
+    """The same header gives the same decoded transformations."""
     img = io.load(_save_timed(tmp_path / "bold.nii", np.eye(4), 2.0, 0.0))
     first = img.transformations
     assert img.transformations is not first
@@ -125,7 +109,7 @@ def test_the_geometry_is_decoded_once_per_header(tmp_path) -> None:  # noqa: ANN
 
 
 def _rotation(angle: float) -> np.ndarray:
-    """A rotation about the z axis, around the center of the volume."""
+    """A rotation about z around the centre of the volume."""
     c, s = np.cos(angle), np.sin(angle)
     rotation = np.eye(4)
     rotation[:2, :2] = [[c, -s], [s, c]]
@@ -137,13 +121,7 @@ def _rotation(angle: float) -> np.ndarray:
 def _expected(
     data: np.ndarray, source: np.ndarray, target: np.ndarray
 ) -> tuple:
-    """
-    Reslice each frame with scipy, and say which voxels sample inside.
-
-    Only the voxels whose coordinates fall inside the source volume are
-    compared, where linear interpolation does not depend on the boundary
-    condition.
-    """
+    """Reslice each frame with scipy and report which voxels sample inside."""
     ijk = np.stack(
         np.meshgrid(*[np.arange(n) for n in SHAPE[:3]], indexing="ij"), -1
     )
@@ -167,7 +145,6 @@ def _expected(
 def test_a_4d_nifti_resliced_onto_its_own_grid_is_unchanged(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """Reslicing a space-and-time image onto its own grid is a no-op."""
     data = np.arange(np.prod(SHAPE), dtype="float32").reshape(SHAPE)
     path = _save(tmp_path / "bold.nii.gz", data, np.eye(4))
 
@@ -197,12 +174,7 @@ def test_a_4d_nifti_is_resliced_through_its_spatial_affine(
     tmp_path,  # noqa: ANN001
     backend: str,
 ) -> None:
-    """
-    A rotation in space is applied to every frame, and time is untouched.
-
-    The rotation couples the x and y axes, so the reslice cannot be split
-    into one-dimensional steps along them.
-    """
+    """The rotation couples x and y, so it is not 1-D separable."""
     rng = np.random.default_rng(0)
     data = rng.random(SHAPE).astype("float32")
     source = _rotation(np.pi / 7)
@@ -225,8 +197,7 @@ def test_a_4d_nifti_is_resliced_through_its_spatial_affine(
     assert got.shape == SHAPE
     assert inside.any() and not inside.all()
     assert np.allclose(got[inside], expected[inside], atol=1e-5)
-    # The output geometry is the target's: its spatial affine, and a time
-    # axis mapped by the spacing and origin of its header (1 and 0).
+    # The output has the target geometry, with time spacing 1 and origin 0.
     matrix = np.asarray(resliced.transformation.to(Affine).matrix)
     assert matrix.shape == (4, 5)
     assert np.allclose(matrix[:3, [0, 1, 2, 4]], target[:3])
@@ -235,7 +206,7 @@ def test_a_4d_nifti_is_resliced_through_its_spatial_affine(
 
 
 def _plans(monkeypatch) -> list:  # noqa: ANN001
-    """Record the plan of every separable reslice, keyed by grid axes."""
+    """Record the plan of each separable reslice, keyed by grid axes."""
     plans = []
     plan = separable._plan
 
@@ -256,13 +227,7 @@ def test_a_4d_reslice_is_separable_with_time_on_its_own(
     tmp_path,  # noqa: ANN001
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    """
-    The spatial affine and the time axis are separate groups.
-
-    The rotation couples x and y, which are pulled together; z is only
-    rescaled, which is a weight matrix; time is untouched, which is a
-    gather. The monolithic pull over all four axes is never used.
-    """
+    """Space and time are planned as separate groups, never as one pull."""
     rng = np.random.default_rng(1)
     data = rng.random(SHAPE).astype("float32")
     source = _rotation(np.pi / 5)
@@ -291,14 +256,7 @@ def test_a_4d_identity_reslice_returns_a_view(
     tmp_path,  # noqa: ANN001
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    """
-    A reslice onto its own geometry cancels to the grid, by identity.
-
-    The geometry decoded from the header is the same object on every
-    access, so the transformation meets its own inverse and cancels
-    without being computed: every axis is a gather, and numpy data comes
-    back as a view of itself.
-    """
+    """The geometry cancels by identity, and numpy returns a view."""
     data = np.arange(np.prod(SHAPE), dtype="float32").reshape(SHAPE)
     img = io.load(_save(tmp_path / "bold.nii.gz", data, _rotation(0.3)))
     assert img.transformation is img.transformation
@@ -317,7 +275,7 @@ def test_a_4d_identity_reslice_returns_a_view(
 def _save_untimed(
     path: object, data: np.ndarray, tr: float, forms: bool = True
 ) -> str:
-    """Write a 4D NIfTI whose repetition time is missing (`tr`: 0 or NaN)."""
+    """Write a 4-D NIfTI file whose TR is missing (0 or NaN)."""
     nii = nb.Nifti1Image(data, _rotation(0.3))
     nii.header.set_xyzt_units("mm", "sec")
     nii.header["pixdim"][4] = tr
@@ -333,13 +291,7 @@ def test_a_4d_geometry_without_a_repetition_time_is_spatial_only(
     tmp_path,  # noqa: ANN001
     tr: float,
 ) -> None:
-    """
-    A time spacing of zero means that the repetition time is missing.
-
-    Only the spatial subspace transform is defined: the time axis passes
-    through, and still counts frames in every space -- none claims a time
-    unit it has no mapping into.
-    """
+    """Without a TR, only space is mapped and time counts frames."""
     data = np.zeros(SHAPE, dtype="float32")
     img = io.load(_save_untimed(tmp_path / "bold.nii", data, tr))
 
@@ -366,7 +318,6 @@ def test_a_4d_geometry_without_a_repetition_time_is_spatial_only(
 def test_a_4d_identity_reslice_without_a_repetition_time_is_a_view(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """A geometry with no time mapping still cancels itself, by identity."""
     data = np.arange(np.prod(SHAPE), dtype="float32").reshape(SHAPE)
     img = io.load(_save_untimed(tmp_path / "bold.nii.gz", data, 0.0))
 
@@ -384,13 +335,9 @@ def test_a_4d_image_without_a_repetition_time_round_trips(
     tmp_path,  # noqa: ANN001
     forms: bool,
 ) -> None:
-    """
-    Saving keeps the repetition time missing (`pixdim[4] = 0`), and leaves
-    `toffset` alone, rather than writing a spacing of one or failing.
-    """
+    """Saving keeps the TR missing and leaves toffset alone."""
     data = np.arange(np.prod(SHAPE), dtype="float32").reshape(SHAPE)
-    # With neither form, the preferred transformation is the scaling into
-    # the physical space, where time is not mapped either.
+    # With neither form, the preferred transformation is the scaling.
     path = _save_untimed(tmp_path / "bold.nii", data, 0.0, forms=forms)
 
     img = io.load(path)

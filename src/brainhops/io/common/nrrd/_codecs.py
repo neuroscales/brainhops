@@ -27,14 +27,12 @@ from ._constants import (
 
 
 def nrrd_dtype(name: str, endian: tx.Optional[str] = None) -> np.dtype:
-    """
-    The numpy type of a NRRD `type`, in the byte order of `endian`
-    (`"little"` or `"big"`; the native order when it is not given).
+    """Return the NumPy data type of a NRRD type name and byte order.
 
     Raises
     ------
     ParserContentError
-        If the type is unknown, or is `block`.
+        If the type is unknown.
     """
     key = " ".join(str(name).split()).lower()
     if key not in _TYPES:
@@ -46,15 +44,12 @@ def nrrd_dtype(name: str, endian: tx.Optional[str] = None) -> np.dtype:
 
 
 def dtype_to_nrrd(dtype: tx.Any) -> str:
-    """
-    The NRRD `type` of a numpy type (or of a NRRD type name).
-
-    Booleans are stored as `uint8` and half floats as `float`.
+    """Return the NRRD type name of a NumPy data type.
 
     Raises
     ------
     WriterError
-        If NRRD has no type for it (complex numbers, strings, ...).
+        If NRRD has no matching type.
     """
     if isinstance(dtype, str) and " ".join(dtype.split()).lower() in _TYPES:
         return _TYPE_NAMES[_TYPES[" ".join(dtype.split()).lower()]]
@@ -101,7 +96,10 @@ def _format_float(value: float) -> str:
 
 
 def _parse_vectors(value: str) -> tx.List[tx.Optional[tx.List[float]]]:
-    """`none (1,0,0) (0,1,0)` -> `[None, [1, 0, 0], [0, 1, 0]]`."""
+    """Parse a list of vectors.
+
+    `"none (1,0,0) (0,1,0)"` gives `[None, [1, 0, 0], [0, 1, 0]]`.
+    """
     out: tx.List[tx.Optional[tx.List[float]]] = []
     for token in re.findall(r"\([^)]*\)|[^\s()]+", value):
         if token.lower() in _NONE:
@@ -123,7 +121,7 @@ def _format_vectors(vectors: tx.Iterable[tx.Any]) -> str:
 
 
 def _parse_strings(value: str) -> tx.List[str]:
-    """`"mm" "" "s"` -> `["mm", "", "s"]`."""
+    """Parse quoted strings: `'"mm" "" "s"'` gives `["mm", "", "s"]`."""
     return [_unescape(s) for s in re.findall(r'"((?:[^"\\]|\\.)*)"', value)]
 
 

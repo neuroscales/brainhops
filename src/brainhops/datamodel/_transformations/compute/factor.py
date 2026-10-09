@@ -1,72 +1,55 @@
-"""Factor a transformation chain into its axis-group normal form.
+"""Factoring of a chain into its axis-group normal form.
 
-The factor pass rewrites a sequence into a *normal form* (NF): a leading
-grid (when present), one axis-preserving factor per group of axes that
-transform together, and a trailing reindex permutation. Each factor acts on
-a group of work axes and leaves every other axis untouched, so nothing is
-ever composed across groups; the coordinates of independent axes are never
-tiled together.
+The factor pass rewrites a chain into an optional leading grid, one
+axis-preserving factor per group of axes that transform together, and an
+optional trailing permutation:
 
-    NF = [grid]? . F_1 . F_2 . ... . F_m . [Pi_perm]?
+```text
+NF = [grid]? . F_1 . F_2 . ... . F_m . [Pi_perm]?
+```
 
-* ``grid`` -- the leading ``CartesianField``, kept as the same object.
-* ``F_i = Subspace(inner_i, A_i, A_i)`` -- an axis-preserving factor over
-  the group's sorted work positions ``A_i`` (pairwise disjoint, ordered by
-  ``min(A_i)``). ``inner_i`` is the group's restricted sub-chain composed
-  under ``mode``. A factor whose inner is the identity is dropped, so a pure
-  permutation chain reduces to ``[grid, Pi_perm]``.
-* ``Pi_perm`` -- a ``Permutation`` that scatters each group's work axes to
-  its data axes; omitted when it is the identity.
+- The grid is the leading [`CartesianField`][], kept as the same object.
+- Each factor `F_i = Subspace(inner_i, A_i, A_i)` acts on sorted work
+  positions `A_i`, which are pairwise disjoint and ordered by their smallest
+  element. Its inner transformation is the restricted sub-chain of the
+  group, composed under `mode`. A factor whose inner transformation is the
+  identity is dropped.
+- `Pi_perm` is a [`Permutation`][] that scatters the work axes of each group
+  to its data axes. It is omitted when it is the identity.
 
-Scope. Only *dimension-preserving* chains, whose groups are all square
-(``|G| == |D|``), are factored. An intermediate stage may have more or fewer
-axes than the chain's ends (an embedding into a wider space, a warp there,
-and a projection back), in which case a group's inner passes through that
-wider space. A chain whose ends differ (a rectangular affine, a projection,
-a ``None``-index broadcast), or that has a mixed / rank-deficient group, is
-left unfactored and returned unchanged. The embedding / drop projections
-(``E`` / ``Pi_drop``) of the full normal form are a follow-up.
+Nothing is composed across groups, so the coordinates of independent axes
+are never tiled. Only dimension-preserving chains whose groups are all
+square are factored, although intermediate stages may pass through a wider
+space. Other chains are returned unchanged.
 
-The entry point is `factor_sequence`, which `Sequence.compute` runs on
-every round of its fixpoint under `factor=True`. The reslice executor (the
-`separable` module) reads the normal form it produces to decide how to
-sample the data of each group, so this is the one place where the axis
-groups of a transformation are worked out.
-
-How a chain element is cut into the pieces of each group is not decided
-here: it is the dispatched `restrict` operation (see the `restrict`
-module), which keeps each piece's type, keeps a lazy inverse lazy, and
-keeps an element the group holds whole as the same object. Composition
-inside a group then goes through the ordinary [`Sequence.compute`][], so
-a restricted ``Sub(warp) . Sub(warp^-1)`` pair meets as ``[warp,
-warp^-1]`` and is collapsed by the cancellation pair simplifier before any
-composer runs.
+The reslice executor in the `separable` module reads the normal form to
+decide how to sample each group, so this module is the single place where
+axis groups are determined. Elements are cut into group pieces by the
+dispatched `restrict` operation, which keeps a lazy inverse lazy and keeps
+an element held whole as the same object. A restricted pair
+`Sub(warp) . Sub(warp^-1)` therefore meets as `[warp, warp^-1]` inside its
+group and cancels before any composer runs.
 """
 
 __all__ = ["factor_sequence", "PatternCache"]
 
-# stdlib
 from dataclasses import dataclass, field
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# api
 from brainhops.errors import (
     CompositionError,
     ConversionError,
     RestrictionError,
 )
 
-# internals
 from ..base import Transformation
 from ..concrete import CartesianField, Identity, Permutation
 from ..meta import SubspaceTransformation
 from .restrict import restrict
 from .utils import UNREADABLE, affine_matrix, axis_list
 
-# typing
 if tx.TYPE_CHECKING:
     from ..modes import ModeLike
     from ..sequence import Sequence
@@ -89,71 +72,46 @@ def factor_sequence(
 ) -> Transformation:
     """Rewrite a sequence into its axis-group normal form.
 
-    The chain is read as a graph whose nodes are the axes at every stage
-    and whose edges are the dependencies of each element. The connected
-    components of that graph are the groups of axes that transform
-    together. Each element is restricted to every group it touches, and
-    each group's pieces are composed on their own, into one factor per
-    group:
-
-        NF = [grid]? . F_1 . F_2 . ... . F_m . [Pi_perm]?
-
-    See the module docstring for the shape of the normal form and for the
-    chains that are left unfactored.
-
-    This is one round of the factor pass. `Sequence.compute(factor=True)`
-    runs it between simplification and composition until a fixpoint, and
-    is how it is normally reached. It is not part of the public
-    `transformations` API.
+    The chain is read as a graph whose nodes are the axes at every stage and
+    whose edges are the dependencies of each element. Its connected components
+    are the groups of axes that transform together. Each element is restricted
+    to the groups it touches, and the pieces of each group are composed alone
+    into one factor, as described in the module documentation. A call performs
+    one round of the pass, which `Sequence.compute(factor=True)` runs between
+    simplification and composition until a fixpoint is reached.
 
     Parameters
     ----------
     seq : Sequence
-        The chain to factor. Nested sequences are flattened. A leading
-        `CartesianField` is the sampling grid and is kept as it is.
-    mode : [list of] name or type, default=True
-        Which kinds may compose *inside* a group, as in
-        [`Sequence.compute`][]. Nothing is ever composed across groups.
-    simplify : simplify policy, default="analytic"
-        The simplify policy under which each group's pieces are composed,
-        as in [`Sequence.compute`][].
+        Chain to factor. Nested sequences are flattened, and a leading
+        [`CartesianField`][] is the sampling grid, kept as is.
+    mode : ModeLike, default=True
+        Kinds of transformation allowed to compose inside a group, as in
+        [`Sequence.compute`][].
+    simplify : SimplifyLike, default="analytic"
+        Simplification policy for composing the pieces of each group.
     cache : PatternCache, optional
-        A memo of each element's dependency pattern, to share across the
-        rounds of one `compute`, whose elements are mostly the same
-        objects from one round to the next. A fresh one is used when
-        omitted.
+        Memo of dependency patterns, shared across the rounds of one
+        computation. A fresh cache is used if it is omitted.
 
     Returns
     -------
     Transformation
-        One of:
-
-        * `seq` itself (the same object), when the chain does not factor
-          (a single group, a chain whose ends differ in dimension, an
-          element that cannot be read or cannot be restricted to its
-          groups) or is already in normal form for
-          its partition. The pass is therefore idempotent, which is what
-          lets the fixpoint loop stop.
-        * A sequence `[grid?, F_1, ..., F_m, Pi_perm?]` with the endpoints
-          of `seq`. Every `F_i` is a `SubspaceTransformation` with equal
-          input and output axes, the axes of different factors are
-          disjoint, and the factors are ordered by their first axis.
-          `Pi_perm` is present only when it is not the identity.
-        * An `Identity` with the endpoints of `seq`, when every factor
-          reduces to the identity and there is neither a grid nor a
-          permutation left.
-
-        An element that a group holds whole is kept as the same object,
-        so the adjacent-inverse cancellation (which links a transform to
-        its lazy inverse by identity) still sees it, and no lazy inverse
-        is ever materialized to read the chain.
+        `seq` itself when the chain does not factor (a single group, ends that
+        differ in dimension, an element that cannot be read or restricted) or
+        is already in normal form, which makes the pass idempotent. Otherwise,
+        a sequence `[grid?, F_1, ..., F_m, Pi_perm?]` with the endpoints of
+        `seq`, or an [`Identity`][] when nothing remains. Elements held whole
+        by a group stay the same objects, so that a transformation still
+        cancels with its lazy inverse, and no lazy inverse is materialized.
 
     Examples
     --------
-    A diagonal scaling followed by an axis swap splits into one factor per
-    scaled axis and a trailing permutation. The unit scale of the last
-    axis is the identity, so its factor is dropped.
+    A diagonal scaling followed by an axis swap gives one factor per scaled
+    axis and a trailing permutation. The last axis has a unit scale, so its
+    factor is dropped.
 
+    ```pycon
     >>> import numpy as np
     >>> from brainhops.datamodel.transformations import (
     ...     CartesianField, Permutation, Scaling, Sequence,
@@ -169,6 +127,7 @@ def factor_sequence(
     ['SubspaceTransformation', 'SubspaceTransformation', 'Permutation']
     >>> [f.input_axes.tolist() for f in body[:2]]
     [[0], [1]]
+    ```
     """
     from ..sequence import _unnest
 
@@ -187,8 +146,8 @@ def factor_sequence(
     if not body:
         return seq
     if any(isinstance(t, CartesianField) for t in body):
-        # An interior or trailing grid is not our shape (interior grids are
-        # dropped before this pass); leave it unfactored.
+        # Interior grids are dropped before this pass, so a grid here is
+        # unsupported.
         return seq
 
     n_in = _chain_ndim_in(grid, body)
@@ -197,27 +156,27 @@ def factor_sequence(
 
     stages = _build_stages(body, n_in, cache)
     if stages is None:
-        return seq  # not dimension-preserving / unreadable
+        return seq
 
     groups = _partition(stages, n_in)
     if groups is None:
-        return seq  # a mixed / source / sink group -> unfactored
+        return seq
     if len(groups) <= 1:
-        return seq  # trivial: nothing separable -> unchanged, same objects
+        return seq
 
     try:
         factors = _build_factors(groups, stages, mode, simplify)
     except RestrictionError:
-        # An element cannot be cut into the pieces of these groups soundly:
-        # leave the chain unfactored rather than drop a piece.
+        # An element that cannot be soundly cut into group pieces leaves the
+        # chain unfactored, instead of losing a piece.
         return seq
     if factors is None:
-        return seq  # a group's pieces cannot be composed
+        return seq
     perm = _build_perm(groups, n_in)
 
     if _same_structure(body, factors, perm):
-        # Already in normal form for this partition: keep the same objects so
-        # the fixpoint loop's identity-based exit test converges.
+        # Returning the same objects lets the identity-based exit test of the
+        # fixpoint loop converge.
         return seq
 
     elements: tx.List[Transformation] = []
@@ -233,13 +192,12 @@ def factor_sequence(
 
 @dataclass
 class PatternCache:
-    """A memo of each chain element's dependency pattern.
+    """Memo of element dependency patterns.
 
-    The pattern of an element is the boolean `(n_out, n_in)` matrix whose
-    entry `(i, j)` says that output axis `i` depends on input axis `j`. It
-    is keyed by the element's `id`, and the element is pinned in
-    `keepalive` so that its `id` is never reused by another object while
-    the cache holds it. A cache is meant to live for one `compute`.
+    A pattern is a boolean `(n_out, n_in)` matrix whose entry `(i, j)` is true
+    when output axis `i` depends on input axis `j`. Patterns are keyed by the
+    `id` of the element, which is kept in `keepalive` so that the `id` is not
+    reused while it is cached. A cache lives for one computation.
     """
 
     patterns: tx.Dict[int, tx.Optional[np.ndarray]] = field(
@@ -250,7 +208,7 @@ class PatternCache:
     def pattern(
         self, element: Transformation, ni: int, no: int
     ) -> tx.Optional[np.ndarray]:
-        """The `(no, ni)` pattern of `element`, or `None` if unreadable."""
+        """Return the pattern of `element`, or None if it is unreadable."""
         key = id(element)
         if key in self.patterns:
             return self.patterns[key]
@@ -273,17 +231,16 @@ class PatternCache:
 
 @dataclass
 class _Stage:
-    # One chain element read in the work view.
     element: Transformation
-    pattern: np.ndarray  # (N_out, N_in) bool: output i depends on input j
+    pattern: np.ndarray  # (N_out, N_in): output i depends on input j
 
 
 @dataclass
 class _Group:
-    # A connected component of the (stage, work-axis) graph.
-    axes: tx.List[int]  # sorted work positions the factor acts on (A = G)
-    grid_axes: tx.List[int]  # G (chain-input positions)
-    data_axes: tx.List[int]  # D (chain-output positions), paired with `axes`
+    # Connected component of the (stage, work axis) graph.
+    axes: tx.List[int]  # sorted work positions acted on
+    grid_axes: tx.List[int]  # G: positions in the chain input
+    data_axes: tx.List[int]  # D: positions in the chain output
     per_stage: tx.Dict[int, tx.List[int]] = field(default_factory=dict)
 
 
@@ -308,21 +265,16 @@ class _UnionFind:
 # ----------------------------------------------------------------------
 #   DEPENDENCY PATTERNS
 # ----------------------------------------------------------------------
-#
-# Reading a chain never materializes a lazy inverse: an `Inverse` is read
-# as the transpose of its forward's dependency pattern. An element with no
-# affine reading (`UNREADABLE`) must leave the chain unfactored, never be
-# read as the identity.
+# Reading never materializes a lazy inverse, whose pattern is the transpose of
+# the pattern of its forward transformation. An element without an affine
+# reading (UNREADABLE) leaves the chain unfactored and is never read as the
+# identity.
 
 
 def _element_ndim(
     element: Transformation, ndim: int
 ) -> tx.Optional[tx.Tuple[int, int]]:
-    # The (input, output) dimensionality of a chain element, or `None` when
-    # it cannot be read. A subspace, a raw field and an identity preserve the
-    # full dimensionality; an affine-ish element is read from its matrix
-    # shape; a lazy inverse is read from its forward, transposed, so it is
-    # never materialized.
+    # (input, output) dimensionality, or None if unreadable.
     from ..inverse import Inverse
     from ..sequence import _interpolates
 
@@ -351,15 +303,12 @@ def _element_ndim(
 def _read_pattern(
     element: Transformation, ni: int, no: int
 ) -> tx.Optional[np.ndarray]:
-    # The element's `(no, ni)` boolean dependency pattern in the work view,
-    # or `None` when it cannot be read.
     from ..inverse import Inverse
     from ..sequence import Sequence, _interpolates
 
     if isinstance(element, Sequence):
-        # A nested sub-chain (e.g. a subspace inner that composed only
-        # partially under a restrictive mode): the pattern is the product of
-        # its members' patterns along the chain.
+        # A nested sub-chain, such as a partially composed subspace inner, has
+        # the product of the member patterns along the chain.
         acc = np.eye(ni, dtype=bool)
         ndim = ni
         for member in element.transformations or []:
@@ -380,14 +329,11 @@ def _read_pattern(
         forward = element.forward
         if forward is None:
             return np.eye(ni, dtype=bool) if ni == no else None
-        # The pattern of a lazy inverse is the transpose of the forward's,
-        # which never materializes it and gives the same coupling components.
         fpat = _read_pattern(forward, no, ni)
         if fpat is None or fpat.shape != (ni, no):
             return None
         return fpat.T
     if _interpolates(element):
-        # A raw field couples every axis to every axis.
         return np.ones((no, ni), dtype=bool) if ni == no else None
     if isinstance(element, Identity):
         return np.eye(ni, dtype=bool) if ni == no else None
@@ -405,20 +351,15 @@ def _subspace_pattern(
     interpolates = _interpolates(inner)
     if not in_axes or not out_axes:
         if interpolates:
-            # An interpolating subspace naming no axes cannot be read.
             return None
-        # A non-interpolating subspace carries its full affine embedding.
         return _read_pattern_affine(element, ndim, ndim)
     ki, ko = len(in_axes), len(out_axes)
     if inner is None and ki == ko:
-        # No inner is the identity over the acted axes: `input_axes[k]`
-        # feeds `output_axes[k]`, and the other axes pass through in order.
-        # When the axes differ, the embedding makes it a reindex, which
-        # every reader (the affine converter and both subspace composers,
-        # since #110) agrees on.
+        # No inner transformation is the identity on the acted axes:
+        # input_axes[k] feeds output_axes[k], the others pass through in order.
+        # Differing axes make it a reindex, which all readers agree on.
         inner_dep = np.eye(ko, dtype=bool)
     elif interpolates:
-        # An interpolating inner couples every acted-on axis to every other.
         inner_dep = np.ones((ko, ki), dtype=bool)
     else:
         inner_dep = None
@@ -461,8 +402,6 @@ def _read_pattern_affine(
 def _chain_ndim_in(
     grid: tx.Optional[CartesianField], body: tx.List[Transformation]
 ) -> tx.Optional[int]:
-    # The chain's input dimensionality: the grid's axis count when a grid
-    # leads, else read from the first element that states a dimension.
     if grid is not None and grid.shape is not None:
         return len(grid.shape)
     for element in body:
@@ -475,10 +414,8 @@ def _chain_ndim_in(
 def _build_stages(
     body: tx.List[Transformation], n_in: int, cache: PatternCache
 ) -> tx.Optional[tx.List[_Stage]]:
-    # Read every element's dependency pattern in the work view. Returns
-    # `None` when the chain's ends differ in dimension or an element cannot
-    # be read, so the caller leaves the sequence unfactored. An element may
-    # change the dimension in between (an embedding, then a projection).
+    # Intermediate stages may change dimension (embedding then projection), but
+    # the ends may not.
     stages: tx.List[_Stage] = []
     ndim = n_in
     for element in body:
@@ -492,25 +429,20 @@ def _build_stages(
         stages.append(_Stage(element=element, pattern=pat))
         ndim = no
     if ndim != n_in:
-        # Not dimension-preserving: created / dropped axes are left to a
-        # follow-up (no E / Pi_drop is emitted yet).
+        # Created or dropped axes are not supported yet.
         return None
     return stages
 
 
 def _stage_dims(stages: tx.List[_Stage], n_axes: int) -> tx.List[int]:
-    # The axis count at every stage: stage 0 is the chain's input, and
-    # stage `s` is the output of element `s`.
     return [n_axes] + [s.pattern.shape[0] for s in stages]
 
 
 def _partition(
     stages: tx.List[_Stage], n_axes: int
 ) -> tx.Optional[tx.List[_Group]]:
-    # Connected components of the graph whose nodes are `(stage, work-axis)`
-    # and whose edges are the true entries of each stage pattern. Returns
-    # `None` on any non-square group (mixed / source / sink), so the chain is
-    # left unfactored.
+    # Components of the graph whose nodes are (stage, work axis) pairs and
+    # whose edges are the true entries of the stage patterns.
     dims = _stage_dims(stages, n_axes)
     offsets = np.cumsum([0] + dims).tolist()
     uf = _UnionFind(offsets[-1])
@@ -534,11 +466,10 @@ def _partition(
         grid_axes = sorted(comp.get(0, []))
         data_axes = sorted(comp.get(last, []))
         if not grid_axes or not data_axes:
-            # A group touching only the grid or only the data (source / sink)
-            # is not a per-axis step (yet).
+            # A source or sink group is not a per-axis step.
             return None
         if len(grid_axes) != len(data_axes):
-            return None  # mixed / rank-deficient -> unfactored
+            return None
         groups.append(
             _Group(
                 axes=grid_axes,
@@ -566,9 +497,8 @@ def _partition(
 def _restrict_group(
     group: _Group, stages: tx.List[_Stage]
 ) -> tx.List[Transformation]:
-    # The group's pieces, one per element it touches, in chain order. Each
-    # element is restricted to the group's axes at its two stages (see the
-    # `restrict` module); an identity piece is left out.
+    # One piece per touched element, in chain order; identity pieces are
+    # omitted.
     sub: tx.List[Transformation] = []
     for stage, s in enumerate(stages, start=1):
         rows = group.per_stage.get(stage, [])
@@ -583,13 +513,9 @@ def _restrict_group(
 
 
 def _inner_is_identity(inner: tx.Optional[Transformation]) -> bool:
-    # Whether a group's composed inner is the identity, so its factor is
-    # dropped. A non-interpolating inner is checked at value level
-    # (`compute=True`), so a restriction that lands on the identity -- a
-    # single-axis permutation `Permutation([0])`, a unit `Scaling([1])`, an
-    # identity affine sub-block -- is recognized and dropped. An interpolating
-    # inner (a field) is only ever checked structurally, so a field factor is
-    # never dropped by reading its values.
+    # A non-interpolating inner is checked by value, so restrictions that land
+    # on the identity, such as Scaling([1]), are dropped. A field is never
+    # dropped by value.
     from ..sequence import _interpolates
 
     if inner is None:
@@ -605,7 +531,6 @@ def _build_factors(
     mode: "ModeLike",
     simplify: "SimplifyLike",
 ) -> tx.Optional[tx.List[SubspaceTransformation]]:
-    # `None` when the pieces of some group cannot be composed.
     from ..sequence import Sequence
 
     factors: tx.List[SubspaceTransformation] = []
@@ -613,22 +538,17 @@ def _build_factors(
         sub = _restrict_group(group, stages)
         if not sub:
             continue
-        # The group's restricted sub-chain is computed like any other
-        # sequence, under the caller's own mode and simplify policy, so the
-        # pieces inside a group compose exactly as far as `mode` admits --
-        # and a restricted transform/inverse pair cancels first, for free.
+        # The caller's mode and policy apply, so a restricted transformation
+        # and inverse pair cancels first.
         try:
             inner = Sequence(transformations=sub).compute(
                 mode, simplify=simplify, factor=False
             )
         except (ConversionError, CompositionError):
-            # Factoring is an optimization: the original chain is returned
-            # unchanged and computed as it would be without `factor`, so
-            # leaving it unfactored is always sound. The restricted pieces
-            # can fail to compose where the whole chain does not: a piece
-            # that stays a subspace carries no closed coordinate system, so
-            # it cannot be embedded next to an affine piece of the same
-            # group that does not state the number of axes either.
+            # Factoring is an optimization, so returning the chain unchanged is
+            # always sound. Restricted pieces can fail to compose where the
+            # whole chain does not, for example a subspace piece without an
+            # axis count next to an affine piece.
             return None
         if _inner_is_identity(inner):
             continue
@@ -646,8 +566,7 @@ def _build_factors(
 def _build_perm(
     groups: tx.List[_Group], n_axes: int
 ) -> tx.Optional[Permutation]:
-    # `Pi_perm` scatters each group's work axes `A` to its data axes `D`:
-    # output data axis `D[j]` reads work axis `A[j]`. Omitted when identity.
+    # Output data axis D[j] reads work axis A[j].
     perm = list(range(n_axes))
     identity = True
     for group in groups:
@@ -665,11 +584,8 @@ def _same_structure(
     factors: tx.List[SubspaceTransformation],
     perm: tx.Optional[Permutation],
 ) -> bool:
-    # Whether the current body already has the normal form's structure (same
-    # factor axes, same reindex), so it is returned unchanged (idempotence /
-    # identity preservation). Inners are trusted to be stable across
-    # iterations (they were composed when first built), so only axis lists
-    # and the permutation are compared.
+    # Only the axis lists and the permutation are compared; inner
+    # transformations are trusted to be stable across rounds.
     expected: tx.List[Transformation] = list(factors)
     if perm is not None:
         expected.append(perm)

@@ -1,18 +1,10 @@
-"""Regression tests for the b-spline coefficient conversions.
+"""Regression tests for the conversion between B-spline values and
+coefficients.
 
-The value/coefficient round trip in :mod:`brainhops._core.bsplines` was
-broken in two ways that no test covered:
-
-* ``value2coeff`` forwarded a ``cval`` keyword to ``spline_filter``, which
-  does not accept it (``TypeError``).
-* ``coeff2value`` built its sampling grid from the *batch* dimensions
-  instead of the *spatial* ones, so ``map_coordinates`` rejected the
-  coordinate array (``RuntimeError``).
-
-Together these made ``DisplacementField.to(store=...)`` and
-``CoordinatesField.to(store=...)`` raise for any field carrying data, and
-therefore made composing any field of coefficients fail (the composers
-call ``Ti.to(store="values")``).
+The conversion used to raise for any field holding data, in both
+directions, so that `DisplacementField.to(store=...)` and
+`CoordinatesField.to(store=...)` failed, and with them the composition of
+coefficient fields.
 """
 
 import numpy as np
@@ -31,7 +23,7 @@ FIELD_TYPES = [DisplacementField, CoordinatesField]
 
 
 def _random_field(rng, ndim):  # noqa: ANN001, ANN202
-    """A small, smooth displacement field of shape (*spatial, ndim)."""
+    """Return a small smooth displacement field."""
     spatial = (6, 7, 5)[:ndim]
     return rng.standard_normal((*spatial, ndim)) * 0.05
 
@@ -46,8 +38,7 @@ def test_value_coeff_round_trip(
     degree,  # noqa: ANN001
     bound,  # noqa: ANN001
 ) -> None:
-    # value -> coeff -> value must recover the original samples exactly (up
-    # to spline-filter numerical error) for every string boundary condition.
+    # Values to coefficients and back recovers the samples, for every bound.
     rng = np.random.default_rng(0)
     values = _random_field(rng, ndim)
     field = field_type(field=values.copy(), degree=degree, bound=bound)
@@ -61,7 +52,7 @@ def test_value_coeff_round_trip(
 
 
 def test_repro_from_report() -> None:
-    # Verbatim reproduction from the bug report.
+    # The original bug report, verbatim.
     f = np.random.RandomState(0).randn(6, 7, 2) * 0.05
     D = DisplacementField(field=f, degree=3)
     C = D.to(store="coefficients")
@@ -71,9 +62,7 @@ def test_repro_from_report() -> None:
 
 @pytest.mark.parametrize("degree", DEGREES)
 def test_compose_coeff_fields_does_not_raise(degree) -> None:  # noqa: ANN001
-    # Composition routes through ``Ti.to(store="values")``, so a broken
-    # coefficient conversion made composing any field of coefficients
-    # fail.
+    # Composition converts its inputs with `to(store="values")`.
     rng = np.random.default_rng(1)
     d1 = DisplacementField(field=_random_field(rng, 2), degree=degree).to(
         store="coefficients"
@@ -121,16 +110,12 @@ def test_value2coeff_inverts_coeff2value(
     shape: tuple,
     array_backend: str,
 ) -> None:
-    """
-    The coefficients `value2coeff` returns are those `coeff2value`
-    interpolates back to the values, under every bound, at every degree,
-    on axes shorter and longer than the band near each end that a bound
-    changes.
+    """Interpolating the coefficients gives back the values.
 
-    scipy's prefilter extends the values the way its evaluation extends
-    the coefficients for `mirror`, `grid-wrap` and `wrap` only: for
-    `nearest` and constant bounds the round trip was off by up to 10 at
-    degree five, and for `reflect` scipy approximates it, by up to 1e-4.
+    The check covers every bound and degree, with axes both shorter and longer
+    than the band that a bound alters at each end. The scipy prefilter matches
+    its own evaluation only for mirror, grid-wrap and wrap; it was off by up to
+    10 for nearest and constant at degree 5, and approximate for reflect.
     """
     from brainhops._core.bsplines import coeff2value, value2coeff
 
@@ -151,11 +136,7 @@ def test_value2coeff_inverts_coeff2value(
 def test_a_nearest_spline_takes_its_edge_coefficient_past_the_edge(
     degree: int,
 ) -> None:
-    """
-    Past the edges a `nearest` spline is its edge coefficient, which is
-    what interpolates the edge value: the clamped coefficients, evaluated
-    at the edge sample and beyond, agree with it there.
-    """
+    """Past the edges, a nearest spline equals its edge coefficient."""
     from brainhops._core.bsplines import pull, value2coeff
 
     values = np.random.default_rng(15).standard_normal(20)

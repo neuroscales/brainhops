@@ -38,16 +38,16 @@ def afni_cardinal_matrix(
     delta: tx.Sequence[float],
 ) -> np.ndarray:
     """
-    The `(4, 4)` cardinal voxel-to-DICOM matrix (`THD_daxes_to_mat44`).
+    Build the cardinal voxel-to-DICOM matrix of an AFNI grid.
 
-    Voxel axis `i` runs along DICOM axis `orient[i] // 2`: that row of
-    column `i` holds `delta[i]`, and that row of the last column holds
-    `origin[i]`.
+    As in `THD_daxes_to_mat44`, voxel axis `i` runs on DICOM axis
+    `orient[i] // 2`; in that row, column `i` holds `delta[i]` and the last
+    column holds `origin[i]`.
 
     Raises
     ------
     ValueError
-        If the orientation codes are not valid or do not name three
+        If an orientation code is invalid, or if the codes do not name three
         different DICOM axes.
     """
     orient = [int(o) for o in orient[:3]]
@@ -75,21 +75,13 @@ def afni_geometry_from_matrix(
     tx.Tuple[float, float, float],
 ]:
     """
-    Decompose a voxel-to-DICOM matrix into AFNI's orientation codes,
-    origin and voxel sizes (`THD_daxes_from_mat44`).
+    Decompose a voxel-to-DICOM matrix into `(orient, origin, delta)`.
 
-    Each voxel axis is given the DICOM axis and direction its column is
-    closest to, among the assignments that give the three axes different
-    DICOM axes. Its voxel size is the length of its column, and its
-    origin is the projection of the translation on the unit column, both
-    negated for an orientation that runs towards `R`, `A` or `I`. A
-    cardinal matrix gives back exactly its `ORIGIN` and `DELTA`.
-
-    Returns
-    -------
-    orient : (int, int, int)
-    origin : (float, float, float)
-    delta : (float, float, float)
+    As in `THD_daxes_from_mat44`, each voxel axis takes its closest
+    orientation, under the constraint that the three axes run on different
+    DICOM axes. The voxel size is the length of the column and the origin is
+    the translation projected on the unit column, both negated for the R, A
+    and I orientations. A cardinal matrix round-trips exactly.
     """
     matrix = np.asarray(matrix, dtype=np.float64)
     linear = matrix[:3, :3]
@@ -98,10 +90,8 @@ def afni_geometry_from_matrix(
     safe = np.where(norms > 0, norms, 1.0)
     unit = linear / safe
 
-    # The closest orientation: the permutation of DICOM axes whose
-    # entries are the largest, which is what NIfTI's
-    # `nifti_mat44_to_orientation` settles on for any matrix that is not
-    # wildly sheared.
+    # The closest orientation is the permutation with the largest entries,
+    # as in nifti_mat44_to_orientation.
     best = max(
         itertools.permutations(range(3)),
         key=lambda rows: sum(abs(unit[r, c]) for c, r in enumerate(rows)),
@@ -120,21 +110,18 @@ def afni_geometry_from_matrix(
 
 def afni_voxel_to_dicom(xform: Transformation) -> np.ndarray:
     """
-    The `(4, 4)` voxel-to-DICOM (LPS) matrix of a voxel-to-world
-    transformation.
+    Compute the voxel-to-DICOM matrix of a voxel-to-world transformation.
 
-    The transformation is reduced to an affine (a `Scaling`, a
-    `Sequence` of affines, ...), embedded in three dimensions, turned into
-    RAS from the anatomical orientation of its world axes (a world with
-    no orientation is taken to be RAS already, as every format does), and
-    then into DICOM.
+    The world coordinates are converted to RAS according to the orientation
+    of the world axes (axes without one are taken to be RAS already), and
+    then to DICOM.
 
     Raises
     ------
     UnrepresentableTransformationError
         If the transformation has no affine representation.
     WriterError
-        If it maps more than three spatial dimensions.
+        If the transformation has more than three spatial dimensions.
     """
     affine = reduce_to_affine(xform, "AFNI", "DICOM")
     matrix = affine.homogeneous_matrix
@@ -152,12 +139,11 @@ def afni_voxel_to_dicom(xform: Transformation) -> np.ndarray:
 
 def _spatial_block(matrix: np.ndarray) -> np.ndarray:
     """
-    The homogeneous matrix of the three leading axes of a wider one.
+    Keep the three leading axes of a matrix when they do not mix with the
+    others.
 
-    A map of more than three axes -- such as the `Scaling` of a time
-    series, which also scales its time axis -- keeps its three leading
-    axes when they do not mix with the others. Any other matrix is
-    returned unchanged (and refused by `embed_affine` if too wide).
+    A `Scaling` of a time series that also scales time is an example. Any
+    other matrix is returned unchanged.
     """
     out_dim, in_dim = matrix.shape[0] - 1, matrix.shape[1] - 1
     if out_dim <= 3 and in_dim <= 3:
@@ -173,18 +159,17 @@ def _spatial_block(matrix: np.ndarray) -> np.ndarray:
 
 
 def afni_world(name: str) -> LPSmm:
-    """The DICOM (LPS millimetre) world space of an AFNI dataset, named
-    after its view (`"orig"`, `"tlrc"`, ...)."""
+    """The DICOM (LPS mm) world space of an AFNI view."""
     return LPSmm(name=name)
 
 
 def afni_view(name: tx.Any) -> tx.Optional[str]:
     """
-    The AFNI view a name stands for, or `None`.
+    Return the AFNI view that a name stands for, or `None`.
 
-    `name` may be a view (`"tlrc"`), the name of a world space
-    (`"talairach"` and `"mni"` mean `tlrc`, `"orig-cardinal"` means
-    `orig`), or a dataset file name (`"anat+tlrc.HEAD"`).
+    The name may be a view (`"tlrc"`), a world-space name (`"mni"` stands
+    for `"tlrc"`, `"orig-cardinal"` for `"orig"`), or a dataset file name
+    (`"anat+tlrc.HEAD"`).
     """
     if not isinstance(name, (str, os.PathLike)):
         return None
@@ -202,4 +187,4 @@ def afni_view(name: tx.Any) -> tx.Optional[str]:
 
 
 _CARDINAL = "-cardinal"
-"""The suffix of the name of the cardinal world space of a view."""
+"""The suffix of the cardinal world-space name of a view."""

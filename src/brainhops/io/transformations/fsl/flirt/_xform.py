@@ -1,17 +1,10 @@
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import KwOnly
 
-# core
 from brainhops._core.typing import Deactivated
-
-# externals
-# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-
-# io
 from brainhops.io.base._base import register_format
 from brainhops.io.transformations.base import FileBasedTransformation
 
@@ -28,49 +21,41 @@ class FlirtTransform(
     _xforms.Affine,
     FileBasedTransformation,
 ):
-    """A linear transformation stored in a FLIRT `.mat` file.
+    """Linear transformation stored in an FSL FLIRT `.mat` file.
 
-    A FLIRT matrix maps moving-image scaled-mm coordinates to
-    reference-image scaled-mm coordinates. This reader exposes it as an
-    affine whose `matrix` maps reference-image world (RAS) coordinates to
-    moving-image world (RAS) coordinates, which is the direction the data
-    model uses to resample a moving image onto a reference.
-
-    The reference and moving images must be supplied, because the `.mat`
-    file carries no image geometry. They may be passed as keyword
-    arguments to `load` or `from_file` (`reference=`, `moving=`), or set
-    on the object before its `matrix` is read.
+    The FLIRT matrix maps moving to reference scaled millimetres. Its `matrix`
+    is exposed in the direction the data model uses for resampling, from
+    reference RAS to moving RAS. Since the file carries no geometry, the
+    reference and moving images must be passed as `reference=` and `moving=`
+    when loading, or set before `matrix` is read.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS = ("flirt",)
-    # The stored parameter is the raw FLIRT matrix: `matrix` is derived from
-    # it and the two image geometries, so reading it is not free and may
-    # raise. Naming the raw field here keeps the identity check of
-    # `inverse()` off that path.
+    # Name the raw matrix: `matrix` is derived from the images (costly, may
+    # raise), and this keeps the identity check of `inverse()` off that path.
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ("flirt_matrix",)
 
     _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
-    # The affine is computed on demand from the raw FLIRT matrix and the
-    # two image geometries, so its `data` is not a stored,
-    # constructor-taken field here. Declaring it a `ClassVar` overrides
-    # the inherited init-field from `Affine` and keeps `data` out of
-    # `__init__` and `fields()`, while the property below serves reads
-    # (and, through it, the `matrix` view). The `matrix=` convenience is
-    # deactivated with it.
+    # The affine is computed on demand. A ClassVar `_data` overrides the init
+    # field inherited from `Affine`, keeping `data` out of `__init__` and
+    # `fields()`.
     _data: tx.ClassVar[tx.Optional[tx.Any]]
     _matrix: Deactivated[None]
 
     @property
     def data(self) -> tx.Optional[np.ndarray]:
-        """The reference-RAS to moving-RAS affine, as a `(3, 4)` matrix.
+        """The affine from reference RAS to moving RAS, as a (3, 4) array.
 
-        Reading this (or the `matrix` view) resolves the affine from the
-        raw FLIRT matrix and the two image geometries. It raises when the
-        raw matrix is present but either image is missing, because the
-        affine cannot be placed in world coordinates without both.
+        The affine is computed from the raw matrix and both image geometries,
+        and is `None` when no raw matrix is set. It cannot be assigned.
+
+        Raises
+        ------
+        ValueError
+            If a raw matrix is set but an image is missing.
         """
         raw = self.flirt_matrix
         if raw is None:
@@ -97,9 +82,7 @@ class FlirtTransform(
             )
 
     def inverse(self, compute: bool = False, **kwargs) -> _xforms.Affine:
-        # The inverse of a resolved FLIRT affine is a plain affine, because
-        # the raw-matrix and image structure of a FLIRT transform does not
-        # survive inversion.
+        # The raw matrix and the images do not survive inversion.
         return _xforms.Affine(
             matrix=self.matrix, input=self.input, output=self.output
         ).inverse(compute=compute, **kwargs)

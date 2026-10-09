@@ -69,19 +69,23 @@ AnnotatedPartialBase = AnnotatedPartial
 def annotated_partial(
     func: Callable[..., Any], *args: Any, **kwargs: Any
 ) -> Any:
-    """
-    Create a partial function with preserved type annotations.
+    """Partially apply a function while keeping its type annotations.
+
+    The returned object behaves like [`partial`][functools.partial], but its
+    `__annotations__` describe the return value and the parameters that
+    remain to be supplied, with hints resolved by [`get_type_hints`][]. The
+    object is also a descriptor, so that a partial stored as a class
+    attribute binds to instances as a method.
     """
 
-    # Define local class with its own __call__ method
+    # A local subclass gives `__call__` annotations of its own, without
+    # affecting other partial objects.
     class AnnotatedPartial(AnnotatedPartialBase):
         def __call__(self, *args, **kwargs) -> Any:
             return super().__call__(*args, **kwargs)
 
-    # Wrap function
     wrapped = AnnotatedPartial(func, *args, **kwargs)
 
-    # Assign annotations to __call__ method
     def __annotations__(self: Callable) -> Dict[str, Any]:
         return wrapped.__annotations__
 

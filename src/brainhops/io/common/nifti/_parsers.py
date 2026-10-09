@@ -42,15 +42,9 @@ from ._header import (
 
 
 class NiftiParser(DataModelBase, BinaryFileParserWriter):
-    """
-    Base class for objects that are encoded by a NIfTI file.
-
-    This class is a base for `NiftiBasedImage` and `NiftiBasedTransformation`.
-    """
+    """Base class for objects stored as NIfTI files."""
 
     HINTS = ("nifti",)
-
-    # --- NIfTI API ----------------------------------------------------
 
     image: tx.Annotated[
         tx.Optional[nb.Nifti1Image],
@@ -83,20 +77,12 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @property
     def header(self) -> tx.Optional[nb.Nifti1Header]:
-        """
-        The NIfTI header associated with this object.
+        """The NIfTI header of the object.
 
-        If a header was explicitly set by the user (at construction or
-        later), this will be pointing to that header.
-
-        Otherwise, if the object was created from a NIfTI header, this
-        will be pointing to that header.
-
-        Otherwise, if the object was created from a NIfTI image, this
-        will be pointing to the header of that image.
+        A header set explicitly takes precedence over the header of the image.
 
         !!! example
-        ```python
+            ```python
             import nibabel as nb
             image1 = nb.load("image1.nii")
             image2 = nb.load("image2.nii")
@@ -106,7 +92,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
             obj = NiftiParser(image1)
             obj.header = image2.header
             obj.header                                        # `image2.header`
-        ```
+            ```
         """
         if getattr(self, "_header", None) is not None:
             return self._header
@@ -120,20 +106,16 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @property
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, read lazily from `image` and cached, unless
-        it has been set explicitly.
+        """The image data, read lazily from the image and cached.
 
-        The axes that the intent code marks as irrelevant, such as a
-        singleton axis before a vector's components, are dropped.
+        Axes left unnamed by [`_nifti_to_axes`][] are dropped.
         """
         if getattr(self, "_data", None) is not None:
             return self._data
 
         if self.image is not None:
-            # Get the nibabel array
             data = get_array_backend().asarray(self.image.dataobj)
 
-            # Drop irrelevant axes as specified by the intent code.
             slicer = [
                 slice(None) if axis.name is not None else 0
                 for axis in _nifti_to_axes(self.header)
@@ -149,11 +131,10 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
-        """The voxel coordinate system, derived from `header`, unless it
-        has been set explicitly.
+        """The voxel coordinate system, built from the header unless set.
 
-        The axes that the intent code marks as irrelevant are dropped.
-        `None` when there is no header to derive it from.
+        Axes left unnamed by [`_nifti_to_axes`][] are dropped. Without a
+        header, the system is `None`.
         """
         if getattr(self, "_system", None) is not None:
             return self._system
@@ -161,32 +142,31 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         if self.header is None:
             return None
 
-        # Drop irrelevant axes, as specified by the intent code. The axes
-        # already count samples, as the axes of a voxel space do.
         axes = [
             axis
             for axis in _nifti_to_axes(self.header)
             if axis.name is not None
         ]
-        # A NIfTI array is F-ordered: the first axis changes fastest.
+        # In F order, the first axis changes fastest.
         return CoordinateSystem(axes=axes, name="voxel", order="F")
 
     @system.setter
     def system(self, value: tx.Optional[CoordinateSystem]) -> None:
         self._system = value
 
-    # --- BinaryFileParser API -----------------------------------------
-
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
-        """
-        Build the object from a NIfTI file.
+        """Read an object from a NIfTI path or file object.
 
-        A local path is handed to `nibabel` by name, so that it owns the
-        file handle and can memory-map the voxels: its array proxy reads
-        them lazily, long after the call returns. A remote path is opened
-        through its own backend instead, since `nibabel` would take its
-        name for a local file. See `_load_nifti`.
+        A local path is handed to nibabel by name, so that nibabel owns the
+        file handle and can memory-map the voxels. A remote path is opened
+        through the path backend instead. The keyword arguments are passed to
+        nibabel.
+
+        Raises
+        ------
+        ParserExistsError
+            If the path does not exist.
         """
         if isinstance(file, str):
             file = path.Path(file)
@@ -198,8 +178,11 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
-        """Build the object from an open NIfTI file object, image data
-        included when the stream allows reading it."""
+        """Read an object from an open NIfTI file object.
+
+        The image data are read when the stream allows it; otherwise only the
+        header is read.
+        """
         with preserve_position(fileobj):
             try:
                 obj = _nifti_from_stream(fileobj, **kwargs)
@@ -211,28 +194,30 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_bytes(cls, data: bytes, **kwargs) -> tx.Self:
-        """Build the object from bytes in NIfTI format."""
+        """Read an object from the bytes of a NIfTI file."""
         return cls.from_fileobj(BytesIO(data), **kwargs)
 
     @classmethod
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
-        """Build the object from an already-loaded `nibabel` header or
-        image."""
+        """Build an object from a loaded nibabel header or image.
+
+        Raises
+        ------
+        TypeError
+            If `nifti` is neither a header nor an image.
+        """
         if isinstance(nifti, nb.Nifti1Header):
             return cls(header=nifti, **kwargs)
         if isinstance(nifti, nb.Nifti1Image):
             return cls(image=nifti, header=nifti.header, **kwargs)
         raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")
 
-    # --- FileParserWriter API -----------------------------------------
-
     def to_nibabel(self, **kwargs) -> nb.Nifti1Image:
-        """
-        Build the `nibabel` image that encodes this object.
+        """Return the nibabel image that encodes this object.
 
-        Each concrete NIfTI format overrides this method to describe how
-        its own contents map onto a NIfTI image. The other writer methods
-        are defined in terms of this one.
+        Each concrete format overrides this method, on which the other writer
+        methods rely. The base implementation raises
+        `WriterNotImplementedError`.
         """
         cls = type(self)
         raise WriterNotImplementedError(
@@ -240,13 +225,10 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         )
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """
-        Write the object to a NIfTI file.
+        """Write the object to a path or a file object.
 
-        A path is written gzipped when its name ends in `.gz`: a local
-        path is handed to `nibabel` by name, and a remote one is opened
-        through its own backend. See `_save_nifti`. A file-like object is
-        written the uncompressed NIfTI bytes.
+        A path is compressed when its name ends with `.gz`. A file object
+        receives an uncompressed NIfTI file.
         """
         if isinstance(file, str):
             file = path.Path(file)
@@ -256,15 +238,12 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         return super().to_file(file, **kwargs)
 
     def to_bytes(self, **kwargs) -> bytes:
-        """Return the uncompressed NIfTI-1 encoding of the object."""
+        """Return the uncompressed NIfTI encoding of the object."""
         return self.to_nibabel(**kwargs).to_bytes()
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the uncompressed NIfTI-1 encoding of the object to an
-        open file object."""
+        """Write the uncompressed NIfTI encoding of the object to a stream."""
         file.write(self.to_bytes(**kwargs))
-
-    # --- BinaryFileSniffer API ----------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -275,11 +254,11 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         version: tx.Optional[int] = None,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that an open file object
-        holds a NIfTI-1 or NIfTI-2 header, or a header of the given
-        `version` when one is passed."""
+        """Return the confidence that a stream holds a NIfTI header.
 
-        # --- If nifti version not provided, try both NIfTI-1 and NIfTI-2
+        Both NIfTI-1 and NIfTI-2 are tried unless `version` is given.
+        """
+
         if version is None:
             best = Confidence.NO
             for version in (1, 2):
@@ -297,7 +276,6 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
                 raise error("Content is not a valid NIfTI-1 or NIfTI-2 file")
             return Confidence.NO
 
-        # --- Version hint is provided, use appropriate nibabel class
         NiftiHeader = {1: nb.Nifti1Header, 2: nb.Nifti2Header}[version]
         kwargs["error"] = error
         base_error = None
@@ -311,9 +289,8 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
                     nbkwargs["check"] = kwargs.pop("check")
                 else:
                     nbkwargs["check"] = False
-                # Check the magic before asking `nibabel`, which parses
-                # anything it is given -- and warns about the garbage
-                # it finds in a file that is not a NIfTI at all.
+                # Check the magic number first: nibabel parses anything and
+                # warns about the garbage in a file that is not NIfTI.
                 start = _tell(f)
                 head = f.read(_NIFTI_HEADER_SIZES[version])
                 if not _has_nifti_magic(head, version):
@@ -322,8 +299,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
                     f.seek(start)
                 else:
                     f = BytesIO(head)
-                # A probe must not leak warnings: actual reads still
-                # surface what `nibabel` has to say.
+                # Real reads still show the warnings of nibabel.
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     obj = NiftiHeader.from_fileobj(f, **nbkwargs)
@@ -335,7 +311,6 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         if result:
             return result
 
-        # Cannot parse this content -> return False or error
         if error:
             if error is True:
                 error = SnifferContentError
@@ -353,12 +328,10 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that an already-loaded
-        `nibabel` header or image matches this format.
+        """Return the confidence that a nibabel object matches this format.
 
-        The header's magic number is checked first. A header that passes
-        is then scored for how well it matches this particular format,
-        as opposed to another kind of NIfTI-based format.
+        The header size is checked first, and a valid header is then scored
+        with [`_score_nibabel`][]. A mismatch returns `False`.
         """
         if isinstance(nifti, nb.Nifti1Image):
             return cls.sniff_nibabel(nifti.header, error=error, **kwargs)
@@ -369,8 +342,6 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         else:
             result = False
         if result:
-            # The magic number only says "this is a NIfTI". How *well* it
-            # matches this particular class is for the subclass to say.
             return cls._score_nibabel(nifti)
         if error:
             if error is True:
@@ -383,32 +354,24 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
-        """
-        How well a valid NIfTI header matches *this* class.
+        """Return how well a valid NIfTI header matches this class.
 
-        Called once the magic number has been checked, so the answer is
-        never "not a NIfTI" -- it is "how likely is this NIfTI to be the
-        kind of object I build". A displacement field and a plain image
-        live in the same container and can only be told apart by the
-        intent code, or failing that the data shape.
+        The header has already passed the magic check, so the score expresses
+        how likely the file holds the kind of object that this class builds. A
+        displacement field and a plain image share the container and are told
+        apart by the intent code, or else by the data shape.
 
-        !!! note "Why this is a separate, overridable method"
-            It is the one piece of sniffing that differs per format, so
-            it is a hook rather than inline code: `sniff_nibabel` keeps
-            the part every NIfTI format shares -- validating the
-            container -- and delegates the rest. Overriding
-            `sniff_nibabel` directly would make each format re-implement
-            the magic-number check, and get it subtly wrong.
-
-            It is private because it is an extension point for formats in
-            this package, not something callers invoke: ask `sniff` which
-            format matches, or a concrete format how confident it is.
+        !!! note "Why this is a separate method"
+            [`sniff_nibabel`][] keeps the validation of the container and
+            delegates only the part that depends on the format. Overriding
+            `sniff_nibabel` would make each format re-implement the magic
+            check.
 
         Returns
         -------
-        score : float
-            Confidence in `[0, 1]`; `Confidence.MAYBE` by default,
-            meaning "readable, nothing more".
+        float
+            A score in `[0, 1]`; the base implementation returns
+            `Confidence.MAYBE`.
         """
         return Confidence.MAYBE
 
@@ -419,7 +382,6 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold a NIfTI-1 or
-        NIfTI-2 header."""
+        """Return the confidence that bytes hold a NIfTI header."""
         kwargs["error"] = error
         return cls.sniff_fileobj(BytesIO(data), **kwargs)

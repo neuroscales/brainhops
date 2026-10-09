@@ -25,32 +25,29 @@ from brainhops._core.streams import open_compressed
 # before. A remote path is opened through its own backend, and `nibabel`
 # is handed the open file.
 
-# The protocols of a path on the local file system, as `bagof.paths`
-# reports them: none, `file://` and `local://`.
+# Protocols that bagof.paths reports for local files.
 _LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
 
 
 def _is_local(file: path.FilenameLike) -> bool:
-    """Whether a path names a file that `nibabel` can open by name."""
+    """Return whether nibabel can open a path by name."""
     return path.Path(file).protocol.lower() in _LOCAL_PROTOCOLS
 
 
-# A NIfTI image or header class, by NIfTI version.
 _NIFTI_IMAGES = {1: nb.Nifti1Image, 2: nb.Nifti2Image}
 _NIFTI_HEADERS = {1: nb.Nifti1Header, 2: nb.Nifti2Header}
 
 
 def _tell(fileobj: tx.IO) -> tx.Optional[int]:
-    """The position of a stream, or `None` if it cannot seek back."""
+    """Return the stream position, or `None` if the stream cannot seek."""
     try:
         return fileobj.tell() if fileobj.seekable() else None
     except Exception:
         return None
 
 
-# The size of the header, and where and what its magic string is, by
-# NIfTI version. NIfTI-1 keeps it near the end of its header, NIfTI-2
-# right after `sizeof_hdr`, followed by a DOS/Unix line-ending check.
+# The NIfTI-1 magic sits near the end of the header, and the NIfTI-2 magic
+# right after `sizeof_hdr`, followed by a line-ending check.
 _NIFTI_HEADER_SIZES = {1: 348, 2: 540}
 _NIFTI_MAGICS = {
     1: (344, (b"n+1\0", b"ni1\0")),
@@ -59,12 +56,8 @@ _NIFTI_MAGICS = {
 
 
 def _has_nifti_magic(head: bytes, version: int) -> bool:
-    """
-    Whether the first bytes of a (decompressed) file hold the header
-    size and magic string of a NIfTI header of the given version.
-
-    This is cheap and exact, so a file that is not a NIfTI is turned
-    away before `nibabel` is asked to make sense of it.
+    """Return whether a decompressed header starts with the header size and
+    magic of a NIfTI version.
     """
     size = _NIFTI_HEADER_SIZES[version]
     if len(head) < size:
@@ -77,31 +70,26 @@ def _has_nifti_magic(head: bytes, version: int) -> bool:
 
 
 def _nifti_version(fileobj: tx.BinaryIO) -> int:
-    """
-    The NIfTI version of an open, possibly gzipped, file object: 2 if
-    its header size is that of NIfTI-2, else 1.
+    """Return the NIfTI version of a possibly compressed stream.
 
-    The stream is left where it was. One that cannot seek back is not
-    peeked at, and taken for NIfTI-1.
+    The stream position is preserved. A stream that cannot seek is taken to be
+    NIfTI-1.
     """
     start = _tell(fileobj)
     if start is None:
         return 1
     head = open_compressed(fileobj).read(4)
     fileobj.seek(start)
-    # `sizeof_hdr`, in either byte order.
+    # `sizeof_hdr` in either byte order.
     sizes = {int.from_bytes(head, order) for order in ("little", "big")}
     return 2 if 540 in sizes else 1
 
 
 def _accepted(func: tx.Callable, kwargs: tx.Mapping[str, tx.Any]) -> dict:
-    """
-    The keyword arguments, of `kwargs`, that `func` accepts: all of them
-    if it takes `**kwargs`.
+    """Return the keyword arguments that `func` accepts.
 
-    The options for reading a NIfTI file differ with how it is read: a
-    file `nibabel` opens by name takes `mmap` and `keep_file_open`, a
-    stream does not. Each `nibabel` call is handed the ones it knows.
+    Files opened by name accept `mmap` and `keep_file_open`, whereas streams do
+    not, so each nibabel call receives only the options it knows.
     """
     Parameter = inspect.Parameter
     try:
@@ -118,11 +106,10 @@ def _accepted(func: tx.Callable, kwargs: tx.Mapping[str, tx.Any]) -> dict:
 def _image_from_stream(
     image_class: type, fileobj: tx.BinaryIO, **kwargs
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """
-    Build a NIfTI image from an open, uncompressed file object.
+    """Read a NIfTI image from an uncompressed stream.
 
-    `from_stream` arrived in nibabel 5.0; before, the stream goes in a
-    file map, as `nibabel` 4's own `from_bytes` does.
+    Before nibabel 5.0, which added `from_stream`, the stream is passed in a
+    file map.
     """
     if hasattr(image_class, "from_stream"):
         read = image_class.from_stream
@@ -135,11 +122,10 @@ def _image_from_stream(
 def _image_to_stream(
     image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], fileobj: tx.BinaryIO
 ) -> None:
-    """
-    Write a NIfTI image to an open file object, uncompressed.
+    """Write a NIfTI image to an uncompressed stream.
 
-    `to_stream` arrived in nibabel 5.0; before, the stream goes in a file
-    map, as `nibabel` 4's own `to_bytes` does.
+    Before nibabel 5.0, which added `to_stream`, the stream is passed in a file
+    map.
     """
     if hasattr(image, "to_stream"):
         image.to_stream(fileobj)
@@ -152,19 +138,11 @@ def _image_to_stream(
 def _nifti_from_stream(
     fileobj: tx.BinaryIO, **kwargs
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """
-    Build a NIfTI-1 or NIfTI-2 image from an open, possibly gzipped, file
-    object.
+    """Read a NIfTI-1 or NIfTI-2 image from a possibly compressed stream.
 
-    A stream has no name for `nibabel` to tell a `.gz` from, so the
-    compression is sniffed from its magic bytes. The image's array proxy
-    reads the voxels from `fileobj` lazily, so the caller keeps it open
-    for as long as they may be read. On failure, the stream is put back
-    where it was.
-
-    `nibabel` cannot memory-map a stream: given `mmap`, it falls back to
-    reading the voxels, and `keep_file_open` has no effect on an open
-    file object.
+    The voxels are read lazily, so the stream must stay open while they may be
+    accessed. A stream cannot be memory-mapped. On failure, the stream position
+    is restored.
     """
     image_class = _NIFTI_IMAGES[_nifti_version(fileobj)]
     start = _tell(fileobj)
@@ -181,16 +159,11 @@ def _nifti_from_stream(
 def _load_nifti(
     file: path.FilenameLike, **kwargs
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """
-    Load a NIfTI image from a path, local or remote.
+    """Load a NIfTI image from a local or remote path.
 
-    A local path is handed to `nibabel`'s `from_filename`, which
-    memory-maps the voxels and reads them only when asked. A remote path
-    is opened through its own backend (universal-pathlib or
-    cloudpathlib, through `bagof.paths`) and read into memory: the array
-    proxy reads long after this returns, when the remote stream would be
-    closed, and reading the voxels fetches them all anyway. Each is
-    handed the `kwargs` it accepts; see `_nifti_from_stream`.
+    A local file is opened by nibabel and memory-mapped. A remote file is read
+    into memory, because the voxels would otherwise be read after the stream is
+    closed.
     """
     if _is_local(file):
         filename = str(path.Path(file))
@@ -206,8 +179,7 @@ def _load_nifti(
 def _load_nifti_header(
     file: path.FilenameLike,
 ) -> tx.Union[nb.Nifti1Header, nb.Nifti2Header]:
-    """Read the header of a NIfTI file at a path, local or remote,
-    without reading its voxels."""
+    """Read the header of a NIfTI file without reading the voxels."""
     if _is_local(file):
         return _load_nifti(file).header
     with path.Path(file).open("rb") as f:
@@ -218,21 +190,16 @@ def _load_nifti_header(
 def _save_nifti(
     image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], file: path.FilenameLike
 ) -> None:
-    """
-    Write a NIfTI image to a path, local or remote, gzipped when its name
-    ends in `.gz`.
+    """Write a NIfTI image to a local or remote path.
 
-    A local path is handed to `nibabel`'s `to_filename`, which picks the
-    compression from the extension. A remote path is opened through its
-    own backend, and the image written to the stream.
+    The file is compressed when its name ends with `.gz`.
     """
     if _is_local(file):
         image.to_filename(str(path.Path(file)))
         return
-    # The name is read from the URL's text: a backend may not know it,
-    # and a query (`?token=...`) is not part of it. A stream is written
-    # what it is given, so compression is ours to add. `open_compressed`
-    # only reads (`indexed_gzip` cannot write), so this is `gzip`'s.
+    # The name is taken from the URL, because the backend may not know it and a
+    # query is not part of it. `open_compressed` only reads, so gzip compresses
+    # here.
     compress = urlsplit(str(file)).path.lower().endswith(".gz")
     with path.Path(file).open("wb") as f:
         if compress:
@@ -243,12 +210,10 @@ def _save_nifti(
 
 
 def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
-    """
-    Resolve a `like` template to the NIfTI header to copy fields from.
+    """Return the header to copy from a `like` template, or `None`.
 
-    The template may be a path to a NIfTI file, a `nibabel` image or
-    header, or an object built by this package that carries a header. An
-    object with no readable header resolves to `None`.
+    The template is a nibabel header or image, an object with a header, or the
+    path of a NIfTI file.
     """
     if like is None:
         return None

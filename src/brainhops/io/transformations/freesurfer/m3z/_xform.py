@@ -1,25 +1,16 @@
 __all__ = ["M3zFormat", "M3zParser", "M3zMorph"]
 
-# stdlib
 import zlib
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
-
-# externals
 from bagof.magic import HIDE_IF_NONE, Magic, field, replace
 
-# core
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
-
-# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
-
-# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
@@ -35,7 +26,6 @@ from brainhops.io.transformations.base.fields import (
     homogeneous_matrix,
 )
 
-# locals
 from .._formats import FreesurferTransformationFormat
 from ._struct import (
     GCAM_RAS,
@@ -48,13 +38,12 @@ from ._struct import (
     write_m3z,
 )
 
-# Enough compressed bytes to hold the 24-byte header of the
-# decompressed stream.
+# Enough compressed bytes to hold the 24-byte header once decompressed.
 _SNIFF_SIZE = 1024
 
 
 class M3zFormat(FreesurferTransformationFormat):
-    """A non-linear transformation stored in a FreeSurfer morph file."""
+    """Marker of non-linear transformations stored in a FreeSurfer morph."""
 
     HINTS = ("m3z",)
 
@@ -65,19 +54,16 @@ class M3zParser(
     repr=HIDE_IF_NONE,
     eq=False,
 ):
-    """Reads and writes the raw content of a FreeSurfer morph file.
+    """Reader and writer of the raw content of a morph file.
 
-    It compares by identity (`eq=False`), as its struct holds arrays. The
-    morph built on it is a transformation, which compares by identity
-    too, as every transformation does.
+    The parser compares by identity, since its struct holds arrays.
     """
 
     struct: tx.Optional[M3zStruct] = field(default=None, repr=False)
-    """The raw content of the file, every node and every tag (see
-    [`M3zStruct`][brainhops.io.transformations.freesurfer.m3z.M3zStruct]
-    for its members)."""
+    """The raw content of the file, every node and every tag.
 
-    # --- sniff --------------------------------------------------------
+    See [`M3zStruct`][].
+    """
 
     @classmethod
     def sniff_fileobj(
@@ -88,8 +74,8 @@ class M3zParser(
     ) -> float:
         """Score an open binary file from its first bytes only.
 
-        The base class reads the whole file, and a morph is large
-        (tens of megabytes) while its header is 24 bytes."""
+        A morph weighs tens of megabytes, but its header only 24 bytes.
+        """
         with preserve_position(file):
             head = file.read(_SNIFF_SIZE)
         return cls.sniff_content(head, error=error, **kwargs)
@@ -101,8 +87,11 @@ class M3zParser(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score bytes, gzipped or not: a morph starts with the version
-        `1.0`, then a positive shape and spacing (see `read_header`)."""
+        """Score bytes, gzipped or not.
+
+        A morph starts with the version `1.0`, followed by a positive shape and
+        spacing (see `read_header`).
+        """
         head = bytes(content)
         if is_gzip(head):
             head = _gunzip_head(head)
@@ -114,44 +103,36 @@ class M3zParser(
             raise error("Not a FreeSurfer morph (m3z) file.")
         return Confidence.NO
 
-    # --- from ---------------------------------------------------------
-
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        """Build the object from the bytes of a `.m3z` (gzipped) or
-        `.m3d` (plain) file."""
+        """Build a parser from the bytes of a `.m3z` or `.m3d` file."""
         return cls(struct=read_m3z(content), **kwargs)
 
     @classmethod
     def from_struct(cls, struct: M3zStruct, **kwargs) -> tx.Self:
-        """Build the object from the raw content of a morph."""
+        """Build a parser from the raw content of a morph."""
         return cls(struct=struct, **kwargs)
 
-    # --- to -----------------------------------------------------------
-
     def to_struct(self, **kwargs) -> M3zStruct:
-        """The raw content that encodes this object."""
+        """Return the raw content that encodes this object."""
         if self.struct is None:
             raise WriterError("This morph has no content to write.")
         return self.struct
 
     def to_bytes(self, compress: bool = True, **kwargs) -> bytes:
-        """
-        The content of the morph file, gzipped (`.m3z`) unless
-        `compress=False` (`.m3d`).
+        """Return the content of a morph file.
 
-        Other keyword arguments go to `to_struct`.
+        The content is gzipped (`.m3z`) unless `compress=False` (`.m3d`). Other
+        keyword arguments go to `to_struct`.
         """
         return write_m3z(self.to_struct(**kwargs), compress=compress)
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """
-        Write the morph to a file, gzipped unless its name ends in `.m3d`
-        (FreeSurfer gzips a morph whose name contains `.m3z`).
+        """Write the morph to a file.
 
-        The content is built before the file is opened, so a
-        transformation that the format cannot hold is refused without
-        creating or truncating the file.
+        The file is gzipped unless its name ends in `.m3d`, as in FreeSurfer.
+        The content is built first, so an unrepresentable transformation leaves
+        the file untouched.
         """
         filename = path.Path(filename)
         kwargs.setdefault("compress", not str(filename).endswith(".m3d"))
@@ -167,50 +148,39 @@ class M3zMorph(
     _xforms.ImmutableSequence,
     WritableFileBasedTransformation,
 ):
-    """
-    A non-linear transformation stored in a FreeSurfer morph (`.m3z`).
+    """Non-linear transformation stored in a FreeSurfer morph.
 
-    It maps atlas (target) scanner RAS to source scanner RAS, as
-    `mri_vol2vol --m3z` applies it: the source image is resampled onto
-    the atlas grid, pulled through the field. It is the
+    The morph maps atlas (target) scanner RAS to source scanner RAS, as
+    `mri_vol2vol --m3z` applies it to pull the source onto the atlas grid. It
+    is the
     [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]
     of
 
-    1. [`RASToVoxel`][brainhops.io.transformations.base.affines.RASToVoxel]:
-       atlas RAS to the voxels of the node grid;
-    2. a
-       [`CoordinatesField`][brainhops.datamodel.transformations.CoordinatesField]:
-       the position of each node in source voxels;
-    3. [`VoxelToRAS`][brainhops.io.transformations.base.affines.VoxelToRAS]:
-       source voxels to source RAS.
+    1. a [`RASToVoxel`][], from atlas RAS to the voxels of the node grid; 2. a
+    [`CoordinatesField`][brainhops.datamodel.transformations.CoordinatesField]
+       holding the position of each node in source voxels;
+    3. a [`VoxelToRAS`][], from source voxels to source RAS.
 
-    A morph whose positions are in RAS (`GCAM_RAS`) is the sequence of
-    the first step and a
-    [`RASCoordinatesField`][brainhops.io.transformations.base.fields.RASCoordinatesField].
+    With RAS positions (`GCAM_RAS`), the first step is followed by a
+    [`RASCoordinatesField`][] instead.
 
-    The raw content -- the spacing, the geometries (and voxel-to-RAS
-    matrices) of both volumes, original positions, GCA node indices,
-    labels, the linear transform -- stays in [`struct`][.struct], an
-    [`M3zStruct`][brainhops.io.transformations.freesurfer.m3z.M3zStruct]
-    whose members can be queried, e.g. `morph.struct.spacing`,
-    `morph.struct.atlas_geometry.vox2ras` or `morph.struct.xform.matrix`.
+    The raw content of the file (spacing, geometries, original positions,
+    GCA node indices, labels and linear transform) stays in [`struct`][], an
+    [`M3zStruct`][], for example `morph.struct.atlas_geometry.vox2ras`.
 
     !!! note "What is written"
-        A morph read from a file, whose chain has not been assigned, is
-        written back as it was read. One whose `transformations` were
-        assigned -- including one built from scratch -- is written from
-        them (see [`to_struct`][.to_struct]).
+        A morph whose chain was not assigned is written back as it was read.
+        One whose `transformations` were assigned, including one built from
+        scratch, is written from them (see [`to_struct`][]).
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
 
-    # --- chain --------------------------------------------------------
-
     @property
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
-        """The chain of transformations, in the order they are applied.
+        """The chain, in the order of application.
 
-        It is derived from `struct` unless it has been assigned.
+        The chain is derived from `struct` unless it was assigned.
         """
         explicit = getattr(self, "_transformations", None)
         if explicit is not None:
@@ -232,7 +202,7 @@ class M3zMorph(
 
     def _build_chain(self) -> tx.Tuple[_xforms.Transformation, ...]:
         struct = self.struct
-        # Node `n` is atlas voxel `n * spacing` (`GCAMsampleMorph`).
+        # Node n is atlas voxel n * spacing (GCAMsampleMorph).
         scale = np.diag([float(struct.spacing)] * 3 + [1.0])
         node2ras = struct.atlas_geometry.vox2ras @ scale
         ras2node = RASToVoxel(matrix=np.linalg.inv(node2ras)[:3])
@@ -250,8 +220,6 @@ class M3zMorph(
             VoxelToRAS(matrix=struct.image_geometry.vox2ras[:3]),
         )
 
-    # --- to -----------------------------------------------------------
-
     def to_struct(
         self,
         spacing: tx.Optional[int] = None,
@@ -259,35 +227,32 @@ class M3zMorph(
         atlas_shape: tx.Optional[tx.Sequence[int]] = None,
         **kwargs,
     ) -> M3zStruct:
-        """
-        The raw content that encodes this morph.
+        """Return the raw content that encodes this morph.
 
-        A morph whose chain has not been assigned is its `struct`. One
-        whose chain was assigned must hold, as the reader builds it,
-        either three transformations -- atlas RAS to node voxels (an
-        affine), a field of source voxel coordinates, source voxels to
-        RAS (an affine) -- or two -- the affine and a field of source
-        RAS coordinates. The geometries of both volumes are rebuilt from
-        the affines; what the chain does not say is taken from `struct`
-        when it has one, and from the arguments otherwise.
+        Without an assigned chain, the result is `struct`. An assigned chain
+        must have the shape that the reader builds: three transformations
+        (atlas RAS to node voxels, a field of source voxel coordinates, source
+        voxels to RAS), or two (the first affine and a field of source RAS
+        coordinates). Both geometries are rebuilt from the affines, and
+        whatever the chain does not describe comes from `struct` if there is
+        one, or from the arguments.
 
         Parameters
         ----------
         spacing : int, optional
-            The distance between nodes in atlas voxels. By default, that
-            of `struct`, or 1.
+            Atlas voxels between nodes. Defaults to that of `struct`, or 1.
         image_shape : (int, int, int), optional
-            The shape of the source image, which its RAS centre depends
-            on. By default, that of `struct`. Required when there is no
-            `struct` and the field is in voxels.
+            Shape of the source image, on which its RAS centre depends.
+            Defaults to that of `struct`; required without a struct for a voxel
+            field.
         atlas_shape : (int, int, int), optional
-            The shape of the atlas. By default, that of `struct`, or the
-            shape of the node grid times the spacing.
+            Shape of the atlas. Defaults to that of `struct`, or to the node
+            grid shape times `spacing`.
 
         Raises
         ------
         UnrepresentableTransformationError
-            If the chain does not have one of these two shapes.
+            If the chain has neither of the two shapes.
         WriterError
             If the shape of the source image is needed and unknown.
         """
@@ -307,7 +272,7 @@ class M3zMorph(
                 "coordinates, source voxels to RAS) or two (atlas RAS to "
                 "node voxels, a field of source RAS coordinates)."
             )
-        # A morph stores sampled positions.
+        # A morph stores sampled positions, not spline coefficients.
         positions = np.asarray(field.to(store="values").data, dtype=np.float32)
         if positions.ndim != 4 or positions.shape[-1] != 3:
             raise UnrepresentableTransformationError(
@@ -371,7 +336,7 @@ class M3zMorph(
 
 
 def _gunzip_head(content: bytes) -> bytes:
-    """Decompress the start of a gzip stream, as far as `_SNIFF_SIZE`."""
+    """Decompress the start of a gzip stream, up to `_SNIFF_SIZE` bytes."""
     try:
         stream = zlib.decompressobj(zlib.MAX_WBITS | 16)
         return stream.decompress(content, _SNIFF_SIZE)

@@ -42,28 +42,25 @@ from ._utils import (
 
 class MincParser(DataModelBase, BinaryFileParser):
     """
-    Base class for objects that are encoded by a MINC1 or MINC2 file.
+    The base class of objects encoded as MINC1 or MINC2 files.
 
-    It holds the dimensions of the volume ([`dimensions`][]), in the
-    order the file stores them (slowest first), and reads the voxels on
-    first access, scaled to real values, from the file it was loaded
-    from. The voxel coordinate system and the voxel-to-world matrix are
-    those of the array in F order, i.e. with the axes reversed, so that
-    the fastest-varying dimension comes first.
+    The object holds the dimensions as the file lists them, and reads the
+    voxels from the source file on first access. The coordinate system and
+    the voxel-to-world matrix are those of the Fortran-ordered array.
 
-    A concrete format sets `VERSION` (1 or 2) and is only recognised in
-    files of that version. A class with no version reads both, and
-    returns an object of the matching class among its `VARIANTS`.
+    A concrete format sets [`VERSION`][] and reads only that version. A
+    class without a version reads both, and returns an object of the
+    matching class among its [`VARIANTS`][].
     """
 
     HINTS = ("minc",)
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc",)
 
     VERSION: tx.ClassVar[tx.Optional[int]] = None
-    """The MINC version read by this class, or `None` for both."""
+    """The MINC version this class reads, or `None` for both."""
 
     VARIANTS: tx.ClassVar[tx.Tuple[type, ...]] = ()
-    """The classes that a class with no `VERSION` hands files to."""
+    """The classes to which a versionless class hands files."""
 
     dimensions: tx.Annotated[
         tx.Tuple[MincDimension, ...],
@@ -85,17 +82,14 @@ class MincParser(DataModelBase, BinaryFileParser):
         ),
     ] = None
 
-    # --- geometry -----------------------------------------------------
-
     @property
     def version(self) -> tx.Optional[int]:
-        """The MINC version of the file (1 or 2)."""
+        """The MINC version of the file, 1 or 2."""
         return self.VERSION
 
     @property
     def shape(self) -> tx.Optional[tx.Tuple[int, ...]]:
-        """The shape of the volume in F order (fastest dimension
-        first)."""
+        """The shape of the volume, in Fortran order (fastest first)."""
         if self.dimensions:
             return tuple(d.length for d in reversed(self.dimensions))
         data = getattr(self, "_data", None)
@@ -104,11 +98,10 @@ class MincParser(DataModelBase, BinaryFileParser):
     @property
     def vox2world(self) -> tx.Optional[np.ndarray]:
         """
-        The `(4, 4)` voxel-to-world (RAS) matrix of the F-ordered array.
+        The `(4, 4)` voxel-to-world (RAS) matrix of the Fortran-ordered array.
 
-        Its columns follow the spatial axes of [`system`][] (the
-        non-spatial ones, such as time, are skipped). It is `None` unless
-        the volume has the three spatial dimensions.
+        Non-spatial axes, such as time, are skipped. The matrix is `None`
+        unless the volume has all three spatial dimensions.
         """
         spatial = [d for d in reversed(self.dimensions) if d.is_spatial]
         if len(spatial) != 3:
@@ -119,12 +112,13 @@ class MincParser(DataModelBase, BinaryFileParser):
         matrix[:3, 3] = cosines @ [d.origin for d in spatial]
         return matrix
 
-    # --- datamodel ----------------------------------------------------
-
     @property
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The voxels in F order, scaled to real values, read on first
-        access and cached, unless set explicitly."""
+        """
+        The voxels in Fortran order, scaled to real values.
+
+        They are read on first access and cached, unless set explicitly.
+        """
         if getattr(self, "_data", None) is not None:
             return self._data
         if self._source is None or not self.dimensions:
@@ -139,8 +133,10 @@ class MincParser(DataModelBase, BinaryFileParser):
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
-        """The voxel coordinate system, in F order, derived from the
-        dimensions unless set explicitly."""
+        """
+        The voxel coordinate system in Fortran order, derived from the
+        dimensions unless set explicitly.
+        """
         if getattr(self, "_system", None) is not None:
             return self._system
         if not self.dimensions:
@@ -152,11 +148,9 @@ class MincParser(DataModelBase, BinaryFileParser):
     def system(self, value: tx.Optional[CoordinateSystem]) -> None:
         self._system = value
 
-    # --- variants -----------------------------------------------------
-
     @classmethod
     def _variant(cls, version: tx.Optional[int]) -> type:
-        """The class that reads a file of this version."""
+        """Return the class that reads a file of a given version."""
         if cls.VERSION is not None:
             if cls.VERSION == version:
                 return cls
@@ -168,8 +162,6 @@ class MincParser(DataModelBase, BinaryFileParser):
             f"{cls.__name__} does not read MINC{version or ''} files."
         )
 
-    # --- BinaryFileSniffer API ----------------------------------------
-
     @classmethod
     def sniff_filename(
         cls,
@@ -177,8 +169,11 @@ class MincParser(DataModelBase, BinaryFileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score a file by its content (a MINC2 file is opened by name,
-        so that only its header is read)."""
+        """
+        Score a file from its content.
+
+        A local MINC2 file is opened by name, so that only its header is read.
+        """
         if isinstance(filename, str):
             filename = path.Path(filename)
         if _is_local(filename) and path.exists(filename):
@@ -196,13 +191,12 @@ class MincParser(DataModelBase, BinaryFileParser):
         **kwargs,
     ) -> float:
         """
-        Score how confident the class is that an open file object holds
-        a MINC file of its version, from its content.
+        Return the confidence that an open file holds a MINC file of the
+        version of this class.
 
-        A MINC1 file is a NetCDF file (gzipped or not) whose header names
-        a MINC spatial dimension and an `image` variable; a NetCDF file
-        that does not is only weakly accepted. A MINC2 file is an HDF5
-        file with a `/minc-2.0` group.
+        A NetCDF file, gzipped or not, is certainly MINC1 when its header names
+        a spatial dimension and an `image` variable, and weakly accepted
+        otherwise. An HDF5 file is MINC2 when it has a `/minc-2.0` group.
         """
         score = Confidence.NO
         try:
@@ -229,29 +223,25 @@ class MincParser(DataModelBase, BinaryFileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold a MINC file
-        of its version."""
+        """Return the confidence that bytes hold a MINC file."""
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def _reads(cls, version: tx.Optional[int]) -> bool:
-        """Whether this class (or one of its variants) reads a version."""
+        """Tell whether this class, or one of its variants, reads a version."""
         if version is None:
             return False
         if cls.VERSION is not None:
             return cls.VERSION == version
         return any(v.VERSION == version for v in cls.VARIANTS)
 
-    # --- BinaryFileParser API -----------------------------------------
-
     @classmethod
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
         """
-        Build the object from a MINC file.
+        Build an object from a MINC file, reading only its header.
 
-        Only the header is read: the voxels are read from the file, by
-        name, on first access. A file that is not local, or that is
-        gzipped, is read into memory first.
+        The voxels are read from the file, by name, on first access. A file
+        that is not local, or that is gzipped, is read into memory first.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -266,22 +256,22 @@ class MincParser(DataModelBase, BinaryFileParser):
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """Build the object from an open MINC file object (gzipped or
-        not), which is read into memory."""
+        """
+        Build an object from an open MINC file, gzipped or not, by reading it
+        into memory.
+        """
         with preserve_position(file):
             content = open_compressed(file).read()
         return cls._from_source(bytes(content), **kwargs)
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        """Build the object from the bytes of a MINC file (gzipped or
-        not)."""
+        """Build an object from the bytes of a MINC file, gzipped or not."""
         return cls.from_fileobj(BytesIO(bytes(content)), **kwargs)
 
     @classmethod
     def _from_source(cls, source: _Source, **kwargs) -> tx.Self:
-        """Read the header of a MINC file, and keep where it came from to
-        read the voxels later."""
+        """Read the header, and keep the source to read the voxels later."""
         if isinstance(source, str):
             with open(source, "rb") as f:
                 head = f.read(8)

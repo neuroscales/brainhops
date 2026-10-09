@@ -1,10 +1,7 @@
-"""
-Tests for the MRtrix image format (`.mif`, `.mif.gz`, `.mih` + `.dat`).
+"""Tests for the MRtrix format (.mif, .mif.gz, and .mih with .dat).
 
-The fixtures are hand-crafted from the format's specification, with a
-reference encoder that is deliberately independent of the reader: it
-places each voxel at the byte offset MRtrix computes (`core/stride.h`),
-one voxel at a time, rather than through array views.
+The fixtures are encoded independently of the reader, by placing each voxel
+at the byte offset MRtrix computes (core/stride.h).
 """
 
 import gzip
@@ -40,12 +37,7 @@ from brainhops.io.images.mrtrix import MrtrixImage
 
 
 def _actual_strides(dim, layout):  # noqa: ANN001, ANN202
-    """
-    MRtrix's actual strides (in voxels) from a symbolic layout string.
-
-    The axis of rank 0 has stride 1, the one of rank 1 has stride
-    `size[rank 0]`, and so on; a `-` makes the stride negative.
-    """
+    """MRtrix voxel strides from a symbolic layout; '-' negates the stride."""
     entries = layout.split(",")
     ranks = [int(e.lstrip("+-")) for e in entries]
     signs = [-1 if e.startswith("-") else 1 for e in entries]
@@ -59,8 +51,7 @@ def _actual_strides(dim, layout):  # noqa: ANN001, ANN202
 
 
 def _reference_order(data, layout):  # noqa: ANN001, ANN202
-    """The values of `data` (indexed in header-axis order) in file order,
-    placed one by one at the offset MRtrix computes."""
+    """Values in file order, placed one by one at the MRtrix offset."""
     dim = data.shape
     strides = _actual_strides(dim, layout)
     start = sum(-s * (n - 1) for s, n in zip(strides, dim) if s < 0)
@@ -71,7 +62,6 @@ def _reference_order(data, layout):  # noqa: ANN001, ANN202
 
 
 def _reference_bytes(data, layout, fmt):  # noqa: ANN001, ANN202
-    """Encode with `struct`, one value at a time."""
     return b"".join(
         struct.pack(fmt, v.item() if hasattr(v, "item") else v)
         for v in _reference_order(data, layout)
@@ -79,8 +69,7 @@ def _reference_bytes(data, layout, fmt):  # noqa: ANN001, ANN202
 
 
 def _reference_bits(data, layout):  # noqa: ANN001, ANN202
-    """Pack booleans eight per byte, the first in the most significant
-    bit (`core/raw.h`: `BITMASK = 0x01 << 7`, `BITMASK >> i % 8`)."""
+    """Booleans, 8 per byte, the first in the MSB (core/raw.h)."""
     values = _reference_order(data, layout)
     out = bytearray((len(values) + 7) // 8)
     for i, v in enumerate(values):
@@ -105,7 +94,7 @@ def _header_text(dim, layout, datatype, extra="", file=None):  # noqa: ANN001, A
 
 
 def _single_file(head, payload, pad=0):  # noqa: ANN001, ANN202
-    """A `.mif`: header text, `file: . offset`, END, padding, data."""
+    """A .mif file: header, 'file: . offset', END, padding and data."""
     offset = 0
     while True:
         text = (head + f"file: . {offset}\nEND\n").encode()
@@ -293,18 +282,18 @@ def test_a_layout_is_undone_on_read(tmp_path, layout) -> None:  # noqa: ANN001
     assert isinstance(image, MrtrixImage)
     assert image.data.shape == DATA.shape
     assert np.array_equal(np.asarray(image.data), DATA)
-    # The data are a view of a memory map, not a copy.
+    # The data is a view of a memory map, not a copy.
     assert isinstance(image.data, np.memmap) or isinstance(
         image.data.base, np.memmap
     )
 
 
 def test_a_4d_volume_fastest_layout(tmp_path) -> None:  # noqa: ANN001
-    # MRtrix stores DWI volume-contiguous: `+1,+2,+3,+0`.
+    # MRtrix stores DWI data volume-contiguous.
     data = np.arange(3 * 2 * 2 * 5, dtype="<i2").reshape(3, 2, 2, 5)
     layout = "+1,+2,+3,+0"
     payload = _reference_bytes(data, layout, "<h")
-    # The first values in the file are the five volumes of voxel 0.
+    # The file starts with the five volumes of voxel 0.
     assert struct.unpack("<5h", payload[:10]) == tuple(data[0, 0, 0])
     head = _header_text(data.shape, layout, "Int16LE")
     source = _write(tmp_path / "dwi.mif", _single_file(head, payload))
@@ -476,11 +465,10 @@ def test_voxel_to_scanner_multiplies_by_the_voxel_size(tmp_path) -> None:  # noq
         "inferior-to-superior",
     ]
     for index in [(0, 0, 0), (1, 2, 3), (1, 0, 2)]:
-        # scanner = R @ (vox * index) + t, written out by hand.
         expected = ROTATED[:, :3] @ (np.multiply(vox, index)) + ROTATED[:, 3]
         got = scanner.homogeneous_matrix @ np.array([*index, 1.0])
         assert np.allclose(got[:3], expected)
-    # Voxel (1, 0, 0) is 2 mm along +y (anterior), (0, 1, 0) 3 mm along -x.
+    # Voxel (1, 0, 0) is 2 mm along +y, (0, 1, 0) is 3 mm along -x.
     assert np.allclose(
         scanner.homogeneous_matrix @ [1, 0, 0, 1], [10, -18, 5, 1]
     )
@@ -495,8 +483,8 @@ def test_voxel_to_scanner_multiplies_by_the_voxel_size(tmp_path) -> None:  # noq
 
 
 def test_non_unit_direction_cosines(tmp_path) -> None:  # noqa: ANN001
-    # MRtrix normalises the columns and moves their length into the voxel
-    # size, which leaves `transform @ diag(vox)` unchanged.
+    # MRtrix moves the column length into the voxel size, which leaves
+    # transform @ diag(vox) unchanged.
     transform = ROTATED.copy()
     transform[:, 0] *= 2.0
     image = MrtrixImage.load(_with_geometry(tmp_path, (1, 1, 1), transform))

@@ -1,16 +1,12 @@
-"""The geometry of an image: its sampling grid and voxel-to-world
-transformation."""
+"""Geometry of an image: its sampling grid and voxel-to-world mapping."""
 
 __all__ = ["Geometry"]
 
-# dependencies
 import typing_extensions as tx
 from bagof.magic import Factory, NoRepr
 
-# core
 from brainhops.backends import get_array_backend
 
-# internals
 from ._sugar import get_axes
 from .axes import Axis
 from .base import DataModelBase
@@ -35,11 +31,8 @@ def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
 
 
 class _GeometryFields(DataModelBase):
-    # --- attributes ---------------------------------------------------
-
-    # Named `_transformations`, the storage slot that `Sequence` declares
-    # and serves through its `transformations` property. The constructor
-    # argument is still `transformations=`.
+    # `Sequence` serves this slot as `transformations`, which is also the
+    # name of the constructor argument.
     _transformations: tx.Annotated[
         tx.Tuple[CartesianField, Transformation],
         tx.Doc("A cartesian field and a voxel-to-world transformation."),
@@ -65,21 +58,15 @@ class _GeometryFields(DataModelBase):
 
 
 class Geometry(_GeometryFields, ImmutableSequence):
-    """
-    A Cartesian field and a voxel-to-world transformation that, together,
-    define the geometry of an image.
+    """Geometry of an image.
 
-    The Cartesian field defines the grid onto which the image is defined.
-    The transformation maps the voxel coordinates to world coordinates.
+    A geometry pairs the Cartesian field on which the image is sampled
+    with the transformation from voxel to world coordinates.
     """
-
-    # --- properties ---------------------------------------------------
 
     @property
     def transformation(self) -> Transformation:
-        """
-        The voxel-to-world transformation that defines the image geometry.
-        """
+        """Voxel-to-world transformation, the second element of the pair."""
         return self.transformations[1]
 
     @transformation.setter
@@ -89,7 +76,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
 
     @property
     def grid(self) -> CartesianField:
-        """The Cartesian field that defines the grid of the image."""
+        """Cartesian field that defines the image grid, the first element."""
         return self.transformations[0]
 
     @grid.setter
@@ -99,7 +86,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the image data."""
+        """Shape of the image data, which is the shape of the grid."""
         return self.grid.shape
 
     @shape.setter
@@ -111,13 +98,10 @@ class Geometry(_GeometryFields, ImmutableSequence):
                 output=self.grid.output,
             )
 
-    # --- operators ----------------------------------------------------
-
     def __rmatmul__(self, other: Transformation) -> tx.Self:
-        """Compose `other` with this geometry's transformation.
+        """Return the geometry with `other` applied after its transformation.
 
-        Returns a new `Geometry` with the same grid, whose transformation
-        is the composition of `other` and this geometry's transformation.
+        The grid is kept, and the output system is that of `other`.
         """
         return Geometry(
             (self.grid, other @ self.transformation),
@@ -128,9 +112,10 @@ class Geometry(_GeometryFields, ImmutableSequence):
     def __getitem__(
         self, index: tx.Tuple[tx.Union[int, slice, None], ...]
     ) -> tx.Self:
-        """
-        This mimics indexing into the data array of an image and returns
-        the geometry of the resulting sub-image.
+        """Return the geometry of a sub-image.
+
+        The index is the one that would be applied to the image data: a
+        tuple of integers, slices, `None` and possibly an ellipsis.
         """
         sub2full, shape = _index2transform(index, self.shape, self.grid.input)
         return Geometry(
@@ -144,8 +129,6 @@ class Geometry(_GeometryFields, ImmutableSequence):
             )
         )
 
-    # --- methods ------------------------------------------------------
-
     def compute(
         self,
         mode: tx.Optional[ModeLike] = None,
@@ -153,19 +136,12 @@ class Geometry(_GeometryFields, ImmutableSequence):
         simplify: SimplifyLike = "analytic",
         factor: bool = False,
     ) -> tx.Self:
-        """
-        Compute the geometry by simplifying its transformation.
+        """Return the geometry with its transformation simplified.
 
-        A `Geometry` holds a grid and a voxel-to-world transformation. The
-        transformation part is computed, and the result is returned as a
-        `Geometry` with the same grid and the simplified transformation.
-        The grid is preserved, so the geometry keeps its grid-and-
-        transformation pair and the domain it defines is never lost.
+        The arguments are forwarded to the `compute` method of the
+        transformation. The grid is kept, so the sampling domain of the
+        image is never lost.
         """
-        # Every transformation exposes the same
-        # `compute(mode, *, simplify=..., factor=...)`, so the voxel-to-world
-        # part is computed uniformly whether it is a sequence or a single
-        # leaf. The grid is kept as is, so the sampling domain is never lost.
         flat = self._flattened()
         transformation = flat.transformation.compute(
             mode, simplify=simplify, factor=factor
@@ -176,14 +152,10 @@ class Geometry(_GeometryFields, ImmutableSequence):
             output=self.output,
         )
 
-    # --- helpers ------------------------------------------------------
-
     def _flattened(self) -> tx.Self:
-        # A `Geometry` keeps its (grid, transformation) pair. Only the
-        # transformation part is flattened, so the grid that restricts the
-        # domain is never merged into the surrounding sequence. The
-        # geometry's own input and output are propagated onto the grid and
-        # the transformation, matching `Sequence._flattened`.
+        # Only the transformation is flattened, never merging the grid into
+        # it. The systems of the geometry are propagated onto both parts, as
+        # in `Sequence._flattened`.
         grid, transformation = self.grid, self.transformation
         if grid.input is None and self.input is not None:
             grid = grid.to(input=self.input)
@@ -205,30 +177,30 @@ def _index2transform(
     shape: tx.Tuple[int, ...],
     system: tx.Optional[CoordinateSystem] = None,
 ) -> Transformation:
-    """
-    Convert an ND index into a transformation that maps the coordinates
-    of the indexed array to the coordinates of the original array.
+    """Convert an array index into an affine from sub-array to array.
 
     Parameters
     ----------
-    index : tuple[int | slice | Ellipsis | None, ...]
-        The index to convert.
-    shape : tuple[int, ...]
-        The shape of the original array.
+    index : tuple of int or slice or None
+        Tuple of integers, slices, `None` and at most one ellipsis, which
+        is appended when missing.
+    shape : tuple of int
+        Shape of the original array.
     system : CoordinateSystem, optional
-        The coordinate system of the original array. If provided, the
-        transformation will be returned in the same coordinate system.
+        Coordinate system of the original array.
 
     Returns
     -------
-    Transformation
-        The transformation that maps the coordinates of the indexed array to
-        the coordinates of the original array.
-    shape
-        The shape of the resulting array.
-    """
+    affine : Affine
+        Transformation from the indexed array to the original array.
+    shape : tuple of int
+        Shape of the indexed array.
 
-    # Convert ellipsis to slices
+    Raises
+    ------
+    ValueError
+        If an index element is invalid and the axes of `system` are known.
+    """
     if ... not in index:
         index = (*index, ...)
     index_ellipsis = index.index(...)
@@ -237,13 +209,9 @@ def _index2transform(
     fill = (slice(None),) * nb_implicit_dims
     index = index[:index_ellipsis] + fill + index[(index_ellipsis + 1) :]
 
-    # Compute number of output dimensions after indexing
-    # (some may be dropped, some may be added)
     nb_output_dims = sum(1 for idx in index if not isinstance(idx, int))
     nb_input_dims = len(shape)
 
-    # Compute output axes. An open system is closed to the number of axes
-    # of the array; one that states no axis at all gives none.
     input_axes: tx.Optional[AxisSequence] = get_axes(system)
     if input_axes == [...]:
         input_axes = None
@@ -255,42 +223,33 @@ def _index2transform(
         axis_walker = list(input_axes)
         for idx in index:
             if isinstance(idx, int):
-                # If it's an integer index, we need to remove this axis
                 axis_walker.pop(0)
             elif isinstance(idx, slice):
-                # If it's a slice, we keep the axis but adjust its properties
                 output_axes.append(axis_walker.pop(0))
             elif idx is None:
-                # If it's None, we are adding a new axis (dimension)
                 output_axes.append(Axis())
             else:
                 raise ValueError(f"Invalid index: {idx}")
 
-    # Create an affine matrix.
-    # Seed it with zeros and set every entry explicitly in the loop below.
-    # An identity seed would leave a spurious diagonal 1 in the row of a
-    # dropped (integer) axis and in the column of an inserted (`None`) axis,
-    # corrupting the coordinate mapping.
+    # Start from zeros and set every entry explicitly. An identity seed
+    # would leave a spurious 1 in the row of a dropped (integer) axis and
+    # in the column of an inserted (None) axis.
     backend = get_array_backend()
     affine = backend.zeros((nb_input_dims, nb_output_dims + 1))
 
-    # Iterate over each dimension and apply the index
     input_dim_walker = 0
     output_dim_walker = 0
     output_shape = []
     for idx in index:
         if idx is None:
-            # The new axis does not map to any input dimension
             output_dim_walker += 1
             output_shape.append(1)
 
         elif isinstance(idx, int):
-            # If it's an integer index, save it as an offset
             affine[input_dim_walker, -1] = idx
             input_dim_walker += 1
 
         elif isinstance(idx, slice):
-            # If it's a slice, we need to adjust the transformation accordingly
             shp = shape[input_dim_walker]
             step = idx.step or 1
             if idx.start is None:
@@ -302,9 +261,8 @@ def _index2transform(
             else:
                 stop = (shp + idx.stop) if idx.stop < 0 else idx.stop
 
-            # Compute output shape. The ceiling bias depends on the sign of
-            # the step: `step - 1` for a forward slice, `step + 1` for a
-            # reversed one, matching `len(range(start, stop, step))`.
+            # Round the length up, with a bias that depends on the sign of
+            # the step, to match `len(range(start, stop, step))`.
             if step > 0:
                 stop = min(stop, shp)
                 oshp = max(0, (stop - start + (step - 1)) // step)
@@ -313,16 +271,14 @@ def _index2transform(
                 oshp = max(0, (stop - start + (step + 1)) // step)
             output_shape.append(oshp)
 
-            # Fill affine matrix
             affine[input_dim_walker, output_dim_walker] = step
             affine[input_dim_walker, -1] = start
 
             input_dim_walker += 1
             output_dim_walker += 1
 
-    # Create the transformation object.
-    # NOTE: the input coordinate system is the sub-array, and the
-    # output coordinate system is the original (input) array.
+    # The input system is that of the indexed array and the output system
+    # is that of the original array.
     return Affine(
         matrix=affine,
         input=CoordinateSystem(axes=output_axes) if output_axes else None,

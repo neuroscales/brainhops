@@ -1,14 +1,10 @@
-# stdlib
 import importlib
 
-# dependencies
 import typing_extensions as tx
 
-# Every spelling that resolves to the same dependency: a short alias, the
-# qualified module name, and the availability flag. Named once so that
-# `__getattr__` and `__dir__` cannot drift apart.
+# The aliases of each dependency (short name, qualified module name and
+# HAS_ flag) are defined once, so that __getattr__ and __dir__ agree.
 
-# ---- I/O -------------------------------------------------------------
 _NIBABEL = ("nb", "nibabel", "HAS_NIBABEL")
 _H5PY = ("h5", "h5py", "HAS_H5PY")
 _ABCZARR = ("abczarr", "abczarr", "HAS_ABCZARR")
@@ -16,10 +12,8 @@ _PILLOW = ("pil", "PIL", "HAS_PILLOW")
 _TIFFFILE = ("tifffile", "tifffile", "HAS_TIFFFILE")
 _OPENSLIDE = ("openslide", "openslide", "HAS_OPENSLIDE")
 
-# ---- units -----------------------------------------------------------
 _PINT = ("pint", "pint", "HAS_PINT")
 
-# ---- backends --------------------------------------------------------
 _NUMPY = ("np", "numpy", "HAS_NUMPY")
 _CUPY = ("cp", "cupy", "HAS_CUPY")
 _DASK = ("dk", "dask", "HAS_DASK")
@@ -27,8 +21,7 @@ _DASK_ARRAY = ("da", "dask.array", "HAS_DASK_ARRAY")
 _SCIPY = ("sp", "scipy", "HAS_SCIPY")
 _SCIPY_NDIMAGE = ("npndi", "scipy.ndimage", "HAS_SCIPY_NDIMAGE")
 _CUPY_NDIMAGE = ("cpndi", "cupyx.scipy.ndimage", "HAS_CUPY_NDIMAGE")
-# The dask backend's ndimage functions are brainhops' own, and need
-# nothing but dask.
+# The dask ndimage module belongs to brainhops and only needs dask.
 _DASK_NDIMAGE = ("dkndi", "brainhops._core.dask_ndimage", "HAS_DASK_NDIMAGE")
 
 _LAZY_NAMES = (
@@ -127,12 +120,12 @@ def __getattr__(name: str) -> tx.Any:
 
 
 def has_abczarr_driver() -> bool:
-    """Whether abczarr is installed together with at least one backend driver.
+    """Return whether abczarr can be imported and has a Zarr driver.
 
-    abczarr reads and writes Zarr through a driver, one of zarr-python,
-    TensorStore, or zarrista. The core installs none of them, so abczarr
-    being importable is not enough on its own. This returns `True` only when
-    abczarr is present and at least one driver is available to it.
+    The core installation of abczarr includes no driver, so the package
+    being importable is not enough. At least one driver, such as
+    zarr-python, TensorStore or zarrista, must also be available. Any error
+    raised while listing the drivers is reported as `False`.
     """
     abczarr = __getattr__("abczarr")
     if abczarr is None:
@@ -144,13 +137,7 @@ def has_abczarr_driver() -> bool:
 
 
 def __dir__() -> tx.List[str]:
-    """
-    List the lazily importable names alongside the usual ones.
-
-    Without this, `dir()` and tab-completion show only what has already
-    been imported, so a dependency that nobody has touched yet looks as
-    though it does not exist.
-    """
+    """List the lazy names with the globals, for `dir` and tab completion."""
     return sorted(set(globals()) | set(_LAZY_NAMES))
 
 
@@ -161,36 +148,33 @@ def _lazy_import(
     shortname: tx.Optional[str] = None,
     uppername: tx.Optional[str] = None,
 ) -> tx.Any:
-    """
-    Lazily import a module and store it in the given namespace.
+    """Import a module lazily and record it in a namespace.
 
-    This function is used in this module's `__getattr__` to lazily
-    import optional dependencies.
+    The root package, the module under its short name, and a `HAS_<NAME>`
+    flag are stored in the namespace. A module that cannot be imported is
+    stored as `None` instead of raising an `ImportError`.
 
     Parameters
     ----------
-    namespace : dict
-        The namespace in which to store the imported module.
-        Generally, this is `globals()`.
+    namespace : dict of str to Any
+        Namespace in which the names are stored, usually `globals()`.
     query : str
-        The user query, which triggers the import.
-        This may be the full qualified name of the module, or a short alias,
-        or the name of a boolean constant that indicates whether the module
-        is available.
+        Name whose lookup triggered the import: the qualified module name,
+        its short alias, or the name of its flag.
     qualname : str, optional
-        The qualified name to use to import the module.
+        Name of the module to import. The default is `query`.
     shortname : str, optional
-        The short name to use to store the module in the namespace.
+        Name under which the module is stored. The default is the last
+        component of `qualname`, in lower case.
     uppername : str, optional
-        The name of the boolean constant to store in the namespace,
-        indicating whether the module is available.
+        Suffix of the flag name. The default is the components of
+        `qualname`, in upper case and joined by underscores.
 
     Returns
     -------
-    module : module
-        The queried module or constant.
-        The queried module is set to `None` if its import fails,
-        rather than raising an `ImportError`.
+    module or bool or None
+        The value stored under `query`, or the module itself when `query` is
+        a qualified submodule name that is not stored.
     """
     qualname = qualname or query
     qualnames = qualname.split(".")
@@ -199,10 +183,9 @@ def _lazy_import(
     shortname = shortname or leafname.lower()
     uppername = uppername or "_".join(map(str.upper, qualnames))
     uppername = "HAS_" + uppername
-    # Both must start as None: if the *root* import fails there is no
-    # `root` to record, and referencing an unassigned local would raise
-    # `UnboundLocalError` -- for exactly the uninstalled dependencies
-    # this module exists to report on.
+    # Both names start as None so that a failed import of the root package,
+    # the very case that this module reports, does not raise an
+    # UnboundLocalError.
     root = leaf = None
     try:
         for i in range(len(qualnames)):
@@ -211,17 +194,15 @@ def _lazy_import(
             if i == 0:
                 root = leaf
     except (ImportError, OSError):
-        # OSError: a binding whose native library is missing (OpenSlide).
+        # Bindings whose native library is missing, such as OpenSlide, raise an
+        # OSError.
         leaf = None
 
-    # Only the root and the caller's chosen short name are recorded. The
-    # leaf name alone is ambiguous: `scipy.ndimage` and
-    # `cupyx.scipy.ndimage` would both claim `ndimage`, and whichever
-    # imported last would win.
+    # The leaf name is not recorded because it is ambiguous: scipy.ndimage
+    # and cupyx.scipy.ndimage would collide.
     namespace[rootname] = root
     namespace[shortname] = leaf
     namespace[uppername] = leaf is not None
 
-    # The query is one of the names just written, except for a fully
-    # qualified submodule, which is the leaf itself.
+    # A qualified submodule name, such as dask.array, is not stored.
     return namespace[query] if query in namespace else leaf

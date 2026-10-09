@@ -1,4 +1,4 @@
-"""Readers and writers for SPM transformation formats."""
+"""Readers and writers for SPM transformations."""
 
 __all__ = ["y"]
 

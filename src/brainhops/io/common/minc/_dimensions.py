@@ -16,51 +16,47 @@ from ._constants import (
 
 class MincDimension(Magic, frozen=True):
     """
-    One dimension of a MINC volume, as its header describes it.
+    One dimension of a MINC volume, as the header describes it.
 
-    The attributes the file does not record are `None`; the properties
-    give MINC's defaults instead.
+    Unrecorded attributes are `None`; the properties give the defaults.
     """
 
     name: str
-    """The MINC name of the dimension (`"xspace"`, `"time"`, ...)."""
+    """The MINC name of the dimension, such as `"xspace"` or `"time"`."""
 
     length: int
-    """The number of samples along the dimension."""
+    """The number of samples."""
 
     start: tx.Optional[float] = None
-    """The world coordinate of the first sample, along the direction
-    cosines (MINC's default is 0)."""
+    """The world coordinate of the first sample."""
 
     step: tx.Optional[float] = None
-    """The distance between two samples, possibly negative (MINC's
-    default is 1)."""
+    """The distance between samples, which may be negative."""
 
     direction_cosines: tx.Optional[tx.Tuple[float, ...]] = None
-    """The world direction of the dimension, for a spatial one (MINC's
-    default is its own world axis)."""
+    """The world direction of a spatial dimension."""
 
     units: tx.Optional[str] = None
-    """The unit of `start` and `step`, as written in the file."""
+    """The unit of `start` and `step`, as written."""
 
     @property
     def is_spatial(self) -> bool:
-        """Whether the dimension is one of `xspace`, `yspace`, `zspace`."""
+        """Whether the dimension is `xspace`, `yspace` or `zspace`."""
         return self.name in SPATIAL_DIMENSIONS
 
     @property
     def origin(self) -> float:
-        """`start`, or 0 when the file does not record it."""
+        """The `start`, or 0 if it is not recorded."""
         return 0.0 if self.start is None else float(self.start)
 
     @property
     def spacing(self) -> float:
-        """`step`, or 1 when the file does not record it."""
+        """The `step`, or 1 if it is not recorded."""
         return 1.0 if self.step is None else float(self.step)
 
     @property
     def cosines(self) -> tx.Tuple[float, float, float]:
-        """`direction_cosines`, or the dimension's own world axis."""
+        """The `direction_cosines`, or else the world axis of the dimension."""
         if self.direction_cosines is not None:
             return tuple(float(c) for c in self.direction_cosines)
         return _DEFAULT_COSINES.get(self.name, (0.0, 0.0, 0.0))
@@ -69,8 +65,7 @@ class MincDimension(Magic, frozen=True):
 def _read_dimensions(
     container: tx.Any, mfile: _minc1.Minc1File, version: int
 ) -> tx.Tuple[MincDimension, ...]:
-    """The dimensions of the image of an open MINC file (its NetCDF or
-    HDF5 container), slowest first."""
+    """Read the dimensions of the image of an open file, slowest first."""
     if version == 1:
         image = container.variables["image"]
         names = list(image.dimensions)
@@ -104,7 +99,7 @@ def _read_dimensions(
 
 
 def _float(value: tx.Any) -> tx.Optional[float]:
-    """A scalar attribute as a float (NetCDF stores it as an array)."""
+    """Read a scalar attribute, which NetCDF stores as an array."""
     if value is None:
         return None
     value = np.asarray(value, dtype=np.float64).reshape(-1)
@@ -112,7 +107,7 @@ def _float(value: tx.Any) -> tx.Optional[float]:
 
 
 def _floats(value: tx.Any) -> tx.Optional[tx.Tuple[float, ...]]:
-    """A vector attribute as a tuple of floats."""
+    """Read a vector attribute of three floats, or `None`."""
     if value is None:
         return None
     value = np.asarray(value, dtype=np.float64).reshape(-1)
@@ -120,7 +115,7 @@ def _floats(value: tx.Any) -> tx.Optional[tx.Tuple[float, ...]]:
 
 
 def _string(value: tx.Any) -> tx.Optional[str]:
-    """A string attribute as a `str`."""
+    """Read a string attribute, or `None` if it is empty."""
     if value is None:
         return None
     if isinstance(value, np.ndarray):

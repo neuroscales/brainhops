@@ -1,4 +1,4 @@
-"""Format-family markers used for FSL dispatch hints."""
+"""Format families of FSL transformations, used for dispatch hints."""
 
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
@@ -7,10 +7,10 @@ from brainhops.io.transformations.base import (
 
 
 class FslTransformationFormat(TransformationFormat):
-    """A transformation stored in an FSL format."""
+    """Marker of transformations stored in an FSL format."""
 
     HINTS = ("fsl",)
 
 
 class FslAffineFormat(FslTransformationFormat, AffineTransformationFormat):
-    """An affine transformation stored in an FSL format."""
+    """Marker of affine transformations stored in an FSL format."""

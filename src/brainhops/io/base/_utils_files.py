@@ -1,23 +1,18 @@
-"""Helpers for formats whose header and data may live in separate files."""
-# FIXME: everything else is based on the use of `bagof.paths.Path` or
-# `pathlib.Path` objects. Why work with string and os/os.path here? Can
-# we keep working with Paths everywhere? If we do need (path-based)
-# utilities, can we make the generic enough and move them to _core.path?
+"""Helpers for formats that store header and data in separate files."""
+# TODO: the rest of the code uses Path objects; use them here as well and
+# move generic utilities to brainhops._core.path.
 
 __all__ = ["local_path", "open_path", "sibling"]
 
-# stdlib
 import os
 
-# dependencies
 import typing_extensions as tx
 
-# core
 from brainhops._core import path
 
 
 def local_path(file: tx.Any) -> tx.Optional[str]:
-    """The local file system path of `file`, or `None` if it has none."""
+    """Return the local path of an existing regular file, or `None`."""
     try:
         local = os.fspath(file)
     except Exception:
@@ -28,7 +23,7 @@ def local_path(file: tx.Any) -> tx.Optional[str]:
 
 
 def open_path(file: tx.Any) -> tx.BinaryIO:
-    """Open `file` for binary reading, locally or through its `open`."""
+    """Open a file for binary reading, locally or through its `open` method."""
     local = local_path(file)
     if local is not None:
         return open(local, "rb")
@@ -36,7 +31,7 @@ def open_path(file: tx.Any) -> tx.BinaryIO:
 
 
 def sibling(filename: tx.Any, name: str) -> tx.Any:
-    """`name`, relative to the directory of `filename` unless absolute."""
+    """Resolve `name` against the directory of `filename`, unless absolute."""
     if os.path.isabs(name):
         return path.Path(name)
     if not isinstance(filename, path.PathLike):

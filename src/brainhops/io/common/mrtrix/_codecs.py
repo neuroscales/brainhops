@@ -23,16 +23,15 @@ from ._constants import (
 
 def mrtrix_dtype(spec: str) -> tx.Optional[np.dtype]:
     """
-    The numpy data type of an MRtrix data type, or `None` for `Bit`.
+    Return the NumPy dtype of an MRtrix data type, or `None` for `Bit`.
 
-    The byte order is the suffix's (`LE`, `BE`), or the machine's when
-    there is none, as MRtrix does. The specifier is matched
-    case-insensitively.
+    The name is case-insensitive. As in MRtrix, the byte order is given by
+    an `LE` or `BE` suffix, and is the native one otherwise.
 
     Raises
     ------
     ParserContentError
-        If the specifier is not an MRtrix data type.
+        If the name is not an MRtrix data type.
     """
     key = spec.strip().lower()
     if key == _BIT:
@@ -50,16 +49,20 @@ def mrtrix_dtype(spec: str) -> tx.Optional[np.dtype]:
 
 def dtype_to_mrtrix(dtype: tx.Any) -> str:
     """
-    The MRtrix data type that stores a numpy data type exactly.
+    Return the MRtrix data type that stores a dtype exactly.
 
-    A multi-byte type is always given its byte order (`LE` or `BE`), as
-    MRtrix itself writes it. A boolean is `Bit`. A type MRtrix cannot
-    store (`float16`, `float128`, strings, ...) raises `WriterError`.
+    Booleans are stored as `Bit`, and multi-byte types always carry an `LE`
+    or `BE` suffix, as MRtrix writes them.
+
+    Raises
+    ------
+    WriterError
+        If MRtrix cannot store the dtype, such as float16 or strings.
     """
     if isinstance(dtype, str) and dtype.strip().lower() == _BIT:
         return "Bit"
     if isinstance(dtype, str) and _is_mrtrix_spec(dtype):
-        # Already an MRtrix specifier: normalise its spelling.
+        # normalise the spelling of an MRtrix data type
         np_dtype = mrtrix_dtype(dtype)
         return dtype_to_mrtrix(np_dtype)
     dtype = np.dtype(dtype)
@@ -92,18 +95,17 @@ def _is_mrtrix_spec(spec: str) -> bool:
 
 def parse_layout(spec: str, ndim: int) -> tx.Tuple[int, ...]:
     """
-    Parse an MRtrix `layout` into signed, one-based symbolic strides.
+    Parse a layout into signed one-based strides.
 
-    `-0,-1,+2` becomes `(-1, -2, 3)`: the absolute value minus one is
-    the rank of the axis in the file (0 changes fastest), and the sign
-    is the direction the axis is stored in. The one-based spelling is
-    the one MRtrix uses internally, and keeps the sign of rank 0.
+    For example, `-0,-1,+2` becomes `(-1, -2, 3)`. The absolute value minus
+    one is the rank, from 0 for the fastest axis, and the sign is the
+    storage direction. Counting from one keeps the sign of rank 0.
 
     Raises
     ------
     ParserContentError
-        If the layout is malformed, has the wrong number of axes, or
-        does not give each axis a distinct rank.
+        If the layout is malformed, has the wrong number of axes, or does
+        not give the axes distinct ranks.
     """
     entries = [entry.strip() for entry in spec.split(",")]
     strides = []
@@ -127,14 +129,14 @@ def parse_layout(spec: str, ndim: int) -> tx.Tuple[int, ...]:
 
 
 def format_layout(strides: tx.Sequence[int]) -> str:
-    """Spell signed one-based symbolic strides as an MRtrix `layout`."""
+    """Spell signed one-based strides as a layout."""
     return ",".join(
         ("+" if s > 0 else "-") + str(abs(int(s)) - 1) for s in strides
     )
 
 
 def default_layout(ndim: int) -> tx.Tuple[int, ...]:
-    """The layout of a Fortran-ordered array: `+0,+1,+2,...`."""
+    """Return the Fortran-order layout `+0,+1,+2,...`."""
     return tuple(range(1, ndim + 1))
 
 
@@ -142,11 +144,8 @@ def _storage_shape(
     dim: tx.Sequence[int], strides: tx.Sequence[int]
 ) -> tx.Tuple[tx.Tuple[int, ...], tx.List[int]]:
     """
-    The C-ordered shape the values have in the file, and where each
-    header axis sits in it.
-
-    The slowest axis (highest rank) comes first in the C-ordered shape.
-    `position[i]` is the index, in that shape, of header axis `i`.
+    Return the C-ordered file shape and the position of each header axis
+    in it.
     """
     ndim = len(dim)
     ranks = [abs(s) - 1 for s in strides]
@@ -161,13 +160,9 @@ def storage_to_image(
     stored: np.ndarray, dim: tx.Sequence[int], strides: tx.Sequence[int]
 ) -> np.ndarray:
     """
-    View the values as they are stored as an array of the header's axes.
+    View stored values as an array indexed in header axis order.
 
-    `stored` holds the values in file order, either flat or already
-    shaped. The result is indexed `[i0, i1, ...]` in the order of the
-    header's axes, and is a view of `stored` (a transposition, and a
-    reversal of the negative axes), so a memory-mapped file stays
-    memory-mapped.
+    The result is a view, so that a memory map stays one.
     """
     shape, position = _storage_shape(dim, strides)
     stored = stored.reshape(shape)
@@ -180,10 +175,9 @@ def storage_to_image(
 
 def image_to_storage(image: tx.Any, strides: tx.Sequence[int]) -> np.ndarray:
     """
-    Reorder an array of the header's axes into the order of the file.
+    Reorder an array of header axes into file order.
 
-    The inverse of `storage_to_image`. The result is a C-ordered view
-    when possible; `np.ascontiguousarray` of it is what the file holds.
+    This is the inverse of [`storage_to_image`][].
     """
     image = np.asarray(image)
     ndim = image.ndim

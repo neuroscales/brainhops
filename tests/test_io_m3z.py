@@ -1,22 +1,18 @@
-"""FreeSurfer non-linear morphs (`.m3z`).
+"""Tests for FreeSurfer non-linear morphs (.m3z).
 
-No FreeSurfer morph ships with the tests, so the files are encoded here,
-byte for byte, by `_encode`: a literal transcription of FreeSurfer's
-`__m3zWrite` (`utils/gcamorph.cpp`), loops and all, independent of the
-reader under test.
+No morph ships with the tests, so files are encoded byte for byte by
+`_encode`, a literal transcription of `__m3zWrite` in FreeSurfer's
+utils/gcamorph.cpp that is independent of the reader.
 """
 
-# stdlib
 import gzip
 import struct
 from pathlib import Path
 
-# dependencies
 import numpy as np
 import pytest
 import typing_extensions as tx
 
-# internals
 from brainhops import io
 from brainhops.datamodel import transformations as xforms
 from brainhops.io.base.parsers import (
@@ -32,11 +28,11 @@ from brainhops.io.transformations.freesurfer.m3z import (
 )
 
 SHAPE = (4, 3, 5)
-"""The node grid."""
+"""Shape of the node grid."""
 
 SPACING = 2
 
-# A source image: 1.5 x 1 x 2 mm voxels, oblique-ish permuted axes.
+# Source image: 1.5 x 1 x 2 mm voxels with permuted axes.
 IMAGE = dict(
     valid=1,
     shape=(20, 18, 16),
@@ -47,7 +43,7 @@ IMAGE = dict(
     cras=(3.0, -7.0, 11.0),
     fname=b"/subjects/bert/mri/norm.mgz",
 )
-# The atlas: LIA, 1 mm, node grid times the spacing.
+# Atlas: LIA, 1 mm, the node grid times the spacing.
 ATLAS = dict(
     valid=1,
     shape=(8, 6, 10),
@@ -74,8 +70,7 @@ LINEAR = np.array(
 
 
 def _vox2ras(geom: tx.Dict[str, tx.Any]) -> np.ndarray:
-    """`VGgetVoxelToRasXform`: Mdc * D, then the offset that puts voxel
-    `shape / 2` at `c_ras`."""
+    """Transcribe VGgetVoxelToRasXform: shape / 2 lands at c_ras."""
     m = np.eye(4)
     m[:3, 0] = np.multiply(geom["xras"], geom["size"][0])
     m[:3, 1] = np.multiply(geom["yras"], geom["size"][1])
@@ -86,8 +81,7 @@ def _vox2ras(geom: tx.Dict[str, tx.Any]) -> np.ndarray:
 
 
 def _positions(shape: tx.Tuple[int, int, int] = SHAPE) -> np.ndarray:
-    """Source voxel positions: an affine function of the node index,
-    plus a bump, so that every node is distinct."""
+    """Source voxel positions, affine in the node index plus a bump."""
     i, j, k = np.meshgrid(*map(np.arange, shape), indexing="ij")
     return np.stack(
         [
@@ -100,7 +94,7 @@ def _positions(shape: tx.Tuple[int, int, int] = SHAPE) -> np.ndarray:
 
 
 def _geom(geom: tx.Dict[str, tx.Any]) -> bytes:
-    """`VOL_GEOM::write`."""
+    """Transcribe VOL_GEOM::write."""
     out = struct.pack(">4i", geom["valid"], *geom["shape"])
     out += struct.pack(">3f", *geom["size"])
     for key in ("xras", "yras", "zras", "cras"):
@@ -126,7 +120,7 @@ def _encode(
     tail: bytes = b"",
     gz: bool = True,
 ) -> bytes:
-    """`__m3zWrite`, transcribed."""
+    """Transcribe __m3zWrite."""
     width, height, depth = positions.shape[:3]
     if original is None:
         original = positions - 0.5
@@ -229,7 +223,7 @@ def test_read_without_tags(tmp_path: Path) -> None:
     s = morph.struct
     assert s.tags == () and s.image is None and s.labels is None
     assert s.coordinates == GCAM_VOX and s.xform is None
-    # FreeSurfer's default geometry: 256^3, 1 mm, LIA, centred.
+    # FreeSurfer default geometry: 256^3, 1 mm, LIA, centred.
     lia = _vox2ras(
         dict(
             shape=(256, 256, 256),
@@ -283,8 +277,7 @@ def test_sniff(tmp_path: Path) -> None:
     assert M3zMorph.sniff(gzip.compress(b"not a morph" * 4)) == 0.0
     (tmp_path / "x.lta").write_text("type = 1\n")
     assert M3zMorph.sniff(tmp_path / "x.lta") == 0.0
-    # FreeSurfer always writes big-endian: a byte-swapped header is not
-    # that of a morph.
+    # FreeSurfer always writes big-endian, so a swapped header is no morph.
     swapped = struct.pack("<f4if", 1.0, *SHAPE, SPACING, 20.0)
     assert M3zMorph.sniff(swapped + bytes(64)) == 0.0
     # Only the head of an open file is read.
@@ -325,8 +318,7 @@ def test_chain_shape(tmp_path: Path) -> None:
 
 
 def test_nodes_map_to_their_positions(tmp_path: Path) -> None:
-    """Atlas voxel `n * spacing` lands at the position of node `n`, in
-    the source image's scanner RAS."""
+    """Atlas voxel n * spacing lands at the position of node n."""
     positions = _positions()
     morph = io.load(_write(tmp_path, _encode(positions)))
     nodes = np.array([[0, 0, 0], [1, 2, 3], [3, 1, 4], [2, 0, 1]])
@@ -338,8 +330,7 @@ def test_nodes_map_to_their_positions(tmp_path: Path) -> None:
 
 
 def test_between_nodes_is_trilinear(tmp_path: Path) -> None:
-    """`GCAMsampleMorph`: an atlas voxel between nodes takes the
-    trilinear interpolation of the node positions at `voxel / spacing`."""
+    """An atlas voxel between nodes interpolates the node positions."""
     positions = _positions()
     morph = io.load(_write(tmp_path, _encode(positions)))
     atlas_vox = np.array([[1.0, 2.0, 3.0], [3.0, 1.0, 5.0], [5.0, 3.0, 7.0]])
@@ -358,7 +349,7 @@ def test_between_nodes_is_trilinear(tmp_path: Path) -> None:
 
 
 def test_ras_positions(tmp_path: Path) -> None:
-    """`GCAM_RAS`: the positions are already source scanner RAS."""
+    """GCAM_RAS positions are already in source scanner RAS."""
     positions = _positions() * 3 - 20
     morph = io.load(_write(tmp_path, _encode(positions, gtype=GCAM_RAS)))
     assert len(morph) == 2
@@ -426,8 +417,7 @@ def test_write_edited_field(tmp_path: Path) -> None:
 
 
 def test_write_coefficients_as_positions(tmp_path: Path) -> None:
-    # A morph stores sampled positions, so a field of coefficients is
-    # written as its values.
+    # A morph stores sampled positions, so coefficients are written as values.
     morph = io.load(_write(tmp_path, _encode(_positions())))
     ras2node, field, vox2ras = morph
     moved = np.asarray(field.field) + 1.0
@@ -493,9 +483,7 @@ def test_write_refuses_other_chains(tmp_path: Path) -> None:
 
 
 def test_a_morph_compares_by_identity() -> None:
-    # A morph is a transformation, which compares by identity, even though
-    # the parser it also derives from comes first. The parser alone
-    # compares by identity too, never by the arrays of its struct.
+    # Identity comparison holds although the parser base comes first.
     from brainhops.io.transformations.freesurfer.m3z._xform import M3zParser
 
     def make() -> M3zMorph:

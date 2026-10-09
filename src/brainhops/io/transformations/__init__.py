@@ -1,4 +1,9 @@
-"""Readers and writers for transformation formats."""
+"""Readers and writers of transformation file formats.
+
+The entry points are [`load`][], which reads a transformation from a file
+and detects its format, and [`sniff`][], which predicts that format without
+parsing the file.
+"""
 
 __all__ = [
     "FileBasedTransformation",
@@ -13,7 +18,6 @@ __all__ = [
     "sniff",
 ]
 
-# internals
 from brainhops._core.dependencies import has_abczarr_driver
 
 from . import base, elastix, freesurfer, itk, matrix, niftyreg
@@ -24,41 +28,40 @@ from .base import (
     sniff,
 )
 
-# Formats must be imported for them to register themselves: the registry
-# only holds classes that have actually been imported, so a format left
-# unimported would silently be invisible to `load`.
+# A format is visible to `load` only once its module has been imported,
+# because the format registry holds imported classes only.
 try:
     from . import nifti
 
     __all__ += ["nifti"]
-except ImportError:  # nibabel is optional
+except ImportError:
     pass
 
 try:
     from . import spm
 
     __all__ += ["spm"]
-except ImportError:  # nibabel is optional
+except ImportError:
     pass
 
 try:
     from . import fsl
 
     __all__ += ["fsl"]
-except ImportError:  # nibabel is optional
+except ImportError:
     pass
 
-# The X5 reader needs h5py, which is optional.
+# The X5 reader needs the optional h5py dependency.
 try:
     from . import x5
 
     __all__ += ["x5"]
-except ImportError:  # h5py is optional
+except ImportError:
     pass
 
-# The OME-Zarr field reader needs abczarr and at least one backend driver.
-# abczarr alone cannot open a store, so the reader is registered only when a
-# driver is present. This mirrors how io.images gates io.images.zarr.
+# abczarr alone cannot open a store, so the OME-Zarr field reader is
+# registered only when at least one backend driver is also installed. The
+# same gating applies to brainhops.io.images.zarr.
 if has_abczarr_driver():
     from . import zarr
 

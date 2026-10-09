@@ -9,21 +9,23 @@ PLACEHOLDER = object()
 
 
 def cache(func: tx.Callable) -> tx.Callable:
-    """
-    A [`functools.lru_cache`][] that is available in Python >= 3.9.
+    """Wrap a function in an unbounded cache.
 
-    The `maxsize` argument is fixed to `None`, so the cache is unbounded.
+    The function is a replacement for `functools.cache` on Pythons that lack
+    it, and is equivalent to [`lru_cache`][functools.lru_cache] with
+    `maxsize=None`.
     """
 
     return lru_cache(maxsize=None)(func)
 
 
 class partial(_partial):
-    """
-    A [`functools.partial`][] that allows placeholders in the saved
-    arguments.
+    """Partial application that accepts placeholders.
 
-    Only available in Python >= 3.9.
+    The class extends [`partial`][functools.partial] so that the saved
+    positional arguments may contain the [`PLACEHOLDER`][] sentinel. When the
+    partial object is called, each placeholder is replaced by the next call
+    argument, in order, and the remaining call arguments are appended.
     """
 
     def __new__(cls, func: tx.Callable, /, *args, **kwargs) -> tx.Self:
@@ -62,15 +64,16 @@ else:
 def own_annotations(
     owner: tx.Union[type, tx.Mapping[str, tx.Any]],
 ) -> tx.Dict[str, tx.Any]:
-    """
-    The annotations a class declares itself (not those it inherits), read
-    from the class or from the namespace its metaclass receives.
+    """Return the annotations that a class declares itself.
 
-    Up to Python 3.13 they are in `__annotations__`. From 3.14 (PEP
-    649/749) they are lazy: a class (or its namespace) carries an
-    annotate function instead, which is evaluated here in the
-    `FORWARDREF` format, so a name that is not defined yet becomes a
-    `ForwardRef` instead of raising.
+    Inherited annotations are not included. The owner is either a class or
+    the namespace mapping that a metaclass receives before the class is
+    created. Up to Python 3.13, the annotations are read from
+    `__annotations__` in the namespace. From Python 3.14 (PEP 649 and
+    PEP 749), the lazy annotate function is evaluated in the `FORWARDREF`
+    format, so that undefined names become forward references instead of
+    raising an error. An empty dictionary is returned when the class has no
+    annotations.
     """
     namespace = owner if not isinstance(owner, type) else owner.__dict__
     if "__annotations__" in namespace:

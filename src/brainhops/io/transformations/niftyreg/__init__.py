@@ -12,86 +12,64 @@ Readers and writers for NiftyReg transformations.
 | (dense velocity)     | 3 `DEF_VEL_FIELD`   | [`NiftyRegVelocityField`][]    |
 | (dense velocity)     | 4 `DISP_VEL_FIELD`  | [`NiftyRegVelocityField`][]    |
 
-Hints: `niftyreg.aladin`, `niftyreg.cpp` (or `niftyreg.f3d`),
+The hints are `niftyreg.aladin`, `niftyreg.cpp` (`niftyreg.f3d`),
 `niftyreg.deformation` (`niftyreg.def`), `niftyreg.displacement`
-(`niftyreg.disp`) and `niftyreg.velocity` (`niftyreg.vel`); `niftyreg`
-alone selects any of them.
-
-The NIfTI files are claimed from their header alone; the affine, a bare
-matrix, only with a hint (`hint="niftyreg"`).
-
-Every reader writes back what it reads.
+(`niftyreg.disp`) and `niftyreg.velocity` (`niftyreg.vel`), and `niftyreg`
+alone selects any of them. NIfTI files are claimed from their header alone,
+while the affine, a bare matrix, is only read with `hint="niftyreg"`. Every
+reader writes back what it reads.
 
 ## Conventions
 
-Checked against the NiftyReg sources (KCL-BMEIS/niftyreg, commit
-`79a1762`, September 2026):
+These conventions were checked against KCL-BMEIS/niftyreg at commit 79a1762
+(September 2026).
 
-- **Direction.** Every NiftyReg transformation maps the *reference*
-  image's world to the *floating* image's world -- `reg_aladin` states
-  it as `Affine * Reference = Floating` -- which is the direction the
-  data model uses to resample a moving (floating) image onto a
-  reference. Nothing is inverted.
-- **World.** World coordinates are the NIfTI ones, RAS millimetres, with
-  no sign flip: NiftyReg takes an image's sform when `sform_code > 0`,
-  and its qform otherwise (`sto_xyz` / `qto_xyz` in `reg-lib`). With
-  both codes zero, `nifti1_io` makes the qform a diagonal of pixel sizes
-  with no offset, which is what is used here (not `nibabel`'s centred
-  fallback).
-- **The NIfTI files** are `VECTOR` (1007) images named `"NREG_TRANS"`,
-  of shape `(X, Y, Z, 1, 3)`, whose `intent_p1` holds the
-  `NREG_TRANS_TYPE` (`reg-lib/cpu/Maths.hpp`). The generic NIfTI and ITK
-  field readers decline a file with that name.
-- **Deformation vs displacement.** A deformation field holds positions,
-  a displacement field holds `position - voxel world position`
-  (`reg_getDisplacementFromDeformation`): the sign is +1.
-- **Control-point grids hold positions**, not displacements: the
-  floating world position of each control point
-  (`reg_createControlPointGrid` initialises them to the identity). The
-  grid's header places it: the reference orientation, scaled to the
-  control-point spacing, with its origin one control point before the
-  reference origin. The spline is the centred cubic B-spline in the
-  grid's voxel units (`reg_cubic_spline_getDeformationField3D`).
-- **Beyond the grid**, NiftyReg slides the displacement of the nearest
-  grid point (`get_SlidedValues`): every field is read as displacements
-  with the `nearest` boundary condition, which reproduces that.
-
-- **Velocities** (`reg_f3d -vel`) are read as the same chain, whose
-  field is a `StationaryVelocityField` (`log=True`): the velocity, in
-  voxel units -- the grid's cubic coefficients for a velocity grid --
-  integrated by scaling and squaring with `|intent_p2|` steps (the
-  default rule when it is zero). A negative `intent_p2` marks a backward
-  field, whose velocity is negated
-  (`reg_defField_getDeformationFieldFromFlowField`). A velocity read
-  from a file is written back as it was read; one built from a chain is
-  written as positions, with its steps in `intent_p2`.
+- Direction: every NiftyReg transformation maps the reference world to the
+  floating world (for `reg_aladin`, `Affine * Reference = Floating`). This is
+  the resampling direction of the data model, so nothing is inverted.
+- World: NIfTI RAS millimetres, with no sign flip. The sform is used when
+  `sform_code > 0`, and the qform otherwise. When both codes are zero, the
+  diagonal of pixel sizes that `nifti1_io` builds is used, not the centred
+  fallback of `nibabel`.
+- NIfTI files: `VECTOR` images (1007) named `"NREG_TRANS"`, with shape (X, Y,
+  Z, 1, 3) and the transformation type (`NREG_TRANS_TYPE`) in `intent_p1`.
+- Deformations and displacements: a deformation holds positions, and a
+  displacement holds the position minus the world position of its voxel.
+- Control-point grids hold the floating world position of each control point.
+  The grid header copies the orientation of the reference, scaled to the
+  control-point spacing, with its origin one control point before the reference
+  origin. The spline is a centred cubic B-spline in grid voxel units.
+- Beyond the grid, NiftyReg slides the displacement of the nearest grid point,
+  so every field is read as displacements with the `nearest` boundary.
+- Velocities (`reg_f3d -vel`) give the same chain with a stationary velocity
+  field (`log=True`) in voxel units, integrated by scaling and squaring with
+  `|intent_p2|` steps, or the default rule when it is zero. A negative
+  `intent_p2` marks a backward field, whose velocity is negated. A velocity
+  read from a file is written back as read, and one built from a chain is
+  written as positions with its steps in `intent_p2`.
 
 ## Not supported
 
-- **Velocities with an affine in their extensions** (a symmetric
-  registration): NiftyReg removes that affine before integrating the
-  velocity and composes it back after, which is not decoded. They are
-  read and written back, but using one raises `NotImplementedError`.
-  Integrate them with `reg_transform -def` and read the deformation
-  field instead.
-- **2-D fields and grids** (two components) are not decoded.
-- The non-composition shortcut NiftyReg uses on the reference grid
-  (`reg_cubic_spline_getDeformationField3D` with `composition=false`)
-  places the grid by the ratio of pixel sizes rather than by the
-  header; the two agree for a grid made on that reference, which is
-  the case NiftyReg supports.
+- A velocity with an affine in its header extensions, as written by a symmetric
+  registration. NiftyReg removes the affine before integration and composes it
+  back after, which is not decoded. Such a file is read and written back, but
+  using it raises `NotImplementedError`; integrating it with `reg_transform
+  -def` gives a deformation field that can be read.
+- 2-D fields and grids, which have two components.
+- The non-composition shortcut of `reg_cubic_spline_getDeformationField3D`,
+  which places the grid from the ratio of pixel sizes rather than from the
+  header. Both agree for a grid made on that reference.
 """
 
 __all__ = ["NiftyRegAffine"]
 
-# internals
 from brainhops._core.dependencies import HAS_NIBABEL
 from brainhops.io.base._dispatch import register_missing_format
 
 from ._affine import NiftyRegAffine
 
-# The affine is plain text; the fields and grids are NIfTI files, read
-# with nibabel, which is optional.
+# The affine is plain text, but the fields and grids are NIfTI files,
+# which need the optional nibabel.
 if HAS_NIBABEL:
     from ._fields import (
         NiftyRegControlPointGrid,

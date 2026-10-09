@@ -3,13 +3,11 @@
 
 class FreesurferFormat:
     """
-    A format of the FreeSurfer family, whatever it stores.
+    The base format of the FreeSurfer family: MGH and MGZ images, and LTA
+    and M3Z transformations.
 
-    It is the shared base of the FreeSurfer image formats (MGH/MGZ) and
-    transformation formats (LTA, M3Z), and carries the `"freesurfer"` hint
-    they all answer to. Each format adds its own hints (`"mgh"`,
-    `"lta"`, `"m3z"`, ...), which are then also reachable as
-    `"freesurfer.mgh"`, `"freesurfer.lta"`, ...
+    The hint `"freesurfer"` selects them all. Subclass hints such as
+    `"mgh"`, `"lta"` or `"m3z"` can also be reached as `"freesurfer.mgh"`.
     """
 
     HINTS = ("freesurfer",)

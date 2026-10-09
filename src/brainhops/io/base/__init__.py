@@ -1,5 +1,4 @@
-"""The format-independent base shared by every file-based object, whatever
-its kind."""
+"""Format-independent machinery shared by every kind of file-based object."""
 
 __all__ = [
     "FileBasedObject",

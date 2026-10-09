@@ -2,50 +2,59 @@
 
 ## Load data from files
 
-Brainhops implements readers and writers for many image and transformation
-formats. By default, `load` tries to guess the type of content that is
-stored in a file, and returns the appropriate object. Some file formats
-are used to store different types of content, without internal metadata
-that specifies the content type. An example is NIfTI, which can contain
-arrays that should be interpreted as images (e.g. MRIs), or arrays that
-should be interpreted as displacement or coordinates fields. In such cases,
-a `hint` can be provided:
+brainhops has readers and writers for many image and transformation
+formats. The function `load` guesses what kind of content a file holds and
+returns an object of the appropriate class.
+
+Some formats can hold several kinds of content without recording which
+one they hold. A NIfTI file, for example, may contain an image, a
+displacement field or a coordinate field. When the file does not say, the
+`hint` argument names the format to use.
 
 ```python
 from brainhops import io
 
-src = io.load("source.nii.gz")  # -> Nifti1Image
-dst = io.load("dest.nii.gz")  # -> Nifti1Image
+src = io.load("source.nii.gz")  # -> NiftiImage
+dst = io.load("dest.nii.gz")  # -> NiftiImage
 aff = io.load("affine.lta")  # -> LtaTransformation
-dsp = io.load("disp.nii.gz", hint="voxdisp")  # -> NiftiVoxelDisplacementField
-wrp = io.load("warp.nii.gz", hint="spmy")  # -> SpmCoordinatesField
+dsp = io.load(  # -> NiftiRASDisplacementField
+    "disp.nii.gz", hint="displacements"
+)
+wrp = io.load("warp.nii.gz", hint="spm")  # -> SpmCoordinatesField
 ```
 
-Alternatively, the appropriate classes could have been used:
+The format classes can also be used directly:
 
 ```python
-src = io.Nifti1Image.load("source.nii.gz")
-dst = io.Nifti1Image.load("dest.nii.gz")
-aff = io.LtaTransformation.load("affine.lta")
-dsp = io.NiftiVoxelDisplacementField.load("disp.nii.gz")
-wrp = io.SpmCoordinatesField.load("warp.nii.gz")
+from brainhops.io.images.nifti import NiftiImage
+from brainhops.io.transformations.freesurfer.lta import LtaTransformation
+from brainhops.io.transformations.nifti import NiftiRASDisplacementField
+from brainhops.io.transformations.spm.y import SpmCoordinatesField
+
+src = NiftiImage.load("source.nii.gz")
+dst = NiftiImage.load("dest.nii.gz")
+aff = LtaTransformation.load("affine.lta")
+dsp = NiftiRASDisplacementField.load("disp.nii.gz")
+wrp = SpmCoordinatesField.load("warp.nii.gz")
 ```
 
-or loaders specific to subtypes of objects:
+When the kind of object is known, the loaders of `io.images` and
+`io.transformations` only consider formats of that kind, which is both
+faster and less ambiguous:
 
 ```python
 src = io.images.load("source.nii.gz")
 dst = io.images.load("dest.nii.gz")
 aff = io.transformations.load("affine.lta")
-dsp = io.transformations.load("disp.nii.gz", hint="voxdisp")
-wrp = io.transformations.load("warp.nii.gz", hint="spmy")
+dsp = io.transformations.load("disp.nii.gz", hint="displacements")
+wrp = io.transformations.load("warp.nii.gz", hint="spm")
 ```
 
 !!! tip "Lazy loading"
-    By default, multidimensional arrays (other than affine matrices)
-    are not loaded in memory on `load`, but instead are mapped lazily
-    into a `dask.Array`. This behavior can be altered by choosing
-    a different array backend, either on load or using a context manager:
+    By default, multidimensional arrays other than affine matrices are not
+    loaded into memory. They are mapped lazily to a `dask.array.Array`
+    instead. Another array backend can be selected when a file is loaded,
+    within a context manager, or as the default for the whole session.
 
     === "`load` argument"
 
@@ -73,9 +82,10 @@ wrp = io.transformations.load("warp.nii.gz", hint="spmy")
 
 ## Save data to files
 
-`save` writes an object in the format its file name calls for. An object
-read from a file can be written back, or written in another format that
-holds the same kind of object:
+The function `save` writes an object in the format that the file name
+calls for. An object read from a file can be written back in its own
+format, or in any other format that holds the same kind of object. Writing
+Zarr requires the `zarr` extra.
 
 ```python
 img = io.images.load("source.nii.gz")
@@ -83,143 +93,130 @@ io.save(img, "copy.nii.gz")  # -> NIfTI
 io.save(img, "copy.zarr")  # -> Zarr
 ```
 
-An image computed in memory is written the same way, since NIfTI and Zarr
-both hold a plain image. `save` does not change what an object means to
-fit a format: a general `Affine` is not written as the voxel-to-RAS
-affine a NIfTI file holds. Build that format explicitly when it is what
-you mean:
+An image computed in memory is written in the same way, since NIfTI and
+Zarr files both hold a plain image. However, `save` never changes the
+meaning of an object to fit a format. A general `Affine`, for instance, is
+not written as the voxel-to-RAS affine that a NIfTI file holds, because it
+would be read back as something it did not say. When a file should hold
+that format, the format is built explicitly:
 
 ```python
+import numpy as np
+from brainhops.datamodel.transformations import Affine
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
+affine = Affine(np.eye(3, 4))
 NiftiVoxelToRAS.from_any(affine).save("affine.nii")
 ```
 
-An LTA file says which coordinate systems its affine maps between, so a
-general `Affine` is written to one when its `input` and `output` say it
-too: both `RASmm` (or both `RSAmm`), or both the voxel or physical
-system of an LTA volume. An affine read from an LTA file is written back
-as it was read:
+An LTA file states which coordinate systems its affine maps between. A
+general `Affine` is therefore written to an LTA file only if its `input`
+and `output` say so as well: both must be `RASmm` (or both `RSAmm`), or
+both must be the voxel or physical system of an LTA volume. An affine read
+from an LTA file is written back as it was read.
 
 ```python
 from brainhops.datamodel.systems import RASmm
 
+matrix = np.eye(3, 4)
 io.save(Affine(matrix, input=RASmm(), output=RASmm()), "affine.lta")
 io.save(io.load("affine.lta"), "copy.lta")  # -> the same file
 ```
 
-## Images Are Transformed Arrays
+## Images
 
-The source and destination images are `NiftiImage` objects, which
-inherit from `Image`, which itself inherits from `TransformedArray`.
-They have the attributes:
+The images `src` and `dst` are `NiftiImage` objects. `NiftiImage` is a
+`SingleScaleImage`, which is itself an `Image`. An image combines an array
+with the transformations that place its voxels in world space.
 
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `data` | `da.Array` | The content of the image, F-ordered (e.g. {x, y, z, t, c, ...}) |
-| `transformations` | `list[Transformation]` | Transformations that can be applied to the voxel grid. The output space of the last transformation in the list is the preferred model space.
-| `transformation` | `Transformation` | A transformation from the voxel space to the preferred model space. This is a property that gets automatically computed on the fly.
-| `geometry` | `Transformation` | The preferred transformation, concatenated with a `CartesianField` object, whose shape matches the shape of the data.
+| Name              | Type                   | Description                                                                                                                                         |
+| ----------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `data`            | `ArrayProtocol`        | The content of the image, F-ordered (e.g. {x, y, z, t, c, ...}). A file is mapped to a `dask.array.Array` by default.                                |
+| `transformations` | `list[Transformation]` | Transformations from the voxel space to different world spaces. The last transformation in the list is the preferred one.                         |
+| `transformation`  | `Transformation`       | The preferred voxel-to-world transformation, which is the last element of `transformations`.                                                       |
+| `geometry`        | `Geometry`             | The preferred transformation, preceded by a `CartesianField` whose shape matches the shape of the data. It defines the grid on which the image lives. |
 
 ## Apply a transformation to an image
 
-An `Image` can be called on a `Transformation` that maps from any space
-to its preferred space. It returns another image, whose `transformation`
-attribute is the composition of the original `transformation` attribute
-and the inverse of the transformation. While this may seem counter-intuitive,
-this is the most general way of "delaying" the application of a transformation.
-This means that the two following blocks of statements are (almost) equivalent:
+An image can be called on a transformation whose output space is the
+preferred world space of the image. The call moves the image by that
+transformation without resampling anything. It returns a new image whose
+preferred transformation is the inverse of the given transformation
+composed with the original preferred transformation. Representing the
+moved image in this way delays all computation until the image is
+resampled, which keeps the operation general and cheap. The two following
+lines are equivalent:
 
 ```python
-mov = src(xform)
-mov = Image(data=src.data, transformation=xform.inverse() @ src.transformation)
+from brainhops.datamodel.images import SingleScaleImage
+
+mov = src(aff)
+mov = SingleScaleImage(
+    data=src.data,
+    transformations=[*src.transformations, aff.inverse() @ src.transformation],
+)
 ```
 
-The transformed image can then be computed by calling:
+The moved image is computed by `reslice`, which resamples it onto a grid.
+The grid is given by an image or by its geometry:
 
 ```python
-mov = src.reslice(dst.geometry)  # -> geometry = dst.geometry
-mov = src(dsp).reslice(dsp.geometry)  # -> geometry = dsp.geometry
+mov = src.reslice(dst)  # -> geometry = dst.geometry
+mov = src.reslice(dst.geometry)  # the same
+mov = src(aff).reslice(dst)  # move src by aff, then resample onto dst
+mov = src(aff)(dsp).reslice(dst)  # apply aff first, then dsp
 ```
 
-While it is not implemented yet, it might be useful to automatically
-detect transformations that start with a `Geometry` object, allowing
-`reslice` to be called without an argument:
-
-```python
-mov = src(dst.geometry).reslice()
-mov = src(wrp @ dst.geometry).reslice()
-mov = src(disp).reslice()  # -> geometry == CartesianField(vox_disp.shape)
-mov = src(ras2ras).reslice()  # -> raise Exception("Cannot guess geometry")
-```
-
-We may even guess the geometry of transformations that start with a
-displacement of coordinate field (but that may only be the case for
-certain formats, not general fields, and is not well specified in our
-data model yet). For example:
-
-
-```python
-mov = mov.reslice(geometry)
-```
-
-Note that different behaviours are obtained, depending on whether the
-chain of transformation ends with a `CartesianField`, a `CoordinatesField`
-or another type of transformation:
-
-```python
-mov = src(disp).reslice()  # -> assumes that `disp` has a geometry
-mov = src(ras2ras).reslice()  # -> raise Exception("Cannot guess geometry")
-```
+Without an argument, `reslice` resamples the image onto its own grid.
+Inferring the output grid from the transformations themselves, for example
+from a chain that starts with a `Geometry` or with a displacement field
+defined on a grid, is planned but not implemented yet.
 
 ## Transformations
 
-Basic transformations in `brainhops` are mostly modeled on the
-[OME-NGFF](https://ngff.openmicroscopy.org/specifications/dev/index.html)
-specification, with additional flexibility:
+The basic transformations are mostly modelled on the
+[OME-NGFF specification](https://ngff.openmicroscopy.org/specifications/dev/index.html),
+with some additional flexibility:
 
-- Input and output spaces are entirely contained in each transform, rather
-  than saving a unique coordinate system name and having to query
-  this system from a dictionary.
-- Input and output spaces can be partially specified (e.g. no coordinate
-  system name, no named axes, etc.) or not specified at all! Consequently,
-  the output and input spaces of two sequential transforms do not need
-  to exactly match. When they do not, `brainhops` does its best to bridge
-  the two transformations in a smart way (by matching axes across the two
-  systems based on their type, orientation and/or name). This is (obviously)
-  not as robust as ensuring a matching sequence of transformations, so if
-  your application is critical, please do so. That said, in most neuroimaging
-  applications, our matching algorithm operates reasonably.
-- "By Dimension" wrappers are not mandatory. Similarly to the previous
-  point, if the number of dimensions in the output and input spaces of
-  two sequential transformations differ, `brainhops` will partially
-  match axes and generate the appropriate `ByDimension` wrapper.
-- Additional transformations are available. For example, non-matrix
-  representations of some affine subgroups (quaternions, lie algebra, ...)
-  are implemented in `brainhops`.
+- The input and output spaces of a transformation are stored in the
+  transformation itself, rather than named and looked up in a separate
+  dictionary of coordinate systems.
+- Spaces may be partially specified, for example without a name or without
+  named axes, or not specified at all. Consecutive transformations
+  therefore do not need to declare matching spaces: brainhops bridges them
+  by matching axes by type, orientation or name. Bridging is less robust
+  than a sequence whose spaces match, so critical applications should make
+  sure that they do, but it usually works.
+- Transformations that act on a subset of the axes do not need to be
+  wrapped explicitly. When the dimensionality of two transformations
+  differs, brainhops matches their axes partially and wraps the smaller one
+  in a `SubspaceTransformation`.
+- Additional transformations are available, such as the exponential
+  parameterisations of affine subgroups (`AffineExponential`,
+  `RotationExponential` and others) and stationary velocity fields.
 
 ### Operators
 
-A transformation that maps a space to itself has an inverse, a square and a
-principal square root. Each is a method, and each is lazy, like the
-inverse: the result is computed when it is applied, computed or converted,
-and a typed result stays an instance of the family it belongs to (the
-square root of a `Rotation` is a `Rotation`).
+A transformation that maps a space to itself has an inverse, a square, and
+a principal square root. Each of them is a method, and each is lazy in the
+same way as `inverse`: nothing is computed until the result is applied,
+computed or converted. A typed result stays in its family, so the square
+root of a `Rotation` is a `Rotation`.
 
 ```python
-half = xform.sqrt()  # the half-transformation: half @ half == xform
+half = xform.sqrt()  # the half-transformation: half @ half maps like xform
 twice = xform.square()  # xform @ xform
 expr = a.inverse() @ b.sqrt()
 result = expr.compute()
 ```
 
-A transformation outside an operator's domain, such as a reflection under
-`sqrt`, raises a `DomainError` rather than returning a complex or
+A transformation outside the domain of an operator, such as a reflection
+under `sqrt`, raises `DomainError` rather than returning a complex or
 non-principal result.
 
-The exponential and the logarithm are not operators but an encoding: the
+The exponential and the logarithm are not operators but an encoding. The
 `log` flag says that `data` holds the tangent of the map about the
-identity, and `.to(log=...)` converts between the two.
+identity, and `.to(log=...)` converts between the two encodings.
 
 ```python
 velocity = DisplacementField(data=v, log=True)  # a StationaryVelocityField
@@ -230,14 +227,15 @@ half = velocity.sqrt()  # exact: the velocity, halved
 ```
 
 The inverse, square root and square of a tangent are exact. A velocity
-stored in a file is read with the `svf` hint (`warp.nii.gz|svf`) or with
-`io.transformations.load(path, log=True)`. See [Tangents: the `log`
-flag](../api/datamodel/transformations.md#tangents-the-log-flag).
+stored in a file is read with `io.transformations.load(path, log=True)`,
+or with the `svf` hint on the command line (`warp.nii.gz|svf`). See
+[Tangents: the `log` flag](../api/datamodel/transformations.md#tangents-the-log-flag)
+for the full model.
 
 ## Comparing transformations and images
 
-Transformations and images compare, and hash, **by identity**, not by
-value: `a == b` is the same as `a is b`, and `==` never raises.
+Transformations and images compare and hash by identity: `a == b` is the
+same as `a is b`, and `==` never raises.
 
 ```python
 from brainhops.datamodel.transformations import Affine
@@ -249,18 +247,18 @@ a == b  # -> False: two distinct objects, even with the same matrix
 {a, b}  # -> a set of two transformations
 ```
 
-This means that a transformation (or an image) can be put in a `set`, used
-as a dictionary key, or looked up in a list with `in`, `index` or `remove`,
-and is always found by identity: a distinct object with the same parameters
-is a different element.
+As a consequence, transformations and images can be put in a `set` or used
+as dictionary keys, and list operations such as `in`, `index` and `remove`
+find them by identity. A distinct object with the same parameters is a
+different element.
 
 !!! note "Testing whether two transformations are the same map"
-    Whether two transformations are "the same" -- the same object, the same
-    map, or the same parameters in the same coordinate systems -- has no
-    single answer, so `==` does not pick one. To test whether two
-    transformations map coordinates the same way, check that one composed
-    with the inverse of the other is the identity, and compare their
-    coordinate systems explicitly:
+    "The same" has several possible meanings: the same object, the same
+    map, or the same parameters in the same coordinate systems. Since no
+    single meaning is right for every use, `==` does not pick one. Whether
+    two transformations describe the same map is tested by checking that
+    one composed with the inverse of the other is the identity, and their
+    coordinate systems are compared explicitly:
 
     ```python
     from brainhops.datamodel.transformations import is_identity
@@ -268,5 +266,5 @@ is a different element.
     is_identity((a.inverse() @ b).compute(), compute=True)  # -> True
     ```
 
-    Likewise, compare the data of two images explicitly
-    (e.g., `numpy.array_equal(img1, img2)`).
+    Likewise, the data of two images is compared explicitly, for example
+    with `numpy.array_equal(img1, img2)`.

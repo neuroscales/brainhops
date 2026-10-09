@@ -7,19 +7,19 @@ import struct
 from brainhops.datamodel.axes import Axis
 
 MGH_HEADER_SIZE = 284
-"""Size in bytes of the fixed MGH header; the voxels start right after."""
+"""The size in bytes of the fixed MGH header, after which the voxels start."""
 
 MGH_FOOTER_SIZE = 20
-"""Size in bytes of the MRI-parameter footer (five big-endian floats)."""
+"""The size in bytes of the footer, five big-endian floats."""
 
-# The leading fields of the header, enough to recognise a file:
-# version, 4 dims, type, dof (all int32), goodRASFlag (int16).
+# The leading header fields, enough to recognise a file: the version, the
+# four dimensions, the type and dof (int32), and goodRASFlag (int16).
 _PREFIX = struct.Struct(">7ih")
 
-# Voxel types an MGH file can hold, by code: UCHAR, INT, FLOAT, SHORT.
+# MGH voxel type codes: UCHAR, INT, FLOAT, SHORT.
 _MGH_TYPES = {0: 1, 1: 4, 3: 4, 4: 2}
 
-# The four axes of an MGH volume, in storage (F) order.
+# The four MGH axes, in storage (Fortran) order.
 _MGH_AXES = [
     Axis("x", "space"),
     Axis("y", "space"),
@@ -28,4 +28,4 @@ _MGH_AXES = [
 ]
 
 _MRI_PARAMS = ("tr", "flip_angle", "te", "ti", "fov")
-"""The footer fields, as `nibabel` names them."""
+"""The footer fields, as nibabel names them."""

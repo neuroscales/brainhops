@@ -1,11 +1,8 @@
-"""
-RAS fields stored in NIfTI files: displacements and coordinates.
+"""Tests for RAS fields stored in NIfTI.
 
-The NIfTI-1 standard reserves `DISPVECT` (1006) "specifically for
-displacements" and `VECTOR` (1007) "for any other type of vector". These
-tests pin down that a standard `DISPVECT` file is read as RAS
-displacements in millimetres, that a field of coordinates is written as
-`VECTOR`, and that both kinds round-trip.
+The standard reserves DISPVECT (1006) for displacements and VECTOR (1007)
+for other vectors. DISPVECT files read as RAS displacements in mm, and
+coordinates fields are written as VECTOR.
 """
 
 import numpy as np
@@ -29,14 +26,13 @@ from brainhops.io.transformations.spm.y import (  # noqa: E402
 
 DISPVECT = 1006  # NIFTI_INTENT_DISPVECT
 VECTOR = 1007  # NIFTI_INTENT_VECTOR
-MAPPING = "Mapping"  # the intent name of a coordinates field
+MAPPING = "Mapping"  # intent name of a coordinates field
 
 SHAPE = (4, 5, 6)
-"""Grid shape: small, and no two axes of the same length."""
+"""A small grid whose axis lengths all differ."""
 
-# A voxel-to-RAS affine with a permutation, a flip, anisotropic spacing
-# and an offset, so that displacements left in voxel units, or rotated
-# the wrong way, cannot pass for millimetres.
+# A permutation, flip, anisotropic spacing and offset, so that wrongly
+# scaled or rotated displacements cannot pass as mm.
 VOX2RAS = np.array(
     [
         [0.0, -3.0, 0.0, 10.0],
@@ -48,7 +44,7 @@ VOX2RAS = np.array(
 
 
 def _ramp() -> np.ndarray:
-    """An `(X, Y, Z, 3)` RAS displacement whose entries name their voxel."""
+    """RAS displacements whose entries encode their voxel."""
     i, j, k = np.meshgrid(*map(np.arange, SHAPE), indexing="ij")
     return np.stack(
         [1.0 + 0.1 * i, 2.0 + 0.2 * j, 3.0 + 0.3 * k], axis=-1
@@ -56,29 +52,27 @@ def _ramp() -> np.ndarray:
 
 
 def _grid_points() -> np.ndarray:
-    """The RAS coordinates of every voxel, as an `(X, Y, Z, 3)` array."""
+    """The RAS coordinates of every voxel."""
     ijk = np.stack(np.meshgrid(*map(np.arange, SHAPE), indexing="ij"), axis=-1)
     return ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
 
 
 def _write(path, vectors: np.ndarray, intent: int):  # noqa: ANN001, ANN202
-    """Write `(X, Y, Z, 3)` vectors in the `(X, Y, Z, 1, 3)` layout."""
+    """Write (X, Y, Z, 3) vectors in the NIfTI (X, Y, Z, 1, 3) layout."""
     img = nb.Nifti1Image(vectors[:, :, :, None, :], VOX2RAS)
-    # A field of coordinates is named as SPM and brainhops name it.
+    # Coordinates fields are named as SPM and brainhops name them.
     img.header.set_intent(intent, name=MAPPING if intent == VECTOR else "")
     nb.save(img, str(path))
     return path
 
 
 def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
-    """Map RAS points through a RAS-to-RAS transformation."""
     points = xforms.CoordinatesField(field=np.asarray(points, float))
     out = xforms.Sequence(transformations=[points, *xform]).compute()
     return np.asarray(out.to(xforms.CoordinatesField).field)
 
 
 def _apply_coordinates(field, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
-    """Map RAS points through a voxel-to-RAS coordinates field."""
     ras2vox = np.linalg.inv(VOX2RAS)
     voxels = np.asarray(points, float) @ ras2vox[:3, :3].T + ras2vox[:3, 3]
     voxels = xforms.CoordinatesField(field=voxels)
@@ -88,7 +82,7 @@ def _apply_coordinates(field, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
 
 @pytest.fixture
 def standard_warp(tmp_path):  # noqa: ANN001, ANN201
-    """A `DISPVECT` file built to the standard: RAS displacements in mm."""
+    """A standard DISPVECT file of RAS displacements in mm."""
     return _write(tmp_path / "warp.nii.gz", _ramp(), DISPVECT)
 
 
@@ -108,10 +102,7 @@ def test_a_dispvect_file_maps_ras_to_ras(standard_warp) -> None:  # noqa: ANN001
 def test_a_dispvect_file_moves_every_node_by_its_vector(
     standard_warp,  # noqa: ANN001
 ) -> None:
-    """
-    Each point at a voxel centre moves by that voxel's stored vector, in
-    RAS millimetres: `x -> x + u(x)`.
-    """
+    """A point at a voxel centre moves by the stored vector: x -> x + u(x)."""
     field = io.transformations.load(standard_warp)
     points = _grid_points().reshape(-1, 3)
     moved = _apply(field, points)
@@ -121,7 +112,7 @@ def test_a_dispvect_file_moves_every_node_by_its_vector(
 
 
 def test_a_constant_displacement_is_a_translation_in_mm(tmp_path) -> None:  # noqa: ANN001
-    """Off the grid nodes too, a constant field is a plain translation."""
+    """A constant field is a translation, also off the grid."""
     vectors = np.broadcast_to(
         np.array([1.0, -2.0, 3.0], "float32"), (*SHAPE, 3)
     ).copy()
@@ -135,7 +126,7 @@ def test_a_constant_displacement_is_a_translation_in_mm(tmp_path) -> None:  # no
 
 
 def test_displacements_are_stored_in_voxel_units(standard_warp) -> None:  # noqa: ANN001
-    """The middle slot adds its values on the grid, in voxels."""
+    """The middle slot holds the displacements in voxel units."""
     field = io.transformations.load(standard_warp)
     voxels = np.asarray(field.displacement.field)
     assert voxels.shape == (*SHAPE, 3)
@@ -145,10 +136,7 @@ def test_displacements_are_stored_in_voxel_units(standard_warp) -> None:  # noqa
 
 
 def test_a_coordinates_field_and_its_displacements_agree(tmp_path) -> None:  # noqa: ANN001
-    """
-    A field of RAS positions (`VECTOR`) and the matching field of RAS
-    displacements (`DISPVECT`) are the same map.
-    """
+    """A VECTOR coordinates field and its DISPVECT displacements agree."""
     coords = _write(
         tmp_path / "coords.nii.gz",
         (_grid_points() + _ramp()).astype("float32"),
@@ -166,10 +154,7 @@ def test_a_coordinates_field_and_its_displacements_agree(tmp_path) -> None:  # n
 
 
 def test_a_coordinates_field_drops_its_singleton_axis(tmp_path) -> None:  # noqa: ANN001
-    """
-    NIfTI stores a vector field as `(X, Y, Z, 1, 3)`. The singleton axis
-    is dropped on read, or the field would be sampled as a 4-D grid.
-    """
+    """The singleton axis is dropped, or the field would be sampled as 4-D."""
     values = (_grid_points() + _ramp()).astype("float32")
     field = io.transformations.load(_write(tmp_path / "c.nii", values, VECTOR))
     assert type(field) is NiftiRASCoordinatesField
@@ -194,14 +179,8 @@ def test_an_spm_deformation_is_sampled_in_ras(
     tmp_path,  # noqa: ANN001
     array_backend: str,
 ) -> None:
-    """
-    An SPM `y_` deformation, stored as `(X, Y, Z, 1, 3)`, maps each node
-    of its grid to the RAS position it holds, and every other point --
-    inside the grid or outside of it -- to a position that is the same on
-    every call and on every backend.
-
-    Its field once kept the singleton axis, and was sampled as a 4-D grid
-    of 3-vectors: values of the order of 1e24 and 1e-22.
+    """Nodes of an SPM y_ deformation map to the stored RAS positions, and
+    other points map deterministically on every backend.
     """
     values = (_grid_points() + _ramp()).astype("float32")
     path = _write(tmp_path / "y_sub01.nii.gz", values, VECTOR)
@@ -223,26 +202,18 @@ def test_an_spm_deformation_is_sampled_in_ras(
             np.testing.assert_allclose(
                 _apply(field, outside), reference, atol=1e-4
             )
-    # A deformation of this grid moves no point further than its own
-    # extent, so a sample far outside of that range is not a position.
+    # A deformation moves no point beyond the extent of its values.
     low, high = values.reshape(-1, 3).min(0), values.reshape(-1, 3).max(0)
     assert np.all(reference >= low - 1e-3)
     assert np.all(reference <= high + 1e-3)
 
 
 def test_points_map_through_a_loaded_coordinates_field(tmp_path) -> None:  # noqa: ANN001
-    """
-    Points map through a loaded field of RAS coordinates, and through the
-    `rasfield` slot of an SPM `y_` field, to one RAS position each.
-
-    The field is a linear function of RAS, so trilinear sampling between
-    the nodes is exact. Its singleton axis was once kept, which mapped a
-    single point to a `(4, 1, 3)` array of wrong positions.
-    """
+    """Each point maps to one RAS position, exactly for a linear field."""
     matrix = np.array([[1.1, 0.1, 0.0], [0.0, 0.9, -0.2], [0.1, 0.0, 1.05]])
     shift = np.array([1.5, -2.0, 3.0])
     values = (_grid_points() @ matrix.T + shift).astype("float32")
-    # Points inside the grid, off its nodes.
+    # Points inside the grid but off the nodes.
     ras2vox = np.linalg.inv(VOX2RAS)
     voxels = np.array([[1.3, 2.6, 4.1], [0.5, 0.5, 0.5], [2.9, 3.2, 1.7]])
     points = voxels @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
@@ -301,7 +272,7 @@ def test_a_displacement_field_round_trips(standard_warp, tmp_path) -> None:  # n
 def test_a_displacement_field_built_from_its_slots_is_written(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """A field that was never read from a file is written from its chain."""
+    """A field never read from a file is written from its chain."""
     from brainhops.io.transformations.base.affines import (
         RASToVoxel,
         VoxelToRAS,
@@ -329,10 +300,7 @@ def test_a_displacement_field_built_from_its_slots_is_written(
 
 
 def test_a_coordinates_field_round_trips_as_vector(tmp_path) -> None:  # noqa: ANN001
-    """
-    A field of coordinates is written as `VECTOR` (with SPM's intent
-    name, "Mapping"), never as `DISPVECT`, and reads back as coordinates.
-    """
+    """Coordinates are written as VECTOR with the SPM intent name 'Mapping'."""
     values = (_grid_points() + _ramp()).astype("float32")
     source = _write(tmp_path / "coords.nii.gz", values, VECTOR)
     field = io.transformations.load(source)
@@ -351,10 +319,7 @@ def test_a_coordinates_field_round_trips_as_vector(tmp_path) -> None:  # noqa: A
 
 
 def test_a_legacy_coordinates_file_is_read_through_a_hint(tmp_path) -> None:  # noqa: ANN001
-    """
-    Older brainhops wrote coordinates as `DISPVECT`. Read with an explicit
-    hint and saved again, such a file comes back as `VECTOR`.
-    """
+    """A legacy DISPVECT coordinates file read by hint is saved as VECTOR."""
     values = (_grid_points() + _ramp()).astype("float32")
     legacy = _write(tmp_path / "legacy.nii.gz", values, DISPVECT)
     assert type(io.transformations.load(legacy)) is NiftiRASDisplacementField
@@ -383,7 +348,7 @@ def test_a_two_component_field_is_refused(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_spline_field_is_written_as_its_values(tmp_path) -> None:  # noqa: ANN001
-    """A field of coefficients is decoded: NIfTI stores sampled values."""
+    """NIfTI stores the sampled values of a spline field, not coefficients."""
     from brainhops._core.bsplines import value2coeff_field
     from brainhops.datamodel import systems
     from brainhops.io.transformations.base.affines import (
@@ -421,9 +386,7 @@ def test_a_spline_field_is_written_as_its_values(tmp_path) -> None:  # noqa: ANN
 
 
 def test_assigning_data_refreshes_the_field_view() -> None:
-    """Its `data` is the array the parser holds, so the property is
-    hand-written -- and it still has to clear the views keyed on it, or
-    `field` would keep serving the array that was there before."""
+    """Assigning the data clears the cached field view."""
     grid = np.stack(np.meshgrid(*[np.arange(4.0)] * 3, indexing="ij"), -1)
     coords = NiftiRASCoordinatesField(data=grid)
     assert coords.field is coords.field  # cached
@@ -437,8 +400,7 @@ def test_assigning_data_refreshes_the_field_view() -> None:
 
 
 def test_a_displacement_field_refuses_in_place_edits(standard_warp) -> None:  # noqa: ANN001
-    """Its slots name fixed positions in the chain, so the chain is a
-    tuple and the field cannot be edited in place."""
+    """The chain is a tuple, so the slots cannot be edited in place."""
     from bagof.magic import replace
 
     field = io.transformations.load(standard_warp)
@@ -458,8 +420,7 @@ def test_a_displacement_field_refuses_in_place_edits(standard_warp) -> None:  # 
     built = NiftiRASDisplacementField(transformations=list(field))
     assert isinstance(built.transformations, tuple)
 
-    # Rebuilding is how a field with other slots is made: here, one whose
-    # way back to RAS is shifted by 1 mm along x.
+    # Rebuilding with another voxel2ras shifts the result 1 mm along x.
     from brainhops.io.transformations.base.affines import VoxelToRAS
 
     matrix = np.asarray(field.voxel2ras.matrix).copy()
@@ -474,7 +435,7 @@ def test_a_displacement_field_refuses_in_place_edits(standard_warp) -> None:  # 
     )
     assert type(shifted) is NiftiRASDisplacementField
     assert isinstance(shifted.transformations, tuple)
-    assert field.ras2voxel is ras2voxel  # the original is untouched
+    assert field.ras2voxel is ras2voxel  # The original is untouched.
     points = _grid_points().reshape(-1, 3)
     np.testing.assert_allclose(
         _apply(shifted, points),
@@ -487,20 +448,18 @@ def test_a_displacement_field_refuses_in_place_edits(standard_warp) -> None:  # 
 #   VELOCITIES (`log`)
 # ----------------------------------------------------------------------
 
-# A constant RAS velocity: its flow is the translation by it.
+# A constant RAS velocity, whose flow is a translation.
 VELOCITY = np.array([1.5, -2.0, 0.5], dtype="float32")
 
 
 @pytest.fixture
 def velocity_warp(tmp_path):  # noqa: ANN001, ANN201
-    """A `DISPVECT` file that holds a constant velocity, in mm."""
     vectors = np.zeros((*SHAPE, 3), dtype="float32") + VELOCITY
     return _write(tmp_path / "vel.nii.gz", vectors, DISPVECT)
 
 
 @pytest.mark.parametrize(
-    # `steps` is the count the field integrates with: the one the spec
-    # names, or the one the default rule picks when it names none.
+    # `steps` is the integration count, or None for the default rule.
     "spec, steps",
     [
         ("{}|svf", None),
@@ -522,7 +481,6 @@ def test_a_velocity_is_read_with_the_log_option(
     velocity = field.displacement
     assert type(velocity) is xforms.StationaryVelocityField
     if steps is None:
-        # The file names no count, so the default rule picks one.
         assert velocity.steps is None
         steps = _tangents._squaring_steps(np.asarray(velocity.values))
     assert velocity._compute_steps == steps
@@ -565,14 +523,14 @@ def test_a_velocity_is_written_in_the_encoding_of_the_format(
 ) -> None:
     velocity = io.transformations.load(velocity_warp, log=True)
     chain = tuple(velocity.transformations)
-    # As a displacement, the default: the velocity is integrated.
+    # Written as displacements by default, the velocity is integrated.
     written = NiftiRASDisplacementField(transformations=chain).to_nibabel()
     np.testing.assert_allclose(
         np.asarray(written.dataobj)[:, :, :, 0, :],
         np.zeros((*SHAPE, 3)) + VELOCITY,
         atol=1e-4,
     )
-    # As a velocity, with `log`: the velocity as it is.
+    # Written with `log`, the velocity is stored as is.
     stored = NiftiRASDisplacementField(
         transformations=chain, log=True
     ).to_nibabel()
@@ -581,7 +539,7 @@ def test_a_velocity_is_written_in_the_encoding_of_the_format(
         np.zeros((*SHAPE, 3)) + VELOCITY,
         atol=1e-6,
     )
-    # A linear velocity tells the two apart.
+    # A sheared velocity distinguishes the two.
     sheared = chain[1].to(data=chain[1].data * _ramp()[..., :1])
     chain = (chain[0], sheared, chain[2])
     integrated = NiftiRASDisplacementField(transformations=chain)

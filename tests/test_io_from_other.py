@@ -1,10 +1,7 @@
-"""
-Tests for `from_any` on file-based data models.
+"""Tests for `from_any` on file-based formats.
 
-A file-based image or transformation can be built from the file that
-stores it, so its `from_any` reads a path, an open file, bytes or a
-structured source with `load`, and leaves everything else to the data
-model's own `from_any`.
+A path, open file, bytes or structured source is read with `load`;
+any other value is left to the `from_any` of the data model.
 """
 
 from pathlib import Path
@@ -73,7 +70,7 @@ def test_an_open_file_is_read(tmp_path) -> None:  # noqa: ANN001
     source = _write_image(tmp_path / "image.nii")
     with open(source, "rb") as f:
         image = NiftiImage.from_any(f)
-        # The array proxy reads the voxels lazily, from the open file.
+        # The array proxy reads the voxels lazily from the open file.
         assert np.array_equal(np.asarray(image.data), DATA)
 
 
@@ -88,14 +85,13 @@ def test_a_structured_source_is_read_with_its_hints(tmp_path) -> None:  # noqa: 
     spec = ImageSpec(path=source, hints=("nifti",))
     image = FileBasedImage.from_any(spec)
     assert isinstance(image, NiftiImage)
-    # A hint naming no image format leaves nothing to read it with.
+    # A hint that names no image format leaves no reader.
     with pytest.raises(ParserError):
         FileBasedImage.from_any(ImageSpec(path=source, hints=("zarr",)))
 
 
 def test_keyword_options_reach_the_reader(tmp_path) -> None:  # noqa: ANN001
-    # `mmap` is a `nibabel.load` option: it reaching the reader shows the
-    # keywords are passed to `load` rather than to the constructor.
+    # mmap is a nibabel.load option, so keywords reach load.
     source = _write_image(tmp_path / "image.nii")
     image = NiftiImage.from_any(source, mmap=False)
     assert np.array_equal(np.asarray(image.data), DATA)
@@ -108,7 +104,7 @@ def test_positional_arguments_with_a_file_are_refused(tmp_path) -> None:  # noqa
 
 
 def test_a_missing_file_fails_to_read_rather_than_build(tmp_path) -> None:  # noqa: ANN001
-    # Before, a string was handed to the constructor as the image data.
+    # A string used to be passed to the constructor as image data.
     with pytest.raises(ParserError):
         NiftiImage.from_any(str(tmp_path / "missing.nii"))
     with pytest.raises(FileNotFoundError):
@@ -143,9 +139,7 @@ def test_an_instance_of_the_data_model_is_copied_into_the_format() -> None:
 
 
 def test_an_instance_of_the_format_keeps_what_was_set_on_it(tmp_path) -> None:  # noqa: ANN001
-    # A file-backed object serves its data through a property backed by
-    # private state. Copying it must carry what was set, not re-read the
-    # file.
+    # The copy carries what was set rather than re-reading the file.
     image = NiftiImage.load(_write_image(tmp_path / "image.nii"))
     image.data = np.zeros_like(DATA)
     copy = NiftiImage.from_any(image)
@@ -170,7 +164,6 @@ def _file_based_classes() -> list:
     "cls", _file_based_classes(), ids=lambda cls: cls.__qualname__
 )
 def test_every_file_based_class_reads_files_in_from_other(cls: type) -> None:
-    # The file branch must come before the data model's own `from_any`
-    # in the MRO of every format, whatever the order of its bases.
+    # The file branch must come first in the MRO of every format.
     owner = next(base for base in cls.__mro__ if "from_any" in vars(base))
     assert owner.__name__ == "_FileBasedModelMixin"

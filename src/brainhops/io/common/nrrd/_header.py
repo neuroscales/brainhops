@@ -38,30 +38,21 @@ from ._constants import (
 
 
 class NrrdHeader(Magic, frozen=True):
-    """
-    A NRRD header: its fields and key/value pairs, as written.
-
-    The fields are kept as text, under their canonical names (`"data
-    file"`, `"space directions"`, ...), so that every one of them is
-    written back as it was read. The methods decode the ones that the
-    readers need.
+    """The header of a NRRD file, with the fields kept as text so that they are
+    written back as read.
     """
 
     version: int = 5
-    """The version of the magic line (`NRRD000X`)."""
+    """Format version, from the magic line."""
 
     fields: tx.Dict[str, str] = Factory(dict)
-    """The fields, by canonical name, as text, in the order they were
-    read. The file names of a `data file: LIST` are in `data_files`."""
+    """Fields as text, by canonical name, in reading order."""
 
     keyvalue: tx.Dict[str, str] = Factory(dict)
-    """The `key:=value` pairs, unescaped."""
+    """Unescaped `key:=value` pairs."""
 
     data_files: tx.Tuple[str, ...] = ()
-    """The data files of a detached header, in order (the `LIST` and
-    pattern forms expanded); empty for an attached header."""
-
-    # --- decoded fields -----------------------------------------------
+    """Detached data files in order; empty when the data are attached."""
 
     def _field(self, name: str) -> tx.Optional[str]:
         value = self.fields.get(name)
@@ -69,7 +60,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def dimension(self) -> int:
-        """The number of axes."""
+        """Number of axes."""
         value = self._field("dimension")
         if value is None:
             raise ParserContentError("The NRRD header has no 'dimension'.")
@@ -77,7 +68,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def sizes(self) -> tx.Tuple[int, ...]:
-        """The number of samples along each axis, fastest first."""
+        """Number of samples along each axis, fastest axis first."""
         value = self._field("sizes")
         if value is None:
             raise ParserContentError("The NRRD header has no 'sizes'.")
@@ -91,7 +82,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def encoding(self) -> str:
-        """The canonical encoding: raw, ascii, hex, gzip or bzip2."""
+        """Canonical encoding: `raw`, `ascii`, `hex`, `gzip` or `bzip2`."""
         value = (self._field("encoding") or "").lower()
         if value not in _ENCODINGS:
             raise ParserContentError(f"Unsupported NRRD encoding: {value!r}")
@@ -99,13 +90,16 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def endian(self) -> tx.Optional[str]:
-        """`"little"`, `"big"`, or `None` when the header says nothing."""
+        """Lower-cased byte order, or `None` if absent."""
         value = self._field("endian")
         return None if value is None else value.lower()
 
     @property
     def dtype(self) -> np.dtype:
-        """The numpy type of the stored values, in their byte order."""
+        """NumPy data type of the stored values, with the byte order.
+
+        Multi-byte types in a binary encoding require an `endian` field.
+        """
         value = self._field("type")
         if value is None:
             raise ParserContentError("The NRRD header has no 'type'.")
@@ -123,17 +117,17 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def count(self) -> int:
-        """The number of samples."""
+        """Total number of samples."""
         return int(np.prod(self.sizes, dtype=np.int64))
 
     @property
     def nbytes(self) -> int:
-        """The number of bytes of the (decoded) values."""
+        """Size of the decoded values in bytes."""
         return self.count * self.dtype.itemsize
 
     @property
     def line_skip(self) -> int:
-        """The number of lines to skip before the data."""
+        """Number of lines to skip before the data."""
         value = int(self._field("line skip") or 0)
         if value < 0:
             raise ParserContentError(f"Invalid NRRD line skip: {value}")
@@ -141,7 +135,10 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def byte_skip(self) -> int:
-        """The number of bytes to skip before the data, or -1."""
+        """Number of bytes to skip before the data.
+
+        A value of -1 means that the data are the last bytes of the file.
+        """
         value = int(self._field("byte skip") or 0)
         if value < -1:
             raise ParserContentError(f"Invalid NRRD byte skip: {value}")
@@ -149,8 +146,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def space(self) -> tx.Optional[str]:
-        """The canonical `space` (`"left-posterior-superior"`, ...), or
-        `None` when the header has none."""
+        """Canonical space name, or `None`; abbreviations are accepted."""
         value = self._field("space")
         if value is None:
             return None
@@ -162,8 +158,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def space_dimension(self) -> tx.Optional[int]:
-        """The dimension of the world space, from `space` or `space
-        dimension`; `None` when the header has neither."""
+        """Dimension of the world space, or `None` if unknown."""
         space = self.space
         if space is not None:
             return SPACES[space][1]
@@ -174,8 +169,10 @@ class NrrdHeader(Magic, frozen=True):
     def space_directions(
         self,
     ) -> tx.Optional[tx.List[tx.Optional[np.ndarray]]]:
-        """One vector per axis (`None` for a non-spatial axis), or `None`
-        when the header has no `space directions`."""
+        """Direction vector of each axis, or `None` if the field is absent.
+
+        The vector of a non-spatial axis is `None`.
+        """
         value = self._field("space directions")
         if value is None:
             return None
@@ -200,7 +197,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def space_origin(self) -> tx.Optional[np.ndarray]:
-        """The position of the centre of the first sample, or `None`."""
+        """Position of the first sample, or `None`."""
         value = self._field("space origin")
         if value is None:
             return None
@@ -211,7 +208,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def measurement_frame(self) -> tx.Optional[np.ndarray]:
-        """The measurement frame, one vector per column, or `None`."""
+        """Measurement frame with one vector per column, or `None`."""
         value = self._field("measurement frame")
         if value is None:
             return None
@@ -246,51 +243,52 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def kinds(self) -> tx.List[tx.Optional[str]]:
-        """The kind of each axis, in lower case (`None` when unknown)."""
+        """Lower-cased kind of each axis, or `None`."""
         return self._words("kinds")
 
     @property
     def centers(self) -> tx.List[tx.Optional[str]]:
-        """The centering of each axis: `"cell"`, `"node"` or `None`."""
+        """Lower-cased centering of each axis, or `None`."""
         return self._words("centers")
 
     @property
     def spacings(self) -> tx.List[float]:
-        """The spacing of each axis (`nan` when unknown)."""
+        """Spacing of each axis, or NaN."""
         return self._floats("spacings")
 
     @property
     def axis_mins(self) -> tx.List[float]:
-        """The `axis mins` (`nan` when unknown)."""
+        """Minimum position along each axis, or NaN."""
         return self._floats("axis mins")
 
     @property
     def axis_maxs(self) -> tx.List[float]:
-        """The `axis maxs` (`nan` when unknown)."""
+        """Maximum position along each axis, or NaN."""
         return self._floats("axis maxs")
 
     @property
     def units(self) -> tx.List[tx.Optional[str]]:
-        """The unit of each axis (`None` when not given)."""
+        """Unit of each axis, or `None`."""
         return [v or None for v in self._per_axis("units", _parse_strings)]
 
     @property
     def space_units(self) -> tx.List[tx.Optional[str]]:
-        """The unit of each world axis (`None` when not given)."""
+        """Unit of each world axis, or `None`."""
         value = self._field("space units")
         if value is None:
             return [None] * (self.space_dimension or 0)
         return [v or None for v in _parse_strings(value)]
 
-    # --- parsing ------------------------------------------------------
-
     @classmethod
     def from_lines(
         cls, lines: tx.Iterable[str], version: int = 5
     ) -> "NrrdHeader":
-        """
-        Parse the lines of a header, after its magic line and up to the
-        empty line that ends it.
+        """Build a header from the lines that follow the magic line.
+
+        Raises
+        ------
+        ParserContentError
+            If a line cannot be parsed or a required field is missing.
         """
         fields: tx.Dict[str, str] = {}
         keyvalue: tx.Dict[str, str] = {}
@@ -338,12 +336,10 @@ class NrrdHeader(Magic, frozen=True):
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO) -> tx.Tuple["NrrdHeader", int]:
-        """
-        Read a header from a binary stream, from its magic line.
+        """Read a header from a binary stream positioned at the magic line.
 
-        Returns the header and the offset, relative to the start of the
-        stream, of the first byte after the header (where attached data
-        start).
+        Return the header and the number of bytes read, which is where attached
+        data begin.
         """
         start = file.tell()
         magic = file.readline(64)
@@ -368,11 +364,8 @@ class NrrdHeader(Magic, frozen=True):
         header = cls.from_lines(lines, version=version)
         return header, file.tell() - start
 
-    # --- writing ------------------------------------------------------
-
     def to_text(self) -> str:
-        """The text of the header, from its magic line, without the empty
-        line that separates it from attached data."""
+        """Return the header text, without the empty line that ends it."""
         lines = [f"NRRD000{self.version}"]
         for name in _FIELDS:
             if name in self.fields and name != "data file":
@@ -389,10 +382,7 @@ class NrrdHeader(Magic, frozen=True):
 
 
 def _data_files(value: str) -> tx.Tuple[tx.List[str], bool]:
-    """
-    The files named by a `data file` value, and whether the names follow
-    on the next lines (`LIST`).
-    """
+    """Return the names in a `data file` value and whether a `LIST` follows."""
     parts = value.split()
     if parts and parts[0] == "LIST":
         return [], True

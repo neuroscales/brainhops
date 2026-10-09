@@ -1,57 +1,42 @@
-"""Regenerate the deterministic ITK fixtures in this directory.
+"""Regenerate the deterministic ITK fixtures stored next to this script.
 
-Run it with SimpleITK installed, from anywhere:
+The script needs SimpleITK, which the tests themselves do not require.
+It can be run from any directory::
 
     python tests/data/generate_itk_fixtures.py
 
-It writes the transform files that pin ITK's *layout* and *conventions*,
-together with a `<name>_expected.npy` of the values SimpleITK itself
-reports for each one. The tests assert against those stored arrays, so
-the suite needs SimpleITK only to regenerate the fixtures, never to run.
-
-The values are deliberately not random. A displacement field decoded in
-the wrong memory layout, or Euler angles composed in the wrong order,
-still produce a well-formed array of plausible numbers -- the error only
-shows against values whose every entry says where it came from. Each
-warp fixture therefore carries the ramp
+Each fixture is a transform file and a `<name>_expected.npy` file with the
+values reported by SimpleITK. The values are not random, because a wrong
+memory layout or angle order would still give plausible random arrays.
+The warp fixtures carry the ramp::
 
     value = 1000 * component + 100 * x + 10 * y + z
 
-so a transposed axis or a mistaken component stride is legible at a
-glance, and each warp grid is left with unit spacing and an identity
-direction so that the world-space displacements SimpleITK reports are
-already in the grid's own voxel units.
+so that a transposed axis or a wrong component stride is visible at a
+glance. The warp grids have unit spacing and an identity direction.
 """
 
-# stdlib
 from pathlib import Path
 
-# dependencies
 import numpy as np
 import SimpleITK as sitk
 
 HERE = Path(__file__).parent
 
-#: The grid shape, in ITK's own (x, y, z) order. Small enough that the
-#: `.tfm` files stay a few hundred bytes, big enough that no two axes
-#: have the same length -- an axis swap between equal-length axes is
-#: invisible.
+# ITK (x, y, z) order; distinct lengths make axis swaps visible.
 SHAPE = (2, 3, 4)
 
 
 def ramp(x: int, y: int, z: int) -> list:
-    """The decodable value of each component at one grid point."""
+    """Return the ramp value of each component at a grid point."""
     return [1000 * c + 100 * x + 10 * y + z for c in range(3)]
 
 
 def write_displacement_field() -> None:
-    """A dense displacement field whose every value names its voxel.
+    """Write a dense displacement field whose values name their voxel.
 
-    ITK hands back the parameters of a `DisplacementFieldTransform` as
-    the raw buffer of an image of vectors, so the components of a voxel
-    are adjacent. The expected array is taken from SimpleITK's own view
-    of the image, not from the parameter vector, so it is independent of
-    how that buffer is laid out.
+    The expected array comes from the image view of SimpleITK, independently
+    of the parameter layout.
     """
     image = sitk.Image(SHAPE, sitk.sitkVectorFloat64, 3)
     for z in range(SHAPE[2]):
@@ -62,23 +47,20 @@ def write_displacement_field() -> None:
     transform = sitk.DisplacementFieldTransform(sitk.Image(image))
     sitk.WriteTransform(transform, str(HERE / "itk_displacement_ramp3d.tfm"))
 
-    # `GetArrayFromImage` is (z, y, x, component); the field is stored
+    # `GetArrayFromImage` returns (z, y, x, component); the field is stored as
+    #
     # (x, y, z, component).
     expected = sitk.GetArrayFromImage(image).transpose(2, 1, 0, 3)
     np.save(HERE / "itk_displacement_ramp3d_expected.npy", expected)
 
 
 def write_bspline() -> None:
-    """A B-spline whose coefficients name their control point.
+    """Write a B-spline whose coefficients name their control point.
 
-    Unlike a dense field, a B-spline's parameters are one scalar
-    coefficient image per axis, written back to back. The expected array
-    is stacked from the coefficient images SimpleITK exposes, so it too
-    is independent of the parameter layout.
+    The expected array comes from the coefficient images of SimpleITK,
+    independently of the parameter layout.
     """
-    # A cubic spline pads its mesh with three control points per axis,
-    # so a (1, 2, 3) mesh gives this (4, 5, 6) control grid -- again no
-    # two axes the same length, and still tiny.
+    # A cubic spline pads a (1, 2, 3) mesh to a (4, 5, 6) grid.
     grid = (4, 5, 6)
     images = []
     for component in range(3):
@@ -103,16 +85,11 @@ def write_bspline() -> None:
 
 
 def write_euler3d(compute_zyx: bool, name: str) -> None:
-    """A rigid Euler 3-D transform, in one of ITK's two angle orders.
+    """Write a rigid 3-D Euler transform in either ITK angle order.
 
-    The three angles differ from one another and the center is away from
-    the origin, so neither the composition order nor the folding of the
-    center can cancel out. ITK >= 5 writes the `ComputeZYX` flag as a
-    fourth fixed parameter, which is what makes both files four-long.
-
-    The expected array is the compact `(3, 4)` affine that ITK itself
-    describes: its rotation from `GetMatrix`, and its offset read off
-    `TransformPoint` at the origin, which is where the center folds in.
+    The angles are distinct and the center lies away from the origin, so that
+    errors in composition order or center folding cannot cancel out. The
+    expected array is the compact (3, 4) affine.
     """
     transform = sitk.Euler3DTransform()
     transform.SetComputeZYX(compute_zyx)
@@ -128,16 +105,11 @@ def write_euler3d(compute_zyx: bool, name: str) -> None:
 
 
 def write_generic_affine(ndim: int) -> None:
-    """An affine in the binary MATLAB format ANTs writes its affines in.
+    """Write an affine in the binary MATLAB format written by ANTs.
 
-    `antsRegistration` writes every linear stage through
-    `itk::MatlabTransformIO`, as `<prefix>0GenericAffine.mat`: an
-    `AffineTransform` with a center of rotation. Every entry of the
-    matrix differs, and the center is away from the origin, so neither a
-    transposed matrix nor a dropped center can go unnoticed.
-
-    The expected array is the compact `(D, D + 1)` affine that ITK itself
-    describes, as for the Euler fixtures.
+    This is the `<prefix>0GenericAffine.mat` file of `antsRegistration`. All
+    matrix entries differ and the center lies away from the origin, so that a
+    transposed matrix or a dropped center is detected.
     """
     matrix = np.arange(1, ndim * ndim + 1, dtype=np.float64) / 10
     matrix = matrix.reshape(ndim, ndim) + np.eye(ndim)

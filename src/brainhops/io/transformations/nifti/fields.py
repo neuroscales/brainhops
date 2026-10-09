@@ -1,30 +1,24 @@
 """
-Fields of RAS coordinates and of RAS displacements, stored in NIfTI files.
+RAS coordinates fields and RAS displacement fields stored in NIfTI files.
 
-Which intent code each one reads and writes, and why, is described in
-the package docstring, [`brainhops.io.transformations.nifti`][].
+The intent codes and the reasons for them are described in
+[`brainhops.io.transformations.nifti`][].
 """
 
-# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 from bagof.magic import KwOnly, replace
 
-# core
 from brainhops._core.properties import (
     InvalidatorInAttribute,
     smartproperty,
 )
 from brainhops.backends import get_array_backend
-
-# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
-
-# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -56,97 +50,74 @@ from brainhops.io.transformations.base.fields import (
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 _NDIM = 3
-"""The number of spatial dimensions the displacement reader supports."""
+"""Spatial dimension supported by the displacement reader."""
 
 
 def _always(value: tx.Any) -> bool:
-    """Read every stored value as unset, so the getter always computes."""
+    """Treat every stored value as unset, so that the getter always runs."""
     return True
 
 
 def _store_through_the_parser(
     self: tx.Any, value: tx.Optional[ArrayProtocol]
 ) -> None:
-    """Store `data` where the parser keeps it, which the getter reads."""
+    """Store the data where the parser keeps it, which the getter reads."""
     NiftiParser.data.fset(self, value)
 
 
 @register_format
 class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
-    """
-    Field of RAS coordinates, stored in a NIfTI file.
-    """
+    """Field of RAS coordinates stored in a NIfTI file."""
 
     HINTS = ("coordinates",)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
         """
-        Score a NIfTI header as a field of RAS coordinates.
+        Score a header as a field of RAS coordinates.
 
-        `VECTOR` (1007) is the intent code this reader writes, and the
-        one SPM writes for its `y_` coordinate maps, so it is claimed
-        with certainty. `DISPVECT` (1006) is not claimed at all: the
-        standard reserves it for displacements, which
-        [`NiftiRASDisplacementField`][] reads. FSL intent codes are left
-        to the FSL readers, which decode them.
-
-        A `VECTOR` file in ITK's layout is also claimed with certainty by
-        the ITK displacement reader, which reads its vectors as LPS,
-        unless its intent name is `"Mapping"` -- which SPM and this
-        reader write and ITK never does. A `VECTOR` file without that
-        name says nothing of the frame of its vectors, so the two tie
-        and a hint decides. See
-        [`brainhops.io.transformations.itk.nifti`][].
-
-        A file named `"NREG_TRANS"` is NiftyReg's, and is left to the
-        NiftyReg readers ([`brainhops.io.transformations.niftyreg`][]).
+        A `VECTOR` image (1007), the intent that this reader and SPM write,
+        scores `Confidence.CERTAIN`. A `DISPVECT` image (1006) is left to
+        [`NiftiRASDisplacementField`][], and a file named `"NREG_TRANS"` to
+        [`brainhops.io.transformations.niftyreg`][]. The ITK displacement
+        reader ties on a `VECTOR` image in the ITK layout unless its intent
+        name is `"Mapping"`, so a hint decides (see
+        [`brainhops.io.transformations.itk.nifti`][]). Any other file whose
+        trailing axis has length 3 scores `Confidence.MAYBE`.
         """
         intent = _nifti_intent(header)
         if _nifti_intent_name(header) == _NIFTI_INTENT_NAME_NIFTYREG:
-            # NiftyReg's own fields: `intent_p1` says whether they hold
-            # positions, displacements, spline coefficients or
-            # velocities, which only the NiftyReg readers decode.
+            # Only the NiftyReg readers decode what intent_p1 says the file
+            # holds.
             return Confidence.NO
         if intent == _NIFTI_INTENT_VECTOR:
             return Confidence.CERTAIN
         if intent == _NIFTI_INTENT_DISPVECT:
             return Confidence.NO
-        # The intent code is often left unset, so fall back to the
-        # shape: a field of RAS coordinates carries a trailing axis of
-        # length 3. A plain image has no such axis, and scores zero
-        # rather than competing with the affine readers.
+        # The intent is often unset, so fall back on the shape. A plain image
+        # scores zero rather than compete with the affine readers.
         shape = _nifti_shape(header)
         if shape and len(shape) >= 4 and shape[-1] == 3:
             return Confidence.MAYBE
         return Confidence.NO
 
     @smartproperty(
-        # The parser owns the storage, and the getter below reshapes what
-        # it holds, so there is never a stored value to hand back: the
-        # getter runs on every read.
+        # The getter reshapes what the parser stores, so it runs on every read.
         unset=_always,
         fset=_store_through_the_parser,
-        # Assigning `data` clears the views keyed on it, as it does on
-        # any transformation, which a hand-written setter would otherwise
-        # leave stale.
+        # Assigning the data clears the views keyed on it.
         invalidates=InvalidatorInAttribute("derived_fields"),
     )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
-        The field of RAS coordinates, as an `(X, Y, Z, 3)` array.
+        The field as an (X, Y, Z, 3) array, which its `field` view reads.
 
-        It is the image data that the NIfTI parser reads from the file,
-        and the array this field stores: its `field` view reads it.
-        NIfTI stores a vector field as `(X, Y, Z, 1, 3)`, with the
-        components in the fifth axis, and SPM writes its `y_` fields that
-        way. The singleton axis before the components is dropped, or the
-        field would be sampled as a 4-D grid of 3-vectors.
+        NIfTI stores a vector field with shape (X, Y, Z, 1, 3). The singleton
+        axis is dropped, since the array would otherwise be sampled as a 4-D
+        grid of vectors.
         """
-        # `CoordinatesField` exposes its stored `_data` as `data`, which
-        # shadows the parser's lazy `data` property. The parser keeps the
-        # image it reads in `_data` too, so the two are one value here,
-        # read through the parser.
+        # The parser keeps its image in _data, which is also the value of this
+        # field, so the data is read through the parser.
         data = NiftiParser.data.fget(self)
         if data is None:
             return None
@@ -156,22 +127,15 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the `nibabel` image that encodes this field of RAS coordinates.
+        Build a `nibabel` image that encodes the field.
 
-        The field array becomes the NIfTI data array, and the header
-        carries the `VECTOR` (1007) intent code, with SPM's intent name
-        `"Mapping"`, that marks the file as a field of coordinates rather
-        than a plain image. `DISPVECT` (1006) is not used: the standard
-        reserves it for displacements, and ITK and brainhops read it as
-        such. The voxel-to-RAS affine of the
-        grid is taken from the source header when the field was read from
-        one, and is the identity otherwise.
-
-        The field array keeps its own array backend. A `cupy` or `dask`
-        array is passed through rather than coerced into `numpy`. When
-        `like` is given, non-encoding header fields are copied from it.
-        Keyword arguments override header fields last, so an explicit value
-        wins.
+        The header carries the `VECTOR` intent (1007) with the SPM intent name
+        `"Mapping"`, which marks a coordinates field, rather than `DISPVECT`
+        (1006), which ITK and brainhops read as displacements. The voxel-to-RAS
+        affine comes from the source header, or is the identity. The array
+        backend is kept, so a `cupy` or `dask` array is not converted to
+        `numpy`. Non-encoding header fields are copied from `like`, and
+        `overrides` are applied last.
         """
         # NIfTI stores sampled coordinates.
         field = self.to(store="values").data
@@ -182,10 +146,9 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         backend = get_array_backend(field)
         field = backend.asarray(field)
         if field.ndim == 4:
-            # NIfTI stores a vector field as a five-dimensional array,
-            # with the components in the fifth axis and a singleton axis
-            # before them. A four-dimensional array would put the
-            # components in the time axis, which the reader misreads.
+            # A NIfTI vector field is 5-D, with a singleton axis before the
+            # components. A 4-D array would put the components in the time
+            # axis.
             field = backend.expand_dims(field, axis=3)
         if self.header is not None:
             affine = self.header.get_best_affine()
@@ -205,15 +168,13 @@ class NiftiRASDisplacementField(
     _xforms.ImmutableSequence, NiftiBasedTransformation
 ):
     """
-    Field of RAS displacements, stored in a NIfTI file.
+    Field of RAS displacements stored in a NIfTI file.
 
-    This is the `DISPVECT` (1006) field of the NIfTI-1 standard: each
-    voxel holds the displacement, in RAS millimetres, of the point at
-    its centre, and the field maps RAS to RAS as `x -> x + u(x)`. It is
-    how ITK 5.4 and later reads and writes a `DISPVECT` image.
-
-    A `DisplacementField` adds its values in the units of its own grid,
-    so the field is the
+    The file holds a `DISPVECT` field (1006), in which each voxel holds the
+    displacement, in RAS millimetres, of the point at its centre. The field
+    maps RAS to RAS as `x -> x + u(x)`, which is how ITK 5.4 and later read and
+    write `DISPVECT`. A displacement field adds its values in the units of its
+    own grid, so this field is an
     [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]
     of three named slots:
 
@@ -223,29 +184,25 @@ class NiftiRASDisplacementField(
     | `displacement` | the displacement field, in voxel units      |
     | `voxel2ras`    | the field's voxels back to RAS world        |
 
-    The displacements are interpolated linearly and extended with the
-    nearest value outside the grid, as ITK's `DisplacementFieldTransform`
-    does by default.
+    The displacements are interpolated linearly and extrapolated with the
+    nearest value outside the grid, as by the default
+    `DisplacementFieldTransform` of ITK.
 
-    The file may hold a stationary velocity instead, whose flow at time
-    one is the map: the standard has no code for one, so it is said with
-    the `log` option (`warp.nii.gz|displacements|log:true`, or its alias
-    `warp.nii.gz|svf`; in Python, `load(path, log=True)`). The
-    `displacement` slot is then a
-    [`StationaryVelocityField`][brainhops.datamodel.transformations.\
-StationaryVelocityField], integrated with `steps` squaring steps
-    (`|svf|steps:6`). The field is written in the encoding the options
-    say: a velocity when `log` is set, and otherwise the displacement,
-    which a velocity is integrated into.
+    The file may instead hold a stationary velocity, whose flow at time one is
+    the map. No standard code marks it, so the `log` option does:
+    `warp.nii.gz|displacements|log:true`, its alias `warp.nii.gz|svf`, or
+    `load(path, log=True)`. The `displacement` slot is then a
+    [`StationaryVelocityField`][brainhops.datamodel.transformations.StationaryVelocityField],
+    integrated with `steps` squaring steps (`|svf|steps:6`).
     """
 
     HINTS = ("displacements",)
 
     degree: tx.ClassVar[int] = 1
-    """The spline degree used to interpolate the field."""
+    """Spline degree of the interpolation."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
-    """The boundary condition used outside of the field of view."""
+    """Boundary condition outside the field of view."""
 
     log: tx.Annotated[
         bool,
@@ -271,10 +228,8 @@ transformations.StationaryVelocityField].
         KwOnly(),
     ] = None
 
-    # --- reading ------------------------------------------------------
-    # The NIfTI parser hands its keywords to `nibabel`, not to the
-    # constructor, so the encoding options are taken out first and set
-    # on the field read.
+    # The NIfTI parser hands its keyword arguments to nibabel, so the
+    # encoding options are popped first and set on the field read.
 
     @classmethod
     def from_file(cls, file: tx.Any, **kwargs) -> tx.Self:
@@ -290,30 +245,25 @@ transformations.StationaryVelocityField].
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
         """
-        Score a NIfTI header as a field of RAS displacements.
+        Score a header as a field of RAS displacements.
 
-        `DISPVECT` (1006) is the code the standard reserves for
-        displacements, so a file that carries it is claimed with
-        certainty. Nothing else is: a field without it may as well hold
-        coordinates, and is left to [`NiftiRASCoordinatesField`][].
+        Only a `DISPVECT` image (1006) is claimed, with `Confidence.CERTAIN`.
+        Other images may hold coordinates and are left to
+        [`NiftiRASCoordinatesField`][].
         """
         if _nifti_intent(header) == _NIFTI_INTENT_DISPVECT:
             return Confidence.CERTAIN
         return Confidence.NO
 
-    # --- copies -------------------------------------------------------
-
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """
-        Create an instance from an instance of a similar class.
+        Create a field from an instance of a similar class.
 
-        The chain of another transformation is carried over, rather than
-        re-read from a NIfTI header that comes with it and says something
-        else (a NiftyReg file holds positions, say). Its encoding is not:
-        `log` and `steps` are this format's options, so a velocity copied
-        here is written as its displacement unless `log=True` is given --
-        to this copy, or to `save`.
+        The chain of the other transformation is carried over rather than
+        re-read from its NIfTI header, which may mean something else. The
+        encoding options `log` and `steps` are not carried over, so a copied
+        velocity is written as a displacement unless `log=True` is given.
         """
         if not isinstance(other, NiftiRASDisplacementField):
             kwargs.setdefault("log", False)
@@ -322,25 +272,23 @@ transformations.StationaryVelocityField].
                 kwargs.setdefault("transformations", tuple(other))
         return super().from_instance(other, *args, **kwargs)
 
-    # --- endpoints ----------------------------------------------------
-    #
-    # Declared rather than read off the chain: reading them off the
-    # chain would build it, and building it decodes the field data.
+    # The endpoints are declared rather than read off the chain, which would
+    # decode the data.
 
     @smartproperty(cache=True)
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The anatomical space the field maps from."""
+        """
+        The anatomical space that the field maps from, in RAS millimetres.
+        """
         return _systems.RASmm()
 
     @smartproperty(cache=True)
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The anatomical space the field maps to."""
+        """The anatomical space that the field maps to, in RAS millimetres."""
         return _systems.RASmm()
 
-    # --- decoding -----------------------------------------------------
-
     def _vox2ras(self) -> np.ndarray:
-        """The `(4, 4)` voxel-to-RAS affine of the field's grid."""
+        """Return the (4, 4) voxel-to-RAS affine of the grid."""
         header = self.header
         if header is None:
             raise ParserContentError(
@@ -350,10 +298,10 @@ transformations.StationaryVelocityField].
 
     def _ras_vectors(self) -> ArrayProtocol:
         """
-        The stored displacements, as an `(X, Y, Z, 3)` array in RAS mm.
+        Return the stored displacements, in RAS millimetres.
 
-        The standard layout is five-dimensional, `(X, Y, Z, 1, 3)`, with
-        the components in the fifth axis; its singleton axis is dropped.
+        The standard layout is (X, Y, Z, 1, 3), and its singleton axis is
+        dropped. A field whose vectors do not have three components is refused.
         """
         data = self.data
         if data is None:
@@ -374,19 +322,16 @@ transformations.StationaryVelocityField].
             )
         return data
 
-    # --- chain --------------------------------------------------------
-
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """
         The chain of transformations that the field encodes.
 
-        It is built from the NIfTI header and data on first access, and
-        cached. Assigning to it overrides the derived chain, which is how
-        a field that was not read from a file is built. Either way it is a
-        tuple, and the field refuses in-place edits: its slots name fixed
-        positions in the chain, so a copy with other slots is made with
-        `replace`.
+        The chain is built lazily from the header and the data, and then
+        cached. Assigning a chain overrides the derived one, which is how
+        fields that do not come from a file are built. Since the slots name
+        fixed positions, a copy with other slots is made with `replace` rather
+        than by editing the chain in place.
         """
         return ras_displacement_chain(
             self._ras_vectors(),
@@ -399,21 +344,22 @@ transformations.StationaryVelocityField].
 
     @property
     def ras2voxel(self) -> tx.Optional[_xforms.Transformation]:
-        """The affine from RAS world coordinates to the field's voxels."""
+        """The affine from RAS world coordinates to the voxels of the field."""
         return self.transformations[0]
 
     @property
     def displacement(self) -> tx.Optional[_xforms.Transformation]:
-        """The displacement field, in the voxel units of its grid (a
-        velocity, with `log`)."""
+        """
+        The displacement field in voxel units, or the velocity with `log`.
+        """
         return self.transformations[1]
 
     @property
     def voxel2ras(self) -> tx.Optional[_xforms.Transformation]:
-        """The affine from the field's voxels back to RAS world."""
+        """
+        The affine from the voxels of the field back to RAS world coordinates.
+        """
         return self.transformations[2]
-
-    # --- writing ------------------------------------------------------
 
     def to_nibabel(
         self,
@@ -422,17 +368,13 @@ transformations.StationaryVelocityField].
         **overrides,
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the `nibabel` image that encodes this field of displacements.
+        Build the `nibabel` image of the displacement field.
 
-        The displacements are rotated from voxel units into RAS
-        millimetres and written as a `DISPVECT` (1006) image of shape
-        `(X, Y, Z, 1, 3)`, whose voxel-to-RAS affine is the grid's. With
-        `log` (this field's own, unless one is given here, as in
-        `save(path, log=True)`), the velocity is written instead;
-        otherwise a velocity is integrated into its displacement.
-
-        When `like` is given, non-encoding header fields are copied from
-        it. Keyword arguments override header fields last.
+        The displacements are rotated to RAS millimetres and written under the
+        `DISPVECT` intent (1006), with shape (X, Y, Z, 1, 3). With `log`, which
+        defaults to the option of the field, the velocity is written instead,
+        and otherwise a velocity is integrated first. Non-encoding header
+        fields are copied from `like`, and `overrides` are applied last.
         """
         what = "A NIfTI displacement field"
         log = self.log if log is None else log
@@ -440,8 +382,7 @@ transformations.StationaryVelocityField].
             self.transformations, what, ndim=_NDIM, log=log
         )
         backend = get_array_backend(vectors)
-        # NIfTI stores a vector field as a five-dimensional array, with
-        # the components in the fifth axis.
+        # A NIfTI vector field is 5-D, with the components in the fifth axis.
         vectors = backend.expand_dims(vectors, axis=3)
         image = _new_nifti(vectors, vox2ras)
         image.header.set_intent(_NIFTI_INTENT_DISPVECT)
@@ -451,7 +392,6 @@ transformations.StationaryVelocityField].
 
 
 def _pop_encoding(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:
-    # The encoding options of a displacement field, taken out of `kwargs`.
     return {
         name: kwargs.pop(name) for name in ("log", "steps") if name in kwargs
     }
@@ -460,8 +400,7 @@ def _pop_encoding(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:
 def _with_encoding(
     obj: NiftiRASDisplacementField, encoding: tx.Dict[str, tx.Any]
 ) -> NiftiRASDisplacementField:
-    # The field read, with its encoding options. `steps` is the number of
-    # squaring steps of a velocity, so it needs `log`.
+    # steps only makes sense for a velocity, so it requires log.
     if encoding.get("steps") is not None and not encoding.get("log"):
         raise TypeError(
             "steps is the number of squaring steps of a velocity, so it is "

@@ -1,7 +1,7 @@
 """The constants of the NRRD format."""
 
 NRRD_MAGIC = b"NRRD000"
-"""The first seven bytes of every NRRD file; a version digit follows."""
+"""The first seven bytes of every NRRD file, before the version."""
 
 _MAX_HEADER_LINES = 1_000_000
 
@@ -76,7 +76,7 @@ _TYPE_NAMES = {
     "f4": "float",
     "f8": "double",
 }
-"""The type name written for each numpy type (the `pynrrd` spelling)."""
+"""NRRD type name written for each NumPy type code."""
 
 _ENCODINGS = {
     "raw": "raw",
@@ -135,7 +135,7 @@ _FIELDS = (
     "byte skip",
     "data file",
 )
-"""Every field of the specification, in the order they are written."""
+"""All fields of the specification, in writing order."""
 
 SPACES = {
     "right-anterior-superior": ("RAS", 3),
@@ -151,7 +151,7 @@ SPACES = {
     "3d-right-handed-time": ("3D-right-handed-time", 4),
     "3d-left-handed-time": ("3D-left-handed-time", 4),
 }
-"""Each `space` of the specification: its abbreviation and dimension."""
+"""Canonical space names, mapped to abbreviation and dimension."""
 
 _SPACE_NAMES = {abbr.lower(): name for name, (abbr, _) in SPACES.items()}
 

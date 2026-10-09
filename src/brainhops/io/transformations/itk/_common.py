@@ -1,114 +1,79 @@
-# stdlib
 import math
 from warnings import warn
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
-
-# externals
 from bagof.magic import Magic
 
-# core
 from brainhops._core import affines as _affines
 from brainhops._core.enum import StrEnum
 from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
-
-# datamodel
 from brainhops.datamodel import transformations as _xforms
-
-# io
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
-# locals
 from ._systems import _make_system
 
 
 class ItkTransformClass(StrEnum):
-    """Enumeration of ITK transform class names."""
+    """Names of the ITK transform classes."""
 
     IdentityTransform = "IdentityTransform"
 
-    # Translations
     TranslationTransform = "TranslationTransform"
 
-    # Scales
     ScaleTransform = "ScaleTransform"
     ScaleLogarithmicTransform = "ScaleLogarithmicTransform"
 
-    # Similarities
     Similarity2DTransform = "Similarity2DTransform"
     Similarity3DTransform = "Similarity3DTransform"
 
-    # Rotations
     Euler2DTransform = "Euler2DTransform"
     Euler3DTransform = "Euler3DTransform"
     VersorTransform = "VersorTransform"
 
-    # Quaternions+
     VersorRigid3DTransform = "VersorRigid3DTransform"
     ScaleVersor3DTransform = "ScaleVersor3DTransform"
     ScaleSkewVersor3DTransform = "ScaleSkewVersor3DTransform"
 
-    # Affines
     AffineTransform = "AffineTransform"
     MatrixOffsetTransformBase = "MatrixOffsetTransformBase"
 
-    # Non-linear
     DisplacementFieldTransform = "DisplacementFieldTransform"
     BSplineTransform = "BSplineTransform"
 
-    # Composite
     CompositeTransform = "CompositeTransform"
 
 
-_ITKT = ItkTransformClass  # Alias for brevity in type hints
+_ITKT = ItkTransformClass
 
 
 class ItkPrecision(StrEnum):
-    """Enumeration of ITK transform precision types."""
+    """Precisions of ITK transforms."""
 
     Float = "float"
     Double = "double"
 
 
 class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
-    """This object represents a single ITK transform block.
+    """One ITK transform block, holding only what the file stores.
 
-    It holds what an ITK file stores about one block -- its transform
-    class, its precision, its dimensions, and its parameter vectors --
-    and nothing else. Concrete blocks inherit from [`ItkAffineBase`][]
-    or [`ItkDisplacementBase`][], which both combine this provenance with
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] through
-    [`ItkBlockBase`][], so a parsed block is already a brainhops
-    transformation.
-
-    It is `polymorphic`: each concrete block registers the transform
-    class it stands for with `on={"type": ...}`, so building
-    `ItkStruct(type=..., ...)` -- which is what a parser does for every
-    block it reads -- dispatches to the right subtype from the `type`
-    field alone, and a `type` no block claims falls back to a bare
-    `ItkStruct`. A block registers with every polymorphic class above it
-    -- `ItkStruct` and the intermediate family bases alike -- so the whole
-    table is reachable from the one door the parsers knock on, and each
-    family base reaches its own blocks.
-
-    It compares by identity (`eq=False`): its parameters are arrays, which
-    have no single truth value to compare by. A concrete block is a
-    transformation, which compares by identity too, as every
-    transformation does.
+    Concrete blocks register their class with `on={"type": ...}`, so that
+    `ItkStruct(type=..., ...)` dispatches to the right subtype; an unclaimed
+    type yields a bare `ItkStruct`. Through [`ItkAffineBase`][] and
+    [`ItkDisplacementBase`][], a parsed block is already a transformation.
+    Blocks compare by identity, since their parameters are arrays.
     """
 
     type: ItkTransformClass
-    """The ITK transform class name (e.g., "AffineTransform")."""
+    """The ITK transform class, such as `"AffineTransform"`."""
 
     precision: ItkPrecision
-    """The ITK transform precision type (e.g., "float" or "double")."""
+    """The precision, `"float"` or `"double"`."""
 
     ndim_input: int
     """The number of input dimensions."""
@@ -117,12 +82,10 @@ class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
     """The number of output dimensions."""
 
     parameters: ArrayProtocol = ()
-    """
-    The optimizable parameters of the transform (e.g., translation vector).
-    """
+    """The optimisable parameters, such as a translation vector."""
 
     fixed_parameters: ArrayProtocol = ()
-    """The fixed parameters of the transform (e.g., center of rotation)."""
+    """The fixed parameters, such as a center of rotation."""
 
     def _check_same_ndim(self, expected_ndim: tx.Optional[int] = None) -> None:
         if self.ndim_input != self.ndim_output:
@@ -161,30 +124,23 @@ class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
 
 
 class ItkBlockBase(ItkStruct, _xforms.ImmutableSequence):
-    """What every ITK block shares: its endpoints and its inverse.
+    """Common base of ITK blocks, which map LPS to LPS world coordinates.
 
-    Whatever a block encodes, it maps LPS world coordinates to LPS world
-    coordinates in the number of dimensions its file declares. Both
-    endpoints are therefore *declared* from `ndim_input` / `ndim_output`
-    rather than read back off the chain the way a plain
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] reads
-    them: reading them off the chain would build the chain, and building
-    a warp block's chain decodes its warp data.
-
-    A block's chain is made of named slots, so a block is an
-    [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]:
-    the chain is a tuple, and editing it in place raises `TypeError`.
-    Assigning a whole new chain, or `replace`-ing it, still works.
+    The endpoints come from `ndim_input` and `ndim_output` rather than from the
+    chain, as a plain
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] would do,
+    because building the chain of a warp block decodes the warp data. The chain
+    is a tuple of named slots and cannot be edited in place.
     """
 
     @smartproperty(cache=True)
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The anatomical space the block maps from."""
+        """The LPS space that the block maps from."""
         return _make_system(self.ndim_input)
 
     @smartproperty(cache=True)
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The anatomical space the block maps to."""
+        """The LPS space that the block maps to."""
         return _make_system(self.ndim_output)
 
     def inverse(self, compute: bool = False, **kwargs) -> _xforms.Sequence:
@@ -193,13 +149,10 @@ class ItkBlockBase(ItkStruct, _xforms.ImmutableSequence):
 
 
 class ItkAffineBase(ItkBlockBase):
-    """An ITK block that encodes an affine-like transformation.
+    """ITK block that encodes an affine-like transform.
 
-    ITK does not store an affine-like block as a single matrix. It stores
-    a linear part that acts about a *center of rotation*, optionally
-    followed by a translation. That is a chain, so the block itself is a
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] whose
-    children are named slots:
+    ITK stores a linear part acting about a center of rotation, then an
+    optional translation. The block is a chain of these named slots:
 
     | Slot          | Transformation                             |
     | ------------- | ------------------------------------------ |
@@ -208,12 +161,9 @@ class ItkAffineBase(ItkBlockBase):
     | `uncenter`    | moves the center of rotation back          |
     | `translation` | the translation, when the block has one    |
 
-    Each slot is derived from `parameters` and `fixed_parameters` on
-    first access and cached afterwards, and a slot that a block does not
-    use is `None` and is left out of the chain. A block whose linear part
-    is itself made of several transformations -- a similarity, which ITK
-    parameterizes by a scale and a rotation -- names them individually
-    and lists them in `_SLOTS` instead.
+    Slots are derived from the parameters on first access, and unused slots are
+    `None` and left out. Blocks whose linear part has several factors list them
+    in `_SLOTS`.
     """
 
     _SLOTS: tx.ClassVar[tx.Tuple[str, ...]] = (
@@ -222,22 +172,16 @@ class ItkAffineBase(ItkBlockBase):
         "uncenter",
         "translation",
     )
-    """The names of the slots that make up the chain, in order."""
-
-    # --- slots --------------------------------------------------------
+    """The names of the slots that form the chain, in order."""
 
     @smartproperty(cache=True)
     def center(self) -> tx.Optional[ArrayProtocol]:
-        """The center of rotation, or `None` when the block has none.
-
-        ITK stores it in the fixed parameters. A block that has no center
-        -- a translation, an identity -- stores an empty vector there.
-        """
+        """The center of rotation, or `None` if the stored vector is empty."""
         return _nonempty(self.fixed_parameters)
 
     @smartproperty(cache=True)
     def recenter(self) -> tx.Optional[_xforms.Transformation]:
-        """Moves the center of rotation to the origin."""
+        """Translation from the center of rotation to the origin."""
         center = self.center
         if center is None:
             return None
@@ -245,7 +189,7 @@ class ItkAffineBase(ItkBlockBase):
 
     @smartproperty(cache=True)
     def uncenter(self) -> tx.Optional[_xforms.Transformation]:
-        """Moves the center of rotation back to where it was."""
+        """Translation from the origin back to the center of rotation."""
         center = self.center
         if center is None:
             return None
@@ -253,41 +197,29 @@ class ItkAffineBase(ItkBlockBase):
 
     @smartproperty(cache=True)
     def linear(self) -> tx.Optional[_xforms.Transformation]:
-        """The linear part of the block, applied about the center."""
+        """The linear part, applied about the center of rotation."""
         return None
 
     @smartproperty(cache=True)
     def translation(self) -> tx.Optional[_xforms.Transformation]:
-        """The translation applied after the centered linear part."""
+        """The translation applied after the linear part."""
         return None
-
-    # --- sequence -----------------------------------------------------
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
-        """The chain of transformations that the block encodes.
+        """The chain of used slots, cached.
 
-        It is assembled from the named slots listed in `_SLOTS`, skipping
-        the ones the block does not use, and cached. Assigning to it
-        overrides the derived chain.
-
-        It is a tuple rather than a list because the derived chain is
-        cached and handed out as is, and a list would let `del block[0]`
-        edit the cache in place -- leaving the block reporting a chain
-        that its own slots no longer describe.
+        The chain is a tuple, so that `del block[0]` cannot edit the cache.
         """
         chain = (getattr(self, name) for name in self._SLOTS)
         return tuple(child for child in chain if child is not None)
 
 
 class ItkDisplacementBase(ItkBlockBase):
-    """An ITK block that encodes a dense or spline-based warp.
+    """ITK block that encodes a dense or spline warp.
 
-    The warp lives on its own voxel grid, whose geometry the fixed
-    parameters carry, while the block maps LPS world coordinates. The
-    block is therefore a
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] of three
-    named slots:
+    The warp lives on its own voxel grid, described by the fixed parameters, so
+    the block is a chain of three named slots:
 
     | Slot           | Transformation                              |
     | -------------- | ------------------------------------------- |
@@ -295,107 +227,76 @@ class ItkDisplacementBase(ItkBlockBase):
     | `displacement` | the displacement field, in voxel units      |
     | `voxel2lps`    | warp-grid voxels back to LPS world          |
 
-    The stored parameters are decoded into `field` on first access and
-    cached, so opening a file never touches the warp data: a dask-backed
-    or delayed array stays unread until the chain is asked for.
-
-    `degree`, `store` and `bound` are the spline parameters handed to the
-    [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField],
-    and a subclass overrides them to describe its own encoding.
+    The warp data is decoded on first access, so opening a file never reads it.
+    Subclasses set the spline parameters `degree`, `store` and `bound` of the
+    [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField].
     """
 
     degree: tx.ClassVar[int] = 1
-    """The spline degree used to interpolate the field."""
+    """The spline degree of the field."""
 
     store: tx.ClassVar[StoreEnum] = StoreEnum.values
-    """Whether the field holds spline coefficients rather than values."""
+    """Whether the field holds spline coefficients or values."""
 
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.nearest
     )
-    """The boundary condition used outside of the field of view."""
+    """The boundary condition outside the field of view."""
 
     interleaved: tx.ClassVar[bool] = True
-    """Whether the parameters store one whole vector per grid point.
+    """Whether each grid point stores its whole vector contiguously.
 
-    ITK flattens the two kinds of warp differently, because in ITK they
-    are two different things.
-
-    A dense field's parameters *are* the buffer of an image of vectors:
-    one `Vector<T, D>` per voxel, so the `D` components of a voxel sit
-    next to each other and the component index varies fastest
-    (`interleaved`). A B-spline's parameters are `D` separate scalar
-    coefficient images written back to back, so a whole component spans
-    a contiguous plane and the component index varies slowest (planar).
-
-    Reading one layout as the other silently transposes the warp rather
-    than failing, so each subclass states which it is.
+    A dense field is a vector image, so its components are interleaved. A
+    B-spline stores one coefficient image per axis, back to back. Mixing the
+    two up silently transposes the warp.
     """
-
-    # --- decoding -----------------------------------------------------
 
     @lazyproperty
     def _grid(self) -> tx.Tuple[np.ndarray, tx.Tuple[int, ...]]:
-        # The compact voxel-to-LPS affine of the warp grid, and its shape.
         return _vox2lps(self.fixed_parameters, self.ndim_input)
 
     @smartproperty(cache=True)
     def field(self) -> ArrayProtocol:
-        """The warp array on its own grid, in voxel units.
+        """The warp on its own grid, as an `(Nx, Ny, Nz, D)` array.
 
-        It holds the warp's values, or their spline coefficients when
-        `store` says so, and becomes the `data` of the `displacement`.
-
-        ITK stores them as a flat, C-ordered block of world-space
-        displacements, laid out either interleaved or planar -- see
-        `interleaved`. Either way they are reordered to
-        `(Nx, Ny, Nz, D)` and rotated into voxel units, because a
+        ITK stores flat world-space displacements. They are reordered and
+        rotated into voxel units, because a
         [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField]
-        adds its values in the units of its own grid.
+        adds them in grid units.
         """  # noqa: E501
         vox2lps, shape = self._grid
         ndim = self.ndim_input
 
-        # Ensure array-like
         parameters = self.parameters
         parameters = parameters if parameters is not None else np.array([])
         if not hasattr(parameters, "reshape"):
             parameters = get_array_backend(parameters).asarray(parameters)
 
-        # Reorder to (Nx, Ny, Nz, D). `shape` is (Nx, Ny, Nz) while the
-        # buffer is C-ordered with x varying fastest, so the spatial axes
-        # come out reversed either way and are flipped back; only where
-        # the component axis sits differs between the two layouts.
+        # The buffer is C-ordered with x fastest, so the spatial axes come out
+        # reversed in both layouts.
         spatial = range(ndim - 1, -1, -1)
         if self.interleaved:
-            # (Nz, Ny, Nx, D) -> (Nx, Ny, Nz, D)
             disp = parameters.reshape(*reversed(shape), ndim)
             disp = disp.transpose(*spatial, ndim)
         else:
-            # (D, Nz, Ny, Nx) -> (Nx, Ny, Nz, D)
             disp = parameters.reshape(ndim, *reversed(shape))
             disp = disp.transpose(*(axis + 1 for axis in spatial), 0)
 
-        # Multiply by the world-to-voxel affine to convert from world
-        # displacements to voxel displacements. Only the linear part
-        # rotates a displacement, and it is the first `ndim` columns of
-        # the compact affine.
+        # Only the linear part of the affine rotates a displacement.
         lps2vox = _affines.inv(vox2lps)
         backend = get_array_backend(disp)
         rotate = backend.asarray(lps2vox[:, :ndim], dtype=disp.dtype)
         return backend.matmul(rotate, disp[..., None])[..., 0]
 
-    # --- slots --------------------------------------------------------
-
     @smartproperty(cache=True)
     def lps2voxel(self) -> LPSToVoxel:
-        """The affine from LPS world coordinates to warp-grid voxels."""
+        """Affine from LPS world coordinates to warp-grid voxels."""
         vox2lps, _ = self._grid
         return LPSToVoxel(matrix=_affines.inv(vox2lps))
 
     @smartproperty(cache=True)
     def displacement(self) -> _xforms.DisplacementField:
-        """The displacement field, defined on the warp grid."""
+        """The displacement field on the warp grid."""
         VOX = _systems.VoxelCoordinateSystem()
         return _xforms.DisplacementField(
             data=self.field,
@@ -408,23 +309,13 @@ class ItkDisplacementBase(ItkBlockBase):
 
     @smartproperty(cache=True)
     def voxel2lps(self) -> VoxelToLPS:
-        """The affine from warp-grid voxels back to LPS world."""
+        """Affine from warp-grid voxels to LPS world coordinates."""
         vox2lps, _ = self._grid
         return VoxelToLPS(matrix=vox2lps)
 
-    # --- sequence -----------------------------------------------------
-
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
-        """The chain of transformations that the block encodes.
-
-        It is assembled from the named slots and cached. Assigning to it
-        overrides the derived chain.
-
-        It is a tuple rather than a list for the same reason as on
-        [`ItkAffineBase`][]: the cached chain is handed out as is, and a
-        list would let `del block[0]` edit the cache in place.
-        """
+        """The chain of the three slots, cached as a tuple."""
         return (self.lps2voxel, self.displacement, self.voxel2lps)
 
 
@@ -434,7 +325,7 @@ class ItkDisplacementBase(ItkBlockBase):
 
 
 class ItkIdentityStruct(ItkAffineBase, on={"type": _ITKT.IdentityTransform}):
-    """Identity transform with no parameters."""
+    """ITK identity transform, which has no parameters."""
 
     parameters: tx.Tuple[tx.Any, ...] = ()
 
@@ -443,18 +334,14 @@ class ItkIdentityStruct(ItkAffineBase, on={"type": _ITKT.IdentityTransform}):
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Identity:
         """The identity."""
-        # A one-element chain, rather than an empty one, so that every
-        # block is a sequence of at least one transformation and the
-        # identity still names the spaces it maps between.
+        # A block must hold at least one transformation.
         return _xforms.Identity(input=self.input, output=self.output)
 
 
 class ItkTranslationStruct(
     ItkAffineBase, on={"type": _ITKT.TranslationTransform}
 ):
-    """
-    Translation transform with parameters for translation in each dimension.
-    """
+    """ITK translation, with one parameter per dimension."""
 
     fixed_parameters: tx.Tuple[tx.Any, ...] = ()
 
@@ -469,7 +356,7 @@ class ItkTranslationStruct(
 
 
 class ItkScaleStruct(ItkAffineBase, on={"type": _ITKT.ScaleTransform}):
-    """Scale transform with parameters for scaling in each dimension."""
+    """ITK scaling, with one factor per dimension."""
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
@@ -484,9 +371,7 @@ class ItkScaleStruct(ItkAffineBase, on={"type": _ITKT.ScaleTransform}):
 class ItkScaleLogarithmicStruct(
     ItkAffineBase, on={"type": _ITKT.ScaleLogarithmicTransform}
 ):
-    """
-    Scale logarithmic transform with parameters for scaling in each dimension.
-    """
+    """ITK scaling that stores the logarithms of its factors."""
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
@@ -494,25 +379,25 @@ class ItkScaleLogarithmicStruct(
 
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Scaling:
-        """The per-axis scaling, whose logarithm is stored."""
+        """The per-axis scaling."""
         return _xforms.Scaling(np.exp(self.parameters))
 
 
 class ItkEuler2DStruct(ItkAffineBase, on={"type": _ITKT.Euler2DTransform}):
-    """Euler 2D transform with parameters for rotation and translation."""
+    """ITK 2-D rotation followed by a translation."""
 
     ndim_input: tx.Literal[2] = 2
     ndim_output: tx.Literal[2] = 2
 
     parameters: tx.Tuple[float, float, float]
-    """Rotation angle, followed by translation parameters."""
+    """The angle, then the translation."""
 
     fixed_parameters: tx.Tuple[float, float]
-    """Center of rotation."""
+    """The center of rotation."""
 
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Rotation:
-        """The rotation, parameterized by its angle."""
+        """The rotation."""
         return _xforms.Rotation(_angle_to_matrix(self.parameters[0]))
 
     @smartproperty(cache=True)
@@ -522,49 +407,37 @@ class ItkEuler2DStruct(ItkAffineBase, on={"type": _ITKT.Euler2DTransform}):
 
 
 class ItkEuler3DStruct(ItkAffineBase, on={"type": _ITKT.Euler3DTransform}):
-    """Euler 3D transform with parameters for rotation and translation."""
+    """ITK 3-D Euler rotation followed by a translation."""
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
 
     parameters: tx.Tuple[float, float, float, float, float, float]
-    """Rotation angles (rx, ry, rz), followed by translation parameters."""
+    """The angles `(rx, ry, rz)`, then the translation."""
 
     fixed_parameters: tx.Union[
         tx.Tuple[float, float, float],
         tx.Tuple[float, float, float, float],
     ]
-    """Center of rotation, and -- since ITK 5 -- the `ComputeZYX` flag.
-
-    Older files write the three coordinates of the center alone. ITK 5
-    appends a fourth entry carrying the transform's `ComputeZYX` flag, so
-    both lengths are accepted and a file from either era opens.
-    """
+    """The center of rotation, then optionally the `ComputeZYX` flag."""
 
     @smartproperty(cache=True)
     def center(self) -> tx.Optional[ArrayProtocol]:
-        """The center of rotation.
-
-        Only the first three fixed parameters are coordinates; a fourth,
-        when present, is the `ComputeZYX` flag and would otherwise be
-        read as a fourth axis of the center.
-        """
+        """The center, from the first three fixed parameters."""
         return _nonempty(self.fixed_parameters[:3])
 
     @lazyproperty
     def compute_zyx(self) -> bool:
-        """Whether the angles compose as ZYX rather than ITK's ZXY.
+        """Whether the angles compose in ZYX rather than ZXY order.
 
-        ITK stores the flag as the fourth fixed parameter. A file that
-        does not write one was written before the flag existed, when the
-        order was unconditionally ZXY.
+        Older files lack the flag and always use ZXY.
         """
         fixed = self.fixed_parameters
         return len(fixed) > 3 and bool(fixed[3])
 
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Rotation:
-        """The rotation, parameterized by its Euler angles."""
+        """The rotation."""
         return _xforms.Rotation(
             _euler_to_matrix(self.parameters[:3], self.compute_zyx)
         )
@@ -576,45 +449,43 @@ class ItkEuler3DStruct(ItkAffineBase, on={"type": _ITKT.Euler3DTransform}):
 
 
 class ItkVersorStruct(ItkAffineBase, on={"type": _ITKT.VersorTransform}):
-    """Versor transform with parameters for rotation in each dimension."""
+    """ITK 3-D versor rotation."""
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
 
     parameters: tx.Tuple[float, float, float]
-    """Quaternion parameters."""
+    """The vector part of the versor."""
 
     fixed_parameters: tx.Tuple[float, float, float]
-    """Center of rotation."""
+    """The center of rotation."""
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
 
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Rotation:
-        """The rotation, parameterized by a versor."""
+        """The rotation."""
         return _xforms.Rotation(_versor_to_matrix(self.parameters[:3]))
 
 
 class ItkVersorRigid3DStruct(
     ItkAffineBase, on={"type": _ITKT.VersorRigid3DTransform}
 ):
-    """
-    Versor rigid 3D transform with parameters for rotation and translation.
-    """
+    """ITK 3-D versor rotation followed by a translation."""
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
 
     parameters: tx.Tuple[float, float, float, float, float, float]
-    """Quaternion parameters followed by translation vector."""
+    """The versor, then the translation."""
 
     fixed_parameters: tx.Tuple[float, float, float]
-    """Center of rotation."""
+    """The center of rotation."""
 
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Rotation:
-        """The rotation, parameterized by a versor."""
+        """The rotation."""
         return _xforms.Rotation(_versor_to_matrix(self.parameters[:3]))
 
     @smartproperty(cache=True)
@@ -626,22 +497,18 @@ class ItkVersorRigid3DStruct(
 class ItkSimilarity2DStruct(
     ItkAffineBase, on={"type": _ITKT.Similarity2DTransform}
 ):
-    """
-    Similarity 2D transform with parameters for rotation, translation,
-    and scaling.
-    """
+    """ITK 2-D similarity: isotropic scaling, rotation and translation."""
 
     ndim_input: tx.Literal[2] = 2
     ndim_output: tx.Literal[2] = 2
 
     parameters: tx.Tuple[float, float, float, float]
-    """Scale, angle, and (x, y) translation parameters."""
+    """The scale, the angle and the translation."""
 
     fixed_parameters: tx.Tuple[float, float]
-    """Center of rotation."""
+    """The center of rotation."""
 
-    # ITK parameterizes the linear part by a scale and an angle, so the
-    # two are named -- and chained -- individually.
+    # ITK parameterises the linear part by a scale and an angle.
     _SLOTS: tx.ClassVar[tx.Tuple[str, ...]] = (
         "recenter",
         "scaling",
@@ -657,7 +524,7 @@ class ItkSimilarity2DStruct(
 
     @smartproperty(cache=True)
     def rotation(self) -> _xforms.Rotation:
-        """The rotation, parameterized by its angle."""
+        """The rotation."""
         return _xforms.Rotation(_angle_to_matrix(self.parameters[1]))
 
     @smartproperty(cache=True)
@@ -669,25 +536,18 @@ class ItkSimilarity2DStruct(
 class ItkSimilarity3DStruct(
     ItkAffineBase, on={"type": _ITKT.Similarity3DTransform}
 ):
-    """
-    Similarity 3D transform with parameters for rotation, translation,
-    and scaling.
-    """
+    """ITK 3-D similarity: isotropic scaling, rotation and translation."""
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
 
     parameters: tx.Tuple[float, float, float, float, float, float, float]
-    """
-    (qx, qy, qz) versor parameters, (tx, ty, tz) translation parameters,
-    and scale.
-    """
+    """The versor, the translation and the scale."""
 
     fixed_parameters: tx.Tuple[float, float, float]
-    """Center of rotation."""
+    """The center of rotation."""
 
-    # ITK parameterizes the linear part by a scale and a versor, so the
-    # two are named -- and chained -- individually.
+    # ITK parameterises the linear part by a scale and a versor.
     _SLOTS: tx.ClassVar[tx.Tuple[str, ...]] = (
         "recenter",
         "scaling",
@@ -703,7 +563,7 @@ class ItkSimilarity3DStruct(
 
     @smartproperty(cache=True)
     def rotation(self) -> _xforms.Rotation:
-        """The rotation, parameterized by a versor."""
+        """The rotation."""
         return _xforms.Rotation(_versor_to_matrix(self.parameters[0:3]))
 
     @smartproperty(cache=True)
@@ -715,29 +575,22 @@ class ItkSimilarity3DStruct(
 class ItkScaleVersor3DStruct(
     ItkAffineBase, on={"type": _ITKT.ScaleVersor3DTransform}
 ):
-    """
-    Scale versor 3D transform with parameters for rotation, translation,
-    and scaling.
-    """
+    """ITK 3-D versor rotation with per-axis scaling and a translation."""
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
 
     parameters: tx.Tuple[
-        # 9 parameters
         float, float, float, float, float, float, float, float, float
     ]
-    """
-    (qx, qy, qz) versor parameters, (tx, ty, tz) translation parameters,
-    and (sx, sy, sz) scale parameters.
-    """
+    """The versor, the translation and the scales `(sx, sy, sz)`."""
 
     fixed_parameters: tx.Tuple[float, float, float]
-    """Center of rotation."""
+    """The center of rotation."""
 
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Linear:
-        """The rotation with the anisotropic scaling folded into it."""
+        """The rotation matrix plus `diag(scales - 1)`."""
         R = _versor_to_matrix(self.parameters[0:3])
         S = np.diag(np.asarray(self.parameters[6:9]) - 1)
         return _xforms.Linear(R + S)
@@ -751,16 +604,12 @@ class ItkScaleVersor3DStruct(
 class ItkScaleSkewVersor3DStruct(
     ItkAffineBase, on={"type": _ITKT.ScaleSkewVersor3DTransform}
 ):
-    """
-    Scale skew versor 3D transform with parameters for rotation, translation,
-    scaling, and skewing.
-    """
+    """ITK 3-D versor rotation with scaling, skew and a translation."""
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
 
     parameters: tx.Tuple[
-        # 15 parameters
         float,
         float,
         float,
@@ -777,18 +626,17 @@ class ItkScaleSkewVersor3DStruct(
         float,
         float,
     ]
-    """
-    (qx, qy, qz) versor parameters, (tx, ty, tz) translation parameters,
-    (sx, sy, sz) scale parameters, and (kxy, kxz, kyx, kyz, kzx, kzy)
-    skew parameters.
+    """The versor, the translation, the scales and the skews.
+
+    The skews are ordered `(kxy, kxz, kyx, kyz, kzx, kzy)`.
     """
 
     fixed_parameters: tx.Tuple[float, float, float]
-    """Center of rotation."""
+    """The center of rotation."""
 
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Linear:
-        """The rotation with the scaling and the skew folded into it."""
+        """The rotation matrix plus `diag(scales - 1)` and the skews."""
         k = self.parameters[9:15]
         R = _versor_to_matrix(self.parameters[0:3])
         S = np.diag(np.asarray(self.parameters[6:9]) - 1)
@@ -805,10 +653,7 @@ class ItkScaleSkewVersor3DStruct(
 
 
 class _ItkMatrixOffsetBase(ItkAffineBase):
-    """
-    A full matrix and a translation, as `MatrixOffsetTransformBase` and
-    its subclass `AffineTransform` both store them.
-    """
+    """Base of blocks that store a full matrix, then a translation."""
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
@@ -818,14 +663,14 @@ class _ItkMatrixOffsetBase(ItkAffineBase):
 
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Linear:
-        """The linear part, stored row-major."""
+        """The linear part, stored in row-major order."""
         Di, Do = self.ndim_input, self.ndim_output
         L = np.array(self.parameters[: Di * Do], dtype=np.float64)
         return _xforms.Linear(L.reshape(Do, Di))
 
     @smartproperty(cache=True)
     def translation(self) -> _xforms.Translation:
-        """The translation vector, stored after the linear part."""
+        """The translation, stored after the linear part."""
         Do = self.ndim_output
         return _xforms.Translation(
             np.array(self.parameters[-Do:], dtype=np.float64)
@@ -835,30 +680,25 @@ class _ItkMatrixOffsetBase(ItkAffineBase):
 class ItkAffineStruct(
     _ItkMatrixOffsetBase, on={"type": _ITKT.AffineTransform}
 ):
-    """
-    Affine transform with parameters for linear transformation and translation.
-    """
+    """ITK affine transform."""
 
 
 class ItkMatrixOffsetStruct(
     _ItkMatrixOffsetBase, on={"type": _ITKT.MatrixOffsetTransformBase}
 ):
-    """
-    The base class of ITK's affine transforms, which older ANTs releases
-    write in place of `AffineTransform`. Its parameters are the same.
+    """ITK base class of affine transforms.
+
+    Older ANTs releases write it instead of `AffineTransform`.
     """
 
 
 class ItkDisplacementFieldStruct(
     ItkDisplacementBase, on={"type": _ITKT.DisplacementFieldTransform}
 ):
-    """
-    Displacement field transform with parameters for a dense deformation map.
+    """ITK dense displacement field.
 
-    The parameters hold one world-space displacement per voxel of the
-    grid that the fixed parameters describe, so the field is sampled,
-    not spline-encoded, and is interpolated linearly. They are the raw
-    buffer of that image of vectors, so the components are interleaved.
+    The field holds one world-space displacement per voxel, interpolated
+    linearly and stored interleaved.
     """
 
     interleaved: tx.ClassVar[bool] = True
@@ -867,14 +707,10 @@ class ItkDisplacementFieldStruct(
 class ItkBSplineStruct(
     ItkDisplacementBase, on={"type": _ITKT.BSplineTransform}
 ):
-    """
-    B-spline transform with parameters for a dense deformation map.
+    """ITK B-spline transform.
 
-    The parameters hold cubic B-spline coefficients on the control-point
-    grid that the fixed parameters describe, so the field is evaluated
-    -- not interpolated -- and coefficients outside the grid are zero.
-    They are one scalar coefficient image per axis, written back to
-    back, so the components are planar rather than interleaved.
+    The field holds cubic coefficients on a control-point grid, zero outside
+    it, stored as one planar image per axis.
     """
 
     degree: tx.ClassVar[int] = 3
@@ -895,41 +731,29 @@ def _application_order(
     composites: tx.List[int],
     position: tx.Optional[int] = None,
 ) -> tx.List[tx.Any]:
-    """The blocks of the transform that an ITK file is read as, in the
-    order they apply to points.
+    """Return the blocks of an ITK file in application order.
 
-    `blocks` are the blocks of the file in file order, without the
-    `CompositeTransform` header, and `composites` the positions (in the
-    file) of every `CompositeTransform` header that was skipped.
+    ITK writes a composite as a header followed by its queue, front to back,
+    but applies the queue back to front: `[T0, T1]` maps `x` to `T0(T1(x))`. A
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] lists
+    transformations in application order, so composite blocks are reversed.
+    Without a composite, every block is a separate top-level transform, and the
+    first is returned by default, with a warning when there are several.
 
-    ITK writes a `CompositeTransform` as a header block followed by its
-    transform queue, front to back
-    (`CompositeTransformIOHelperTemplate::GetTransformList`), and reads
-    the blocks after the header back into the queue in the same order
-    (`SetTransformList`, which calls `AddTransform`). But
-    `CompositeTransform::TransformPoint` applies the queue from back to
-    front: a queue `[T0, T1]` maps `x` to `T0(T1(x))`. A brainhops
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
-    transformations in the order they apply, so the blocks of a
-    composite file are reversed.
-
-    The top-level transforms of a file are:
-
-    * the composite, if the file starts with a `CompositeTransform`
-      header: it is then the file's only top-level transform;
-    * otherwise each block, as ITK reads a file without a composite
-      header as a list of unrelated transforms.
-
-    `position` selects one of them. By default, the first one is read,
-    as SimpleITK's `ReadTransform` does, with a warning if the file
-    holds several.
+    Parameters
+    ----------
+    blocks : list
+        The blocks in file order, without composite headers.
+    composites : list of int
+        The file positions of the skipped composite headers.
+    position : int, optional
+        The index of the top-level transform to return.
 
     Raises
     ------
     ParserContentError
-        If a `CompositeTransform` header is not the first block (ITK
-        only writes one there, and refuses to write it anywhere else),
-        or if the file has no top-level transform `position`.
+        If a composite header is not the first block, or if there is no
+        top-level transform at `position`.
     """
     if composites:
         if list(composites) != [0]:
@@ -963,13 +787,7 @@ def _application_order(
 def _inverse_chain(
     struct: _xforms.Sequence, compute: bool = False, **kwargs
 ) -> _xforms.Sequence:
-    """The inverse of an ITK block, as a plain sequence.
-
-    An ITK block derives its children from the parameters that its file
-    stores, so the inverse of a block is not itself a block: it is the
-    reversed chain of inverted children, and it is returned as a plain
-    [`Sequence`][brainhops.datamodel.transformations.Sequence].
-    """
+    """Invert a block as the reversed chain of its inverted children."""
     return _xforms.Sequence(
         transformations=[
             child.inverse(compute=compute, **kwargs)
@@ -981,23 +799,10 @@ def _inverse_chain(
 
 
 def _isotropic_scaling(scale: float, ndim: int) -> _xforms.Scaling:
-    """An isotropic scaling, as a one-element factor vector.
+    """Isotropic scaling, keeping the single ITK factor as it is stored.
 
-    A [`Scaling`][brainhops.datamodel.transformations.Scaling] is
-    parameterized by a vector of factors, and ITK stores the isotropic
-    case as a single number. That number is exposed as it is -- a vector
-    of length one -- rather than written out per axis: one factor for
-    every axis is what the scaling *means*, not what it is parameterized
-    by, and repeating it would state a dimensionality that the ITK
-    parameter does not carry.
-
-    A one-element vector broadcasts over however many axes the transform
-    turns out to have, so the endpoints have to say how many that is: on
-    its own, `Scaling([1.5])` is a one-dimensional scaling. The other
-    slots of a block carry no endpoints, because their own parameters
-    size them -- a rotation matrix, a translation vector -- but this one
-    does not, so it is given the block's own anatomical space at both
-    ends.
+    A one-element vector broadcasts to any number of axes, so the endpoints are
+    given explicitly to fix the dimensionality.
     """
     system = _make_system(ndim)
     return _xforms.Scaling(
@@ -1006,12 +811,7 @@ def _isotropic_scaling(scale: float, ndim: int) -> _xforms.Scaling:
 
 
 def _nonempty(values: tx.Optional[ArrayProtocol]) -> tx.Optional[tx.Any]:
-    """Return `values`, or `None` when it is empty.
-
-    ITK writes an empty parameter vector for a parameter that a block
-    does not use, and an empty vector is not a transformation: it is the
-    absence of one.
-    """
+    """Return `values`, or `None` if they are empty (an unused parameter)."""
     if values is None:
         return None
     try:
@@ -1025,20 +825,11 @@ def _nonempty(values: tx.Optional[ArrayProtocol]) -> tx.Optional[tx.Any]:
 def _vox2lps(
     fixed_parameters: tx.Sequence[float], ndim: int = 3
 ) -> tx.Tuple[np.ndarray, tx.Tuple[int, ...]]:
-    """The voxel-to-LPS affine of a warp grid, and the shape of that grid.
+    """Return the voxel-to-LPS affine of a warp grid, and the grid shape.
 
-    ITK writes the grid geometry into the fixed parameters as four
-    consecutive blocks -- the shape, the origin, the voxel spacing and
-    the direction matrix -- sized by the dimensionality of the block, so
-    they are read off `ndim` rather than off a 3-D layout.
-
-    The affine is returned in the *compact* `(ndim, ndim + 1)` form, with
-    no homogeneous row, which is what
-    [`brainhops._core.affines`][] and
-    [`Affine`][brainhops.datamodel.transformations.Affine] both take. A
-    homogeneous matrix handed to either is read as one dimension too
-    many: `affines.inv` would answer with an `(ndim, ndim + 2)` matrix,
-    and an `Affine` would claim to map `ndim + 1` coordinates.
+    The fixed parameters hold the shape, origin, spacing and direction, sized
+    by `ndim`. The affine is returned in the compact `(ndim, ndim + 1)` form
+    expected by [`brainhops._core.affines`][].
     """
 
     fixed_parameters = np.asarray(fixed_parameters, dtype=np.float64)
@@ -1057,7 +848,7 @@ def _vox2lps(
 
 
 def _angle_to_matrix(angle: float) -> np.ndarray:
-    """Convert a 2D rotation angle to a rotation matrix."""
+    """Convert a 2-D angle to a rotation matrix."""
     return np.array(
         [
             [math.cos(angle), -math.sin(angle)],
@@ -1067,25 +858,17 @@ def _angle_to_matrix(angle: float) -> np.ndarray:
     )
 
 
-#: How far past the unit sphere a versor's vector part may reach and
-#: still be read as a unit versor written imprecisely. A half-turn is
-#: exactly on the sphere, and a file that stores it in single precision
-#: -- or rounds it to a fixed number of decimals -- hands it back a few
-#: ulps outside. ITK renormalizes such a vector rather than refusing it,
-#: so a file that opens there must open here.
+# Rounding can put a half-turn versor a few ulps outside the unit sphere. ITK
+# renormalises it, so a file that ITK opens must open here.
 _VERSOR_TOLERANCE = 1e-6
 
 
 def _versor_to_matrix(q: tx.Sequence[float]) -> np.ndarray:
-    """Convert a versor (unit quaternion) to a rotation matrix."""
+    """Convert the vector part of a versor to a rotation matrix."""
     qx, qy, qz = q
     norm_sq = qx**2 + qy**2 + qz**2
     if norm_sq > 1.0:
-        # The scalar part of a versor is implied by its vector part, so a
-        # vector part longer than the unit sphere has no scalar part to
-        # complete it. Within the tolerance that is a rounding artifact
-        # and the vector is scaled back onto the sphere; beyond it, the
-        # value is not a versor and is refused.
+        # Within tolerance, rescale onto the sphere; beyond it, refuse.
         norm = math.sqrt(norm_sq)
         if norm > 1.0 + _VERSOR_TOLERANCE:
             raise ValueError(
@@ -1121,12 +904,8 @@ def _euler_to_matrix(
 ) -> np.ndarray:
     """Convert ITK Euler angles to a rotation matrix.
 
-    ITK composes the three axis rotations in one of two orders, and the
-    angles alone do not say which: it is `Rz @ Rx @ Ry` when the
-    transform's `ComputeZYX` flag is clear -- which is ITK's default --
-    and `Rz @ Ry @ Rx` when it is set. The caller therefore states the
-    convention rather than relying on a default, because reading a file
-    with the wrong one gives a valid rotation that is the wrong one.
+    The order is `Rz @ Rx @ Ry` by default and `Rz @ Ry @ Rx` when
+    `compute_zyx` is set.
     """
     cx, cy, cz = np.cos(angles)
     sx, sy, sz = np.sin(angles)

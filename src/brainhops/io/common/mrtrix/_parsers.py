@@ -42,16 +42,12 @@ from ._header import MrtrixHeader
 
 class MrtrixParser(DataModelBase, BinaryFileParserWriter):
     """
-    Base class for objects that are encoded by an MRtrix image file.
+    The base class of objects encoded as an MRtrix image.
 
-    It reads and writes the container -- the header and the raw voxel
-    values -- for every MRtrix-based format: an image, and later a warp.
-    What the values mean is for the concrete format to say, through
-    `_mrtrix_header` and `_mrtrix_data` when writing.
-
-    Reading a `.mif` or a `.mih` from a local path memory-maps the data,
-    so nothing but the header is read until the data are indexed. A
-    `.mif.gz`, a file object or bytes are read into memory.
+    The class reads and writes the container, a header and its raw values,
+    and a concrete format provides `_mrtrix_header` and `_mrtrix_data` on
+    write. The data of a local `.mif` or `.mih` file are memory-mapped, so
+    only the header is read until they are indexed.
     """
 
     HINTS = ("mrtrix",)
@@ -80,7 +76,7 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
 
     @property
     def header(self) -> tx.Optional[MrtrixHeader]:
-        """The MRtrix header this object was read from, if any."""
+        """The header this object was read from, if any."""
         return getattr(self, "_header", None)
 
     @header.setter
@@ -89,11 +85,9 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
 
     def _scaled_data(self) -> tx.Optional[tx.Any]:
         """
-        The stored values with the header's intensity scaling applied.
+        Return the stored values with the intensity scaling of the header.
 
-        Without scaling (or with the identity one), the stored values are
-        returned as they are, so a memory map stays one. With scaling,
-        the values are read and scaled, to at least single precision.
+        Unscaled values are returned unchanged, so that a memory map stays one.
         """
         raw = getattr(self, "dataobj", None)
         if raw is None:
@@ -106,18 +100,16 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         dtype = np.result_type(np.asarray(raw).dtype, np.float32)
         return offset + scale * np.asarray(raw, dtype=dtype)
 
-    # --- reading ------------------------------------------------------
-
     @classmethod
     def _from_header(
         cls, header: MrtrixHeader, dataobj: tx.Any, **kwargs
     ) -> tx.Self:
-        """Build the object from a decoded header and its stored values."""
+        """Build an object from a decoded header and its stored values."""
         return cls(header=header, dataobj=dataobj, **kwargs)
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
-        """Build the object from an MRtrix file (path or file object)."""
+        """Build an object from an MRtrix file, by path or file object."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):
@@ -129,11 +121,9 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
     ) -> tx.Self:
         """
-        Build the object from the path of a `.mif`, `.mih` or `.mif.gz`.
+        Build an object from the path of a `.mif`, `.mih` or `.mif.gz` file.
 
-        The data of an uncompressed local file are memory-mapped unless
-        `mmap` is false. A `.mih` header is followed to the data file it
-        names, relative to the header's directory.
+        Uncompressed local data are memory-mapped unless `mmap` is false.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -162,11 +152,9 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
         """
-        Build the object from an open MRtrix file object, gzipped or not.
+        Build an object from an open MRtrix file, gzipped or not.
 
-        The data of a single-file image are read from the stream. A
-        header that names a separate data file is resolved against the
-        stream's `name`, when it has one.
+        A separate data file is found from the name of the stream.
         """
         kwargs.pop("mmap", None)
         with preserve_position(file):
@@ -178,8 +166,7 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        """Build the object from the bytes of a single-file MRtrix image
-        (gzipped or not)."""
+        """Build an object from the bytes of a single-file image."""
         kwargs.pop("mmap", None)
         content = bytes(content)
         if content[:2] == b"\x1f\x8b":
@@ -207,8 +194,6 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
             buffer = _read_buffer(datafile, offset, header.nbytes, False)
         return cls._from_header(header, decode_data(header, buffer), **kwargs)
 
-    # --- sniffing -----------------------------------------------------
-
     @classmethod
     def sniff_fileobj(
         cls,
@@ -216,8 +201,7 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that a stream holds an MRtrix
-        image, gzipped or not."""
+        """Return the confidence that a stream holds an MRtrix image."""
         score = Confidence.NO
         base_error = None
         try:
@@ -242,45 +226,41 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold an MRtrix
-        image, gzipped or not."""
+        """Return the confidence that bytes hold an MRtrix image."""
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def _score_header(cls, header: MrtrixHeader) -> float:
         """
-        How well a valid MRtrix header matches *this* class.
+        Score how well a valid header matches this class.
 
-        Called once the header has been parsed, so the answer is never
-        "not MRtrix". A concrete format overrides it to tell its own kind
-        of MRtrix file (an image, a warp) from the others.
+        A concrete format overrides the score to tell its own kind of image,
+        such as a warp, from the others.
         """
         return Confidence.MAYBE
 
-    # --- writing ------------------------------------------------------
-
     def _mrtrix_header(self, **kwargs) -> MrtrixHeader:
-        """The header to write. Each concrete format builds its own."""
+        """Build the header to write; each concrete format defines it."""
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to "
             f"MRtrix."
         )
 
     def _mrtrix_data(self) -> tx.Any:
-        """The array of the header's axes to write."""
+        """Return the array of header axes to write."""
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to "
             f"MRtrix."
         )
 
     def to_bytes(self, **kwargs) -> bytes:
-        """The bytes of a single-file, uncompressed `.mif`."""
+        """Return the bytes of a single-file, uncompressed `.mif` image."""
         header = self._mrtrix_header(**kwargs)
         data = encode_data(header, self._mrtrix_data_for(header))
         return header.embedded() + data
 
     def _mrtrix_data_for(self, header: MrtrixHeader) -> tx.Any:
-        """The data to write, mapped through the header's scaling."""
+        """Return the data to write, mapped through the header scaling."""
         data = self._mrtrix_data()
         if header.scaling and tuple(header.scaling) != (0.0, 1.0):
             offset, scale = header.scaling
@@ -288,17 +268,15 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         return data
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write a single-file, uncompressed `.mif` to a stream."""
+        """Write a single-file, uncompressed `.mif` image to a stream."""
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """
-        Write to a path, in the variant its extension names.
+        Write to a path, in the variant that its extension names.
 
-        * `.mif`: header and data in one file;
-        * `.mif.gz`: the same, gzip-compressed;
-        * `.mih`: the header, and the data in a `.dat` file next to it
-          (named after the header), which the header points to.
+        A `.mif` file holds the header and the data, gzipped for `.mif.gz`. A
+        `.mih` header points to the data, written next to it in a `.dat` file.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -322,7 +300,7 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
             f.write(content)
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path (variant chosen by extension) or a stream."""
+        """Write to a path or a stream."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):

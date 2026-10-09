@@ -34,10 +34,7 @@ from ._header import NrrdHeader
 def _decode_part(
     file: tx.BinaryIO, start: int, header: NrrdHeader, nbytes: int
 ) -> bytes:
-    """
-    The decoded bytes of one data file (or of the data after an attached
-    header), from `start`: skips, decompression, text decoding.
-    """
+    """Read and decode the values of one data file from `start`."""
     file.seek(start)
     for _ in range(header.line_skip):
         file.readline()
@@ -77,7 +74,7 @@ def _decode_part(
 
 
 def _gunzip(content: bytes) -> bytes:
-    """Decompress gzip data, ignoring anything after its last member."""
+    """Decompress gzip members, ignoring trailing data."""
     out = []
     while content[:2] == b"\x1f\x8b":
         decomp = zlib.decompressobj(16 + zlib.MAX_WBITS)
@@ -94,20 +91,18 @@ def read_data(
     offset: int,
     mmap: bool = True,
 ) -> np.ndarray:
-    """
-    The values of a NRRD image, as an array of shape `sizes` in F order.
+    """Read the values of a NRRD image as an F-ordered array.
 
-    Parameters
-    ----------
-    header : NrrdHeader
-        The header.
-    file : path | bytes
-        The header file (path) or its content (bytes), used when the data
-        are attached, and to find detached data files.
-    offset : int
-        The offset of the first byte after the header.
-    mmap : bool
-        Memory-map a single uncompressed local data file.
+    `file` is the path of the header, against which relative data-file names
+    are resolved, or the file content as bytes. `offset` is the position of the
+    first byte after the header.
+
+    Raises
+    ------
+    ParserExistsError
+        If a data file does not exist.
+    ParserContentError
+        If detached data are read without a path, or the data are too short.
     """
     count, nbytes, dtype = header.count, header.nbytes, header.dtype
     if header.data_files:
@@ -185,9 +180,12 @@ def read_data(
 
 
 def encode_data(header: NrrdHeader, data: tx.Any) -> bytes:
-    """
-    Encode an array of shape `sizes` (indexed in NRRD axis order) into the
-    bytes of the data file, in the header's type, byte order and encoding.
+    """Encode an array as data-file bytes, as the header describes.
+
+    Raises
+    ------
+    WriterError
+        If the shape of the array does not match the header.
     """
     array = np.asarray(data)
     if tuple(array.shape) != tuple(header.sizes):

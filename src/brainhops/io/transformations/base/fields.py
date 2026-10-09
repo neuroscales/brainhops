@@ -9,29 +9,23 @@ __all__ = [
     "voxel_grid_coordinates",
 ]
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import KwOnly
 
-# core
 from brainhops._core import affines as _affines
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
-
-# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
-
-# io
 from brainhops.io.base.parsers import WriterError
 
 from .affines import RASToVoxel, VoxelToRAS
 
 
 class RASCoordinatesField(_xforms.CoordinatesField):
-    """Field of RAS coordinates."""
+    """Coordinates field from voxel space to RAS millimetres."""
 
     _input: KwOnly[_systems.CoordinateSystem] = (
         _systems.VoxelCoordinateSystem()
@@ -40,7 +34,7 @@ class RASCoordinatesField(_xforms.CoordinatesField):
 
 
 class LPSCoordinatesField(_xforms.CoordinatesField):
-    """Field of LPS coordinates."""
+    """Coordinates field from voxel space to LPS millimetres."""
 
     _input: KwOnly[_systems.CoordinateSystem] = (
         _systems.VoxelCoordinateSystem()
@@ -51,21 +45,14 @@ class LPSCoordinatesField(_xforms.CoordinatesField):
 # ----------------------------------------------------------------------
 #   RAS DISPLACEMENT FIELDS
 # ----------------------------------------------------------------------
-#
-# Several formats store a dense field of displacements in world (RAS)
-# millimetres, sampled on a grid whose voxel-to-RAS affine they also
-# store: NIfTI `DISPVECT` files, and BIDS X5 `nonlinear` transforms. A
-# `DisplacementField` adds its values in the units of its own grid, so
-# such a field is read as a chain of three transformations -- RAS to
-# voxel, the displacements rotated into voxel units, voxel back to RAS --
-# and written back by undoing that rotation. Both directions live here,
-# so that the formats agree on them.
-#
-# The same chain holds a field of B-spline coefficients of RAS
-# displacements (an X5 `bspline` transform), with
-# `store="coefficients"`: the
-# displacement at a point is a linear combination of the coefficients,
-# so rotating the coefficients rotates the displacement they encode.
+# Several formats (NIfTI DISPVECT, BIDS X5 nonlinear) store dense RAS
+# displacements on a grid placed by a stored vox2ras, whereas a
+# `DisplacementField` works in the units of its own grid. Such a field is
+# read as RAS to voxel, displacements rotated into voxel units, and voxel
+# to RAS, and written by undoing the rotation; keeping both directions here
+# makes all formats agree. The chain also serves B-spline coefficients of
+# RAS displacements (X5 `bspline`), since a displacement is linear in its
+# coefficients.
 
 
 def ras_displacement_chain(
@@ -78,39 +65,41 @@ def ras_displacement_chain(
     log: bool = False,
     steps: tx.Optional[int] = None,
 ) -> tx.Tuple[RASToVoxel, _xforms.DisplacementField, VoxelToRAS]:
-    """
-    The chain that maps RAS to RAS through a field of RAS displacements.
+    """Build a RAS-to-RAS chain through a field of RAS displacements.
+
+    Only the linear part of the world-to-voxel affine acts on a displacement,
+    so the field of the chain holds the vectors rotated into voxel units. A
+    stationary velocity rotates in the same way and its flow commutes with the
+    change of coordinates, so with `log` the same chain holds a
+    [`StationaryVelocityField`][brainhops.datamodel.transformations.StationaryVelocityField].
 
     Parameters
     ----------
-    vectors : array, shape `(*shape, ndim)`
-        Displacements in RAS millimetres, one vector per voxel -- or,
-        when `store` is `"coefficients"`, the spline coefficients of those
-        displacements, one vector per knot. When `log` is set, they are
-        the stationary velocity whose flow is the map, rather than its
-        displacement.
-    vox2ras : array, shape `(ndim + 1, ndim + 1)`
-        The voxel-to-RAS affine of the grid the vectors are sampled on.
-    degree, bound
-        Spline degree and boundary condition of the field.
-    store : {"values", "coefficients"}
-        Whether `vectors` are spline coefficients rather than values.
-    log : bool
-        Whether `vectors` are a stationary velocity, which makes the field
-        a [`StationaryVelocityField`][brainhops.datamodel.\
-transformations.StationaryVelocityField]. A velocity rotates into voxel
-        units as a displacement does, and its flow commutes with the change
-        of coordinates, so the chain is the same.
+    vectors : ArrayProtocol
+        Displacements in RAS millimetres, of shape `(*shape, ndim)`, one per
+        voxel. With `store="coefficients"` they are spline coefficients, one
+        per knot, and with `log` a stationary velocity whose flow is the map.
+    vox2ras : np.ndarray
+        Square affine of size `ndim + 1` that places the sampling grid.
+    degree : int, default=1
+        Spline degree of the field.
+    bound : str or float, default=BoundaryCondition.nearest
+        Boundary condition of the field.
+    store : {"values", "coefficients"}, default=StoreEnum.values
+        Whether `vectors` are values or spline coefficients.
+    log : bool, default=False
+        Whether `vectors` are a stationary velocity.
     steps : int, optional
-        The number of squaring steps of a velocity. Only a velocity takes
-        it.
+        Number of squaring steps, which only a velocity field accepts.
 
     Returns
     -------
-    ras2voxel, displacement, voxel2ras
-        Only the linear part of the world-to-voxel affine acts on a
-        displacement, so `displacement` holds the vectors rotated into
-        voxel units.
+    ras2voxel : RASToVoxel
+        The world-to-voxel affine.
+    displacement : DisplacementField
+        The field of vectors rotated into voxel units.
+    voxel2ras : VoxelToRAS
+        The voxel-to-world affine.
     """
     vox2ras = np.asarray(vox2ras, dtype=np.float64)
     ndim = vox2ras.shape[0] - 1
@@ -120,8 +109,8 @@ transformations.StationaryVelocityField]. A velocity rotates into voxel
     rotate = backend.asarray(ras2vox, dtype=vectors.dtype)
     field = backend.matmul(rotate, vectors[..., None])[..., 0]
     voxel = _systems.VoxelCoordinateSystem()
-    # `steps` is a field of a velocity only: it is passed when it is set, so
-    # that it is refused without `log`.
+    # `steps` is passed only when set, so that a field without `log`
+    # refuses it.
     velocity = {} if steps is None else {"steps": steps}
     return (
         RASToVoxel(matrix=_affines.inv(compact)),
@@ -148,48 +137,54 @@ def split_ras_displacement_chain(
     bound: tx.Any = None,
     log: bool = False,
 ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
-    """
-    Undo [`ras_displacement_chain`][]: the grid and the RAS vectors.
+    """Split a RAS displacement chain into its grid and its RAS vectors.
 
-    The field is first converted to the encoding the format stores, and
-    its `data` is what is written. A field already in that encoding is
-    passed through as it is: its stored array is written, unrefitted.
+    This function is the inverse of [`ras_displacement_chain`][]. The field
+    is first converted to the encoding that the format stores; a field
+    already in that encoding passes through, and its stored array is written
+    without being refitted.
 
     Parameters
     ----------
-    chain : sequence of three transformations
-        RAS to voxel, a displacement field in voxel units, voxel to RAS.
-    what : str
-        How to name the field in error messages.
+    chain : sequence of Transformation
+        RAS to voxel, a displacement field in voxel units, and voxel to RAS.
+    what : str, default="A displacement field"
+        Name of the written object, used in error messages.
     ndim : int, optional
-        The number of spatial dimensions the format supports.
-    store : {"values", "coefficients"}
-        Whether the format stores spline coefficients rather than
-        sampled values. A field of values written to a format of
-        coefficients is encoded, and the reverse is decoded.
-    degree, bound : optional
-        The spline degree and boundary condition of the coefficients a
-        format stores. A field of coefficients under other ones is
-        refitted. `None` keeps the field's own.
-    log : bool
-        Whether the format stores a stationary velocity rather than a
-        displacement. A velocity written to a format of displacements is
-        integrated; a displacement written to a format of velocities is
-        refused, since a field has no logarithm that brainhops computes.
+        Number of spatial dimensions that the format supports.
+    store : {"values", "coefficients"}, default=StoreEnum.values
+        Whether the format stores spline coefficients. Values written to a
+        coefficient format are encoded, and coefficients written to a value
+        format are decoded.
+    degree : int, optional
+        Spline degree of the stored coefficients, used only with
+        `store="coefficients"`. A coefficient field with another degree is
+        refitted, and `None` keeps the degree of the field.
+    bound : str or float, optional
+        Boundary condition of the stored coefficients, used only with
+        `store="coefficients"`. A coefficient field with another boundary
+        condition is refitted, and `None` keeps the boundary condition of the
+        field.
+    log : bool, default=False
+        Whether the format stores a stationary velocity. A velocity written
+        to a displacement format is integrated, while a displacement written
+        to a velocity format is refused, since brainhops computes no field
+        logarithm.
 
     Returns
     -------
-    vox2ras : array, shape `(ndim + 1, ndim + 1)`
-        The voxel-to-RAS affine of the grid, read from the last slot.
-    vectors : array, shape `(*shape, ndim)`
-        The displacements (or their coefficients), rotated back into RAS
-        millimetres.
+    vox2ras : np.ndarray
+        The `(ndim + 1, ndim + 1)` grid affine, from the last link.
+    vectors : ArrayProtocol
+        The `(*shape, ndim)` displacements or coefficients, rotated back to
+        RAS millimetres.
 
     Raises
     ------
     WriterError
-        If the chain does not have that shape, holds no field, or its
-        grid is not an affine.
+        If the chain does not have three links around a displacement field,
+        holds no displacements, has a grid that is not an affine, or holds an
+        array of the wrong shape.
     """
     chain = tuple(chain or ())
     if len(chain) != 3 or not isinstance(chain[1], _xforms.DisplacementField):
@@ -228,31 +223,30 @@ def voxel_grid_coordinates(
     vox2world: np.ndarray,
     backend: tx.Any = None,
 ) -> ArrayProtocol:
-    """
-    The world coordinate of every voxel of a grid.
+    """Return the world coordinates of every voxel of a grid.
 
-    Formats that store a field of world *positions* (an FSL absolute
-    warp, a NiftyReg deformation field or control-point grid) are read
-    as displacements by subtracting these, and written back by adding
-    them. A `CoordinatesField` would hold the same map inside its grid,
-    but no boundary condition extends positions beyond the grid the way
-    these tools do -- by keeping the edge *displacement* -- while
-    `nearest` on a displacement field does.
+    Formats that store world positions, such as FSL absolute warps and
+    NiftyReg deformation or control-point grids, are read as displacements
+    by subtracting these coordinates and written by adding them. A
+    [`CoordinatesField`][brainhops.datamodel.transformations.CoordinatesField]
+    is not used because no boundary condition extends positions beyond the
+    grid as these tools do, by keeping the edge displacement, which is what
+    `nearest` does on a displacement field.
 
     Parameters
     ----------
     shape : sequence of int
-        The shape of the grid, `(X, Y, Z)`.
-    vox2world : array, shape `(ndim + 1, ndim + 1)` or `(ndim, ndim + 1)`
-        The voxel-to-world affine of the grid.
+        Shape of the grid.
+    vox2world : np.ndarray
+        Affine of shape `(ndim + 1, ndim + 1)` or `(ndim, ndim + 1)`.
     backend : ArrayBackend, optional
-        The array backend to build the coordinates with (NumPy by
-        default), so that they match the field they are combined with.
+        Backend of the result, NumPy by default, to match the field with
+        which the coordinates are combined.
 
     Returns
     -------
-    coordinates : array, shape `(*shape, ndim)`
-        The coordinate of voxel `(i, j, k)` is
+    ArrayProtocol
+        Coordinates of shape `(*shape, ndim)`; voxel `(i, j, k)` maps to
         `vox2world @ [i, j, k, 1]`.
     """
     if backend is None:
@@ -277,43 +271,36 @@ def homogeneous_matrix(
     what: str = "A displacement field",
     ndim: tx.Optional[int] = None,
 ) -> np.ndarray:
-    """
-    The homogeneous matrix of the transformation that places a field's grid.
+    """Return the homogeneous matrix of the affine that places a field's grid.
 
-    A field stored in world units is read as a chain whose first and last
-    transformations map between the field's voxel grid and the world (see
-    [`ras_displacement_chain`][]). A writer needs that voxel-to-world
-    mapping back as a plain matrix, to store it in the file's header. It
-    may come out of the chain as an `Affine`, or as any transformation
-    that converts to one, such as a `Scaling`, a `Translation` or a
-    format-specific voxel-to-RAS class.
-
-    This function converts `xform` to an `Affine` and returns its
-    homogeneous matrix, checking that the format can store it.
+    The transformation maps voxels to world, normally as the last link of a
+    [`ras_displacement_chain`][]. It may be an
+    [`Affine`][brainhops.datamodel.transformations.Affine] or anything that
+    converts to one, such as a scaling, a translation or a format-specific
+    voxel-to-RAS class. The matrix is checked against what the format can
+    store.
 
     Parameters
     ----------
     xform : Transformation
-        The transformation that maps the field's voxel grid to the world,
-        usually the last transformation of the chain.
-    what : str
-        How to name the field in error messages, e.g.
+        The voxel-to-world transformation of the grid.
+    what : str, default="A displacement field"
+        Name of the written object, used in error messages, for example
         `"An X5 displacement field"`.
     ndim : int, optional
-        The number of spatial dimensions the format supports. When given,
-        the matrix must be `(ndim + 1, ndim + 1)`.
+        If given, the number of spatial dimensions that the matrix must have.
 
     Returns
     -------
-    matrix : array, shape `(D + 1, D + 1)`
-        The homogeneous voxel-to-world matrix, as float64, where `D` is
-        the number of spatial dimensions.
+    np.ndarray
+        A float64 matrix of shape `(D + 1, D + 1)`, with `D` spatial
+        dimensions.
 
     Raises
     ------
     WriterError
-        If `xform` does not convert to an `Affine`, if its matrix is not
-        square (the grid and the world must have as many dimensions), or
+        If the transformation does not convert to an affine, if the matrix is
+        not square (the grid and the world must have as many dimensions), or
         if it does not have `ndim` dimensions.
     """
     try:

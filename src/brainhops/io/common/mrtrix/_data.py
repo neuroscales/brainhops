@@ -26,13 +26,16 @@ from ._header import MrtrixHeader
 
 def decode_data(header: MrtrixHeader, buffer: tx.Any) -> np.ndarray:
     """
-    Decode the stored values into an array of the header's axes.
+    Decode stored values into an array of header axes.
 
-    `buffer` holds the voxel data, from its first byte: `bytes`, a
-    `memoryview`, or a one-dimensional `uint8` array (a memory map). The
-    result is a view of it whenever the data type allows one; packed bits
-    are unpacked into a new boolean array. Intensity scaling is not
-    applied.
+    The buffer holds the voxel data from their first byte. The result is a
+    view of the buffer, except for `Bit` data, which are unpacked into a
+    new boolean array. Intensity scaling is not applied.
+
+    Raises
+    ------
+    ParserContentError
+        If the buffer holds fewer values than the header requires.
     """
     count = header.count
     if header.is_bit:
@@ -54,11 +57,14 @@ def decode_data(header: MrtrixHeader, buffer: tx.Any) -> np.ndarray:
 
 def encode_data(header: MrtrixHeader, data: tx.Any) -> bytes:
     """
-    Encode an array of the header's axes into the bytes of the file.
+    Encode an array of header axes into the bytes of the file.
 
-    The values are converted to the header's data type, rounding when a
-    floating-point array is stored as integers, and laid out as the
-    header's `layout` says.
+    Floats stored as integers are rounded.
+
+    Raises
+    ------
+    WriterError
+        If the shape of the array disagrees with the header.
     """
     array = np.asarray(data)
     if tuple(array.shape) != tuple(header.dim):
@@ -78,11 +84,8 @@ def encode_data(header: MrtrixHeader, data: tx.Any) -> bytes:
 
 def _read_buffer(file: tx.Any, offset: int, nbytes: int, mmap: bool) -> tx.Any:
     """
-    The `nbytes` bytes at `offset` in an uncompressed data file.
-
-    A local file is memory-mapped (read-only) unless `mmap` is false, so
-    nothing is read until it is indexed. Any other path is read through
-    its `open`.
+    Read `nbytes` bytes at `offset` in an uncompressed data file,
+    memory-mapping a local file unless `mmap` is false.
     """
     local = _local_path(file)
     if local is not None and mmap and nbytes > 0:
@@ -95,7 +98,7 @@ def _read_buffer(file: tx.Any, offset: int, nbytes: int, mmap: bool) -> tx.Any:
 
 
 def _is_gzip(file: tx.Any) -> bool:
-    """Whether a path names a gzip-compressed file, from its content."""
+    """Tell whether a path names a gzip file, judged by its content."""
     try:
         with _open_path(file) as f:
             return f.read(2) == b"\x1f\x8b"
@@ -104,7 +107,15 @@ def _is_gzip(file: tx.Any) -> bool:
 
 
 def _data_location(header: MrtrixHeader) -> tx.Tuple[str, int]:
-    """The `(name, offset)` of the data, checked as MRtrix does."""
+    """
+    Return the `(name, offset)` of the data, checked as MRtrix does.
+
+    Raises
+    ------
+    ParserContentError
+        If the header has no `file` entry, or an embedded image has no
+        positive offset.
+    """
     if header.file is None:
         raise ParserContentError(
             "The MRtrix header has no 'file' entry, so its data cannot be "

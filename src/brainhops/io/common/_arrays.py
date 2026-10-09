@@ -1,56 +1,24 @@
 """
-Format-independent readers for generic array containers.
+Readers of generic array containers.
 
-Several formats store a bare numeric array in a generic container: a
-delimited text file, a NumPy `.npy` / `.npz` file, or a MATLAB `.mat`
-file. This module reads those containers into NumPy arrays and knows
-nothing about what the arrays mean, so that every format built on one of
-them (FLIRT matrices, plain affine matrices, and later the generic array
-readers) shares one parser.
+The containers are delimited text, NumPy `.npy` and `.npz` files, and
+MATLAB `.mat` files. The readers produce NumPy arrays and know nothing
+of what the arrays mean, so that FLIRT matrices, affine matrices and
+other array-based formats share the same parsers.
 
-It has two layers:
+The functions ([`read_text_array`][], [`read_npy`][], [`read_mat`][],
+...) each parse one container. The parsers, one per container, derive
+from [`ArrayParser`][] and hand the array to `from_array`, which a
+format class implements. A format mixes in one parser per container,
+for example:
 
-- **Functions** (`read_text_array`, `read_npy`, `read_npz`, `read_mat`,
-  ...) that parse the content of one container.
-- **Parsers**, one per container, deriving from the abstract
-  [`ArrayParser`][]. Each implements the usual `from_*` / `sniff_*`
-  entry points of its kind of content (`from_lines` for text,
-  `from_bytes` for binary), and hands the array it read to
-  `from_array`, which a format class implements (with the private
-  hooks `_accepts_array` and `_array_confidence`). A format mixes one
-  of them in per container, as in
-  `class NpyMatrixAffine(NpyArrayParser, MatrixAffine)`.
+```python
+class NpyMatrixAffine(NpyArrayParser, MatrixAffine): ...
+```
 
-  Text (built on `TextFileParser`):
-
-  - [`TextArrayParser`][]: the abstract text base, any separator;
-  - [`TxtArrayParser`][]: whitespace; `.txt`, `.dat`, `.1D`; hint
-    `"txt"`;
-  - [`CsvArrayParser`][]: commas; `.csv`; hint `"csv"`;
-  - [`TsvArrayParser`][]: tabs; `.tsv`; hint `"tsv"`.
-
-  Binary (built on `BinaryFileParser`):
-
-  - [`NpyArrayParser`][]: `.npy`; hint `"npy"`;
-  - [`NpzArrayParser`][]: `.npz`; hint `"npz"`;
-  - [`MatArrayParser`][]: any MATLAB `.mat`; hint `"mat"`; dispatches
-    to [`MatLegacyArrayParser`][] (v4, v5-v7, no extra hint) or
-    [`Mat73ArrayParser`][] (v7.3; hints `"mat73"`, `"73"`, hence
-    `"mat.73"`).
-
-The text readers build on the shared text plumbing (decoding, and
-declining content that does not decode) and differ by their separator:
-whitespace, commas or tabs. AFNI `.1D` and generic `.dat` files are
-whitespace-separated columns with `#` comments, so they are extensions
-of [`TxtArrayParser`][] rather than formats of their own.
-[`MatArrayParser`][] dispatches between the two unrelated MATLAB
-containers: its `sniff_bytes` scores the best of its variants', and its
-`from_bytes` reads a file with the variant whose container it is.
-
-Every reader takes the whole file content as `bytes` (or text lines),
-never a path, so that it works the same on files, streams and in-memory
-content. Nothing here unpickles: NumPy containers are read with
-`allow_pickle=False`, and MATLAB cell arrays or structs are skipped.
+All readers take the whole content as bytes or lines, never a path, so
+they work on files, streams and memory alike. Nothing is unpickled, and
+MATLAB cells and structs are skipped.
 """
 
 __all__ = [
@@ -76,22 +44,17 @@ __all__ = [
     "select_array",
 ]
 
-# stdlib
 import functools
 import io
 import os
 import re
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# core
 from brainhops._core import path
 from brainhops._core.peek import peekable_lines
 from brainhops._core.streams import preserve_position
-
-# io
 from brainhops.io.base.parsers import (
     BinaryFileParser,
     Confidence,
@@ -105,7 +68,7 @@ from brainhops.io.base.parsers import (
 
 
 class ArrayContainerError(ValueError):
-    """Raised when a container cannot be read as (numeric) arrays."""
+    """The content cannot be read as numeric arrays of this container."""
 
 
 # ----------------------------------------------------------------------
@@ -118,25 +81,17 @@ _HDF5_MAGIC = b"\x89HDF\r\n\x1a\n"
 _MAT5_MAGIC = b"MATLAB 5.0 MAT-file"
 _MAT73_MAGIC = b"MATLAB 7.3 MAT-file"
 _MAT73_KINDS = ("mat73", "hdf5")
-"""What `detect_container` calls a MATLAB v7.3 file."""
+"""The kinds that [`detect_container`][] reports for MATLAB v7.3."""
 
 
 def detect_container(content: bytes) -> tx.Optional[str]:
     """
-    Identify a binary array container from its magic number.
+    Identify a binary array container from its first kilobyte.
 
-    Parameters
-    ----------
-    content : bytes
-        The file content, or at least its first 1 KiB.
-
-    Returns
-    -------
-    kind : {"npy", "npz", "mat5", "mat73", "hdf5"} | None
-        `"mat5"` is a MATLAB v5-v7 file, `"mat73"` a MATLAB v7.3 (HDF5)
-        file and `"hdf5"` an HDF5 file without a MATLAB header. `None`
-        means no magic number was recognized: the content may be text,
-        a MATLAB v4 file (which has no magic number), or anything else.
+    The kind is `"npy"`, `"npz"`, `"mat5"` (MATLAB v5 to v7), `"mat73"`
+    (MATLAB v7.3), or `"hdf5"` (HDF5 without a MATLAB header). Unrecognised
+    content, such as text or a MATLAB v4 file, which has no magic number,
+    gives `None`.
     """
     head = bytes(content[:1024])
     if head.startswith(_NPY_MAGIC):
@@ -156,7 +111,6 @@ def detect_container(content: bytes) -> tx.Optional[str]:
 #   TEXT
 # ----------------------------------------------------------------------
 
-# Commas, semicolons, tabs and spaces all separate values.
 _SEPARATORS = re.compile(r"[\s,;]+")
 
 
@@ -166,31 +120,18 @@ def read_text_rows(
     separators: tx.Optional[str] = None,
 ) -> tx.List[tx.List[float]]:
     """
-    Read rows of floats from delimited text.
+    Read rows of numbers from delimited text.
 
-    Blank lines (after removing comments) are skipped. Rows may have
-    different lengths; use [`read_text_array`][] to require a rectangle.
-
-    Parameters
-    ----------
-    lines : Iterable[str]
-        The lines of text.
-    comments : str | Sequence[str] | None
-        Markers that start a comment running to the end of the line.
-        `None` or an empty sequence disables comments.
-    separators : str | None
-        A regular expression matching value separators. The default
-        accepts whitespace (spaces, tabs), commas and semicolons.
-
-    Returns
-    -------
-    rows : list[list[float]]
+    Comments, which start at any of the `comments` markers, are removed and
+    blank lines skipped. The `separators` regular expression defaults to
+    runs of whitespace, commas and semicolons. Rows may differ in length,
+    unlike in [`read_text_array`][].
 
     Raises
     ------
     ArrayContainerError
-        If a value is not a number, or a line holds a NUL byte (binary
-        content that happens to decode).
+        If a value is not a number, or if a line holds a NUL character,
+        which betrays binary content.
     """
     if isinstance(comments, str):
         comments = (comments,)
@@ -218,15 +159,15 @@ def read_text_array(
     separators: tx.Optional[str] = None,
 ) -> np.ndarray:
     """
-    Read a 2D array of floats from delimited text.
+    Read a two-dimensional float array from delimited text.
 
-    See [`read_text_rows`][] for the accepted syntax.
+    The syntax is that of [`read_text_rows`][].
 
     Raises
     ------
     ArrayContainerError
-        If the text is empty, holds a non-numeric value, or its rows do
-        not all have the same length.
+        If the text holds no numbers, holds a value that is not a number, or
+        has rows of different lengths.
     """
     rows = read_text_rows(lines, comments=comments, separators=separators)
     if not rows:
@@ -245,7 +186,7 @@ def read_text_array(
 
 
 def read_npy(content: bytes) -> np.ndarray:
-    """Read the array stored in `.npy` content, without unpickling."""
+    """Read the array of `.npy` content, without unpickling."""
     if detect_container(content) != "npy":
         raise ArrayContainerError("Not a .npy file.")
     try:
@@ -258,7 +199,7 @@ def read_npy(content: bytes) -> np.ndarray:
 
 
 def read_npz(content: bytes) -> tx.Dict[str, np.ndarray]:
-    """Read every array stored in `.npz` content, without unpickling."""
+    """Read all arrays of `.npz` content, without unpickling."""
     if detect_container(content) != "npz":
         raise ArrayContainerError("Not a .npz file.")
     try:
@@ -275,22 +216,18 @@ def read_npz(content: bytes) -> tx.Dict[str, np.ndarray]:
 
 def read_mat(content: bytes) -> tx.Dict[str, np.ndarray]:
     """
-    Read the numeric arrays stored in MATLAB `.mat` content.
+    Read the top-level numeric and logical arrays of `.mat` content.
 
-    MATLAB v4 and v5-v7 files are read with `scipy.io.loadmat`. MATLAB
-    v7.3 files are HDF5 files and are read with `h5py`, imported only
-    when needed. HDF5 stores MATLAB's column-major arrays with their axes
-    reversed, so v7.3 arrays are transposed back to MATLAB's shape.
-
-    Only top-level numeric (or logical) arrays are returned; structs,
-    cells, strings and objects are skipped.
+    MATLAB v4 to v7 files are read with `scipy.io.loadmat`, and v7.3 files
+    with h5py (see [`read_mat73`][]). Structs, cells, strings and objects
+    are skipped.
 
     Raises
     ------
     ArrayContainerError
         If the content is not a readable MATLAB file.
     ImportError
-        If the file is v7.3 and `h5py` is not installed.
+        If the content is a v7.3 file and h5py is not installed.
     """
     if detect_container(content) in _MAT73_KINDS:
         return read_mat73(content)
@@ -298,10 +235,11 @@ def read_mat(content: bytes) -> tx.Dict[str, np.ndarray]:
 
 
 def _read_mat_legacy(content: bytes) -> tx.Dict[str, np.ndarray]:
-    """Read the numeric arrays of MATLAB v4 or v5-v7 content.
+    """
+    Read the numeric arrays of MATLAB v4 to v7 content.
 
-    A v5-v7 file is recognized by its header. A v4 file has none, so it
-    is any binary content that `scipy.io` reads: text is turned down.
+    A v5 to v7 file is recognised by its header. A v4 file has none, so any
+    binary content that `scipy.io` reads is accepted, but text is rejected.
     """
     kind = detect_container(content)
     if kind not in ("mat5", None):
@@ -348,19 +286,18 @@ _MAT73_NUMERIC = {
 
 def read_mat73(content: bytes) -> tx.Dict[str, np.ndarray]:
     """
-    Read the numeric arrays stored in MATLAB v7.3 (HDF5) `.mat` content.
+    Read the numeric arrays of MATLAB v7.3 content with h5py.
 
-    The file is read with `h5py`, imported only now. HDF5 stores
-    MATLAB's column-major arrays with their axes reversed, so arrays are
-    transposed back to MATLAB's shape. Only top-level numeric (or
-    logical) datasets are returned.
+    Only top-level numeric and logical datasets are returned. HDF5 stores
+    the column-major MATLAB arrays with reversed axes, so each array is
+    transposed back to its MATLAB shape.
 
     Raises
     ------
     ArrayContainerError
         If the content is not a readable HDF5 file.
     ImportError
-        If `h5py` is not installed.
+        If h5py is not installed.
     """
     kind = detect_container(content)
     if kind not in _MAT73_KINDS:
@@ -390,8 +327,6 @@ def read_mat73(content: bytes) -> tx.Dict[str, np.ndarray]:
                 value = np.asarray(item[()])
                 if not is_numeric_array(value):
                     continue
-                # HDF5 holds MATLAB's column-major array with its axes
-                # reversed; transposing restores MATLAB's (rows, cols).
                 arrays[name] = value.T
     except ImportError:  # pragma: no cover
         raise
@@ -406,7 +341,7 @@ def read_mat73(content: bytes) -> tx.Dict[str, np.ndarray]:
 
 
 def is_numeric_array(value: tx.Any) -> bool:
-    """Whether `value` is a real numeric (or boolean) NumPy array."""
+    """Tell whether a value is a real numeric or boolean NumPy array."""
     return isinstance(value, np.ndarray) and value.dtype.kind in "biuf"
 
 
@@ -417,31 +352,18 @@ def select_array(
     what: str = "array",
 ) -> tx.Tuple[str, np.ndarray]:
     """
-    Pick one array from a named collection.
+    Pick one array from a named collection, such as `.npz` keys or `.mat`
+    variables, and return its name and value.
 
-    Parameters
-    ----------
-    arrays : Mapping[str, ndarray]
-        Named arrays, e.g. the variables of a `.mat` or the keys of a
-        `.npz`.
-    name : str, optional
-        The name to select. By default, the collection must hold exactly
-        one array that satisfies `predicate`.
-    predicate : callable, optional
-        Which arrays may be selected by default (ignored when `name` is
-        given). By default, any numeric array.
-    what : str
-        How to call the arrays in error messages.
-
-    Returns
-    -------
-    name : str
-    array : ndarray
+    The array is the one called `name` if given. Otherwise the collection
+    must hold exactly one array that satisfies `predicate`, which by
+    default accepts any numeric array. The noun `what` is used in error
+    messages.
 
     Raises
     ------
     ArrayContainerError
-        If `name` is missing, or no single array can be chosen.
+        If no array has the given name, or if no single array can be chosen.
     """
     if name is not None:
         if name not in arrays:
@@ -467,75 +389,74 @@ def select_array(
 _Reader = tx.Callable[
     [tx.Any], tx.Union[np.ndarray, tx.Mapping[str, np.ndarray]]
 ]
-"""A container reader: the content in, its single array or its named
-arrays out, `ArrayContainerError` if the content is not the container."""
+"""A container reader, which returns one array or a mapping of named arrays."""
 
 
 class ArrayParser(FileParser):
     """
-    Abstract base of the readers of one generic array container.
+    The abstract base of the readers of one generic array container.
 
-    A concrete subclass reads one container through the usual entry
-    points: `from_lines` / `sniff_lines` for a text container,
-    `from_bytes` / `sniff_bytes` for a binary one. It declares its
-    `EXTENSIONS`, `HINTS` and `CONTAINER`. What the array *means* is
-    left to a format class, which mixes the container parser in and
-    implements:
+    An array parser is never registered as a format. A subclass reads its
+    container in `from_lines` and `sniff_lines` (text) or in `from_bytes`
+    and `sniff_bytes` (binary), and declares `EXTENSIONS`, `HINTS` and
+    [`CONTAINER`][]. The meaning of the array is left to the format class
+    that mixes the parser in, which implements [`from_array`][] and may
+    override `_accepts_array` and `_array_confidence`.
 
-    - `from_array`: how to build the object from the array;
-    - `_accepts_array`: which arrays it can read, used to pick one in a
-      container that holds several;
-    - `_array_confidence`: how sure it is that the array is its own.
-
-    Abstract: it reads no container, and is never registered as a
-    format.
-
-    **Selecting an array**: in a container that holds several (`.npz`,
-    `.mat`), `key=` (or its alias `variable=`) names the array to read.
-    By default, the container must hold exactly one array that
-    `_accepts_array` accepts. Single-array containers ignore it.
+    In a container that holds several arrays (`.npz`, `.mat`), the `key`
+    option, or its alias `variable`, names the array to read. By default,
+    the container must hold exactly one array that the format accepts.
+    Single-array containers ignore the option.
     """
 
     CONTAINER: tx.ClassVar[str] = ""
-    """A short name for the container, e.g. `"npy"`."""
+    """The short name of the container, such as `"npy"`."""
 
     SNIFF_CONFIDENCE: tx.ClassVar[float] = Confidence.WEAK
-    """The score of content whose container and array are both readable.
+    """
+    The score when the container and its array are both readable.
 
-    A generic container says nothing about what its array means, so the
-    default is `WEAK`: any format that recognizes the file positively
-    wins. A format raises it in `_array_confidence` when the array itself
-    identifies it."""
+    The default is `WEAK`, so that any format which positively recognises
+    the file wins. A format raises the score in `_array_confidence`
+    when the array identifies it.
+    """
 
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = None
-    """The largest file, in bytes, that sniffing reads. A larger file is
-    turned down without being read whole. `None` means no limit."""
-
-    # --- format hooks -------------------------------------------------
+    """
+    The size in bytes of the largest file that is sniffed, or `None` for no
+    limit; larger files are turned down unread.
+    """
 
     @classmethod
     def from_array(
         cls, array: np.ndarray, key: tx.Optional[str] = None, **kwargs
     ) -> tx.Self:
-        """Build the object from the array read from the container.
-        Implemented by the format class."""
+        """
+        Build an object from the array of the container.
+
+        The format class implements this method.
+        """
         raise ParserNotImplementedError(
             f"from_array() is not available in parser of type {cls.__name__}"
         )
 
     @classmethod
     def _accepts_array(cls, array: np.ndarray) -> bool:
-        """Whether this format can read `array`. Any numeric array by
-        default."""
+        """
+        Tell whether the format can read an array (any numeric one by default).
+
+        In a container of several arrays, this test also picks the one to read.
+        """
         return is_numeric_array(array)
 
     @classmethod
     def _array_confidence(cls, array: np.ndarray, **kwargs) -> float:
-        """How confident this format is that an accepted `array` is its
-        own, given the reading options. `SNIFF_CONFIDENCE` by default."""
-        return cls.SNIFF_CONFIDENCE
+        """
+        Return the confidence that an accepted array belongs to the format.
 
-    # --- sniff ----------------------------------------------------------
+        The default is [`SNIFF_CONFIDENCE`][].
+        """
+        return cls.SNIFF_CONFIDENCE
 
     @classmethod
     def sniff_filename(
@@ -565,31 +486,22 @@ class ArrayParser(FileParser):
             return _reject(error, f"Larger than {limit} bytes.")
         return cls.sniff_content(content, error=error, **kwargs)
 
-    # --- shared by the containers' sniff_* and from_* -------------------
-
     @classmethod
     def _read_array(
         cls, read: _Reader, content: tx.Any, kwargs: tx.Dict[str, tx.Any]
     ) -> tx.Tuple[tx.Optional[str], np.ndarray]:
         """
-        Read the container with `read`, and pick the array this format
-        reads.
+        Read a container with `read` and pick the array of the format.
 
         The selection options (`key`, its alias `variable`, and the text
-        `encoding`, already used) are popped from `kwargs`, which is left
-        holding the options of the format.
-
-        Returns
-        -------
-        key : str | None
-            The name of the array, or `None` in a single-array container.
-        array : ndarray
+        `encoding`) are popped from `kwargs`. The name returned with the array
+        is `None` for a single-array container.
 
         Raises
         ------
         ParserContentError
-            If the content is not this container, or holds no single
-            array that `_accepts_array` accepts.
+            If the content is not this container, or if it holds no single
+            acceptable array.
         """
         variable = kwargs.pop("variable", None)
         key = kwargs.pop("key", None)
@@ -621,13 +533,15 @@ class ArrayParser(FileParser):
         error: tx.Union[bool, tx.Type[Exception]],
         **kwargs,
     ) -> float:
-        """Score `content` read with `read`: `_array_confidence` of the
-        array that `_read_array` picks, or `NO`."""
+        """
+        Score content by the confidence in the array that `_read_array`
+        picks.
+        """
         try:
             _, array = cls._read_array(read, content, kwargs)
         except ParserContentError as e:
             return _reject(error, str(e))
-        except Exception as e:  # anything a container library raises
+        except Exception as e:  # any library error means another container
             return _reject(error, f"Not a {cls.CONTAINER} file: {e}")
         score = cls._array_confidence(array, **kwargs)
         if not score:
@@ -641,49 +555,38 @@ class ArrayParser(FileParser):
 
 class TextArrayParser(ArrayParser, TextFileParser):
     """
-    Base of the readers of a 2-D array stored as delimited text.
+    The base of the readers of two-dimensional text arrays.
 
-    One row per line; `#` starts a comment; blank lines are skipped. All
-    rows must have the same length. Decoding is the shared text
-    plumbing of [`TextFileParser`][brainhops.io.base.parsers.TextFileParser]:
-    content that does not decode (or holds a NUL byte) is not text, and
-    scores `NO`.
+    The text holds one row per line, with `#` comments and blank lines
+    skipped, and all rows must have the same length. Content that cannot be
+    decoded, or that holds NUL characters, is not text. This base class
+    declares no extension or hint, so it is not a format itself.
 
-    This base splits values on any run of whitespace, commas or
-    semicolons, and declares no extension or hint: it is not a format.
-    The concrete readers fix the separator and the file names:
-
-    - [`TxtArrayParser`][]: whitespace (`.txt`, `.dat`, `.1D`);
-    - [`CsvArrayParser`][]: commas (`.csv`);
-    - [`TsvArrayParser`][]: tabs (`.tsv`).
-
-    **Sniffing.** A file whose name ends in one of a reader's
-    `EXTENSIONS` and whose content it reads scores at least
-    `NAMED_CONFIDENCE`: the name says "plain numbers", which no content
-    check can. Without such a name, a reader also requires its
-    *signature*, so that one content is claimed by one reader only: CSV
-    needs a comma, TSV a tab, and whitespace text yields tab-separated
-    content to TSV.
+    A readable file named with an extension of a reader scores at least
+    [`NAMED_CONFIDENCE`][]. Without such a name, the content must also bear
+    the signature of the reader, so that only one reader claims it: a comma
+    for CSV, a tab for TSV, and anything that TSV does not read for
+    whitespace-separated text.
     """
 
     CONTAINER: tx.ClassVar[str] = "text"
 
     SEPARATORS: tx.ClassVar[tx.Optional[str]] = None
-    """The regular expression that separates values (see
-    [`read_text_rows`][]). `None` accepts whitespace, commas and
-    semicolons."""
+    """
+    A regular expression matching the separators, or `None` for runs of
+    whitespace, commas and semicolons.
+    """
 
     NAMED_CONFIDENCE: tx.ClassVar[float] = Confidence.LIKELY
-    """The least score of a text array whose file name has one of the
-    reader's extensions."""
+    """
+    The minimum score of a text array whose file has an extension of this
+    reader.
+    """
 
     @classmethod
     def _has_signature(cls, lines: tx.List[str]) -> bool:
-        """Whether text that this reader reads is recognizably its own,
-        whatever the file is called. Always, by default."""
+        """Tell whether text is this reader's, whatever its file name."""
         return True
-
-    # --- sniff ----------------------------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -725,8 +628,6 @@ class TextArrayParser(ArrayParser, TextFileParser):
             )
         return score
 
-    # --- from -----------------------------------------------------------
-
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
         read = functools.partial(read_text_array, separators=cls.SEPARATORS)
@@ -750,16 +651,12 @@ class TextArrayParser(ArrayParser, TextFileParser):
 
 class TxtArrayParser(TextArrayParser):
     """
-    Reader for a 2-D array stored as whitespace-separated text (`.txt`).
+    The reader of whitespace-separated text arrays (`.txt`).
 
-    Values are separated by spaces or tabs, as `numpy.loadtxt` and
-    `numpy.savetxt` do by default. This is also the layout of AFNI
-    `.1D` files (whitespace-separated columns, `#` comments) and of the
-    conventionless `.dat` files many tools write, so both are read
-    here rather than by readers of their own.
-
-    Its signature is anything but tab-separated values: unnamed
-    content that [`TsvArrayParser`][] reads is left to it.
+    This is the layout of `numpy.loadtxt` and `numpy.savetxt`, and also of
+    AFNI `.1D` files and of the `.dat` files many tools write. Without a
+    matching file name, content that [`TsvArrayParser`][] reads is left to
+    that reader.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt", ".dat", ".1D")
@@ -776,10 +673,9 @@ class TxtArrayParser(TextArrayParser):
 
 class CsvArrayParser(TextArrayParser):
     """
-    Reader for a 2-D array stored as comma-separated values (`.csv`).
+    The reader of comma-separated text arrays (`.csv`).
 
-    Values are separated by commas, with optional spaces around them.
-    Its signature is a comma.
+    Spaces around the commas are allowed.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".csv",)
@@ -793,10 +689,9 @@ class CsvArrayParser(TextArrayParser):
 
 class TsvArrayParser(TextArrayParser):
     """
-    Reader for a 2-D array stored as tab-separated values (`.tsv`).
+    The reader of tab-separated text arrays (`.tsv`).
 
-    Values are separated by one tab, with optional spaces around it.
-    Its signature is a tab.
+    Each separator is one tab, with optional spaces around it.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".tsv",)
@@ -809,8 +704,7 @@ class TsvArrayParser(TextArrayParser):
 
 
 class _BinaryArrayParser(ArrayParser, BinaryFileParser):
-    """An array container that is never text: each subclass implements
-    `sniff_bytes` and `from_bytes`."""
+    """An array container that is never text."""
 
     @classmethod
     def sniff_lines(
@@ -829,8 +723,7 @@ class _BinaryArrayParser(ArrayParser, BinaryFileParser):
 
 
 class NpyArrayParser(_BinaryArrayParser):
-    """Reader for the single array of a NumPy `.npy` file, without
-    unpickling."""
+    """The reader of the single array of a `.npy` file."""
 
     CONTAINER: tx.ClassVar[str] = "npy"
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".npy",)
@@ -852,8 +745,7 @@ class NpyArrayParser(_BinaryArrayParser):
 
 
 class NpzArrayParser(_BinaryArrayParser):
-    """Reader for one array of a NumPy `.npz` archive, selected by
-    `key=`, without unpickling."""
+    """The reader of one array of a `.npz` file, selected by `key`."""
 
     CONTAINER: tx.ClassVar[str] = "npz"
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".npz",)
@@ -876,27 +768,18 @@ class NpzArrayParser(_BinaryArrayParser):
 
 class MatArrayParser(_BinaryArrayParser):
     """
-    Reader for one variable of a MATLAB `.mat` file of any version,
-    selected by `key=` (or `variable=`).
+    The reader of one variable of a MATLAB `.mat` file of any version.
 
-    MATLAB has two unrelated containers behind one extension, each read
-    by a subclass:
+    Two unrelated containers hide behind the extension:
+    [`MatLegacyArrayParser`][] reads versions 4 to 7 and
+    [`Mat73ArrayParser`][] reads version 7.3, an HDF5 file. This class
+    dispatches between its [`VARIANTS`][]: `sniff_bytes` returns their best
+    score, and `from_bytes` reads with the variant whose container matches.
 
-    - [`MatLegacyArrayParser`][]: v4 and v5-v7, read with
-      `scipy.io.loadmat`;
-    - [`Mat73ArrayParser`][]: v7.3, an HDF5 file read with `h5py`.
-
-    This class dispatches between its `VARIANTS`: `sniff_bytes` scores
-    the best of theirs, and `from_bytes` reads a file with the variant
-    whose container it is. The variants override both, so they read
-    their own container only. It declares the hint `"mat"`, which the
-    subclasses inherit; the v7.3 reader adds `"mat73"` and `"73"` (so
-    `"mat.73"`).
-
-    A format built on this one (as in `MatMatrixAffine`) declares its
-    own `VARIANTS`, so that dispatch returns objects of its own variant
-    classes. Register the variants for dispatch, not the dispatcher: it
-    would only ever tie with (and lose to) its own subclasses.
+    A format built on this class, such as `MatMatrixAffine`, declares its
+    own `VARIANTS` so that the dispatch returns its own classes. The
+    variants are registered, not the dispatcher, which would only tie with
+    them and lose.
     """
 
     CONTAINER: tx.ClassVar[str] = "mat"
@@ -904,8 +787,7 @@ class MatArrayParser(_BinaryArrayParser):
     HINTS = ("mat",)
 
     VARIANTS: tx.ClassVar[tx.Tuple[type, ...]] = ()
-    """The readers this class dispatches to: the v4-v7 reader, then the
-    v7.3 reader."""
+    """The readers dispatched to: MATLAB v4 to v7, then v7.3."""
 
     @classmethod
     def sniff_bytes(
@@ -926,12 +808,10 @@ class MatArrayParser(_BinaryArrayParser):
 
 class MatLegacyArrayParser(MatArrayParser):
     """
-    Reader for one variable of a MATLAB v4 or v5-v7 `.mat` file,
-    selected by `key=` (or `variable=`), read with `scipy.io.loadmat`.
+    The reader of one variable of a MATLAB v4 to v7 `.mat` file.
 
-    A v5-v7 file is recognized by its header; a v4 file has none, so it
-    is any binary content that `scipy.io` reads. Only numeric variables
-    are considered. It adds no hint to `"mat"`.
+    The file is read with `scipy.io.loadmat`, and only numeric variables
+    are kept. The reader adds no hint to `"mat"`.
     """
 
     @classmethod
@@ -953,14 +833,9 @@ class MatLegacyArrayParser(MatArrayParser):
 
 class Mat73ArrayParser(MatArrayParser):
     """
-    Reader for one variable of a MATLAB v7.3 `.mat` file, selected by
-    `key=` (or `variable=`).
+    The reader of one variable of a MATLAB v7.3 `.mat` file, with h5py.
 
-    A v7.3 file is an HDF5 file with a MATLAB header. It is read with
-    `h5py`, imported only then. HDF5 stores MATLAB's column-major arrays
-    transposed, which is undone. Only numeric variables are considered.
-    It adds the hints `"mat73"` and `"73"` to `"mat"`, so `"mat.73"`
-    selects it.
+    The hints `"mat73"` and `"73"` let `"mat.73"` select this reader.
     """
 
     CONTAINER: tx.ClassVar[str] = "mat73"
@@ -990,7 +865,7 @@ MatArrayParser.VARIANTS = (MatLegacyArrayParser, Mat73ArrayParser)
 
 
 def _reject(error: tx.Union[bool, tx.Type[Exception]], message: str) -> float:
-    """Return `Confidence.NO`, or raise if the caller asked for it."""
+    """Return `Confidence.NO`, or raise if the caller asks for it."""
     if error:
         if error is True:
             error = SnifferContentError
@@ -1005,14 +880,13 @@ def _as_lines(lines: tx.Iterable[str]) -> tx.List[str]:
 
 
 def _data_lines(lines: tx.List[str]) -> tx.List[str]:
-    """The lines of a text that hold values: comments and blank lines
-    removed."""
+    """Keep the lines that hold values, without comments."""
     lines = (line.split("#", 1)[0].strip() for line in lines)
     return [line for line in lines if line]
 
 
 def _reads(lines: tx.List[str], separators: tx.Optional[str]) -> bool:
-    """Whether `lines` read as a text array with these separators."""
+    """Tell whether lines read as a text array with these separators."""
     try:
         read_text_array(lines, separators=separators)
     except ArrayContainerError:

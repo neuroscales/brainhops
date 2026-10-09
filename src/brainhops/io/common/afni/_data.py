@@ -39,13 +39,17 @@ from ._header import AfniHeader
 
 def brick_dtype(dtype: tx.Any) -> np.dtype:
     """
-    The AFNI data type that stores an array of type `dtype` (without byte
-    order), or the one named (`"byte"`, `"short"`, `"int"`, `"float"`,
-    `"double"`, `"complex"`).
+    Return the AFNI dtype that stores a dtype, or the one an AFNI type
+    name (`"short"`, `"float"`, ...) names.
 
-    A type AFNI has is kept. Booleans become bytes, `int8` shorts,
-    `uint16` and `uint32` ints, wider integers doubles, `float16` floats
-    and `complex128` complex (single precision).
+    Supported dtypes are kept. Otherwise booleans become bytes, int8
+    shorts, uint16 ints, uint32 and wider integers doubles, float16 floats,
+    and complex128 single-precision complex.
+
+    Raises
+    ------
+    WriterError
+        If AFNI cannot store the dtype.
     """
     if isinstance(dtype, str) and dtype.lower() in _BRICK_NAMES:
         return _BRICK_DTYPES[_BRICK_NAMES[dtype.lower()]]
@@ -68,19 +72,23 @@ def brick_dtype(dtype: tx.Any) -> np.dtype:
 
 
 def brick_code(dtype: tx.Any) -> int:
-    """The `BRICK_TYPES` code of an AFNI data type."""
+    """Return the `BRICK_TYPES` code of an AFNI dtype."""
     return _BRICK_CODES[np.dtype(dtype).newbyteorder("=")]
 
 
 def decode_bricks(header: AfniHeader, buffer: tx.Any) -> np.ndarray:
     """
-    Decode the BRIK into a `(nx, ny, nz, nvals)` array.
+    Decode an uncompressed BRIK into an `(nx, ny, nz, nvals)` array.
 
-    `buffer` holds the (uncompressed) BRIK: `bytes`, a `memoryview` or a
-    one-dimensional `uint8` array (a memory map). The result is a
-    Fortran-ordered view of it when every sub-brick has the same type;
-    sub-bricks of different types are converted to a common type and
-    copied. Scaling (`BRICK_FLOAT_FACS`) is not applied.
+    The buffer may be bytes, a memoryview or a one-dimensional uint8 array
+    such as a memory map. When all sub-bricks share a type, the result is a
+    view of the buffer; otherwise the sub-bricks are copied into their
+    common type. Scale factors are not applied.
+
+    Raises
+    ------
+    ParserContentError
+        If the buffer is shorter than the header requires.
     """
     shape = header.shape
     nvox = int(np.prod(shape))
@@ -117,12 +125,11 @@ def decode_bricks(header: AfniHeader, buffer: tx.Any) -> np.ndarray:
 
 def scale_bricks(header: AfniHeader, stored: tx.Any) -> tx.Any:
     """
-    Apply the `BRICK_FLOAT_FACS` of the header to the stored values
-    (whose last axis holds the sub-bricks, unless there is only one).
+    Apply the `BRICK_FLOAT_FACS` scale factors to stored values.
 
-    Without a factor, the stored values are returned as they are, so a
-    memory map stays one. With one, they are read and scaled, to at least
-    single precision.
+    When no sub-brick is scaled, the values are returned unchanged, so that
+    a memory map stays one. Otherwise they are scaled in at least single
+    precision.
     """
     facs = np.asarray(header.float_facs, dtype=np.float64)
     if not np.any(facs) or np.all((facs == 0) | (facs == 1)):
@@ -137,18 +144,18 @@ def scale_bricks(header: AfniHeader, stored: tx.Any) -> tx.Any:
 
 def encode_bricks(header: AfniHeader, data: tx.Any) -> tx.Iterator[bytes]:
     """
-    Encode a `(nx, ny, nz, nvals)` array (or `(nx, ny, nz)` for a single
-    sub-brick) into the bytes of the BRIK, one sub-brick at a time.
+    Encode an `(nx, ny, nz, nvals)` array into BRIK content, sub-brick by
+    sub-brick.
 
-    The values are divided by the header's `BRICK_FLOAT_FACS` (where not
-    zero) and converted to its types and byte order, rounding when a
-    floating-point array is stored as integers.
+    A three-dimensional array is a single sub-brick. Each sub-brick is
+    divided by its nonzero scale factor, rounded if it is stored as
+    integers, and converted to the type and byte order of the header.
 
     Raises
     ------
     WriterError
-        If the shape disagrees with the header, or integers do not fit
-        the stored type.
+        If the shape disagrees with the header, or if integer values
+        overflow their stored type.
     """
     array = np.asarray(data)
     shape = header.shape
@@ -188,22 +195,21 @@ def afni_dataset_files(
     filename: path.FilenameLike,
 ) -> tx.Tuple[tx.Any, tx.Any, str]:
     """
-    The `.HEAD` and `.BRIK` files of the dataset a path names.
+    Find the `.HEAD` and `.BRIK` files of the dataset that a path names.
 
-    The path may be that of the `.HEAD`, of the `.BRIK` (compressed or
-    not), or the dataset's name without extension (`anat+orig`). The
-    BRIK is the first one found among `.BRIK`, `.BRIK.gz`, `.BRIK.bz2`,
-    `.BRIK.Z` (AFNI's own order), or the uncompressed name if none
-    exists.
+    The path may name the `.HEAD` file, the `.BRIK` file with any
+    compression, or the bare dataset (`anat+orig`). The BRIK is the first
+    existing file among the compression suffixes AFNI tries, or else the
+    uncompressed name.
 
     Returns
     -------
     head : Path
         The `.HEAD` file.
     brik : Path
-        The `.BRIK` file (which may not exist).
+        The `.BRIK` file, which may not exist.
     stem : str
-        The dataset's name, without directory nor extension.
+        The dataset name, without directory or extension.
     """
     if isinstance(filename, str):
         filename = path.Path(filename)
@@ -237,11 +243,8 @@ def _brik_suffix(brik: tx.Any) -> str:
 
 def _read_brik(header: AfniHeader, brik: tx.Any, mmap: bool) -> np.ndarray:
     """
-    Read the BRIK of a dataset into a `(nx, ny, nz, nvals)` array.
-
-    An uncompressed local BRIK whose sub-bricks share one type is
-    memory-mapped (read-only) unless `mmap` is false, so nothing is read
-    until the data are indexed. Anything else is read into memory.
+    Read a BRIK, memory-mapping it when it is local, uncompressed, of a
+    single type, and `mmap` is true.
     """
     if not path.exists(brik):
         raise ParserExistsError(
@@ -283,7 +286,7 @@ def _read_brik(header: AfniHeader, brik: tx.Any, mmap: bool) -> np.ndarray:
 
 
 def _write_brik(header: AfniHeader, data: tx.Any, brik: tx.Any) -> None:
-    """Write the BRIK, compressed as its suffix says."""
+    """Write a BRIK, compressed according to its suffix."""
     suffix = _brik_suffix(brik)
     with brik.open("wb") as f:
         if suffix == ".gz":

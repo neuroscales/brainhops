@@ -1,12 +1,9 @@
-"""Map OME-Zarr axes onto brainhops axis types."""
+"""Conversion of OME-Zarr axes to brainhops axes."""
 
-# stdlib
 from collections.abc import Mapping
 
-# dependencies
 import typing_extensions as tx
 
-# internals
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -26,12 +23,9 @@ _AXIS_TYPES = {
 
 
 def _to_axis(ome_axis: tx.Any) -> Axis:
-    # Build a brainhops `Axis` from one OME-Zarr axis. The OME axis is
-    # either a mapping or an object with `type`, `name`, `unit` and
-    # `discrete` attributes. A recognized OME axis type selects the
-    # matching `Axis` subclass, which fixes the type; any other type is
-    # carried on a plain `Axis`. The remaining attributes are copied when
-    # they are present.
+    # The OME axis is a mapping or an object with attributes. A known OME type
+    # selects the matching Axis subclass, which fixes the type; an unknown type
+    # is carried by a plain Axis.
     if isinstance(ome_axis, Mapping):
         type_ = ome_axis.get("type")
         name = ome_axis.get("name")

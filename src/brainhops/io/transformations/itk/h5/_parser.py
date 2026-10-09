@@ -1,9 +1,6 @@
-# dependencies
 import h5py
 import numpy as np
 import typing_extensions as tx
-
-# externals
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 from brainhops.io.base.parsers import Confidence, SnifferContentError
@@ -13,7 +10,6 @@ from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5Parser
 from brainhops.io.common.hdf5._delayed import delayed_dataset
 from brainhops.io.common.hdf5._parsers import read_string
 
-# locals
 from .._common import ItkStruct, ItkTransformClass, _application_order
 
 __all__ = ["DelayedH5Array", "H5Header", "H5TransformParser"]
@@ -24,31 +20,19 @@ class H5Header(
     convert=True,
     repr=HIDE_IF_NONE,
 ):
-    """Header of a ITK H5 file."""
+    """Provenance strings stored at the root of an ITK HDF5 file."""
 
     HDFVersion: tx.Optional[str] = None
-    """
-    A string describing the version of the HDF5 library used.
-    Ex: "HDF5 library version: 1.10.4"
-    """
+    """The HDF5 library version, such as `"HDF5 library version: 1.10.4"`."""
 
     ITKVersion: tx.Optional[str] = None
-    """
-    A string describing the version of the ITK library used.
-    Ex: "5.1.0"
-    """
+    """The ITK library version, such as `"5.1.0"`."""
 
     OSName: tx.Optional[str] = None
-    """
-    A string describing the operating system name.
-    Ex: "Linux"
-    """
+    """The operating system name, such as `"Linux"`."""
 
     OSVersion: tx.Optional[str] = None
-    """
-    A string describing the operating system version.
-    Ex: "6.1.0-1007-oem"
-    """
+    """The operating system version, such as `"6.1.0-1007-oem"`."""
 
 
 class H5TransformParser(
@@ -57,23 +41,14 @@ class H5TransformParser(
     convert=True,
     repr=HIDE_IF_NONE,
 ):
-    """Parses an ITK binary (`.h5`) transform file into a chain of
-    transform blocks.
+    """Parser for ITK HDF5 (`.h5`) transform files.
 
-    The blocks of a `CompositeTransform` (such as ANTs'
-    `<prefix>Composite.h5`) are listed in the order they apply to
-    points, which is the reverse of their order in the file (ITK applies
-    the last block of a composite first).
-
-    Each block is itself a brainhops transformation, so the parsed blocks
-    are stored straight into the `transformations` of the sequence that
-    this parser is mixed into.
+    Every block is parsed into a transformation and stored directly in
+    `transformations`, with the blocks of a composite in application order.
     """
 
     file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
-
-    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_h5(
@@ -81,9 +56,8 @@ class H5TransformParser(
         h5file: h5py.File,
         error: tx.Union[bool, tx.Type[Exception]] = False,
     ) -> float:
-        """Score how confident the parser is that an open HDF5 file is
-        an ITK transform file."""
-        # An ITK transform file records the ITK version at the root.
+        """Confidence that an open HDF5 file is an ITK transform file."""
+        # ITK records its version at the root of the file.
         if "ITKVersion" in h5file.keys():
             return Confidence.CERTAIN
         if error:
@@ -91,8 +65,6 @@ class H5TransformParser(
                 error = SnifferContentError
             raise error("HDF5 file is not an ITK transform file")
         return Confidence.NO
-
-    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_h5(
@@ -103,28 +75,25 @@ class H5TransformParser(
         position: tx.Optional[int] = None,
         **kwargs,
     ) -> tx.Self:
-        """
-        Build an object from an HDF5 file.
+        """Parse an open HDF5 file.
 
         Parameters
         ----------
         h5file : h5py.File
-            Input HDF5 file.
-        load : bool, optional
-            If True, load the data into memory.
-            If False, keep the data on disk.
-        keep_open : bool, optional
-            If True, keep the HDF5 file open after loading.
-            If False, close the file after loading.
+            The open HDF5 file.
+        keep_open : bool, default=False
+            Whether to keep the file open after parsing, instead of closing it.
+        load : bool, default=True
+            Whether to load warp parameters into memory, instead of reading
+            them lazily from disk.
         position : int, optional
-            Which top-level transform of the file to read: the
-            composite, if the file starts with a `CompositeTransform`
-            header, else one of its blocks. By default, the first one,
-            with a warning if the file holds several.
+            The top-level transform to read: the composite when the file has
+            one, otherwise one of its blocks. By default the first one is read,
+            with a warning when there are several.
 
         Returns
         -------
-        obj
+        Self
             The parsed object.
         """
         header = H5Header()
@@ -142,30 +111,26 @@ class H5TransformParser(
 
         blocks = []
         composites = []
-        # ITK names the groups after their position, `0`, `1`, ...,
-        # and reads them by number; h5py lists them by name, which
-        # would put `10` before `2`.
+        # ITK reads the groups by number, but h5py lists them by name, which
+        # puts `10` before `2`.
         for index, node in enumerate(sorted(nodes, key=_node_number)):
-            # Parse transform type
             xtype = read_string(nodes[node]["TransformType"])
             xtype, prec, ndim_inp, ndim_out = xtype.split("_")
             xtype = ItkTransformClass(xtype)
             ndim_inp, ndim_out = int(ndim_inp), int(ndim_out)
 
             if xtype == "CompositeTransform":
-                # A composite header has no parameters of its own: its
-                # queue is the blocks that follow it.
+                # A composite header has no parameters; its queue is the next
+                # blocks.
                 composites.append(index)
                 continue
-
-            # Read transform parameters
 
             parameters = np.array([])
             if "TransformParameters" in nodes[node]:
                 parameters_key = "TransformParameters"
                 parameters = nodes[node]["TransformParameters"]
             elif "TranformParameters" in nodes[node]:
-                # legacy spelling error in older ITK versions
+                # Misspelling written by older ITK versions.
                 parameters_key = "TranformParameters"
                 parameters = nodes[node][parameters_key]
 
@@ -174,14 +139,14 @@ class H5TransformParser(
                 fixed_parameters_key = "TransformFixedParameters"
                 fixed_parameters = nodes[node]["TransformFixedParameters"]
             elif "TranformFixedParameters" in nodes[node]:
-                # legacy spelling error in older ITK versions
+                # Misspelling written by older ITK versions.
                 fixed_parameters_key = "TranformFixedParameters"
                 fixed_parameters = nodes[node][fixed_parameters_key]
 
-            # Always load fixed parameters (they are never large)
+            # Fixed parameters are small and always loaded.
             fixed_parameters = fixed_parameters[()]
 
-            # Do not load parameters if nonlinear (can be large)
+            # Warp parameters can be large, so they are read lazily on request.
             LARGE_TYPES = ("DisplacementFieldTransform", "BSplineTransform")
             if load or xtype not in LARGE_TYPES:
                 parameters = parameters[()]
@@ -214,12 +179,12 @@ class H5TransformParser(
             self.file.close()
 
     def __del__(self) -> None:
-        """Close the underlying HDF5 file, if one is still open."""
+        """Close the HDF5 file if it is still open."""
         self._close()
 
 
 def _node_number(name: str) -> tx.Tuple[int, tx.Union[int, str]]:
-    """Sort key of a `/TransformGroup` child: numbers first, by value."""
+    """Sort key that puts numeric group names first, by value."""
     try:
         return (0, int(name))
     except ValueError:

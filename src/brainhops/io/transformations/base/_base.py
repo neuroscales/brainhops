@@ -1,6 +1,5 @@
 __all__ = ["FileBasedTransformation", "WritableFileBasedTransformation"]
 
-# internals
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import (
     FileBasedObject,
@@ -16,12 +15,11 @@ from ._formats import TransformationFormat
 class FileBasedTransformation(
     _FileBasedModelMixin, TransformationFormat, Transformation, FileBasedObject
 ):
-    """
-    A transformation that is stored in a file.
+    """Base class of transformations that are stored in files.
 
-    This is the dispatcher for transformation formats: concrete readers
-    inherit from it and opt in with `@register_format`, which is what
-    makes `brainhops.io.transformations.load` work.
+    The class dispatches to the concrete formats. A reader derives from it and
+    opts in with the `@register_format` decorator, after which
+    [`load`][brainhops.io.transformations.load] can select that reader.
     """
 
 
@@ -29,4 +27,4 @@ class FileBasedTransformation(
 class WritableFileBasedTransformation(
     FileBasedTransformation, WritableFileBasedObject
 ):
-    """A transformation that is stored in a file and can be written."""
+    """File-based transformation that can also be written."""

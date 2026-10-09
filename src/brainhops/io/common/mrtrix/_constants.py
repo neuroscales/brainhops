@@ -1,22 +1,24 @@
 """The constants of the MRtrix image format."""
 
 MRTRIX_MAGIC = "mrtrix image"
-"""The line every MRtrix header starts with."""
+"""The first line of every MRtrix header."""
 
 _MAGIC_BYTES = MRTRIX_MAGIC.encode("ascii")
 
 _END = "END"
-"""The line every MRtrix header ends with."""
+"""The last line of every MRtrix header."""
 
 _RESERVED = ("dim", "vox", "layout", "datatype", "transform", "scaling")
-"""The keys MRtrix decodes itself, matched case-insensitively."""
+"""The keys MRtrix decodes itself, which are case-insensitive."""
 
 _FILE = "file"
-"""The key that says where the voxel data are."""
+"""The key that gives the location of the data."""
 
 _MAX_HEADER_LINES = 1_000_000
-"""A bound on the header length, so a stray binary file is not read whole
-while looking for an `END` that never comes."""
+"""
+A bound on the header length, so that a stray binary file is not read
+whole in search of `END`.
+"""
 
 
 # ----------------------------------------------------------------------
@@ -37,7 +39,7 @@ _DTYPES = {
     "cfloat32": "c8",
     "cfloat64": "c16",
 }
-"""The numpy type of each MRtrix data type, without its byte order."""
+"""The NumPy type of each MRtrix data type, without byte order."""
 
 _NAMES = {
     "int8": "Int8",
@@ -53,6 +55,6 @@ _NAMES = {
     "cfloat32": "CFloat32",
     "cfloat64": "CFloat64",
 }
-"""The spelling MRtrix writes each data type with."""
+"""The spelling MRtrix writes for each data type."""
 
 _BIT = "bit"

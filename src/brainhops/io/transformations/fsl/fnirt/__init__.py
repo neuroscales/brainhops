@@ -1,9 +1,7 @@
-"""FNIRT non-linear transformations stored in NIfTI files.
+"""FSL FNIRT non-linear transforms.
 
-FNIRT writes its non-linear registration as either a deformation (warp)
-field or a coefficient field, distinguished by the NIfTI intent code. One
-degree-parameterized reader handles both. Both express displacements in FSL
-scaled-mm coordinates.
+FNIRT stores a deformation field or a spline coefficient field in a NIfTI file,
+told apart by the intent code. One reader handles both.
 """
 
 __all__ = ["FnirtWarpField"]
