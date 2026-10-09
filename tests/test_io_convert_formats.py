@@ -618,3 +618,75 @@ def test_the_converted_formats_still_read_files(tmp_path, cls: type) -> None:  #
     image.header.set_intent(1007, name="Mapping")
     nb.save(image, str(path))
     assert type(cls.from_any(path)) is cls
+
+
+# ----------------------------------------------------------------------
+#   BACK INTO THE DATA MODEL
+# ----------------------------------------------------------------------
+# The NIfTI formats derive their map from a header, and keep the image of
+# the parser under `_data`, so a conversion must copy the map rather than
+# what is stored there (#342).
+
+
+def _header() -> tx.Any:
+    header = nb.Nifti1Header()
+    header.set_data_shape(SHAPE)
+    header.set_sform(VOX2WORLD, code=1)
+    return header
+
+
+# Each NIfTI affine, the class of the data model it belongs to, and its map.
+NIFTI_AFFINES = [
+    (NiftiVoxelToRAS, VoxelToRAS, VOX2WORLD[:-1]),
+    (NiftiRASToVoxel, RASToVoxel, np.linalg.inv(VOX2WORLD)[:-1]),
+]
+
+
+@pytest.mark.parametrize("nifti, base, matrix", NIFTI_AFFINES)
+def test_a_nifti_affine_read_from_a_header_converts_back(
+    nifti: type, base: type, matrix: np.ndarray
+) -> None:
+    xform = nifti(header=_header())
+    for cls in (xforms.Affine, base):
+        affine = xform.to(cls)
+        assert type(affine) is cls
+        np.testing.assert_allclose(affine.matrix, matrix)
+
+
+@pytest.mark.parametrize("nifti, base, matrix", NIFTI_AFFINES)
+def test_a_nifti_affine_with_a_set_matrix_converts_back(
+    nifti: type, base: type, matrix: np.ndarray
+) -> None:
+    xform = nifti(matrix=matrix)
+    for cls in (xforms.Affine, base):
+        affine = xform.to(cls)
+        assert type(affine) is cls
+        np.testing.assert_array_equal(affine.matrix, matrix)
+
+
+def test_a_loaded_nifti_affine_converts_back_into_an_affine(tmp_path) -> None:  # noqa: ANN001
+    path = tmp_path / "affine.nii.gz"
+    nb.save(nb.Nifti1Image(np.zeros(SHAPE, "float32"), VOX2WORLD), str(path))
+    nifti = NiftiVoxelToRAS.load(path)
+    np.testing.assert_array_equal(
+        nifti.to(xforms.Affine).matrix, VOX2WORLD[:-1]
+    )
+    np.testing.assert_array_equal(
+        nifti.inverse().to(xforms.Affine).matrix,
+        np.linalg.inv(VOX2WORLD)[:-1],
+    )
+    # Back into the format, the affine is written and read unchanged.
+    io.save(nifti.to(xforms.Affine).to(NiftiVoxelToRAS), tmp_path / "x.nii")
+    back = io.transformations.load(tmp_path / "x.nii")
+    np.testing.assert_array_equal(back.matrix, VOX2WORLD[:-1])
+
+
+def test_a_loaded_nifti_field_of_coordinates_converts_back(tmp_path) -> None:  # noqa: ANN001
+    path = tmp_path / "y_field.nii"
+    image = nb.Nifti1Image(_coordinates()[:, :, :, None, :], VOX2WORLD)
+    image.header.set_intent(1007, name="Mapping")
+    nb.save(image, str(path))
+    nifti = NiftiRASCoordinatesField.load(path)
+    field = nifti.to(xforms.CoordinatesField)
+    assert type(field) is xforms.CoordinatesField
+    np.testing.assert_allclose(field.field, nifti.field)

@@ -459,6 +459,17 @@ def test_a_transformation_follows_the_parser_contract(tmp_path) -> None:  # noqa
     assert LtaTransformation.from_text(text).struct == _struct()
 
 
+def test_a_loaded_transformation_converts_back_into_an_affine(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The matrix is read from the struct rather than stored, so a conversion
+    # must copy the map (#342).
+    xform = LtaTransformation.load(_write(tmp_path, _struct()))
+    affine = xform.to(Affine)
+    assert type(affine) is Affine
+    np.testing.assert_array_equal(affine.matrix, np.asarray(MATRIX)[:-1])
+
+
 def test_a_transformation_is_saved_to_an_unnamed_file() -> None:
     buffer = _io.StringIO()
     io.save(LtaTransformation.from_struct(_struct()), buffer)

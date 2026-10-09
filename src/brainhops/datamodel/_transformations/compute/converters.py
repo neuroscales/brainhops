@@ -99,6 +99,14 @@ def _convert_withdata(
     return smart_replace(t, cls, **kwargs)
 
 
+def _stores_data(t: Transformation) -> bool:
+    # A file reader may keep something else under `_data` (the NIfTI parser
+    # caches its image there) or nothing (an LTA file reads its matrix from its
+    # struct), and derive `data` from a header or a struct. Only a `_data` that
+    # is `data` itself can be copied as it is.
+    return stores(type(t), "_data") and getattr(t, "_data", None) is t.data
+
+
 def _convert_withlog(
     t: Transformation, cls: tx.Type[TRANSFORMATION], _fallback: str, **kwargs
 ) -> TRANSFORMATION:
@@ -113,7 +121,7 @@ def _convert_withlog(
     # coordinates from a shape. Such a transformation does not keep its data
     # under the name that the rebuild reads, so a class that is not one of
     # its own receives the map through the `_fallback` field instead.
-    derived = not stores(type(t), "_data") and not issubclass(cls, type(t))
+    derived = not issubclass(cls, type(t)) and not _stores_data(t)
     if crossing or derived:
         fields = set(cls.data_fields) | set(cls.derived_fields)
         if not (fields & set(kwargs)):
