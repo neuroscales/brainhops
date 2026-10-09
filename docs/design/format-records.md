@@ -309,11 +309,11 @@ its status.
    default `raw=None` overwrites a value given as `data=`. A
    `__post_init__` applies `data=` again, and when both `raw=` and
    `data=` are given, `data=` wins. Status: open.
-2. A `smartproperty` whose setter is added later with `@data.setter`
-   loses its `invalidates=` option, because the invalidator is wrapped
-   around the setter only when the property is built
-   (`_core/properties.py:278`). Setters are passed as `fset=` instead.
-   Status: open.
+2. A `smartproperty` whose setter was added later with `@data.setter`
+   lost its `invalidates=` option, because the invalidator was wrapped
+   around the setter only when the property was built. Status: resolved
+   in pass 1a, where `smartproperty` returns a subclass of `property`
+   whose `setter` keeps the invalidator.
 3. nibabel applies `scl_slope` when it writes, so copying an untouched
    file byte for byte requires writing the unscaled data of the proxy
    with the slope and intercept of the record. Status: open.
@@ -331,28 +331,71 @@ its status.
    while #287 puts it on the roots of the data model. The name also
    clashes with `Transformation.metadata_fields`, which may be renamed.
    Status: open.
-8. A proxy built over a stream that the caller passed in must keep that
-   stream alive for as long as the proxy is used. Status: open.
-9. `_holds` (`io/base/_save.py:220`) refuses a format that does not take
-   every constructor field of its model. A format must therefore keep
-   `data` in its constructor even though `data` becomes a view, and
-   `MultiScaleImage.data` is a read-only property for which a rule is
-   set in the fourth pass. Status: open.
-10. Reader options fall into two groups. Some describe the object, such
+8. Views that are decoded from `metadata` and cached, such as
+   `transformations`, become stale when `metadata` is assigned again.
+   The fix is a private `_metadata` field behind a public `metadata`
+   `smartproperty` with `invalidates=("transformations",)`, because
+   bagof does not allow a field and a property with the same name in
+   one class. Status: open.
+9. A proxy built over a stream that the caller passed in must keep that
+   stream alive for as long as the proxy is used. For the same reason,
+   a format whose `raw` is a proxy must override `from_filename` or
+   `from_file`, because the adapter's `from_filename` closes the stream
+   when it returns. Status: open, and the second part is a rule for
+   every pass.
+10. `_holds` (`io/base/_save.py:220`) refuses a format that does not
+    take every constructor field of its model. A format must therefore
+    keep `data` in its constructor even though `data` becomes a view,
+    and `MultiScaleImage.data` is a read-only property for which a rule
+    is set in the fourth pass. Status: open.
+11. Reader options fall into two groups. Some describe the object, such
     as `moving`, `reference`, `log` and `steps`, and others describe
     the reading, such as `mmap` and `keep_file_open`. The two groups
     have to be split. Status: open.
-11. The NiftyReg writer replaces the extensions of the record instead
+12. The NiftyReg writer replaces the extensions of the record instead
     of appending to them. Status: open.
-12. Several public names break and must be announced. They include
+13. Several public names break and must be announced. They include
     `NiftiReaderWriter`, `sniff_nibabel`, the `image` and `header`
     attributes, the `header=` argument of `from_nibabel`, `LtaStruct`,
     the modules `nifti.affines`, `nifti.base` and `nifti.fields`, and
     the positional parameters recorded in the constructor signature
     test. Status: open.
-13. The design needs `bagof-magic` 0.3.dev2 or later, which is not on
+14. The design needs `bagof-magic` 0.3.dev2 or later, which is not on
     PyPI yet, so the checks before each pull request need it installed
     from another source. Status: open.
-14. The levels of a `MultiScaleImage` and the metadata of a pyramid
+15. The levels of a `MultiScaleImage` and the metadata of a pyramid
     have no record yet. They are decided in the Zarr pass. Status:
     open.
+16. `_foreign_format_fields` counted the `MetadataFormat` dispatcher as
+    a format that owns `raw`, so `raw` was reset when it should have
+    been copied. Status: resolved in pass 1a, where dispatchers are no
+    longer counted as owners.
+17. Copying an object within its format with `from_instance`, as
+    `io.save` does, read `data` and so turned the proxy into an array.
+    Status: resolved in pass 1a, where `from_instance` keeps `raw` and
+    leaves `data` unset within a format, so that copies stay lazy and
+    an untouched object is still saved byte for byte.
+18. `replace` reads `data` through the property, so a copy made with
+    `replace` turns the proxy into an array and is no longer saved byte
+    for byte. Status: open.
+19. The `repr` of an image decoded the whole proxy to show `data`.
+    Status: resolved in pass 1a, where `SingleScaleImage.data` is
+    hidden from `repr`, which changes the public `repr`.
+20. A cached `smartproperty` that is set through a hand-written setter
+    keeps its own cache, unless the setter deletes it or names it in
+    `invalidates`. Doing this automatically would break the setters
+    that fill the cache on purpose (`concrete.py:396-421`). The NIfTI
+    field setters must therefore clear `_cache_data` themselves, since
+    `_FORGET_VIEWS` clears only the attributes listed in
+    `derived_fields`. Status: open.
+21. The test that compares the registry with the table of formats sees
+    only registered classes, so a concrete format that is not
+    registered escapes it. Status: open.
+22. `MetadataFormat` also inherits `_FileBasedModelMixin`, which is
+    needed for `from_any(file)` and for the reset of fields when
+    copying from another format. The base list of the plan did not
+    include it. Status: open.
+23. The conformance check that reads only the header assumes that the
+    header is a prefix of the file. Formats with a separate header
+    file, such as detached NRRD and MINC, need a hook in their exemplar
+    in the third pass. Status: open.
