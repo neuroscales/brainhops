@@ -13,6 +13,16 @@ from ._enums import LtaType
 from ._struct import LtaStruct
 
 
+def _type_name(lta_type: object) -> str:
+    """Return the name of an LTA type, for error messages.
+
+    Formatting an integer enum in an f-string gives its value on older
+    versions of Python and its qualified name on newer ones, so the name
+    is read explicitly to keep the messages identical on every version.
+    """
+    return str(getattr(lta_type, "name", lta_type))
+
+
 def _get_vox2phys(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
     return fs_vox2phys(vol_info.volume, vol_info.voxelsize)
 
@@ -56,7 +66,7 @@ def _get_ras2ras(lta: LtaStruct) -> np.ndarray:
         src_phys2ras = _get_phys2ras(lta.src)
         dst_phys2ras = _get_phys2ras(lta.dst)
         return dst_phys2ras @ matrix @ np.linalg.inv(src_phys2ras)
-    raise AssertionError(f"unsupported LTA type: {lta.type}")
+    raise AssertionError(f"unsupported LTA type: {_type_name(lta.type)}")
 
 
 def _get_phys2phys(lta: LtaStruct) -> np.ndarray:
@@ -77,7 +87,7 @@ def _get_phys2phys(lta: LtaStruct) -> np.ndarray:
         dst_phys2ras = _get_phys2ras(lta.dst)
         ras2ras = _get_ras2ras(lta)
         return np.linalg.inv(dst_phys2ras) @ ras2ras @ src_phys2ras
-    raise AssertionError(f"unsupported LTA type: {lta.type}")
+    raise AssertionError(f"unsupported LTA type: {_type_name(lta.type)}")
 
 
 def _get_vox2vox(lta: LtaStruct) -> np.ndarray:
@@ -97,7 +107,7 @@ def _get_vox2vox(lta: LtaStruct) -> np.ndarray:
         dst_vox2ras = _get_vox2ras(lta.dst)
         ras2ras = _get_ras2ras(lta)
         return np.linalg.inv(dst_vox2ras) @ ras2ras @ src_vox2ras
-    raise AssertionError(f"unsupported LTA type: {lta.type}")
+    raise AssertionError(f"unsupported LTA type: {_type_name(lta.type)}")
 
 
 # Orientation helpers shared with the other FreeSurfer formats.

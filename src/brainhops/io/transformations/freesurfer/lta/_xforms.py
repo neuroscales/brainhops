@@ -29,7 +29,12 @@ from brainhops.io.transformations.base import (
 
 from .._formats import FreesurferTransformationFormat
 from ._enums import LtaType, LtaValidity
-from ._matrix_utils import _get_phys2phys, _get_ras2ras, _get_vox2vox
+from ._matrix_utils import (
+    _get_phys2phys,
+    _get_ras2ras,
+    _get_vox2vox,
+    _type_name,
+)
 from ._struct import LtaStruct
 from ._systems import LtaCoordinateSystem, LtaPhysicalSystem, LtaVoxelSystem
 
@@ -110,7 +115,9 @@ class LtaTransformation(
             return _system(LtaVoxelSystem, self.struct.src)
         elif self.struct.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return _system(LtaPhysicalSystem, self.struct.src)
-        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
+        raise AssertionError(
+            f"unsupported LTA type: {_type_name(self.struct.type)}"
+        )
 
     @property
     def output(self) -> LtaCoordinateSystem:
@@ -129,7 +136,9 @@ class LtaTransformation(
             return _system(LtaVoxelSystem, self.struct.dst)
         elif self.struct.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return _system(LtaPhysicalSystem, self.struct.dst)
-        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
+        raise AssertionError(
+            f"unsupported LTA type: {_type_name(self.struct.type)}"
+        )
 
     @property
     def data(self) -> np.ndarray:
