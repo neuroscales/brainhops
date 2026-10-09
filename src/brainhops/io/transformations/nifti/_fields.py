@@ -5,27 +5,27 @@ The intent codes and the reasons for them are described in
 [`brainhops.io.transformations.nifti`][].
 """
 
+# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 from bagof.magic import KwOnly, replace
 
+# internals
 from brainhops._core.properties import (
     InvalidatorInAttribute,
     smartproperty,
 )
-from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.nifti import NiftiReaderWriter
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
@@ -35,13 +35,13 @@ from brainhops.io.common.nifti._constants import (
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
-    _new_nifti,
+    _header,
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
-    _nifti_vector_field,
     _NiftiObject,
 )
+from brainhops.io.common.nifti._views import _field_to_disk, _field_to_model
 from brainhops.io.transformations.base._conversions import (
     convert_instance,
     converts_to,
@@ -51,22 +51,40 @@ from brainhops.io.transformations.base.fields import (
     ras_displacement_chain,
     split_ras_displacement_chain,
 )
-from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
+
+# this format
+from ._base import NiftiBasedTransformation, _always, _record_image
 
 _NDIM = 3
 """Spatial dimension supported by the displacement reader."""
 
 
-def _always(value: tx.Any) -> bool:
-    """Treat every stored value as unset, so that the getter always runs."""
-    return True
+_FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
+"""Invalidator that clears the views that the data model derives."""
 
 
-def _store_through_the_parser(
-    self: tx.Any, value: tx.Optional[ArrayProtocol]
+def _set_field_data(
+    self: NiftiBasedTransformation, value: tx.Optional[ArrayProtocol]
 ) -> None:
-    """Store the data where the parser keeps it, which the getter reads."""
-    NiftiReaderWriter.data.fset(self, value)
+    """Store the data of a NIfTI vector field in `raw`, as NIfTI stores it.
+
+    The cached data is dropped, and the views derived from it are dropped
+    by the invalidation of the property.
+    """
+    self.raw = None if value is None else _field_to_disk(value)
+    self.__dict__.pop("_cache_data", None)
+
+
+def _set_coordinates_data(
+    self: "NiftiRASCoordinatesField", value: tx.Optional[ArrayProtocol]
+) -> None:
+    """Store the data of a field of coordinates in `raw`.
+
+    The private field in which the data model stores its data is emptied,
+    so that a copy made with `replace` takes the data from `raw`.
+    """
+    _set_field_data(self, value)
+    self._data = None
 
 
 @register_format
@@ -119,29 +137,39 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
+        if isinstance(other, cls):
+            # Within the format, `raw` and the metadata carry the data, so
+            # the data is not read, and a proxy stays lazy in the copy.
+            kwargs.setdefault("data", None)
         return super().from_instance(other, *args, **kwargs)
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        # The constructor stores `data=` in the private field of the data
+        # model, which the view does not read, and the default of `raw`
+        # comes after it. The array is therefore stored again, in `raw`.
+        # When both are given, `data` takes precedence over `raw`.
+        if arguments.get("data") is not None:
+            self.data = arguments["data"]
+
     @smartproperty(
-        # The getter reshapes what the parser stores, so it runs on every read.
+        cache=True,
         unset=_always,
-        fset=_store_through_the_parser,
-        # Assigning the data clears the views keyed on it.
-        invalidates=InvalidatorInAttribute("derived_fields"),
+        fset=_set_coordinates_data,
+        invalidates=_FORGET_VIEWS,
     )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The field as an (X, Y, Z, 3) array, which its `field` view reads.
 
-        NIfTI stores a vector field with shape (X, Y, Z, 1, 3). The singleton
-        axis is dropped, since the array would otherwise be sampled as a 4-D
-        grid of vectors.
+        NIfTI stores a vector field with shape (X, Y, Z, 1, 3). The data is
+        decoded from `raw` without the singleton axis, since the array would
+        otherwise be sampled as a 4-D grid of vectors. Setting the data
+        stores it in `raw` with the singleton axis again.
         """
-        # The parser keeps its image in _data, which is also the value of this
-        # field, so the data is read through the parser.
-        data = NiftiReaderWriter.data.fget(self)
-        if data is None:
+        if self.raw is None:
             return None
-        return _nifti_vector_field(data)
+        return _field_to_model(self.raw)
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
@@ -151,30 +179,27 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
         The header carries the `VECTOR` intent (1007) with the SPM intent name
         `"Mapping"`, which marks a coordinates field, rather than `DISPVECT`
-        (1006), which ITK and brainhops read as displacements. The voxel-to-RAS
-        affine comes from the source header, or is the identity. The array
-        backend is kept, so a `cupy` or `dask` array is not converted to
-        `numpy`. Non-encoding header fields are copied from `like`, and
-        `overrides` are applied last.
+        (1006), which ITK and brainhops read as displacements. The field
+        holds no grid of its own, so a copy of the header of the metadata,
+        with its voxel-to-RAS affine, is written with the coordinates, and a
+        field without metadata gets the identity. The array is written as
+        `raw` holds it, so a proxy that was read is copied as the file
+        stored it, and a `cupy` or `dask` array is not converted to `numpy`.
+        Non-encoding header fields are copied from `like`, and `overrides`
+        are applied last.
         """
         # NIfTI stores sampled coordinates.
-        field = self.to(store="values").data
-        if field is None:
+        if StoreEnum(self.store) is StoreEnum.values:
+            raw = self.raw
+        else:
+            values = self.to(store="values").data
+            raw = None if values is None else _field_to_disk(values)
+        if raw is None:
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."
             )
-        backend = get_array_backend(field)
-        field = backend.asarray(field)
-        if field.ndim == 4:
-            # A NIfTI vector field is 5-D, with a singleton axis before the
-            # components. A 4-D array would put the components in the time
-            # axis.
-            field = backend.expand_dims(field, axis=3)
-        if self.header is not None:
-            affine = self.header.get_best_affine()
-        else:
-            affine = np.eye(4)
-        image = _ras_coordinates_nifti(field, affine)
+        image = _record_image(raw, self.metadata, overrides=overrides)
+        _set_coordinates_intent(image.header)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
@@ -258,14 +283,41 @@ transformations.StationaryVelocityField].
         KwOnly(),
     ] = None
 
+    @smartproperty(
+        cache=True,
+        unset=_always,
+        fset=_set_field_data,
+        invalidates=("transformations",),
+    )
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """
+        The stored vectors as an (X, Y, Z, 3) array, decoded from `raw`.
+
+        NIfTI stores the field with shape (X, Y, Z, 1, 3), and the singleton
+        axis is dropped. The vectors are the RAS displacements of the file,
+        or its velocity with `log`. Setting the data stores it in `raw` and
+        drops the chain decoded from the previous data.
+        """
+        if self.raw is None:
+            return None
+        return _field_to_model(self.raw)
+
+    metadata = smartproperty("metadata", invalidates=("transformations",))
+    """The metadata of the file, which holds its header, or `None`.
+
+    Assigning other metadata drops the chain decoded from the previous
+    header.
+    """
+
     # --- reading ------------------------------------------------------
-    # The NIfTI parser hands its keyword arguments to nibabel, so the
-    # encoding options are popped first and set on the field read.
+    # The readers hand their keyword arguments to nibabel, so the encoding
+    # options are popped first and set on the field read.
 
     @classmethod
-    def from_file(cls, file: tx.Any, **kwargs) -> tx.Self:
+    def from_filename(cls, filename: tx.Any, **kwargs) -> tx.Self:
         encoding = _pop_encoding(kwargs)
-        return _with_encoding(super().from_file(file, **kwargs), encoding)
+        obj = super().from_filename(filename, **kwargs)
+        return _with_encoding(obj, encoding)
 
     @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
@@ -336,34 +388,33 @@ transformations.StationaryVelocityField].
     # --- decoding -----------------------------------------------------
 
     def _vox2ras(self) -> np.ndarray:
-        """Return the (4, 4) voxel-to-RAS affine of the grid."""
-        header = self.header
+        """Return the (4, 4) voxel-to-RAS affine of the grid.
+
+        The affine is the best affine of the header, or the identity for a
+        field without metadata.
+        """
+        header = _header(self)
         if header is None:
-            raise ParserContentError(
-                "This field has no NIfTI header to read its grid from."
-            )
+            return np.eye(4)
         return np.asarray(header.get_best_affine(), dtype=np.float64)
 
     def _ras_vectors(self) -> ArrayProtocol:
         """
         Return the stored displacements, in RAS millimetres.
 
-        The standard layout is (X, Y, Z, 1, 3), and its singleton axis is
-        dropped. A field whose vectors do not have three components is refused.
+        A field whose array is not a grid of vectors with three components
+        is refused.
         """
         data = self.data
         if data is None:
             raise ParserContentError("This field has no data to read.")
-        backend = get_array_backend(data)
-        data = backend.asarray(data)
-        shape = tuple(int(d) for d in data.shape)
-        data = _nifti_vector_field(data)
-        if data.ndim != 4:
+        if len(data.shape) != 4:
+            shape = tuple(int(d) for d in self.raw.shape)
             raise ParserContentError(
                 f"A NIfTI displacement field is stored as a (X, Y, Z, 1, 3) "
                 f"array, not as an array of shape {shape}."
             )
-        if data.shape[-1] != _NDIM:
+        if int(data.shape[-1]) != _NDIM:
             raise ParserContentError(
                 f"Only three-dimensional displacement fields are "
                 f"supported, and this one has {data.shape[-1]} components."
@@ -422,62 +473,54 @@ transformations.StationaryVelocityField].
         """
         Build the `nibabel` image of the displacement field.
 
-        The displacements are rotated to RAS millimetres and written under the
-        `DISPVECT` intent (1006), with shape (X, Y, Z, 1, 3). With `log`, which
-        defaults to the option of the field, the velocity is written instead,
-        and otherwise a velocity is integrated first. Non-encoding header
-        fields are copied from `like`, and `overrides` are applied last.
+        The displacements are written in RAS millimetres under the `DISPVECT`
+        intent (1006), with shape (X, Y, Z, 1, 3). With `log`, which defaults
+        to the option of the field, the velocity is written instead, and
+        otherwise a velocity is integrated first.
+
+        A field whose chain is decoded from its file, in the encoding that it
+        is written in, is written back as it is stored, under a copy of the
+        header of its metadata, whose geometry is kept. A field whose chain
+        was assigned is encoded from the chain over that header, whose
+        geometry is replaced.
+        Non-encoding header fields are copied from `like`, and `overrides`
+        are applied last.
         """
         what = "A NIfTI displacement field"
         log = self.log if log is None else log
-        vox2ras, vectors = split_ras_displacement_chain(
-            self.transformations, what, ndim=_NDIM, log=log
+        stored = (
+            self.raw is not None
+            and getattr(self, "_transformations", None) is None
+            and log == self.log
         )
-        backend = get_array_backend(vectors)
-        # A NIfTI vector field is 5-D, with the components in the fifth axis.
-        vectors = backend.expand_dims(vectors, axis=3)
-        image = _new_nifti(vectors, vox2ras)
-        image.header.set_intent(_NIFTI_INTENT_DISPVECT)
+        if stored:
+            image = _record_image(self.raw, self.metadata, overrides=overrides)
+            if _nifti_intent(image.header) != _NIFTI_INTENT_DISPVECT:
+                image.header.set_intent(_NIFTI_INTENT_DISPVECT)
+        else:
+            vox2ras, vectors = split_ras_displacement_chain(
+                self.transformations, what, ndim=_NDIM, log=log
+            )
+            vectors = _field_to_disk(vectors)
+            image = _record_image(vectors, self.metadata, vox2ras, overrides)
+            image.header.set_intent(_NIFTI_INTENT_DISPVECT)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
 
 
-def _ras_coordinates_nifti(
-    field: tx.Optional[ArrayProtocol], vox2ras: np.ndarray
-) -> nb.Nifti1Image:
-    """
-    The `nibabel` image of a field of RAS coordinates.
+def _set_coordinates_intent(header: nb.Nifti1Header) -> None:
+    """Give a header the intent of a field of coordinates.
 
-    The field array becomes the NIfTI data array, and the header carries
-    the `VECTOR` (1007) intent code, with SPM's intent name `"Mapping"`.
-    Both [`NiftiRASCoordinatesField`][] and SPM's `y_` fields are written
-    this way.
-
-    Parameters
-    ----------
-    field : array, shape `(X, Y, Z, 3)` or `(X, Y, Z, 1, 3)`
-        The coordinates, as values. The array keeps its backend.
-    vox2ras : array, shape `(4, 4)`
-        The voxel-to-RAS affine of the grid.
+    The intent is `VECTOR` (1007) with the intent name `"Mapping"`. A
+    header that already has this intent is left as it is, so that its
+    intent parameters are kept.
     """
-    if field is None:
-        raise WriterError(
-            "This field has no coordinates, so there is nothing to write."
+    intent = (_nifti_intent(header), _nifti_intent_name(header))
+    if intent != (_NIFTI_INTENT_VECTOR, _NIFTI_INTENT_NAME_MAPPING):
+        header.set_intent(
+            _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_MAPPING
         )
-    backend = get_array_backend(field)
-    field = backend.asarray(field)
-    if field.ndim == 4:
-        # NIfTI stores a vector field as a five-dimensional array, with the
-        # components in the fifth axis and a singleton axis before them. A
-        # four-dimensional array would put the components in the time
-        # axis, which the reader misreads.
-        field = backend.expand_dims(field, axis=3)
-    image = _new_nifti(field, vox2ras)
-    image.header.set_intent(
-        _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_MAPPING
-    )
-    return image
 
 
 def _pop_encoding(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:

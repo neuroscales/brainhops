@@ -14,14 +14,14 @@ from brainhops.io.transformations.base._conversions import (
     unrepresentable,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
+from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.nifti._converters import (
     RAS,
     check_coordinates,
     ras_coordinate_values,
 )
-from brainhops.io.transformations.nifti.fields import RASCoordinatesField
 
-from .y import SpmCoordinatesField
+from ._fields import SpmCoordinatesField
 
 
 @converter(_xforms.DisplacementField, SpmCoordinatesField)

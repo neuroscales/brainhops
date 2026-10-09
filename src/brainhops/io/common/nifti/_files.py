@@ -3,7 +3,6 @@
 # stdlib
 import gzip
 import inspect
-from io import BytesIO
 from urllib.parse import urlsplit
 
 # dependencies
@@ -156,37 +155,6 @@ def _nifti_from_stream(
         raise
 
 
-def _load_nifti(
-    file: path.FilenameLike, **kwargs
-) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """Load a NIfTI image from a local or remote path.
-
-    A local file is opened by nibabel and memory-mapped. A remote file is read
-    into memory, because the voxels would otherwise be read after the stream is
-    closed.
-    """
-    if _is_local(file):
-        filename = str(path.Path(file))
-        with open(filename, "rb") as f:
-            image_class = _NIFTI_IMAGES[_nifti_version(f)]
-        read = image_class.from_filename
-        return read(filename, **_accepted(read, kwargs))
-    with path.Path(file).open("rb") as f:
-        buffer = BytesIO(f.read())
-    return _nifti_from_stream(buffer, **kwargs)
-
-
-def _load_nifti_header(
-    file: path.FilenameLike,
-) -> tx.Union[nb.Nifti1Header, nb.Nifti2Header]:
-    """Read the header of a NIfTI file without reading the voxels."""
-    if _is_local(file):
-        return _load_nifti(file).header
-    with path.Path(file).open("rb") as f:
-        header_class = _NIFTI_HEADERS[_nifti_version(f)]
-        return header_class.from_fileobj(open_compressed(f))
-
-
 def _save_nifti(
     image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], file: path.FilenameLike
 ) -> None:
@@ -207,28 +175,3 @@ def _save_nifti(
                 _image_to_stream(image, gz)
         else:
             _image_to_stream(image, f)
-
-
-def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
-    """Return the header to copy from a `like` template, or `None`.
-
-    The template is a nibabel header or image, an object with a header, an
-    object whose metadata holds a NIfTI record, such as a `NiftiImage`, or
-    the path of a NIfTI file.
-    """
-    if like is None:
-        return None
-    if isinstance(like, (nb.Nifti1Header, nb.Nifti2Header)):
-        return like
-    if isinstance(like, (nb.Nifti1Image, nb.Nifti2Image)):
-        return like.header
-    record = getattr(getattr(like, "metadata", None), "raw", None)
-    header = getattr(record, "header", None)
-    if isinstance(header, (nb.Nifti1Header, nb.Nifti2Header)):
-        return header
-    header = getattr(like, "header", None)
-    if header is not None:
-        return header
-    if isinstance(like, (str, path.PathLike)):
-        return _load_nifti_header(like)
-    return None

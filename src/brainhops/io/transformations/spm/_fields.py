@@ -2,17 +2,23 @@
 SPM deformation fields, stored in NIfTI files prefixed with `y_` or `iy_`.
 """
 
-# externals
+# dependencies
 import nibabel as nb
 import typing_extensions as tx
+from bagof.hints.array import ArrayProtocol
 
+# internals
+from brainhops._core.properties import smartproperty
+from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
+from brainhops.io.base.parsers import WriterError
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _NiftiObject,
 )
+from brainhops.io.common.nifti._views import _field_to_disk, _field_to_model
 from brainhops.io.transformations.base._conversions import (
     convert_instance,
     converts_to,
@@ -22,11 +28,15 @@ from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
     homogeneous_matrix,
 )
-from brainhops.io.transformations.nifti.affines import NiftiRASToVoxel
-from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
-from brainhops.io.transformations.nifti.fields import (
+from brainhops.io.transformations.nifti import (
+    NiftiBasedTransformation,
     NiftiRASCoordinatesField,
-    _ras_coordinates_nifti,
+    NiftiRASToVoxel,
+)
+from brainhops.io.transformations.nifti._base import _always, _record_image
+from brainhops.io.transformations.nifti._fields import (
+    _set_coordinates_intent,
+    _set_field_data,
 )
 
 
@@ -69,7 +79,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         of the file cannot distinguish the two readers, and pretending
         otherwise would invent evidence. The `y_` or `iy_` prefix decides the
         tie instead, through
-        [`PREFIXES`][brainhops.io.transformations.spm.y.SpmCoordinatesField.PREFIXES].
+        [`PREFIXES`][brainhops.io.transformations.spm.SpmCoordinatesField.PREFIXES].
         """
         return NiftiRASCoordinatesField._score_nibabel(header)
 
@@ -89,35 +99,64 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             return convert_instance(cls, other, *args, **kwargs)
         return super().from_instance(other, *args, **kwargs)
 
+    # --- data -----------------------------------------------------------
+
+    @smartproperty(
+        cache=True,
+        unset=_always,
+        fset=_set_field_data,
+        invalidates=("transformations",),
+    )
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """
+        The RAS coordinates as an (X, Y, Z, 3) array, decoded from `raw`.
+
+        NIfTI stores the field with shape (X, Y, Z, 1, 3), and the singleton
+        axis is dropped. Setting the data stores it in `raw` and drops the
+        chain decoded from the previous data.
+        """
+        if self.raw is None:
+            return None
+        return _field_to_model(self.raw)
+
+    metadata = smartproperty("metadata", invalidates=("transformations",))
+    """The metadata of the file, which holds its header, or `None`.
+
+    Assigning other metadata drops the chain decoded from the previous
+    header.
+    """
+
+    # --- chain --------------------------------------------------------
     # The stored chain is a tuple, as `ImmutableSequence` declares it, so
     # the derived and the assigned chain are both immutable, and in-place
     # edits such as `del field[0]` are refused.
 
-    @property
+    @smartproperty(cache=True)
     def transformations(
         self,
-    ) -> tx.Tuple[
-        tx.Optional[RASToVoxel],
-        tx.Optional[RASCoordinatesField],
-    ]:
-        """The transformations, derived from the NIfTI file unless stored."""
-        _transformations = getattr(self, "_transformations", None)
-        if _transformations is not None:
-            return _transformations
+    ) -> tx.Tuple[RASToVoxel, RASCoordinatesField]:
+        """The transformations, decoded from the NIfTI file unless stored.
+
+        The decoded chain is made of the RAS-to-voxel affine of the header
+        and the field of RAS coordinates of the file. Both hold the metadata
+        of this field, and the field holds its `raw` array too.
+        """
         return (
-            NiftiRASToVoxel(image=self.image, header=self.header),
-            NiftiRASCoordinatesField(image=self.image, header=self.header),
+            NiftiRASToVoxel(metadata=self.metadata),
+            NiftiRASCoordinatesField(raw=self.raw, metadata=self.metadata),
         )
 
     @transformations.setter
     def transformations(
         self,
-        value: tx.Tuple[
-            tx.Optional[RASToVoxel],
-            tx.Optional[RASCoordinatesField],
+        value: tx.Optional[
+            tx.Tuple[
+                tx.Optional[RASToVoxel],
+                tx.Optional[RASCoordinatesField],
+            ]
         ],
     ) -> None:
-        # None means that the chain is derived from the NIfTI file.
+        # None means that the chain is decoded from the NIfTI file.
         self._transformations = None if value is None else tuple(value)
 
     @property
@@ -125,7 +164,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         """The transformation from RAS to voxel space."""
         xform = self.transformations[0]
         if xform is None:
-            xform = NiftiRASToVoxel(image=self.image, header=self.header)
+            xform = NiftiRASToVoxel(metadata=self.metadata)
         return xform
 
     @property
@@ -134,7 +173,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         xform = self.transformations[1]
         if xform is None:
             xform = NiftiRASCoordinatesField(
-                image=self.image, header=self.header
+                raw=self.raw, metadata=self.metadata
             )
         return xform
 
@@ -159,15 +198,39 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         `"Mapping"` that SPM writes. The voxel-to-RAS affine of the grid
         is the inverse of `ras2voxel`.
 
-        When `like` is given, non-encoding header fields are copied from
-        it. Keyword arguments override header fields last.
+        A field whose chain is decoded from its file is written back as it
+        is stored, under a copy of the header of its metadata, whose
+        geometry is kept. A field whose chain was assigned is encoded from
+        the chain over that header, whose geometry is replaced. When `like`
+        is given, non-encoding header fields are copied from it. Keyword
+        arguments override header fields last.
         """
-        what = "An SPM deformation field"
-        # The inverse of a `NiftiRASToVoxel` read from a header is that
-        # header's affine itself, rather than an inverse of its inverse.
-        vox2ras = homogeneous_matrix(self.ras2voxel.inverse(), what, ndim=3)
-        # SPM stores sampled coordinates.
-        image = _ras_coordinates_nifti(self.rasfield.values, vox2ras)
+        stored = (
+            self.raw is not None
+            and getattr(self, "_transformations", None) is None
+        )
+        if stored:
+            image = _record_image(self.raw, self.metadata, overrides=overrides)
+        else:
+            what = "An SPM deformation field"
+            # The inverse of a `NiftiRASToVoxel` read from a header is that
+            # header's affine itself, rather than an inverse of its inverse.
+            vox2ras = homogeneous_matrix(
+                self.ras2voxel.inverse(), what, ndim=3
+            )
+            # SPM stores sampled coordinates.
+            coordinates = self.rasfield.values
+            if coordinates is None:
+                raise WriterError(
+                    "This field has no coordinates, so there is nothing to "
+                    "write."
+                )
+            backend = get_array_backend(coordinates)
+            coordinates = _field_to_disk(backend.asarray(coordinates))
+            image = _record_image(
+                coordinates, self.metadata, vox2ras, overrides
+            )
+        _set_coordinates_intent(image.header)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image

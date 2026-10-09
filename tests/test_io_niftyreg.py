@@ -332,8 +332,9 @@ def test_intent_p1_picks_the_reader(
 
 def test_generic_vector_readers_decline_niftyreg_files() -> None:
     image = _nreg_image(np.zeros((3, 4, 5, 3)), REF_VOX2RAS, 1)
-    assert NiftiRASCoordinatesField.sniff_nibabel(image) == Confidence.NO
-    assert ItkNiftiDisplacementField.sniff_nibabel(image) == Confidence.NO
+    header = image.header
+    assert NiftiRASCoordinatesField._score_nibabel(header) == Confidence.NO
+    assert ItkNiftiDisplacementField._score_nibabel(header) == Confidence.NO
 
 
 def test_other_vector_images_are_not_niftyreg() -> None:
@@ -341,7 +342,7 @@ def test_other_vector_images_are_not_niftyreg() -> None:
     image.header.set_intent(1007, name="")
     image.header["intent_p1"] = 1
     for cls in (NiftyRegDisplacementField, NiftyRegDeformationField):
-        assert cls.sniff_nibabel(image) == Confidence.NO
+        assert cls._score_nibabel(image.header) == Confidence.NO
 
 
 @pytest.mark.parametrize(
@@ -780,9 +781,7 @@ def test_velocity_with_an_affine_is_read_but_not_decoded(
     xform = load(path, hint="niftyreg.velocity")
     assert xform.squaring_steps == -6
     assert len(xform.extension_affines) == 2
-    np.testing.assert_allclose(
-        np.asarray(xform.data)[:, :, :, 0, :], vectors, atol=1e-6
-    )
+    np.testing.assert_allclose(np.asarray(xform.data), vectors, atol=1e-6)
     with pytest.raises(NotImplementedError, match="extensions"):
         xform.compute()
 

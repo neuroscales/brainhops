@@ -4,6 +4,7 @@ from bagof.magic import KwOnly
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.io.common.nifti._header import _header
 
 from ._systems import FslCoordinateSystem
 
@@ -44,19 +45,6 @@ class ScaledMmToScaledMm(_xforms.Affine):
 # ----------------------------------------------------------------------
 #   IMAGE GEOMETRY
 # ----------------------------------------------------------------------
-
-
-def _header(obj: tx.Any) -> tx.Any:
-    """Return the header of an image, or `None`.
-
-    A nibabel image and a NIfTI transformation have a `header` attribute,
-    whereas a `NiftiImage` holds its header in the record of its metadata.
-    """
-    header = getattr(obj, "header", None)
-    if header is not None:
-        return header
-    record = getattr(getattr(obj, "metadata", None), "raw", None)
-    return getattr(record, "header", None)
 
 
 def _best_affine(obj: tx.Any) -> np.ndarray:

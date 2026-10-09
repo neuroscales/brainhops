@@ -63,8 +63,7 @@ class MghReaderWriter(
     """
     The base class of objects encoded as MGH or MGZ files.
 
-    As in [`NiftiReaderWriter`][brainhops.io.common.nifti.NiftiReaderWriter],
-    the object holds a nibabel image or header, together with the raw
+    The object holds a nibabel image or header, together with the raw
     `goodRASFlag` and the trailing tags. It exposes the voxels, their
     coordinate system, and the voxel-to-RAS matrices that FreeSurfer
     derives from the header.

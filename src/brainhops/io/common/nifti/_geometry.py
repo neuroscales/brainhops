@@ -34,13 +34,15 @@ from ._constants import (
     _QFORM_NAME,
 )
 from ._header import (
+    _STORAGE_OVERRIDES,
     _apply_like,
     _apply_overrides,
     _new_nifti,
     _NiftiObject,
+    _reset_structural_fields,
     _set_other_axes,
+    _stored_scaling,
 )
-from ._raw import NiftiRaw
 from ._units import nifti_unit_meters, unit_to_nifti
 
 
@@ -288,90 +290,23 @@ def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
     return scaled
 
 
-# Fields of a header that describe how the voxels are laid out and stored,
-# and the geometry that the model encodes. A record used as the base of a
-# header has these fields reset, and the writer sets them again. The other
-# fields, such as the description, the intent, the calibration range, the
-# slice timing, `toffset` and the extensions, are kept from the record.
-_STRUCTURAL_FIELDS = (
-    "dim",
-    "pixdim",
-    "datatype",
-    "bitpix",
-    "vox_offset",
-    "scl_slope",
-    "scl_inter",
-    "magic",
-    "xyzt_units",
-    "qform_code",
-    "sform_code",
-    "quatern_b",
-    "quatern_c",
-    "quatern_d",
-    "qoffset_x",
-    "qoffset_y",
-    "qoffset_z",
-    "srow_x",
-    "srow_y",
-    "srow_z",
-)
-
-
-# Overrides that change how the voxels are stored, so that a proxy cannot be
-# copied as it is stored.
-_STORAGE_OVERRIDES = frozenset({"dtype", "scl_slope", "scl_inter"})
-
-
-def _reset_structural_fields(header: nb.Nifti1Header) -> None:
-    """Give the structural fields of a header their values in a new header.
-
-    The fields are listed in [`_STRUCTURAL_FIELDS`][]. A header reset in
-    this way keeps everything else that its file recorded, and the writer
-    then encodes the layout of the data and the geometry over it.
-    """
-    fresh = type(header)()
-    for name in _STRUCTURAL_FIELDS:
-        header[name] = fresh[name]
-
-
-def _stored_scaling(
-    header: tx.Optional[nb.Nifti1Header], proxy: ArrayProxy
-) -> tx.Tuple[tx.Any, tx.Any]:
-    """Return the `scl_slope` and `scl_inter` to write with unscaled voxels.
-
-    The voxels of a proxy are written as they are stored, so the file needs
-    the slope and the intercept that the proxy applies when it reads them.
-    The values of the record are kept when they mean the same scaling, so
-    that a slope of zero, which means that the voxels are not scaled, is
-    written as zero again rather than as one.
-    """
-    if header is not None:
-        slope, inter = header.get_slope_inter()
-        slope = 1.0 if slope is None else slope
-        inter = 0.0 if inter is None else inter
-        if (slope, inter) == (proxy.slope, proxy.inter):
-            # A field of a header is a view, which a reset would change.
-            return header["scl_slope"].item(), header["scl_inter"].item()
-    return proxy.slope, proxy.inter
-
-
 def _image_with_geometry(
     data: ArrayProtocol,
     transformation: Transformation,
     transformations: tx.Sequence[Transformation],
-    base: tx.Optional[NiftiRaw] = None,
+    header: tx.Optional[nb.Nifti1Header] = None,
     like: tx.Any = None,
     overrides: tx.Optional[tx.Mapping] = None,
 ) -> _NiftiObject:
     """Build a NIfTI image from data and their voxel-to-world geometry.
 
-    The header is built in a fixed order. The record `base`, when it is
-    given, is the starting point: its structural fields are reset with
-    [`_reset_structural_fields`][], and its other fields and extensions are
-    kept. The record is changed in place, so the caller passes a copy.
-    Without a record, the header starts empty. The geometry is then encoded
-    over the header, header fields are copied from `like`, and the
-    `overrides` are applied last.
+    The header is built in a fixed order. The `header` of a record, when
+    it is given, is the starting point: its structural fields are reset
+    with [`_reset_structural_fields`][], and its other fields and
+    extensions are kept. The header is changed in place, so the caller
+    passes a copy. Without a header, the header starts empty. The geometry
+    is then encoded over the header, header fields are copied from `like`,
+    and the `overrides` are applied last.
 
     The preferred transformation provides the sform, the spacing of the
     later axes and the units, and the qform comes from
@@ -393,7 +328,6 @@ def _image_with_geometry(
     makes the proxy be read and scaled again instead.
     """
     overrides = dict(overrides or {})
-    header = None if base is None else base.header
 
     preferred_output = getattr(transformation, "output", None)
     space, time = _xyzt_labels(preferred_output)

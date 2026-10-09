@@ -134,8 +134,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "FlirtTransform": ("flirt_matrix", "moving", "reference"),
     },
     "brainhops.io.transformations.fsl.fnirt._base": {
-        # The fields of the format precede `transformations`.
-        "FnirtWarpField": ("image", "header", "transformations"),
+        "FnirtWarpField": ("transformations",),
     },
     "brainhops.io.transformations.itk._common": {
         "ItkAffineBase": ("transformations",),
@@ -168,9 +167,9 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "MatTransform": ("transformations",),
     },
     "brainhops.io.transformations.itk.nifti._fields": {
-        "ItkNiftiCoordinatesField": ("transformations", "image", "header"),
-        "ItkNiftiDisplacementField": ("transformations", "image", "header"),
-        "ItkNiftiField": ("transformations", "image", "header"),
+        "ItkNiftiCoordinatesField": ("transformations",),
+        "ItkNiftiDisplacementField": ("transformations",),
+        "ItkNiftiField": ("transformations",),
     },
     "brainhops.io.transformations.itk.tfm._xform": {
         "TfmTransform": ("transformations",),
@@ -189,33 +188,33 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
             "TxtMatrixAffine",
         )
     },
-    "brainhops.io.transformations.nifti.affines": {
-        "NiftiRASToVoxel": ("data", "image", "header"),
-        "NiftiVoxelToRAS": ("data", "image", "header"),
+    "brainhops.io.transformations.nifti._affines": {
+        "NiftiRASToVoxel": ("data",),
+        "NiftiVoxelToRAS": ("data",),
     },
-    "brainhops.io.transformations.nifti.base": {
-        "NiftiBasedTransformation": ("image", "header"),
+    "brainhops.io.transformations.nifti._base": {
+        "NiftiBasedTransformation": (),
     },
-    "brainhops.io.transformations.nifti.fields": {
-        "NiftiRASCoordinatesField": ("data", "image", "header"),
-        "NiftiRASDisplacementField": ("transformations", "image", "header"),
+    "brainhops.io.transformations.nifti._fields": {
+        "NiftiRASCoordinatesField": ("data",),
+        "NiftiRASDisplacementField": ("transformations",),
     },
     "brainhops.io.transformations.niftyreg._affine": {
         "NiftyRegAffine": ("data",),
     },
     "brainhops.io.transformations.niftyreg._fields": {
         # The fields of the format precede `transformations`.
-        "NiftyRegControlPointGrid": ("image", "header", "transformations"),
-        "NiftyRegDeformationField": ("image", "header", "transformations"),
-        "NiftyRegDisplacementField": ("image", "header", "transformations"),
-        "NiftyRegField": ("image", "header"),
-        "NiftyRegSequence": ("image", "header", "transformations"),
-        "NiftyRegVelocity": ("image", "header", "transformations"),
-        "NiftyRegVelocityField": ("image", "header", "transformations"),
-        "NiftyRegVelocityGrid": ("image", "header", "transformations"),
+        "NiftyRegControlPointGrid": ("transformations",),
+        "NiftyRegDeformationField": ("transformations",),
+        "NiftyRegDisplacementField": ("transformations",),
+        "NiftyRegField": (),
+        "NiftyRegSequence": ("transformations",),
+        "NiftyRegVelocity": ("transformations",),
+        "NiftyRegVelocityField": ("transformations",),
+        "NiftyRegVelocityGrid": ("transformations",),
     },
-    "brainhops.io.transformations.spm.y": {
-        "SpmCoordinatesField": ("transformations", "image", "header"),
+    "brainhops.io.transformations.spm._fields": {
+        "SpmCoordinatesField": ("transformations",),
     },
     "brainhops.io.transformations.x5._blocks": {
         "X5BSplineField": ("transformations",),

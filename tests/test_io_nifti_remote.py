@@ -19,7 +19,7 @@ from bagof.paths import Path  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
 from brainhops.io.common.nifti import _files as nifti_base  # noqa: E402
-from brainhops.io.common.nifti import _parsers as nifti_parsers  # noqa: E402
+from brainhops.io.common.nifti import _header as nifti_header  # noqa: E402
 from brainhops.io.common.nifti import _raw as nifti_raw  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS  # noqa: E402
@@ -134,7 +134,7 @@ def test_an_image_is_written_to_a_remote_path(
 def test_a_remote_header_template_is_read(remote) -> None:  # noqa: ANN001
     url = "s3://bucket/template.nii.gz"
     remote.store[url] = _encode(".nii.gz")
-    header = nifti_base._like_header(remote(url))
+    header = nifti_header._like_header(remote(url))
     assert np.allclose(header.get_best_affine(), AFFINE)
 
 
@@ -144,7 +144,7 @@ def test_a_nifti2_stream_is_read(remote) -> None:  # noqa: ANN001
     image = NiftiImage.load(remote(url))
     assert isinstance(image.metadata.raw.header, nb.Nifti2Header)
     assert np.array_equal(np.asarray(image.data), DATA)
-    header = nifti_base._like_header(remote(url))
+    header = nifti_header._like_header(remote(url))
     assert isinstance(header, nb.Nifti2Header)
 
 
@@ -232,7 +232,6 @@ def test_a_local_path_is_loaded_by_name(
 
     monkeypatch.setattr(nb.Nifti1Image, "from_filename", classmethod(spy))
     monkeypatch.setattr(nifti_base, "_nifti_from_stream", no_stream)
-    monkeypatch.setattr(nifti_parsers, "_nifti_from_stream", no_stream)
     monkeypatch.setattr(nifti_raw, "_nifti_from_stream", no_stream)
 
     for file in (str(target), target, Path(target), f"file://{target}"):
@@ -249,7 +248,7 @@ def test_a_local_nifti2_image_is_read(tmp_path, ext: str) -> None:  # noqa: ANN0
     image = NiftiImage.load(target)
     assert isinstance(image.metadata.raw.header, nb.Nifti2Header)
     assert np.array_equal(np.asarray(image.data), DATA)
-    header = nifti_base._like_header(target)
+    header = nifti_header._like_header(target)
     assert isinstance(header, nb.Nifti2Header)
 
 
