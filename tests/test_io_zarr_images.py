@@ -1155,3 +1155,62 @@ def test_reader_maps_a_multi_field_sequence_without_banning(
         isinstance(part, DisplacementField)
         for part in geometry.transformations
     )
+
+
+# ---- base Zarr writer ------------------------------------------------
+
+
+class _RecordingStorePath:
+    """A store path that records the targets it is copied to."""
+
+    def __init__(self) -> None:
+        self.copies: tx.List[tx.Any] = []
+
+    def copy(self, target: tx.Any) -> None:
+        self.copies.append(target)
+
+
+class _FakeNode(abczarr.ZarrNode):
+    """A minimal Zarr node whose store path records each copy."""
+
+    zarr_version = 3
+    metadata = None
+
+    def __init__(self) -> None:
+        self._store_path = _RecordingStorePath()
+
+    @property
+    def store_path(self) -> _RecordingStorePath:
+        return self._store_path
+
+
+def _base_writer_class() -> tx.Type[tx.Any]:
+    from brainhops.io.common.zarr._parsers import ZarrReaderWriter
+
+    class _Writer(ZarrReaderWriter):
+        pass
+
+    return _Writer
+
+
+def test_base_to_node_returns_the_node_written_into() -> None:
+    source = _FakeNode()
+    target = _FakeNode()
+    writer = _base_writer_class()(node=source)
+    assert writer.to_node(target) is target
+    assert source.store_path.copies == [target.store_path]
+
+
+def test_base_to_node_refuses_a_parser_without_a_node() -> None:
+    writer = _base_writer_class()()
+    with pytest.raises(WriterError, match="nothing to write"):
+        writer.to_node(_FakeNode())
+
+
+def test_base_to_store_refuses_a_parser_without_a_node(
+    tmp_path: Path,
+) -> None:
+    writer = _base_writer_class()()
+    with pytest.raises(WriterError, match="nothing to write"):
+        writer.to_store(str(tmp_path / "out.zarr"))
+    assert not (tmp_path / "out.zarr").exists()
