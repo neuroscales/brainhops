@@ -163,7 +163,11 @@ def _file_based_classes() -> list:
 @pytest.mark.parametrize(
     "cls", _file_based_classes(), ids=lambda cls: cls.__qualname__
 )
-def test_every_file_based_class_reads_files_in_from_other(cls: type) -> None:
-    # The file branch must come first in the MRO of every format.
-    owner = next(base for base in cls.__mro__ if "from_any" in vars(base))
+def test_every_file_based_class_reads_files_in_from_any(cls: type) -> None:
+    # The file branch must come before the data model's own `from_any`
+    # in the MRO of every format, whatever the order of its bases. A format
+    # may define its own, which defers to its bases: the ones that other
+    # transformations convert to do, for everything but a transformation.
+    bases = cls.__mro__[1:]
+    owner = next(base for base in bases if "from_any" in vars(base))
     assert owner.__name__ == "_FileBasedModelMixin"

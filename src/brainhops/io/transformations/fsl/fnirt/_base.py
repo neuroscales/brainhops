@@ -1,3 +1,4 @@
+import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Alias
@@ -7,14 +8,17 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import Confidence
+from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common.nifti import NiftiParser
 from brainhops.io.common.nifti._header import (
+    _apply_like,
+    _apply_overrides,
     _nifti_intent,
     _nifti_vector_field,
     _NiftiObject,
 )
+from brainhops.io.transformations.base import WritableFileBasedTransformation
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
-from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
@@ -56,10 +60,23 @@ _SPLINE_DEGREE = {
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
+class _WritableNifti(WritableFileBasedTransformation, NiftiParser):
+    """
+    A transformation read from or written to a NIfTI file.
+
+    It is a class of its own rather than two bases of `FnirtWarpField`, because
+    no order of those bases keeps the constructor's positional parameters
+    (`moving`, `reference`, `deformation_type`, `image`, `header`,
+    `transformations`).
+    """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
+
+
 @register_format
 class FnirtWarpField(
     FslTransformationFormat,
-    NiftiBasedTransformation,
+    _WritableNifti,
     _xforms.ImmutableSequence,
 ):
     """Non-linear transformation stored in an FSL FNIRT NIfTI file.
@@ -82,9 +99,21 @@ class FnirtWarpField(
     on its own grid and the spline is evaluated only when the sequence is
     computed.
 
-    A deformation field carries the reference geometry, so only the moving
-    image is required; a coefficient field needs both images. DCT coefficient
-    fields (intent 2008) are recognised but not supported.
+    A deformation field carries the reference geometry itself, so only the
+    moving image is required. A coefficient field carries neither image's
+    geometry, so both the reference and the moving image are required. A
+    discrete-cosine-transform coefficient field (intent 2008) is
+    recognized but not supported.
+
+    !!! note "Images remain external"
+        A FNIRT file does not hold everything its map depends on: the moving
+        image, whose geometry places the warped points in the world, is given
+        separately, and so is whether a deformation field holds absolute or
+        relative positions, which is otherwise guessed from the values. Save
+        writes this FNIRT file, but those inputs are not embedded; retain them
+        to read the same map back. A coefficient field also needs a knot grid,
+        a spline anchoring and an initial affine that a general field does not
+        have.
     """
 
     HINTS = ("fnirt",)
@@ -152,6 +181,30 @@ class FnirtWarpField(
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_bytes(data, **kwargs)
         return cls._with_images(obj, moving, reference)
+
+    def to_nibabel(self, like: tx.Any = None, **overrides) -> tx.Any:
+        """Build the NIfTI image while preserving the FNIRT header intent."""
+        if self.data is None or self.header is None:
+            raise WriterError(
+                "A FNIRT file needs both its field data and header to be "
+                "written."
+            )
+        data = self.data
+        image_type = (
+            nb.Nifti2Image
+            if isinstance(self.header, nb.Nifti2Header)
+            else nb.Nifti1Image
+        )
+        image = image_type(
+            data,
+            self.header.get_best_affine(),
+            header=self.header.copy(),
+        )
+        _apply_like(image, like)
+        _apply_overrides(image, overrides)
+        return image
+
+    # --- exposed parameters -------------------------------------------
 
     @property
     def degree(self) -> tx.Optional[int]:
