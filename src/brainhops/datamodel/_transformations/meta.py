@@ -3,7 +3,7 @@ from numbers import Integral
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import NotKwOnly, replace
 
 # core
 from brainhops._core.properties import smartproperty
@@ -11,19 +11,17 @@ from brainhops._core.typing import npvector
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import (
-    CoordinateSystem,
-    _axes_or_unknown,
-)
+from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.errors import CompositionError
 
 # internals
-from . import registries
+from . import nocycles
 from .base import Transformation
-from .errors import CompositionError
+from .compute.simplify import SimplifyLike
+from .compute.simplify import simplify as _simplify
+from .compute.utils import axis_list, require_endomorphism
 from .modes import ModeLike
-from .simplify import SimplifyLike
-from .simplify import simplify as _simplify
-from .utils import axis_list, require_endomorphism
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 
@@ -49,7 +47,7 @@ class MetaTransformation(Transformation):
             # one-element sequence, which runs the factor pass. The engine
             # never passes `factor` back to a leaf's `compute`, so there is
             # no recursion.
-            return registries.SEQUENCE([self]).compute(
+            return nocycles.SEQUENCE([self]).compute(
                 mode, simplify=simplify, factor=True
             )
         # A meta transformation holds no parameter of its own to fuse, so
@@ -87,19 +85,14 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
     # --- attributes ---------------------------------------------------
 
-    transformation: tx.Annotated[
-        tx.Optional[TRANSFORMATION], tx.Doc("The transformation to apply.")
-    ] = None
+    transformation: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
+    """The transformation to apply."""
 
-    input_axes: tx.Annotated[
-        tx.Optional[npvector[Integral]],
-        tx.Doc("The axes of the input coordinate system to transform."),
-    ] = None
+    input_axes: NotKwOnly[tx.Optional[npvector[Integral]]] = None
+    "The axes of the input coordinate system to transform."
 
-    output_axes: tx.Annotated[
-        tx.Optional[npvector[Integral]],
-        tx.Doc("The axes of the output coordinate system to transform."),
-    ] = None
+    output_axes: NotKwOnly[tx.Optional[npvector[Integral]]] = None
+    """The axes of the output coordinate system to transform."""
 
     # --- properties ---------------------------------------------------
 
@@ -164,8 +157,8 @@ class Projection(MetaTransformation):
 
     # --- attributes ---------------------------------------------------
 
-    dropped: npvector[Integral] = ()
-    created: npvector[Integral] = ()
+    dropped: NotKwOnly[npvector[Integral]] = ()
+    created: NotKwOnly[npvector[Integral]] = ()
 
     # --- methods ------------------------------------------------------
 
@@ -181,7 +174,7 @@ class Projection(MetaTransformation):
         )
 
 
-@kinds.Bijection.register
+@kinds.Bijection
 class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
     """
     A transformation whose inverse is explicitly defined.
@@ -197,13 +190,11 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
     # --- attributes ---------------------------------------------------
 
-    forward: tx.Annotated[
-        tx.Optional[TRANSFORMATION], tx.Doc("The forward transformation.")
-    ] = None
+    forward: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
+    """The forward transformation."""
 
-    backward: tx.Annotated[
-        tx.Optional[TRANSFORMATION], tx.Doc("The backward transformation.")
-    ] = None
+    backward: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
+    """The backward transformation."""
 
     # --- properties ---------------------------------------------------
 
@@ -342,8 +333,8 @@ def _close_subspace(
     in_axes = axis_list(t.input_axes)
     out_axes = axis_list(t.output_axes)
     own_in, own_out = (
-        _axes_or_unknown(t.input).ndim,
-        _axes_or_unknown(t.output).ndim,
+        get_axes(t.input).ndim,
+        get_axes(t.output).ndim,
     )
     n_in = own_in if own_in is not None else n_in
     n_out = own_out if own_out is not None else n_out

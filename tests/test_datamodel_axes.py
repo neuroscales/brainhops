@@ -6,9 +6,9 @@ import re
 import pytest
 from bagof.converters import ConversionError
 
+from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel.axes import (
     Axis,
-    AxisError,
     ChannelAxis,
     CoordinateAxis,
     DisplacementAxis,
@@ -16,9 +16,8 @@ from brainhops.datamodel.axes import (
     RightToLeftAxis,
     SpaceAxis,
     TimeAxis,
-    vector_axis,
 )
-from brainhops.datamodel.orientation import (
+from brainhops.datamodel.orientations import (
     LeftToRight,
     Orientation,
     RightToLeft,
@@ -27,6 +26,7 @@ from brainhops.datamodel.systems import (
     CoordinateSystem3D,
     SpatialCoordinateSystem3D,
 )
+from brainhops.errors import AxisError
 
 
 def _messages(error: BaseException) -> list:
@@ -127,18 +127,18 @@ def test_generic_axes_are_read_as_spatial_axes() -> None:
 
 def test_an_axis_with_the_same_orientation_is_read_as_oriented() -> None:
     # The generic axis has no name: the oriented axis keeps its own.
-    axis = LeftToRightAxis.from_other(Axis(orientation=LeftToRight()))
+    axis = LeftToRightAxis.from_any(Axis(orientation=LeftToRight()))
     assert axis == LeftToRightAxis()
 
 
 def test_an_axis_with_another_orientation_is_not_read_as_oriented() -> None:
     with pytest.raises(ValueError, match="always LeftToRight"):
-        LeftToRightAxis.from_other(Axis(name="x", orientation=RightToLeft()))
+        LeftToRightAxis.from_any(Axis(name="x", orientation=RightToLeft()))
 
 
 def test_an_axis_of_another_type_is_not_read_as_spatial() -> None:
     with pytest.raises(ValueError, match="always 'space'"):
-        SpaceAxis.from_other(Axis(name="t", type="time"))
+        SpaceAxis.from_any(Axis(name="t", type="time"))
 
 
 def test_an_axis_of_another_unit_kind_is_not_read_as_spatial() -> None:
@@ -171,7 +171,7 @@ def test_a_sibling_axis_is_read_field_by_field() -> None:
     orientation = Orientation(value="toward-the-light")
     axis = Axis(name="x", orientation=orientation, unit="mm")
     assert not isinstance(axis, SpaceAxis)
-    read = SpaceAxis.from_other(axis)
+    read = SpaceAxis.from_any(axis)
     assert isinstance(read, SpaceAxis)
     assert (read.name, read.unit) == ("x", axis.unit)
     assert read.orientation == orientation

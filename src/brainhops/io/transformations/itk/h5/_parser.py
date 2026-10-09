@@ -6,14 +6,15 @@ import typing_extensions as tx
 # externals
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
+from brainhops.io.base.parsers import Confidence, SnifferContentError
+
 # io
-from brainhops.io.base.hdf5 import (
+from brainhops.io.common.hdf5 import (
     DelayedH5Array,
     Hdf5Parser,
     delayed_dataset,
     read_string,
 )
-from brainhops.io.base.parsers import Confidence, SnifferContentError
 
 # locals
 from .._common import ItkStruct, ItkTransformClass, _application_order
@@ -131,13 +132,13 @@ class H5TransformParser(
         """
         header = H5Header()
         if "/HDFVersion" in h5file:
-            header.HDFVersion = _readstr(h5file["/HDFVersion"])
+            header.HDFVersion = read_string(h5file["/HDFVersion"])
         if "/ITKVersion" in h5file:
-            header.ITKVersion = _readstr(h5file["/ITKVersion"])
+            header.ITKVersion = read_string(h5file["/ITKVersion"])
         if "/OSName" in h5file:
-            header.OSName = _readstr(h5file["/OSName"])
+            header.OSName = read_string(h5file["/OSName"])
         if "/OSVersion" in h5file:
-            header.OSVersion = _readstr(h5file["/OSVersion"])
+            header.OSVersion = read_string(h5file["/OSVersion"])
 
         obj = cls(header=header, file=h5file if keep_open else None)
         nodes = h5file.get("/TransformGroup", {})
@@ -149,7 +150,7 @@ class H5TransformParser(
         # would put `10` before `2`.
         for index, node in enumerate(sorted(nodes, key=_node_number)):
             # Parse transform type
-            xtype = _readstr(nodes[node]["TransformType"])
+            xtype = read_string(nodes[node]["TransformType"])
             xtype, prec, ndim_inp, ndim_out = xtype.split("_")
             xtype = ItkTransformClass(xtype)
             ndim_inp, ndim_out = int(ndim_inp), int(ndim_out)
@@ -226,8 +227,3 @@ def _node_number(name: str) -> tx.Tuple[int, tx.Union[int, str]]:
         return (0, int(name))
     except ValueError:
         return (1, name)
-
-
-def _readstr(dataset: h5py.Dataset) -> str:
-    """Read a string from a HDF5 dataset."""
-    return read_string(dataset)

@@ -41,11 +41,11 @@ from bagof.magic import replace
 
 # datamodel
 from brainhops.datamodel import kinds
+from brainhops.errors import ConversionError, DomainError
 
 # internals
-from .base import Transformation
-from .check import is_kind
-from .concrete import (
+from ..base import Transformation
+from ..concrete import (
     Affine,
     CartesianField,
     Identity,
@@ -54,19 +54,18 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
-    is_identity,
 )
-from .errors import ConversionError, DomainError
-from .inverse import Inverse
-from .meta import (
+from ..inverse import Inverse
+from ..meta import (
     Bijection,
     Projection,
     SubspaceTransformation,
     _same_axes,
 )
-from .multiscale import MultiscaleField
-from .operators import Sqrt
-from .sequence import Sequence, _unnest
+from ..multiscale import MultiscaleField
+from ..operators import Sqrt
+from ..sequence import Sequence, _unnest
+from .check import is_kind
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
 from .utils import with_endpoints as _with_endpoints
@@ -210,7 +209,7 @@ def _(t: SubspaceTransformation, policy: SimplifyTable) -> Transformation:
         # reindex otherwise (kept as is).
         return Identity(input=t.input, output=t.output) if same else t
     simplified = _simplify(inner, policy=policy)
-    if same and is_identity(simplified, resolved is NUMERIC):
+    if same and simplified.is_identity(resolved is NUMERIC):
         return Identity(input=t.input, output=t.output)
     if simplified is inner:
         return t
@@ -410,8 +409,8 @@ def _(
     # case is `_cancels` above; a numerically-zero field is caught by the
     # downcast pass, which turns it into an `Identity` first.
     both_identity = (
-        inner_first is None or is_identity(inner_first, False)
-    ) and (inner_second is None or is_identity(inner_second, False))
+        inner_first is None or inner_first.is_identity(False)
+    ) and (inner_second is None or inner_second.is_identity(False))
     if not both_identity:
         return None
     return Identity(input=first.input, output=second.output)
@@ -477,7 +476,7 @@ def _droppable_grid(t: Transformation, policy: SimplifyTable) -> bool:
         return False
     if policy.resolve(t) is NONE:
         return False
-    return is_identity(t, compute=True)
+    return t.is_identity(compute=True)
 
 
 # NOTE

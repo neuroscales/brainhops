@@ -12,9 +12,9 @@ from unittest import mock
 import numpy as np
 
 from brainhops.datamodel import kinds as H
-from brainhops.datamodel._transformations import checkers as _checkers
-from brainhops.datamodel._transformations import inverse as _inv
-from brainhops.datamodel._transformations.checkers import (
+from brainhops.datamodel._transformations import concrete as _concrete
+from brainhops.datamodel._transformations.compute import checkers as _checkers
+from brainhops.datamodel._transformations.compute.checkers import (
     _bijective_targets,
     _embed_targets,
     _permute_targets,
@@ -300,13 +300,13 @@ def test_inverse_delegates_without_reading_its_parameter() -> None:
 def test_field_inverse_never_inverts_and_never_raises() -> None:
     df = DisplacementField(field=np.random.RandomState(0).randn(6, 7, 2))
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(f: object) -> object:
         calls["n"] += 1
         return real(f)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         for policy in ("analytic", "numeric"):
             assert not _M(df.inverse(), "AffineTransformation", policy)
             # A coordinate-field inverse must never raise from membership.
@@ -413,7 +413,11 @@ def test_analytic_membership_calls_no_numeric_routines() -> None:
             mock.patch.object(np.linalg, "inv", bump(np.linalg.inv))
         )
         stack.enter_context(
-            mock.patch.object(_inv, "inverse_disp", bump(_inv.inverse_disp))
+            mock.patch.object(
+                _concrete,
+                "inverse_disp",
+                bump(_concrete.inverse_disp),
+            )
         )
         for t in cases:
             for node in (
@@ -478,7 +482,7 @@ def test_selection_memo_follows_registry_and_values() -> None:
     # so does a new virtual subclass (the ABC cache token moves).
     import abc
 
-    from brainhops.datamodel._transformations.check import IsKind
+    from brainhops.datamodel._transformations.compute.check import IsKind
 
     class Source(abc.ABC):  # noqa: B024 (registered into, not implemented)
         def __init__(self, flag: bool = False) -> None:

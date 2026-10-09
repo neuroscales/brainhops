@@ -432,7 +432,7 @@ def test_write_coefficients_as_positions(tmp_path: Path) -> None:
     ras2node, field, vox2ras = morph
     moved = np.asarray(field.field) + 1.0
     coefficients = xforms.CoordinatesField(field=moved, degree=3)
-    coefficients = coefficients.to(coeff=True)
+    coefficients = coefficients.to(store="coefficients")
     morph.transformations = [ras2node, coefficients, vox2ras]
     morph.save(tmp_path / "out.m3z")
     back = io.load(tmp_path / "out.m3z")

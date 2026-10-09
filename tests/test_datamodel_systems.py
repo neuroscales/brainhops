@@ -10,6 +10,7 @@ from bagof.converters import ConversionError
 from bagof.magic import replace
 
 from brainhops.datamodel import systems as _systems
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import (
     A,
     Axis,
@@ -239,7 +240,7 @@ def test_ndim_of_an_unknown_system(unknown_axes: tx.Sequence) -> None:
 
 
 def test_ndim_of_a_missing_system() -> None:
-    assert _systems._axes_or_unknown(None).ndim is None
+    assert get_axes(None).ndim is None
 
 
 # ----------------------------------------------------------------------
@@ -396,10 +397,10 @@ def test_the_axes_of_a_system(any_layout: str) -> None:
 def test_the_axes_of_a_missing_system_are_unknown() -> None:
     # Only a missing endpoint (`None`) has no `axes` to read, and reads as
     # `[...]`; any system reads as its own axes.
-    assert _systems._axes_or_unknown(None) == [...]
-    assert type(_systems._axes_or_unknown(None)) is AxisList
+    assert get_axes(None) == [...]
+    assert type(get_axes(None)) is AxisList
     for system in (CS(), CS(axes=[X, ...]), RASCoordinateSystem()):
-        assert _systems._axes_or_unknown(system) is system.axes
+        assert get_axes(system) is system.axes
 
 
 def test_the_axes_of_a_fixed_dimension_system() -> None:
@@ -542,7 +543,7 @@ def test_index_asks_for_the_class_of_the_query() -> None:
 
 def test_index_never_matches_ellipsis(unknown_axes: tx.Sequence) -> None:
     for system in (CS(axes=unknown_axes), None):
-        axes = _systems._axes_or_unknown(system)
+        axes = get_axes(system)
         for query in (Axis(), "x", TimeAxis()):
             with pytest.raises(ValueError, match="is not in list"):
                 axes.index(query)
@@ -626,7 +627,7 @@ def test_a_position_in_an_unknown_system(
 ) -> None:
     for system in (CS(axes=unknown_axes), None):
         for i in (0, 3, -1):
-            assert _systems._axes_or_unknown(system)._position(i) == i
+            assert get_axes(system)._position(i) == i
 
 
 def test_a_position_may_be_a_numpy_integer() -> None:
@@ -666,7 +667,7 @@ def test_the_axis_at_a_position_of_an_unknown_system(
 ) -> None:
     for system in (CS(axes=unknown_axes), None):
         for position in (0, 2, -1):
-            assert _systems._axes_or_unknown(system).at(position) == Axis()
+            assert get_axes(system).at(position) == Axis()
 
 
 # ----------------------------------------------------------------------

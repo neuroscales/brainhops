@@ -13,7 +13,10 @@ from bagof.hints.array import ArrayProtocol
 from bagof.magic import KwOnly, replace
 
 # core
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import (
+    InvalidatorInAttribute,
+    smartproperty,
+)
 from brainhops.backends import get_array_backend
 
 # datamodel
@@ -23,7 +26,12 @@ from brainhops.datamodel.enums import BoundaryCondition
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import (
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserContentError,
+    WriterError,
+)
+from brainhops.io.common.nifti import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_NAME_NIFTYREG,
@@ -38,11 +46,6 @@ from brainhops.io.base.nifti import (
     _nifti_vector_field,
     _NiftiObject,
 )
-from brainhops.io.base.parsers import (
-    Confidence,
-    ParserContentError,
-    WriterError,
-)
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
     ras_displacement_chain,
@@ -52,6 +55,18 @@ from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 _NDIM = 3
 """The number of spatial dimensions the displacement reader supports."""
+
+
+def _always(value: tx.Any) -> bool:
+    """Read every stored value as unset, so the getter always computes."""
+    return True
+
+
+def _store_through_the_parser(
+    self: tx.Any, value: tx.Optional[ArrayProtocol]
+) -> None:
+    """Store `data` where the parser keeps it, which the getter reads."""
+    NiftiParser.data.fset(self, value)
 
 
 @register_format
@@ -104,7 +119,17 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
             return Confidence.MAYBE
         return Confidence.NO
 
-    @property
+    @smartproperty(
+        # The parser owns the storage, and the getter below reshapes what
+        # it holds, so there is never a stored value to hand back: the
+        # getter runs on every read.
+        unset=_always,
+        fset=_store_through_the_parser,
+        # Assigning `data` clears the views keyed on it, as it does on
+        # any transformation, which a hand-written setter would otherwise
+        # leave stale.
+        invalidates=InvalidatorInAttribute("derived_fields"),
+    )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The field of RAS coordinates, as an `(X, Y, Z, 3)` array.
@@ -124,11 +149,6 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         if data is None:
             return None
         return _nifti_vector_field(data)
-
-    @data.setter
-    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
-        NiftiParser.data.fset(self, value)
-        self._forget_views()
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
@@ -152,7 +172,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         wins.
         """
         # NIfTI stores sampled coordinates.
-        field = self.to(coeff=False).data
+        field = self.to(store="values").data
         if field is None:
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."

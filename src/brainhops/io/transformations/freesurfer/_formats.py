@@ -1,6 +1,6 @@
 """Format-family markers used for FreeSurfer dispatch hints."""
 
-from brainhops.io.base.freesurfer import FreesurferFormat
+from brainhops.io.common.freesurfer import FreesurferFormat
 from brainhops.io.transformations.base import TransformationFormat
 
 

@@ -11,13 +11,13 @@ arity-dispatched `get_simplifiers`.
 import pytest
 from bagof.dispatchers import Function
 
-from brainhops.datamodel._transformations import simplify as _S
-from brainhops.datamodel._transformations.concrete import Affine, Identity
-from brainhops.datamodel._transformations.inverse import Inverse
-from brainhops.datamodel._transformations.simplify import (
+from brainhops.datamodel._transformations.compute import simplify as _S
+from brainhops.datamodel._transformations.compute.simplify import (
     SimplifyTable,
     get_simplifiers,
 )
+from brainhops.datamodel._transformations.concrete import Affine, Identity
+from brainhops.datamodel._transformations.inverse import Inverse
 
 
 def _identity() -> Identity:

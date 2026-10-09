@@ -66,7 +66,6 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.io.base.nifti import _is_local
 from brainhops.io.base.parsers import (
     BinaryFileParser,
     Confidence,
@@ -74,6 +73,7 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     SnifferContentError,
 )
+from brainhops.io.common.nifti import _is_local
 
 _NETCDF_MAGICS = (b"CDF\x01", b"CDF\x02")
 """The magic numbers of NetCDF classic files (MINC1)."""

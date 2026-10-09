@@ -4,27 +4,29 @@ from collections.abc import Sequence as AbcSequence
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import NotKwOnly, replace
 
 # api
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import kinds
 from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.errors import CompositionError, ConversionError
 
 # internals
-from . import registries
+from . import nocycles
 from .base import Transformation
-from .check import is_kind
-from .compose import compose
+from .compute.check import is_kind
+from .compute.compose import compose
+from .compute.factor import PatternCache, factor_sequence
+from .compute.simplify import SimplifyLike, SimplifyTable
+from .compute.simplify import simplify as _simplify
+from .compute.utils import require_endomorphism
 from .concrete import (
     CartesianField,
     CoordinatesField,
     DisplacementField,
     Identity,
-    is_identity,
 )
-from .errors import CompositionError, ConversionError
-from .factor import PatternCache, factor_sequence
 from .inverse import Inverse
 from .meta import SubspaceTransformation
 from .modes import (
@@ -34,10 +36,7 @@ from .modes import (
     mode_children,
     normalize_modes,
 )
-from .registries import register_sequence
-from .simplify import SimplifyLike, SimplifyTable
-from .simplify import simplify as _simplify
-from .utils import require_endomorphism
+from .nocycles import register_sequence
 
 
 class SequenceMixin(AbcSequence):
@@ -50,9 +49,6 @@ class SequenceMixin(AbcSequence):
 
     def __getitem__(self, index: tx.Union[int, slice]) -> Transformation:
         return self.transformations[index]
-
-    def __delitem__(self, index: tx.Union[int, slice]) -> None:
-        del self.transformations[index]
 
     def __iter__(self) -> tx.Iterator[Transformation]:
         return iter(self.transformations or [])
@@ -67,6 +63,9 @@ class MutableSequenceMixin(SequenceMixin, AbcMutableSequence):
         self, index: tx.Union[int, slice], value: Transformation
     ) -> None:
         self.transformations[index] = value
+
+    def __delitem__(self, index: tx.Union[int, slice]) -> None:
+        del self.transformations[index]
 
     def insert(self, index: int, value: Transformation) -> None:
         if self.transformations is None:
@@ -116,7 +115,7 @@ class Sequence(SequenceMixin, Transformation):
         * `Sequence([t1, t2, t3]) @ x` is equivalent to `t3 @ t2 @ t1 @ x`.
     """
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("transformations",)
+    data_fields = ("transformations",)
 
     # --- attributes ---------------------------------------------------
 
@@ -129,15 +128,13 @@ class Sequence(SequenceMixin, Transformation):
     # `replace()` freeze the derived chain into a declared one, so a copy
     # made with a new parameter would keep serving the chain built from
     # the old one, and would share that very list with the original.
-    _transformations: tx.Annotated[
-        tx.Optional[tx.Sequence[Transformation]],
-        tx.Doc(
-            """
-            A list of transformations, in the order in which they are
-            applied to an input coordinate system.
-            """
-        ),
-    ] = None
+    _transformations: NotKwOnly[tx.Optional[tx.Sequence[Transformation]]] = (
+        None
+    )
+    """
+    A list of transformations, in the order in which they are applied to
+    an input coordinate system.
+    """
 
     transformations = smartproperty("transformations")
 
@@ -209,18 +206,17 @@ class Sequence(SequenceMixin, Transformation):
     ) -> Transformation:
         """Convert this chain to a different type or encoding.
 
-        See [`Transformation.to`][brainhops.datamodel.transformations.\
-Transformation.to]. A chain has no tangent of its own -- the tangent of a
-        composition is not the sum of the tangents -- so `log=` re-encodes
-        the transformation it reduces to, and anything else is refused
-        before it is computed:
+        See [`Transformation.to`][]. A chain has no tangent of its own
+        -- the tangent of a composition is not the sum of the tangents
+        -- so `log=` re-encodes the transformation it reduces to, and
+        anything else is refused before it is computed:
 
         * a chain that simplifies to one transformation is that one;
-        * a change of coordinates `[P, *X, P^-1]` (see [`sqrt`][brainhops.\
-datamodel.transformations.Sequence.sqrt]) keeps its ends, and re-encodes
-          `X`: the flow of a velocity commutes with the conjugation, so this
-          is exact. A velocity read between a world-to-voxel affine and its
-          inverse (`|svf`) is turned into its displacement that way;
+        * a change of coordinates `[P, *X, P^-1]` (see [`Sequence.sqrt`])
+          keeps its ends, and re-encodes `X`: the flow of a velocity
+          commutes with the conjugation, so this is exact. A velocity
+          read between a world-to-voxel affine and its inverse (`|svf`)
+          is turned into its displacement that way;
         * a chain of affines is composed, which is cheap and exact.
 
         Any other chain -- one with a field, between ends that do not undo
@@ -334,41 +330,20 @@ class MutableSequence(MutableSequenceMixin, Sequence):
     """
 
     # NOTE: this makes `transformations` a list instead of any sequence
-    _transformations: tx.Annotated[
-        tx.Optional[tx.List[Transformation]],
-        tx.Doc(
-            """
-            A list of transformations, in the order in which they are
-            applied to an input coordinate system.
-            """
-        ),
-    ] = None
+    _transformations: NotKwOnly[tx.Optional[tx.List[Transformation]]] = None
 
 
 class ImmutableSequence(Sequence):
     """A [`Sequence`][] whose contents cannot be edited in place.
 
-    Every in-place edit -- item assignment, deletion, insertion -- raises
-    `TypeError`.
+    The chain is stored as a tuple and no mutating method is implemented,
+    so item assignment, deletion and insertion all fail.
     """
 
-    def _refuse_in_place_edit(self, *args: tx.Any) -> tx.NoReturn:
-        raise TypeError(f"{type(self).__name__} cannot be edited in place.")
-
-    __setitem__ = _refuse_in_place_edit
-    __delitem__ = _refuse_in_place_edit
-    insert = _refuse_in_place_edit
-
     # NOTE: this makes `transformations` a tuple instead of any sequence
-    _transformations: tx.Annotated[
-        tx.Optional[tx.Tuple[Transformation, ...]],
-        tx.Doc(
-            """
-            A tuple of transformations, in the order in which they are
-            applied to an input coordinate system.
-            """
-        ),
-    ] = None
+    _transformations: NotKwOnly[tx.Optional[tx.Tuple[Transformation, ...]]] = (
+        None
+    )
 
 
 # ======================================================================
@@ -728,7 +703,7 @@ def _undoes(first: Transformation, last: Transformation) -> bool:
         product = compose(last, first)
     except (CompositionError, ValueError):
         return False
-    return is_identity(product, compute=True)
+    return product.is_identity(compute=True)
 
 
 # ----------------------------------------------------------------------
@@ -741,10 +716,10 @@ def _normalize_inverse(t: Transformation) -> Transformation:
     # the transform it holds, so the sequence engine computes it and
     # cancellation recognizes it like any other inverse. An endpoint
     # override on the `Inverse` is carried onto the result. A typed
-    # inverse (its `_inverseof` is set) is already such a result and is
+    # inverse (its `_resultof` is set) is already such a result and is
     # left as is: `Inverse(forward=X)` becomes `X.inverse()`, which for
     # a field or an affine is the typed inverse whose `forward` is `X`.
-    if not isinstance(t, Inverse) or t._inverseof is not None:
+    if not isinstance(t, Inverse) or t._resultof is not None:
         return t
     if t.forward is None:
         return Identity(input=t.input, output=t.output)
@@ -821,7 +796,7 @@ def _splice(spliced: tx.List[Transformation], nxt: Transformation) -> None:
         return
     prev = spliced[-1]
     pieces = list(
-        registries.ADAPT(prev, nxt, allow_type_grouped_positional=True)
+        nocycles.ADAPT(prev, nxt, allow_type_grouped_positional=True)
     )
     if pieces[0] is not prev:
         # `prev` was embedded in the fuller space of `nxt`, so the piece

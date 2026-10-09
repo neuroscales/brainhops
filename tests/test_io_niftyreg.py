@@ -528,9 +528,10 @@ def test_control_point_grid_matches_niftyreg(
     nb.save(_nreg_image(positions, vox2world, 2), path)
     xform = load(path)
     assert isinstance(xform, NiftyRegControlPointGrid)
-    assert xform.degree == 3 and xform.coeff
+    assert xform.degree == 3 and xform.store == "coefficients"
     assert xform.affine is None
-    assert xform.displacement.coeff and xform.displacement.degree == 3
+    assert xform.displacement.store == "coefficients"
+    assert xform.displacement.degree == 3
     points = np.concatenate(
         [_points(rng, 25, 0, 1), _points(rng, 10, -0.8, 1.8)]
     )
@@ -559,7 +560,7 @@ def test_linear_grid_matches_niftyreg(
     path = tmp_path / "lin.nii.gz"
     nb.save(_nreg_image(positions, vox2world, 6), path)
     xform = load(path, hint="niftyreg.cpp")
-    assert xform.degree == 1 and not xform.coeff
+    assert xform.degree == 1 and xform.store == "values"
     points = np.concatenate(
         [_points(rng, 20, 0, 1), _points(rng, 10, -0.5, 1.5)]
     )
@@ -632,7 +633,7 @@ def _written_field(grid, tmp_path: Path) -> np.ndarray:  # noqa: ANN001
     nb.save(grid.to_nibabel(), out)
     back = load(out)
     field = list(back)[-2]
-    assert (field.coeff, int(field.degree)) == (True, 3)
+    assert (field.store, int(field.degree)) == ("coefficients", 3)
     return np.asarray(field.field)
 
 
@@ -646,7 +647,10 @@ def test_a_grid_of_another_degree_is_refitted_to_a_cubic_one(
 
     grid = NiftyRegControlPointGrid()
     grid.transformations = ras_displacement_chain(
-        rng.standard_normal((6, 6, 6, 3)), np.eye(4), degree=2, coeff=True
+        rng.standard_normal((6, 6, 6, 3)),
+        np.eye(4),
+        degree=2,
+        store="coefficients",
     )
     values = np.asarray(list(grid)[1].field)
     np.testing.assert_allclose(
@@ -666,7 +670,7 @@ def test_sampled_values_are_written_as_coefficients(
     values = rng.standard_normal((6, 6, 6, 3))
     grid = NiftyRegControlPointGrid()
     grid.transformations = ras_displacement_chain(
-        values, np.eye(4), degree=3, coeff=False
+        values, np.eye(4), degree=3, store="values"
     )
     np.testing.assert_allclose(
         _written_field(grid, tmp_path), values, atol=1e-4
@@ -759,17 +763,27 @@ def test_velocity_grid_integrates_to_its_flow(
     assert isinstance(xform, NiftyRegVelocityGrid)
     velocity = xform.displacement
     assert isinstance(velocity, xforms.StationaryVelocityField)
-    assert (velocity.coeff, velocity.degree, velocity.steps) == (True, 3, 8)
+    assert velocity.store == "coefficients"
+    assert (velocity.degree, velocity.steps) == (3, 8)
     points = _points(rng, 20, 0.3, 0.7)
     np.testing.assert_allclose(_apply(xform, points), _flow(points), atol=2e-3)
 
 
 def test_unset_velocity_steps_use_the_default_rule(tmp_path: Path) -> None:
+    from brainhops.datamodel._transformations import tangents as _tangents
+
     world = _grid(REF_SHAPE, REF_VOX2RAS)
     path = tmp_path / "vel.nii.gz"
     nb.save(_nreg_image(_velocity(world), REF_VOX2RAS, 4, p2=0), path)
     xform = load(path)
-    assert xform.steps is None and xform.displacement.steps is None
+    # The file names no count (`intent_p2 = 0`), so the field integrates
+    # with the one the default rule picks.
+    assert xform.steps is None
+    velocity = xform.displacement
+    assert velocity.steps is None
+    assert velocity._compute_steps == _tangents._squaring_steps(
+        np.asarray(velocity.values)
+    )
 
 
 @pytest.mark.parametrize("kind", [3, 4, 5])
@@ -815,7 +829,11 @@ def test_velocity_is_written_from_a_chain(
     nb.save(_nreg_image(_velocity(world), vox2world, 4, p2=7), path)
     chain = tuple(load(path).transformations)
     if kind == 5:
-        chain = (chain[0], chain[1].to(coeff=True, degree=3), chain[2])
+        chain = (
+            chain[0],
+            chain[1].to(store="coefficients", degree=3),
+            chain[2],
+        )
     image = cls(transformations=chain).to_nibabel()
     assert float(image.header["intent_p1"]) == kind
     assert float(image.header["intent_p2"]) == 7

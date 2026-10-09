@@ -475,6 +475,10 @@ class FileBasedObject(FormatDispatcher):
     The dispatching itself is described in `FormatDispatcher`.
     """
 
+    # FIXME: `FileBasedObject` inherits from `FormatDispatcher` but not
+    # from `FileParser`, whereas `WritableFileBasedObject` inherits from
+    # `FileParserWriter`. This is asymmetric and counter inttuitive.
+
 
 @format_registry
 class WritableFileBasedObject(FileParserWriter, FileBasedObject):
@@ -512,9 +516,9 @@ class WritableBinaryFileBasedObject(
 
 class _FileBasedModelMixin:
     """
-    Gives a file-based data model a `from_other` that reads files.
+    Gives a file-based data model a `from_any` that reads files.
 
-    A data model's `from_other` builds an instance from a mapping, from
+    A data model's `from_any` builds an instance from a mapping, from
     an instance of a similar class, or from constructor arguments. A
     file-based one can also be built from the file that stores it, so
     this mixin tries that first: a path, an open file, bytes or a
@@ -526,8 +530,8 @@ class _FileBasedModelMixin:
     so that the data models themselves never deal with files.
 
     !!! note "Why this is not part of `FileBasedObject`"
-        To win, this `from_other` must come before
-        `DataModelBase.from_other` in the MRO, and `FileBasedObject`
+        To win, this `from_any` must come before
+        `DataModelBase.from_any` in the MRO, and `FileBasedObject`
         comes after `DataModelBase` in the MRO of every file-based class.
         Nor can it be moved ahead. A format's parser base declares
         itself a data model first, as in
@@ -565,7 +569,7 @@ class _FileBasedModelMixin:
     """
 
     @classmethod
-    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """
         Create an instance from a file, or from anything the data model
         reads.
@@ -575,7 +579,7 @@ class _FileBasedModelMixin:
         is read with `load`: on a dispatcher such as `FileBasedImage`,
         the best-matching registered format reads it, and on a concrete
         format, that format does. Any other value is handed to the data
-        model's own `from_other`, which reads a mapping field by field,
+        model's own `from_any`, which reads a mapping field by field,
         copies an instance of a similar class, and passes anything else
         to the constructor.
 
@@ -602,10 +606,10 @@ class _FileBasedModelMixin:
             If positional arguments come with a file to read.
         """
         if not _is_file_or_content(other):
-            return super().from_other(other, *args, **kwargs)
+            return super().from_any(other, *args, **kwargs)
         if args:
             raise TypeError(
-                f"{cls.__name__}.from_other() reads a file with keyword "
+                f"{cls.__name__}.from_any() reads a file with keyword "
                 f"options only, but was given {len(args)} positional "
                 f"argument(s)."
             )

@@ -30,8 +30,8 @@ from brainhops.datamodel.systems import (  # noqa: E402
     VoxelCoordinateSystem,
 )
 from brainhops.datamodel.transformations import Affine  # noqa: E402
-from brainhops.io.base.nifti import _voxel_to_ras  # noqa: E402
 from brainhops.io.base.parsers import WriterError  # noqa: E402
+from brainhops.io.common.nifti import _voxel_to_ras  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 
 CS = CoordinateSystem

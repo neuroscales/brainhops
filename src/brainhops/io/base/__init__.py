@@ -32,7 +32,10 @@ from brainhops._core.dependencies import (
     has_abczarr_driver,
 )
 
-from . import afni, freesurfer, mrtrix, parsers
+# FIXME: do not import anything from common here. Have "clients" import
+# from common directly.
+from ..common import afni, freesurfer, mgh, minc, mrtrix
+from . import parsers
 from ._base import (
     BinaryFileBasedObject,
     FileBasedObject,
@@ -57,7 +60,7 @@ from .specs import (
 )
 
 if HAS_NIBABEL:
-    from . import mgh, minc, nifti
+    from ..common import nifti
 
     __all__ += ["mgh", "minc", "nifti"]
 
@@ -65,6 +68,6 @@ if HAS_NIBABEL:
 # abczarr alone cannot open a store, so the adapter is exposed only when a
 # driver is present.
 if has_abczarr_driver():
-    from . import zarr
+    from ..common import zarr
 
     __all__ += ["zarr"]

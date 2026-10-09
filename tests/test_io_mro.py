@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
 
 nb = pytest.importorskip("nibabel")
 
-from brainhops.io.base.nifti import NiftiParser  # noqa: E402
+from brainhops.io.common.nifti import NiftiParser  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,

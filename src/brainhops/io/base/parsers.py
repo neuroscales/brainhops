@@ -1,6 +1,19 @@
 """The base classes that give a format the ability to sniff, read and
 write itself, and the errors they raise."""
 
+__all__ = [
+    "Confidence",
+    "FileSniffer",
+    "FileParser",
+    "FileParserWriter",
+    "BinaryFileSniffer",
+    "BinaryFileParser",
+    "BinaryFileParserWriter",
+    "TextFileSniffer",
+    "TextFileParser",
+    "TextFileParserWriter",
+]
+
 # stdlib
 from collections.abc import Iterable
 from contextvars import ContextVar
@@ -12,130 +25,23 @@ import typing_extensions as tx
 # core
 from brainhops._core import path, peek
 from brainhops._core.streams import preserve_position
+from brainhops.errors import (
+    AmbiguousFormatError,  # noqa: F401
+    ParserContentError,  # noqa: F401
+    ParserError,  # noqa: F401
+    ParserExistsError,
+    ParserNotImplementedError,
+    ParserTypeError,
+    SnifferContentError,
+    SnifferError,  # noqa: F401
+    SnifferExistsError,
+    SnifferNotImplementedError,
+    SnifferTypeError,
+    UnrepresentableTransformationError,  # noqa: F401
+    WriterError,  # noqa: F401
+    WriterNotImplementedError,
+)
 from brainhops.io.base.specs import SourceSpec
-
-# ----------------------------------------------------------------------
-#   EXCEPTIONS
-# ----------------------------------------------------------------------
-
-
-# ---- sniff -----------------------------------------------------------
-
-
-class SnifferError(Exception):
-    """Base class for sniffer errors."""
-
-    pass
-
-
-class SnifferTypeError(SnifferError, TypeError):
-    """Raised when a sniffer encounters an unexpected type."""
-
-    pass
-
-
-class SnifferExistsError(SnifferError, FileNotFoundError):
-    """Raised when a sniffer encounters an unexpected content."""
-
-    pass
-
-
-class SnifferContentError(SnifferError, TypeError):
-    """Raised when a sniffer encounters an unexpected content."""
-
-    pass
-
-
-class SnifferNotImplementedError(SnifferError, NotImplementedError):
-    """Raised when a sniffer function is not implemented."""
-
-    pass
-
-
-# ---- from ------------------------------------------------------------
-
-
-class ParserError(Exception):
-    """Base class for parser errors."""
-
-    pass
-
-
-class ParserTypeError(ParserError, TypeError):
-    """Raised when a parser encounters an unexpected type."""
-
-    pass
-
-
-class ParserExistsError(ParserError, FileNotFoundError):
-    """Raised when a parser encounters an unexpected content."""
-
-    pass
-
-
-class ParserContentError(ParserError, TypeError):
-    """Raised when a parser encounters an unexpected content."""
-
-    pass
-
-
-class ParserNotImplementedError(ParserError, NotImplementedError):
-    """Raised when a parser function is not implemented."""
-
-    pass
-
-
-class AmbiguousFormatError(ParserError):
-    """
-    Raised when several parsers claim the same content, equally well.
-
-    Reaching this means two parsers agree on the confidence score, the
-    extension they matched, the constraints they declare and their
-    explicit priority, yet build different objects. There is no
-    meaningful way to choose between them, and picking one at random
-    would silently return the wrong kind of object.
-
-    The message is written for the user who hit it: it names each
-    candidate format, and the `hint=` value (or the format's own `load`)
-    that reads the content as that format.
-
-    If the formats should be able to tell such content apart, the fix
-    belongs in the parsers, not in the caller: give one of them a
-    sniffer that can tell the two apart (a magic number, an intent code,
-    a filename constraint), or set an explicit `PRIORITY`.
-    """
-
-    pass
-
-
-# ---- to ------------------------------------------------------------
-
-
-class WriterError(ParserError):
-    """Base class for writer errors."""
-
-    pass
-
-
-class WriterNotImplementedError(WriterError, NotImplementedError):
-    """Raised when a writer function is not implemented."""
-
-    pass
-
-
-class UnrepresentableTransformationError(WriterError):
-    """
-    Raised when a transformation cannot be encoded in the target format.
-
-    A format that stores only affine geometry, such as NIfTI, cannot hold
-    an arbitrary transformation. When the object being written carries one
-    that the format has no way to represent, the writer raises this error
-    rather than resampling the data or discarding the transformation. The
-    message names the transformation that could not be written.
-    """
-
-    pass
-
 
 # ----------------------------------------------------------------------
 #   CONFIDENCE

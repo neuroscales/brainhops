@@ -20,16 +20,16 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine
 from brainhops.io.base import FileBasedObject, WritableFileBasedObject
-from brainhops.io.base.mrtrix import (
-    MrtrixHeader,
-    dtype_to_mrtrix,
-    mrtrix_dtype,
-    parse_layout,
-)
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     ParserError,
+)
+from brainhops.io.common.mrtrix import (
+    MrtrixHeader,
+    dtype_to_mrtrix,
+    mrtrix_dtype,
+    parse_layout,
 )
 from brainhops.io.images import FileBasedImage, WritableFileBasedImage
 from brainhops.io.images.mrtrix import MrtrixImage
@@ -587,7 +587,7 @@ def test_the_written_bytes_follow_the_layout(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_written_file_starts_as_mrtrix_writes_it(tmp_path) -> None:  # noqa: ANN001
-    image = MrtrixImage.from_other(SingleScaleImage(data=DATA))
+    image = MrtrixImage.from_any(SingleScaleImage(data=DATA))
     content = image.to_bytes()
     lines = content.split(b"\n")
     assert lines[0] == b"mrtrix image"

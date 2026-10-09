@@ -1,6 +1,6 @@
 """Tests for orientation datamodel compatibility."""
 
-from brainhops.datamodel.orientation import AnatomicalOrientation, LeftToRight
+from brainhops.datamodel.orientations import AnatomicalOrientation, LeftToRight
 
 
 def test_anatomical_orientation_accepts_plain_string_values() -> None:

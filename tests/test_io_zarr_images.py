@@ -22,14 +22,17 @@ from brainhops.datamodel.axes import (
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Affine
 from brainhops.io.base.parsers import WriterError
-from brainhops.io.images.zarr import (
+
+# `brainhops.io.images.zarr` imports abczarr itself, so the skip has to
+# come before the import, not after it.
+abczarr = pytest.importorskip("abczarr")
+
+from brainhops.io.images.zarr import (  # noqa: E402
     OmeImageError,
     OmeZarrImage,
     ZarrImage,
     _axisorder,
 )
-
-abczarr = pytest.importorskip("abczarr")
 
 # Reading an OME-Zarr displacement/coordinate field identifies the vector
 # component axis from the field array's OME metadata or its zarr v3

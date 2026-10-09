@@ -11,9 +11,12 @@ restriction returns `None` for an identity piece.
 import numpy as np
 import typing_extensions as tx
 
+# api
+from brainhops.errors import RestrictionError
+
 # internals
-from .base import Transformation
-from .concrete import (
+from ..base import Transformation
+from ..concrete import (
     Affine,
     Identity,
     Permutation,
@@ -21,12 +24,11 @@ from .concrete import (
     TransformationField,
     Translation,
 )
-from .errors import RestrictionError
+from ..inverse import Inverse
+from ..meta import SubspaceTransformation
+from ..sequence import Sequence, _interpolates
 from .factor import _element_ndim, _read_pattern
-from .inverse import Inverse
-from .meta import SubspaceTransformation
 from .restrict import embed, embedder, restrict, restrictor
-from .sequence import Sequence, _interpolates
 from .utils import UNREADABLE, affine_matrix, axis_list
 
 # ----------------------------------------------------------------------

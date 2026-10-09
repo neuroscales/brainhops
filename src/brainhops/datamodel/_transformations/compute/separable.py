@@ -1,3 +1,5 @@
+# FIXME: module should be renamed to separable_pull
+
 """Reslice an image by executing the normal form of its transformation.
 
 A reslice applies a voxel-to-voxel transformation to image data by
@@ -37,14 +39,14 @@ from brainhops._core.bsplines import pull, pull_axes, spline_matrix
 # api
 from brainhops.backends import copy_array, get_array_backend, may_share_memory
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import _axes_or_unknown
+from brainhops.datamodel._sugar import get_axes
+from brainhops.errors import CompositionError, ConversionError
 
 # locals
-from .base import Transformation
-from .concrete import Affine, CartesianField, Permutation
-from .errors import CompositionError, ConversionError
-from .meta import SubspaceTransformation
-from .sequence import Sequence, _interpolates
+from ..base import Transformation
+from ..concrete import Affine, CartesianField, Permutation
+from ..meta import SubspaceTransformation
+from ..sequence import Sequence, _interpolates
 from .utils import axis_list
 
 # ======================================================================
@@ -365,7 +367,7 @@ def _discrete_axis(
     ):
         # Positional access reads the axes an open system states, and an
         # unknown axis, which is not discrete, anywhere else.
-        axes = _axes_or_unknown(system)
+        axes = get_axes(system)
         for a in axis_index:
             if axes.ndim is not None and a >= axes.ndim:
                 continue

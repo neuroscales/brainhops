@@ -3,9 +3,10 @@ __all__ = ["load", "sniff"]
 # dependencies
 import typing_extensions as tx
 
-# internals
+# core
 from brainhops._core.path import FileOrContentLike
 
+# internals
 from ._base import FileBasedObject
 
 

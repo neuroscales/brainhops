@@ -52,18 +52,24 @@ from dataclasses import dataclass, field
 import numpy as np
 import typing_extensions as tx
 
+# api
+from brainhops.errors import (
+    CompositionError,
+    ConversionError,
+    RestrictionError,
+)
+
 # internals
-from .base import Transformation
-from .concrete import CartesianField, Identity, Permutation, is_identity
-from .errors import CompositionError, ConversionError, RestrictionError
-from .meta import SubspaceTransformation
+from ..base import Transformation
+from ..concrete import CartesianField, Identity, Permutation
+from ..meta import SubspaceTransformation
 from .restrict import restrict
 from .utils import UNREADABLE, affine_matrix, axis_list
 
 # typing
 if tx.TYPE_CHECKING:
-    from .modes import ModeLike
-    from .sequence import Sequence
+    from ..modes import ModeLike
+    from ..sequence import Sequence
     from .simplify import SimplifyLike
 
 
@@ -164,7 +170,7 @@ def factor_sequence(
     >>> [f.input_axes.tolist() for f in body[:2]]
     [[0], [1]]
     """
-    from .sequence import _unnest
+    from ..sequence import _unnest
 
     if cache is None:
         cache = PatternCache()
@@ -317,8 +323,8 @@ def _element_ndim(
     # full dimensionality; an affine-ish element is read from its matrix
     # shape; a lazy inverse is read from its forward, transposed, so it is
     # never materialized.
-    from .inverse import Inverse
-    from .sequence import _interpolates
+    from ..inverse import Inverse
+    from ..sequence import _interpolates
 
     if isinstance(element, (SubspaceTransformation, Identity)):
         return ndim, ndim
@@ -347,8 +353,8 @@ def _read_pattern(
 ) -> tx.Optional[np.ndarray]:
     # The element's `(no, ni)` boolean dependency pattern in the work view,
     # or `None` when it cannot be read.
-    from .inverse import Inverse
-    from .sequence import Sequence, _interpolates
+    from ..inverse import Inverse
+    from ..sequence import Sequence, _interpolates
 
     if isinstance(element, Sequence):
         # A nested sub-chain (e.g. a subspace inner that composed only
@@ -391,7 +397,7 @@ def _read_pattern(
 def _subspace_pattern(
     element: SubspaceTransformation, ndim: int
 ) -> tx.Optional[np.ndarray]:
-    from .sequence import _interpolates
+    from ..sequence import _interpolates
 
     inner = element.transformation
     in_axes = axis_list(element.input_axes)
@@ -584,13 +590,13 @@ def _inner_is_identity(inner: tx.Optional[Transformation]) -> bool:
     # identity affine sub-block -- is recognized and dropped. An interpolating
     # inner (a field) is only ever checked structurally, so a field factor is
     # never dropped by reading its values.
-    from .sequence import _interpolates
+    from ..sequence import _interpolates
 
     if inner is None:
         return True
     if _interpolates(inner):
-        return is_identity(inner, compute=False)
-    return is_identity(inner, compute=True)
+        return inner.is_identity(compute=False)
+    return inner.is_identity(compute=True)
 
 
 def _build_factors(
@@ -600,7 +606,7 @@ def _build_factors(
     simplify: "SimplifyLike",
 ) -> tx.Optional[tx.List[SubspaceTransformation]]:
     # `None` when the pieces of some group cannot be composed.
-    from .sequence import Sequence
+    from ..sequence import Sequence
 
     factors: tx.List[SubspaceTransformation] = []
     for group in groups:

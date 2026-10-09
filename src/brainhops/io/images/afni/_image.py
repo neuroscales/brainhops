@@ -10,6 +10,7 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 # internals
+from brainhops._core.properties import smartproperty
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
@@ -19,7 +20,8 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base.afni import (
+from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common.afni import (
     AFNI_VIEWS,
     AfniHeader,
     AfniParser,
@@ -31,7 +33,6 @@ from brainhops.io.base.afni import (
     brick_code,
     brick_dtype,
 )
-from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.images.base import WritableFileBasedImage
 
 _INDEX = "index"
@@ -188,36 +189,24 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
 
     # --- data model ---------------------------------------------------
 
-    @property
+    @smartproperty
     def data(self) -> tx.Optional[tx.Any]:
         """The image data, scaled, unless set explicitly."""
-        if getattr(self, "_data", None) is not None:
-            return self._data
         data = self._scaled_data()
         if data is not None and data is not getattr(self, "dataobj", None):
             self._data = data
         return data
 
-    @data.setter
-    def data(self, value: tx.Optional[tx.Any]) -> None:
-        self._data = value
-
-    @property
+    @smartproperty
     def system(self) -> tx.Optional[CoordinateSystem]:
         """The voxel coordinate system, derived from the header, unless
         set explicitly. `None` when there is no header."""
-        if getattr(self, "_system", None) is not None:
-            return self._system
         if self.header is None:
             return None
         axes = _afni_axes(self.header)
         return CoordinateSystem(name="voxel", axes=axes, order="F")
 
-    @system.setter
-    def system(self, value: tx.Optional[CoordinateSystem]) -> None:
-        self._system = value
-
-    @property
+    @smartproperty(unset="empty")
     def transformations(self) -> tx.List[Transformation]:
         """The voxel-to-world transformations recorded by the header,
         decoded on access unless set explicitly.
@@ -225,15 +214,9 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         An image built from data alone has no header, so it records no
         transformation and the list is empty.
         """
-        if getattr(self, "_transformations", None):
-            return self._transformations
         if self.header is None:
             return list(getattr(self, "_transformations", None) or [])
         return _afni_to_transformations(self.header)
-
-    @transformations.setter
-    def transformations(self, value: tx.List[Transformation]) -> None:
-        self._transformations = value
 
     # --- writing ------------------------------------------------------
 

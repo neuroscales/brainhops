@@ -663,7 +663,7 @@ transformation endpoint `input=None`/`output=None` is **not** the same as
 - An **explicit system is always kept** as given, even `CoordinateSystem()`.
   It does not defer.
 - Code that needs the axes of a possibly missing endpoint reads them with
-  `_axes_or_unknown(system)`, which maps `None` to `[...]` and nothing
+  `get_axes(system)`, which maps `None` to `[...]` and nothing
   else.
 
 An earlier iteration treated an endpoint that "says nothing" as `None`

@@ -2,17 +2,15 @@
 import numpy as np
 import typing_extensions as tx
 
-# api
-from brainhops.datamodel.systems import _axes_or_unknown
-
-# internals
-from .errors import ConversionError
+# datamodel
+from brainhops.datamodel._sugar import get_axes
+from brainhops.errors import ConversionError
 
 if tx.TYPE_CHECKING:
     # internals
     from brainhops.datamodel.systems import CoordinateSystem
 
-    from .base import Transformation
+    from ..base import Transformation
 
 
 def get_ndim(
@@ -23,9 +21,9 @@ def get_ndim(
     `default` is returned when neither system is closed: a missing or an
     open system says nothing about the number of axes.
     """
-    ndim = _axes_or_unknown(t.input).ndim
+    ndim = get_axes(t.input).ndim
     if ndim is None:
-        ndim = _axes_or_unknown(t.output).ndim
+        ndim = get_axes(t.output).ndim
     return default if ndim is None else ndim
 
 
@@ -50,8 +48,8 @@ def systems_disagree(
     [`adapt`][] is what removes a disagreement.
     """
     source_axes, target_axes = (
-        _axes_or_unknown(source),
-        _axes_or_unknown(target),
+        get_axes(source),
+        get_axes(target),
     )
     if source_axes.is_open or target_axes.is_open:
         return not source_axes.compatible_with(target_axes)
@@ -102,7 +100,7 @@ def require_endomorphism(t: "Transformation", operator: str) -> None:
     DomainError
         If `t` does not map a space to itself.
     """
-    from .errors import DomainError
+    from ....errors import DomainError
 
     kind = type(t).__name__
     if systems_disagree(t.input, t.output):
@@ -158,9 +156,8 @@ def axis_counts(
 
     Reading never materializes a lazy inverse or composes a sequence.
     """
-    from .base import Transformation
-    from .checkers import _matrix_dims
-    from .concrete import (
+    from ..base import Transformation
+    from ..concrete import (
         Affine,
         CartesianField,
         CoordinatesField,
@@ -170,9 +167,10 @@ def axis_counts(
         Scaling,
         Translation,
     )
-    from .inverse import Inverse
-    from .operators import Operation
-    from .sequence import Sequence
+    from ..inverse import Inverse
+    from ..operators import Operation
+    from ..sequence import Sequence
+    from .checkers import _matrix_dims
 
     if not isinstance(t, Transformation):
         return None, None
@@ -218,9 +216,9 @@ def axis_counts(
                 else:
                     ni = len(field.shape) - 1
     if ni is None:
-        ni = _axes_or_unknown(getattr(t, "_input", None)).ndim
+        ni = get_axes(getattr(t, "_input", None)).ndim
     if no is None:
-        no = _axes_or_unknown(getattr(t, "_output", None)).ndim
+        no = get_axes(getattr(t, "_output", None)).ndim
     return ni, no
 
 
@@ -240,8 +238,8 @@ def _sequence_ends(
 def _first_count(
     members: tx.List["Transformation"], side: int
 ) -> tx.Optional[int]:
+    from ..sequence import Sequence
     from .factor import _element_ndim
-    from .sequence import Sequence
 
     for member in members:
         counts = axis_counts(member)
@@ -270,7 +268,7 @@ def affine_matrix(t: "Transformation") -> tx.Any:
     `UNREADABLE` when it cannot be converted to an `Affine` at all.
     Never call it on a lazy `Inverse`: converting one materializes it.
     """
-    from .concrete import Affine
+    from ..concrete import Affine
 
     try:
         affine = t.to(Affine)

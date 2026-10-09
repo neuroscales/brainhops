@@ -34,9 +34,8 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import kinds
 
 # internals
-from .base import Transformation
-from .check import checker, is_kind, register_kind_alias
-from .concrete import (
+from ..base import Transformation
+from ..concrete import (
     Affine,
     CartesianField,
     CoordinatesField,
@@ -47,14 +46,15 @@ from .concrete import (
     TransformationField,
     Translation,
 )
-from .inverse import Inverse
-from .meta import (
+from ..inverse import Inverse
+from ..meta import (
     Bijection,
     MetaTransformation,
     Projection,
     SubspaceTransformation,
 )
-from .operators import Sqrt
+from ..operators import Sqrt
+from .check import checker, is_kind, register_kind_alias
 
 
 def identity_from(field: str) -> tx.Callable:

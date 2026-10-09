@@ -17,7 +17,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.base.zarr import (
+from brainhops.io.common.zarr import (
     StoreLike,
     ZarrParserWriter,
     _as_node,

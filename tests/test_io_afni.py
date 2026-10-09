@@ -25,15 +25,6 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling
 from brainhops.io.base import FileBasedObject, WritableFileBasedObject
-from brainhops.io.base.afni import (
-    DICOM_TO_RAS,
-    AfniHeader,
-    afni_cardinal_matrix,
-    afni_dataset_files,
-    afni_geometry_from_matrix,
-    afni_view,
-    brick_dtype,
-)
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -42,6 +33,15 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.base.specs import format_hints
+from brainhops.io.common.afni import (
+    DICOM_TO_RAS,
+    AfniHeader,
+    afni_cardinal_matrix,
+    afni_dataset_files,
+    afni_geometry_from_matrix,
+    afni_view,
+    brick_dtype,
+)
 from brainhops.io.images import FileBasedImage, WritableFileBasedImage
 from brainhops.io.images.afni import AfniImage
 

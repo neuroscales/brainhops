@@ -222,6 +222,9 @@ def test_qualification_distinguishes_ambiguous_leaf_hints() -> None:
 
 
 def test_builtin_formats_expose_semantic_hint_namespaces() -> None:
+    # The FSL and NIfTI formats are registered only with nibabel.
+    pytest.importorskip("nibabel")
+
     from brainhops.io.transformations.fsl.flirt import FlirtTransform
     from brainhops.io.transformations.itk.tfm import TfmTransform
     from brainhops.io.transformations.nifti.affines import NiftiVoxelToRAS

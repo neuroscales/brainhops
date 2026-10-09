@@ -92,7 +92,7 @@ you mean:
 ```python
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
-NiftiVoxelToRAS.from_other(affine).save("affine.nii")
+NiftiVoxelToRAS.from_any(affine).save("affine.nii")
 ```
 
 An LTA file says which coordinate systems its affine maps between, so a

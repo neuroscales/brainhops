@@ -46,6 +46,8 @@ There are two entry points:
    leaves the extra axes unchanged.
 """
 
+__all__ = ["bridge", "adapt"]
+
 # externals
 import warnings
 from functools import partial
@@ -54,29 +56,28 @@ import numpy as np
 import typing_extensions as tx
 
 # api
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import (
     ArrayCoordinateSystem,
     CoordinateSystem,
-    _axes_or_unknown,
 )
 from brainhops.datamodel.units import Unit, is_indexunit, is_physicalunit
+from brainhops.errors import AdaptationError
 
 # internals
-from .base import Transformation
-from .concrete import (
+from ..base import Transformation
+from ..concrete import (
     CartesianField,
     Identity,
     Permutation,
     Scaling,
     Translation,
-    is_identity,
 )
-from .errors import AdaptationError
-from .meta import SubspaceTransformation
-from .registries import register_adapt
-from .sequence import Sequence, _interpolates
+from ..meta import SubspaceTransformation
+from ..nocycles import register_adapt
+from ..sequence import Sequence, _interpolates
 from .utils import systems_disagree
 
 Extents = tx.Union[tx.Sequence[tx.Optional[int]], tx.Mapping[tx.Any, int]]
@@ -164,8 +165,8 @@ def bridge(
     # --- special cases ------------------------------------------------
     # Only two closed systems can be bridged. A missing system is open too:
     # it reads as `[...]`.
-    source_axes = _axes_or_unknown(source)
-    target_axes = _axes_or_unknown(target)
+    source_axes = get_axes(source)
+    target_axes = get_axes(target)
     if source_axes.is_open or target_axes.is_open:
         if source_axes.compatible_with(target_axes):
             return Identity(input=source, output=target)
@@ -442,11 +443,11 @@ def _unmatched_report(
 ) -> tx.NoReturn:
     matched_source = {i for i in match if i is not None}
     unmatched_target = [
-        axis for axis, i in zip(_axes_or_unknown(target), match) if i is None
+        axis for axis, i in zip(get_axes(target), match) if i is None
     ]
     unmatched_source = [
         axis
-        for i, axis in enumerate(_axes_or_unknown(source))
+        for i, axis in enumerate(get_axes(source))
         if i not in matched_source
     ]
 
@@ -474,7 +475,7 @@ def _cannot_bridge_report(
 ) -> tx.NoReturn:
     source_name = getattr(source, "name", None) or "the source system"
     target_name = getattr(target, "name", None) or "the target system"
-    which = "the source" if _axes_or_unknown(source).is_open else "the target"
+    which = "the source" if get_axes(source).is_open else "the target"
     raise AdaptationError(
         f"Cannot bridge {source_name} to {target_name}: {which} system is "
         f"open (its axes hold `...`), and the axes it states do not match "
@@ -590,8 +591,8 @@ def adapt(
     # axes. An open one that disagrees with its neighbour is refused by the
     # bridge below.
     n_source, n_target = (
-        _axes_or_unknown(source).ndim,
-        _axes_or_unknown(target).ndim,
+        get_axes(source).ndim,
+        get_axes(target).ndim,
     )
     if n_source is not None and n_target is not None and n_source != n_target:
         # One transform acts on a subset of the other's axes. Embed the
@@ -634,7 +635,7 @@ def adapt(
             allow_positional=allow_positional,
             allow_type_grouped_positional=allow_type_grouped_positional,
         )
-        if is_identity(reconciler):
+        if reconciler.is_identity():
             pieces = [first, second]
         elif isinstance(reconciler, Sequence):
             pieces = [first, *(reconciler.transformations or []), second]
@@ -708,9 +709,9 @@ def embed(
     # the fuller system has and the subset does not.
     sub_input = transform.input
     sub_output = transform.output
-    full_axes = _axes_or_unknown(full)
-    in_axes = _axes_or_unknown(sub_input)
-    out_axes = _axes_or_unknown(sub_output)
+    full_axes = get_axes(full)
+    in_axes = get_axes(sub_input)
+    out_axes = get_axes(sub_output)
     if any(axes.is_open for axes in (full_axes, in_axes, out_axes)):
         return None
     if len(in_axes) != len(out_axes):
@@ -755,7 +756,7 @@ def embed(
     # --- embed input --------------------------------------------------
     if side == "input":
         sub_bridge = make_bridge(sub_full, sub_input)
-        if is_identity(sub_bridge):
+        if sub_bridge.is_identity():
             inner: Transformation = transform
         else:
             inner = Sequence(
@@ -774,7 +775,7 @@ def embed(
     # --- embed output -------------------------------------------------
     else:
         sub_bridge = make_bridge(sub_output, sub_full)
-        if is_identity(sub_bridge):
+        if sub_bridge.is_identity():
             inner = transform
         else:
             inner = Sequence(
@@ -1099,7 +1100,7 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
     and its clearing reads the input side.
     """
     if isinstance(t, CartesianField) and t.shape is not None:
-        axes = _axes_or_unknown(t.output if at_output else t.input)
+        axes = get_axes(t.output if at_output else t.input)
         if axes.is_open:
             # The grid's shape gives the number of axes of an open system.
             axes = axes.expand(len(t.shape))

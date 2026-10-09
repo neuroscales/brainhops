@@ -27,7 +27,7 @@ from brainhops.backends import get_array_backend
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 
 # io
 from brainhops.io.base.parsers import (
@@ -89,7 +89,7 @@ class _X5RASDisplacements(_xforms.ImmutableSequence):
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition used outside of the field of view."""
 
-    coeff: tx.ClassVar[bool] = False
+    store: tx.ClassVar[StoreEnum] = StoreEnum.values
     """Whether the field holds spline coefficients rather than values."""
 
     @classmethod
@@ -101,7 +101,7 @@ class _X5RASDisplacements(_xforms.ImmutableSequence):
                 vox2ras,
                 degree=cls.degree,
                 bound=cls.bound,
-                coeff=cls.coeff,
+                store=cls.store,
             )
         )
 
@@ -155,13 +155,13 @@ class X5BSplineField(_X5RASDisplacements):
     | Slot           | Transformation                                   |
     | -------------- | ------------------------------------------------ |
     | `ras2voxel`    | RAS world coordinates to the knot grid           |
-    | `displacement` | the coefficients, in knot-grid units (`coeff`)   |
+    | `displacement` | the coefficients, in knot-grid units            |
     | `voxel2ras`    | the knot grid back to RAS world                  |
     """
 
     degree: tx.ClassVar[int] = _BSPLINE_DEGREE
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.zeros
-    coeff: tx.ClassVar[bool] = True
+    store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
 
 
 class X5CoordinatesField(_xforms.ImmutableSequence):
@@ -186,7 +186,7 @@ class X5CoordinatesField(_xforms.ImmutableSequence):
         vox2ras = np.asarray(vox2ras, dtype=np.float64)
         compact = vox2ras[:-1]
         return cls(
-            transformations=(
+            (
                 RASToVoxel(matrix=_affines.inv(compact)),
                 RASCoordinatesField(field=coordinates),
             )
@@ -379,8 +379,12 @@ def _vector_last(node: X5Node) -> ArrayProtocol:
 # ----------------------------------------------------------------------
 
 
-def _name(system: tx.Any) -> str:
-    return "an unspecified system" if system is None else type(system).__name__
+def _name(system: tx.Optional[_systems.CoordinateSystem]) -> str:
+    if name := getattr(system, "name", None):
+        return name
+    if system is not None:
+        return type(system).__name__
+    return "an unspecified system"
 
 
 def _check_ras(xform: _xforms.Transformation, what: str) -> None:
@@ -404,9 +408,9 @@ def transformation_to_nodes(
       NIfTI `DISPVECT` field, or any chain of an affine, a
       `DisplacementField` and an affine) is one `nonlinear` node that
       stores `displacements`.
-    - The same chain whose field holds spline coefficients (`coeff`),
-      such as an [`X5BSplineField`][], is one `nonlinear` `bspline`
-      node that stores `coefficients`: the field's `coeff` flag selects
+    - The same chain whose field holds spline coefficients, such as an
+      [`X5BSplineField`][], is one `nonlinear` `bspline`
+      node that stores `coefficients`: the field's `store` flag selects
       which of the two a displacement field is written as. X5 stores
       cubic coefficients with a zero boundary, so coefficients of
       another degree or boundary are refitted to those.
@@ -424,7 +428,7 @@ def transformation_to_nodes(
     chain = _chain(xform)
     if chain is not None:
         if len(chain) == 3 and isinstance(chain[1], _xforms.DisplacementField):
-            if chain[1].coeff:
+            if chain[1].store is StoreEnum.coefficients:
                 return [_encode_bspline(xform, chain)]
             return [_encode_displacements(xform, chain)]
         if len(chain) == 2 and isinstance(chain[1], _xforms.CoordinatesField):
@@ -495,7 +499,7 @@ def _encode_bspline(
         chain,
         "An X5 B-spline",
         ndim=_NDIM,
-        coeff=True,
+        store=StoreEnum.coefficients,
         degree=_BSPLINE_DEGREE,
         bound=BoundaryCondition.zeros,
     )
@@ -518,7 +522,7 @@ def _encode_coordinates(
     what = "An X5 coordinates field"
     ras2vox = homogeneous_matrix(chain[0], what, ndim=_NDIM)
     # X5 stores sampled coordinates.
-    field = chain[1].to(coeff=False)
+    field = chain[1].to(store=StoreEnum.values)
     if field.data is None:
         raise UnrepresentableTransformationError(
             "This field has no coordinates, so there is nothing to write."

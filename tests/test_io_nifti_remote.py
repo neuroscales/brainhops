@@ -25,7 +25,7 @@ nb = pytest.importorskip("nibabel")
 from bagof.paths import Path  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
-from brainhops.io.base import nifti as nifti_base  # noqa: E402
+from brainhops.io.common import nifti as nifti_base  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS  # noqa: E402
 

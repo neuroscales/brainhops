@@ -35,15 +35,16 @@ import typing_extensions as tx
 
 # internals
 from brainhops.backends import get_array_backend
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
-from brainhops.datamodel.orientation import Orientation
-from brainhops.datamodel.systems import CoordinateSystem, _axes_or_unknown
+from brainhops.datamodel.orientations import Orientation
+from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
-    ConversionError,
     Sequence,
     Transformation,
 )
+from brainhops.errors import ConversionError
 from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
@@ -84,7 +85,7 @@ def ras_conversion(system: tx.Optional[CoordinateSystem]) -> np.ndarray:
     """
     # An axis about which nothing is known, including the `...` of a
     # missing space, carries no orientation.
-    axes = _axes_or_unknown(system)[:3]
+    axes = get_axes(system)[:3]
     mapping = []
     for axis in axes:
         value = getattr(getattr(axis, "orientation", None), "value", None)

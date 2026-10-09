@@ -1,4 +1,8 @@
 """Helpers for formats whose header and data may live in separate files."""
+# FIXME: everything else is based on the use of `bagof.paths.Path` or
+# `pathlib.Path` objects. Why work with string and os/os.path here? Can
+# we keep working with Paths everywhere? If we do need (path-based)
+# utilities, can we make the generic enough and move them to _core.path?
 
 __all__ = ["local_path", "open_path", "sibling"]
 

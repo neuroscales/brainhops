@@ -2,7 +2,7 @@
 import numpy as np
 
 # internals
-from brainhops.io.base.freesurfer import (
+from brainhops.io.common.freesurfer import (
     code2orient,
     fs_phys2ras,
     fs_vox2phys,

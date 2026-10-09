@@ -125,11 +125,12 @@ from bagof.dispatchers import Function, Super
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import AxisList, _axes_or_unknown
+from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel.systems import AxisList
 
 # typing
 if tx.TYPE_CHECKING:
-    from .base import Transformation as _Transformation
+    from ..base import Transformation as _Transformation
 
 Transformation: tx.TypeAlias = "_Transformation"
 Kind: tx.TypeAlias = tx.Type[kinds.TransformationKind]
@@ -137,6 +138,7 @@ Kind: tx.TypeAlias = tx.Type[kinds.TransformationKind]
 One node of the [`kinds`][] hierarchy -- a set node or, since every
 concrete transform is registered into the hierarchy, a class kind.
 """
+
 Family: tx.TypeAlias = kinds.TransformationFamily
 Key: tx.TypeAlias = tx.Tuple[tx.Type[Transformation], Kind]
 Checker: tx.TypeAlias = tx.Callable[[Transformation, Kind, bool], bool]
@@ -493,9 +495,7 @@ def is_family(x: Transformation, family: FamilyLike) -> bool:
     # `space` holds only unknown axes, so only the numbers of axes can
     # clash with it.
     space = AxisList([...]).expand(family.ndim)
-    return all(
-        _axes_or_unknown(e).compatible_with(space) for e in (x.input, x.output)
-    )
+    return all(get_axes(e).compatible_with(space) for e in (x.input, x.output))
 
 
 # --- Public helpers ---------------------------------------------------

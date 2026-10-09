@@ -59,40 +59,34 @@ __all__ = [
     "is_permutation",
     "is_rotation",
     "is_linear",
-    # errors
-    "ConversionError",
-    "LossyConversionError",
-    "CompositionError",
-    "AdaptationError",
-    "DomainError",
 ]
 
+# The errors a transformation raises live in `brainhops.errors`, which is
+# their only home: io raises them too, so neither layer owns them.
+
+from .base import Transformation
+
 # Registration into registries
-from . import adaptors as _adaptors  # noqa: F401, F403
-from . import checkers as _checkers  # noqa: F401, F403
-from . import composers as _composers  # noqa: F401, F403
-from . import converters as _converters  # noqa: F401, F403
-from . import restrictors as _restrictors  # noqa: F401, F403
-from . import simplifiers as _simplifiers  # noqa: F401, F403
+from .compute import adaptors as _adaptors  # noqa: F401, F403
+from .compute import checkers as _checkers  # noqa: F401, F403
+from .compute import composers as _composers  # noqa: F401, F403
+from .compute import converters as _converters  # noqa: F401, F403
+from .compute import restrictors as _restrictors  # noqa: F401, F403
+from .compute import simplifiers as _simplifiers  # noqa: F401, F403
 
 # Import public symbols into the package namespace
-from .base import Transformation
-from .check import is_kind
+from .compute.check import is_kind
+from .compute.simplify import SimplifyLike, SimplifyPolicy, SimplifyTable
 from .concrete import (
     Affine,
-    AffineExponential,
     CartesianField,
     CoordinatesField,
     DisplacementField,
     Identity,
     Linear,
-    LinearExponential,
     Permutation,
     Rotation,
-    RotationExponential,
     Scaling,
-    ScalingExponential,
-    StationaryVelocityField,
     Translation,
     is_identity,
     is_linear,
@@ -100,13 +94,6 @@ from .concrete import (
     is_rotation,
     is_scaling,
     is_translation,
-)
-from .errors import (
-    AdaptationError,
-    CompositionError,
-    ConversionError,
-    DomainError,
-    LossyConversionError,
 )
 from .inverse import (
     Inverse,
@@ -129,4 +116,10 @@ from .modes import ModeLike
 from .multiscale import Multiscale, MultiscaleField
 from .operators import UNARY_OPERATORS, Sqrt
 from .sequence import ImmutableSequence, MutableSequence, Sequence
-from .simplify import SimplifyLike, SimplifyPolicy, SimplifyTable
+from .tangents import (
+    AffineExponential,
+    LinearExponential,
+    RotationExponential,
+    ScalingExponential,
+    StationaryVelocityField,
+)

@@ -310,7 +310,7 @@ def test_bspline_degree(degree: int) -> None:
     block = io.load(FILES[name])[0]
     assert block.degree == degree
     assert block.displacement.degree == degree
-    assert block.displacement.coeff is True
+    assert block.displacement.store == "coefficients"
 
 
 def test_bspline_grid_index_moves_the_first_coefficient() -> None:

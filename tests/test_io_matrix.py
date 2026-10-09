@@ -18,13 +18,13 @@ import pytest
 import scipy.io
 
 from brainhops.datamodel import systems
-from brainhops.io.base import arrays
 from brainhops.io.base.parsers import (
     BinaryFileParser,
     Confidence,
     ParserContentError,
     TextFileParser,
 )
+from brainhops.io.common import arrays
 from brainhops.io.transformations import FileBasedTransformation, load, sniff
 from brainhops.io.transformations.matrix import (
     CsvMatrixAffine,

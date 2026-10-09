@@ -13,7 +13,8 @@ from brainhops.datamodel import transformations as _xforms
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.arrays import (
+from brainhops.io.base.parsers import Confidence, ParserContentError
+from brainhops.io.common.arrays import (
     ArrayParser,
     CsvArrayParser,
     Mat73ArrayParser,
@@ -25,7 +26,6 @@ from brainhops.io.base.arrays import (
     TxtArrayParser,
     is_numeric_array,
 )
-from brainhops.io.base.parsers import Confidence, ParserContentError
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     FileBasedTransformation,

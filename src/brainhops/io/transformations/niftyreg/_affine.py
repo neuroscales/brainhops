@@ -6,13 +6,13 @@ import typing_extensions as tx
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.arrays import TxtArrayParser, is_numeric_array
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     TextFileParserWriter,
     WriterError,
 )
+from brainhops.io.common.arrays import TxtArrayParser, is_numeric_array
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 from brainhops.io.transformations.base.affines import RASToRAS
 

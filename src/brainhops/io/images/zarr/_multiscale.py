@@ -4,12 +4,14 @@ from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
 from bagof.magic import replace
 
-# internals
+# core
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
 # backends
 from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -19,16 +21,21 @@ from brainhops.datamodel.axes import (
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base._base import register_format
+
+# io
+from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.base.zarr import (
+from brainhops.io.common.zarr import (
     StoreLike,
     ZarrParserWriter,
     _as_node,
 )
 from brainhops.io.images.base import WritableFileBasedImage
 from brainhops.io.images.zarr import _axisorder
-from brainhops.io.images.zarr._ome import (
+from brainhops.io.transformations.zarr import _map
+
+from ._image import ZarrImage
+from ._ome import (
     OmeImageError,
     common_transformations,
     intrinsic_name,
@@ -41,9 +48,6 @@ from brainhops.io.images.zarr._ome import (
     system_axes,
     write_multiscale,
 )
-from brainhops.io.transformations.zarr import _map
-
-from ._image import ZarrImage
 
 _Ellipsis = type(Ellipsis)
 # The type of `...`. Python 3.10 names it `types.EllipsisType`.

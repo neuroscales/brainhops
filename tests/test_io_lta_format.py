@@ -2,7 +2,7 @@
 Tests for reading and writing FreeSurfer LTA files.
 
 LTA is a registered text format: `io.load`, `io.transformations.load`
-and `from_other` read a `.lta` file, found by its extension or by its
+and `from_any` read a `.lta` file, found by its extension or by its
 content, and `io.save` writes one. `LtaStruct` and `LtaTransformation`
 follow the shared parser contract (`load`, `save`, `to_bytes`,
 `to_fileobj`, ...).
@@ -294,11 +294,11 @@ def test_lta_is_a_registered_writable_format() -> None:
     [
         io.load,
         io.transformations.load,
-        FileBasedTransformation.from_other,
-        LtaTransformation.from_other,
+        FileBasedTransformation.from_any,
+        LtaTransformation.from_any,
         LtaTransformation.load,
     ],
-    ids=["io.load", "transformations.load", "from_other", "own", "own.load"],
+    ids=["io.load", "transformations.load", "from_any", "own", "own.load"],
 )
 @pytest.mark.parametrize("lta_type, system", TYPES, ids=TYPE_IDS)
 def test_every_type_is_read_through_dispatch(

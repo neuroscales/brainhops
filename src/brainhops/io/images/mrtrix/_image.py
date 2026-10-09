@@ -9,7 +9,7 @@ from bagof.magic import replace
 # internals
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -18,8 +18,13 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._geometry import Arrangement, declared_axes
-from brainhops.io.base.mrtrix import (
+from brainhops.io.base.parsers import (
+    Confidence,
+    UnrepresentableTransformationError,
+    WriterError,
+)
+from brainhops.io.common._geometry import Arrangement, declared_axes
+from brainhops.io.common.mrtrix import (
     MrtrixHeader,
     MrtrixParser,
     default_layout,
@@ -27,11 +32,6 @@ from brainhops.io.base.mrtrix import (
     parse_layout,
     split_voxel_to_scanner,
     voxel_to_ras,
-)
-from brainhops.io.base.parsers import (
-    Confidence,
-    UnrepresentableTransformationError,
-    WriterError,
 )
 from brainhops.io.images.base import WritableFileBasedImage
 

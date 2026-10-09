@@ -14,8 +14,8 @@ import numpy as np
 import pytest
 
 import brainhops._ext.invfield as invfield
-from brainhops.datamodel._transformations import factor as fac
 from brainhops.datamodel._transformations import sequence as seqmod
+from brainhops.datamodel._transformations.compute import factor as fac
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -441,8 +441,8 @@ def test_subspace_cancel_is_a_cost_free_pair_simplifier(
     # decline-able rewrite that `compose` consults first, before any
     # parameter-reading composer. It collapses the pair to the identity
     # without inverting the field.
-    from brainhops.datamodel._transformations.compose import compose
-    from brainhops.datamodel._transformations.simplify import (
+    from brainhops.datamodel._transformations.compute.compose import compose
+    from brainhops.datamodel._transformations.compute.simplify import (
         get_simplifiers,
         simplify,
     )
@@ -606,7 +606,7 @@ def test_sequence_inner_split_across_groups_is_kept() -> None:
 def test_unrestrictable_element_leaves_the_chain_unfactored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from brainhops.datamodel._transformations.errors import RestrictionError
+    from brainhops.errors import RestrictionError
 
     def refuse(*args: object) -> None:
         raise RestrictionError("cannot")

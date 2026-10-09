@@ -21,7 +21,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 
 # io
-from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
@@ -299,7 +299,7 @@ class ItkDisplacementBase(ItkBlockBase):
     cached, so opening a file never touches the warp data: a dask-backed
     or delayed array stays unread until the chain is asked for.
 
-    `degree`, `coeff` and `bound` are the spline parameters handed to the
+    `degree`, `store` and `bound` are the spline parameters handed to the
     [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField],
     and a subclass overrides them to describe its own encoding.
     """
@@ -307,7 +307,7 @@ class ItkDisplacementBase(ItkBlockBase):
     degree: tx.ClassVar[int] = 1
     """The spline degree used to interpolate the field."""
 
-    coeff: tx.ClassVar[bool] = False
+    store: tx.ClassVar[StoreEnum] = StoreEnum.values
     """Whether the field holds spline coefficients rather than values."""
 
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
@@ -344,7 +344,7 @@ class ItkDisplacementBase(ItkBlockBase):
         """The warp array on its own grid, in voxel units.
 
         It holds the warp's values, or their spline coefficients when
-        `coeff` is set, and becomes the `data` of the `displacement`.
+        `store` says so, and becomes the `data` of the `displacement`.
 
         ITK stores them as a flat, C-ordered block of world-space
         displacements, laid out either interleaved or planar -- see
@@ -402,7 +402,7 @@ class ItkDisplacementBase(ItkBlockBase):
             input=VOX,
             output=VOX,
             degree=self.degree,
-            coeff=self.coeff,
+            store=self.store,
             bound=self.bound,
         )
 
@@ -878,7 +878,7 @@ class ItkBSplineStruct(
     """
 
     degree: tx.ClassVar[int] = 3
-    coeff: tx.ClassVar[bool] = True
+    store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.zeros
     )

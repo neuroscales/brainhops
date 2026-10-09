@@ -17,7 +17,7 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.io.base.nifti import NiftiParser  # noqa: E402
+from brainhops.io.common.nifti import NiftiParser  # noqa: E402
 
 DATA = Path(__file__).parent / "data"
 

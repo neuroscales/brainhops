@@ -3,6 +3,20 @@ This module contains utilities for working with "compact" affine matrices,
 i.e., M x (N+1) matrices that do not contain the homogeneous row.
 """
 
+__all__ = [
+    "to_homogeneous",
+    "to_compact",
+    "inv",
+    "axis_scales",
+    "matmul",
+    "matvec",
+    "lmdiv",
+    "rmdiv",
+    "expm",
+    "logm",
+    "sqrtm",
+]
+
 # stdlib
 from math import prod
 from types import ModuleType
@@ -12,8 +26,42 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 from numpy import broadcast_shapes
 
+# api
+from brainhops.backends import get_array_backend
+
 # locals
-from ..backends import get_array_backend
+from .linalg import expm as _expm
+from .linalg import logm as _logm
+from .linalg import sqrtm as _sqrtm
+
+
+def to_homogeneous(
+    matrix: ArrayProtocol, tangent: bool = False
+) -> ArrayProtocol:
+    """
+    Return the homogeneous version of a compact affine matrix.
+
+    It adds the homogeneous row `[0, ..., 0, 1]` to the bottom of the matrix,
+    unless `tangent=True`, in which case it adds the homogeneous row
+    `[0, ..., 0, 0]`.
+    """
+    # The square homogeneous matrix of a compact `(N, N + 1)` affine.
+    nx = get_array_backend(matrix)
+    nd = matrix.shape[-1] - 1
+    corner = 0 if tangent else 1
+    pad = nx.asarray([[0] * nd + [corner]])
+    full = nx.concatenate([matrix, pad], axis=-2)
+    return full
+
+
+def to_compact(matrix: ArrayProtocol) -> ArrayProtocol:
+    """
+    Return the compact version of a homogeneous affine matrix.
+
+    It removes the homogeneous row `[0, ..., 0, 1]` from the bottom of the
+    matrix.
+    """
+    return matrix[..., :-1, :]
 
 
 def inv(
@@ -330,3 +378,44 @@ def rmdiv(
     C[..., -1:] -= backend.matmul(C[..., :-1], B[..., -1:])
 
     return C
+
+
+def expm(
+    matrix: ArrayProtocol,
+    what: str = "The exponential of this affine tangent",
+) -> ArrayProtocol:
+    """The exponential of a compact `(N, N + 1)` affine tangent.
+
+    The tangent `[L, l]` is the top of the homogeneous generator
+    `[[L, l], [0, ..., 0]]`, whose exponential is a homogeneous affine;
+    its top `N` rows are returned. `L` may be singular: a translation has
+    the tangent `[0, t]`.
+    """
+    return to_compact(_expm(to_homogeneous(matrix, tangent=True), what))
+
+
+def logm(
+    matrix: ArrayProtocol,
+    what: str = "The logarithm of this affine",
+) -> ArrayProtocol:
+    """The principal logarithm of a compact `(N, N + 1)` affine.
+
+    It is the tangent `[L, l]`: the top `N` rows of the principal
+    logarithm of the homogeneous matrix, whose last row is `[0, ..., 0]`.
+
+    The matrix handed in is a map, so it is squared up with the affine
+    row `[0, ..., 0, 1]`; only the result is a tangent.
+    """
+    return to_compact(_logm(to_homogeneous(matrix), what))
+
+
+def sqrtm(
+    matrix: ArrayProtocol,
+    what: str = "The square root of this affine",
+) -> ArrayProtocol:
+    """The principal square root of a compact `(N, N + 1)` affine.
+
+    The matrix handed in is a map, and so is its square root, so both
+    carry the affine row `[0, ..., 0, 1]`.
+    """
+    return to_compact(_sqrtm(to_homogeneous(matrix), what))

@@ -1,5 +1,6 @@
-"""Units of measurement, backed by a private [pint](https://pint.readthedocs.io)
-registry.
+"""
+Units of measurement, backed by a private
+[pint](https://pint.readthedocs.io) registry.
 
 A [`Unit`][] is built from a name -- `Unit("mm")`, `Unit("millisecond")`,
 `Unit("s/mm^2")` -- and is an interned, hashable, picklable value: two
@@ -10,12 +11,10 @@ The name is parsed by [pint](https://pint.readthedocs.io), through a
 registry that belongs to brainhops and that is extended with the units
 imaging data needs: the *index* units (`index`, `voxel`, `pixel`, of
 dimension `index`), the arbitrary unit (`a.u.`) and the Hounsfield unit
-(`HU`). pint is imported, and the registry built, the first time a name is
-parsed, not when `brainhops` is imported. pint types never appear in the
-API, apart from the
-[`Unit.to_pint`][brainhops.datamodel.units.Unit.to_pint] and
-[`Unit.from_pint`][brainhops.datamodel.units.Unit.from_pint] escape
-hatches.
+(`HU`). pint is imported, and the registry built, the first time a name
+is parsed, not when `brainhops` is imported. pint types never appear in
+the API, apart from the [`Unit.to_pint`][] and [`Unit.from_pint`][]
+escape hatches.
 
 ## Units restricted to a dimension
 

@@ -7,7 +7,7 @@ from bagof.magic import replace
 from brainhops._core.dependencies import HAS_H5PY
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import (
@@ -17,7 +17,7 @@ from brainhops.datamodel.units import (
     is_physicalunit,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base.minc import MincDimension, MincParser
+from brainhops.io.common.minc import MincDimension, MincParser
 from brainhops.io.images.base import FileBasedImage
 
 _PHYSICAL = "physical"

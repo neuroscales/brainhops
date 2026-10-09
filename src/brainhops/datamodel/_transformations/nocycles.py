@@ -1,6 +1,6 @@
 """The late-bound singletons every cyclic import goes through.
 
-The singletons (`INVERSE`, `ADAPT`, `SEQUENCE`, `TRANSFORMATION`) live here
+The singletons (`OPERATORS`, `ADAPT`, `SEQUENCE`, `TRANSFORMATION`) live here
 because they must be importable by every module of the package without
 forming a cycle: a module registers into them at import time, so that a
 lower layer can reach a higher one without importing it.
@@ -20,52 +20,36 @@ import typing_extensions as tx
 # typing
 if tx.TYPE_CHECKING:
     from .base import Transformation
-    from .inverse import Inverse
-    from .operators import Sqrt
+    from .operators import Operation
     from .sequence import Sequence
-
-
-# --- inverse ----------------------------------------------------------
-
-INVERSE_CACHE = "_inverse_param_cache"
-"""
-The materialized inverse parameter is cached on the *forward* transform,
-under this attribute name, rather than on the wrapper. A wrapper rebuilt
-by `replace` or `.to(...)` keeps the same forward transform, so the cache
-survives the rebuild and the inversion is not run again. The cache
-assumes the forward transform is not mutated in place after it is
-wrapped: a forward transform whose parameter is replaced by editing the
-same object would keep serving the stale inverse.
-"""
-
-INVERSE: tx.Optional[tx.Type["Inverse"]] = None
-"""Registered `Inverse` class, to avoid cyclic imports."""
-
-
-def register_inverse(cls: tx.Type["Inverse"]) -> None:
-    global INVERSE
-    INVERSE = cls
-    return cls
 
 
 # --- operators --------------------------------------------------------
 
-SQRT: tx.Optional[tx.Type["Sqrt"]] = None
-"""Registered `Sqrt` class, to avoid cyclic imports."""
-
-OPERATION_CACHE = "_operation_param_cache"
+OPERATORS: tx.Dict[str, tx.Type["Operation"]] = {}
 """
-The parameters a lazy operator (a square root) materializes are cached on
-its *forward* transform, under this attribute name, for the reason
-`INVERSE_CACHE` gives: a wrapper rebuilt by `replace` or `.to(...)` keeps
-its forward, so the expensive part is not computed twice.
+The front door of each unary operator, keyed by the name of the
+`Transformation` method that applies it: `inverse`, `sqrt`.
+
+A front door is polymorphic: calling it picks the typed wrapper of the
+transformation handed to it. That is what a transformation's own
+`inverse()`/`sqrt()` builds, and what a lazy wrapper rebuilds itself
+through when its forward is edited -- a new encoding can change the
+forward's class, and the typed wrapper is then chosen again for it.
+
+The wrappers live in modules that import this one, so they register here
+at import time.
 """
 
 
-def register_sqrt(cls: tx.Type["Sqrt"]) -> tx.Type["Sqrt"]:
-    global SQRT
-    SQRT = cls
-    return cls
+def register_operator(name: str) -> tx.Callable[[type], type]:
+    """Register the front door of the operator that `name` applies."""
+
+    def decorate(cls: tx.Type["Operation"]) -> tx.Type["Operation"]:
+        OPERATORS[name] = cls
+        return cls
+
+    return decorate
 
 
 # --- adapt ------------------------------------------------------------
@@ -116,14 +100,3 @@ def register_transformation(cls: tx.Type["Transformation"]) -> None:
     global TRANSFORMATION
     TRANSFORMATION = cls
     return cls
-
-
-# --- compose / convert / simplify -------------------------------------
-#
-# These three no longer keep a table here. Their rules are registered into
-# `bagof.dispatchers` functions in the `compose`, `convert` and `simplify`
-# modules: `compose` and `convert` are single-winner most-specific dispatch
-# (`convert` on `type(x)` and, via a `type[...]` parameter, on the target
-# class value), and `simplify` uses one function per arity. See the migration
-# memo under `docs/design/` for why they map onto the library's model and why
-# `is_kind` (above) stays bespoke.

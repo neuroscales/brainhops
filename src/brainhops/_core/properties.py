@@ -24,21 +24,82 @@ a tuple of them (see [`smartproperty`][])."""
 #: which raises rather than answering -- is never treated as empty.
 _EMPTY_TYPES = (list, tuple, dict, set, frozenset)
 
+_Names: tx.TypeAlias = tx.Union[str, tx.Iterable[str]]
+
+
+class Invalidator:
+    """
+    Read, off the object whose property was set, the names of the
+    properties that the assignment invalidates.
+
+    The names are not known when the property is declared: they live on
+    the class, so a subclass that derives more views than its parent
+    invalidates all of them. A subclass of this one says where to look;
+    `resolve(obj)` is what it hands over.
+    """
+
+    def __init__(self, resolve: tx.Callable[[object], _Names]) -> None:
+        self.resolve = resolve
+
+    def __call__(self, obj: object) -> tx.Tuple[str, ...]:
+        invalidated = self.resolve(obj)
+        if isinstance(invalidated, str):
+            invalidated = (invalidated,)
+        return tuple(invalidated)
+
+
+class InvalidatorInAttribute(Invalidator):
+    """
+    Hold the name of an attribute of an object that holds the names of
+    the properties that are invalidated when another property is set.
+    """
+
+    def __init__(self, attrname: str) -> None:
+        self.attrname = attrname.split(".")
+        super().__init__(self._getattr)
+
+    def _getattr(self, obj: object) -> _Names:
+        node = obj
+        for attr in self.attrname:
+            node = getattr(node, attr)
+        return node
+
+
+class InvalidatorInMethod(Invalidator):
+    """
+    Hold the name of a method of an object that returns the names of
+    the properties that are invalidated when another property is set.
+    """
+
+    def __init__(self, methodname: str) -> None:
+        self.methodname = methodname
+        super().__init__(self._callmethod)
+
+    def _callmethod(self, obj: object) -> _Names:
+        method = getattr(obj, self.methodname)
+        return method()
+
 
 # --- lazyproperty -----------------------------------------------------
 
 
 @tx.overload
-def lazyproperty(fget: _Getter) -> property:
-    """Bare decorator."""
+def lazyproperty(fget: _Getter) -> property: ...
+
+
+# A property that computes its value on first access and caches it.
+# Variant: bare decorator.
 
 
 @tx.overload
 def lazyproperty(
     *,
     unset: UnsetLike = None,
-) -> tx.Callable[[_Getter], property]:
-    """Decorator factory (with options)."""
+) -> tx.Callable[[_Getter], property]: ...
+
+
+# A property that computes its value on first access and caches it.
+# Variant: decorator factory (with options).
 
 
 @tx.overload
@@ -47,8 +108,11 @@ def lazyproperty(
     doc: tx.Optional[str] = None,
     *,
     unset: UnsetLike = None,
-) -> tx.Callable[[_Getter], property]:
-    """Functional decorator factory."""
+) -> tx.Callable[[_Getter], property]: ...
+
+
+# A property that computes its value on first access and caches it.
+# Variant: functional decorator factory.
 
 
 @tx.overload
@@ -59,8 +123,6 @@ def lazyproperty(
     unset: UnsetLike = None,
 ) -> property:
     """
-    Functional decorator.
-
     A property that computes its value on first access and caches it.
 
     Parameters
@@ -69,8 +131,8 @@ def lazyproperty(
         The function that computes the property value.
     doc : str, optional
         The docstring for the property.
-    unset : None, "empty", callable, or tuple of them, default=None
-        When the stored value reads as no value, so that the value is
+    unset : None | {"empty"} | [tuple of] callable, default=None
+        What value(s) should read as "unset", so that the value is
         computed instead. See [`smartproperty`][].
 
     Returns
@@ -88,8 +150,10 @@ def lazyproperty(fget=None, doc=None, unset=None):
 
 
 @tx.overload
-def smartproperty(fget: _Getter) -> property:
-    """Bare decorator."""
+def smartproperty(fget: _Getter) -> property: ...
+
+
+# Bare decorator
 
 
 @tx.overload
@@ -97,8 +161,11 @@ def smartproperty(
     *,
     unset: UnsetLike = None,
     cache: bool = False,
-) -> tx.Callable[[_Getter], property]:
-    """Decorator factory (with options)."""
+    invalidates: tx.Union[str, tx.Iterable[str], None] = (),
+) -> tx.Callable[[_Getter], property]: ...
+
+
+# Decorator factory (with options).
 
 
 @tx.overload
@@ -110,8 +177,11 @@ def smartproperty(
     *,
     unset: UnsetLike = None,
     cache: bool = False,
-) -> tx.Callable[[_Getter], property]:
-    """Functional decorator factory."""
+    invalidates: tx.Union[str, tx.Iterable[str], None] = (),
+) -> tx.Callable[[_Getter], property]: ...
+
+
+# Functional decorator factory
 
 
 @tx.overload
@@ -123,10 +193,9 @@ def smartproperty(
     *,
     unset: UnsetLike = None,
     cache: bool = False,
+    invalidates: tx.Union[str, tx.Iterable[str], None] = (),
 ) -> property:
     """
-    Functional decorator.
-
     A property that can:
 
     * read and write its value from a "private" attribute,
@@ -164,6 +233,9 @@ def smartproperty(
         given: only the getter reads it as unset.
     cache : bool, default=False
         Whether to cache the computed value for future access.
+    invalidates : [iterable of] str, optional
+        The names of other properties that are invalidated when this
+        one is set. The setter deletes their cached values, if any.
 
     Returns
     -------
@@ -184,6 +256,7 @@ def smartproperty(
     doc=None,
     unset=None,
     cache=False,
+    invalidates=(),
 ):
     # Read `unset` once, when the property is declared, so that a wrong one
     # is refused there and the getter tests one predicate.
@@ -194,10 +267,21 @@ def smartproperty(
         # than directly: return the decorator the function is handed to.
         def decorate(func: tx.Callable) -> property:
             return smartproperty(
-                func, fset, fdel, doc, unset=unset, cache=cache
+                func,
+                fset,
+                fdel,
+                doc,
+                unset=unset,
+                cache=cache,
+                invalidates=invalidates,
             )
 
         return decorate
+
+    if not callable(invalidates):
+        if isinstance(invalidates, str):
+            invalidates = (invalidates,)
+        invalidates = tuple(invalidates or ())
 
     if isinstance(fget, str):
         name = fget
@@ -209,6 +293,8 @@ def smartproperty(
 
     if not callable(fset):
         fset = _make_fset(name, settable=fset is not False, cacheable=cache)
+    if invalidates and fset is not None:
+        fset = _wrap_fset_invalidator(fset, invalidates)
 
     return property(fget, fset, fdel, doc)
 
@@ -220,13 +306,15 @@ def _make_fget(
     set: bool = True,
     cache: bool = False,
 ) -> _Getter:
-    if set and cache:
-        return _make_fget_settable_cacheable(name, make_fn, isunset_fn)
-    if set:
-        return _make_fget_settable(name, make_fn, isunset_fn)
+    # Caching is the only thing that changes how the value is read.
+    # `fset=False` says the property cannot be *assigned*, not that
+    # nothing is stored under it: a field declared `_<name>` is written
+    # by the constructor, and a read-only view of it still has to read
+    # it. A property with no such field reads nothing there and computes,
+    # which is what it would have done anyway.
     if cache:
-        return _make_fget_cacheable(name, make_fn)
-    return _make_fget_fallback(name, make_fn)
+        return _make_fget_settable_cacheable(name, make_fn, isunset_fn)
+    return _make_fget_settable(name, make_fn, isunset_fn)
 
 
 def _make_fget_settable(
@@ -250,25 +338,8 @@ def _make_fget_settable(
     return fget
 
 
-def _make_fget_cacheable(name: str, make_fn: _Getter) -> _Getter:
-    # Return a getter function that computes its value with `make_fn` if
-    # necessary and caches it for future access.
-    cache_name = "_cache_" + name
-
-    def fget(self: tx.Self) -> tx.Any:
-        value = getattr(self, cache_name, None)
-        if value is not None:
-            return value
-        value = make_fn(self)
-        setattr(self, cache_name, value)
-        return value
-
-    fget.__name__ = name
-    return fget
-
-
 def _make_fget_settable_cacheable(
-    name: str, make_fn: _Getter, isunset_fn: _IsUnset
+    name: str, make_fn: tx.Optional[_Getter], isunset_fn: _IsUnset
 ) -> _Getter:
     # Return a getter function that reads the value from the private
     # attribute corresponding to `name`, computing it with `make_fn` if
@@ -284,20 +355,11 @@ def _make_fget_settable_cacheable(
         value = getattr(self, cache_name, None)
         if value is not None:
             return value
+        if make_fn is None:
+            return value
         value = make_fn(self)
         setattr(self, cache_name, value)
         return value
-
-    fget.__name__ = name
-    return fget
-
-
-def _make_fget_fallback(name: str, make_fn: _Getter) -> _Getter:
-    # Return a getter function that computes the value with `make_fn`
-    # and returns it.
-
-    def fget(self: tx.Self) -> tx.Any:
-        return make_fn(self)
 
     fget.__name__ = name
     return fget
@@ -344,6 +406,36 @@ def _make_fset_settable_cacheable(name: str) -> _Setter:
     return fset
 
 
+# --- invalidates ------------------------------------------------------
+
+
+def _wrap_fset_invalidator(
+    fset: _Setter, invalidates: tx.Tuple[str]
+) -> _Setter:
+    # Return a setter function that calls `fset` and deletes the cached
+    # values of the properties named in `invalidates`, if any.
+    if not callable(invalidates):
+        cache_names = tuple("_cache_" + name for name in invalidates)
+
+        def fset_invalidator(self: tx.Self, value: tx.Any) -> None:
+            fset(self, value)
+            for cache_name in cache_names:
+                # A view that has not been read yet has nothing cached.
+                self.__dict__.pop(cache_name, None)
+
+    else:
+
+        def fset_invalidator(self: tx.Self, value: tx.Any) -> None:
+            fset(self, value)
+            invalidated = invalidates(self)
+            cache_names = tuple("_cache_" + name for name in invalidated)
+            for cache_name in cache_names:
+                self.__dict__.pop(cache_name, None)
+
+    fset_invalidator.__name__ = fset.__name__
+    return fset_invalidator
+
+
 # --- smartsetter ------------------------------------------------------
 
 
@@ -364,15 +456,18 @@ def smartsetter(fset):
     The getter reads the value from the "private" attribute of the
     property's name (`_<name>`), as [`smartproperty`][] does, and returns
     `None` when nothing is stored. The decorated function is the whole
-    setter: it stores the value itself, so that it may check it first and
-    clear what depends on it after.
+    setter: it stores the value itself, so that it may check or normalize
+    it first.
 
     ```python
     @smartsetter
-    def data(self, value):
-        self._data = value
-        self._forget_views()
+    def degree(self, value):
+        self._degree = InterpolationOrder(value)
     ```
+
+    To clear what depends on the value as well, hand the setter to
+    [`smartproperty`][] with an `invalidates` instead: it wraps a setter
+    of your own exactly as it wraps the one it generates.
 
     Parameters
     ----------

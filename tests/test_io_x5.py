@@ -405,7 +405,7 @@ def test_bspline_is_a_cubic_spline_of_ras_displacements(
     assert isinstance(field, X5BSplineField)
     assert isinstance(field.input, systems.RASmm)
     assert isinstance(field.output, systems.RASmm)
-    assert field.displacement.coeff
+    assert field.displacement.store == "coefficients"
     assert int(field.displacement.degree) == 3
     points = _knot_probes()
     expected = _bspline_map(_ramp() - 2.0, KNOTS, points)
@@ -492,7 +492,7 @@ def test_splines_x5_cannot_hold_are_refitted(
         data=field.data,
         input=field.input,
         output=field.output,
-        coeff=True,
+        store="coefficients",
         **{"degree": 3, "bound": "constant", **kwargs},
     )
     chain = xforms.Sequence(
@@ -504,7 +504,7 @@ def test_splines_x5_cannot_hold_are_refitted(
     again = io.load(out)[0]
     assert isinstance(again, X5BSplineField)
     back = again[1]
-    assert (back.coeff, int(back.degree)) == (True, 3)
+    assert (back.store, int(back.degree)) == ("coefficients", 3)
     np.testing.assert_allclose(
         np.asarray(back.field), np.asarray(spline.field), atol=1e-4
     )
@@ -533,7 +533,7 @@ def test_stored_spline_coefficients_are_not_refitted(
 
 
 def test_sampled_displacements_stay_sampled(tmp_path: Path) -> None:
-    # X5 stores either encoding, and the field's `coeff` flag selects
+    # X5 stores either encoding, and the field's `store` flag selects
     # which: a field of values is written as displacements.
     out = tmp_path / "dense.x5"
     X5Transform(
@@ -700,7 +700,7 @@ def test_coordinate_coefficients_are_written_as_deformations(
     # X5 stores sampled coordinates, so a field of coefficients is written
     # as its values, and reads back as them.
     ras2vox, field = X5CoordinatesField.from_ras(_ramp(), VOX2RAS)
-    spline = field.to(degree=3).to(coeff=True)
+    spline = field.to(degree=3).to(store="coefficients")
     chain = xforms.Sequence(
         transformations=[ras2vox, spline],
         input=systems.RASmm(),

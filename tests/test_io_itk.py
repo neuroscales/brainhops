@@ -11,6 +11,7 @@ from bagof.magic import replace
 
 from brainhops import io
 from brainhops._core import affines
+from brainhops._core.dependencies import HAS_H5PY
 from brainhops.datamodel import transformations as xforms
 from brainhops.io.transformations import itk
 
@@ -18,6 +19,13 @@ data_dir = Path(__file__).parent / "data"
 
 FILES_H5 = list(data_dir.glob("*.h5"))
 FILES_TFM = list(data_dir.glob("*.tfm"))
+
+needs_h5py = pytest.mark.skipif(not HAS_H5PY, reason="needs h5py")
+
+# For the tests that take both kinds of file at once, and so cannot skip
+# the whole run: without h5py the HDF5 reader is not registered, and
+# dispatch reports a file it cannot parse rather than a missing reader.
+PARAMS_H5 = [pytest.param(f, marks=needs_h5py) for f in FILES_H5]
 
 TfmTransform = io.transformations.itk.tfm.TfmTransform
 
@@ -94,7 +102,7 @@ def test_tfm_header_only_is_read_as_empty(tmp_path) -> None:  # noqa: ANN001
 # named, lazily evaluated slots. Nothing is converted after parsing.
 
 
-@pytest.mark.parametrize("filename", FILES_TFM + FILES_H5)
+@pytest.mark.parametrize("filename", FILES_TFM + PARAMS_H5)
 def test_blocks_are_transformations(filename: str) -> None:
     transform = io.transformations.load(filename)
     assert isinstance(transform, xforms.Sequence)
@@ -203,9 +211,9 @@ def test_versor_tolerates_a_rounded_unit_versor() -> None:
 
 def test_displacement_blocks_are_lps_to_lps_chains() -> None:
     pytest.importorskip("h5py")
-    for name, degree, coeff in [
-        ("itk_displacement3d.h5", 1, False),
-        ("itk_bspline3d.h5", 3, True),
+    for name, degree, store in [
+        ("itk_displacement3d.h5", 1, "values"),
+        ("itk_bspline3d.h5", 3, "coefficients"),
     ]:
         block = io.transformations.load(data_dir / name)[-1]
         assert isinstance(block, itk.ItkDisplacementBase)
@@ -215,7 +223,7 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
             block.voxel2lps,
         ]
         assert block.degree == degree
-        assert block.coeff == coeff
+        assert block.store == store
         # The block's array is what its displacement field stores: the
         # values, or the spline coefficients of a B-spline.
         assert block.displacement.data is block.field
@@ -461,7 +469,7 @@ def test_warp_block_computes(name: str) -> None:
     assert isinstance(result[-1], xforms.DisplacementField)
     assert np.asarray(result[-1].field).shape == np.asarray(block.field).shape
     assert result[-1].degree == block.degree
-    assert result[-1].coeff == block.coeff
+    assert result[-1].store == block.store
     assert result.input == block.input
     assert result.output == block.output
 
