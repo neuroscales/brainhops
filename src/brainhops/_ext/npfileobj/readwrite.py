@@ -1,4 +1,4 @@
-"""Additional utilities for nibabel."""
+"""Write-side counterparts of the slicing utilities of `nibabel.fileslice`."""
 
 from threading import Lock
 
@@ -24,7 +24,10 @@ from brainhops._ext.npfileobj.indexing import IndexLike
 
 
 def full_heuristic(*args, **kwargs) -> _tx.Literal["full", "contiguous", None]:
-    """Heuristic that always read the full volume"""
+    """Heuristic that always chooses to read the full dimension.
+
+    The function calls `threshold_heuristic` with `skip_thresh=0`.
+    """
     return threshold_heuristic(*args, **kwargs, skip_thresh=0)
 
 
@@ -34,29 +37,25 @@ def write_segments(
     dat: np.byte,
     lock: _tx.Optional[Lock] = None,
 ) -> None:
-    """
-    Write chunks of `dat` into `fileobj` at locations described in `segments`
+    """Write a byte array to segments of a file object.
 
     Parameters
     ----------
-    fileobj : file-like object
-        Implements `seek` and `write`
-    segments : list
-        list of 2 sequences where sequences are (offset, length), giving
-        absolute file offset in bytes and number of bytes to write.
-    dat : byte
-        Byte array to write. Its total length should be equal to the
-        sum of all segment lengths.
-    lock : {None, threading.Lock, lock-like} optional
-        If provided, used to ensure that paired calls to ``seek`` and ``write``
-        cannot be interrupted by another thread accessing the same ``fileobj``.
-        Each thread which accesses the same file via ``read_segments`` must
-        share a lock in order to ensure that the file access is thread-safe.
-        A lock does not need to be provided for single-threaded access. The
-        default value (``None``) results in a lock-like object  (a
-        ``_NullLock``) which does not do anything.
+    fileobj : FileLike
+        File object that implements `seek` and `write`.
+    segments : list of (int, int)
+        Absolute byte offset and number of bytes of each segment.
+    dat : bytes
+        Data, whose length is the sum of the segment lengths.
+    lock : threading.Lock or lock-like, optional
+        Lock that guards each pair of `seek` and `write` calls. Threads that
+        share a file must share a lock. By default, no lock is used.
+
+    Raises
+    ------
+    ValueError
+        If fewer bytes than expected are written.
     """
-    # Make a lock-like thing to make the code below a bit nicer
     if lock is None:
         lock = _NullLock()
 
@@ -73,7 +72,7 @@ def write_segments(
                 f" wrote {nb_written}.",
             )
         return
-    # More than one segment
+    # Several segments consume the data sequentially.
     dat_offset = 0
     for offset, length in segments:
         with lock:
@@ -97,61 +96,43 @@ def writeslice(
     heuristic: _tx.Optional[_tx.Callable] = threshold_heuristic,
     lock: _tx.Optional[Lock] = None,
 ) -> ArrayLike:
-    """
-    Write a data slice in `fileobj` using `sliceobj` slicer and array
-    definitions
+    """Write an array into a slice of an array stored in a file.
 
-    `fileobj` contains the contiguous binary data for an array ``A`` of shape,
-    dtype, memory layout `shape`, `dtype`, `order`, with the binary data
-    starting at file offset `offset`.
-
-    Our job is to write the array `dat` into the slice ``A[sliceobj]``
-    in the most efficient way in terms of memory and time.
-
-    Sometimes it will be quicker to read a larger chunk of memory, write
-    into it in memory and write it back to disk, because it will save
-    time we might lose doing short seeks on `fileobj`. Call these
-    alternatives: (read + write); and skip.  This routine guesses when to
-    (read + write) or skip using the callable `heuristic`, with a default
-    using a hard threshold for the memory gap large enough to prefer a skip.
-
-    Currently, we use the same heuristic for writing as the one used for
-    reading. It might not be optimal, as triggering a 'read + write'
-    involves more operations than a 'read + discard'.
+    The file holds an array of shape `shape`, type `dtype` and layout
+    `order`, stored contiguously from byte `offset`, and `dat` is written
+    into `array[sliceobj]`. Instead of many short writes separated by seeks,
+    it is sometimes faster to read a larger block, modify it in memory and
+    write it back. The `heuristic` decides between these strategies. It is
+    the same heuristic as for reading, which may be suboptimal because
+    reading and writing a block costs more than reading and discarding it.
 
     Parameters
     ----------
-    fileobj : file-like object
-        file-like object, opened for reading and writing in binary mode.
-        Implements ``read``, ``write`` and ``seek``.
+    dat : ArrayLike
+        Data to write.
+    fileobj : FileLike
+        Binary file object opened for reading and writing.
     sliceobj : object
-        something that can be used to slice an array as in ``arr[sliceobj]``.
-    shape : sequence
-        shape of the full array inside `fileobj`.
-    dtype : dtype specifier
-        dtype (or input to ``numpy.dtype``) of the array inside `fileobj`.
-    offset : int, optional
-        offset of array data within `fileobj`
-    order : {'C', 'F'}, optional
-        memory layout of array in `fileobj`.
+        Any object that can index an array, as in `array[sliceobj]`.
+    shape : tuple of int
+        Shape of the full array.
+    dtype : dtype-like
+        Data type of the array.
+    offset : int
+        Byte offset of the array in the file.
+    order : {"C", "F"}
+        Memory layout of the array.
     heuristic : callable, optional
-        function taking slice object, axis length, stride length as arguments,
-        returning one of 'full', 'contiguous', None.  See
-        :func:`optimize_slicer` and see :func:`threshold_heuristic` for an
-        example.
-    lock : {None, threading.Lock, lock-like} optional
-        If provided, used to ensure that paired calls to ``seek`` and ``read``
-        cannot be interrupted by another thread accessing the same ``fileobj``.
-        Each thread which accesses the same file via ``read_segments`` must
-        share a lock in order to ensure that the file access is thread-safe.
-        A lock does not need to be provided for single-threaded access. The
-        default value (``None``) results in a lock-like object  (a
-        ``_NullLock``) which does not do anything.
+        Function of a slice, an axis length and a stride that returns
+        `"full"`, `"contiguous"` or `None`. See `threshold_heuristic`.
+    lock : threading.Lock or lock-like, optional
+        Lock that guards each pair of seek and input or output calls. Threads
+        that share a file must share a lock. By default, no lock is used.
 
-    Returns
-    -------
-    sliced_arr : array
-        Array in `fileobj` as sliced with `sliceobj`
+    Raises
+    ------
+    ValueError
+        If `sliceobj` uses fancy indexing.
     """
     if is_fancy(sliceobj):
         raise ValueError("Cannot handle fancy indexing")
@@ -162,9 +143,8 @@ def writeslice(
     )
     dat = dat[pre_slicers]
     if not all(sub_slicer == slice(None) for sub_slicer in sub_slicers):
-        # read-and-write mode
-        # it is faster to read a bigger block, write in that block
-        # and write it back to disk than writing lots of small chunks
+        # Read a larger block, patch it in memory and write it back, instead
+        # of performing many small writes.
         n_bytes = reduce(operator.mul, sub_shape, 1) * itemsize
         bytes = read_segments(fileobj, segments, n_bytes, lock)
         block = np.ndarray(sub_shape, dtype, buffer=bytes, order=order)
@@ -183,66 +163,40 @@ def calc_slicedefs_write(
     order: _tx.Literal["C", "F"],
     heuristic: _tx.Optional[_tx.Callable] = threshold_heuristic,
 ) -> _tx.Tuple[_tx.Tuple, _tx.Tuple, _tx.Tuple, _tx.Tuple]:
-    """Return parameters for slicing an array into `sliceobj`
+    """Compute the segments and slicers needed to write into a slice.
 
-    Calculate the best combination of skips / (read + write) to use for
-    write the data to disk / memory, then generate corresponding
-    `segments`, the disk offsets and lengths to write in memory.  If we
-    have chosen some (read + write) optimization, then we need to
-    write sub-slices into bigger chunks using `sub_slicers`.
-
-    Parameters
-    ----------
-    sliceobj : object
-        something that can be used to slice an array as in ``arr[sliceobj]``
-    in_shape : sequence
-        shape of underlying array to be sliced
-    itemsize : int
-        element size in array (in bytes)
-    offset : int
-        offset of array data in underlying file or memory buffer
-    order : {'C', 'F'}
-        memory layout of underlying array
-    heuristic : callable, optional
-        function taking slice object, dim_len, stride length as arguments,
-        returning one of 'full', 'contiguous', None.  See
-        :func:`optimize_slicer` and :func:`threshold_heuristic`
+    The arguments are the same as in [`writeslice`][], with `in_shape` the
+    shape of the full array and `itemsize` the size of an element in bytes.
+    A `ValueError` is raised if `order` is neither `"C"` nor `"F"`.
 
     Returns
     -------
-    pre_slicers : tuple[index_like]
-        Slicers to apply to the data to write before anything else.
-        It removes new axis and makes strides positive.
-    segments : tuple[(int, int)]
-        List of segments defined by an offset and a length.
-        Each segment correspond to one chunk of data to write (and
-        eventually read) on disk.
-    sub_slicers : tuple[index_like]
-        This one implements the `read + write` vs `skip` strategy.
-        Slicer used to write the chunk of data obtained from `pre_slicer`
-        into a bigger chunk read from disk (`read + write` strategy).
-        If `sub_slicers` is only made of full slices, no need to read
-        a bigger chunk (`skip` strategy)
-    sub_shape : tuple[int]
-        Predicted shape of each segment
+    pre_slicers : tuple
+        Slicers applied to the data first, which remove new axes and make
+        the strides positive.
+    segments : tuple of (int, int)
+        Byte offset and length of each chunk to write, and possibly to read
+        first.
+    sub_slicers : tuple
+        Slicers that place the data into a larger chunk read from the file.
+        If they are all full, nothing needs to be read.
+    sub_shape : tuple of int
+        Shape of the chunk described by the segments.
     """
     if order not in "CF":
         raise ValueError("order should be one of 'CF'")
     sliceobj = canonical_slicers(sliceobj, in_shape)
-    # order fastest changing first (record reordering)
+    # Work in Fortran order, with the fastest dimension first.
     if order == "C":
         sliceobj = sliceobj[::-1]
         in_shape = in_shape[::-1]
-    # Analyze sliceobj for new read_slicers and fixup post_slicers
-    # read_slicers are the virtual slices; we don't slice with these, but use
-    # the slice definitions to read the relevant memory from disk
+    # The write slicers are never applied to the data, but they define the
+    # bytes of the file that are touched.
     pre_slicers, write_slicers, sub_slicers = optimize_write_slicers(
         sliceobj, in_shape, itemsize, heuristic
     )
-    # work out segments corresponding to write_slicers
     segments = slicers2segments(write_slicers, in_shape, offset, itemsize)
     sub_shape = predict_shape(write_slicers, in_shape)
-    # If reordered, order shape, post_slicers
     if order == "C":
         sub_shape = sub_shape[::-1]
         sub_slicers = sub_slicers[::-1]
@@ -256,40 +210,24 @@ def optimize_write_slicers(
     itemsize: int,
     heuristic: _tx.Callable,
 ) -> _tx.Tuple[_tx.Tuple, _tx.Tuple, _tx.Tuple]:
-    """Calculates slices to write disk
+    """Compute the slicers needed to write into a slice, axis by axis.
 
-    Parameters
-    ----------
-    sliceobj : tuple[index_like]
-        something that can be used to slice an array as in ``arr[sliceobj]``.
-        Can be assumed to be canonical in the sense of ``canonical_slicers``
-    in_shape : sequence
-        shape of underlying array to be sliced.  Array for `in_shape` assumed
-        to be already in 'F' order. Reorder shape / sliceobj for slicing a 'C'
-        array before passing to this function.
-    itemsize : int
-        element size in array (bytes)
-    heuristic : callable
-        function taking slice object, axis length, and stride length as
-        arguments, returning one of 'full', 'contiguous', None.  See
-        :func:`optimize_slicer`; see :func:`threshold_heuristic` for an
-        example.
+    `sliceobj` must be canonical, as returned by `canonical_slicers`, and
+    `in_shape` is assumed to be in Fortran order. For an array in C order,
+    `sliceobj` and `in_shape` must be reversed beforehand.
 
     Returns
     -------
-    pre_slicers : tuple[index_like]
-        Any slicing to be applied to the array before writing.
-        (discard any ``newaxis``, invert negative strides)
-    write_slicers : tuple[index_like]
-        Slicers that corresponds to the chunk of data actually written
-        (and eventually read beforehand) to disk.
-    sub_slicers : tuple[index_like]
-        Slicers into the chunk of data described by `write_slicers`.
-        If it is only made of full slices, it is not used and data is
-        directly written to disk using `write_slicers` (skip strategy).
-        Else, `write_slicers` is used to read (then write) a bigger
-        chunk and `sub_slicers` is used to write data into this bigger
-        chunk.
+    pre_slicers : tuple
+        Slicers applied to the data before writing, which discard new axes
+        and invert negative strides.
+    write_slicers : tuple
+        Slicers that describe the chunk that is written, and possibly read
+        first.
+    sub_slicers : tuple
+        Slicers into the chunk described by `write_slicers`. If they are all
+        full, the data is written directly. Otherwise, a larger chunk is read
+        and the data is placed into it with `sub_slicers`.
     """
     pre_slicers = []
     sub_slicers = []
@@ -304,7 +242,6 @@ def optimize_write_slicers(
         dim_len = in_shape[real_no]
         real_no += 1
         is_last = real_no == len(in_shape)
-        # make modified sliceobj (to_read, post_slice)
         pre_slicer, write_slicer, sub_slicer = optimize_write_slicer(
             slicer, dim_len, all_full, is_last, stride, heuristic
         )
@@ -324,93 +261,71 @@ def optimize_write_slicer(
     stride: int,
     heuristic: _tx.Optional[_tx.Callable] = threshold_heuristic,
 ) -> _tx.Tuple[_tx.Union[slice, int], _tx.Union[slice, int], slice]:
-    """Return maybe modified slice and post-slice slicing for `slicer`
+    """Compute the slicers needed to write along a single axis.
+
+    A contiguous slice has a step of 1 or -1, and a full slice is a
+    contiguous slice that covers every element of the axis. The function
+    decides whether the slicer is split into a write slicer and a sub-slicer,
+    so that a single large read and write replaces many small writes. The
+    `heuristic` takes this decision, and it is only consulted when all the
+    faster axes are full (`all_full`). Otherwise, the slicer is only split
+    into a pre-slicer and a write slicer, so that the write slicer has a
+    positive step.
 
     Parameters
     ----------
-    write_slice : slice or int
-        Index along a single axis
+    slicer : slice or int
+        Index along the axis.
     dim_len : int
-        length of axis along which to slice
+        Length of the axis.
     all_full : bool
-        Whether dimensions up until now have been full (all elements)
+        Whether the slicers of all the faster axes are full.
     is_slowest : bool
-        Whether this dimension is the slowest changing in memory / on disk
+        Whether the axis is the slowest one in memory.
     stride : int
-        size of one step along this axis
+        Stride of the axis, in bytes.
     heuristic : callable, optional
-        function taking slice object, dim_len, stride length as arguments,
-        returning one of 'full', 'contiguous', None. See
-        :func:`threshold_heuristic` for an example.
+        See `threshold_heuristic`.
 
     Returns
     -------
-    pre_slice : slice or int
-        slice to be applied before the array is written.
-    write_slice : slice or int
-        slice of data to write (or read-and-write).
-        `write_slice` must always have positive ``step`` (because we don't
-        want to go backwards in the buffer / file)
-    sub_slice : slice
-        slice used to write the current data-block into the larger
-        read-and-written data block.
-
-    Notes
-    -----
-    This is the heart of the algorithm for making segments from slice objects.
-
-    A contiguous slice is a slice with ``slice.step in (1, -1)``
-
-    A full slice is a continuous slice returning all elements.
-
-    The main question we have to ask is whether we should split
-    `write_slice` into (`write_slice`, `sub_slice`) to prefer a large
-    read+write over many small writes. We apply a heuristic `heuristic`
-    to decide whether to do this, and adapt `write_slice` and `sub_slice`
-    accordingly.
-
-    Otherwise we return `write_slice` almost unaltered. We simply split
-    is into (`pre_slice`, `write_slice`) to ensure that the strides
-    we use are positive.
-
+    pre_slicer : slice or int or None
+        Slicer applied to the data before writing.
+    write_slicer : slice or int
+        Slicer that is written, or read and then written. Its step is
+        positive.
+    sub_slicer : slice
+        Slicer that places the data into the larger block.
     """
-    # int or slice as input?
-    try:  # if int - we drop a dim (no append)
-        slicer = int(slicer)  # casts float to int as well
-    except TypeError:  # slice
-        # Deal with full cases first
+    try:
+        slicer = int(slicer)
+    except TypeError:
         if slicer == slice(None):
             return slicer, slicer, slice(None)
         slicer = fill_slicer(slicer, dim_len)
-        # actually equivalent to slice(None)
         if slicer == slice(0, dim_len, 1):
             return slice(None), slice(None), slice(None)
-        # full, but reversed
         if slicer == slice(dim_len - 1, None, -1):
             return slice(None, None, -1), slice(None), slice(None)
-        # Not full, maybe continuous
         is_int = False
-    else:  # int
-        if slicer < 0:  # make negative offsets positive
+    else:
+        if slicer < 0:
             slicer = dim_len + slicer
         is_int = True
     if all_full:
         action = heuristic(slicer, dim_len, stride)
-        # Check return values (we may be using a custom function)
+        # A custom heuristic may return anything.
         if action not in ("full", "contiguous", None):
             raise ValueError(f"Unexpected return {action} from heuristic")
         if is_int and action == "contiguous":
             raise ValueError("int index cannot be contiguous")
-        # If this is the slowest changing dimension, never upgrade None or
-        # contiguous beyond contiguous (we've already covered the already-full
-        # case)
+        # On the slowest axis, a full read is downgraded.
         if is_slowest and action == "full":
             action = None if is_int else "contiguous"
         if action == "full":
-            # read a bigger block and write into it using `slicer`
             return slice(None), slice(None), slicer
-        elif action == "contiguous":  # Cannot be int
-            # If this is already contiguous, default None behavior handles it
+        elif action == "contiguous":  # an int was rejected above
+            # Slices with a step of 1 or -1 fall through to the default.
             step = slicer.step
             if step not in (-1, 1):
                 if step < 0:
@@ -420,7 +335,7 @@ def optimize_write_slicer(
                     slice(slicer.start, slicer.stop, 1),
                     slice(None, None, slicer.step),
                 )
-    # We only need to be positive
+    # Default: make the step positive with the pre-slicer.
     if is_int:
         return None, slicer, slice(None)
     if slicer.step > 0:

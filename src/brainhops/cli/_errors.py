@@ -1,20 +1,18 @@
 """Errors raised by the command-line interface.
 
-A `CliError` carries the exit code that the process should return. The
-top-level dispatcher catches it, prints the message to standard error and
-exits with that code, so a command never has to call `sys.exit` itself.
+Commands never call `sys.exit`. They raise a [`CliError`][], whose
+message the dispatcher prints to standard error before exiting with the
+exit code of the error.
 """
 
 from __future__ import annotations
 
 
 class CliError(Exception):
-    """An error that ends a command with a message and an exit code.
+    """Error that ends a command with a message and an exit code.
 
-    The dispatcher prints the message to standard error and returns
-    `exit_code` from the process. A command raises this rather than
-    printing and exiting, so that the same command function can be called
-    from a test and inspected.
+    Raising instead of exiting keeps commands testable. The default exit
+    code is 1.
     """
 
     exit_code: int = 1
@@ -25,13 +23,11 @@ class CliError(Exception):
 
 
 class WritingUnavailable(CliError):
-    """A resampled or composed object could not be written to disk.
+    """Error raised when a computed result cannot be written.
 
-    No writable format is registered for the output file name, or none
-    of those that are can hold the object, or the one chosen cannot write
-    it. The computation itself succeeded, so this is distinct from a
-    failure to compute. The dedicated exit code lets a caller tell "the
-    result could not be written" apart from an ordinary error.
+    The output name may match no writable format, no format may hold the
+    object, or the chosen format may fail to write it. The exit code 3 sets
+    this case apart from ordinary errors.
     """
 
     exit_code: int = 3

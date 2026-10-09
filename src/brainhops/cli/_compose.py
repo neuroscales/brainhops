@@ -1,23 +1,13 @@
-"""The ``compose`` command: combine transformations into one.
+"""The `compose` command, which is not implemented yet.
 
-The command is intended to read several transformations, combine them
-into a single transformation, and write the result to a file. The
-combination follows the composition operator: given transformations ``A``
-and ``B``, the composite maps a coordinate through ``B`` first and then
-through ``A``, matching ``A @ B`` in the data model.
-
-Each operand may carry a per-operand operation before it enters the
-composition. The planned operations are inversion, and the matrix square,
-square root and exponential of a transformation. The surface that spells
-these operations on the command line is still being decided, so the
-command parses its arguments and reports that the operation is not
-implemented rather than combining anything.
-
-The command depends on a writable transformation format, which is not
-part of the library yet, and on the chosen operation surface. It is
-registered so that ``brainhops compose --help`` describes the intended
-behaviour, and so that the argument names can settle before the operation
-is built.
+The command is meant to combine several transformations into one and
+write the result. For transformations A and B, the composite applies B
+first and then A, as `A @ B` does in the data model, so the last file
+listed is applied first. Operands may also be inverted, squared or
+otherwise transformed before composition, but the command-line spelling
+of these operations is not settled. Writing also requires a writable
+transformation format (issue #41). Until then, the command only parses
+its arguments, so that `--help` documents the intended interface.
 """
 
 from __future__ import annotations
@@ -30,7 +20,7 @@ from ._errors import CliError
 def add_parser(
     subparsers: argparse._SubParsersAction,
 ) -> argparse.ArgumentParser:
-    """Register the ``compose`` subcommand and its arguments."""
+    """Register the `compose` subcommand."""
     parser = subparsers.add_parser(
         "compose",
         help="Combine transformations into a single transformation.",
@@ -59,7 +49,7 @@ def add_parser(
 
 
 def run(args: argparse.Namespace) -> int:
-    """Run the ``compose`` command from parsed arguments."""
+    """Run the `compose` command, which raises a [`CliError`][]."""
     raise CliError(
         "'brainhops compose' is not implemented yet. It depends on a "
         "writable transformation format (issue #41) and on the choice of "

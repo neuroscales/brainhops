@@ -1,15 +1,7 @@
-"""
-Utilities for reading from streams without consuming them.
+"""Utilities for reading streams without consuming them."""
 
-TODO: merge or combine this module with `_core.peek`. The two solve the
-same problem from opposite ends -- `peekable`/`peekable_lines` let a
-sniffer look at the next line without eating it, and `preserve_position`
-lets it read a whole stream and put it back. A parser usually needs both,
-and importing them from two places obscures that they are one concern.
-Folding `peek` in here (or both into a shared module) would make the
-"look, don't consume" contract explicit in one place. Left separate for
-now because `peek` has callers that would all need updating.
-"""
+# TODO: merge with _core.peek, which also looks ahead without consuming;
+# the modules stay separate until the many callers of peek are updated.
 
 __all__ = [
     "preserve_position",
@@ -18,38 +10,31 @@ __all__ = [
     "HAS_INDEXED_GZIP",
 ]
 
-# stdlib
 import gzip
 from contextlib import contextmanager
 
-# dependencies
 import typing_extensions as tx
 
 
 @contextmanager
 def preserve_position(file: tx.IO) -> tx.Generator[tx.IO, None, None]:
-    """
-    Restore a stream to the position it held on entry.
+    """Restore a stream to its current position when the context exits.
 
-    Sniffing and parsing both consume the stream, and dispatch may try
-    several parsers on the same one, so every consumer must leave the
-    stream where it found it -- including when it raises.
-
-    The stream is restored to its *entry* position, not to zero: it may
-    have been positioned deliberately, e.g. when a parser is handed a
-    sub-stream embedded in a larger file.
-
-    Non-seekable streams (pipes, sockets, stdin) are yielded untouched.
+    Sniffers and parsers consume the streams that they read, and a
+    dispatch may try several of them on one stream. The entry position is
+    restored even after an exception, rather than zero, since the stream
+    may be a sub-stream of a larger file. A stream that cannot seek is
+    yielded untouched.
 
     Parameters
     ----------
-    file : IO
-        The stream to protect.
+    file
+        Stream to protect.
 
     Yields
     ------
-    file : IO
-        The same stream, unchanged.
+    tx.IO
+        The same stream.
     """
     pos = None
     if hasattr(file, "tell") and hasattr(file, "seek"):
@@ -73,21 +58,17 @@ except ImportError:
     _IndexedGzipFile = None
 
 HAS_INDEXED_GZIP = _IndexedGzipFile is not None
-"""Whether `indexed_gzip` is available to accelerate gzip seeking."""
+"""Whether indexed_gzip can be imported, which speeds up seeking in gzip."""
 
 
 def _open_gzip(file: tx.BinaryIO) -> tx.IO:
-    """
-    Open a gzip stream, preferring `indexed_gzip` when it is installed.
+    """Open a gzip stream, preferably with indexed_gzip.
 
-    `gzip.GzipFile` seeks by decompressing from the start of the stream
-    every time, which makes random access into a large volume quadratic.
-    `indexed_gzip` builds an index of decompression checkpoints instead,
-    so seeking is fast -- which matters because array readers routinely
-    seek to a voxel offset rather than reading front to back.
-
-    Falls back to the standard library if `indexed_gzip` is missing, or
-    refuses the stream (it needs a seekable one).
+    The standard [`GzipFile`][gzip.GzipFile] seeks by decompressing again
+    from the start, which makes random access into large volumes
+    quadratic, whereas indexed_gzip keeps an index of checkpoints. The
+    standard library is used when indexed_gzip is missing or refuses the
+    stream.
     """
     if _IndexedGzipFile is not None:
         try:
@@ -97,18 +78,14 @@ def _open_gzip(file: tx.BinaryIO) -> tx.IO:
     return gzip.GzipFile(fileobj=file, mode="rb")
 
 
-# Compressors are keyed by the magic bytes that start their streams.
-# `bz2` and `lzma` are optional at build time (a Python compiled without
-# libbz2 or liblzma simply lacks them), so each is registered only if it
-# imported.
 COMPRESSORS: tx.List[tx.Tuple[bytes, tx.Callable[[tx.BinaryIO], tx.IO]]] = [
     (b"\x1f\x8b", _open_gzip),
 ]
-"""
-Known compressed-stream formats, as `(magic, opener)` pairs.
+"""Decompressors, as pairs of leading magic bytes and an opener.
 
-Append to this list to teach `open_compressed` a new format; an opener
-takes the compressed stream and returns a decompressing one.
+An opener takes the compressed stream and returns a decompressing one.
+Appending a pair teaches [`open_compressed`][] a new format. The bz2 and
+lzma formats are registered only if their modules can be imported.
 """
 
 try:
@@ -129,30 +106,23 @@ except ImportError:  # pragma: no cover - Python built without liblzma
 
 
 def open_compressed(file: tx.BinaryIO) -> tx.IO:
-    """
-    Wrap a stream in a decompressor if its content is compressed.
+    """Wrap a binary stream in a decompressor if its magic bytes match.
 
-    Libraries generally decide whether to decompress from the *file
-    name*, which a bare stream does not have -- so a `.nii.gz` handed
-    over as a file object gets read as garbage. Sniffing the magic bytes
-    works whatever the stream is called, or is not called.
-
-    Detection starts from the stream's current position, so a compressed
-    member embedded partway through a larger file is handled too, and the
-    position is restored before wrapping.
-
-    A stream that is not compressed, or cannot be inspected because it is
-    not seekable, is returned unchanged.
+    Libraries usually detect compression from the file name, which a bare
+    stream lacks, so a `.nii.gz` file object would otherwise read as
+    garbage. Detection starts at the current position, which is restored
+    before the stream is wrapped.
 
     Parameters
     ----------
-    file : BinaryIO
-        The stream to inspect.
+    file
+        Binary stream, read from its current position.
 
     Returns
     -------
-    stream : IO
-        A decompressing stream, or `file` itself.
+    tx.IO
+        A decompressing stream, or `file` itself when the data are not
+        compressed or the stream cannot seek.
     """
     width = max(len(magic) for magic, _ in COMPRESSORS)
     try:
@@ -160,7 +130,8 @@ def open_compressed(file: tx.BinaryIO) -> tx.IO:
         head = file.read(width)
         file.seek(pos)
     except Exception:
-        # Not seekable: peeking would consume bytes we cannot put back.
+        # Peeking at a stream that cannot seek would consume bytes that cannot
+        # be recovered.
         return file
 
     for magic, opener in COMPRESSORS:

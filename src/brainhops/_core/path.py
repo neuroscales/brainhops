@@ -1,9 +1,10 @@
-"""
+"""Type hints for files, paths and file contents.
+
 !!! warning "Internal module"
-    `brainhops._core.path` is internal. It is documented here only to
-    explain the type hints that appear in the public API. Do not import
-    it, and do not rely on anything in it: its contents can change or
-    disappear without notice.
+    `brainhops._core.path` is an internal module. It is documented only to
+    explain the type hints that appear in the public interface, and it
+    should not be imported or relied upon. It may change or disappear
+    without notice.
 """
 
 __all__ = [
@@ -23,68 +24,51 @@ __all__ = [
     "exists",
 ]
 
-# stdlib
 import errno
 from os import PathLike
 from pathlib import Path as LocalPath
 
-# dependencies
 import typing_extensions as tx
 from bagof.paths import Path
 
-# typing
-
 FilenameLike = tx.Union[PathLike, str]
-"""A `PathLike` or `str` that represents a filename."""
+"""Name of a file, given as a string or a path-like object."""
 
 BinaryFileLike = tx.Union[FilenameLike, tx.BinaryIO]
-"""A path to a file or a binary file object."""
+"""Name of a file, or a file object opened in binary mode."""
 
 TextFileLike = tx.Union[FilenameLike, tx.TextIO]
-"""A path to a file or a text file object."""
+"""Name of a file, or a file object opened in text mode."""
 
 FileLike = tx.Union[BinaryFileLike, TextFileLike]
-"""A path to a file or a file object."""
+"""Name of a file, or a file object opened in binary or text mode."""
 
 BinaryContentLike = tx.Union[bytes, bytearray, tx.Iterable[bytes]]
-"""
-The content of a binary file:
-a `bytes`, `bytearray` or an iterable of `bytes`.
-"""
+"""Binary content, given as bytes, a bytearray or an iterable of bytes."""
 
 TextContentLike = tx.Union[str, tx.Iterable[str]]
-"""
-The content of a text file:
-a `str` or an iterable of `str`.
-"""
+"""Text content, given as a string or an iterable of strings."""
 
 ContentLike = tx.Union[BinaryContentLike, TextContentLike]
-"""The content of a text or binary file."""
+"""Binary or text content."""
 
 FileOrContentLike = tx.Union[FileLike, ContentLike]
-"""A path to a file, a file object, or the content of a file."""
+"""Name of a file, file object, or content."""
 
 TextFileOrContentLike = tx.Union[TextFileLike, TextContentLike]
-"""A path to a text file, a text file object, or the content of a text file."""
+"""Name of a file, text file object, or text content."""
 
 BinaryFileOrContentLike = tx.Union[BinaryFileLike, BinaryContentLike]
-"""
-A path to a binary file, a binary file object, or the content of a
-binary file.
-"""
-
-
-# utilities
+"""Name of a file, binary file object, or binary content."""
 
 
 def exists(filename: FilenameLike) -> bool:
-    """
-    Whether a file exists.
+    """Return whether a file exists.
 
-    A name too long for the file system to look up names no file. Such
-    a "name" is usually file content handed over where a path was
-    expected, and is reported as a missing file rather than as an
-    `OSError` from deep inside `stat`. Any other error is raised.
+    A name that is too long for the operating system (`ENAMETOOLONG`) is
+    reported as not existing instead of raising an error. Such a name is
+    usually file content that was passed where a path was expected. Other
+    errors raised by the file system are propagated.
     """
     if isinstance(filename, str):
         filename = Path(filename)

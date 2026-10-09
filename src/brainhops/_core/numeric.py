@@ -1,24 +1,21 @@
-"""
-Helpers for numbers as files store them.
+"""Recovery of the short decimals behind numbers stored in files.
 
-Many file formats store numbers in single precision, sometimes in
-another unit than the one brainhops uses (milliseconds instead of
-seconds, radians instead of degrees). Converted to double precision, such
-a number reads as `0.30000001192092896` rather than as the `0.3` that was
-written. The functions of this module recover the short decimal that
-was meant.
+Files often store numbers in single precision, sometimes in a different
+unit from the one used in memory, such as milliseconds instead of
+seconds or radians instead of degrees. Once widened to double precision,
+a stored `0.3` reads as `0.30000001192092896`. The functions in this
+module recover the short decimal that was originally written.
 """
 
 __all__ = ["float32_repr", "shortest_decimal"]
 
-# stdlib
 import math
 
-# externals
 import numpy as np
 import typing_extensions as tx
 
-# A double has at most 17 significant decimal digits.
+# A double has at most 17 significant decimal digits, which bounds the
+# search.
 _MAX_DIGITS = 17
 
 
@@ -26,36 +23,30 @@ def shortest_decimal(
     value: float,
     encode: tx.Optional[tx.Callable[[float], float]] = None,
 ) -> float:
-    """
-    Find the shortest decimal that a file stores as the same single
-    precision number as `value`.
+    """Return the decimal with the fewest digits that is stored as the same
+    float32.
 
-    A writer stores a value `d` as the single-precision number
-    `float32(encode(d))`, where `encode` converts the value into the unit
-    of the file. A reader that decodes that number in double precision
-    obtains `value`, which is close to the number that was written, but
-    rarely equal to it. This function returns the decimal with the fewest
-    significant digits that the writer would store as the same number.
-    That decimal is the value the reader reports: it reads back exactly as
-    it was written, and writing it again stores the same bits.
-
-    With the identity as `encode`, this is the question that the shortest
-    round-trip representation of a single-precision number answers, and
-    the result is the value that `str(numpy.float32(value))` prints.
+    A writer stores a decimal `d` as `float32(encode(d))`, where `encode`
+    converts `d` into the unit of the file. A reader obtains the double
+    `value`, which is close to `d` but rarely equal to it. The returned
+    decimal reads as it was written, and writing it again stores the same
+    bits. With the default identity encoding, the result is the shortest
+    representation of a float32 that round-trips, which is what
+    `str(numpy.float32(value))` prints.
 
     Parameters
     ----------
-    value : float
-        The decoded value, in double precision.
-    encode : callable, optional
-        The function that converts a value into what the file stores,
-        before the rounding to single precision. By default, the identity.
+    value
+        Double decoded from the file.
+    encode
+        Conversion from the unit of `value` to the unit of the file. The
+        default is the identity.
 
     Returns
     -------
     float
-        The shortest decimal that is stored as the same number. A value
-        that is zero or not finite is returned as it is.
+        The shortest decimal. Zero and non-finite values are returned as
+        they are.
 
     Examples
     --------
@@ -93,19 +84,9 @@ def shortest_decimal(
 
 
 def float32_repr(value: tx.Any) -> float:
-    """
-    The shortest decimal that is stored as the same single-precision
-    number as `value`.
+    """Return the shortest decimal that has the same float32 value.
 
-    Parameters
-    ----------
-    value : float
-        A number, usually one read from a single-precision slot.
-
-    Returns
-    -------
-    float
-        The shortest decimal with the same single-precision value, such
-        as `0.3` for the single-precision number `0.30000001192092896`.
+    The value, which usually comes from a single-precision field, is first
+    cast to float32. For example, `0.30000001192092896` becomes `0.3`.
     """
     return shortest_decimal(float(np.float32(value)))
