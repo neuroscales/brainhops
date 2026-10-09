@@ -225,7 +225,7 @@ def test_flirt_mat_file_accepts_every_moving_alias(
     tmp_path,  # noqa: ANN001
     keyword,  # noqa: ANN001
 ) -> None:
-    """A `.mat` file reader accepts each alias of `moving` (#372)."""
+    """A `.mat` file reader accepts each alias of `moving`."""
     path = tmp_path / "src2ref.mat"
     np.savetxt(str(path), FLIRT_MATRIX, fmt="%.8g")
     moving = _image(MOV_SHAPE, MOV_AFFINE)
@@ -449,7 +449,7 @@ def test_coefficient_field_needs_both_images() -> None:
 
 @pytest.mark.parametrize("keyword", ["moving", "mov", "src"])
 def test_fnirt_reader_accepts_every_moving_alias(keyword) -> None:  # noqa: ANN001
-    """The FNIRT reader accepts each alias of `moving` (#372)."""
+    """The FNIRT reader accepts each alias of `moving`."""
     moving = _real_src()
     coef = io.transformations.load(
         fsl_dir / "coefficientfield.nii.gz",
@@ -461,7 +461,7 @@ def test_fnirt_reader_accepts_every_moving_alias(keyword) -> None:  # noqa: ANN0
 
 
 def test_coefficient_field_ignores_an_invalid_deformation_type() -> None:
-    """An invalid `deformation_type` does not hide the chain (#373)."""
+    """An invalid `deformation_type` does not hide the chain."""
     coef = io.transformations.load(
         fsl_dir / "coefficientfield.nii.gz",
         reference=_real_ref(),
