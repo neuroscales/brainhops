@@ -904,8 +904,10 @@ def afni_dataset_files(
 
     Returns
     -------
-    head, brik : Path
-        The two files; the BRIK may not exist.
+    head : Path
+        The `.HEAD` file.
+    brik : Path
+        The `.BRIK` file, which may not exist.
     stem : str
         The dataset name, without directory or extension.
     """

@@ -385,14 +385,17 @@ def parse(
         The input.
     registry : set of type
         The formats to choose between.
-    fn_parse, fn_sniff : str
-        The names of the parsing and sniffing methods, such as `"from_file"`
-        and `"sniff_file"`.
-    brute : bool
+    fn_parse : str
+        The name of the parsing method, such as `"from_file"`.
+    fn_sniff : str
+        The name of the sniffing method, such as `"sniff_file"`.
+    brute : bool, default=False
         Whether to try every format when none recognizes the input.
-    hints, hint : str or iterable of str
+    hints : str or iterable of str, default=()
         Only formats answering to one of these hints are allowed, and they are
         tried even if none sniffs the input positively.
+    hint : str or iterable of str, optional
+        Further hints, merged with `hints` and applied in the same way.
     options : mapping, optional
         Source options. Only formats accepting every option are allowed.
 
@@ -648,9 +651,9 @@ def sniff(
 
     Parameters
     ----------
-    error : bool or type of Exception
+    error : bool or type of Exception, default=False
         If not false, raise instead of returning `None`.
-    what : str
+    what : str, default="input content"
         A description of the input for error messages.
 
     Returns

@@ -318,7 +318,7 @@ class PillowImage(
             scales onto axes with a unit of length, and is otherwise the
             resolution read with the image. `False` records none, and a number
             or an `(x, y)` pair is recorded as is.
-        **options
+        **options : Any
             Passed to `Image.save`, such as `quality=95` for JPEG. The ICC
             profile and EXIF block of `info` are added unless given.
 

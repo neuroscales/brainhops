@@ -127,10 +127,10 @@ class FileSniffer:
         ----------
         file : FileOrContentLike
             The file or its content.
-        error : bool or type of Exception
+        error : bool or type of Exception, default=False
             If not false, raise when the input cannot be sniffed: `True` raises
             the default error, and an exception class raises that class.
-        **kwargs
+        **kwargs : Any
             Parser options.
 
         Returns

@@ -284,7 +284,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             Chunk shape of every level, in the brainhops axis order.
         version : str, optional
             OME-NGFF version. By default, the source version or 0.6 is used.
-        **kwargs
+        **kwargs : Any
             Passed to the creation of each level array.
 
         Raises

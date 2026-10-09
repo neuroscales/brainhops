@@ -532,7 +532,7 @@ def encode_pillow(
         The Pillow name of the format, such as `"PNG"`.
     dpi : tuple of float, optional
         The resolution along x and y, passed only to [`DPI_FORMATS`][].
-    **options
+    **options : Any
         Passed to `Image.save`, such as `quality=95` for JPEG.
 
     Raises

@@ -115,7 +115,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         like : path, nibabel MGH image or header, or MGH object, optional
             Template whose MRI parameters override those of this image. A
             TR stated by the transformation overrides both.
-        **overrides
+        **overrides : Any
             Header fields set last. `dtype` sets the stored voxel type,
             which by default is the type of the data if MGH can store it
             (uint8, int16, int32, float32), or else the nearest one.

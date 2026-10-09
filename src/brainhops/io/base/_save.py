@@ -56,7 +56,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         A path, or a file object opened for writing. An object without a name,
         such as a buffer, gives no name to choose from, so `obj` must already
         be a writable format.
-    **kwargs
+    **kwargs : Any
         Options passed to the `save` method of the chosen format.
 
     Raises

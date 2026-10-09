@@ -27,7 +27,7 @@ def load(
     ----------
     filelike : FileOrContentLike
         The file or its content.
-    brute : bool
+    brute : bool, default=False
         If no format recognizes the input, try every registered reader.
     """
     return FileBasedObject.load(filelike, brute=brute, **kwargs)

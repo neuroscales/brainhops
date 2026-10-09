@@ -493,9 +493,9 @@ class _FileBasedModelMixin:
         ----------
         other : object
             A file, its content, a mapping, or an instance of a similar class.
-        *args
+        *args : Any
             Constructor arguments. A file is read with keyword options only.
-        **kwargs
+        **kwargs : Any
             Format options when reading a file, and field values otherwise.
 
         Raises

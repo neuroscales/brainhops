@@ -184,7 +184,7 @@ def unit_to_nifti(
         The unit to write.
     kind : {"space", "time"}
         The slot of `xyzt_units`.
-    nearest : bool
+    nearest : bool, default=False
         For a spatial unit without a NIfTI code, return the nearest label on a
         logarithmic scale instead of `"unknown"`. The caller must then rescale
         what the unit measures.

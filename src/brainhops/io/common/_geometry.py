@@ -91,8 +91,10 @@ def reduce_to_affine(
     ----------
     xform : Transformation
         The voxel-to-world transformation.
-    fmt, world : str
-        The names of the format and of the world space, for error messages.
+    fmt : str
+        The name of the format, for error messages.
+    world : str, default="world"
+        The name of the world space, for error messages.
 
     Raises
     ------
@@ -363,12 +365,14 @@ def plan_axes(
 
     Parameters
     ----------
-    side, fmt : str
-        The side, `"voxel"` or `"world"`, and the format, for error messages.
-    fill_space : bool
+    side : str
+        The side, `"voxel"` or `"world"`, for error messages.
+    fmt : str
+        The format, for error messages.
+    fill_space : bool, default=True
         With one or two spatial axes and other axes, insert singleton spatial
         axes up to three.
-    fill_time : bool
+    fill_time : bool, default=False
         With no time axis and other non-spatial axes, insert a singleton time
         axis before them.
     time_slot : int, optional
