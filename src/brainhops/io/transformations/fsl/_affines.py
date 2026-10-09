@@ -63,8 +63,9 @@ def _best_affine(obj: tx.Any) -> np.ndarray:
     """Return the voxel-to-world (RAS) affine of a nibabel image or header."""
     if hasattr(obj, "get_best_affine"):
         return np.asarray(obj.get_best_affine(), dtype=np.float64)
-    if _header(obj) is not None:
-        return _best_affine(_header(obj))
+    header = _header(obj)
+    if header is not None:
+        return _best_affine(header)
     if getattr(obj, "affine", None) is not None:
         return np.asarray(obj.affine, dtype=np.float64)
     raise ValueError(
@@ -79,8 +80,9 @@ def _shape(obj: tx.Any) -> tx.Tuple[int, ...]:
         return tuple(int(s) for s in obj.get_data_shape())
     if getattr(obj, "shape", None) is not None:
         return tuple(int(s) for s in obj.shape)
-    if _header(obj) is not None:
-        return _shape(_header(obj))
+    header = _header(obj)
+    if header is not None:
+        return _shape(header)
     raise ValueError("Cannot determine the shape of the image.")
 
 
@@ -91,7 +93,7 @@ def _pixdim(obj: tx.Any) -> np.ndarray:
     incomplete `pixdim` still gives an invertible scaled-mm affine.
     """
     header = obj
-    if not hasattr(header, "get_zooms") and _header(obj) is not None:
+    if not hasattr(header, "get_zooms"):
         header = _header(obj)
     if hasattr(header, "get_zooms"):
         zooms = np.asarray(header.get_zooms(), dtype=np.float64)

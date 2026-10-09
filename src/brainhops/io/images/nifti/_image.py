@@ -8,7 +8,6 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import KwOnly, NoRepr, replace
-from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core import path
@@ -110,9 +109,10 @@ class NiftiImage(
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The image data, decoded from `raw` on first access and cached.
 
-        Setting the data stores it in `raw` and drops the cached value.
-        Data decoded as a writable array, as NumPy decodes it, is written
-        instead of `raw`, because it may have been changed in place.
+        Data decoded from a file is read-only, because changing it in
+        place would not change `raw`, which is what the image writes. To
+        change the voxels, assign `data`: setting it stores the new array
+        in `raw` and drops the cached value.
         """
         if self.raw is None:
             return None
@@ -166,12 +166,14 @@ class NiftiImage(
     ) -> float:
         """Return the confidence that a stream holds a NIfTI image.
 
-        The stream is first tested with [`NiftiRaw.sniff_fileobj`][], and a
-        NIfTI header is then scored with `_score_nibabel`.
+        A stream that starts with a NIfTI header is scored with
+        `_score_nibabel`. Any other stream is declined by
+        [`NiftiRaw.sniff_fileobj`][], which raises the requested error.
         """
-        if not NiftiRaw.sniff_fileobj(file, error=error, **kwargs):
-            return Confidence.NO
-        return cls._score_nibabel(_sniffed_header(file))
+        header = _sniffed_header(file, kwargs.get("version"))
+        if header is None:
+            return NiftiRaw.sniff_fileobj(file, error=error, **kwargs)
+        return cls._score_nibabel(header)
 
     @classmethod
     def sniff_bytes(
@@ -318,18 +320,9 @@ class NiftiImage(
             raise WriterError(
                 "This image has no data, so there is nothing to write."
             )
-        raw = self.raw
-        # Data decoded as an array that can be changed in place, as NumPy
-        # decodes a proxy, may have been changed, so it is written instead
-        # of the proxy. A Dask array cannot be changed in place, so the
-        # proxy is written and an untouched image stays byte for byte.
-        if isinstance(raw, ArrayProxy) and _is_writable(
-            vars(self).get("_cache_data")
-        ):
-            raw = _image_to_disk(self.data)
         base = None if self.metadata is None else self.metadata.to_raw()
         return _image_with_geometry(
-            raw,
+            self.raw,
             self.transformation,
             self.transformations,
             base=base,
@@ -357,16 +350,6 @@ class NiftiImage(
         The keyword arguments are those of [`to_nibabel`][].
         """
         return self.to_nibabel(**kwargs).to_bytes()
-
-
-def _is_writable(array: tx.Any) -> bool:
-    """Return whether an array can be changed in place.
-
-    NumPy arrays say so in their flags. Arrays without such flags, such as
-    Dask arrays, and `None` are taken to be read-only.
-    """
-    flags = getattr(array, "flags", None)
-    return bool(getattr(flags, "writeable", False))
 
 
 def _nifti_to_transformations(

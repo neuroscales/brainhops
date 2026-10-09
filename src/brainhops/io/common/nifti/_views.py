@@ -8,6 +8,7 @@ two functions of a pair are pure and invert each other, so that
 """
 
 # dependencies
+import numpy as np
 from nibabel.arrayproxy import ArrayProxy
 
 # internals
@@ -20,12 +21,17 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
     An image stores its data as it is. The proxy of a file, which reads
     the voxels lazily, is read with the array backend, which loads it with
-    NumPy and keeps it lazy with Dask. Any other array is returned as it
-    is, so that an image built from a Dask array keeps it lazy.
+    NumPy and keeps it lazy with Dask. A NumPy array decoded in this way is
+    made read-only, because changing it in place would not change the
+    proxy, which is what the image writes. Any other array is returned as
+    it is, so that an image built from a Dask array keeps it lazy.
     """
-    if isinstance(raw, ArrayProxy):
-        return get_array_backend().asarray(raw)
-    return raw
+    if not isinstance(raw, ArrayProxy):
+        return raw
+    data = get_array_backend().asarray(raw)
+    if isinstance(data, np.ndarray):
+        data.flags.writeable = False
+    return data
 
 
 def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:

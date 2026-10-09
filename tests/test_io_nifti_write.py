@@ -1053,14 +1053,20 @@ def test_a_nifti2_file_is_written_back_as_nifti2(tmp_path) -> None:  # noqa: ANN
     assert target.read_bytes() == source.read_bytes()
 
 
-def test_data_changed_in_place_after_a_read_is_written(tmp_path) -> None:  # noqa: ANN001
+def test_read_data_is_read_only_and_assigned_data_is_written(
+    tmp_path,  # noqa: ANN001
+) -> None:
     from brainhops.backends import backend
 
     source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
     target = tmp_path / "copy.nii"
     with backend("numpy"):
         image = NiftiImage.load(source)
-        image.data[0, 0, 0] = 7.0
+        with pytest.raises(ValueError, match="read-only"):
+            image.data[0, 0, 0] = 7.0
+        edited = np.array(image.data)
+        edited[0, 0, 0] = 7.0
+        image.data = edited
         image.save(target)
     assert nb.load(str(target)).get_fdata()[0, 0, 0] == 7.0
 
@@ -1087,3 +1093,19 @@ def test_a_dtype_override_scales_an_untouched_image_again(tmp_path) -> None:  # 
     written = nb.load(str(target))
     assert written.get_data_dtype() == np.dtype("int16")
     assert np.allclose(written.get_fdata(), values, atol=1e-3)
+
+
+@pytest.mark.parametrize("suffix", [".nii", ".nii.gz"])
+def test_metadata_is_compressed_by_the_name_of_its_file(
+    tmp_path,  # noqa: ANN001
+    suffix: str,
+) -> None:
+    from brainhops.io.images.nifti import NiftiMetadata
+
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    metadata = NiftiMetadata.load(source)
+    target = tmp_path / ("header" + suffix)
+    metadata.save(target)
+    compressed = target.read_bytes()[:2] == b"\x1f\x8b"
+    assert compressed == suffix.endswith(".gz")
+    assert NiftiMetadata.load(target).to_bytes() == metadata.to_bytes()

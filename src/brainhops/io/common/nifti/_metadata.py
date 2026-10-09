@@ -8,6 +8,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 # internals
+from brainhops._core import path
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileReader, BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat
@@ -87,3 +88,11 @@ class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """
         raw = NiftiRaw() if self.raw is None else self.raw
         return raw.to_bytes(**kwargs)
+
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """Write the header to a path, compressed if its name ends with `.gz`.
+
+        The header is written with [`NiftiRaw.to_filename`][].
+        """
+        raw = NiftiRaw() if self.raw is None else self.raw
+        raw.to_filename(filename, **kwargs)

@@ -1,8 +1,10 @@
 """The record of a NIfTI file, and reading and writing whole files."""
 
 # stdlib
+import gzip
 import warnings
 from io import BytesIO
+from urllib.parse import urlsplit
 
 # dependencies
 import nibabel as nb
@@ -161,6 +163,21 @@ class NiftiRaw(Magic, BinaryFileReader, BinaryFileWriter):
         buffer = BytesIO()
         self.header.copy().write_to(buffer)
         return buffer.getvalue()
+
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """Write the header to a path, compressed if its name ends with `.gz`.
+
+        The name is read from the path of the URL, so that a query does not
+        hide the suffix, as when a whole NIfTI file is written.
+        """
+        content = self.to_bytes(**kwargs)
+        compress = urlsplit(str(filename)).path.lower().endswith(".gz")
+        with path.Path(filename).open("wb") as file:
+            if compress:
+                with gzip.GzipFile(fileobj=file, mode="wb") as gz:
+                    gz.write(content)
+            else:
+                file.write(content)
 
 
 def _sniffed_header(
