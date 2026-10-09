@@ -1,4 +1,4 @@
-"""Orientations of an axis or a space, such as left-to-right."""
+"""Orientations of axes and spaces, such as left-to-right."""
 
 __all__ = [
     "Orientation",
@@ -22,14 +22,11 @@ __all__ = [
     "inferiorToSuperior",
     "InferiorToSuperior",
 ]
-# dependencies
 import typing_extensions as tx
 from bagof.magic import Narrow
 
-# core
 from brainhops._core.typing import NoRepr
 
-# locals
 from .base import DataModelBase
 from .enums import OrientationType
 
@@ -37,13 +34,12 @@ _T = tx.TypeVar("_T", bound=type)
 
 
 def singleton(cls: _T) -> _T:
-    """
-    Make a class a singleton, so that only one instance of it can exist.
+    """Make a class a singleton.
 
-    Calling the class again returns that instance. A singleton cannot be
-    subclassed: a subclass would be a second kind of the one thing. The
-    classes below are also frozen, since every axis that points their way
-    holds the one instance: changing it would turn them all.
+    Calling the class again returns its single instance, and subclassing it
+    raises a TypeError, since a subclass would be a second kind of the same
+    thing. The classes below are also frozen, because every axis shares the one
+    instance and mutating it would change all of them.
     """
 
     registry = {}
@@ -68,12 +64,11 @@ def singleton(cls: _T) -> _T:
 
 
 class Orientation(DataModelBase, polymorphic=True):
-    """Describes the orientation of an axis or a space.
+    """The orientation of an axis or a space.
 
-    An orientation has a `type`, drawn from [`OrientationType`][], that
-    names the frame of reference it belongs to. Its `value` identifies
-    the specific orientation within that frame, for example
-    `"left-to-right"` for an anatomical orientation.
+    The `type` is the frame of reference (an [`OrientationType`][]), and the
+    `value` is the specific orientation within that frame, such as
+    `"left-to-right"`.
     """
 
     value: tx.Optional[str] = None
@@ -90,8 +85,7 @@ class AnatomicalOrientation(Orientation, on={"type": "anatomical"}):
 class LeftToRight(
     AnatomicalOrientation, on={"value": "left-to-right"}, frozen=True
 ):
-    """The anatomical orientation in which coordinates increase from the
-    left of the subject toward the right."""
+    """Coordinates increase from left to right."""
 
     value: NoRepr[Narrow[str]] = "left-to-right"
 
@@ -100,8 +94,7 @@ class LeftToRight(
 class RightToLeft(
     AnatomicalOrientation, on={"value": "right-to-left"}, frozen=True
 ):
-    """The anatomical orientation in which coordinates increase from the
-    right of the subject toward the left."""
+    """Coordinates increase from right to left."""
 
     value: NoRepr[Narrow[str]] = "right-to-left"
 
@@ -110,8 +103,7 @@ class RightToLeft(
 class AnteriorToPosterior(
     AnatomicalOrientation, on={"value": "anterior-to-posterior"}, frozen=True
 ):
-    """The anatomical orientation in which coordinates increase from the
-    front of the subject toward the back."""
+    """Coordinates increase from front to back."""
 
     value: NoRepr[Narrow[str]] = "anterior-to-posterior"
 
@@ -120,8 +112,7 @@ class AnteriorToPosterior(
 class PosteriorToAnterior(
     AnatomicalOrientation, on={"value": "posterior-to-anterior"}, frozen=True
 ):
-    """The anatomical orientation in which coordinates increase from the
-    back of the subject toward the front."""
+    """Coordinates increase from back to front."""
 
     value: NoRepr[Narrow[str]] = "posterior-to-anterior"
 
@@ -130,8 +121,7 @@ class PosteriorToAnterior(
 class InferiorToSuperior(
     AnatomicalOrientation, on={"value": "inferior-to-superior"}, frozen=True
 ):
-    """The anatomical orientation in which coordinates increase from the
-    bottom of the subject toward the top."""
+    """Coordinates increase from bottom to top."""
 
     value: NoRepr[Narrow[str]] = "inferior-to-superior"
 
@@ -140,26 +130,25 @@ class InferiorToSuperior(
 class SuperiorToInferior(
     AnatomicalOrientation, on={"value": "superior-to-inferior"}, frozen=True
 ):
-    """The anatomical orientation in which coordinates increase from the
-    top of the subject toward the bottom."""
+    """Coordinates increase from top to bottom."""
 
     value: NoRepr[Narrow[str]] = "superior-to-inferior"
 
 
 R = LR = leftToRight = LeftToRight()
-"""Singleton left-to-right orientation."""
+"""Left to right, named `R` after the end of the axis (also `LR`)."""
 
 L = RL = rightToLeft = RightToLeft()
-"""Singleton right-to-left orientation."""
+"""Right to left (`L`, `RL`)."""
 
 A = PA = posteriorToAnterior = PosteriorToAnterior()
-"""Singleton posterior-to-anterior orientation."""
+"""Posterior to anterior (`A`, `PA`)."""
 
 P = AP = anteriorToPosterior = AnteriorToPosterior()
-"""Singleton anterior-to-posterior orientation."""
+"""Anterior to posterior (`P`, `AP`)."""
 
 I = SI = superiorToInferior = SuperiorToInferior()
-"""Singleton superior-to-inferior orientation."""
+"""Superior to inferior (`I`, `SI`)."""
 
 S = IS = inferiorToSuperior = InferiorToSuperior()
-"""Singleton inferior-to-superior orientation."""
+"""Inferior to superior (`S`, `IS`)."""

@@ -1,25 +1,19 @@
-# stdlib
 from contextlib import contextmanager
 from types import ModuleType
 
-# dependencies
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
-# internals
 from brainhops._core.dependencies import cp, cpndi, da, dkndi, np, npndi
 
-#: The array package of each backend, with the ndimage package it needs.
-#: A backend needs both: one that can hold an array but not interpolate it
-#: is not a backend brainhops can use.
+# A backend needs both its array package and its ndimage package.
 _MODULES = {
     "numpy": (np, npndi),
     "cupy": (cp, cpndi),
     "dask": (da, dkndi),
 }
 
-#: The distribution that supplies each backend's ndimage package, named in
-#: the error raised when it is missing.
+# Distribution that provides each ndimage package, for error messages.
 _NDIMAGE_PACKAGE = {
     "numpy": "scipy",
     "cupy": "cupy",
@@ -30,11 +24,10 @@ _PRIORITY = ("dask", "cupy", "numpy")
 
 
 def available_backends() -> tx.Tuple[str, ...]:
-    """The backends that can be selected, most preferred first.
+    """Return the names of the installed backends, most preferred first.
 
-    A backend appears only when both of its packages are installed. The
-    dask backend's ndimage package is brainhops' own
-    ([`brainhops._core.dask_ndimage`][]), so dask alone is enough for it.
+    A backend is installed when both its array and ndimage packages are.
+    Dask uses [`brainhops._core.dask_ndimage`][], so it needs nothing else.
     """
     return tuple(
         name
@@ -43,13 +36,19 @@ def available_backends() -> tx.Tuple[str, ...]:
     )
 
 
-#: The backend used when none is selected: the most preferred one that is
-#: actually available.
 _BACKEND = (available_backends() or ("numpy",))[0]
 
 
 def best_backend(*backends) -> ModuleType:
-    """Return the array backend with highest priority from a list."""
+    """Return the array module of the most preferred given backend.
+
+    Each argument is anything accepted by [`get_array_backend`][].
+
+    Raises
+    ------
+    ValueError
+        If none of the given backends is installed.
+    """
     references = map(get_array_backend, available_backends())
     backends = tuple(map(get_array_backend, backends))
     for ref in references:
@@ -62,7 +61,15 @@ def best_backend(*backends) -> ModuleType:
 def backend(
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> tx.Generator[str, None, None]:
-    """Context manager to temporarily set the array backend"""
+    """Select a backend, given by name or module, inside a `with` block.
+
+    The previous backend is restored on exit. `None` keeps the current one.
+
+    Yields
+    ------
+    str
+        The name of the backend in use.
+    """
     global _BACKEND
     old_backend = _BACKEND
     if backend is not None:
@@ -74,20 +81,19 @@ def backend(
 
 
 def get_backend() -> str:
-    """Get the current array backend"""
+    """Return the name of the current backend."""
     return _BACKEND
 
 
 def backend_name(
     backend: tx.Union[str, ModuleType, ArrayProtocol],
 ) -> str:
-    """The name of a backend, given its name, its module, or one of its
-    arrays.
+    """Return the name of the backend of a name, module or array.
 
     Raises
     ------
     ValueError
-        If nothing names a known backend.
+        If the argument does not designate a supported backend.
     """
     if isinstance(backend, str):
         if backend not in _MODULES:
@@ -101,21 +107,17 @@ def backend_name(
 
 
 def set_backend(backend: tx.Union[str, ModuleType]) -> None:
-    """Set the current array backend
+    """Set the current backend, given by name or array module.
 
-    The backend may be named, or given as its array module -- which is what
-    [get_array_backend][brainhops.backends.get_array_backend] hands back, so
-    a caller that has an array in hand can select its backend without
-    naming it.
+    Passing the result of [`get_array_backend`][] selects the backend of an
+    array. The installed backends are listed by [`available_backends`][].
 
     Raises
     ------
     ValueError
-        If `backend` does not name a backend.
+        If the argument does not designate a supported backend.
     ImportError
-        If the backend's array package, or the ndimage package it needs, is
-        not installed. Both are required -- see
-        [available_backends][brainhops.backends.available_backends].
+        If the array or ndimage package of the backend is not installed.
     """
     global _BACKEND
     backend = backend_name(backend)
@@ -140,20 +142,23 @@ def to_backend(
 def get_array_backend(
     x: tx.Optional[tx.Union[ArrayProtocol, ModuleType, str]] = None,
 ) -> ModuleType:
-    """Determine the array package for a given array
+    """Return the array package of an array, module or backend name.
 
-    One of: numpy, cupy, dask.array
+    The result is `numpy`, `cupy` or `dask.array`. `None`, or an object of
+    no known backend, gives the package of the current backend.
+
+    Raises
+    ------
+    TypeError
+        If the argument is a module that belongs to no known backend.
     """
     if x is None:
         x = get_backend()
 
-    # Guess from backend name
     if isinstance(x, str):
         return {"numpy": np, "cupy": cp, "dask": da}[x]
 
-    # Guess from module type
     if isinstance(x, ModuleType):
-        # Already an array module
         if x is np:
             return np
         if x is cp:
@@ -161,7 +166,6 @@ def get_array_backend(
         if x is da:
             return da
 
-        # Guess from image module?
         if x is npndi:
             return np
         if x is cpndi:
@@ -171,7 +175,6 @@ def get_array_backend(
 
         raise TypeError(f"Unknown module: {x}")
 
-    # Guess from array type
     if np and isinstance(x, np.ndarray):
         return np
     if cp and isinstance(x, cp.ndarray):
@@ -183,17 +186,13 @@ def get_array_backend(
 
 
 def may_share_memory(x: ArrayProtocol, y: ArrayProtocol) -> tx.Optional[bool]:
-    """Whether two arrays might share memory, if the backend can tell.
+    """Return whether two arrays might share memory.
 
-    For numpy and cupy this is the backend's own `may_share_memory`, a
-    conservative bounds check: `False` means the arrays certainly do not
-    overlap, `True` means they might. A dask array never shares memory with
-    another array object: it is immutable, and `x[...] = v` rebinds the
-    graph of `x` itself, never that of the array it was built from, so
-    `False` is returned for it unless the two are the same object. An
-    array-like of no known backend (a lazy file proxy, say) cannot be
-    inspected, so `None` is returned for it: the caller cannot rule sharing
-    out.
+    Numpy and cupy arrays use the conservative bounds check of their
+    backend, so `False` means certainly disjoint. Host and device arrays
+    never share memory. Dask arrays are immutable and writes rebind their
+    own graph, so distinct dask arrays never do. `None` is returned for an
+    array-like of unknown backend, such as a lazy file proxy.
     """
     if x is y:
         return True
@@ -206,38 +205,31 @@ def may_share_memory(x: ArrayProtocol, y: ArrayProtocol) -> tx.Optional[bool]:
         elif da is not None and isinstance(array, da.Array):
             backends.append(da)
         else:
-            # An array-like of no known backend, whose memory cannot be
-            # inspected.
             return None
     if da in backends:
-        # Distinct dask arrays never alias: a write rebinds one array's own
-        # graph. (A computed result can be a view of a numpy array the graph
-        # was built from, but that is outside what this function answers.)
+        # A computed result that views a source numpy array is ignored.
         return False
     if backends[0] is not backends[1]:
-        # A host array and a device array cannot alias each other.
         return False
     return bool(backends[0].may_share_memory(x, y))
 
 
 def copy_array(x: ArrayProtocol) -> ArrayProtocol:
-    """A copy of `x` that shares no memory with it, in the same backend.
+    """Return a copy of an array, on the same backend, sharing no memory.
 
-    A dask array's own `copy()` returns a new array object over the same
-    graph, which is all an immutable array needs: no chunk is copied.
+    A dask copy is a new object over the same graph, which suffices because
+    dask arrays are immutable.
     """
     if hasattr(x, "copy"):
         return x.copy()
-    # An array-like of no known backend is read into a fresh host array.
     return np.array(x, copy=True)
 
 
 def _ndimage_of(name: str) -> ModuleType:
-    """The ndimage package of a backend, by name.
+    """Return the ndimage package of a backend name, or raise.
 
-    A missing package is reported, never substituted: serving the dask
-    backend with scipy would materialize the array it was handed, which for
-    a lazily read volume is the allocation dask is used to avoid.
+    A missing package is never replaced: scipy would load a lazy dask
+    volume into memory.
     """
     array, image = _MODULES[name]
     if array is None:
@@ -253,27 +245,26 @@ def _ndimage_of(name: str) -> ModuleType:
 def get_ndimage_backend(
     x: tx.Optional[tx.Union[ArrayProtocol, ModuleType, str]] = None,
 ) -> ModuleType:
-    """Determine the ndimage package for a given array
+    """Return the ndimage package of an array, module or backend name.
 
-    One of: scipy.ndimage, cupyx.scipy.ndimage,
-    brainhops._core.dask_ndimage
+    The result is `scipy.ndimage`, `cupyx.scipy.ndimage` or
+    [`brainhops._core.dask_ndimage`][]. `None`, or an object of no known
+    backend, gives the package of the current backend.
 
     Raises
     ------
     ImportError
-        If the backend the array belongs to has no ndimage package
-        installed. It is never stood in for by another backend's.
+        If the ndimage package of the backend is not installed.
+    TypeError
+        If the argument is a module that belongs to no known backend.
     """
     if x is None:
         x = get_backend()
 
-    # Guess from backend name
     if isinstance(x, str):
         return _ndimage_of(x)
 
-    # Guess from module type
     if isinstance(x, ModuleType):
-        # Already a image module?
         if x is npndi:
             return npndi
         if x is cpndi:
@@ -281,7 +272,6 @@ def get_ndimage_backend(
         if x is dkndi:
             return dkndi
 
-        # Guess from array module
         if x is np:
             return _ndimage_of("numpy")
         if x is cp:
@@ -291,7 +281,6 @@ def get_ndimage_backend(
 
         raise TypeError(f"Unknown module: {x}")
 
-    # Guess from array type
     if cp and isinstance(x, cp.ndarray):
         return _ndimage_of("cupy")
     if np and isinstance(x, np.ndarray):

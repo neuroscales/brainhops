@@ -1,8 +1,7 @@
-"""
-Generic representation of transforms and their interactions.
+"""Generic representation of coordinate systems and transformations.
 
-Mostly based on OME-NGFF, but with more flexibility.
-Should be able to accommodate a large variety of existing transform formats:
+The model follows OME-NGFF but is more flexible, so that it can represent
+the transformations of many formats:
 
 - OME-NGFF
 - FreeSurfer LTA (affine)
@@ -12,12 +11,8 @@ Should be able to accommodate a large variety of existing transform formats:
 - nitorch
 - ...
 
-(FSL defines its transformations with respect to the fixed and moving
-images, but their metadata is not stored in the transform, which means
-that the fixed and moving images must be accessible when applying the
-transform on some third image. This is very inconvenient and not a use
-case I am fond of supporting).
-
+FSL transformations are not supported, because applying one requires the
+metadata of its fixed and moving images, which it does not store.
 """
 
 __all__ = [
@@ -32,7 +27,7 @@ __all__ = [
     "units",
 ]
 
-# trigger registration
+# Importing the modules registers their classes.
 from . import (
     axes,
     base,
