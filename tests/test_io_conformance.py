@@ -14,8 +14,8 @@ the checks need to know about it, and every other registered format is
 listed in `NOT_MIGRATED`. A test makes sure that the two tables together
 name every registered format, so a new format has to choose a table. The
 checks are parametrized over the exemplars and over a small format defined
-in this module, the toy format, which shows the mechanism end to end
-before any real format is migrated.
+in this module, the toy format, which shows the mechanism end to end in
+as little code as possible.
 """
 
 import gzip
@@ -36,6 +36,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.transformations import (
+    Affine,
     Identity,
     Scaling,
     Transformation,
@@ -52,6 +53,18 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata import MetadataFormat
+
+try:
+    import nibabel as nb
+    from nibabel.arrayproxy import ArrayProxy
+
+    from brainhops.io.common.nifti._views import (
+        _image_to_disk,
+        _image_to_model,
+    )
+    from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
+except ImportError:
+    nb = None
 
 # ----------------------------------------------------------------------
 #   TOY FORMAT
@@ -392,8 +405,36 @@ class Exemplar(tx.NamedTuple):
     """Whether the format is read in binary mode."""
 
 
+def _nifti_edit_record(record: tx.Any) -> tx.Any:
+    record.header["descrip"] = b"edited"
+    return record
+
+
+def _nifti_geometry(image: tx.Any) -> np.ndarray:
+    return np.asarray(image.transformation.to(Affine).matrix, dtype=float)
+
+
+def _nifti_change_geometry(image: tx.Any) -> None:
+    image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+
+
 EXEMPLARS: tx.Dict[type, Exemplar] = {}
 """The registered formats that follow the design."""
+
+if nb is not None:
+    EXEMPLARS[NiftiImage] = Exemplar(
+        metadata=NiftiMetadata,
+        suffix=".nii",
+        proxies=(ArrayProxy,),
+        to_model=_image_to_model,
+        to_disk=_image_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=_nifti_edit_record,
+        record_edited=lambda raw: raw.header["descrip"].item() == b"edited",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    )
 
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.afni.AfniImage",
@@ -401,7 +442,6 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.minc.Minc1Image",
     "brainhops.io.images.minc.Minc2Image",
     "brainhops.io.images.mrtrix.MrtrixImage",
-    "brainhops.io.images.nifti.NiftiImage",
     "brainhops.io.images.nrrd.AttachedNrrdImage",
     "brainhops.io.images.nrrd.DetachedNrrdImage",
     "brainhops.io.images.openslide.AperioImage",
@@ -481,10 +521,26 @@ TEST_EXEMPLARS: tx.Dict[type, Exemplar] = {
 }
 """Formats defined by the tests, which the checks also run on."""
 
+VARIANTS: tx.List[tx.Tuple[str, type, Exemplar]] = []
+"""Other files of the exemplars, which the checks also run on.
+
+Each entry names the case and gives the class and what the checks need to
+know about that file, such as another suffix.
+"""
+
+if nb is not None:
+    VARIANTS.append(
+        (
+            "NiftiImage-gz",
+            NiftiImage,
+            EXEMPLARS[NiftiImage]._replace(suffix=".nii.gz"),
+        )
+    )
+
 CASES = [
     pytest.param(cls, exemplar, id=cls.__name__)
     for cls, exemplar in {**EXEMPLARS, **TEST_EXEMPLARS}.items()
-]
+] + [pytest.param(cls, exemplar, id=name) for name, cls, exemplar in VARIANTS]
 
 # Names that belonged to the parsers that the design removes.
 _PARSER_STATE = {"image", "header", "_header", "struct", "dataobj", "node"}
@@ -543,7 +599,9 @@ def test_every_registered_format_is_in_one_table() -> None:
         for cls in Format._REGISTRY | MetadataFormat._REGISTRY
         if cls.__module__.startswith("brainhops.")
     }
-    assert registered == set(EXEMPLARS) | not_migrated
+    # The metadata class of an exemplar is registered with it.
+    metadata = {exemplar.metadata for exemplar in EXEMPLARS.values()}
+    assert registered == set(EXEMPLARS) | metadata | not_migrated
 
 
 def test_the_metadata_registry_is_isolated() -> None:
@@ -578,7 +636,7 @@ def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # no
     assert "_cache_data" not in vars(loaded)
     assert isinstance(loaded.metadata, exemplar.metadata)
     data = loaded.data
-    assert np.array_equal(data, exemplar.sample())
+    assert np.array_equal(np.asarray(data), exemplar.sample())
     # The view is decoded once, and reading it leaves the proxy in place.
     assert loaded.data is data
     assert isinstance(loaded.raw, exemplar.proxies)
@@ -599,7 +657,7 @@ def test_03_setting_data_stores_raw(
     for name in ("data",) + exemplar.derived:
         assert "_cache_" + name not in vars(loaded)
     assert np.array_equal(np.asarray(loaded.raw), exemplar.to_disk(value))
-    assert np.array_equal(loaded.data, value)
+    assert np.array_equal(np.asarray(loaded.data), value)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -667,7 +725,7 @@ def test_08_an_object_built_from_data_saves(
     assert np.array_equal(np.asarray(built.raw), exemplar.to_disk(value))
     path = tmp_path / ("built" + exemplar.suffix)
     built.save(path)
-    assert np.array_equal(cls.load(path).data, value)
+    assert np.array_equal(np.asarray(cls.load(path).data), value)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -694,7 +752,7 @@ def test_09_copies_keep_raw_and_metadata(
     converted = cls.from_instance(exemplar.foreign(value))
     assert converted.metadata is None
     assert np.array_equal(np.asarray(converted.raw), exemplar.to_disk(value))
-    assert np.array_equal(converted.data, value)
+    assert np.array_equal(np.asarray(converted.data), value)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -745,7 +803,8 @@ def test_12_adapter_contract(
         if exemplar.binary:
             assert klass._READ_MODE == "rb"
     content = _saved(cls, exemplar, tmp_path).read_bytes()
-    assert np.array_equal(cls.from_bytes(content).data, exemplar.sample())
+    data = cls.from_bytes(content).data
+    assert np.array_equal(np.asarray(data), exemplar.sample())
     metadata = exemplar.metadata.from_bytes(content)
     assert isinstance(metadata, exemplar.metadata)
 
@@ -791,3 +850,73 @@ def test_copied_metadata_keeps_only_a_record_of_its_own_format() -> None:
     assert ToyMetadata.from_instance(metadata).raw is metadata.raw
     assert ToyMetadata.from_instance(_ForeignMetadata(raw="other")).raw is None
     assert _ForeignMetadata.from_instance(metadata).raw is None
+
+
+# ----------------------------------------------------------------------
+#   NIFTI
+# ----------------------------------------------------------------------
+
+needs_nibabel = pytest.mark.skipif(nb is None, reason="needs nibabel")
+
+
+@needs_nibabel
+@pytest.mark.parametrize("suffix", [".nii", ".nii.gz"])
+def test_an_untouched_scaled_nifti_is_saved_byte_for_byte(
+    tmp_path,  # noqa: ANN001
+    suffix: str,
+) -> None:
+    # The values are stored as integers with a slope and an intercept, and
+    # the copy must store the same integers with the same scaling.
+    values = np.linspace(-3.0, 7.0, 24).reshape(2, 3, 4)
+    source = tmp_path / ("scaled" + suffix)
+    NiftiImage(data=values).save(source, dtype="int16")
+    stored = nb.load(str(source))
+    assert stored.get_data_dtype() == np.dtype("int16")
+    assert stored.dataobj.slope != 1.0
+    target = tmp_path / ("copy" + suffix)
+    NiftiImage.load(source).save(target)
+    assert _decompressed(target) == _decompressed(source)
+    target = tmp_path / ("generic" + suffix)
+    io.save(NiftiImage.load(source), target)
+    assert _decompressed(target) == _decompressed(source)
+    assert np.allclose(NiftiImage.load(target).data, stored.get_fdata())
+
+
+@needs_nibabel
+def test_an_untouched_nifti_keeps_its_extensions_and_description(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    image = nb.Nifti1Image(np.zeros((2, 3, 4), "float32"), np.eye(4))
+    image.header["descrip"] = b"kept"
+    image.header["cal_max"] = 5.0
+    comment = nb.nifti1.Nifti1Extension("comment", b"a comment")
+    image.header.extensions.append(comment)
+    source = tmp_path / "source.nii"
+    nb.save(image, str(source))
+    target = tmp_path / "copy.nii"
+    loaded = NiftiImage.load(source)
+    loaded.data = np.ones((2, 3, 4), "float32")
+    loaded.save(target)
+    header = nb.load(str(target)).header
+    assert header["descrip"].item() == b"kept"
+    assert float(header["cal_max"]) == 5.0
+    assert [e.get_content() for e in header.extensions] == [b"a comment"]
+    assert np.array_equal(nb.load(str(target)).get_fdata(), np.ones((2, 3, 4)))
+
+
+@needs_nibabel
+def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: ANN001
+    source = _saved(NiftiImage, EXEMPLARS[NiftiImage], tmp_path)
+    loaded = NiftiImage.load(source)
+    assert isinstance(loaded.raw, ArrayProxy)
+    assert isinstance(loaded.metadata.raw.header, nb.Nifti1Header)
+    assert MetadataFormat.load(source).raw.header == loaded.metadata.raw.header
+    # Other metadata gives other transformations.
+    first = loaded.transformation
+    assert loaded.transformation is first
+    edited = loaded.metadata.to_raw()
+    edited.header.set_sform(np.diag([2.0, 2.0, 2.0, 1.0]), code=2)
+    loaded.metadata = NiftiMetadata.from_raw(edited)
+    assert loaded.transformation is not first
+    expected = np.diag([2.0, 2.0, 2.0, 1.0])[:3]
+    assert np.allclose(_nifti_geometry(loaded), expected)

@@ -20,6 +20,7 @@ from bagof.paths import Path  # noqa: E402
 import brainhops.io as io  # noqa: E402
 from brainhops.io.common.nifti import _files as nifti_base  # noqa: E402
 from brainhops.io.common.nifti import _parsers as nifti_parsers  # noqa: E402
+from brainhops.io.common.nifti import _raw as nifti_raw  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS  # noqa: E402
 
@@ -98,7 +99,8 @@ def test_an_image_is_read_from_a_remote_path(remote, ext: str) -> None:  # noqa:
     remote.store[url] = _encode(ext)
     image = NiftiImage.load(remote(url))
     assert np.array_equal(np.asarray(image.data), DATA)
-    assert np.allclose(image.header.get_best_affine(), AFFINE)
+    header = image.metadata.raw.header
+    assert np.allclose(header.get_best_affine(), AFFINE)
 
 
 @pytest.mark.parametrize("ext", EXTENSIONS)
@@ -140,7 +142,7 @@ def test_a_nifti2_stream_is_read(remote) -> None:  # noqa: ANN001
     url = "s3://bucket/image2.nii"
     remote.store[url] = nb.Nifti2Image(DATA, AFFINE).to_bytes()
     image = NiftiImage.load(remote(url))
-    assert isinstance(image.image, nb.Nifti2Image)
+    assert isinstance(image.metadata.raw.header, nb.Nifti2Header)
     assert np.array_equal(np.asarray(image.data), DATA)
     header = nifti_base._like_header(remote(url))
     assert isinstance(header, nb.Nifti2Header)
@@ -189,7 +191,7 @@ def test_reader_options_reach_only_the_calls_that_take_them(
     target = tmp_path / "image.nii"
     target.write_bytes(raw)
     image = NiftiImage.load(target, **options)
-    assert not isinstance(image.image.dataobj.get_unscaled(), np.memmap)
+    assert not isinstance(image.raw.get_unscaled(), np.memmap)
 
 
 def test_only_accepted_keywords_are_passed_on() -> None:
@@ -231,6 +233,7 @@ def test_a_local_path_is_loaded_by_name(
     monkeypatch.setattr(nb.Nifti1Image, "from_filename", classmethod(spy))
     monkeypatch.setattr(nifti_base, "_nifti_from_stream", no_stream)
     monkeypatch.setattr(nifti_parsers, "_nifti_from_stream", no_stream)
+    monkeypatch.setattr(nifti_raw, "_nifti_from_stream", no_stream)
 
     for file in (str(target), target, Path(target), f"file://{target}"):
         calls.clear()
@@ -244,7 +247,7 @@ def test_a_local_nifti2_image_is_read(tmp_path, ext: str) -> None:  # noqa: ANN0
     target = tmp_path / f"image2{ext}"
     nb.save(nb.Nifti2Image(DATA, AFFINE), str(target))
     image = NiftiImage.load(target)
-    assert isinstance(image.image, nb.Nifti2Image)
+    assert isinstance(image.metadata.raw.header, nb.Nifti2Header)
     assert np.array_equal(np.asarray(image.data), DATA)
     header = nifti_base._like_header(target)
     assert isinstance(header, nb.Nifti2Header)
@@ -254,7 +257,7 @@ def test_a_local_uncompressed_image_is_memory_mapped(tmp_path) -> None:  # noqa:
     target = tmp_path / "image.nii"
     target.write_bytes(_encode(".nii"))
     image = NiftiImage.load(target)
-    assert isinstance(image.image.dataobj.get_unscaled(), np.memmap)
+    assert isinstance(image.raw.get_unscaled(), np.memmap)
 
 
 # ----------------------------------------------------------------------
@@ -318,4 +321,5 @@ def test_an_image_round_trips_through_a_memory_path(
 
     back = NiftiImage.load(target)
     assert np.array_equal(np.asarray(back.data), DATA)
-    assert np.allclose(back.header.get_best_affine(), AFFINE)
+    header = back.metadata.raw.header
+    assert np.allclose(header.get_best_affine(), AFFINE)

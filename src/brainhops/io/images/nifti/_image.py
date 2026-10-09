@@ -1,8 +1,19 @@
+"""The NIfTI image format."""
+
+# stdlib
+from io import BytesIO
+
+# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import KwOnly, NoRepr, replace
+from nibabel.arrayproxy import ArrayProxy
 
+# internals
+from brainhops._core import path
+from brainhops._core.properties import smartproperty
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
@@ -15,8 +26,14 @@ from brainhops.datamodel.transformations import (
     Translation,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.nifti import NiftiReaderWriter
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    BinaryFileWriter,
+    Confidence,
+    ParserExistsError,
+    WriterError,
+)
+from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_NONE,
@@ -29,26 +46,142 @@ from brainhops.io.common.nifti._header import (
     _nifti_to_axes,
     _NiftiObject,
 )
+from brainhops.io.common.nifti._raw import (
+    _sniffed_header,
+    read_nifti,
+    write_nifti,
+)
 from brainhops.io.common.nifti._units import nifti_to_unit
+from brainhops.io.common.nifti._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
 
 
 @register_format
-class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
+class NiftiImage(
+    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+):
     """An image stored in a NIfTI file.
 
-    !!! note "Why the bases are in this order"
-        `SingleScaleImage.data` has no default, while [`NiftiReaderWriter`][]
-        contributes the defaulted fields `image` and `_header`. Fields are
-        collected in reverse method resolution order, so
-        [`SingleScaleImage`][] must come last; otherwise `data` would
-        follow a defaulted field and `bagof` would reject the signature.
-        Leading with [`NiftiReaderWriter`][] also lets its lazy `data` and
-        `system` properties, which are read from the nibabel image on
-        demand, take precedence over plain fields.
+    A NIfTI image holds the header of its file as [`NiftiMetadata`][] and
+    the voxels as stored in `raw`. When the image is read from a file,
+    `raw` is a nibabel proxy, which reads the voxels only when they are
+    needed, and `data` is decoded from it on first access. The
+    transformations are decoded from the header in the same way, unless
+    other transformations are assigned.
+
+    When the image is written, the header of its file is the base of the
+    new header. The fields that describe the layout of the voxels and the
+    geometry are encoded again from the image, and the other fields, such
+    as the description, the intent and the extensions, are kept. The
+    voxels of an image that is read and written again without changes are
+    copied as the file stores them. The header is then the same as well,
+    unless the file stores the geometry in a way that the writer does not
+    reproduce, for example with a qform or an sform whose code is zero.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
+
+    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    """The voxels as the file stores them, or `None` without data.
+
+    After a read, `raw` is a nibabel proxy, which applies the scaling of
+    the header when it is read. Setting `data` stores the new array here.
+    """
+
+    _metadata: KwOnly[NoRepr[tx.Optional[NiftiMetadata]]] = None
+
+    metadata = smartproperty("metadata", invalidates=("transformations",))
+    """The metadata of the file, which holds its header, or `None`.
+
+    An image built from data has no metadata. Assigning other metadata
+    drops the transformations decoded from the previous header.
+    """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # The constructor assigns the fields in order, so the default of
+        # `raw`, assigned after `data`, erases the array stored by `data=`.
+        # The array is therefore stored again. When both are given, `data`
+        # takes precedence over `raw`.
+        if arguments.get("data") is not None:
+            self.data = arguments["data"]
+
+    @smartproperty(cache=True, invalidates=("data",))
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The image data, decoded from `raw` on first access and cached.
+
+        Setting the data stores it in `raw` and drops the cached value.
+        Data decoded as a writable array, as NumPy decodes it, is written
+        instead of `raw`, because it may have been changed in place.
+        """
+        if self.raw is None:
+            return None
+        return _image_to_model(self.raw)
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _image_to_disk(value)
+
+    @smartproperty(cache=True, unset=(None, "empty"))
+    def transformations(self) -> tx.List[Transformation]:
+        """Voxel-to-world transformations, decoded from the header.
+
+        The decoded list is cached, so `img.transformation is
+        img.transformation`, and a transformation appended to the list in
+        place is kept. Assigning a list replaces the decoded one, and
+        assigning other metadata drops it. A header modified in place is
+        not noticed, so a modified copy should be assigned as new metadata
+        instead.
+        """
+        if self.metadata is None or self.metadata.raw is None:
+            return []
+        return _nifti_to_transformations(self.metadata.raw.header)
+
+    @property
+    def system(self) -> tx.Optional[CoordinateSystem]:
+        """The voxel coordinate system described by the header.
+
+        The axes are those of the stored array, in Fortran order, with the
+        names and types that the intent code gives them. An image without
+        metadata has no system.
+        """
+        if self.metadata is None or self.metadata.raw is None:
+            return None
+        axes = [
+            axis
+            for axis in _nifti_to_axes(self.metadata.raw.header)
+            if axis.name is not None
+        ]
+        # In F order, the first axis changes fastest.
+        return CoordinateSystem(axes=axes, name="voxel", order="F")
+
+    # --- reading ------------------------------------------------------
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a stream holds a NIfTI image.
+
+        The stream is first tested with [`NiftiRaw.sniff_fileobj`][], and a
+        NIfTI header is then scored with `_score_nibabel`.
+        """
+        if not NiftiRaw.sniff_fileobj(file, error=error, **kwargs):
+            return Confidence.NO
+        return cls._score_nibabel(_sniffed_header(file))
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        data: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that bytes hold a NIfTI image."""
+        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -72,39 +205,91 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
             return Confidence.LIKELY
         return Confidence.MAYBE
 
-    @property
-    def transformations(self) -> tx.List[Transformation]:
-        """Voxel-to-world transformations, decoded from the header.
+    @classmethod
+    def from_filename(
+        cls, filename: path.FilenameLike, **kwargs
+    ) -> "NiftiImage":
+        """Read an image from the path of a NIfTI file.
 
-        The decoded transformations are cached while the image holds the
-        same header object, so `img.transformation is img.transformation`.
-        A header modified in place is not noticed; a modified copy should
-        be assigned instead.
+        A local file is handed to nibabel by name, so that nibabel opens
+        it whenever the voxels are read and can memory-map them. A remote
+        file is read into memory instead. The keyword arguments are passed
+        to nibabel.
+
+        Raises
+        ------
+        ParserExistsError
+            If the path does not exist.
         """
-        if getattr(self, "_transformations", None):
-            return self._transformations
-        header = self.header
-        if header is None:
-            return list(getattr(self, "_transformations", None) or [])
-        decoded = getattr(self, "_decoded", None)
-        if decoded is None or decoded[0] is not header:
-            decoded = (header, _nifti_to_transformations(header))
-            self._decoded = decoded
-        return list(decoded[1])
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+        if not path.exists(filename):
+            raise ParserExistsError(f"No such file: {filename}")
+        raw, proxy = read_nifti(filename, **kwargs)
+        return cls(raw=proxy, metadata=NiftiMetadata.from_raw(raw))
 
-    @transformations.setter
-    def transformations(self, value: tx.List[Transformation]) -> None:
-        self._transformations = value
+    @classmethod
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NiftiImage":
+        """Read an image from an open NIfTI stream.
+
+        The proxy reads the voxels from the stream when they are needed,
+        so the stream must stay open while the data may be read. The
+        keyword arguments are passed to nibabel.
+        """
+        raw, proxy = read_nifti(file, **kwargs)
+        return cls(raw=proxy, metadata=NiftiMetadata.from_raw(raw))
+
+    @classmethod
+    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> "NiftiImage":
+        """Build an image from a nibabel image or header.
+
+        The voxels of an image become `raw` as they are, and a copy of its
+        header becomes the record of the metadata. A header alone gives an
+        image without data.
+
+        Parameters
+        ----------
+        nifti : nibabel.Nifti1Image or nibabel.Nifti1Header
+            The nibabel image or header. NIfTI-2 images and headers are
+            accepted too.
+        **kwargs : Any
+            Other fields of the image.
+
+        Returns
+        -------
+        NiftiImage
+            The image.
+
+        Raises
+        ------
+        TypeError
+            If `nifti` is neither a NIfTI image nor a NIfTI header.
+        """
+        if isinstance(nifti, nb.Nifti1Image):
+            raw, header = nifti.dataobj, nifti.header
+        elif isinstance(nifti, nb.Nifti1Header):
+            raw, header = None, nifti
+        else:
+            raise TypeError(
+                f"Expected a NIfTI image or header, got {type(nifti)}"
+            )
+        metadata = NiftiMetadata.from_raw(NiftiRaw(header=header.copy()))
+        return cls(raw=raw, metadata=metadata, **kwargs)
+
+    # --- writing ------------------------------------------------------
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """Build the nibabel image that encodes this image.
 
-        The data become the NIfTI array. The preferred transformation
-        becomes the sform, and the qform is a rigid transformation among
-        the others or the rigid part of the sform. Large arrays are
-        written as NIfTI-2 and smaller ones as NIfTI-1.
+        A copy of the header of the metadata is the base of the new header,
+        and the fields that describe the layout of the voxels and the
+        geometry are encoded again over it. The data become the NIfTI
+        array. The preferred transformation becomes the sform, and the
+        qform is a rigid transformation among the others or the rigid part
+        of the sform. Large arrays are written as NIfTI-2, and so is an
+        image whose header is NIfTI-2.
 
         Parameters
         ----------
@@ -112,8 +297,9 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
             Template whose description and intent are copied. The geometry
             always comes from this image.
         **overrides : Any
-            Values of `dtype`, `intent` and `descrip`, which take
-            precedence over the derived values and `like`.
+            Values of `dtype`, `intent` and `descrip`, or of any other
+            header field, which take precedence over the derived values and
+            `like`.
 
         Returns
         -------
@@ -128,18 +314,59 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
             If the preferred transformation is not affine, as for a
             displacement field.
         """
-        data = self.data
-        if data is None:
+        if self.raw is None:
             raise WriterError(
                 "This image has no data, so there is nothing to write."
             )
+        raw = self.raw
+        # Data decoded as an array that can be changed in place, as NumPy
+        # decodes a proxy, may have been changed, so it is written instead
+        # of the proxy. A Dask array cannot be changed in place, so the
+        # proxy is written and an untouched image stays byte for byte.
+        if isinstance(raw, ArrayProxy) and _is_writable(
+            vars(self).get("_cache_data")
+        ):
+            raw = _image_to_disk(self.data)
+        base = None if self.metadata is None else self.metadata.to_raw()
         return _image_with_geometry(
-            data,
+            raw,
             self.transformation,
             self.transformations,
+            base=base,
             like=like,
             overrides=overrides,
         )
+
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """Write the image to a path, compressed if its name ends with `.gz`.
+
+        The keyword arguments are those of [`to_nibabel`][].
+        """
+        write_nifti(self.to_nibabel(**kwargs), filename)
+
+    def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
+        """Write the image to a stream as an uncompressed NIfTI file.
+
+        The keyword arguments are those of [`to_nibabel`][].
+        """
+        write_nifti(self.to_nibabel(**kwargs), file)
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Return the uncompressed NIfTI encoding of the image.
+
+        The keyword arguments are those of [`to_nibabel`][].
+        """
+        return self.to_nibabel(**kwargs).to_bytes()
+
+
+def _is_writable(array: tx.Any) -> bool:
+    """Return whether an array can be changed in place.
+
+    NumPy arrays say so in their flags. Arrays without such flags, such as
+    Dask arrays, and `None` are taken to be read-only.
+    """
+    flags = getattr(array, "flags", None)
+    return bool(getattr(flags, "writeable", False))
 
 
 def _nifti_to_transformations(

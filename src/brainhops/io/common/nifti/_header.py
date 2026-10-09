@@ -98,12 +98,17 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
 
 
 def _new_nifti(
-    data: ArrayProtocol, affine: tx.Optional[np.ndarray]
+    data: ArrayProtocol,
+    affine: tx.Optional[np.ndarray],
+    header: tx.Optional[nb.Nifti1Header] = None,
 ) -> _NiftiObject:
     """Build a nibabel image, as NIfTI-2 if an extent exceeds NIfTI-1.
 
     The array is stored as given, so lazy and device arrays are not
-    materialised.
+    materialised. nibabel chooses the stored data type from the array and
+    refuses the types that NIfTI cannot store. When a header is given, the
+    image is then built again over that header, which receives the chosen
+    data type. A NIfTI-2 header gives a NIfTI-2 image whatever the extents.
 
     Raises
     ------
@@ -112,15 +117,21 @@ def _new_nifti(
     """
     shape = tuple(int(d) for d in getattr(data, "shape", ()) or ())
     image_cls = nb.Nifti1Image
-    if any(d > _NIFTI1_MAX_DIM for d in shape):
+    if isinstance(header, nb.Nifti2Header) or any(
+        d > _NIFTI1_MAX_DIM for d in shape
+    ):
         image_cls = nb.Nifti2Image
     try:
-        return image_cls(data, affine)
+        image = image_cls(data, affine)
     except ValueError as error:
         dtype = getattr(data, "dtype", "unknown")
         raise WriterError(
             f"NIfTI cannot store an array of type {dtype}: {error}"
         ) from error
+    if header is None:
+        return image
+    header.set_data_dtype(image.get_data_dtype())
+    return image_cls(data, affine, header)
 
 
 def _set_other_axes(

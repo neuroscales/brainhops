@@ -212,8 +212,9 @@ def _save_nifti(
 def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
     """Return the header to copy from a `like` template, or `None`.
 
-    The template is a nibabel header or image, an object with a header, or the
-    path of a NIfTI file.
+    The template is a nibabel header or image, an object with a header, an
+    object whose metadata holds a NIfTI record, such as a `NiftiImage`, or
+    the path of a NIfTI file.
     """
     if like is None:
         return None
@@ -221,6 +222,10 @@ def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
         return like
     if isinstance(like, (nb.Nifti1Image, nb.Nifti2Image)):
         return like.header
+    record = getattr(getattr(like, "metadata", None), "raw", None)
+    header = getattr(record, "header", None)
+    if isinstance(header, (nb.Nifti1Header, nb.Nifti2Header)):
+        return header
     header = getattr(like, "header", None)
     if header is not None:
         return header

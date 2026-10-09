@@ -46,12 +46,25 @@ class ScaledMmToScaledMm(_xforms.Affine):
 # ----------------------------------------------------------------------
 
 
+def _header(obj: tx.Any) -> tx.Any:
+    """Return the header of an image, or `None`.
+
+    A nibabel image and a NIfTI transformation have a `header` attribute,
+    whereas a `NiftiImage` holds its header in the record of its metadata.
+    """
+    header = getattr(obj, "header", None)
+    if header is not None:
+        return header
+    record = getattr(getattr(obj, "metadata", None), "raw", None)
+    return getattr(record, "header", None)
+
+
 def _best_affine(obj: tx.Any) -> np.ndarray:
     """Return the voxel-to-world (RAS) affine of a nibabel image or header."""
     if hasattr(obj, "get_best_affine"):
         return np.asarray(obj.get_best_affine(), dtype=np.float64)
-    if hasattr(obj, "header") and obj.header is not None:
-        return _best_affine(obj.header)
+    if _header(obj) is not None:
+        return _best_affine(_header(obj))
     if getattr(obj, "affine", None) is not None:
         return np.asarray(obj.affine, dtype=np.float64)
     raise ValueError(
@@ -66,8 +79,8 @@ def _shape(obj: tx.Any) -> tx.Tuple[int, ...]:
         return tuple(int(s) for s in obj.get_data_shape())
     if getattr(obj, "shape", None) is not None:
         return tuple(int(s) for s in obj.shape)
-    if hasattr(obj, "header") and obj.header is not None:
-        return _shape(obj.header)
+    if _header(obj) is not None:
+        return _shape(_header(obj))
     raise ValueError("Cannot determine the shape of the image.")
 
 
@@ -78,8 +91,8 @@ def _pixdim(obj: tx.Any) -> np.ndarray:
     incomplete `pixdim` still gives an invertible scaled-mm affine.
     """
     header = obj
-    if not hasattr(header, "get_zooms") and hasattr(obj, "header"):
-        header = obj.header
+    if not hasattr(header, "get_zooms") and _header(obj) is not None:
+        header = _header(obj)
     if hasattr(header, "get_zooms"):
         zooms = np.asarray(header.get_zooms(), dtype=np.float64)
     else:

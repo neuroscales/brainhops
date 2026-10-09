@@ -100,11 +100,10 @@ def test_the_geometry_is_decoded_once_per_header(tmp_path) -> None:  # noqa: ANN
     """The same header gives the same decoded transformations."""
     img = io.load(_save_timed(tmp_path / "bold.nii", np.eye(4), 2.0, 0.0))
     first = img.transformations
-    assert img.transformations is not first
-    assert all(a is b for a, b in zip(img.transformations, first))
+    assert img.transformations is first
     assert img.geometry.transformation is img.transformation
 
-    img.header = img.header.copy()
+    img.metadata = type(img.metadata).from_raw(img.metadata.to_raw())
     assert all(a is not b for a, b in zip(img.transformations, first))
 
 

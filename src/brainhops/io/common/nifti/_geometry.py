@@ -2,8 +2,10 @@
 transformation, units and the image that stores them."""
 
 # dependencies
+import nibabel as nb
 import numpy as np
 import typing_extensions as tx
+from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core.typing import ArrayProtocol
@@ -38,6 +40,7 @@ from ._header import (
     _NiftiObject,
     _set_other_axes,
 )
+from ._raw import NiftiRaw
 from ._units import nifti_unit_meters, unit_to_nifti
 
 
@@ -285,26 +288,113 @@ def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
     return scaled
 
 
+# Fields of a header that describe how the voxels are laid out and stored,
+# and the geometry that the model encodes. A record used as the base of a
+# header has these fields reset, and the writer sets them again. The other
+# fields, such as the description, the intent, the calibration range, the
+# slice timing, `toffset` and the extensions, are kept from the record.
+_STRUCTURAL_FIELDS = (
+    "dim",
+    "pixdim",
+    "datatype",
+    "bitpix",
+    "vox_offset",
+    "scl_slope",
+    "scl_inter",
+    "magic",
+    "xyzt_units",
+    "qform_code",
+    "sform_code",
+    "quatern_b",
+    "quatern_c",
+    "quatern_d",
+    "qoffset_x",
+    "qoffset_y",
+    "qoffset_z",
+    "srow_x",
+    "srow_y",
+    "srow_z",
+)
+
+
+# Overrides that change how the voxels are stored, so that a proxy cannot be
+# copied as it is stored.
+_STORAGE_OVERRIDES = frozenset({"dtype", "scl_slope", "scl_inter"})
+
+
+def _reset_structural_fields(header: nb.Nifti1Header) -> None:
+    """Give the structural fields of a header their values in a new header.
+
+    The fields are listed in [`_STRUCTURAL_FIELDS`][]. A header reset in
+    this way keeps everything else that its file recorded, and the writer
+    then encodes the layout of the data and the geometry over it.
+    """
+    fresh = type(header)()
+    for name in _STRUCTURAL_FIELDS:
+        header[name] = fresh[name]
+
+
+def _stored_scaling(
+    header: tx.Optional[nb.Nifti1Header], proxy: ArrayProxy
+) -> tx.Tuple[tx.Any, tx.Any]:
+    """Return the `scl_slope` and `scl_inter` to write with unscaled voxels.
+
+    The voxels of a proxy are written as they are stored, so the file needs
+    the slope and the intercept that the proxy applies when it reads them.
+    The values of the record are kept when they mean the same scaling, so
+    that a slope of zero, which means that the voxels are not scaled, is
+    written as zero again rather than as one.
+    """
+    if header is not None:
+        slope, inter = header.get_slope_inter()
+        slope = 1.0 if slope is None else slope
+        inter = 0.0 if inter is None else inter
+        if (slope, inter) == (proxy.slope, proxy.inter):
+            # A field of a header is a view, which a reset would change.
+            return header["scl_slope"].item(), header["scl_inter"].item()
+    return proxy.slope, proxy.inter
+
+
 def _image_with_geometry(
     data: ArrayProtocol,
     transformation: Transformation,
     transformations: tx.Sequence[Transformation],
+    base: tx.Optional[NiftiRaw] = None,
     like: tx.Any = None,
     overrides: tx.Optional[tx.Mapping] = None,
 ) -> _NiftiObject:
     """Build a NIfTI image from data and their voxel-to-world geometry.
 
-    The preferred transformation provides the sform, the spacing of the later
-    axes and the units, and the qform comes from [`_sform_and_qform`][]. A
-    spatial unit that NIfTI cannot store is converted, and each matrix is
-    scaled accordingly.
+    The header is built in a fixed order. The record `base`, when it is
+    given, is the starting point: its structural fields are reset with
+    [`_reset_structural_fields`][], and its other fields and extensions are
+    kept. The record is changed in place, so the caller passes a copy.
+    Without a record, the header starts empty. The geometry is then encoded
+    over the header, header fields are copied from `like`, and the
+    `overrides` are applied last.
+
+    The preferred transformation provides the sform, the spacing of the
+    later axes and the units, and the qform comes from
+    [`_sform_and_qform`][]. A spatial unit that NIfTI cannot store is
+    converted, and each matrix is scaled accordingly. A record whose
+    spatial unit is unknown keeps it unknown when the model is in
+    millimetres, because the reader reads an unknown spatial unit as
+    millimetres.
 
     The axes are written in NIfTI order, so data whose voxel space declares
     another order are transposed (lazily for lazy arrays). Singleton axes are
     inserted where NIfTI needs them: `(x,y,t)->(X,Y,1,T)`,
-    `(x,y,z,c)->(X,Y,Z,1,C)` and `(x,y,c)->(X,Y,1,1,C)`. Header fields are then
-    copied from `like`, and the `overrides` are applied last.
+    `(x,y,z,c)->(X,Y,Z,1,C)` and `(x,y,c)->(X,Y,1,1,C)`.
+
+    The data is written after the header. A nibabel proxy that reaches the
+    writer unchanged is written unscaled, with the data type, the slope and
+    the intercept that the file stored, so that an untouched image is
+    written byte for byte. An override of the data type or of the scaling
+    makes the proxy be read and scaled again instead.
     """
+    overrides = dict(overrides or {})
+    header = None if base is None else base.header
+
     preferred_output = getattr(transformation, "output", None)
     space, time = _xyzt_labels(preferred_output)
 
@@ -322,11 +412,24 @@ def _image_with_geometry(
     sform = _scale_spatial(sform_raw, _unit_scale(preferred_output, space))
     qform = _scale_spatial(qform_raw, _unit_scale(qform_output, space))
 
-    image = _new_nifti(data, sform)
+    scaling = None
+    if isinstance(data, ArrayProxy) and not (
+        _STORAGE_OVERRIDES.intersection(overrides)
+    ):
+        scaling = _stored_scaling(header, data)
+        data = data.get_unscaled()
+    if header is not None:
+        if space == "mm" and header.get_xyzt_units()[0] == "unknown":
+            space = "unknown"
+        _reset_structural_fields(header)
+
+    image = _new_nifti(data, sform, header)
     _set_other_axes(image, others, timed)
     _apply_like(image, like)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
     image.header.set_xyzt_units(space, time)
     _apply_overrides(image, overrides)
+    if scaling is not None:
+        image.header["scl_slope"], image.header["scl_inter"] = scaling
     return image
