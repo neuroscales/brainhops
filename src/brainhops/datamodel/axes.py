@@ -1,4 +1,4 @@
-"""Axes of a coordinate system, such as a spatial or a time axis."""
+"""Axes of coordinate systems, such as spatial and time axes."""
 
 __all__ = [
     "Axis",
@@ -26,14 +26,11 @@ __all__ = [
     "SI",
     "SuperiorToInferiorAxis",
 ]
-# dependencies
 import typing_extensions as tx
 from bagof.magic import fields
 
-# core
 from brainhops._core.typing import NoRepr
 
-# locals
 from .base import DataModelBase
 from .enums import AnatomicalOrientationValue, AxisType
 from .orientations import (
@@ -57,69 +54,42 @@ from .units import IndexUnit, SpaceUnit, TimeUnit, Unit
 class Axis(DataModelBase, polymorphic=True):
     """One axis of a coordinate system or of a grid.
 
-    An axis names its type, such as `"space"` or `"time"`, and may carry
-    a unit, an orientation, and whether it is discrete.
+    A field that is `None` is unknown, so `Axis()` is a placeholder about
+    which nothing is known. A subclass fixes some fields: a [`SpaceAxis`][]
+    is known to be spatial, although its unit is unknown by default.
 
-    Each field that is `None` is unknown. A plain `Axis()`, whose fields
-    are all `None`, is an axis about which nothing is known. It is the
-    placeholder that fills a position no description covers. An instance
-    of a subclass that sets a field, such as a [`SpaceAxis`][], whose
-    type is `"space"`, is not unknown -- although its unit, which it
-    leaves unspecified by default, is.
-
-    Equality (`==`) is strict: two axes are equal when they are of the
-    same class and every field is equal. [`compatible_with`][]
-    is the looser question of whether two descriptions could be of the
-    same axis.
+    Two axes are equal when they have the same class and equal fields.
+    [`compatible_with`][] tests whether they could be the same axis.
     """
 
     name: tx.Optional[str] = None
-    """The name of the axis, such as `"x"` or `"y"`."""
+    """Name of the axis, such as `"x"`."""
 
     type: tx.Optional[tx.Union[AxisType, str]] = None
-    """The type of the axis, such as `"space"` or `"time"`."""
+    """Type of the axis, such as `"space"` or `"time"`."""
 
     unit: tx.Optional[Unit] = None
-    """The unit in which coordinates are measured along the axis."""
+    """Unit of the coordinates along the axis."""
 
     discrete: tx.Optional[bool] = None
-    """
-    Whether the axis is discrete, as opposed to continuous.
-
-    Here discrete means that the axis has no particular order, and
-    therefore does not come with a continuous coordinates system.
-    """
+    """Whether the axis is discrete, so that its positions have no order."""
 
     orientation: tx.Optional[Orientation] = None
-    """
-    The orientation of the axis, if it has one.
-
-    This is useful to indicate that the direction of coordinates along
-    the axis has a particular meaning, such as `"left-to-right"` for an
-    anatomical axis.
-    """
+    """Meaningful direction of the axis, such as left to right."""
 
     def __pre_init__(self, arguments: tx.Any) -> None:
-        # This is not really needed, but helps diagnosing the use of `...`
-        # in fixed-sized coordinate systems, where it is forbidden. For
-        # example, `CoordinateSystem(axes=["x", "y", ...])` is allowed,
-        # but `CoordinateSystem3D(axes=["x", "y", ...])` is not.
-        # Otherwise, the raised error would be "could not convert
-        # Ellipsis -- ToUnion(Optional[str])", which is much less clear.
+        # Fixed-size systems such as `CoordinateSystem3D` forbid `...`; without
+        # this check the error is an obscure conversion message.
         if arguments.name is Ellipsis:
             raise TypeError("`...` is not an axis")
 
     def compatible_with(self, other: "Axis") -> bool:
-        """Whether `self` and `other` could describe the same axis.
+        """Return whether two axes could describe the same axis.
 
-        Two axes are compatible when every field that is set (not `None`)
-        on both of them is equal. A field that is `None` on either side
-        is unknown there, and matches anything. In particular, the
-        unknown `Axis()` is compatible with every axis.
-
-        The relation is symmetric, but it is not transitive: `Axis()` is
-        compatible with both `Axis(name="x")` and `Axis(name="y")`, which
-        are not compatible with each other.
+        Two axes are compatible when every field set on both has the same
+        value, so `Axis()` is compatible with every axis. The relation is
+        symmetric but not transitive: `Axis()` fits both `Axis(name="x")` and
+        `Axis(name="y")`, which do not fit each other.
 
         !!! example
             ```pycon
@@ -133,13 +103,13 @@ class Axis(DataModelBase, polymorphic=True):
 
         Parameters
         ----------
-        other : Axis
+        other
             The axis to compare with.
 
         Returns
         -------
         bool
-            Whether no field is known on both sides with different values.
+            Whether no field is set on both sides to different values.
 
         Raises
         ------
@@ -154,17 +124,12 @@ class Axis(DataModelBase, polymorphic=True):
         return not _conflicts(self, other)
 
     def merge_with(self, other: "Axis") -> "Axis":
-        """Combine what `self` and `other` know about the same axis.
+        """Combine two descriptions of the same axis.
 
-        Each field of the result is the value set on either side, or
-        `None` if neither side sets it. The two axes must be
-        [`compatible_with`][]: a field that both set must be set
-        to the same value.
-
-        The result is an instance of the more derived of the two classes,
-        so merging an [`Axis`][] with a [`SpaceAxis`][] gives a
-        [`SpaceAxis`][]. Merging with the unknown `Axis()` returns an
-        axis equal to the other side.
+        Each field takes the value set on either axis, and the axes must be
+        compatible in the sense of [`compatible_with`][]. The result has the
+        more derived class: an [`Axis`][] merged with a [`SpaceAxis`][] gives a
+        [`SpaceAxis`][].
 
         !!! example
             ```pycon
@@ -178,41 +143,36 @@ class Axis(DataModelBase, polymorphic=True):
 
         Parameters
         ----------
-        other : Axis
-            The other description of the same axis.
+        other
+            Another description of the same axis.
 
         Returns
         -------
         Axis
-            A new axis that carries every field known on either side.
+            A new axis with every field known to either side.
 
         Raises
         ------
         TypeError
             If `other` is not an [`Axis`][].
         ValueError
-            If a field is set on both sides to different values, or if
-            neither class derives from the other, so that no class can
-            hold what both sides know.
+            If the axes disagree on a field, or if neither class derives from
+            the other.
         """
         if not isinstance(other, Axis):
             raise TypeError(
                 f"An axis merges only with another Axis, not with "
                 f"{type(other).__name__}."
             )
-        # The merged axis is of the more derived of the two classes,
-        # which is the one that can hold every field either side sets.
-        # `_merge_with` reads the fields of `first`, so that is the one.
+        # The more derived class can hold every field, and `_merge_with` reads
+        # the fields of its first argument, so that instance goes first.
         if isinstance(self, type(other)):
             cls, first, second = type(self), self, other
         elif isinstance(other, type(self)):
             cls, first, second = type(other), other, self
         else:
-            # Neither class refines the other. A disagreement on a field
-            # is the plainer reason and is reported first -- a
-            # left-to-right axis and a right-to-left one disagree on
-            # their orientation; only when the two agree on everything
-            # is there simply no class to hold what both describe.
+            # Report a field disagreement, such as LR against RL, before the
+            # lack of a common class.
             _refuse_conflicts(self, other)
             raise ValueError(
                 f"Cannot merge a {type(self).__name__} with a "
@@ -222,9 +182,6 @@ class Axis(DataModelBase, polymorphic=True):
         return cls(**_merge_with(first, second))
 
 
-# --- Helpers ----------------------------------------------------------
-
-
 def _field_names(axis: Axis) -> tx.List[str]:
     return [field.name for field in fields(type(axis))]
 
@@ -232,8 +189,7 @@ def _field_names(axis: Axis) -> tx.List[str]:
 def _conflicts(
     first: Axis, second: Axis
 ) -> tx.List[tx.Tuple[str, tx.Any, tx.Any]]:
-    # The fields set on both axes to different values, as
-    # `(name, first value, second value)`.
+    # Fields set on both axes to different values.
     names = _field_names(first)
     names += [name for name in _field_names(second) if name not in names]
     conflicts = []
@@ -246,7 +202,6 @@ def _conflicts(
 
 
 def _refuse_conflicts(first: Axis, second: Axis) -> None:
-    # Refuse two axes that set one field to different values.
     conflicts = _conflicts(first, second)
     if conflicts:
         name, mine, theirs = conflicts[0]
@@ -261,9 +216,8 @@ def _merge_with(first: Axis, second: Axis) -> tx.Dict[str, tx.Any]:
     kwargs = {}
     for field in fields(type(first)):
         if not (field.init and field.kw):
-            # A constant of the class, such as the type of a
-            # `SpaceAxis`. No conflict was found, so it already
-            # agrees with the value on the other side, if any.
+            # Class constants, such as `SpaceAxis.type`, already agree because
+            # no conflict was found.
             continue
         value = getattr(first, field.name, None)
         if value is None:
@@ -278,23 +232,16 @@ def _merge_with(first: Axis, second: Axis) -> tx.Dict[str, tx.Any]:
 #
 # ======================================================================
 
-# --- Dispatch helpers -------------------------------------------------
-
 
 def _is_not_none(obj: tx.Any) -> bool:
-    """Whether `obj` is not `None`."""
     return obj is not None
 
 
 def _is_anatomical(orientation: tx.Optional[Orientation]) -> bool:
-    """Whether `orientation` is an anatomical orientation."""
     return getattr(orientation, "type", None) == "anatomical"
 
 
 def _has_value(value: str) -> tx.Callable[[tx.Optional[Orientation]], bool]:
-    """
-    Whether `orientation` is an anatomical orientation with the given value.
-    """
 
     if not isinstance(value, AnatomicalOrientationValue):
         try:
@@ -312,18 +259,12 @@ def _has_value(value: str) -> tx.Callable[[tx.Optional[Orientation]], bool]:
     return _check
 
 
-# --- API --------------------------------------------------------------
-
-
 class SpaceAxis(Axis, on={"type": "space"}):
-    """An axis that measures a spatial dimension.
+    """Axis that measures a spatial dimension.
 
-    Its unit is a unit of space, an index unit (the axis indexes an
-    array), or
-    unspecified (`None`, the default). Any other unit is refused by the
-    type of the field. The unit is not what an axis is selected on, so
-    `Axis(type="space", unit="s")` builds a `SpaceAxis`, which refuses the
-    second, rather than quietly falling back to a generic `Axis`.
+    The unit is a space unit, an index unit, or `None`. The class is
+    selected on the type and not on the unit, so `Axis(type="space",
+    unit="s")` fails rather than building a generic `Axis`.
     """
 
     unit: tx.Optional[tx.Union[SpaceUnit, IndexUnit]] = None
@@ -331,62 +272,50 @@ class SpaceAxis(Axis, on={"type": "space"}):
 
 
 class TimeAxis(Axis, on={"type": "time"}):
-    """An axis that measures time.
-
-    Its unit is a unit of time, an index unit (the axis indexes an
-    array), or
-    unspecified (`None`, the default). Any other unit is refused.
-    """
+    """Axis that measures time, in a time unit or an index unit."""
 
     unit: tx.Optional[tx.Union[TimeUnit, IndexUnit]] = None
     type: NoRepr[tx.Literal["time"]] = "time"
 
 
 class ChannelAxis(Axis, on={"type": "channel"}):
-    """An axis that enumerates channels, such as color or feature channels."""
+    """Axis that enumerates channels, such as colours or features."""
 
     type: NoRepr[tx.Literal["channel"]] = "channel"
 
 
 class DisplacementAxis(Axis, on={"type": "displacement"}):
-    """An axis that carries the components of a displacement vector.
+    """Axis that enumerates the components of displacement vectors.
 
-    A field of displacements names its spatial axes together with exactly
-    one axis of this type. That axis enumerates the displacement
-    components stored at each grid point.
+    A displacement field has its spatial axes and one displacement axis.
     """
 
     type: NoRepr[tx.Literal["displacement"]] = "displacement"
 
 
 class CoordinateAxis(Axis, on={"type": "coordinate"}):
-    """An axis that carries the components of a coordinate vector.
+    """Axis that enumerates the components of coordinate vectors.
 
-    A field of coordinates names its spatial axes together with exactly
-    one axis of this type. That axis enumerates the coordinate components
-    stored at each grid point.
+    A coordinate field has its spatial axes and one coordinate axis.
     """
 
     type: NoRepr[tx.Literal["coordinate"]] = "coordinate"
 
 
 class OrientedAxis(Axis, on={"orientation": _is_not_none}):
-    """An axis that carries an orientation."""
+    """Axis that carries an orientation."""
 
 
-# The two classes below inherit from two registered classes, so bagof
-# selects them on what both parents stand for -- a time (or spatial) axis
-# that carries an orientation -- with no `on=` of their own.
+# These classes derive from two registered classes, so they are selected on
+# both conditions without an `on=` of their own.
 
 
 class OrientedTimeAxis(TimeAxis, OrientedAxis):
-    # automatically on={"type": "time", "orientation": _is_not_none}
-    """A time axis that carries an orientation."""
+    """Time axis with an orientation."""
 
 
 class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
-    # automatically on={"type": "space", "orientation": _is_not_none}
-    """A spatial axis that carries an orientation."""
+    """Spatial axis with an orientation."""
 
 
 # ======================================================================
@@ -396,29 +325,25 @@ class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
 # ======================================================================
 
 
-# An anatomical orientation says that the axis runs through space, so a
-# generic `Axis(orientation=R())`,` which names no type, is known to be
-# a spatial axis. That is a step the class statement cannot express
-# (all parents it is registered with ask for `type="space"`), so it is
-# registered with the root by hand, on the orientation alone.
+# An anatomical orientation implies a spatial axis, but every parent requires
+# `type='space'`, so the class is also registered with the root on the
+# orientation alone.
 @Axis.register_polymorph(on={"orientation": _is_anatomical})
 class AnatomicalAxis(
     OrientedSpaceAxis,
     on={"orientation": _is_anatomical},
 ):
-    """An axis that carries an anatomical orientation.
+    """Spatial axis with an anatomical orientation.
 
-    `Axis(orientation=...)` with an anatomical orientation builds one of
-    these even when it names no type: an anatomical direction is a
-    direction in space. Its unit may still be an index unit, for a voxel axis
-    that points in that direction.
+    An anatomical orientation selects this class even without a type. The
+    unit may be an index unit, for a voxel axis along that direction.
     """
 
 
 class LeftToRightAxis(
     AnatomicalAxis, on={"orientation": _has_value("left-to-right")}
 ):
-    """A spatial axis oriented from left to right."""
+    """Spatial axis oriented from left to right."""
 
     name: str = "left-to-right"
     orientation: NoRepr[LeftToRight] = LeftToRight()
@@ -427,7 +352,7 @@ class LeftToRightAxis(
 class RightToLeftAxis(
     AnatomicalAxis, on={"orientation": _has_value("right-to-left")}
 ):
-    """A spatial axis oriented from right to left."""
+    """Spatial axis oriented from right to left."""
 
     name: str = "right-to-left"
     orientation: NoRepr[RightToLeft] = RightToLeft()
@@ -436,7 +361,7 @@ class RightToLeftAxis(
 class AnteriorToPosteriorAxis(
     AnatomicalAxis, on={"orientation": _has_value("anterior-to-posterior")}
 ):
-    """A spatial axis oriented from anterior to posterior."""
+    """Spatial axis oriented from anterior to posterior."""
 
     name: str = "anterior-to-posterior"
     orientation: NoRepr[AnteriorToPosterior] = AnteriorToPosterior()
@@ -445,7 +370,7 @@ class AnteriorToPosteriorAxis(
 class PosteriorToAnteriorAxis(
     AnatomicalAxis, on={"orientation": _has_value("posterior-to-anterior")}
 ):
-    """A spatial axis oriented from posterior to anterior."""
+    """Spatial axis oriented from posterior to anterior."""
 
     name: str = "posterior-to-anterior"
     orientation: NoRepr[PosteriorToAnterior] = PosteriorToAnterior()
@@ -454,7 +379,7 @@ class PosteriorToAnteriorAxis(
 class InferiorToSuperiorAxis(
     AnatomicalAxis, on={"orientation": _has_value("inferior-to-superior")}
 ):
-    """A spatial axis oriented from inferior to superior."""
+    """Spatial axis oriented from inferior to superior."""
 
     name: str = "inferior-to-superior"
     orientation: NoRepr[InferiorToSuperior] = InferiorToSuperior()
@@ -463,38 +388,53 @@ class InferiorToSuperiorAxis(
 class SuperiorToInferiorAxis(
     AnatomicalAxis, on={"orientation": _has_value("superior-to-inferior")}
 ):
-    """A spatial axis oriented from superior to inferior."""
+    """Spatial axis oriented from superior to inferior."""
 
     name: str = "superior-to-inferior"
     orientation: NoRepr[SuperiorToInferior] = SuperiorToInferior()
 
 
-# --- Aliases ----------------------------------------------------------
-# Short names. These are the classes, not instances: an axis is mutable,
-# so a module-level instance would be shared by every system that took it.
-# Build one where it is needed -- `R()`, `R(unit="mm")`, `R(name="x")` --
-# and test with `isinstance(axis, R)`.
+# The aliases are classes because axes are mutable and a shared instance would
+# leak between systems. Use `R(unit='mm')` and `isinstance(axis, R)`.
 
 R: tx.TypeAlias = LeftToRightAxis
 LR: tx.TypeAlias = LeftToRightAxis
-"""A left-to-right anatomical axis (coordinates increase toward the right)."""
+"""Aliases of [`LeftToRightAxis`][].
+
+Coordinates along this axis increase toward the right.
+"""
 
 L: tx.TypeAlias = RightToLeftAxis
 RL: tx.TypeAlias = RightToLeftAxis
-"""A right-to-left anatomical axis (coordinates increase toward the left)."""
+"""Aliases of [`RightToLeftAxis`][].
+
+Coordinates along this axis increase toward the left.
+"""
 
 A: tx.TypeAlias = PosteriorToAnteriorAxis
 PA: tx.TypeAlias = PosteriorToAnteriorAxis
-"""A posterior-to-anterior anatomical axis (increasing toward the front)."""
+"""Aliases of [`PosteriorToAnteriorAxis`][].
+
+Coordinates along this axis increase toward the front.
+"""
 
 P: tx.TypeAlias = AnteriorToPosteriorAxis
 AP: tx.TypeAlias = AnteriorToPosteriorAxis
-"""An anterior-to-posterior anatomical axis (increasing toward the back)."""
+"""Aliases of [`AnteriorToPosteriorAxis`][].
+
+Coordinates along this axis increase toward the back.
+"""
 
 S: tx.TypeAlias = InferiorToSuperiorAxis
 IS: tx.TypeAlias = InferiorToSuperiorAxis
-"""An inferior-to-superior anatomical axis (increasing toward the top)."""
+"""Aliases of [`InferiorToSuperiorAxis`][].
+
+Coordinates along this axis increase toward the top.
+"""
 
 I: tx.TypeAlias = SuperiorToInferiorAxis
 SI: tx.TypeAlias = SuperiorToInferiorAxis
-"""A superior-to-inferior anatomical axis (increasing toward the bottom)."""
+"""Aliases of [`SuperiorToInferiorAxis`][].
+
+Coordinates along this axis increase toward the bottom.
+"""
