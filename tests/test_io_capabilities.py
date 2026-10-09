@@ -113,7 +113,7 @@ def test_write_only_adapters_preserve_borrowed_streams(
     obj.save(target)
     assert (target.read_bytes() if binary else target.read_text()) == expected
     if not binary:
-        assert obj.to_bytes(encoding="latin-1") == b"caf\xe9"
+        assert obj.to_bytes(encoding="latin-1") == b"\x63\x61\x66\xe9"
 
 
 class Note(DataModelBase):
