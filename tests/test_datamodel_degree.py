@@ -1,4 +1,7 @@
-"""Tests that the spline degree of fields and reslices is called `degree`."""
+"""Tests that the spline degree of fields and reslices is called `degree`.
+
+See #283.
+"""
 
 import numpy as np
 import pytest

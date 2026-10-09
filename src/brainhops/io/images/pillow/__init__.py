@@ -1,4 +1,4 @@
-"""Raster images, read and written with Pillow.
+"""Raster images, read and written with [Pillow](https://python-pillow.org).
 
 This module covers PNG, JPEG, BMP, GIF, WebP, PNM, JPEG 2000, TGA and other
 formats, and needs the `pillow` extra.
