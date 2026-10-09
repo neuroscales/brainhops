@@ -7,6 +7,7 @@ LTA files as a header and warn (#258).
 import gzip
 import warnings
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pytest
@@ -14,6 +15,10 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
+from brainhops.io.base.parsers import (  # noqa: E402
+    Confidence,
+    SnifferContentError,
+)
 from brainhops.io.common.nifti import NiftiReaderWriter  # noqa: E402
 
 DATA = Path(__file__).parent / "data"
@@ -169,3 +174,35 @@ def test_the_magic_is_found_in_either_byte_order(
     cls = {1: nb.Nifti1Header, 2: nb.Nifti2Header}[version]
     header = cls(endianness=order)
     assert NiftiReaderWriter.sniff_bytes(header.binaryblock)
+
+
+def _mgh() -> "nb.MGHImage":
+    return nb.MGHImage(np.zeros((2, 2, 2), "f4"), np.eye(4))
+
+
+@pytest.mark.parametrize(
+    "make",
+    [_mgh, lambda: _mgh().header, nb.AnalyzeHeader],
+    ids=["MGHImage", "MGHHeader", "AnalyzeHeader"],
+)
+def test_sniff_nibabel_rejects_other_objects(
+    make: "Callable[[], object]",
+) -> None:
+    """A non-NIfTI object gives the requested error."""
+    obj = make()
+    name = type(obj).__name__
+    assert NiftiReaderWriter.sniff_nibabel(obj) == Confidence.NO
+    with pytest.raises(
+        SnifferContentError, match=f"Not a NIfTI header: {name}"
+    ):
+        NiftiReaderWriter.sniff_nibabel(obj, error=True)
+    with pytest.raises(KeyError, match=name):
+        NiftiReaderWriter.sniff_nibabel(obj, error=KeyError)
+
+
+def test_sniff_nibabel_reports_a_wrong_header_size() -> None:
+    header = nb.Nifti1Header()
+    header["sizeof_hdr"] = 540
+    assert NiftiReaderWriter.sniff_nibabel(header) == Confidence.NO
+    with pytest.raises(SnifferContentError, match="header size: 540 != 348"):
+        NiftiReaderWriter.sniff_nibabel(header, error=True)
