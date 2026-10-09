@@ -111,8 +111,8 @@ def add_parser(
             "transform, which is what a pull-convention warp needs. The "
             "'|' usually needs shell quoting; encode a literal pipe in a "
             "path as '%%7C'. The operators 'sqrt' "
-            "and 'square' are recognised but not implemented yet "
-            "(tracked in issue #47). A velocity field is declared with "
+            "and 'square' are recognised but not implemented yet. A "
+            "velocity field is declared with "
             "an option such as '|svf' rather than with an operator."
         ),
     )
