@@ -42,7 +42,7 @@ def _values(shape: tuple = (12, 13, 2), seed: int = 0) -> np.ndarray:
 
 
 def _small(shape: tuple = (8, 9, 2), seed: int = 0) -> np.ndarray:
-    # Small, so that the mesh inversion behaves well.
+    # The values are small, so that the mesh inversion behaves well.
     return 0.1 * np.random.default_rng(seed).normal(size=shape)
 
 
@@ -265,7 +265,6 @@ def test_a_new_encoding_of_a_lazy_inverse_is_made_to_its_forward(
     start: dict, change: dict
 ) -> None:
     # The new encoding goes to the forward, and the inverse stays lazy but
-    #
     # matches the inverse materialized first.
     forward = DisplacementField(field=_small(), degree=DEGREE).to(**start)
     inverse = forward.inverse()
@@ -452,7 +451,6 @@ def test_replace_with_a_convenience_keyword_meets_the_data(
     cls: type, view: str, values: np.ndarray
 ) -> None:
     # `replace` carries `data` over, so the keyword meets it and both are
-    #
     # refused.
     with pytest.raises(TypeError):
         replace(cls(values), **{view: values})
@@ -569,7 +567,6 @@ def test_an_unchanged_encoding_is_a_pass_through(
 
 def test_the_translation_check_reads_values() -> None:
     # Constant coefficients under a zero boundary do not make a constant
-    #
     # field.
     data = np.ones((8, 9, 2))
     t = DisplacementField(

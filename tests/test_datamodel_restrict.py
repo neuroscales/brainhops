@@ -131,7 +131,6 @@ def test_sequence_covering_the_block_is_the_same_object() -> None:
 
 def test_sequence_is_restricted_member_by_member() -> None:
     # Regression: a partial block of a sequence without an affine reading was
-    #
     # dropped as the identity.
     seq = Sequence(
         [
@@ -199,7 +198,6 @@ def test_partial_inverse_is_reinverted_lazily() -> None:
 
 def test_partial_affine_inverse_swaps_the_block() -> None:
     # The forward maps 2 axes to 3, so it is restricted over the swapped
-    #
     # block.
     matrix = np.asarray([[2.0, 0.0, 1.0], [0.0, 4.0, 0.0], [0.0, 1.0, 0.0]])
     forward = Affine(matrix=matrix)
@@ -248,7 +246,6 @@ def test_subspace_field_with_a_pass_through_axis_stays_wrapped() -> None:
 
 def test_inner_less_reindex_over_its_whole_group_is_a_local_swap() -> None:
     # Input 0 goes to output 1, input 1 to output 0, and axis 2 passes
-    #
     # through.
     piece = restrict(_sub(None, [0, 1], [1, 0]), [0, 1], [0, 1], 3, 3)
     assert type(piece) is Affine
@@ -273,7 +270,7 @@ def test_restrict_refuses_an_unsupported_type() -> None:
 
 
 def test_restrict_refuses_a_transform_with_no_affine_reading() -> None:
-    # Never read as the identity, which would drop it.
+    # The projection must not be read as the identity, which would drop it.
     with pytest.raises(RestrictionError, match="no affine reading"):
         restrict(Projection(dropped=[1]), [0], [0], 2, 1)
 

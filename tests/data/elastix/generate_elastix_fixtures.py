@@ -39,9 +39,8 @@ def rotation2d(a: float) -> np.ndarray:
     return np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
 
 
-# Oblique, non-symmetric and flipping the last axis, so that a transposed
-#
-# direction is detected.
+# The directions are oblique, non-symmetric and flip the last axis, so that
+# a transposed direction is detected.
 DIRECTION = {
     2: rotation2d(0.3) @ np.diag([1, -1]),
     3: rotation3d(0.2, -0.1, 0.4) @ np.diag([1, 1, -1]),
@@ -270,7 +269,6 @@ def main() -> None:
     write("euler3d_toml", [euler], {"euler3d.toml": euler})
 
     # An affine, then a B-spline naming it as initial transform by a path
-    #
     # relative to the B-spline file.
     affine = cases()["affine3d"]
     # Enlarge the B-spline grid so that it still covers the moved points.
@@ -287,8 +285,7 @@ def main() -> None:
         },
     )
 
-    # Three-link chain using the deprecated key spelling
-    #
+    # A chain of three links that uses the deprecated key spelling
     # `InitialTransformParametersFileName`.
     translation = cases()["translation3d"]
     euler = dict(cases()["euler3d"])

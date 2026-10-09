@@ -80,7 +80,7 @@ TRANSLATION = """
 # ----------------------------------------------------------------------
 #   TRANSFORMIX GROUND TRUTH
 # ----------------------------------------------------------------------
-# Fixtures from data/elastix/generate_elastix_fixtures.py.
+# The fixtures come from data/elastix/generate_elastix_fixtures.py.
 
 
 @pytest.mark.parametrize("name", sorted(CASES))

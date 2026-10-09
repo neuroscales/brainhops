@@ -122,7 +122,7 @@ def test_cartesian_field_flattens_and_computes_in_a_sequence() -> None:
         transformations=[affine, CartesianField(shape=(4, 5))],
         output=output,
     )
-    # compute flattens the sequence, rebuilding the CartesianField first.
+    # `compute` flattens the sequence, rebuilding the CartesianField first.
     result = seq.compute()
     assert result is not None
 
@@ -221,7 +221,7 @@ def test_replace_coordinates_field_round_trips_explicit_field() -> None:
 
 
 def _contains_cartesian_field(result) -> bool:  # noqa: ANN001
-    # Whether a CartesianField survives anywhere in a computed result.
+    # Return whether a CartesianField survives anywhere in a computed result.
     if isinstance(result, CartesianField):
         return True
     if isinstance(result, Sequence):
@@ -418,7 +418,7 @@ def test_subspace_inverse_wraps_inner_transform() -> None:
 
 
 def test_interpolates_truth_table() -> None:
-    # Whether applying a transformation interpolates data with splines.
+    # Check whether applying a transformation interpolates data with splines.
     from brainhops.datamodel._transformations.sequence import _interpolates
 
     affine = Affine(matrix=np.eye(3, 4))
@@ -442,7 +442,7 @@ def test_interpolates_truth_table() -> None:
     assert _interpolates(Sequence([affine, translation])) is False
     assert _interpolates(Sequence([affine, disp])) is True
 
-    # A subspace is transparent.
+    # A subspace interpolates exactly when its inner transformation does.
     axes = np.asarray([0, 1, 2])
     assert (
         _interpolates(
@@ -535,7 +535,7 @@ def test_sequence_compute_applies_simplify_to_the_result() -> None:
 
 
 def test_simplify_is_keyword_only() -> None:
-    # mode may be positional, simplify may not.
+    # The mode may be passed positionally, but simplify may not.
     import pytest
 
     affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
@@ -780,7 +780,8 @@ def test_to_reports_a_lossy_conversion_rather_than_performing_it() -> None:
 
 
 def test_transformations_compare_by_identity() -> None:
-    # == is `is`, and it never raises, whatever the other operand.
+    # `==` compares by identity, like `is`, and never raises, whatever the
+    # other operand is.
     system = CoordinateSystem(name="world", axes=[Axis(name="x")] * 2)
     matrix = np.array([[2.0, 0.5, 1.0], [0.0, 3.0, -1.0]])
     affine = Affine(matrix=matrix, input=system, output=system)

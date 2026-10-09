@@ -40,7 +40,6 @@ def test_geometry_with_nested_sequence_computes_to_two_element_geometry() -> (
     computed = geom.compute()
 
     # The result is a (grid, transformation) pair, with the transformation
-    #
     # simplified.
     assert isinstance(computed, Geometry)
     assert len(computed.transformations) == 2
@@ -52,7 +51,6 @@ def test_geometry_with_nested_sequence_computes_to_two_element_geometry() -> (
 
 def test_geometry_flatten_preserves_the_pair_and_the_grid() -> None:
     # A doubly nested transformation still flattens into the single
-    #
     # transformation slot.
     inner = Sequence(
         transformations=[Sequence(transformations=[_affine(), _affine()])]
@@ -69,7 +67,6 @@ def test_geometry_flatten_preserves_the_pair_and_the_grid() -> None:
 
 def test_geometry_flatten_propagates_endpoints() -> None:
     # Flattening moves the input of the geometry onto the grid and its output
-    #
     # onto the transformation.
     voxel = VoxelCoordinateSystem()
     ras = RASCoordinateSystem()
@@ -84,7 +81,6 @@ def test_geometry_flatten_propagates_endpoints() -> None:
 
 def test_composing_a_sequence_onto_a_geometry_keeps_a_geometry() -> None:
     # `sequence @ geometry` gives a geometry whose transformation is a nested
-    #
     # sequence, which `compute` must simplify while keeping the pair.
     grid = CartesianField(
         shape=(2, 3, 4),
@@ -110,7 +106,6 @@ def test_composing_a_sequence_onto_a_geometry_keeps_a_geometry() -> None:
 
 def test_nesting_a_geometry_in_a_sequence_computes_to_a_field() -> None:
     # A geometry inside a sequence is flattened, and its grid is sampled
-    #
     # rather than folded away.
     grid = CartesianField(shape=(2, 3, 4))
     geom = Geometry((grid, _affine(2.0)))
@@ -130,7 +125,6 @@ def test_nesting_a_geometry_in_a_sequence_computes_to_a_field() -> None:
 
 def test_index2transform_dropped_axis_is_a_pure_translation() -> None:
     # An integer index drops an axis, which becomes a constant offset in its
-    #
     # row, without the diagonal 1 of the identity.
     transform, shape = _index2transform(
         (slice(None), 2, slice(None)), (4, 5, 6)
@@ -148,7 +142,6 @@ def test_index2transform_dropped_axis_is_a_pure_translation() -> None:
 
 def test_index2transform_inserted_axis_has_no_spurious_diagonal() -> None:
     # A None index inserts an axis, and later rows must not get a stray
-    #
     # diagonal 1 in the inserted column.
     transform, shape = _index2transform(
         (slice(None), None, slice(None), slice(None)), (4, 5, 6)
@@ -178,7 +171,6 @@ def test_sub_geometry_reslice_reproduces_numpy_indexing(
     index: tuple, degree: int
 ) -> None:
     # With an identity affine, the result depends only on the affine of the
-    #
     # index, so an error there would read the wrong voxels.
     system = CoordinateSystem(
         name="voxel",

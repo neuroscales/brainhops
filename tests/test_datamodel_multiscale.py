@@ -24,7 +24,6 @@ from brainhops.datamodel.transformations import (
 
 def _rotated_anisotropic_affine(sx: float, sy: float) -> tuple:
     # Scale, rotate and shift, so that the linear part is not a multiple of the
-    #
     # identity.
     theta = 0.37
     rot = np.array(
@@ -52,7 +51,6 @@ def _displacement_level(
     raw_world: np.ndarray, affine: Affine, linear: np.ndarray
 ) -> Sequence:
     # A world-to-voxel affine, a displacement in voxel units, and a
-    #
     # voxel-to-world affine.
     voxel = raw_world @ np.linalg.inv(linear).T
     return Sequence(

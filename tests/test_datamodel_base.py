@@ -94,7 +94,6 @@ def test_from_instance_accepts_a_fixed_field_that_agrees_or_is_unset() -> None:
 
 def test_from_instance_refuses_a_fixed_field_that_disagrees() -> None:
     # The value of the parent cannot be dropped silently, so a disagreement is
-    #
     # refused.
     with pytest.raises(ValueError, match="always 'fixed'"):
         _FixedKind.from_instance(_Kinded(kind="other"))
@@ -108,7 +107,6 @@ def test_from_dict_refuses_a_fixed_field_that_disagrees() -> None:
 
 def test_from_other_does_not_read_a_plain_object_as_a_parent() -> None:
     # Every class derives from `object`, but an `object` instance has nothing
-    #
     # to read, so the constructor refuses it.
     with pytest.raises(ConversionError):
         _Plain.from_any(object())
@@ -128,7 +126,6 @@ def test_converter_reads_a_mapping_through_from_other() -> None:
 
 def test_converter_reads_a_parent_instance_through_from_other() -> None:
     # Regression: the parent instance was taken as the value of the first
-    #
     # field.
     obj = get_converter(_Child)(_Plain(x=5, y=7))
     assert type(obj) is _Child

@@ -44,7 +44,8 @@ from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 #   FIXTURES
 # ----------------------------------------------------------------------
 
-# No eigenvalue on the negative real axis, so a principal root exists.
+# This matrix has no eigenvalue on the negative real axis, so it has a
+# principal root.
 AFFINE = np.array(
     [[1.2, 0.1, -0.2, 3.0], [0.05, 0.9, 0.3, -1.0], [0.1, -0.1, 1.1, 2.0]]
 )
@@ -97,7 +98,8 @@ def _transforms() -> list:
 
 
 def _rootable() -> list:
-    # No reordering of axes is half of another.
+    # The principal root of a permutation is not a permutation, so
+    # permutations are left out.
     return [t for t in _transforms() if not isinstance(t, Permutation)]
 
 
@@ -195,7 +197,8 @@ def test_sqrt_squared_is_the_transform(t: Transformation) -> None:
 
 
 def test_a_permutation_has_no_root() -> None:
-    # Its root, a sixth of a turn, permutes no axes.
+    # The principal root of this cycle, a sixth of a turn, is not a
+    # permutation of the axes.
     p = Permutation(permutation=CYCLE)
     with pytest.raises(NotImplementedError):
         p.sqrt()

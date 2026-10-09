@@ -70,7 +70,6 @@ from brainhops.errors import (
 )
 
 # Physical anatomical axes in mm. R, A and S fix a direction but not a
-#
 # metric, so a world system that meets a transform in mm must state one.
 Rmm, Amm, Smm = RASmm().axes
 
@@ -128,7 +127,6 @@ def test_bridge_round_trips_to_identity(
     source: CoordinateSystem, target: CoordinateSystem
 ) -> None:
     # Opposite bridges cancel, because the adaptor emits only exactly
-    #
     # invertible pieces.
     forward = bridge(source, target)
     backward = bridge(target, source)
@@ -138,7 +136,6 @@ def test_bridge_round_trips_to_identity(
 
 def test_matches_by_orientation_when_names_differ() -> None:
     # The source axes are named and the target axes are oriented; they still
-    #
     # match on type and orientation.
     source = CoordinateSystem(
         name="named",
@@ -156,7 +153,6 @@ def test_matches_by_orientation_when_names_differ() -> None:
     )
     result = bridge(source, target)
     # x (left to right) feeds target axis 1, and y (posterior to anterior)
-    #
     # feeds target axis 0.
     assert isinstance(result, Permutation)
     np.testing.assert_array_equal(result.permutation, [1, 0])
@@ -176,13 +172,12 @@ def test_unit_difference_is_a_scaling() -> None:
     )
     result = bridge(source, target)
     assert isinstance(result, Scaling)
-    # 1 mm = 1000 um.
+    # One millimeter is 1000 micrometers.
     np.testing.assert_allclose(result.scale, [1000.0])
 
 
 def test_an_unspecified_unit_is_compatible_with_any_unit() -> None:
     # An unspecified unit is never a reason to refuse, and matches at a ratio
-    #
     # of one.
     source = CoordinateSystem(name="mm", axes=[LeftToRightAxis(unit="mm")])
     target = CoordinateSystem(
@@ -235,7 +230,6 @@ def test_world_flip_carries_no_offset() -> None:
 
 def test_array_index_flip_carries_the_extent_offset() -> None:
     # Between array-index systems, a reversed axis of extent n maps x to
-    #
     # (n - 1) - x.
     n = 10
     source = _oriented_index_system("LR", LeftToRight())
@@ -425,7 +419,6 @@ def test_itk_transform_applied_to_a_nifti_image_bridges_ras_and_lps() -> None:
     of a NIfTI image gets a sign flip from the adaptor.
     """
     # Without nibabel, `brainhops.io.images` imports but has no NIfTI reader,
-    #
     # so the load would fail instead of skipping.
     pytest.importorskip("nibabel")
     images = pytest.importorskip("brainhops.io.images")
@@ -546,7 +539,6 @@ def test_nested_sequence_beside_a_sibling_inserts_the_flip_bridge() -> None:
 
 def test_bare_inverse_boundary_inserts_the_flip_bridge() -> None:
     # A boundary behind `Inverse(forward=b)` is bridged against the LPS system
-    #
     # that the inverse presents.
     a = _ras_affine()
     b = _lps_affine()
@@ -593,7 +585,6 @@ def test_compute_pairs_underspecified_voxel_axes_by_position_and_warns() -> (
 
 def test_explicit_bridge_does_not_fall_back_to_position() -> None:
     # The explicit entry point raises by default; only `compute()` falls back
-    #
     # to positions.
     with pytest.raises(AdaptationError):
         bridge(VoxelCoordinateSystem(), _xyz_index_system())
@@ -601,7 +592,6 @@ def test_explicit_bridge_does_not_fall_back_to_position() -> None:
 
 def test_same_type_group_pairs_by_position_even_when_oriented() -> None:
     # Two spatial axes on each side form groups of equal size, so they pair by
-    #
     # order, with a warning, even when only one is oriented.
     oriented = CoordinateSystem(
         name="oriented",
@@ -627,7 +617,6 @@ def test_same_type_group_pairs_by_position_even_when_oriented() -> None:
 
 def test_same_type_group_pairs_by_position_when_united() -> None:
     # All axes have length units, so neither names nor units give a unique
-    #
     # pairing; the axes pair by order, and each unit ratio becomes a scaling.
     source = CoordinateSystem(
         name="mm",
@@ -647,7 +636,7 @@ def test_same_type_group_pairs_by_position_when_united() -> None:
     second = Affine(matrix=np.eye(2, 3), input=target, output=target)
     with pytest.warns(UserWarning):
         result = Sequence([first, second]).compute()
-    # a to c and b to d, each scaled by 1000 from mm to um.
+    # Axis a maps to c and b maps to d, each scaled by 1000 from mm to um.
     np.testing.assert_allclose(
         np.diag(_homogeneous(result)), [1000.0, 1000.0, 1.0]
     )
@@ -655,7 +644,6 @@ def test_same_type_group_pairs_by_position_when_united() -> None:
 
 def test_type_grouped_positional_keeps_each_type_to_its_own_group() -> None:
     # Pairing by absolute position would cross time with space; the fallback
-    #
     # pairs within each type and reorders the axes instead.
     source = CoordinateSystem(
         name="s",
@@ -682,7 +670,6 @@ def test_type_grouped_positional_keeps_each_type_to_its_own_group() -> None:
 
 def test_typeless_group_pairs_with_a_typed_group_of_equal_count() -> None:
     # A typeless system pairs by position with a spatial system of the same
-    #
     # size, with a warning.
     source = CoordinateSystem(
         name="typeless",
@@ -705,7 +692,6 @@ def test_typeless_group_pairs_with_a_typed_group_of_equal_count() -> None:
 
 def test_typeless_group_with_no_equal_count_typed_group_raises() -> None:
     # Two typeless axes against a spatial and a time axis are ambiguous, and
-    #
     # the mismatch is reported rather than guessed.
     source = CoordinateSystem(
         name="typeless",
@@ -773,7 +759,6 @@ def test_shared_unit_across_different_types_is_not_matched() -> None:
 
 def test_axes_match_by_unit_when_names_differ() -> None:
     # Spatial axes with different names match by unit kind, and the unit
-    #
     # ratio becomes a scaling.
     source = CoordinateSystem(
         name="mm", axes=[SpaceAxis(name="a", unit="millimeter")]
@@ -802,7 +787,6 @@ def _oriented_named_index_system(
 
 def test_array_flip_in_a_sequence_uses_an_adjacent_grid_extent() -> None:
     # A reversed array-index axis needs its extent, which an interior grid
-    #
     # supplies through its shape.
     lr = _oriented_named_index_system("LR", LeftToRight())
     rl = _oriented_named_index_system("RL", RightToLeft())
@@ -835,7 +819,6 @@ def test_array_flip_without_an_extent_source_raises_actionably() -> None:
 
 def test_non_collinear_axes_matched_by_name_are_rejected() -> None:
     # Left-to-right and anterior-to-posterior axes lie on different lines, so a
-    #
     # shared name must not force a sign flip.
     source = CoordinateSystem(
         name="lr",
@@ -856,7 +839,6 @@ def test_non_collinear_axes_matched_by_name_are_rejected() -> None:
 
 def test_unit_ratio_round_trip_is_exact() -> None:
     # A ratio times its reciprocal is exactly one, which dividing the two
-    #
     # scales does not guarantee.
     def _system(unit: str) -> CoordinateSystem:
         return CoordinateSystem(
@@ -886,7 +868,6 @@ def test_unit_ratio_round_trip_is_exact() -> None:
 
 def test_named_ras_lps_voxel_systems_are_array_index() -> None:
     # fRAS and fLPS are voxel grids despite their unit and orientation, so the
-    #
     # flip between them carries an offset and needs the extents.
     with pytest.raises(AdaptationError):
         bridge(FRASCoordinateSystem(), FLPSCoordinateSystem())
@@ -961,7 +942,6 @@ def _homogeneous_of_each(sequence: Sequence) -> np.ndarray:
 
 def test_subset_transform_is_wrapped_in_a_subspace() -> None:
     # A 3-D LPS transform meeting a 4-D (x, y, z, t) boundary is embedded over
-    #
     # the three spatial axes.
     first = _voxel_to_ras_time(np.eye(4, 5))
     second = _lps_affine_3d(np.eye(3, 4))
@@ -976,7 +956,6 @@ def test_subset_transform_is_wrapped_in_a_subspace() -> None:
 
 def test_unnamed_unoriented_subset_transform_is_wrapped() -> None:
     # A transform over unnamed, unoriented spatial axes is still embedded in
-    #
     # the spatial axes, by position and with a warning.
     full = CoordinateSystem(
         name="xyzt",
@@ -1038,7 +1017,6 @@ def test_subspace_wrap_round_trips_through_inverse() -> None:
 
 def test_spatial_transform_across_a_4d_image_via_compute() -> None:
     # A 3-D LPS transform after a 4-D voxel-to-RAS map is embedded in the
-    #
     # spatial axes: spatial coordinates are mapped and time is carried through.
     voxel_matrix = np.array(
         [
@@ -1056,7 +1034,6 @@ def test_spatial_transform_across_a_4d_image_via_compute() -> None:
 
     result = Sequence([first, second]).compute()
     # The embedding does not interpolate, so it folds into a single 4-D
-    #
     # affine: the embedded transform, the flip and the voxel map.
     got = _composed_homogeneous(result)
     flip4 = np.diag([-1.0, -1.0, 1.0, 1.0, 1.0])
@@ -1077,7 +1054,6 @@ def test_spatial_transform_across_a_4d_image_via_compute() -> None:
 
 def test_wrapped_result_round_trips_through_compute() -> None:
     # The embedded transform composed with its inverse gives the identity on
-    #
     # the full 4-D space.
     itk_matrix = np.array(
         [[0.9, 0.1, 0.0, 1.0], [-0.1, 0.9, 0.0, 2.0], [0.0, 0.0, 1.0, 3.0]]
@@ -1094,7 +1070,6 @@ def test_wrapped_result_round_trips_through_compute() -> None:
 
 def test_extra_spatial_axis_is_not_absorbed_and_raises() -> None:
     # A fourth spatial axis without a counterpart is a real mismatch, so the
-    #
     # adaptor raises instead of dropping the axis.
     four_spatial = CoordinateSystem(
         name="four-spatial",
@@ -1116,7 +1091,6 @@ def test_bridge_refuses_a_dimensionality_mismatch() -> None:
 
 def test_backward_embedding_wraps_a_3d_transform_before_a_4d_one() -> None:
     # When the fuller space is on the output side, the 3-D transform is
-    #
     # wrapped and placed before the 4-D map.
     itk_matrix = np.array(
         [[0.9, 0.1, 0.0, 1.0], [-0.1, 0.9, 0.0, 2.0], [0.0, 0.0, 1.0, 3.0]]
@@ -1134,7 +1108,6 @@ def test_backward_embedding_wraps_a_3d_transform_before_a_4d_one() -> None:
 
     result = Sequence([first, second]).compute()
     # The backward embedding folds into one 4-D affine as well, in the
-    #
     # opposite order.
     got = _composed_homogeneous(result)
     flip4 = np.diag([-1.0, -1.0, 1.0, 1.0, 1.0])
@@ -1149,7 +1122,6 @@ def test_backward_embedding_wraps_a_3d_transform_before_a_4d_one() -> None:
 
 def test_extra_spatial_axis_is_not_absorbed_backward_and_raises() -> None:
     # A 4-D output with four spatial axes is a real mismatch, so the adaptor
-    #
     # raises instead of inventing an axis.
     four_spatial = CoordinateSystem(
         name="four-spatial",
@@ -1184,7 +1156,6 @@ def test_itk_3d_transform_applied_to_a_4d_image_wraps_the_spatial_axes(
 
     result = Sequence([voxel_to_world, itk]).compute()
     # The ITK transform folds into one 4-D affine that embeds it on the
-    #
     # spatial axes.
     got = _composed_homogeneous(result)
     itk_3d = np.asarray(itk.compute().to(Affine).homogeneous_matrix)[:3, :]
@@ -1207,7 +1178,6 @@ def test_itk_3d_transform_applied_to_a_4d_image_wraps_the_spatial_axes(
 
 def test_is_identity_recognizes_a_subspace_of_the_identity() -> None:
     # A subspace of the identity, over the same axes, is recognized as the
-    #
     # identity from its structure alone.
     subspace = SubspaceTransformation(
         transformation=Identity(),
@@ -1252,7 +1222,6 @@ def _spatial3(name: str) -> CoordinateSystem:
 
 def _spatial_warp() -> Sequence:
     # A 3-D world-space warp: world to voxel, a displacement in voxel units,
-    #
     # and voxel to world.
     rng = np.random.default_rng(1)
     voxel = _spatial3("warp-voxel")
@@ -1314,7 +1283,6 @@ def test_4d_reslice_through_a_3d_warp_field_matches_reference() -> None:
 
 def test_4d_reslice_through_a_3d_warp_field_degree3() -> None:
     # The tolerance is looser at degree 3, because the reslice prefilters the
-    #
     # whole 4-D array while the reference prefilters each volume.
     image = _image_4d()
     warp = _spatial_warp()
@@ -1407,7 +1375,6 @@ def test_embed_refuses_an_interpolating_transform_on_a_discrete_axis() -> None:
 
 def test_compose_refuses_interpolating_subspace_on_discrete_axis() -> None:
     # A subspace with a field inner on a discrete axis cannot be applied to a
-    #
     # coordinate field.
     voxel = _spatial3("warp-voxel")
     field = DisplacementField(
@@ -1462,7 +1429,6 @@ def test_adapt_keeps_first_by_identity_for_a_forward_embedding() -> None:
 
 def test_backward_embedding_finds_the_original_leaf_by_identity() -> None:
     # A backward embedding wraps the first transform, which remains reachable
-    #
     # unchanged inside the wrapper.
     first = _lps_affine_3d(np.eye(3, 4))
     second = _voxel_to_ras_time(np.eye(4, 5))
@@ -1480,13 +1446,14 @@ def test_backward_embedding_finds_the_original_leaf_by_identity() -> None:
 
 
 def _composed_homogeneous(result: Transformation) -> np.ndarray:
-    # The full matrix of a result, whether or not it stayed a sequence.
+    # Return the full matrix of a result, whether or not it stayed a
+    # sequence.
     if isinstance(result, Sequence):
         return _homogeneous_of_each(result)
     return np.asarray(result.compute().to(Affine).homogeneous_matrix)
 
 
-# Nontrivial, so that a dropped or misplaced axis is visible.
+# The affine is nontrivial, so that a dropped or misplaced axis is visible.
 _EMBED_AFFINE_3D = np.array(
     [[1.3, 0.2, -0.1, 4.0], [0.0, 0.9, 0.3, -2.0], [0.1, 0.0, 1.1, 1.0]]
 )
@@ -1540,9 +1507,7 @@ def test_adapt_backward_embedding_composes_like_the_flat_sequence() -> None:
 
 def _embedded_matrix(spatial: list, unit: str) -> np.ndarray:
     # Embed a transform whose own x axis points the other way into the first
-    #
     # three axes of a 4-D system, which reverses x. Only the axis units say
-    #
     # whether the axes index an array.
     full = CoordinateSystem(axes=[*spatial, TimeAxis(name="t", unit=unit)])
     sub = CoordinateSystem(

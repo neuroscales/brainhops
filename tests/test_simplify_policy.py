@@ -152,7 +152,8 @@ def test_special_and_symbol_keys() -> None:
 def test_invalid_keys_raise() -> None:
     from brainhops.datamodel.transformations import MultiscaleField
 
-    # Classes without a hierarchy node lower rather than raising.
+    # Classes without a hierarchy node are normalized to a family without a
+    # node rather than raising.
     assert normalize_family(Sequence) == TransformationFamily(Sequence, None)
     assert normalize_family(MultiscaleField) == TransformationFamily(
         MultiscaleField, None
@@ -223,7 +224,7 @@ def test_resolution_fallback_and_bare_list() -> None:
 
 
 def test_default_compute_is_analytic() -> None:
-    # A structure-only downcast.
+    # A default Linear is downcast to Identity from its structure alone.
     assert isinstance(Linear().compute(), Identity)
     # A diagonal Linear stays a Linear under analytic.
     lin = Linear(matrix=np.diag([2.0, 3.0]))
@@ -431,13 +432,14 @@ def test_the_value_guard_is_not_vacuous() -> None:
 
 
 def test_ladder_stops_at_the_cheapest_type_and_never_widens() -> None:
-    # A transform is rewritten as the first set it is established in, and left
-    # as the same object otherwise, so that a lazy inverse still cancels by
-    # identity.
+    # A transform is rewritten as the first type on the ladder that it is
+    # shown to belong to. Otherwise the same object is returned, so that a
+    # lazy inverse still cancels by identity.
     rot = Rotation(matrix=[[0.0, -1.0], [1.0, 0.0]])
     # The ladder never widens a Rotation to a Linear.
     assert rot.simplify("numeric") is rot
-    # Its inverse is then a transpose rather than a solve.
+    # The inverse of a narrowed Rotation is then a transpose rather than a
+    # linear solve.
     narrowed = Linear(matrix=[[0.0, -1.0], [1.0, 0.0]]).simplify("numeric")
     assert type(narrowed) is Rotation
     np.testing.assert_allclose(

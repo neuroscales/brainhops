@@ -40,7 +40,8 @@ from brainhops.io.common.freesurfer._geometry import (  # noqa: E402
 from brainhops.io.images.freesurfer import MghImage  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 
-# Oblique, anisotropic geometry, so that every header field matters.
+# The geometry is oblique and anisotropic, so that every header field
+# matters.
 _ROT = np.array(
     [
         [np.cos(0.3), -np.sin(0.3), 0.0],
@@ -227,7 +228,7 @@ def test_mri_params_are_kept(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_bad_ras_flag_uses_freesurfer_defaults(tmp_path) -> None:  # noqa: ANN001
-    """With goodRASFlag unset: 1 mm voxels, LIA, centred at the origin."""
+    """Without goodRASFlag, the voxels are 1 mm, LIA and centred at 0."""
     source = _write(tmp_path, "vol.mgh", _data())
     raw = bytearray(source.read_bytes())
     raw[28:30] = struct.pack(">h", 0)

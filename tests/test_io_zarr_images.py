@@ -893,7 +893,8 @@ def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
 
 
 def _field_array() -> np.ndarray:
-    # Stored as (component, z, y, x), each component constant.
+    # The field is stored as (component, z, y, x), with each component
+    # constant.
     field = np.zeros((3, 6, 5, 4), dtype="float32")
     field[0] = 100.0
     field[1] = 200.0
@@ -995,7 +996,7 @@ def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
 def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
     from brainhops.datamodel.transformations import DisplacementField
 
-    # Fallback: a bare array whose dimension_names name the axes.
+    # As a fallback, a bare array whose dimension_names name the axes is read.
     path = _authored_pyramid(
         tmp_path,
         {"type": "displacements", "path": "disp"},
