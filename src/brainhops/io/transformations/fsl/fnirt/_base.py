@@ -23,6 +23,7 @@ from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
 from .._formats import FslTransformationFormat
+from .._keywords import pop_aliased
 from .._repr import stored_repr
 
 # Intent codes from `nifti1.h`.
@@ -146,18 +147,19 @@ class FnirtWarpField(
     # which rejects `moving=` and `reference=`, so these are set after parsing.
 
     @classmethod
-    def _pop_images(cls, kwargs: dict) -> tx.Tuple[tx.Any, tx.Any]:
-        moving = kwargs.pop("moving", None)
-        if moving is None:
-            moving = kwargs.pop("src", None)
-        reference = kwargs.pop("reference", None)
-        if reference is None:
-            reference = kwargs.pop("ref", None)
+    def _pop_images(
+        cls, kwargs: tx.Dict[str, tx.Any]
+    ) -> tx.Tuple[tx.Optional[_ImageLike], tx.Optional[_ImageLike]]:
+        moving = pop_aliased(cls, kwargs, "moving")
+        reference = pop_aliased(cls, kwargs, "reference")
         return moving, reference
 
     @classmethod
     def _with_images(
-        cls, obj: tx.Self, moving: tx.Any, reference: tx.Any
+        cls,
+        obj: tx.Self,
+        moving: tx.Optional[_ImageLike],
+        reference: tx.Optional[_ImageLike],
     ) -> tx.Self:
         if moving is not None:
             obj.moving = moving
@@ -356,7 +358,13 @@ class FnirtWarpField(
             return False
         if self._is_coeff() and self.reference is None:
             return False
-        if self.deformation_type not in (None, "absolute", "relative"):
+        # A coefficient field ignores `deformation_type`, so an invalid
+        # value only matters for a deformation field.
+        if not self._is_coeff() and self.deformation_type not in (
+            None,
+            "absolute",
+            "relative",
+        ):
             return False
         return True
 
