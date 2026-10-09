@@ -328,33 +328,60 @@ class NiftiReaderWriter(DataModelBase, BinaryFileReader, BinaryFileWriter):
     @classmethod
     def sniff_nibabel(
         cls,
-        nifti: _NiftiObject,
+        nifti: object,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
         """Return the confidence that a nibabel object matches this format.
 
-        The header size is checked first, and a valid header is then scored
-        with [`_score_nibabel`][]. A mismatch returns `False`.
+        Only NIfTI-1 and NIfTI-2 images and headers can match. The
+        size that the header records for itself (the `sizeof_hdr` field)
+        is checked first, and a valid header is then scored with
+        [`_score_nibabel`][]. Any other object, including other nibabel
+        images and headers, gives `Confidence.NO`, or the requested error
+        when `error` is set.
+
+        Parameters
+        ----------
+        nifti : object
+            The object to test, usually a nibabel image or header.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the object does not match. With
+            `True`, the error is a `SnifferContentError`; an exception
+            class is raised instead when one is given.
+        **kwargs : dict
+            Ignored.
+
+        Returns
+        -------
+        float
+            A score in `[0, 1]`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the object does not match and `error` is `True`.
         """
         if isinstance(nifti, nb.Nifti1Image):
             return cls.sniff_nibabel(nifti.header, error=error, **kwargs)
         if isinstance(nifti, nb.Nifti2Header):
-            result = nifti["sizeof_hdr"] == 540
+            expected = 540
         elif isinstance(nifti, nb.Nifti1Header):
-            result = nifti["sizeof_hdr"] == 348
+            expected = 348
         else:
-            result = False
-        if result:
-            return cls._score_nibabel(nifti)
+            expected = None
+        if expected is not None:
+            size = nifti["sizeof_hdr"]
+            if size == expected:
+                return cls._score_nibabel(nifti)
+            message = f"Invalid NIfTI header size: {size} != {expected}"
+        else:
+            message = f"Not a NIfTI header: {type(nifti).__name__}"
         if error:
             if error is True:
                 error = SnifferContentError
-            raise error(
-                f"Magic number does not match NIfTI header: "
-                f"{nifti['sizeof_hdr']}"
-            )
-        return False
+            raise error(message)
+        return Confidence.NO
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
