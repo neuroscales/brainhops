@@ -27,8 +27,10 @@ from brainhops._core.path import Path
 class Parser(Magic, frozen=True):
     """Annotation metadata choosing the parser of a field.
 
-    The value is a registered target or a parser, and takes precedence over the
-    registry.
+    A field annotated as `Annotated[T, Parser(value)]` converts its option
+    string with `value` instead of the parser registered for `T`. The value is
+    either a parser or a target registered with [`register_parser`][], in
+    which case the parser registered for that target is used.
     """
 
     value: tx.Any
@@ -37,7 +39,9 @@ class Parser(Magic, frozen=True):
 class SourceSpec(Magic, frozen=True):
     """An immutable source path with format hints and named options.
 
-    Option values are strings or nested specifications.
+    A source specification names a file to read. Its format hints restrict
+    the formats that may read the file, and its options set fields of the
+    format that reads it. Option values are strings or nested specifications.
     """
 
     path: ConvertTo[Path]
@@ -48,10 +52,13 @@ class SourceSpec(Magic, frozen=True):
     def from_arg(cls, text: str) -> tx.Self:
         """Parse a source argument written as `path|hint|key:value`.
 
-        Later segments are hints (also given as `hint:a,b`), options, or
-        operations that the class declares. Brackets delimit a nested
-        specification. Colons are syntax only in later segments, so URI schemes
-        in values survive. A literal pipe is written `%7C`.
+        The segments after the path are format hints, options, or operations
+        that the class declares. Hints may also be given as `hint:a,b`. An
+        option value written in brackets, as in `key:[path|hint]`, is a nested
+        specification. Colons have a special meaning only in the segments after
+        the path, and only the first colon of a segment separates the option
+        name from its value, so a URI scheme in the path or in a value is kept
+        intact. A literal pipe is written `%7C`.
 
         Raises
         ------
@@ -136,11 +143,12 @@ class OperationSpec(Magic, frozen=True):
 
 
 class TransformationSpec(SourceSpec, frozen=True):
-    """Transformation source with operations.
+    """Source specification of a transformation, with optional operations.
 
-    The hint `svf` stands for `displacements|log:true`, a displacement field
-    holding the stationary velocity of the map, as in
-    `warp.nii.gz|svf|steps:6`.
+    The hint `svf` is shorthand for `displacements|log:true`, which reads a
+    displacement field as the stationary velocity field of the transformation,
+    as in `warp.nii.gz|svf|steps:6`. Operations such as `inv` are applied to
+    the loaded transformation in the order in which they are written.
     """
 
     operations: tx.Tuple[OperationSpec, ...] = ()
@@ -175,7 +183,7 @@ class TransformationSpec(SourceSpec, frozen=True):
         return operation.from_arg(segment) if operation else None
 
     def apply_operations(self, value: tx.Any) -> tx.Any:
-        """Apply the operations in written order."""
+        """Apply the operations in the order in which they were written."""
         for operation in self.operations:
             value = operation.apply(value)
         return value
@@ -183,14 +191,15 @@ class TransformationSpec(SourceSpec, frozen=True):
 
 @TransformationSpec.register_operation("inv")
 class InvertOperation(OperationSpec, frozen=True):
-    """Invert a loaded transformation (`inv`)."""
+    """Invert a loaded transformation, written `inv` in a specification."""
 
     def apply(self, value: tx.Any) -> tx.Any:
         return value.inverse()
 
 
 def _expand_svf(spec: TransformationSpec) -> TransformationSpec:
-    # svf already means log:true.
+    # The svf hint already implies log:true, so it cannot be combined with an
+    # explicit log option.
     if "svf" not in spec.hints:
         return spec
     if "log" in spec.options:
@@ -221,8 +230,10 @@ def _decode_pipe(value: str) -> str:
 def _split_top_level(text: str) -> tx.List[str]:
     """Split on the pipes outside nested specifications.
 
-    A bracket is structural only right after an option tag `key:` in a later
-    segment, and its match must end that value. Other brackets belong to paths.
+    A bracket opens a nested specification only when it directly follows an
+    option name `key:`, other than `hint:`, in a segment after the path. The
+    matching bracket must then end the option value. Every other bracket is
+    part of a path.
     """
     parts: tx.List[str] = []
     start = 0
@@ -268,7 +279,7 @@ def _split_top_level(text: str) -> tx.List[str]:
 def _starts_nested_source(
     text: str, segment_start: int, bracket: int, segment_number: int
 ) -> bool:
-    """Whether `text[bracket]` opens a nested specification."""
+    """Return whether `text[bracket]` opens a nested specification."""
     if segment_number == 0:
         return False
     tag = text[segment_start:bracket]
@@ -279,7 +290,7 @@ def _starts_nested_source(
 
 
 def _ends_nested_source(text: str, bracket: int) -> bool:
-    """Whether `text[bracket]` closes a nested specification."""
+    """Return whether `text[bracket]` closes a nested specification."""
     return bracket + 1 == len(text) or text[bracket + 1] in "|]"
 
 
@@ -306,14 +317,14 @@ _FALSE = frozenset({"false", "no", "off", "0"})
 def parse_bool(spec: SourceSpec) -> bool:
     """Parse a boolean option such as `log:true`.
 
-    Every non-empty string is truthy, so `log:false` would otherwise read as
-    true. `true`, `yes`, `on`, `1` and their opposites are accepted in any
-    case.
+    A dedicated parser is needed because every non-empty string is truthy, so
+    `log:false` would otherwise read as true. The values `true`, `yes`, `on`
+    and `1` and their opposites are accepted, in any letter case.
 
     Raises
     ------
     ValueError
-        For any other value, or if hints or options are given.
+        If the value is anything else, or if hints or options are given.
     """
     text = str(spec.path).strip().lower()
     if spec.hints or spec.options or (text not in _TRUE | _FALSE):
@@ -326,7 +337,8 @@ def parse_bool(spec: SourceSpec) -> bool:
 def parser_for(annotation: tx.Any) -> tx.Optional[tx.Any]:
     """Return the explicit or registered parser for an annotation, or `None`.
 
-    A union uses the parser of its members if they share exactly one.
+    For a union, the parser of its members is used when the members that have
+    a parser all share the same one.
     """
     annotation, explicit = _unwrap_annotated(annotation)
     if explicit is not None:
@@ -369,7 +381,13 @@ def _unwrap_annotated(
 
 
 def _hint_paths(cls: type) -> tx.Set[tx.Tuple[str, ...]]:
-    """Build the hint paths of `cls` along each inheritance branch."""
+    """Return the hint paths of `cls` along each inheritance branch.
+
+    A hint path lists the hints declared along an inheritance branch, from the
+    most general to the most specific. [`format_hints`][] joins each path into
+    a dotted hint such as `itk.displacements`. Each hint that `cls` declares
+    also forms a path on its own.
+    """
     declared = tuple(
         str(hint).lower() for hint in cls.__dict__.get("HINTS", ())
     )

@@ -14,9 +14,9 @@ def load(
 ) -> FileBasedObject:
     """Read an object from a file, whatever its kind and format.
 
-    The registered format that best matches the content is chosen: a NIfTI file
-    holding a displacement field is read as a transformation, a plain one as an
-    image.
+    The file is read by the registered format that best matches its content.
+    For example, a NIfTI file that holds a displacement field is read as a
+    transformation, whereas a plain NIfTI file is read as an image.
 
     !!! tip "Prefer the scoped entry points when the kind is known"
         [`images.load`][brainhops.io.images.load] and
@@ -28,7 +28,8 @@ def load(
     filelike : FileOrContentLike
         The file or its content.
     brute : bool, default=False
-        If no format recognizes the input, try every registered reader.
+        Whether to try every registered reader when no format recognizes the
+        input.
     """
     return FileBasedObject.load(filelike, brute=brute, **kwargs)
 
