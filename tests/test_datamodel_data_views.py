@@ -27,10 +27,13 @@ from brainhops.datamodel.transformations import (
     Permutation,
     Rotation,
     Scaling,
+    Sequence,
+    StationaryVelocityField,
     Translation,
     is_identity,
     is_translation,
 )
+from brainhops.errors import ConversionError
 
 DEGREE = 3
 BOUND = "nearest"
@@ -631,3 +634,86 @@ def test_an_unset_displacement_converts_to_unset_coordinates() -> None:
     c = d.to(CoordinatesField)
     assert c.data is None
     assert (c.store, c.degree) == ("coefficients", DEGREE)
+
+
+# ----------------------------------------------------------------------
+#   COORDINATES TO DISPLACEMENTS  (#300)
+# ----------------------------------------------------------------------
+
+
+def _evaluate(field, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
+    """Return the coordinates that a field maps the given points to."""
+    computed = Sequence(
+        transformations=[CoordinatesField(field=points), field]
+    ).compute()
+    return np.asarray(computed.to(CoordinatesField).field)
+
+
+@pytest.mark.parametrize("shape", [(6, 7, 5, 3), (8, 9, 2)], ids=["3d", "2d"])
+@pytest.mark.parametrize("degree", [1, 3])
+@pytest.mark.parametrize("store", ["values", "coefficients"])
+def test_displacements_round_trip_through_coordinates(
+    store: str, degree: int, shape: tuple
+) -> None:
+    d = DisplacementField(field=_values(shape), degree=degree).to(store=store)
+    c = d.to(CoordinatesField)
+    back = c.to(DisplacementField)
+    assert type(back) is DisplacementField
+    assert (back.store, back.degree, back.bound) == (store, d.degree, d.bound)
+    np.testing.assert_allclose(
+        np.asarray(back.data), np.asarray(d.data), atol=1e-10
+    )
+
+
+@pytest.mark.parametrize("degree", [1, 3])
+@pytest.mark.parametrize("store", ["values", "coefficients"])
+def test_a_grid_of_coordinates_converts_to_zero_displacements(
+    store: str, degree: int
+) -> None:
+    c = CoordinatesField(field=_grid((5, 6, 4)), degree=degree).to(store=store)
+    d = c.to(DisplacementField)
+    assert (d.store, d.degree) == (store, c.degree)
+    np.testing.assert_allclose(np.asarray(d.data), 0, atol=1e-10)
+    g = CartesianField(shape=(5, 6, 4)).to(DisplacementField)
+    np.testing.assert_allclose(np.asarray(g.data), 0, atol=1e-10)
+
+
+def test_the_docstring_example_converts_coordinates_to_displacements() -> None:
+    coords = CoordinatesField(field=_grid((4, 5)) + 0.5, store="coefficients")
+    d = coords.to(DisplacementField, store="values")
+    assert type(d) is DisplacementField
+    assert d.store == "values"
+    np.testing.assert_allclose(np.asarray(d.data), 0.5, atol=1e-10)
+
+
+def test_unset_coordinates_convert_to_unset_displacements() -> None:
+    c = CoordinatesField(degree=DEGREE, store="coefficients")
+    d = c.to(DisplacementField)
+    assert d.data is None
+    assert (d.store, d.degree) == ("coefficients", DEGREE)
+
+
+def test_coordinates_do_not_convert_to_a_velocity() -> None:
+    with pytest.raises(ConversionError):
+        CoordinatesField(field=_grid((4, 5))).to(StationaryVelocityField)
+
+
+@pytest.mark.parametrize("degree", [1, 3])
+@pytest.mark.parametrize("store", ["values", "coefficients"])
+def test_coordinates_and_displacements_agree_as_maps_in_the_interior(
+    store: str, degree: int
+) -> None:
+    # Outside the grid and near its border for degree 3 they differ (#313):
+    # the cubic spline of the grid misses it by an error that decays by
+    # about 0.27 per node away from the border, so the points stay far.
+    shape = (32, 33)
+    c = CoordinatesField(
+        field=_grid(shape) + _small(shape + (2,)), degree=degree
+    ).to(store=store)
+    d = c.to(DisplacementField)
+    nodes = _grid(shape)[14:-14, 14:-14].astype(float)
+    between = nodes[:-1, :-1] + np.array([0.5, 0.25])
+    for points in (nodes, between):
+        np.testing.assert_allclose(
+            _evaluate(d, points), _evaluate(c, points), atol=1e-8
+        )
