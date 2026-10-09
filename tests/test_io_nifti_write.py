@@ -1016,3 +1016,96 @@ def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
     axes = _nifti_to_axes(image.header)
     assert len(axes) == len(shape)
     assert all(isinstance(axis.unit, IndexUnit) for axis in axes)
+
+
+# ----------------------------------------------------------------------
+#   THE HEADER OF THE FILE IS THE BASE OF THE WRITTEN HEADER
+# ----------------------------------------------------------------------
+
+
+def test_like_and_overrides_take_precedence_over_the_record(tmp_path) -> None:  # noqa: ANN001
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    image = NiftiImage.load(source)
+    record = image.metadata.to_raw()
+    record.header["descrip"] = b"from the record"
+    record.header["aux_file"] = b"kept"
+    image.metadata = type(image.metadata).from_raw(record)
+
+    template = nb.Nifti1Header()
+    template["descrip"] = b"from the template"
+    header = image.to_nibabel(like=template).header
+    assert header["descrip"].item() == b"from the template"
+    assert header["aux_file"].item() == b"kept"
+    header = image.to_nibabel(like=template, descrip="overridden").header
+    assert header["descrip"].item() == b"overridden"
+    assert image.to_nibabel().header["descrip"].item() == b"from the record"
+
+
+def test_a_nifti2_file_is_written_back_as_nifti2(tmp_path) -> None:  # noqa: ANN001
+    nifti = nb.Nifti2Image(np.zeros((3, 4, 5), "f4"), AFFINE)
+    nifti.header.set_sform(AFFINE, code=2)
+    nifti.header.set_qform(AFFINE, code=1)
+    source = tmp_path / "source.nii"
+    nb.save(nifti, str(source))
+    target = tmp_path / "copy.nii"
+    NiftiImage.load(source).save(target)
+    assert isinstance(nb.load(str(target)), nb.Nifti2Image)
+    assert target.read_bytes() == source.read_bytes()
+
+
+def test_read_data_is_read_only_and_assigned_data_is_written(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    from brainhops.backends import backend
+
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    target = tmp_path / "copy.nii"
+    with backend("numpy"):
+        image = NiftiImage.load(source)
+        with pytest.raises(ValueError, match="read-only"):
+            image.data[0, 0, 0] = 7.0
+        edited = np.array(image.data)
+        edited[0, 0, 0] = 7.0
+        image.data = edited
+        image.save(target)
+    assert nb.load(str(target)).get_fdata()[0, 0, 0] == 7.0
+
+
+def test_a_nibabel_image_becomes_a_proxy_and_a_record(tmp_path) -> None:  # noqa: ANN001
+    source = _write_image(tmp_path, "source.nii", np.ones((3, 4, 5), "f4"))
+    nifti = nb.load(str(source))
+    image = NiftiImage.from_nibabel(nifti)
+    assert image.raw is nifti.dataobj
+    assert image.metadata.raw.header is not nifti.header
+    assert np.allclose(image.to_nibabel().affine, nifti.affine)
+    empty = NiftiImage.from_nibabel(nifti.header)
+    assert empty.raw is None
+    assert empty.data is None
+    with pytest.raises(TypeError):
+        NiftiImage.from_nibabel(np.zeros(3))
+
+
+def test_a_dtype_override_scales_an_untouched_image_again(tmp_path) -> None:  # noqa: ANN001
+    values = np.linspace(-3.0, 7.0, 60, dtype="f4").reshape(3, 4, 5)
+    source = _write_image(tmp_path, "source.nii", values)
+    target = tmp_path / "int16.nii"
+    NiftiImage.load(source).save(target, dtype="int16")
+    written = nb.load(str(target))
+    assert written.get_data_dtype() == np.dtype("int16")
+    assert np.allclose(written.get_fdata(), values, atol=1e-3)
+
+
+@pytest.mark.parametrize("suffix", [".nii", ".nii.gz"])
+def test_metadata_is_compressed_by_the_name_of_its_file(
+    tmp_path,  # noqa: ANN001
+    suffix: str,
+) -> None:
+    from brainhops.io.images.nifti import NiftiMetadata
+
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    metadata = NiftiMetadata.load(source)
+    target = tmp_path / ("header" + suffix)
+    metadata.save(target)
+    compressed = target.read_bytes()[:2] == b"\x1f\x8b"
+    assert compressed == suffix.endswith(".gz")
+    assert NiftiMetadata.load(target).to_bytes() == metadata.to_bytes()

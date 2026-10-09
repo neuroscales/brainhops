@@ -33,11 +33,18 @@ PACKAGES: tx.Dict[str, Package] = {
         names=frozenset({"MetadataFormat"}),
     ),
     "brainhops.io.common.nifti": Package(
-        names=frozenset({"NiftiReaderWriter", "NiftiUnitWarning"}),
+        names=frozenset(
+            {
+                "NiftiMetadata",
+                "NiftiRaw",
+                "NiftiReaderWriter",
+                "NiftiUnitWarning",
+            }
+        ),
         needs=("nibabel",),
     ),
     "brainhops.io.images.nifti": Package(
-        names=frozenset({"NiftiImage"}),
+        names=frozenset({"NiftiImage", "NiftiMetadata", "NiftiRaw"}),
         needs=("nibabel",),
     ),
     "brainhops.io.transformations.nifti": Package(
