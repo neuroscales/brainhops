@@ -76,7 +76,14 @@ class Confidence:
 
 
 class FileSniffer:
-    """Class that can sniff files to decide whether they are of its type."""
+    """Class that can sniff files to decide whether they are of its type.
+
+    Sniffing a file means inspecting its content and returning a confidence
+    score between 0 and 1. The `sniff*` methods form a chain in which each
+    method turns its input into a simpler form and passes it on, from a path
+    to an open file, then to content, and finally to [`sniff_bytes`][] or
+    [`sniff_line`][], which a concrete format overrides.
+    """
 
     _READ_MODE: str = "r"
 
@@ -84,31 +91,33 @@ class FileSniffer:
     """File extensions that the format handles, such as `(".nii", ".nii.gz")`.
 
     A matching extension keeps the format among the candidates even if its
-    sniffer declines, and ranks it just after the sniffer score. The longest
-    matching extension wins, so `.nii.gz` beats `.gz`.
+    sniffer declines, and the extension match is the next ranking criterion
+    after the sniffer score. The longest matching extension wins, so `.nii.gz`
+    beats `.gz`.
     """
 
     PREFIXES: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Required file name prefixes, such as `("y_", "iy_")`.
 
-    An empty tuple means no constraint. A format with a matching prefix is more
-    specific and wins ties. Extensions and prefixes are declared separately and
-    combine as a cross-product, as naming conventions do: the four names of SPM
+    An empty tuple means that any name is accepted. When prefixes are declared,
+    a file name matches the format only if it starts with one of them, and a
+    format with a matching prefix is more specific and wins ties. Extensions
+    and prefixes are declared separately, and every prefix combines with every
+    extension, as file naming conventions usually do: the four names of SPM
     deformation fields are `{y_, iy_}` times `{.nii, .nii.gz}`.
     """
 
     # TODO: neither attribute expresses infix constraints, such as the BIDS
-    # suffix *_T1w.nii.gz or FreeSurfer's lh.white. If needed, add optional
-    # glob
-    # PATTERNS alongside them, with specificity counted as the number of
-    # literal
-    # characters matched, as _match_name already measures.
+    # suffix *_T1w.nii.gz or FreeSurfer's lh.white. If such constraints are
+    # needed, add optional glob PATTERNS alongside them, and count specificity
+    # as the number of literal characters matched, as _match_name already does
+    # for extensions and prefixes.
 
     PRIORITY: tx.ClassVar[int] = 0
     """Tie-breaker used only when specificity cannot decide.
 
-    The higher value wins. It should stay at 0 unless two parsers genuinely
-    collide.
+    The higher value wins. The priority should stay at 0 unless two parsers
+    genuinely collide.
     """
 
     @classmethod
@@ -219,8 +228,8 @@ class FileSniffer:
     ) -> float:
         """Same as [`sniff`][], for a file object open for reading.
 
-        The whole stream is read and passed to [`sniff_content`][], and its
-        position is restored.
+        The whole stream is read and passed to [`sniff_content`][], and the
+        position of the stream is restored afterwards.
         """
         kwargs["error"] = error
         with preserve_position(file):
@@ -321,26 +330,30 @@ class FileSniffer:
 def _passthrough_from_fileobj(func: tx.Callable) -> tx.Callable:
     """Mark a `from_fileobj` as a passthrough.
 
-    A passthrough does not read the stream itself but ends up passing all of it
-    to `from_bytes`, as the default implementation or a mixin forwarding to
-    `super()` does.
+    A passthrough implementation does not read the stream itself. Instead, it
+    ends up passing the whole stream to `from_bytes`, as the default
+    implementation does, or as a mixin does when it only forwards the call to
+    `super()`. [`FileParser.from_bytes`][] never falls back to a passthrough,
+    because the fallback would loop.
     """
     func._passthrough_from_fileobj = True
     return func
 
 
-# Parser classes whose from_bytes is currently falling back to from_fileobj.
-# Re-entry for the same class means that from_fileobj fell back to from_bytes.
+# The parser classes whose from_bytes is currently falling back to
+# from_fileobj. If from_bytes is entered again for one of these classes, then
+# from_fileobj has passed the content back to from_bytes, and the fallback
+# would loop.
 _FROM_BYTES_FALLBACK: ContextVar[frozenset] = ContextVar(
     "_FROM_BYTES_FALLBACK", default=frozenset()
 )
 
 
 def _overrides_from_fileobj(cls: type) -> bool:
-    """Whether a class in the MRO of `cls` provides its own `from_fileobj`.
+    """Return whether a class in the MRO of `cls` defines `from_fileobj`.
 
-    Implementations marked with `_passthrough_from_fileobj` do not count, so
-    mixing in a forwarder is not an override.
+    Implementations marked with `_passthrough_from_fileobj` do not count, so a
+    mixin that only forwards the call is not an override.
     """
     for klass in cls.__mro__:
         func = klass.__dict__.get("from_fileobj")
@@ -387,7 +400,7 @@ class FileParser(FileSniffer):
 
     @classmethod
     def from_spec(cls, spec: SourceSpec, **kwargs) -> tx.Self:
-        """Read the source that an unqualified specification names.
+        """Read the file named by a specification without hints or options.
 
         Raises
         ------
@@ -435,9 +448,10 @@ class FileParser(FileSniffer):
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
         """Read an object from a file object open for reading.
 
-        The default reads the whole stream and passes it to [`from_content`][].
-        A parser that needs only part of the stream, such as a header, should
-        override this method, which [`from_bytes`][] then falls back to.
+        The default implementation reads the whole stream and passes it to
+        [`from_content`][]. A parser that needs only part of the stream, such
+        as a header, should override this method. [`from_bytes`][] then wraps
+        binary content in a stream and reads it with the override.
         """
         with preserve_position(file):
             return cls.from_content(file.read(), **kwargs)
@@ -461,12 +475,13 @@ class FileParser(FileSniffer):
         """Read an object from binary content.
 
         If the class implements [`from_fileobj`][] itself, the content is
-        wrapped in an `io.BytesIO` and read with it. Otherwise, falling back
-        would recurse, because the default `from_fileobj` passes its content
-        back here. An override that only forwards to `super().from_fileobj`
-        should be marked with `_passthrough_from_fileobj`; if it is not, the
-        loop is still detected when this method is re-entered for the same
-        class.
+        wrapped in an `io.BytesIO` and read with that method. Otherwise, this
+        method raises, because the default `from_fileobj` would pass the
+        content back to `from_bytes` and the fallback would recurse. An
+        override that only forwards to `super().from_fileobj` should be marked
+        with `_passthrough_from_fileobj`. If such an override is not marked,
+        the loop is still detected when this method is entered again for the
+        same class.
 
         Raises
         ------
@@ -559,9 +574,11 @@ class FileParserWriter(FileParser):
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the object to a file object open for writing.
 
-        In binary mode, the result of [`to_bytes`][] is written; otherwise, the
-        lines of [`to_lines`][] are written with `writelines`, each followed by
-        a newline, or the result of [`to_text`][] with `write`.
+        If the class writes in binary mode, the result of [`to_bytes`][] is
+        written. Otherwise, if the file object has a `writelines` method, the
+        lines of [`to_lines`][] are written with that method, each followed by
+        a newline. A file object without `writelines` receives the result of
+        [`to_text`][] through `write`.
         """
         if "b" in self._WRITE_MODE:
             file.write(self.to_bytes(**kwargs))
@@ -593,7 +610,8 @@ class FileParserWriter(FileParser):
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Return the lines of the file, without terminators.
 
-        The default yields [`to_line`][] once.
+        The default implementation yields the result of [`to_line`][] as the
+        only line.
         """
         yield self.to_line(**kwargs)
 
@@ -630,10 +648,10 @@ class TextFileSniffer(FileSniffer):
     ) -> float:
         """Sniff a file object as text.
 
-        A text stream decodes as it is read, so content that is not text, such
-        as a binary file with the extension of a text format, scores
-        [`Confidence.NO`][] rather than failing, or raises
-        [`SnifferContentError`][] if `error` is set.
+        A text stream decodes its content as it is read. Content that is not
+        text, such as a binary file that has the extension of a text format,
+        therefore scores [`Confidence.NO`][] instead of failing with a decoding
+        error. If `error` is set, [`SnifferContentError`][] is raised instead.
         """
         try:
             return super().sniff_fileobj(file, error=error, **kwargs)
@@ -668,7 +686,8 @@ def _not_text(
 ) -> float:
     """Decline content that does not decode as text.
 
-    The requested error is raised from `cause` if `error` is set.
+    The function returns [`Confidence.NO`][]. If `error` is set, the requested
+    error is raised instead, with `cause` as its cause.
     """
     if error:
         if error is True:
