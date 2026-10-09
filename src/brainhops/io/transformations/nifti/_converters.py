@@ -8,10 +8,16 @@ raises a `ConversionError` that says what the format cannot hold.
 
 | Source                             | Format                        |
 | ---------------------------------- | ----------------------------- |
-| `Affine`, `Sequence` of affines    | `NiftiVoxelToRAS`             |
-| `Affine`, `Sequence` of affines    | `NiftiRASToVoxel`             |
-| `DisplacementField`, `Sequence`    | `NiftiRASDisplacementField`   |
-| `CoordinatesField`, `Sequence`     | `NiftiRASCoordinatesField`    |
+| any affine, `Sequence` of affines  | `NiftiVoxelToRAS`             |
+| any affine, `Sequence` of affines  | `NiftiRASToVoxel`             |
+| any field, `Sequence`              | `NiftiRASDisplacementField`   |
+| any field, `Sequence`              | `NiftiRASCoordinatesField`    |
+
+"Any affine" is each family that has an affine form (`Identity`,
+`Translation`, `Scaling`, `Permutation`, `Linear` and `Rotation`, `Affine`,
+their tangents, and `SubspaceTransformation`), and "any field" each
+family of fields. Each is named, because the converters of the data model
+would otherwise rebuild it as the format, whatever its endpoints.
 
 The endpoints are those of `t`, bridged to the format's (see
 [`brainhops.io.transformations.base.conversions`][]): an affine to LPS
@@ -42,6 +48,11 @@ from bagof.magic import replace
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
+from brainhops.datamodel._transformations.compute.converters import (
+    _convert_withlog,
+    _convert_withsplines,
+    smart_replace,
+)
 from brainhops.datamodel.enums import BoundaryCondition
 
 # io
@@ -81,6 +92,13 @@ whose affine places the grid without changing the map."""
 # ----------------------------------------------------------------------
 
 
+@converter(_xforms.Identity, NiftiVoxelToRAS)
+@converter(_xforms.Translation, NiftiVoxelToRAS)
+@converter(_xforms.Scaling, NiftiVoxelToRAS)
+@converter(_xforms.Permutation, NiftiVoxelToRAS)
+@converter(_xforms.Linear, NiftiVoxelToRAS)
+@converter(_xforms.AffineExponential, NiftiVoxelToRAS)
+@converter(_xforms.SubspaceTransformation, NiftiVoxelToRAS)
 @converter(_xforms.Sequence, NiftiVoxelToRAS)
 @converter
 def _(
@@ -95,6 +113,13 @@ def _(
     return cls(matrix=matrix[:-1], **options)
 
 
+@converter(_xforms.Identity, NiftiRASToVoxel)
+@converter(_xforms.Translation, NiftiRASToVoxel)
+@converter(_xforms.Scaling, NiftiRASToVoxel)
+@converter(_xforms.Permutation, NiftiRASToVoxel)
+@converter(_xforms.Linear, NiftiRASToVoxel)
+@converter(_xforms.AffineExponential, NiftiRASToVoxel)
+@converter(_xforms.SubspaceTransformation, NiftiRASToVoxel)
 @converter(_xforms.Sequence, NiftiRASToVoxel)
 @converter
 def _(
@@ -118,7 +143,7 @@ def _(
 ) -> NiftiVoxelToRAS:
     # Within its own format, an affine is changed by the rules of any
     # affine (a new `matrix=`, say), which keep its type.
-    return replace(t, **kwargs) if kwargs else t
+    return _convert_withlog(t, cls, "matrix", **kwargs)
 
 
 # ----------------------------------------------------------------------
@@ -150,6 +175,8 @@ def _(
     return NiftiRASDisplacementField(transformations=chain, **options)
 
 
+@converter(_xforms.StationaryVelocityField, NiftiRASCoordinatesField)
+@converter(_xforms.CartesianField, NiftiRASCoordinatesField)
 @converter(_xforms.DisplacementField, NiftiRASCoordinatesField)
 @converter(_xforms.Sequence, NiftiRASCoordinatesField)
 @converter
@@ -174,8 +201,9 @@ def _(
     cls: tx.Type[NiftiRASDisplacementField],
     **kwargs,
 ) -> NiftiRASDisplacementField:
-    # Within its own format, a field is copied with the changes asked for.
-    return replace(t, **kwargs) if kwargs else t
+    # Within its own format, a chain is changed by the rules of any chain,
+    # which keep its type.
+    return smart_replace(t, cls, **kwargs)
 
 
 @converter
@@ -186,7 +214,7 @@ def _(
 ) -> NiftiRASCoordinatesField:
     # Within its own format, a field is changed by the rules of any field
     # of coordinates (a new `field=`, say), which keep its type.
-    return replace(t, **kwargs) if kwargs else t
+    return _convert_withsplines(t, cls, **kwargs)
 
 
 # ----------------------------------------------------------------------

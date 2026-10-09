@@ -127,6 +127,11 @@ NiftiVoxelToRAS.from_any(affine).save("affine.nii")
 affine.to(NiftiVoxelToRAS)  # the same conversion
 ```
 
+Every family with an affine form, such as a `Scaling` or a `Translation`,
+is converted in the same way. A format that has no exact conversion yet
+refuses `t.to(Format)` with a `ConversionError` rather than relabelling
+`t` as the format.
+
 An LTA file states which coordinate systems its affine maps between. A
 general `Affine` is therefore written to an LTA file only if its `input`
 and `output` say so as well: both must be `RASmm` (or both `RSAmm`), or

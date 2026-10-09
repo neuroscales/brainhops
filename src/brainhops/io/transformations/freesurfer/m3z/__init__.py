@@ -149,3 +149,7 @@ __all__ = [
 
 from ._struct import GCAM_RAS, GCAM_VOX, M3zGeometry, M3zStruct, M3zXform
 from ._xform import M3zFormat, M3zMorph, M3zParser
+
+# The converters into these formats register themselves when this module
+# is imported, here, so that `t.to(Format)` refuses rather than relabels.
+from . import _converters  # noqa: E402, F401  isort: skip

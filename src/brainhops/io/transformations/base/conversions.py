@@ -22,6 +22,13 @@ that has converters builds itself from another transformation through
 them ([`converts_to`][] and [`convert_instance`][]), so that
 `Format.from_any(t)`, `Format.from_instance(t)` and `t.to(Format)` are
 one conversion.
+
+Every format has a converter for each family that the generic converters
+of the data model would otherwise relabel as it: without one, the
+`Affine` converter would rebuild a `Scaling` as a `NiftiVoxelToRAS`
+whatever its endpoints. A format without an exact conversion yet refuses
+with [`no_exact_conversion`][], and a format converted to its own class is
+changed by the rules of its family, as any transformation of that family.
 """
 
 __all__ = [
@@ -30,6 +37,7 @@ __all__ = [
     "convert_instance",
     "converts_to",
     "format_options",
+    "no_exact_conversion",
     "split_field_chain",
     "undoes",
     "unrepresentable",
@@ -71,6 +79,26 @@ def unrepresentable(
     return ConversionError(
         f"This {type(t).__name__} cannot be held exactly by a "
         f"{cls.__name__}: {reason}"
+    )
+
+
+def no_exact_conversion(
+    t: _xforms.Transformation, cls: type
+) -> ConversionError:
+    """
+    The error a converter raises when its format has no exact conversion
+    yet.
+
+    The format may hold some transformations of the family of `t`, but
+    which ones, and how, is for an exact converter to decide (#312). Until
+    it has one, `t` is refused rather than relabelled as the format.
+    """
+    return unrepresentable(
+        t,
+        cls,
+        "no exact conversion into this format is implemented yet (#312), "
+        "and a transformation is not relabelled as a format. Build the "
+        "format from its own parameters instead.",
     )
 
 
