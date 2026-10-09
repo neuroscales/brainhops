@@ -44,7 +44,9 @@ class peekable(Iterator, tx.Generic[T]):
         self._iterator: tx.Iterator[T] = iterable
         self._peeked: tx.Union[T, EMPTY_TYPE] = EMPTY
 
-    def peek(self, preproc: bool = True, valid: bool = True) -> tx.Optional[T]:
+    def peek(
+        self, preproc: bool = True, valid: bool = True
+    ) -> tx.Union[T, EMPTY_TYPE]:
         if self._peeked is EMPTY:
             self._peeked = self._next(preproc=preproc, valid=valid)
         return self._peeked
@@ -74,7 +76,8 @@ class peekable(Iterator, tx.Generic[T]):
 
     @classmethod
     def preproc(cls, item: T) -> T:
-        return T
+        """Return the item unchanged, unless a subclass overrides it."""
+        return item
 
     def _next(
         self, preproc: bool = True, valid: bool = True
