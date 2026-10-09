@@ -15,15 +15,17 @@ if tx.TYPE_CHECKING:
 
 
 OPERATORS: tx.Dict[str, tx.Type["Operation"]] = {}
-"""Front doors of the lazy operators, keyed by method name.
+"""Entry-point classes of the lazy operators, indexed by method name.
 
-A key is the name of the [`Transformation`][] method that applies the operator,
-such as `"inverse"` or `"sqrt"`. The value is the front door of the operator: a
-polymorphic class that, given a transformation, builds the typed wrapper suited
-to the family of that transformation. The front doors are used by the
-`inverse()` and `sqrt()` methods, and by a lazy wrapper that rebuilds itself
-after its forward is edited, since a new encoding can change the class of the
-forward.
+Each key is the name of the [`Transformation`][] method that applies an
+operator, such as `"inverse"` or `"sqrt"`. Each value is the front door of that
+operator, that is, a polymorphic class that, given a transformation, builds the
+typed wrapper suited to the family of that transformation. For example, the
+front door of `"inverse"` builds an `InverseAffine` for an affine
+transformation. The `inverse()` and `sqrt()` methods use the front doors. A
+lazy wrapper also uses them to rebuild itself after its forward transformation
+is edited, because a new encoding can change the class of the forward
+transformation.
 """
 
 
@@ -53,11 +55,11 @@ def register_operator(name: str) -> tx.Callable[[type], type]:
 ADAPT: tx.Optional[tx.Callable[..., "Sequence"]] = None
 """Routine that reconciles two consecutive transformations.
 
-The routine bridges a boundary where the coordinate systems of the two
-transformations differ only by a reordering, rescaling or flipping of shared
-axes. It also embeds a transformation that acts on a subset of the axes into
-the fuller axis space of its neighbour, where it acts as the identity on the
-extra axes, so that a lower-dimensional transformation can meet a
+The routine connects two transformations whose coordinate systems, at the
+point where they meet, differ only by a reordering, rescaling or flipping of
+shared axes. It also embeds a transformation that acts on a subset of the axes
+into the fuller axis space of its neighbour, where it acts as the identity on
+the extra axes, so that a lower-dimensional transformation can meet a
 higher-dimensional one without changing dimensionality.
 
 The routine is defined in the `adaptors` module, which imports this one, and

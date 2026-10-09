@@ -60,26 +60,28 @@ _OptionalArray: tx.TypeAlias = tx.Optional[_Array]
 class Inverse(Operation, tx.Generic[TRANSFORMATION], polymorphic=True):
     """Lazy inverse of a forward transformation, resolved on demand.
 
-    The inverse is resolved when it is applied, computed or converted. Placed
-    next to its forward in a
+    The inverse is resolved when it is applied, computed or converted. When
+    the inverse is placed next to its forward transformation in a
     [`Sequence`][brainhops.datamodel.transformations.Sequence], the two cancel
     and no inverse is computed.
 
-    `Inverse(forward=t)` builds the typed inverse of the family of `t`, such as
-    [`InverseAffine`][], which is also what `t.inverse()` returns. A typed
-    inverse is an instance of the family it inverts, so composition and the
-    kind checks treat it like any member of that family. Unlike the other
-    [`Operation`][], an inverse reverses the direction of its forward, whose
-    endpoints it swaps.
+    `Inverse(forward=t)` builds the inverse wrapper that belongs to the family
+    of `t`, such as [`InverseAffine`][] for an affine transformation, and
+    `t.inverse()` returns the same wrapper. Such a typed inverse is an instance
+    of the family it inverts, so composition and the kind checks treat it like
+    any other member of that family. Unlike the other kinds of
+    [`Operation`][], an inverse reverses the direction of its forward
+    transformation, so its input and output systems are those of the forward,
+    swapped.
     """
 
     _operator: tx.ClassVar[str] = "inverse"
     _reverses: tx.ClassVar[bool] = True
 
-    # The family that a typed inverse inverts, which materialization rebuilds.
-    # It is unset on the front door. The wrapper is chosen polymorphically by
-    # the `on={...}` predicates of the subclasses, so nothing needs to be
-    # registered.
+    # The class of the family that a typed inverse inverts, which is the type
+    # that evaluating the inverse produces. It is unset on the generic
+    # `Inverse` class. The wrapper class is chosen by the `on={...}`
+    # predicates of the subclasses, so nothing needs to be registered.
     _resultof: _TypeReference = None
 
     forward: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
@@ -102,24 +104,27 @@ class Inverse(Operation, tx.Generic[TRANSFORMATION], polymorphic=True):
 
 
 # A typed inverse derives its `data` from the forward and reads its views off
-# that data. The convenience keywords of the family (`translation=`, `matrix=`,
-# ...) are deactivated, since a wrapper is built from its forward only.
+# that data. The convenience keywords of the family, such as `translation=`
+# and `matrix=`, are deactivated, since a wrapper is built from its forward
+# only.
 
 
 class ConcreteInverseMixin:
-    """Parameter of a typed inverse, read off its forward.
+    """Mixin that reads the parameter of a typed inverse from its forward.
 
-    Every forward family derives the parameter of its inverse under `_inverse`
-    and caches it there, in its own encoding; the wrapper holds no array and
-    reports that one. The forward clears the cache when its `data` or a flag is
-    assigned, so an edited forward never serves a stale inverse.
+    Each family computes the parameter of its inverse in the `_inverse`
+    property of the forward transformation, and caches it there in the
+    encoding of the forward. The wrapper holds no array of its own and reports
+    the cached array as its `data`. The forward clears the cache when its
+    `data` or a flag is assigned, so an edited forward never serves a stale
+    inverse.
     """
 
     data = _alias("data", "forward._inverse", fset=False)
 
 
 class FieldInverseMixin(ConcreteInverseMixin):
-    """Views of a field inverse, decoded under the flags of the forward.
+    """Mixin that decodes the views of an inverse field with the forward flags.
 
     The views are not cached, because a cache would live on the wrapper, which
     is not told when the forward is edited.
@@ -266,18 +271,19 @@ class InverseDisplacementField(
     """Inverse of a [`DisplacementField`][], resolved on demand.
 
     The inverse reports the `degree`, `bound` and `store` of its forward. Its
-    `data` is the inverse field in the same encoding: the values of the forward
-    are inverted, then refitted to coefficients if the forward holds
-    coefficients. The `field` view holds the inverse as values either way.
+    `data` is the inverse field in the same encoding. To build it, the values
+    of the forward are inverted, and then refitted to coefficients if the
+    forward holds coefficients. The `field` view holds the inverse as values
+    in either case.
 
     !!! note "Accuracy"
         The inversion sees only the values at the grid nodes and inverts the
         piecewise-affine map that they define (see
         [`inverse`][brainhops._ext.invfield.inverse]), whatever the degree of
-        the forward; the result is then interpolated at that degree. It is
-        exact only for the piecewise-affine map, so a cubic field is inverted
-        about as accurately as a linear one, and the error grows near the
-        border. For smooth fields with an amplitude of a few voxels,
+        the forward. The result is then interpolated at that degree. The
+        inversion is exact only for the piecewise-affine map, so a cubic field
+        is inverted about as accurately as a linear one, and the error grows
+        near the border. For smooth fields with an amplitude of a few voxels,
         `fwd(inv(x)) - x` is typically a few hundredths of a voxel in the
         interior and a few tenths near the border.
     """
@@ -315,11 +321,11 @@ class InverseCoordinatesField(
 ):
     """Inverse of a [`CoordinatesField`][], resolved on demand.
 
-    The inverse is encoded like an [`InverseDisplacementField`][]. Next to the
-    field it inverts in a
+    The inverse is encoded like an [`InverseDisplacementField`][]. When the
+    inverse is placed next to the field it inverts in a
     [`Sequence`][brainhops.datamodel.transformations.Sequence], the two cancel
-    for free; otherwise, materializing the inverse runs a mesh inversion, since
-    a coordinates field has no closed-form inverse.
+    without any computation. Otherwise, evaluating the inverse runs a mesh
+    inversion, since a coordinates field has no closed-form inverse.
 
     !!! note "Accuracy"
         As for an [`InverseDisplacementField`][], only the piecewise-affine map
@@ -329,9 +335,10 @@ class InverseCoordinatesField(
     !!! warning "The coordinates must live on the grid they are sampled on"
         A coordinates field is inverted as an identity grid plus a
         displacement, which assumes coordinates in voxels of the grid.
-        Coordinates in world units give a well-defined but useless result, off
-        the output lattice, so a world-to-voxel affine should be composed into
-        the field first.
+        Coordinates in world units give a result that is well defined but
+        useless, because it does not lie on the output grid. A world-to-voxel
+        affine transformation should therefore be composed into the field
+        first.
     """
 
     _resultof: _TypeReference = CoordinatesField
@@ -456,10 +463,11 @@ class InverseStationaryVelocityField(
     """Inverse of a [`StationaryVelocityField`][], resolved on demand.
 
     The inverse of the map `exp(v)` is `exp(-v)`. Its `data` is the negated
-    velocity, in the encoding of the forward, whose flags it reports, including
-    `steps`. Its `field` view integrates that velocity as the forward
-    integrates its own, so no mesh is inverted, and the accuracy caveat of
-    [`InverseDisplacementField`][] does not apply.
+    velocity in the encoding of the forward, and it reports the flags of the
+    forward, including `steps`. Its `field` view integrates the negated
+    velocity in the same way as the forward integrates its own velocity. No
+    mesh is inverted, so the accuracy caveat of [`InverseDisplacementField`][]
+    does not apply.
     """
 
     _resultof: _TypeReference = StationaryVelocityField

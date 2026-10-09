@@ -40,7 +40,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
 
     @property
     def _finest(self) -> SINGLE_SCALE:
-        # The finest scale, or `None` if there are no scales.
+        # Return the finest scale, or `None` if there are no scales.
         scales = self.scales
         return scales[0] if scales else None
 
@@ -53,14 +53,15 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         return self.scales[int(index)]
 
     def _level_resolution(self, index: int) -> tx.Optional[ArrayProtocol]:
-        # Hook for the physical grid size of a level, as a vector with one
-        # entry per axis in the input units, or `None` if it is unknown.
-        # Subclasses override it.
+        # Return the physical grid size of a level, as a vector with one entry
+        # per axis in the input units, or `None` if the size is unknown. This
+        # hook returns `None` here, and subclasses override it.
         return None
 
     def _nearest_level(self, voxel2world: Transformation) -> int:
-        # The comparison is done by `_nearest_resolution_index`, which the
-        # multiscale image shares.
+        # Return the index of the scale whose resolution is closest to the
+        # grid of `voxel2world`. The comparison is done by
+        # `_nearest_resolution_index`, which the multiscale image also uses.
         scales = self.scales
         resolutions = [self._level_resolution(i) for i in range(len(scales))]
         return _nearest_resolution_index(
@@ -76,7 +77,7 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
     two elements, a world-to-voxel affine and a coordinates field. A scale of
     displacements has three: a world-to-voxel affine, a displacement field in
     voxel units and a voxel-to-world affine. The container treats a scale as a
-    plain sequence, so one class carries both.
+    plain sequence, so a single class handles both kinds of field.
 
     The field behaves as its finest scale: it composes as the finest scale
     would, and `compute()` reduces it to that scale. Another scale is used only
@@ -147,9 +148,10 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
         )
 
     def _as_sequence(self) -> Sequence:
-        # The finest scale as a plain sequence with the endpoints of the
-        # container. The simplifier works on it, because the derived
-        # `transformations` of the container cannot be rebuilt by `replace()`.
+        # Return the finest scale as a plain sequence that carries the
+        # endpoints of the container. The simplifier works on this sequence,
+        # because the derived `transformations` of the container cannot be
+        # rebuilt by `replace()`.
         return Sequence(
             transformations=self.transformations,
             input=self.input,
@@ -179,10 +181,10 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
 
 
 def _as_affine(xform: Transformation) -> tx.Optional[Affine]:
-    # The transformation as an `Affine`, or `None` rather than an error if it
-    # does not reduce to an affine with a defined matrix. A caller that must
-    # know whether the transformation really is affine uses this function, not
-    # `_as_affine_ignoring_fields`.
+    # Return the transformation as an `Affine`. If the transformation does not
+    # reduce to an affine with a defined matrix, `None` is returned rather than
+    # an error. A caller that must know whether the transformation really is
+    # affine uses this function, not `_as_affine_ignoring_fields`.
     try:
         affine = xform.compute().to(Affine)
     except ConversionError:
@@ -195,16 +197,18 @@ def _as_affine(xform: Transformation) -> tx.Optional[Affine]:
 def _as_affine_ignoring_fields(
     xform: Transformation,
 ) -> tx.Optional[Affine]:
-    # The affine part, with every field read as the identity, or `None`. A warp
-    # is close to an isometry, so this measures the scale of a chain that
-    # contains one. It answers scale questions only.
+    # Return the affine part of the transformation, with every field treated
+    # as the identity, or `None` if what remains is not affine. A warp has no
+    # affine form, but it is close to an isometry, so the affine part still
+    # measures the scale of a chain that contains a warp. The result answers
+    # questions about scale only.
     return _as_affine(_fields_as_identity(xform))
 
 
 def _fields_as_identity(xform: Transformation) -> Transformation:
-    # Replace every field with the identity, keeping the affine part. Fields
-    # are recognised by family, so the typed inverse of a field is replaced
-    # too.
+    # Replace every field with the identity and keep the affine part. Fields
+    # are recognised by their class, so the typed inverse of a field is also
+    # replaced.
     if isinstance(xform, (CoordinatesField, DisplacementField)):
         return Identity(input=xform.input, output=xform.output)
     if isinstance(xform, Inverse):
