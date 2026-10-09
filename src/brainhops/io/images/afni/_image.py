@@ -1,15 +1,12 @@
-# stdlib
 import math
 import time
 import uuid
 from collections import OrderedDict
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
-# internals
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -41,11 +38,10 @@ _SPATIAL = ("x", "y", "z")
 _PHYSICAL = "physical"
 _CARDINAL = "-cardinal"
 
-# `TAXIS_NUMS[2]` for the time units a writer may meet.
+# Codes of `TAXIS_NUMS[2]` for the time units the writer may meet.
 _TAXIS_CODES = {"millisecond": 77001, "second": 77002, "hertz": 77003}
 
-# The attributes the writer computes, which are never copied from the
-# header an image was read from.
+# Attributes the writer computes itself, never copied from the source.
 _GENERATED = (
     "TYPESTRING",
     "IDCODE_STRING",
@@ -64,9 +60,8 @@ _GENERATED = (
     "BYTEORDER_STRING",
 )
 
-# The attributes that describe each sub-brick (or the time axis), which
-# are copied from the source header only when the number of sub-bricks is
-# unchanged.
+# Attributes that describe sub-bricks or the time axis, copied from the
+# source header only if the number of sub-bricks is unchanged.
 _PER_BRICK = (
     "BRICK_LABS",
     "BRICK_KEYWORDS",
@@ -78,8 +73,8 @@ _PER_BRICK = (
     "TAXIS_OFFSETS",
 )
 
-# The attributes that describe the grid, which are copied from the source
-# header only when the grid (shape and geometry) is unchanged.
+# Attributes that describe the grid, copied from the source header only
+# if the shape and geometry are unchanged.
 _PER_GRID = (
     "MARKS_XYZ",
     "MARKS_LAB",
@@ -90,7 +85,7 @@ _PER_GRID = (
     "TAGSET_LABELS",
 )
 
-# `TYPESTRING` values, in the order of their `SCENE_DATA[2]` code.
+# TYPESTRING values, indexed by the code in `SCENE_DATA[2]`.
 _TYPESTRINGS = (
     "3DIM_HEAD_ANAT",
     "3DIM_HEAD_FUNC",
@@ -101,13 +96,10 @@ _ANAT_SPGR, _ANAT_EPI, _ANAT_BUCK = 0, 2, 11
 
 
 def _afni_axes(header: AfniHeader) -> tx.List[Axis]:
-    """
-    The axes of the voxel space of an AFNI image.
+    """Return the voxel axes of an AFNI dataset.
 
-    The first three are spatial (`x`, `y`, `z`). A dataset with several
-    sub-bricks has a fourth axis: `t`, of type time, for a time series
-    (one with a `TAXIS_NUMS` attribute); otherwise `brick`, which AFNI
-    gives no meaning of its own (the statistics of a "bucket", ...).
+    Several sub-bricks add a fourth axis: `t` for a time series, and
+    `brick`, with no meaning defined by AFNI, otherwise.
     """
     axes = [Axis(name, "space", unit=_INDEX) for name in _SPATIAL]
     if header.nvals > 1:
@@ -120,36 +112,18 @@ def _afni_axes(header: AfniHeader) -> tx.List[Axis]:
 
 @register_format
 class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
-    """
-    An image that is encoded by an AFNI dataset (`.HEAD` + `.BRIK`).
+    """An image stored as an AFNI dataset (`.HEAD` and `.BRIK` files).
 
-    The data are indexed `[x, y, z]`, or `[x, y, z, sub-brick]` for a
-    dataset with several sub-bricks, in F order. The data of an
-    uncompressed local BRIK stay memory-mapped until they are indexed.
-    The scaling factors of the sub-bricks (`BRICK_FLOAT_FACS`) are applied
-    on access; `dataobj` holds the stored values.
-
-    The voxel-to-world transformations are, in order:
-
-    1. `voxel` -> `physical`: a `Scaling` by the voxel sizes (`|DELTA|`,
-       in mm), and the repetition time of a time series;
-    2. `voxel` -> `<view>-cardinal` (`orig-cardinal`, `tlrc-cardinal`,
-       ...): the `Affine` from `ORIENT_SPECIFIC`, `ORIGIN` and `DELTA`,
-       the grid AFNI programs compute on;
-    3. `voxel` -> `<view>` (`orig`, `acpc` or `tlrc`): the `Affine` of
-       `IJK_TO_DICOM_REAL`, the true (possibly oblique) geometry, which
-       AFNI exports to NIfTI. Without that attribute, it is the cardinal
-       one.
-
-    The world spaces are LPS millimetres (AFNI's "DICOM order"). The
-    last transformation is the preferred one. The attributes the data
-    model has no slot for are kept in `header` and written back.
+    The data are indexed `[x, y, z]`, or `[x, y, z, sub-brick]`, in
+    Fortran order and scaled by `BRICK_FLOAT_FACS`. The transformations
+    lead to `physical`, `<view>-cardinal` and `<view>`, the last of which
+    is preferred. Header attributes without a place in the data model are
+    kept in `header` and written back.
 
     !!! note "Why the bases are in this order"
-        As for `NiftiImage`: `SingleScaleImage` comes last so that its
-        `data` field follows the defaulted fields of the parser, and the
-        lazy properties of this class take precedence over the plain
-        fields.
+        As for `NiftiImage`, [`SingleScaleImage`][] comes last so that its
+        `data` field follows the defaulted fields of the parser, and so that
+        the lazy properties of this class override plain fields.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (
@@ -163,35 +137,29 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         ".brik.bz2",
     )
 
-    # --- reading ------------------------------------------------------
-
     @classmethod
     def _from_header(
         cls, header: AfniHeader, bricks: np.ndarray, **kwargs
     ) -> tx.Self:
-        """A dataset with a single sub-brick is a 3D image."""
+        """Build an image, dropping the last axis of a single sub-brick."""
         if header.nvals == 1:
             bricks = bricks[..., 0]
         return cls(header=header, dataobj=bricks, **kwargs)
 
     @classmethod
     def _score_header(cls, header: AfniHeader) -> float:
-        """
-        Score an AFNI header as a plain image.
+        """Score a header as a plain image.
 
-        Any AFNI dataset can be read as an image. One with three
-        sub-bricks may be a warp (`3dQwarp`'s `_WARP` datasets), so it is
-        only a weak match.
+        A dataset with exactly three sub-bricks may be a warp (such as the
+        `_WARP` output of 3dQwarp), so it is only a weak match.
         """
         if header.nvals == 3:
             return Confidence.WEAK
         return Confidence.LIKELY
 
-    # --- data model ---------------------------------------------------
-
     @smartproperty
     def data(self) -> tx.Optional[tx.Any]:
-        """The image data, scaled, unless set explicitly."""
+        """Scaled image data, unless set explicitly."""
         data = self._scaled_data()
         if data is not None and data is not getattr(self, "dataobj", None):
             self._data = data
@@ -199,8 +167,7 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
 
     @smartproperty
     def system(self) -> tx.Optional[CoordinateSystem]:
-        """The voxel coordinate system, derived from the header, unless
-        set explicitly. `None` when there is no header."""
+        """Voxel coordinate system, derived from the header unless set."""
         if self.header is None:
             return None
         axes = _afni_axes(self.header)
@@ -208,17 +175,14 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
 
     @smartproperty(unset="empty")
     def transformations(self) -> tx.List[Transformation]:
-        """The voxel-to-world transformations recorded by the header,
-        decoded on access unless set explicitly.
+        """Voxel-to-world transformations, decoded from the header.
 
-        An image built from data alone has no header, so it records no
-        transformation and the list is empty.
+        The transformations are decoded lazily unless they are set
+        explicitly. An image built from data alone has none.
         """
         if self.header is None:
             return list(getattr(self, "_transformations", None) or [])
         return _afni_to_transformations(self.header)
-
-    # --- writing ------------------------------------------------------
 
     def _afni_data(self) -> tx.Any:
         data = self.data
@@ -244,35 +208,37 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
         **kwargs,
     ) -> AfniHeader:
-        """
-        Build the header that encodes this image.
+        """Build a header that encodes this image.
 
-        The geometry comes from the preferred transformation, converted
-        to voxel-to-DICOM: it is written as `IJK_TO_DICOM_REAL`, and its
-        closest cardinal grid as `ORIENT_SPECIFIC`, `ORIGIN`, `DELTA` and
-        `IJK_TO_DICOM`. When it is the geometry of the header the image
-        was read from, that header's cardinal grid is kept as it was.
+        The preferred transformation is written as `IJK_TO_DICOM_REAL`, and
+        its closest cardinal grid as `ORIENT_SPECIFIC`, `ORIGIN` and
+        `DELTA`. The grid of the source header is kept if the geometry is
+        unchanged.
 
         Parameters
         ----------
+        filename : path, optional
+            File being written, whose name may carry a view.
         view : {"orig", "acpc", "tlrc"}, optional
-            The view. Defaults to the one in the file name
-            (`out+tlrc.HEAD`), else the one the preferred transformation's
-            world space names (`"tlrc"`, `"talairach"`, `"mni"`, ...),
-            else the view of the header the image was read from, else
-            `"orig"`.
-        datatype : str | dtype, optional
-            The stored type, as AFNI names it (`"byte"`, `"short"`,
-            `"int"`, `"float"`, `"double"`, `"complex"`) or as a numpy
-            type. Defaults to the data's own type, or the closest one AFNI
-            has. Values are rounded, but never rescaled, to fit an integer
-            type.
+            Defaults to the view in the file name, then to the view named
+            by the world space, then to the source view, then to `"orig"`.
+        datatype : str or dtype, optional
+            AFNI type name or numpy type, by default that of the data.
+            Values are never rescaled.
         attributes : mapping, optional
-            Extra attributes, merged into the computed ones and those
-            copied from the source header; a value of `None` removes an
-            attribute. A string is a string attribute; a sequence of
-            numbers is a float attribute if any is a float (or if AFNI
-            stores it as floats), else an integer one.
+            Extra attributes. A value of `None` removes an attribute.
+
+        Returns
+        -------
+        AfniHeader
+            The validated header.
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
+        WriterError
+            If the data, the geometry or the view cannot be written.
         """
         if kwargs:
             raise TypeError(
@@ -283,7 +249,6 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         nvals = shape[3] if len(shape) == 4 else 1
         source = self.header
 
-        # --- geometry -------------------------------------------------
         matrix = afni_voxel_to_dicom(self.transformation)
         if not np.all(np.isfinite(matrix)) or not np.linalg.det(matrix):
             raise WriterError(
@@ -301,7 +266,6 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
             orient, origin, delta = afni_geometry_from_matrix(matrix)
         cardinal = afni_cardinal_matrix(orient, origin, delta)
 
-        # --- view and type --------------------------------------------
         output = getattr(self.transformation, "output", None)
         name = getattr(output, "name", None)
         chosen = (
@@ -320,7 +284,6 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         stored = brick_dtype(datatype)
         taxis = _time_axis(self, source, nvals)
 
-        # --- attributes -----------------------------------------------
         attrs = OrderedDict()
         typestring, scene = _typestring_and_scene(source, nvals, taxis)
         attrs["TYPESTRING"] = typestring
@@ -370,7 +333,7 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
 
 
 def _as_value(value: tx.Any) -> tx.Any:
-    """An attribute value as the header holds it."""
+    """Normalize an attribute value to a string or a flat tuple."""
     if isinstance(value, str):
         return value
     values = np.ravel(np.asarray(value)).tolist()
@@ -378,8 +341,7 @@ def _as_value(value: tx.Any) -> tx.Any:
 
 
 def _brick_stats(data: tx.Any, nvals: int) -> tx.Tuple[float, ...]:
-    """The minimum and maximum of each sub-brick (`BRICK_STATS`), over
-    its finite values."""
+    """Return `BRICK_STATS`: the finite minimum and maximum of each brick."""
     stats = []
     for i in range(nvals):
         brick = data[..., i] if np.ndim(data) == 4 else data
@@ -398,12 +360,10 @@ def _typestring_and_scene(
     nvals: int,
     taxis: tx.Optional[tx.Tuple[float, str]],
 ) -> tx.Tuple[str, tx.Tuple[int, ...]]:
-    """
-    The `TYPESTRING`, and `SCENE_DATA` after its view code.
+    """Return the TYPESTRING and the `SCENE_DATA` values after the view.
 
-    The source header's are kept when it has them. Otherwise the dataset
-    is an anatomical one (`3DIM_HEAD_ANAT`), of type SPGR for a single
-    volume, EPI for a time series and bucket for other sub-bricks.
+    Valid source values are kept. Otherwise the dataset is anatomical:
+    SPGR for one volume, EPI for a time series and bucket otherwise.
     """
     if source is not None:
         typestring = source.get("TYPESTRING")
@@ -427,14 +387,11 @@ def _typestring_and_scene(
 def _time_axis(
     image: AfniImage, source: tx.Optional[AfniHeader], nvals: int
 ) -> tx.Optional[tx.Tuple[float, str]]:
-    """
-    The `(TR, unit)` to write for a time series, or `None`.
+    """Return the TR and its unit for a time series, or `None`.
 
-    The source header's time axis is kept when the number of sub-bricks
-    is unchanged. Otherwise, an image whose fourth axis is of type time
-    is a time series: its repetition time is the scale of that axis in a
-    `Scaling` among the transformations (such as the `physical` one),
-    in that axis's unit; it is 1 second when no transformation gives it.
+    The source time axis is kept if the number of sub-bricks is unchanged.
+    Otherwise the TR of a time axis is read from a [`Scaling`][], and
+    defaults to one second.
     """
     if source is not None and source.nvals == nvals and source.taxis:
         return source.taxis
@@ -463,8 +420,7 @@ def _time_axis(
 
 
 def _afni_to_transformations(header: AfniHeader) -> tx.List[Transformation]:
-    """
-    Convert an AFNI header to a list of transformations.
+    """Convert an AFNI header to transformations, in this order.
 
     1. voxel -> "physical": a `Scaling` by `|DELTA|` (and the TR of a
        time series);

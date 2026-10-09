@@ -1,9 +1,7 @@
 __all__ = ["FileBasedImage", "WritableFileBasedImage"]
 
-# dependencies
 import typing_extensions as tx
 
-# internals
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import (
     FileBasedObject,
@@ -17,24 +15,23 @@ from brainhops.io.base.specs import register_parser
 @register_parser(Image)
 @format_registry
 class FileBasedImage(_FileBasedModelMixin, Image, FileBasedObject):
-    """
-    An image that is stored in a file.
+    """An image stored in a file.
 
-    This is the dispatcher for image formats: concrete readers inherit
-    from it and opt in with `@register_format`, which is what makes
-    `brainhops.io.images.load` work without a hand-maintained table.
+    [`FileBasedImage`][] dispatches between the image formats. A concrete
+    reader inherits from it and opts in with `@register_format`, which
+    makes [`load`][brainhops.io.images.load] find the reader without a
+    hand-maintained table.
     """
 
     PRIORITY: tx.ClassVar[int] = 10
-    """
-    Kind precedence, used only to break ties that confidence could not.
+    """Precedence of the image kind, used only to break ties.
 
-    A NIfTI file is legitimately both an image and a set of affines, so
-    when nothing else separates them the image wins. Scoring sniffers
-    (e.g. NIfTI intent codes) normally decide well before this matters.
+    Sniffers that score their input, for example by NIfTI intent codes,
+    normally decide first. A NIfTI file is both an image and a set of
+    affines, and the image wins when nothing else separates the two.
     """
 
 
 @format_registry
 class WritableFileBasedImage(FileBasedImage, WritableFileBasedObject):
-    """An image that is stored in a file and can be written to disk."""
+    """A file-based image that can also be written to disk."""

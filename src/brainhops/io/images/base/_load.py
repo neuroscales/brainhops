@@ -1,7 +1,5 @@
-# dependencies
 import typing_extensions as tx
 
-# internals
 from brainhops._core.path import FileOrContentLike
 from brainhops.io.base.specs import ImageSpec
 
@@ -13,13 +11,12 @@ def load(
     brute: bool = False,
     **kwargs,
 ) -> FileBasedImage:
-    """
-    Read an image from a file, whatever its format.
+    """Read an image from a file, whatever its format.
 
     Parameters
     ----------
-    filelike : FileOrContentLike | ImageSpec
-        Input file, its content, or a structured image source.
+    filelike : file, content or ImageSpec
+        File to read, its content, or a structured image source.
     brute : bool
         If no format recognizes the input, try every registered reader.
     **kwargs
@@ -27,30 +24,29 @@ def load(
 
     Returns
     -------
-    image : FileBasedImage
+    FileBasedImage
         The image that was read.
     """
     return FileBasedImage.load(filelike, brute=brute, **kwargs)
 
 
 def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
-    """
-    Identify which image format would read this file.
+    """Predict which image format would read a file.
 
-    The file is only inspected, never parsed, so this is a prediction of
-    what `load` would reach for rather than a guarantee.
+    The file is inspected but never parsed, so the result predicts what
+    [`load`][] would try first rather than guaranteeing success.
 
     Parameters
     ----------
-    filelike : FileOrContentLike
-        Input file, or its content.
+    filelike : file or content
+        File to inspect, or its content.
     **kwargs
         Format-specific options.
 
     Returns
     -------
-    format : type | None
-        The best match among registered image formats, or `None` if no
-        single one stands out.
+    type or None
+        The best-matching registered format, or `None` if no single
+        format stands out.
     """
     return FileBasedImage.sniff(filelike, **kwargs)

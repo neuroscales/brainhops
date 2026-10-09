@@ -1,12 +1,10 @@
-"""
-The machinery shared by every OpenSlide format: opening a slide, reading
-its levels region by region, and its geometry.
+"""Machinery shared by every OpenSlide format.
 
-The per-vendor classes (`_formats.py`) only say which vendor they read,
-under which extensions and hints.
+This module opens slides, reads their levels region by region and computes
+their geometry. The vendor classes in `_formats` only add a vendor name,
+extensions and hints.
 """
 
-# stdlib
 import functools
 import math
 import os
@@ -14,11 +12,9 @@ import shutil
 import tempfile
 import weakref
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# internals
 from brainhops._core import path
 from brainhops._core.dependencies import openslide
 from brainhops._core.properties import smartproperty
@@ -41,19 +37,17 @@ from brainhops.io.images.base import _utils_raster as raster
 #   CONSTANTS
 # ----------------------------------------------------------------------
 
-# OpenSlide decodes every level as RGBA rows: C-ordered (y, x, samples).
-# The alpha channel only marks the pixels outside the scanned area, which
-# are composited onto the background colour, so the image is RGB.
+# OpenSlide yields C-ordered (y, x, samples) RGBA; alpha only marks pixels
+# outside the scan and is composited away.
 _STORAGE = "YXS"
 
-# The dask chunks of a lazily read level are whole tiles, grouped so that
-# a chunk is at least this many pixels wide and tall.
+# Dask chunks group whole tiles up to at least this many pixels.
 _MIN_CHUNK = 1024
 
 _LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
 
-# The single-scale class of each vendor, by OpenSlide vendor name, which
-# the multiscale classes build their levels with (filled by `_formats`).
+# Vendor name -> single-scale class, used by the multiscale classes to build
+# their levels. Filled by `_formats`.
 _LEVEL_CLASSES: tx.Dict[str, type] = {}
 
 
@@ -72,8 +66,9 @@ def _require_openslide() -> tx.Any:
 
 
 def _local_path(file: tx.Any) -> tx.Optional[str]:
-    """The local path of a file OpenSlide can open by name, or `None`:
-    a local path, or an open file with the name of a local file."""
+    """Return the local path of a path or open file, or `None` if OpenSlide
+    cannot open it by name.
+    """
     if isinstance(file, (str, path.PathLike)):
         try:
             if path.Path(file).protocol.lower() not in _LOCAL_PROTOCOLS:
@@ -90,10 +85,12 @@ def _local_path(file: tx.Any) -> tx.Optional[str]:
 
 @functools.lru_cache(maxsize=64)
 def _detect(filename: str, mtime: int, size: int) -> tx.Tuple[str, int]:
-    """The OpenSlide vendor of a file and its number of levels, or
-    `("", 0)` if OpenSlide cannot read it. Cached by modification time
-    and size, since every OpenSlide format sniffs the same file."""
-    del mtime, size  # part of the cache key only
+    """Return the vendor and level count of a file, or `("", 0)`.
+
+    Every format sniffs the same file, so the result is cached on the
+    modification time and size of the file.
+    """
+    del mtime, size  # cache key only
     try:
         vendor = openslide.OpenSlide.detect_format(filename)
         if not vendor:
@@ -121,10 +118,10 @@ def _release(state: tx.Dict[str, tx.Any]) -> None:
 
 
 class _Slide:
-    """
-    An OpenSlide slide, opened on first use and closed (and its temporary
-    copy, if any, deleted) when the last image or array reading from it
-    is collected.
+    """An OpenSlide slide, opened on first use.
+
+    The slide is closed, and its temporary copy deleted, when the last object
+    using it is garbage-collected.
     """
 
     def __init__(
@@ -136,9 +133,9 @@ class _Slide:
 
     @classmethod
     def from_content(cls, content: bytes, suffix: str) -> "_Slide":
-        """A slide held in memory, spilled into a temporary file: OpenSlide
-        only opens files by name. A format made of several files (MIRAX,
-        Hamamatsu VMS) cannot be read this way."""
+        """Write content to a temporary file, since OpenSlide opens slides only
+        by name. Multi-file formats cannot be read this way.
+        """
         tempdir = tempfile.mkdtemp(prefix="brainhops-openslide-")
         filename = os.path.join(tempdir, "slide" + suffix)
         with open(filename, "wb") as f:
@@ -170,7 +167,7 @@ class _Slide:
 
 
 def _hex_colour(text: tx.Optional[str]) -> np.ndarray:
-    """An `RRGGBB` colour as three bytes, white if there is none."""
+    """Convert an `RRGGBB` string to three bytes, white if it is invalid."""
     try:
         value = int(str(text), 16)
     except (TypeError, ValueError):
@@ -181,8 +178,9 @@ def _hex_colour(text: tx.Optional[str]) -> np.ndarray:
 
 
 def _bounding(key: tx.Any, n: int) -> tx.Tuple[int, int, tx.Any]:
-    """The range `[start, stop)` an index along one axis needs, and the
-    index into that range."""
+    """Return the range `[start, stop)` that an index reads along one axis, and
+    the index into that range.
+    """
     if isinstance(key, (int, np.integer)):
         i = int(key)
         if not -n <= i < n:
@@ -195,17 +193,14 @@ def _bounding(key: tx.Any, n: int) -> tx.Tuple[int, int, tx.Any]:
         if not len(indices):
             return 0, 0, slice(0, 0)
         lo, hi = min(indices), max(indices) + 1
-        # The region ends at the last index either way.
+        # the range ends at the last index whatever the sign of the step
         return lo, hi, slice(start - lo, None, step)
-    return 0, n, key  # an array index: read the whole axis
+    return 0, n, key  # arrays read the whole axis
 
 
 class _SlideArray:
-    """
-    One level of a slide, F-ordered (`x, y, c`, RGB), read region by
-    region: indexing it reads only the region it covers, with OpenSlide's
-    `read_region`. Pixels outside the scanned area are the slide's
-    background colour.
+    """One level of a slide, as an F-ordered `(x, y, c)` RGB `uint8` array that
+    reads only the region it is indexed with.
     """
 
     dtype = np.dtype(np.uint8)
@@ -243,9 +238,11 @@ class _SlideArray:
         return array if dtype is None else array.astype(dtype)
 
     def __getitem__(self, key: tx.Any) -> np.ndarray:
-        """Read the region an index covers. Integers and slices index as
-        in numpy; integer or boolean arrays index each axis on its own
-        (orthogonally)."""
+        """Read the region that an index covers.
+
+        Integers and slices behave as in NumPy, while integer and boolean
+        arrays index each axis independently.
+        """
         if not isinstance(key, tuple):
             key = (key,)
         if any(k is Ellipsis for k in key):
@@ -276,8 +273,7 @@ class _SlideArray:
         return out.squeeze(axis=tuple(drop)) if drop else out
 
     def _read(self, x: int, y: int, width: int, height: int) -> np.ndarray:
-        """The region of this level at `(x, y)` (in its own pixels) of
-        size `(width, height)`, as an `(x, y, c)` RGB array."""
+        """Read a region given in level pixels, as an `(x, y, c)` RGB array."""
         if width <= 0 or height <= 0:
             return np.zeros((max(width, 0), max(height, 0), 3), np.uint8)
         location = (
@@ -291,8 +287,7 @@ class _SlideArray:
         alpha = rgba[..., 3:4]
         rgb = rgba[..., :3]
         if not (alpha == 255).all():
-            # OpenSlide (python) returns un-premultiplied RGBA: composite
-            # it onto the background colour.
+            # read_region yields RGBA that is not premultiplied
             a = alpha.astype(np.uint16)
             rgb = (
                 rgb.astype(np.uint16) * a + self._background * (255 - a) + 127
@@ -304,8 +299,10 @@ class _SlideArray:
 def _level_data(
     slide: _Slide, level: int, lazy: tx.Optional[bool]
 ) -> ArrayProtocol:
-    """A level, as a dask array of whole tiles when `lazy` is true (or is
-    `None` and dask is the array backend), else as a `_SlideArray`."""
+    """Return the data of a level: a dask array of whole tiles if `lazy` is
+    true, or if `lazy` is `None` and dask is the array backend, and a
+    [`_SlideArray`][] otherwise.
+    """
     array = _SlideArray(slide, level)
     if lazy is None:
         from brainhops.backends import get_array_backend
@@ -346,8 +343,9 @@ def _level_data(
 
 
 def _mpp(properties: tx.Mapping[str, str]) -> tx.Dict[str, tx.Any]:
-    """The pixel size of the full-resolution level, in micrometres, along
-    the axes for which the slide records one (`openslide.mpp-x/y`)."""
+    """Return the full-resolution pixel size in micrometres, for the axes whose
+    size the slide records.
+    """
     out = {}
     for name in ("x", "y"):
         try:
@@ -377,12 +375,11 @@ def _level_geometry(
     pixel_size: tx.Any = None,
     unit: tx.Any = None,
 ) -> tx.Any:
-    """
-    The pixel-to-physical transformation of a level: the full-resolution
-    pixel size (`openslide.mpp-x/y`, or the caller's) times the level's
-    downsampling factor, with the level covering the extent of the full
-    resolution (pixel `i` centred on full-resolution pixel
-    `f * i + (f - 1) / 2`).
+    """Return the pixel-to-physical transformation of a level.
+
+    The full-resolution pixel size is multiplied by the downsampling factor `f`
+    of the level, and pixel `i` is centred on the full-resolution coordinate
+    `f * i + (f - 1) / 2`.
     """
     handle = slide.slide
     axes = raster.storage_axes(_STORAGE)
@@ -400,31 +397,32 @@ def _level_geometry(
 
 
 class OpenSlideFormat:
-    """
-    An image read with [OpenSlide](https://openslide.org/). Each vendor
-    format derives from it, so that the hint `"openslide"` selects them
-    all, and `"openslide.<vendor>"` one of them.
+    """Base class of every image read with OpenSlide.
+
+    Each vendor format derives from this class, so that the hint `"openslide"`
+    selects every vendor and `"openslide.<vendor>"` selects one. See
+    [OpenSlide](https://openslide.org).
     """
 
     HINTS = ("openslide",)
 
     VENDOR: tx.ClassVar[tx.Optional[str]] = None
-    """The vendor name OpenSlide gives to the format
-    (`OpenSlide.detect_format`)."""
+    """The vendor name, as `OpenSlide.detect_format` reports it."""
 
     SCORE: tx.ClassVar[float] = Confidence.CERTAIN
-    """How confident the format is in a file OpenSlide attributes to its
-    vendor."""
+    """The confidence for a file that OpenSlide attributes to the vendor."""
 
 
 class _OpenSlideMixin(OpenSlideFormat):
-    """Sniffing, opening and the slide's metadata, shared by the
-    single-scale and multiscale OpenSlide images."""
+    """Sniffing, opening and metadata, shared by single-scale and multiscale
+    images.
+    """
 
     @classmethod
     def _score(cls, levels: int, level: tx.Optional[int]) -> float:
-        """The score of a file of this vendor, with `levels` levels, when
-        `level` is (or is not) asked for."""
+        """Return the score for a slide of this vendor, given its number of
+        levels and the requested level.
+        """
         raise NotImplementedError  # pragma: no cover
 
     @classmethod
@@ -451,9 +449,8 @@ class _OpenSlideMixin(OpenSlideFormat):
         level: tx.Optional[int] = None,
         **kwargs,
     ) -> float:
-        """
-        Score how confident the class is that a file is a slide of its
-        vendor, as OpenSlide detects it. Only a local file is sniffed.
+        """Return the confidence that a local file is a slide of this vendor,
+        as OpenSlide detects it.
         """
         local = _local_path(filename)
         if local is None:
@@ -472,10 +469,11 @@ class _OpenSlideMixin(OpenSlideFormat):
         level: tx.Optional[int] = None,
         **kwargs,
     ) -> float:
-        """
-        Score an open file, by the name of the local file it was opened
-        from. A stream with no such name is not sniffed (`NO`): OpenSlide
-        reads files by name, so it is read only when asked for by hint.
+        """Return the confidence that an open file is a slide of this vendor.
+
+        The file is sniffed through the name of the local file it was opened
+        from. A stream without such a name scores `NO` and is read only by
+        hint.
         """
         local = _local_path(file)
         if local is None:
@@ -493,8 +491,7 @@ class _OpenSlideMixin(OpenSlideFormat):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Content in memory is not sniffed (`NO`); it is read only when
-        asked for by hint."""
+        """Return `NO`: content in memory is read only by hint."""
         if error:
             if error is True:
                 error = SnifferContentError
@@ -503,8 +500,9 @@ class _OpenSlideMixin(OpenSlideFormat):
 
     @classmethod
     def _suffix(cls, name: tx.Optional[str]) -> str:
-        """The extension of a temporary copy: OpenSlide detects some
-        formats by it."""
+        """Return the extension for a temporary copy, since OpenSlide detects
+        some formats by their suffix.
+        """
         if name:
             for ext in sorted(cls.EXTENSIONS, key=len, reverse=True):
                 if name.lower().endswith(ext):
@@ -516,11 +514,10 @@ class _OpenSlideMixin(OpenSlideFormat):
 
     @classmethod
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
-        """
-        Read the slide from a file. A local file is opened by OpenSlide
-        directly; a remote one is copied into a temporary file first (which
-        only works for the formats held in a single file). See
-        `from_source` for the options.
+        """Read a slide from a file.
+
+        A local file is opened in place, and a remote file is first copied to a
+        temporary file. The options are those of `from_source`.
         """
         local = _local_path(filename)
         if local is not None:
@@ -538,9 +535,11 @@ class _OpenSlideMixin(OpenSlideFormat):
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """Read the slide from an open file: by its name if it is a local
-        file, or else from a temporary copy. See `from_source` for the
-        options."""
+        """Read a slide from an open file.
+
+        A local file is opened by name, and other files are copied to a
+        temporary file. The options are those of `from_source`.
+        """
         local = _local_path(file)
         if local is not None:
             return cls.from_source(_Slide(local), **kwargs)
@@ -551,8 +550,10 @@ class _OpenSlideMixin(OpenSlideFormat):
 
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
-        """Read the slide from the bytes of a file, through a temporary
-        copy. See `from_source` for the options."""
+        """Read a slide from bytes, through a temporary copy.
+
+        The options are those of `from_source`.
+        """
         slide = _Slide.from_content(bytes(content), cls._suffix(None))
         return cls.from_source(slide, **kwargs)
 
@@ -582,10 +583,16 @@ class _OpenSlideMixin(OpenSlideFormat):
         )
 
     def associated_image(self, name: str) -> np.ndarray:
-        """
-        An associated image of the slide (`"label"`, `"macro"`,
-        `"thumbnail"`, ... as listed in `associated_images`), as an
-        F-ordered `(x, y, c)` RGB array, composited onto white.
+        """Read an associated image of the slide.
+
+        Associated images are the label, macro, thumbnail and other images
+        listed in `associated_images`. They are returned as F-ordered
+        `(x, y, c)` RGB `uint8` arrays, composited onto white.
+
+        Raises
+        ------
+        KeyError
+            If there is no associated image of that name.
         """
         slide = getattr(self, "_slide", None)
         if slide is None:
@@ -598,7 +605,7 @@ class _OpenSlideMixin(OpenSlideFormat):
         return np.ascontiguousarray(rgb).transpose(1, 0, 2)
 
 
-# The annotations of the metadata kept on both kinds of image.
+# Metadata attributes shared by single-scale and multiscale images.
 _Properties = tx.Annotated[
     tx.Optional[tx.Dict[str, str]],
     tx.Doc(
@@ -648,16 +655,13 @@ _Associated = tx.Annotated[
 class OpenSlideImage(
     _OpenSlideMixin, BinaryFileParser, FileBasedImage, SingleScaleImage
 ):
-    """
-    One level of a whole-slide image, read with OpenSlide: the base of
-    the single-scale image of every vendor.
+    """A single level of a whole-slide image, read with OpenSlide.
 
-    The data is F-ordered `(x, y, c)` RGB `uint8`, and is read region by
-    region when it is indexed (or as a dask array of whole tiles), never
-    in full unless asked for (`numpy.asarray(image.data)`). The only
-    transformation is a scaling from the pixel system to a `"physical"`
-    one, in micrometres when the slide records its pixel size
-    (`openslide.mpp-x/y`) and the identity, in no unit, otherwise.
+    This class is the base of the single-scale image of every vendor. Its data
+    is an F-ordered `(x, y, c)` RGB `uint8` array that reads only the indexed
+    region, or a dask array of whole tiles. Its transformation scales pixels to
+    micrometres when the slide records `openslide.mpp-x` and `openslide.mpp-y`,
+    and is otherwise the identity, with no unit.
     """
 
     vendor: _Vendor = None
@@ -681,9 +685,10 @@ class OpenSlideImage(
 
     @classmethod
     def _score(cls, levels: int, level: tx.Optional[int]) -> float:
-        """The vendor's score when a level is asked for, or the slide has
-        a single level; less (yielding to the multiscale image) for a
-        pyramid."""
+        """Return the vendor score for a requested level or a single-level
+        slide, and 0.8 times that score for a pyramid, which yields to the
+        multiscale class.
+        """
         if level is not None or levels < 2:
             return cls.SCORE
         return 0.8 * cls.SCORE
@@ -698,34 +703,32 @@ class OpenSlideImage(
         lazy: tx.Optional[bool] = None,
         **kwargs,
     ) -> tx.Self:
-        """
-        Read one level of a slide.
+        """Read one level of a slide.
 
         Parameters
         ----------
         slide : _Slide
             The slide.
         level : int, optional
-            The level to read: 0 (the default) is the full resolution;
-            negative values count from the end. A level covers the same
-            extent as the full resolution (see `OpenSlideMultiScaleImage`).
-        pixel_size : float | Sequence[float] | Mapping[str, float], optional
-            The full-resolution pixel size, which overrides the slide's.
-        unit : str | Unit, optional
-            The unit of `pixel_size`, or the unit to convert the slide's
-            (micrometres) to.
+            The level, 0 (the full resolution) by default. A negative level
+            counts from the end.
+        pixel_size : float or Sequence[float] or Mapping[str, float], optional
+            The full-resolution pixel size, overriding the one of the slide.
+        unit : str or Unit, optional
+            The unit of `pixel_size`, or the unit to convert micrometres to.
         lazy : bool, optional
-            Read the pixels as a dask array of whole tiles. By default,
-            only when dask is the array backend; otherwise `data` reads
-            the region it is indexed with.
+            Whether the data is a dask array of whole tiles. By default, it is
+            one only when dask is the array backend.
 
         Raises
         ------
         ParserContentError
-            If OpenSlide cannot read the file, or it is a slide of another
+            If OpenSlide cannot read the file, or the slide is of another
             vendor.
         IndexError
             If the slide has no such level.
+        TypeError
+            If an unknown option is given.
         """
         if kwargs:
             raise TypeError(
@@ -758,18 +761,12 @@ class OpenSlideImage(
 class OpenSlideMultiScaleImage(
     _OpenSlideMixin, BinaryFileParser, FileBasedImage, MultiScaleImage
 ):
-    """
-    A whole-slide image, read with OpenSlide, as a pyramid: the base of
-    the multiscale image of every vendor.
+    """A whole-slide image read with OpenSlide, as a pyramid.
 
-    Each OpenSlide level is a single-scale image of the same vendor,
-    finest first, read region by region. A level's pixel size is the
-    full-resolution pixel size times its downsampling factor
-    (`level_downsamples`), and it covers the same extent as the full
-    resolution: pixel `i` of a level downsampled by `f` is centred on the
-    full-resolution pixel coordinate `f * i + (f - 1) / 2`, as in a TIFF
-    or OME-Zarr pyramid. Every level maps onto the same `"physical"`
-    system, so the pyramid's own transformations are empty.
+    This class is the base of the multiscale image of every vendor. Its levels
+    are single-scale images of the same vendor, finest first, which all cover
+    the whole slide and map to the same `"physical"` system, as in TIFF and
+    OME-Zarr pyramids. The pyramid therefore has no transformation of its own.
     """
 
     vendor: _Vendor = None
@@ -781,16 +778,16 @@ class OpenSlideMultiScaleImage(
     associated_images: _Associated = None
 
     PRIORITY: tx.ClassVar[int] = FileBasedImage.PRIORITY + 1
-    """
-    Content held in memory is not sniffed, so when it is read by hint the
-    pyramid and its single-scale class would tie: the pyramid is tried
-    first (and declines a `level`).
+    """Content in memory is not sniffed, so by hint a pyramid and a
+    single-scale class would tie. The pyramid is tried first, and declines a
+    `level` option.
     """
 
     @classmethod
     def _score(cls, levels: int, level: tx.Optional[int]) -> float:
-        """The vendor's score for a pyramid when no level is asked for,
-        and `NO` otherwise."""
+        """Return the vendor score when no level is requested and the slide is
+        a pyramid, and `NO` otherwise.
+        """
         if level is not None or levels < 2:
             return Confidence.NO
         return cls.SCORE
@@ -804,9 +801,10 @@ class OpenSlideMultiScaleImage(
         lazy: tx.Optional[bool] = None,
         **kwargs,
     ) -> tx.Self:
-        """
-        Read every level of a slide. The options are those of the
-        single-scale image's `from_source`, but for `level`.
+        """Read every level of a slide.
+
+        The options are those of [`OpenSlideImage.from_source`][], except
+        `level`.
         """
         if kwargs:
             raise TypeError(

@@ -1,46 +1,32 @@
-"""
-Decoding TIFF files with tifffile, and reading the pixel size their
-metadata dialects record.
+"""The tifffile backend of the TIFF reader.
 
-This is the tifffile *backend* of the TIFF image reader. It opens a file,
-selects a series and a pyramid level, reads its pixels -- memory-mapped,
-lazily, or eagerly -- and gathers what the file says about the size of a
-pixel. It knows nothing of coordinate systems or transformations, which
-are the business of the shared raster conventions in
-`brainhops.io.images.base._utils_raster`. It mirrors
-`brainhops.io.images.pillow._utils`, the Pillow backend of the raster
-reader.
+This module opens a file, selects a series and a pyramid level, reads the
+pixels and gathers what the file records about the pixel size. Coordinate
+systems and transformations belong to the shared raster conventions of
+`brainhops.io.images.base._utils_raster`, as for the Pillow backend.
 
 ## Dialects
 
-A TIFF file stores its pixel size in one of three ways, which this module
-reads in this order of precedence (a dialect wins over the next one for
-every axis it gives a size for):
+The pixel size can be stored in three ways. Along each axis, the first of them
+that gives a size wins:
 
-1. **OME-TIFF.** The OME-XML in the first `ImageDescription` gives
-   `PhysicalSizeX`, `PhysicalSizeY` and `PhysicalSizeZ`, each with its
-   unit (`PhysicalSizeXUnit`, ..., micrometres when absent, as the schema
-   says), and `TimeIncrement` (seconds when its unit is absent). The
-   position of the first plane (`PositionX`, `PositionY`, `PositionZ` of
-   the plane whose Z, C and T indices are all 0) is the origin. The axis order
-   (`DimensionOrder`) is applied by tifffile.
-2. **ImageJ.** An ImageJ hyperstack records its unit of length (`unit`,
-   with `yunit` and `zunit` when they differ) in its `ImageDescription`;
-   the pixel width and height are `1 / XResolution` and `1 / YResolution`
-   in that unit, and the slice step is `spacing`, which is negative when
-   the slices run backwards. The frame interval is `finterval`, in
-   `tunit` (seconds by default).
-3. **Resolution tags.** `XResolution` and `YResolution`, in pixels per
-   `ResolutionUnit`: 1 (none: an aspect ratio only, so the size is
-   unknown), 2 (inch, the default when the tag is absent), 3
-   (centimetre), and tifffile's extensions 4 (millimetre) and 5
-   (micrometre).
+1. OME-TIFF: the OME-XML of the first `ImageDescription` records
+   `PhysicalSizeX`, `Y` and `Z` with their units (micrometres if absent) and
+   `TimeIncrement` (seconds if no unit is given). The origin is the position of
+   the plane whose Z, C and T indices are 0.
+2. ImageJ: the hyperstack records a length `unit` (with `yunit` and `zunit`
+   when they differ), in which pixels measure `1 / XResolution` by
+   `1 / YResolution`. The slice step is `spacing` (negative if the slices run
+   backwards), and the frame interval is `finterval` in `tunit` (seconds by
+   default).
+3. Resolution tags count pixels per `ResolutionUnit`: 1 for none (an aspect
+   ratio only), 2 for the inch (the default), 3 for the centimetre, and the
+   tifffile extensions 4 and 5 for the millimetre and the micrometre.
 
-A size that is absent, or is a placeholder, is *unknown* and is left out.
-tifffile reports missing resolution tags as 1 pixel per inch, so their
-absence is detected from the tags themselves; a resolution in inches or
-centimetres equal to 72 or 96 dpi, or to one pixel per unit, is a
-placeholder (see `is_default_dpi`).
+Absent and placeholder sizes are left out. tifffile reports missing resolution
+tags as 1 pixel per inch, so their absence is detected from the tags
+themselves, and a resolution of 72 or 96 dpi, or of one pixel per inch or
+centimetre, is a placeholder.
 """
 
 __all__ = [
@@ -66,18 +52,15 @@ __all__ = [
     "read_series",
 ]
 
-# stdlib
 import math
 import weakref
 import xml.etree.ElementTree as ElementTree
 from io import BytesIO
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
 
-# internals
 from brainhops._core import path
 from brainhops._core.dependencies import tifffile
 from brainhops.io.base.parsers import ParserContentError
@@ -92,11 +75,10 @@ EXTENSIONS: tx.Tuple[str, ...] = (
     ".tf8",
     ".tf2",
 )
-"""The file extensions of TIFF files, BigTIFF and OME-TIFF included."""
+"""The extensions of TIFF files, including BigTIFF and OME-TIFF."""
 
 MAGICS: tx.Tuple[bytes, ...] = (b"II*\0", b"MM\0*", b"II+\0", b"MM\0+")
-"""The first four bytes of a TIFF file (little- and big-endian) and of a
-BigTIFF file."""
+"""The first four bytes of TIFF files (both byte orders) and BigTIFF."""
 
 RESOLUTION_UNITS: tx.Dict[int, tx.Optional[str]] = {
     1: None,
@@ -105,9 +87,9 @@ RESOLUTION_UNITS: tx.Dict[int, tx.Optional[str]] = {
     4: "mm",
     5: "um",
 }
-"""The units of the `ResolutionUnit` tag: the TIFF ones (1 to 3) and
-tifffile's extensions (4 and 5). `None` is "no unit": the resolution is
-an aspect ratio."""
+"""The units of the `ResolutionUnit` tag: TIFF codes 1 to 3, plus the tifffile
+extensions 4 and 5. `None` means no unit (an aspect ratio).
+"""
 
 TAGS_OF_INTEREST: tx.Dict[int, str] = {
     269: "DocumentName",
@@ -123,12 +105,12 @@ TAGS_OF_INTEREST: tx.Dict[int, str] = {
     316: "HostComputer",
     33432: "Copyright",
 }
-"""The tags of the first page that the reader keeps (by code)."""
+"""The tags of the first page that the reader keeps, by code."""
 
-_TIFF_INCH = 2  # The default of `ResolutionUnit`.
+_TIFF_INCH = 2  # default of ResolutionUnit
 
-# Spellings of units of length, normalized: OME's symbols, ImageJ's words
-# (and its escaped micro sign), and the usual abbreviations.
+# Normalised spellings of length units: OME symbols, ImageJ words (including
+# the escaped micro sign) and the usual abbreviations.
 _LENGTH_UNITS = {
     "m": "m",
     "meter": "m",
@@ -207,8 +189,7 @@ def _require_tifffile() -> tx.Any:
 
 
 def is_tiff(head: bytes) -> bool:
-    """Whether the first bytes of a file are those of a TIFF (or
-    BigTIFF) file."""
+    """Return whether the first bytes of a file are a TIFF or BigTIFF magic."""
     return bytes(head[:4]) in MAGICS
 
 
@@ -227,18 +208,19 @@ def _unit(value: tx.Any, table: tx.Mapping[str, str]) -> tx.Optional[str]:
 
 
 def length_unit(value: tx.Any) -> tx.Optional[str]:
-    """
-    A unit of length as the metadata spells it, normalized (`"micron"`,
-    `"µm"` and ImageJ's escaped `"\\u00B5m"` are all `"um"`), or `None`
-    when it is not a physical unit of length (`"pixel"`, OME's
-    `"reference frame"`, or anything unknown).
+    r"""Normalise the spelling of a length unit.
+
+    `"micron"`, `"µm"` and the escaped `"µm"` of ImageJ all become `"um"`.
+    `None` is returned for anything that is not a physical length, such as
+    `"pixel"`, the OME `"reference frame"` or an unknown unit.
     """
     return _unit(value, _LENGTH_UNITS)
 
 
 def time_unit(value: tx.Any) -> tx.Optional[str]:
-    """A unit of time as the metadata spells it, normalized (`"sec"` is
-    `"s"`), or `None` when it is unknown."""
+    """Normalise the spelling of a time unit, such as `"sec"` to `"s"`, or
+    return `None` if the unit is unknown.
+    """
     return _unit(value, _TIME_UNITS)
 
 
@@ -253,8 +235,7 @@ def _positive(value: tx.Any) -> tx.Optional[float]:
 
 
 def _rational(value: tx.Any) -> tx.Optional[float]:
-    """The value of a TIFF rational (a `(numerator, denominator)` pair),
-    or of a number."""
+    """Return the value of a TIFF rational, a `(num, den)` pair or a number."""
     if value is None:
         return None
     try:
@@ -275,65 +256,69 @@ _Scales = tx.Dict[str, raster.AxisScale]
 
 
 class TiffMetadata(Magic, frozen=True):
-    """What a TIFF file says about the geometry of one of its series."""
+    """What a TIFF file says about the geometry of one series."""
 
     dialect: tx.Optional[str]
     """`"ome"`, `"imagej"`, or `None` for a plain TIFF file."""
 
     scales: _Scales
-    """The size of a sample and its unit, by axis name (`"x"`, `"y"`,
-    `"z"`, `"t"`), for the axes whose size is known. Always positive."""
+    """The positive size and unit of a sample along each axis (x, y, z, t)
+    whose size is known.
+    """
 
     signs: tx.Dict[str, float]
-    """The sign of an axis whose step is negative (an ImageJ `spacing`
-    below zero), by axis name: `-1.0`."""
+    """The sign, -1.0, of the axes with a negative step (an ImageJ `spacing`
+    below 0), by name.
+    """
 
     origin: _Scales
-    """The position of the first sample and its unit, by axis name, for
-    the axes whose position is known (OME plane positions)."""
+    """The position and unit of the first sample, by axis name, where the file
+    records it (OME plane positions).
+    """
 
     sources: tx.Dict[str, str]
-    """Which dialect each size in `scales` was taken from: `"ome"`,
-    `"imagej"` or `"resolution"`."""
+    """The dialect that each size of `scales` comes from: `"ome"`, `"imagej"`
+    or `"resolution"`.
+    """
 
     ome_xml: tx.Optional[str]
-    """The OME-XML of the file, if it is an OME-TIFF."""
+    """The OME-XML of an OME-TIFF file."""
 
     ome_index: tx.Optional[int]
-    """The position, among the OME `Image` elements, of the one that
-    describes the series."""
+    """The position, among the OME Image elements, of the one of the series."""
 
     imagej: tx.Optional[tx.Dict[str, tx.Any]]
-    """The ImageJ metadata of the file, if it is an ImageJ hyperstack."""
+    """The ImageJ metadata of an ImageJ hyperstack."""
 
     tags: tx.Dict[str, tx.Any]
-    """The tags of interest of the first page, by name
-    (`TAGS_OF_INTEREST`)."""
+    """The tags of interest of the first page, by name."""
 
 
 def tags_of_interest(page: tx.Any) -> tx.Dict[str, tx.Any]:
-    """The tags of interest of a page, by name. The first of repeated
-    tags (several `ImageDescription`s, say) is kept."""
+    """Return the tags of interest of a page, by name.
+
+    When a tag is repeated, such as several `ImageDescription` tags, the first
+    one is kept.
+    """
     out: tx.Dict[str, tx.Any] = {}
     for tag in page.tags.values():
         name = TAGS_OF_INTEREST.get(tag.code)
         if name is None or name in out:
             continue
         value = tag.value
-        if hasattr(value, "value"):  # an enum, such as RESUNIT
+        if hasattr(value, "value"):  # unwrap enum values such as RESUNIT
             value = value.value
         out[name] = value
     return out
 
 
 def resolution_scales(page: tx.Any) -> _Scales:
-    """
-    The pixel width (`"x"`) and height (`"y"`) the resolution tags of a
-    page give, or nothing when they are absent, give an aspect ratio only
-    (`ResolutionUnit` 1), or are placeholders.
+    """Return the pixel width (x) and height (y) given by the resolution tags
+    of a page.
 
-    The tags are read directly: tifffile reports their absence as one
-    pixel per inch, which would pass for a resolution.
+    Nothing is returned for absent tags, an aspect ratio only, or placeholders.
+    The tags are read directly, because tifffile reports their absence as 1
+    pixel per inch.
     """
     tags = page.tags
     xres = _positive(_rational(tags.valueof(282)))
@@ -352,7 +337,7 @@ def resolution_scales(page: tx.Any) -> _Scales:
         ):
             return {}
     if unit == "inch":
-        # In millimetres: `Unit("inch")` does not convert reliably.
+        # Unit('inch') does not convert reliably
         return {
             "x": (raster.dpi_to_size(xres, "mm"), "mm"),
             "y": (raster.dpi_to_size(yres, "mm"), "mm"),
@@ -365,26 +350,24 @@ def imagej_scales(
     page: tx.Any,
     names: tx.Collection[str],
 ) -> tx.Tuple[_Scales, tx.Dict[str, float]]:
-    """
-    The sizes an ImageJ hyperstack records, and the signs of its steps.
+    """Return the sizes recorded by an ImageJ hyperstack and the signs of its
+    steps.
 
     Parameters
     ----------
-    metadata : Mapping
-        The ImageJ metadata (tifffile's `imagej_metadata`).
+    metadata : Mapping[str, Any]
+        The `imagej_metadata` of tifffile.
     page : TiffPage
-        The first page, whose resolution tags hold the pixel size in
-        ImageJ's unit.
+        The first page, whose resolution tags hold the pixel size.
     names : Collection[str]
-        The names of the axes of the series (`"x"`, `"y"`, `"z"`,
-        `"t"`, ...): sizes are given only for these.
+        The axes of the series, the only ones given a size.
 
     Returns
     -------
-    scales : dict[str, (float, str)]
+    scales : dict[str, tuple[float, str]]
         The size and unit of each axis whose size is known.
     signs : dict[str, float]
-        `{"z": -1.0}` when the slices run backwards.
+        The signs of the steps, such as `{"z": -1.0}`.
     """
     scales: _Scales = {}
     signs: tx.Dict[str, float] = {}
@@ -418,7 +401,7 @@ def imagej_scales(
 
 
 def _local(tag: str) -> str:
-    """An XML tag without its namespace."""
+    """Return an XML tag without its namespace."""
     return tag.rsplit("}", 1)[-1]
 
 
@@ -437,28 +420,13 @@ def _ome_images(ome_xml: str) -> tx.List[tx.Any]:
 def ome_image_index(
     ome_xml: str, series: tx.Sequence[tx.Any], index: int
 ) -> tx.Optional[int]:
-    """
-    The position, among the OME `Image` elements, of the image that
-    describes series `index` of a file.
+    """Return the position, among the OME Image elements, of the image that
+    describes series `index`, or `None`.
 
-    tifffile makes one series per OME `Image`, in order, but skips the
-    images whose planes it cannot find. So each series is matched to the
-    next image of the same name and size.
-
-    Parameters
-    ----------
-    ome_xml : str
-        The OME-XML.
-    series : Sequence[TiffPageSeries]
-        All the series of the file (anything with `name`, `axes` and
-        `shape`).
-    index : int
-        The series to describe.
-
-    Returns
-    -------
-    int | None
-        The position of the image, or `None` if none matches.
+    tifffile makes one series per OME Image, in order, but skips the images
+    whose planes it cannot find. Each series is therefore matched to the next
+    image of the same name and size. `series` holds all series, or anything
+    with a `name`, `axes` and `shape`.
     """
     images = _ome_images(ome_xml)
     position = 0
@@ -492,8 +460,9 @@ def ome_image_index(
 def ome_image(
     ome_xml: str, index: int
 ) -> tx.Tuple[tx.Optional[tx.Any], tx.Optional[tx.Any]]:
-    """The OME `Image` element at a position, and its `Pixels` element,
-    or `(None, None)`."""
+    """Return the OME Image element at a position and its Pixels element, or
+    `(None, None)`.
+    """
     images = _ome_images(ome_xml)
     if index is None or not 0 <= index < len(images):
         return None, None
@@ -502,35 +471,29 @@ def ome_image(
 
 
 def ome_channel_names(pixels: tx.Any) -> tx.List[tx.Optional[str]]:
-    """The names of the channels of an OME `Pixels` element."""
+    """Return the channel names of an OME Pixels element."""
     return [channel.get("Name") for channel in _children(pixels, "Channel")]
 
 
 def ome_scales(
     pixels: tx.Any, names: tx.Collection[str]
 ) -> tx.Tuple[_Scales, _Scales]:
-    """
-    The sizes, and the origin, an OME `Pixels` element records.
+    """Return the sizes and origin recorded by an OME Pixels element.
 
     Parameters
     ----------
     pixels : Element
-        The `Pixels` element (see
-        `ome_image`).
+        The Pixels element (see [`ome_image`][]).
     names : Collection[str]
-        The names of the axes of the series: sizes are given only for
-        these.
+        The axes of the series, the only ones given a size.
 
     Returns
     -------
-    scales : dict[str, (float, str)]
-        The size and unit of each axis whose size is known. A size whose
-        unit is not a unit of length (`"pixel"`, `"reference frame"`) is
-        unknown.
-    origin : dict[str, (float, str | None)]
-        The position of the first plane along `x`, `y` and `z`, for those
-        the file records. Its unit is `None` when the file names none (the
-        caller decides what that means).
+    scales : dict[str, tuple[float, str]]
+        The size and unit of each axis whose unit is a length.
+    origin : dict[str, tuple[float, str or None]]
+        The position of the first plane along x, y and z, where recorded, with
+        a unit of `None` when the file names none.
     """
     scales: _Scales = {}
     for name in ("x", "y", "z"):
@@ -571,20 +534,8 @@ def ome_scales(
 
 
 def series_metadata(tif: tx.Any, index: int = 0) -> TiffMetadata:
-    """
-    What a TIFF file says about the geometry of one of its series, with
-    the precedence OME > ImageJ > resolution tags applied axis by axis.
-
-    Parameters
-    ----------
-    tif : tifffile.TiffFile
-        The open file.
-    index : int
-        The series.
-
-    Returns
-    -------
-    TiffMetadata
+    """Return what a TIFF file says about the geometry of series `index`, with
+    OME taking precedence over ImageJ and the resolution tags along each axis.
     """
     series = tif.series[index]
     page = series.keyframe if series.keyframe is not None else tif.pages[0]
@@ -640,12 +591,11 @@ def series_metadata(tif: tx.Any, index: int = 0) -> TiffMetadata:
 def level_factors(
     base: tx.Sequence[int], level: tx.Sequence[int]
 ) -> tx.List[float]:
-    """
-    The downsampling factor of a pyramid level along each axis: the ratio
-    of the shape of the base level to its own.
+    """Return the downsampling factor of a pyramid level along each axis.
 
-    The ratio is not rounded: a level of 51 samples under a base of 101
-    is downsampled by 101 / 51, so that both cover the same extent.
+    The factor is the base shape divided by the shape of the level, without
+    rounding: a level of 51 pixels under a base of 101 is downsampled by
+    101/51, so that both cover the same extent.
     """
     if len(base) != len(level):
         raise ParserContentError(
@@ -677,13 +627,10 @@ def _is_local(file: tx.Any) -> bool:
 
 
 class TiffSource:
-    """
-    Where a TIFF file can be opened again, to read its pixels after the
-    metadata has been read.
+    """Where a TIFF file can be opened again to read its pixels.
 
-    A local file is reopened by name, which lets its pixels be
-    memory-mapped. Anything else -- a remote file, a stream, bytes -- is
-    held in memory as the bytes of the file, and decoded from there.
+    A local file is opened again by name, which allows memory-mapping. A remote
+    file, a stream or bytes are held in memory.
     """
 
     def __init__(
@@ -698,7 +645,7 @@ class TiffSource:
 
     @classmethod
     def from_file(cls, file: tx.Any) -> "TiffSource":
-        """The source of a path, a file object or bytes."""
+        """Return the source of a path, a file object or bytes."""
         if isinstance(file, (bytes, bytearray, memoryview)):
             return cls(content=bytes(file))
         if isinstance(file, (str, path.PathLike)):
@@ -711,7 +658,7 @@ class TiffSource:
         raise TypeError(f"Cannot read a TIFF file from {type(file)}.")
 
     def open(self) -> tx.Any:
-        """Open the file with tifffile (a context manager)."""
+        """Open the file with tifffile, as a context manager."""
         tf = _require_tifffile()
         try:
             if self.filename is not None:
@@ -723,15 +670,16 @@ class TiffSource:
             ) from e
 
 
-# The tifffile flags of the vendor whole-slide formats that OpenSlide also
-# reads, with a dedicated reader (see `brainhops.io.images.openslide`).
+# tifffile flags of the vendor whole-slide formats, which OpenSlide reads with
+# a dedicated reader (brainhops.io.images.openslide).
 _WHOLE_SLIDE_FLAGS = ("is_svs", "is_ndpi", "is_philips", "is_scn", "is_bif")
 
 
 def is_whole_slide(tif: tx.Any) -> bool:
-    """Whether a TIFF file is a vendor whole-slide image (Aperio SVS,
-    Hamamatsu NDPI, Philips, Leica SCN, Ventana BIF), by its first
-    page."""
+    """Return whether a TIFF file is a vendor whole-slide image (Aperio SVS,
+    Hamamatsu NDPI, Philips, Leica SCN or Ventana BIF), judged by its first
+    page.
+    """
     page = tif.pages.first
     return any(getattr(page, flag, False) for flag in _WHOLE_SLIDE_FLAGS)
 
@@ -759,26 +707,23 @@ def read_series(
     mmap: bool = True,
     lazy: tx.Optional[bool] = None,
 ) -> tx.Any:
-    """
-    Read the pixels of one level of one series, C-ordered, as tifffile
-    lays them out (`series.axes`).
+    """Read the pixels of one level of one series.
 
-    The pixels are read in the first of these ways that applies:
+    The array is C-ordered, in the layout of tifffile (`series.axes`), and is
+    read in the first applicable way:
 
-    1. **Memory-mapped** (`mmap=True`), when the file is local and the
-       level is stored uncompressed and contiguously. Nothing is read until
-       the array is indexed. The map is copy-on-write: writing into the
-       array does not change the file.
-    2. **Lazily**, as a dask array over tifffile's Zarr store, when `lazy`
-       is true, or is `None` and dask is the array backend
-       (`brainhops.backends`). This needs dask and zarr; without them the
-       pixels are read eagerly.
-    3. **Eagerly**, decoded into a numpy array.
+    1. Memory-mapped copy-on-write, with `mmap=True`, when the file is local
+       and the level is stored uncompressed and contiguously.
+    2. As a dask array over the Zarr store of tifffile, when `lazy` is true, or
+       `None` with dask as the array backend, and dask and zarr are installed.
+    3. Eagerly, into a NumPy array.
 
     Raises
     ------
     IndexError
-        If the file has no such series or level.
+        If there is no such series or level.
+    ParserContentError
+        If tifffile cannot decode the level.
     """
     with source.open() as tif:
         one = _select(tif, series, level)
@@ -818,8 +763,9 @@ def read_series(
 
 
 def _read_lazily(source: TiffSource, series: int, level: int) -> tx.Any:
-    """A dask array over tifffile's Zarr store, or `None` if dask or zarr
-    is missing."""
+    """Return a dask array over the Zarr store of tifffile, or `None` if dask
+    or zarr is missing.
+    """
     try:
         import dask.array as da
         import zarr
@@ -844,14 +790,12 @@ def _read_lazily(source: TiffSource, series: int, level: int) -> tx.Any:
 
 
 def _close_with(store: tx.Any) -> None:
-    """Close the files a tifffile Zarr store reopens to read chunks when
-    the store is collected.
+    """Close the files of a tifffile Zarr store when the store is collected.
 
-    The store reopens the file on the first chunk read and keeps it open in
-    its file cache until `store.close()`, which the dask graph never calls:
-    without this, the file would only be closed by the garbage collector,
-    with a `ResourceWarning`. The finalizer holds the cache, not the store,
-    so that it does not keep the store (and the dask array) alive.
+    The store keeps the file it opens for chunks until `store.close()`, which a
+    dask graph never calls, so only garbage collection would close it, with a
+    `ResourceWarning`. The finalizer holds the cache rather than the store, so
+    that it keeps neither the store nor the dask array alive.
     """
     cache = getattr(store, "_filecache", None)
     if cache is not None:

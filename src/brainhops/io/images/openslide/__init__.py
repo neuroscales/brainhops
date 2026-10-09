@@ -1,17 +1,9 @@
-"""
-Whole-slide images -- Aperio SVS, Hamamatsu NDPI/VMS/VMU, MIRAX, Leica
-SCN, Philips TIFF, Ventana BIF, Sakura SVSlide, Trestle, Zeiss CZI, DICOM
-WSI and generic tiled TIFF -- read with [OpenSlide](https://openslide.org/)
-(read only).
+"""Whole-slide images, read with OpenSlide.
 
-This reader requires the `openslide` extra
-(`pip install brainhops[openslide]`), which installs `openslide-python`
-and `openslide-bin`, the wheels of the OpenSlide C library (Linux, macOS
-and Windows). Where `openslide-bin` has no wheel, install the OpenSlide
-library with the system's package manager (`apt install libopenslide0`,
-`brew install openslide`, `conda install -c conda-forge openslide`) and
-`openslide-python` alone. Without them, these formats are not registered
-(see [Without OpenSlide](#without-openslide)).
+[OpenSlide](https://openslide.org) reads, but does not write, the pyramidal
+images of slide scanners. The `openslide` extra installs openslide-python and
+the openslide-bin wheels; elsewhere, the OpenSlide library can come from the
+system, with openslide-python on top of it.
 
 ```python
 from brainhops.io.images import load
@@ -26,117 +18,82 @@ load("slide.tif", hint="openslide")  # a generic tiled TIFF, by OpenSlide
 
 ## Formats
 
-OpenSlide reads every format through one library, but each is a class of
-its own, with its own extensions and hints, so that it can be asked for by
-name. The vendor of a file is the one `OpenSlide.detect_format` reports:
+Each vendor, as `OpenSlide.detect_format` names it, has a single-scale and a
+multiscale class, with its own extensions and hints:
 
-Vendor (`VENDOR`): classes; extensions; hints.
+* `aperio`: [`AperioImage`][] and [`AperioMultiScaleImage`][]; extensions
+  `.svs`; hints `aperio`, `svs`.
+* `hamamatsu`: [`HamamatsuImage`][] and [`HamamatsuMultiScaleImage`][];
+  extensions `.ndpi`, `.vms`, `.vmu`; hints `hamamatsu`, `ndpi`, `vms`, `vmu`.
+* `mirax`: [`MiraxImage`][] and [`MiraxMultiScaleImage`][]; extensions `.mrxs`;
+  hints `mirax`, `mrxs`, `3dhistech`.
+* `leica`: [`LeicaImage`][] and [`LeicaMultiScaleImage`][]; extensions `.scn`;
+  hints `leica`, `scn`.
+* `philips`: [`PhilipsImage`][] and [`PhilipsMultiScaleImage`][]; extensions
+  `.tiff`; hints `philips`.
+* `ventana`: [`VentanaImage`][] and [`VentanaMultiScaleImage`][]; extensions
+  `.bif`, `.tif`; hints `ventana`, `bif`.
+* `sakura`: [`SakuraImage`][] and [`SakuraMultiScaleImage`][]; extensions
+  `.svslide`; hints `sakura`, `svslide`.
+* `trestle`: [`TrestleImage`][] and [`TrestleMultiScaleImage`][]; extensions
+  `.tif`; hints `trestle`.
+* `zeiss`: [`ZeissImage`][] and [`ZeissMultiScaleImage`][]; extensions `.czi`;
+  hints `zeiss`, `czi`.
+* `dicom`: [`DicomWsiImage`][] and [`DicomWsiMultiScaleImage`][]; extensions
+  `.dcm`; hints `dicom-wsi`.
+* `generic-tiff`: [`GenericTiffImage`][] and [`GenericTiffMultiScaleImage`][];
+  extensions `.tif`, `.tiff`; hints `generic-tiff`.
 
-* `aperio`: `AperioImage`, `AperioMultiScaleImage`; extensions `.svs`; hints
-  `aperio`, `svs`.
-* `hamamatsu`: `HamamatsuImage`, `HamamatsuMultiScaleImage`; extensions
-  `.ndpi`, `.vms`, `.vmu`; hints `hamamatsu`, `ndpi`, `vms`, `vmu`.
-* `mirax`: `MiraxImage`, `MiraxMultiScaleImage`; extensions `.mrxs`; hints
-  `mirax`, `mrxs`, `3dhistech`.
-* `leica`: `LeicaImage`, `LeicaMultiScaleImage`; extensions `.scn`; hints
-  `leica`, `scn`.
-* `philips`: `PhilipsImage`, `PhilipsMultiScaleImage`; extensions `.tiff`;
-  hints `philips`.
-* `ventana`: `VentanaImage`, `VentanaMultiScaleImage`; extensions `.bif`,
-  `.tif`; hints `ventana`, `bif`.
-* `sakura`: `SakuraImage`, `SakuraMultiScaleImage`; extensions `.svslide`;
-  hints `sakura`, `svslide`.
-* `trestle`: `TrestleImage`, `TrestleMultiScaleImage`; extensions `.tif`; hints
-  `trestle`.
-* `zeiss`: `ZeissImage`, `ZeissMultiScaleImage`; extensions `.czi`; hints
-  `zeiss`, `czi`.
-* `dicom`: `DicomWsiImage`, `DicomWsiMultiScaleImage`; extensions `.dcm`; hints
-  `dicom-wsi`.
-* `generic-tiff`: `GenericTiffImage`, `GenericTiffMultiScaleImage`; extensions
-  `.tif`, `.tiff`; hints `generic-tiff`.
+Every hint is also accepted as `openslide.<hint>`, and `hint="openslide"`
+selects all of these formats. A vendor class reads only the slides that
+OpenSlide attributes to its vendor.
 
-Every hint is also qualified by `openslide` (`"openslide.aperio"`), and
-`hint="openslide"` alone selects all of them. A file is attributed to a
-vendor's class only if OpenSlide detects that vendor: a class asked for by
-hint refuses a slide of another vendor.
-
-OpenSlide opens files by name. A local file (or an open file whose name is
-a local file) is sniffed and read in place. A remote file, a stream or
-bytes are copied into a temporary file first (deleted with the image),
-and are only read when asked for by hint, since nothing is sniffed in
-memory; a format made of several files (MIRAX, VMS, DICOM, Trestle)
-cannot be read that way.
+OpenSlide opens files by name, so local files are sniffed and read in place.
+Remote files, streams and bytes are copied to a temporary file and read only by
+hint; the multi-file formats (MIRAX, Hamamatsu VMS, DICOM WSI and Trestle)
+cannot be read from such a copy.
 
 ## Which reader reads a TIFF-based slide
 
-SVS, NDPI, Philips, Leica SCN, Ventana BIF, Trestle and generic slides
-are TIFF files, which the [TIFF reader][brainhops.io.images.tiff] reads
-too. Formats are chosen by their sniffing scores first, so:
+SVS, NDPI, Philips, SCN, BIF, Trestle and generic slides are TIFF files, which
+the [TIFF reader][brainhops.io.images.tiff] reads too. A slide of a known
+vendor scores `CERTAIN` with OpenSlide, against 0.9 for the TIFF pyramid and
+`LIKELY` for a single-scale TIFF, so OpenSlide wins whenever it is installed;
+with `level=`, the single-scale classes compete in the same way. A generic
+tiled TIFF scores only `MAYBE` with OpenSlide, so the TIFF reader keeps it,
+along with its OME-XML, ImageJ and resolution metadata, unless
+`hint="openslide"` is given. Without `level=`, a single-scale class scores a
+pyramid at 0.8 times the vendor score, below the multiscale class.
 
-1. A slide of a known vendor scores `CERTAIN` (1.0) with its OpenSlide
-   multiscale class. The TIFF reader scores a vendor whole-slide pyramid
-   (tifffile's `is_svs`, `is_ndpi`, `is_philips`, `is_scn` or `is_bif`)
-   0.9 rather than `CERTAIN`, and a single-scale TIFF image 0.75
-   (`LIKELY`). So OpenSlide reads vendor slides when it is installed, and
-   the TIFF reader reads them otherwise.
-2. With `level=`, the OpenSlide single-scale class scores `CERTAIN`, the
-   TIFF multiscale reader declines, and the single-scale TIFF reader
-   scores `LIKELY`.
-3. A generic tiled TIFF (no vendor) scores only `MAYBE` (0.5), so the TIFF
-   reader, which also reads its OME-XML, ImageJ and resolution metadata,
-   keeps it; `hint="openslide"` asks for OpenSlide instead.
-4. Without a level, the single-scale class of a pyramid scores 0.8 times
-   its vendor's score, below its multiscale class; a slide with a single
-   level is read as a single-scale image.
+## Data and geometry
 
-## Data
+A level is an F-ordered `(x, y, c)` RGB `uint8` array whose row 0 is the top of
+the slide. The RGBA pixels of OpenSlide are composited onto the background
+colour of the slide (`openslide.background-color`, white by default).
+`image.data` reads only the region that is indexed, while
+`numpy.asarray(image.data)` reads the whole level. With `lazy=True`, or when
+dask is the array backend, the data is a dask array of whole tiles.
 
-Each level is F-ordered `(x, y, c)`: RGB `uint8` samples, row 0 at the
-top (`y` points down; this is not encoded as an orientation). OpenSlide
-decodes RGBA; the alpha channel only marks pixels outside the scanned
-area, which are composited onto the slide's background colour
-(`openslide.background-color`, white by default), so the image is RGB.
-
-Pixels are never read in full unless asked for. `image.data` is a lazy
-array that reads, with `read_region`, only the region it is indexed with
-(`numpy.asarray(image.data)` reads the whole level); with `lazy=True`, or
-when dask is the array backend, it is a dask array whose chunks are whole
-tiles (at least 1024 pixels wide).
-
-## Geometry
-
-The index space is 0-based, and an integer is the centre of a pixel. The
-image carries one transformation, a scaling from its `"pixel"` system to a
-`"physical"` one, whose size is the full-resolution pixel size from
-`openslide.mpp-x` / `openslide.mpp-y` (micrometres), times the level's
-downsampling factor (`level_downsamples`). When the slide records no
-pixel size it is unknown: the identity, in no unit. `pixel_size=` and
-`unit=` override it, as for every raster image.
-
-A level covers the same extent as the full resolution: pixel `i` of a
-level downsampled by `f` is centred on the full-resolution pixel
-coordinate `f * i + (f - 1) / 2` (a translation of `(f - 1) / 2`
-full-resolution pixels), as in TIFF and OME-Zarr pyramids. A pyramid's
-levels all map onto the same `"physical"` system, and its own
-transformation is the identity. The bounds of a sparse slide
-(`openslide.bounds-*`) are kept as metadata, not applied: every level
-covers the whole slide.
+Each level is scaled to `"physical"` by the pixel size of `openslide.mpp-x` and
+`openslide.mpp-y` (in micrometres) times its downsampling factor `f`, or by the
+identity, with no unit, when the slide records no size. Pixel `i` is centred at
+the full-resolution coordinate `f * i + (f - 1) / 2`, so that every level
+covers the whole slide, as in TIFF and OME-Zarr pyramids. The bounds of the
+scan (`openslide.bounds-*`) are kept as metadata only.
 
 ## Metadata
 
-What the slide records besides the pixels is kept on the image:
-`vendor`, `properties` (every OpenSlide property, standard and
-vendor-specific), `n_levels`, `level_downsamples`, `background_color`,
-`bounds`, `level` (single-scale), and `associated_images`, the names of
-the label, macro, thumbnail, ... images, which `associated_image(name)`
-reads as `(x, y, c)` RGB arrays.
+Images have the attributes `vendor`, `properties` (every OpenSlide property),
+`n_levels`, `level_downsamples`, `background_color`, `bounds`, `level`
+(single-scale images only) and `associated_images`, the names of the images
+that `associated_image(name)` reads.
 
 ## Without OpenSlide
 
-When `openslide-python` or the OpenSlide library is missing, this module
-is not registered; asking for it by hint (`"openslide"`, `"svs"`, ...)
-says what to install, and the TIFF-based slides are read by the
-[TIFF reader][brainhops.io.images.tiff], if tifffile is installed.
+Without openslide-python or the OpenSlide library, this module is not
+registered, and a request by hint (`"openslide"`, `"svs"`, ...) says what to
+install. TIFF-based slides then fall back to the TIFF reader, if tifffile is
+installed.
 """
 
 __all__ = [

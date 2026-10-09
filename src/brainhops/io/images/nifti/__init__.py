@@ -1,4 +1,4 @@
-"""Readers and writers for images stored in NIfTI files."""
+"""Readers and writers for NIfTI images."""
 
 __all__ = ["NiftiImage"]
 
