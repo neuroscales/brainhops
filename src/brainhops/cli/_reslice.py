@@ -4,12 +4,14 @@ The command reads an input image, applies a chain of transformations and
 resamples the result onto the grid of a reference image, whose geometry
 also places the output in world space.
 
-Each `-t`/`--transform` is a forward (push) map that moves the input
-image, as in `image(T)` in the library, and the transformations are
-applied in the order given. The resampler pulls internally by inverting
-the composed map. Warps written by ANTs, SPM and FSL are usually pull
-maps, from the reference to the moving image, and must be inverted with
-the `inv` operator:
+Each `-t` or `--transform` option names a forward (push) map that moves
+the input image, as `image(T)` does in the library, and the
+transformations are applied in the order given. Internally, the resampler
+works in the pull direction: it inverts the composed map to find, for
+each voxel of the reference grid, the point of the input image to sample.
+Warps written by ANTs, SPM and FSL are usually pull maps, which go from
+the reference to the moving image, so they must be inverted with the
+`inv` operator:
 
     path/to/warp.nii.gz|inv
 """
@@ -41,9 +43,9 @@ class _UnimplementedOperation(OperationSpec, frozen=True):
         )
 
 
-# Exponential and logarithm are not operators: a file that holds a
-# velocity field says so with an option, such as `|svf` or
-# `|displacements|log:true`.
+# The exponential and the logarithm are not registered as operators,
+# because a file that holds a velocity field declares it with an option,
+# such as `|svf` or `|displacements|log:true`.
 for _operation_name in ("sqrt", "square"):
     TransformationSpec.register_operation(_operation_name)(
         _UnimplementedOperation
@@ -156,8 +158,9 @@ def _split_image_spec(spec: str) -> ImageSpec:
 def _load_push_transform(spec: str) -> Image:
     """Load a transformation and apply its chain of operators.
 
-    The operators are applied in the order written, so that `warp|a|b` is
-    `b(a(load))`, and the result is a forward (push) map.
+    The operators are applied in the order written, so that `warp|a|b`
+    applies `a` to the loaded transformation and then applies `b` to the
+    result. The returned transformation is a forward (push) map.
     """
     source = _split_transform_spec(spec)
     transform = load_transform(source)

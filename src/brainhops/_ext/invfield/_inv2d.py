@@ -10,8 +10,8 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
     an affine transform, following Ashburner, Andersson and Friston,
     "High-Dimensional Image Registration Using Symmetric Priors", NeuroImage,
     1999 (https://www.fil.ion.ucl.ac.uk/spm/doc/papers/john_high_dim.pdf).
-    Points of the output that no triangle covers are filled by smoothing
-    in the values of their neighbours.
+    The points of the output that no triangle covers are filled in by
+    repeatedly smoothing the values of their neighbours.
 
     Parameters
     ----------
@@ -120,10 +120,11 @@ def _process_segment(
 ) -> None:
     """Rasterise a batch of segments that lie on horizontal lines.
 
-    The triangles `src` and `dst` have shape `(N, 3, 2)`, `y` holds the
-    line of each segment, with shape `(N,)`, and `seg` holds the end points
-    of the segments in the target domain, with shape `(N, 2, 1)`. The
-    output `out` has shape `(Nx, Ny, 2)` and is written in place.
+    The triangles `src` and `dst` have shape `(N, 3, 2)`. The array `y`,
+    with shape `(N,)`, holds the y coordinate of the line on which each
+    segment lies, and `seg`, with shape `(N, 2, 1)`, holds the x
+    coordinates of the end points of each segment in the target domain.
+    The output `out` has shape `(Nx, Ny, 2)` and is written in place.
     """
 
     idx = np.argsort(seg[:, :, X : X + 1], axis=VERTEX_AXIS)
@@ -139,7 +140,8 @@ def _process_segment(
         vdst = np.stack((xm, ym), axis=-1)
         bary = _barycoord(vdst, dst[mask])
 
-        # The source point is the barycentric mean of the source vertices.
+        # The source point is the mean of the source vertices, weighted by
+        # the barycentric coordinates of the target point.
         vsrc = np.einsum("ijk,ij->ik", src[mask], bary)
 
         out[xm, ym] = vsrc
@@ -148,8 +150,8 @@ def _process_segment(
 
 
 def _barycoord(x: np.ndarray, tri: np.ndarray) -> np.ndarray:
-    # Barycentric coordinates, of shape (N, 3), of the points x, of shape
-    # (N, 2), in the triangles tri, of shape (N, 3, 2).
+    # Compute the barycentric coordinates, of shape (N, 3), of the points
+    # x, of shape (N, 2), in the triangles tri, of shape (N, 3, 2).
 
     v0 = tri[:, 0]
     v1 = tri[:, 1]
@@ -258,10 +260,10 @@ def yield_red(
     #    | /    /   |
     #         /_____|
 
-    # Tip at x00.
+    # Triangle 1 has its tip at x00.
     yield _truncate_and_stack2d(x00, x01, x10)
 
-    # Tip at x11.
+    # Triangle 2 has its tip at x11.
     yield _truncate_and_stack2d(x11, x01, x10)
 
 
@@ -274,10 +276,10 @@ def yield_black(
     #  |   \    \   |
     #  |_____\    \ |
 
-    # Tip at x01.
+    # Triangle 1 has its tip at x01.
     yield _truncate_and_stack2d(x01, x00, x11)
 
-    # Tip at x10.
+    # Triangle 2 has its tip at x10.
     yield _truncate_and_stack2d(x10, x00, x11)
 
 

@@ -39,9 +39,10 @@ def to_homogeneous(
 ) -> ArrayProtocol:
     """Convert a compact affine to a square homogeneous matrix.
 
-    The row `[0, ..., 0, 1]` is appended, or the row `[0, ..., 0, 0]` when
-    `tangent` is true, which is the bottom row of the generator of an
-    affine transform.
+    The function appends the row `[0, ..., 0, 1]`. When `tangent` is true,
+    the function appends the row `[0, ..., 0, 0]` instead, because the input
+    is then a tangent, that is, the generator of an affine transform, whose
+    bottom row is zero.
     """
     nx = get_array_backend(matrix)
     nd = matrix.shape[-1] - 1
@@ -185,8 +186,8 @@ def _matmul(
 
 
 def _matmul_cost(A: ArrayProtocol, B: ArrayProtocol) -> int:
-    # The cost ignores the size of the output; it only serves to multiply
-    # the matrices without batch dimensions first.
+    # The cost ignores the size of the output. Its only purpose is to ensure
+    # that the matrices without batch dimensions are multiplied first.
     batch = broadcast_shapes(A.shape[:-2], B.shape[:-2])
     return prod(batch) * B.shape[-2]
 
@@ -359,11 +360,13 @@ def expm(
 ) -> ArrayProtocol:
     """Return the exponential of a compact affine tangent.
 
-    A tangent `[L, l]`, with shape `(N, N+1)`, is the top of the generator
-    `[[L, l], [0, ..., 0]]`, and the result is the top of the homogeneous
-    affine that the generator exponentiates to. The linear part `L` may be
-    singular, as in the pure translation `[0, t]`. The `what` argument names
-    the operation in error messages.
+    A tangent is the generator of an affine transform. Its compact form
+    `[L, l]`, with shape `(N, N+1)`, stands for the square matrix
+    `[[L, l], [0, ..., 0]]`, whose bottom row is zero. The function
+    exponentiates that square matrix and returns the resulting affine in
+    compact form. The linear part `L` may be singular, as in the pure
+    translation `[0, t]`. The `what` argument names the operation in error
+    messages.
     """
     return to_compact(_expm(to_homogeneous(matrix, tangent=True), what))
 
@@ -374,10 +377,11 @@ def logm(
 ) -> ArrayProtocol:
     """Return the principal logarithm of a compact affine.
 
-    The input is a map, so it is completed with the affine row
-    `[0, ..., 0, 1]`. The result is a tangent `[L, l]`, the top of the
-    logarithm, whose last row is zero. The `what` argument names the
-    operation in error messages.
+    The input is an affine map, so it is completed with the row
+    `[0, ..., 0, 1]` before the logarithm is taken. The bottom row of the
+    logarithm is zero, and the function returns the remaining rows, which
+    form a tangent `[L, l]`. The `what` argument names the operation in
+    error messages.
     """
     return to_compact(_logm(to_homogeneous(matrix), what))
 
@@ -388,8 +392,8 @@ def sqrtm(
 ) -> ArrayProtocol:
     """Return the principal square root of a compact affine.
 
-    Both the input and the root are maps, completed with the affine row
-    `[0, ..., 0, 1]`. The `what` argument names the operation in error
-    messages.
+    Both the input and the root are affine maps, so their full matrices end
+    with the row `[0, ..., 0, 1]`. The `what` argument names the operation
+    in error messages.
     """
     return to_compact(_sqrtm(to_homogeneous(matrix), what))

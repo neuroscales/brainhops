@@ -137,7 +137,7 @@ def has_abczarr_driver() -> bool:
 
 
 def __dir__() -> tx.List[str]:
-    """List the lazy names with the globals, for `dir` and tab completion."""
+    """List the globals of the module and its lazy names, for `dir`."""
     return sorted(set(globals()) | set(_LAZY_NAMES))
 
 
@@ -159,8 +159,8 @@ def _lazy_import(
     namespace : dict of str to Any
         Namespace in which the names are stored, usually `globals()`.
     query : str
-        Name whose lookup triggered the import: the qualified module name,
-        its short alias, or the name of its flag.
+        Name whose lookup triggered the import. The name is the qualified
+        module name, its short alias, or the name of its flag.
     qualname : str, optional
         Name of the module to import. The default is `query`.
     shortname : str, optional
