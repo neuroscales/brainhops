@@ -22,12 +22,12 @@ from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base.parsers import WriterError
 
 from .affines import (
-    LPS,
-    RAS,
-    VOXEL,
+    _LPS,
+    _RAS,
+    _VOXEL,
     RASToVoxel,
     VoxelToRAS,
-    check_endpoint,
+    _check_endpoint,
 )
 
 
@@ -41,8 +41,8 @@ class RASCoordinatesField(_xforms.CoordinatesField):
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        check_endpoint(self, "input", VOXEL)
-        check_endpoint(self, "output", RAS)
+        _check_endpoint(self, "input", _VOXEL)
+        _check_endpoint(self, "output", _RAS)
 
 
 class LPSCoordinatesField(_xforms.CoordinatesField):
@@ -55,8 +55,8 @@ class LPSCoordinatesField(_xforms.CoordinatesField):
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        check_endpoint(self, "input", VOXEL)
-        check_endpoint(self, "output", LPS)
+        _check_endpoint(self, "input", _VOXEL)
+        _check_endpoint(self, "output", _LPS)
 
 
 # ----------------------------------------------------------------------

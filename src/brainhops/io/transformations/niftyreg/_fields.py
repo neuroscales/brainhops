@@ -38,8 +38,8 @@ from brainhops.io.common.nifti._header import (
     _nifti_vector_field,
     _NiftiObject,
 )
+from brainhops.io.transformations.base._conversions import no_exact_conversion
 from brainhops.io.transformations.base.affines import RASToRAS
-from brainhops.io.transformations.base.conversions import no_exact_conversion
 from brainhops.io.transformations.base.fields import (
     homogeneous_matrix,
     ras_displacement_chain,

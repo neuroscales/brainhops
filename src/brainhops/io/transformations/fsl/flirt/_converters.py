@@ -15,7 +15,7 @@ from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     _convert_withlog,
 )
-from brainhops.io.transformations.base.conversions import unrepresentable
+from brainhops.io.transformations.base._conversions import unrepresentable
 
 from ._xform import FlirtTransform
 

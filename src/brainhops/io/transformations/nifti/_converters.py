@@ -20,13 +20,12 @@ family of fields. Each is named, so that its endpoints are bridged: the
 converters of the data model would rebuild it as the format with its own
 endpoints, which the format refuses unless they are its own.
 
-The endpoints are those of `t`, bridged to the format's (see
-[`brainhops.io.transformations.base.conversions`][]): an affine to LPS
-is flipped into RAS, and one whose systems are not known is taken to map
-the format's. A field is held only as NIfTI stores it -- its values,
-read back with linear interpolation and the nearest value outside the
-grid -- and a displacement field only between a world-to-grid affine and
-its inverse. A field of displacements is not stored as one of
+The endpoints are those of `t`, bridged exactly to the format's: an
+affine to LPS is flipped into RAS, and one whose systems are not known is
+taken to map the format's. A field is held only as NIfTI stores it -- its
+values, read back with linear interpolation and the nearest value outside
+the grid -- and a displacement field only between a world-to-grid affine
+and its inverse. A field of displacements is not stored as one of
 coordinates, or the reverse: the two extend differently outside their
 grid, so they are not the same map there.
 
@@ -35,9 +34,7 @@ helper it calls first (`_ras_displacement`, `_ras_coordinates`, or
 `affine_between`). Nothing is resampled or approximated. The options a
 converter is given are the format's own (`header=`, and `log=` and
 `steps=` for a displacement field); one that would change the map, such
-as `input=` or `matrix=`, is refused (see
-[`format_options`][brainhops.io.transformations.base.conversions.\
-format_options]).
+as `input=` or `matrix=`, is refused (by `format_options`).
 """
 
 # dependencies
@@ -55,10 +52,7 @@ from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
 from brainhops.datamodel.enums import BoundaryCondition
-
-# io
-from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
-from brainhops.io.transformations.base.conversions import (
+from brainhops.io.transformations.base._conversions import (
     affine_between,
     apply_affine,
     format_options,
@@ -66,6 +60,9 @@ from brainhops.io.transformations.base.conversions import (
     undoes,
     unrepresentable,
 )
+
+# io
+from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 from .affines import NiftiRASToVoxel, NiftiVoxelToRAS
 from .fields import NiftiRASCoordinatesField, NiftiRASDisplacementField

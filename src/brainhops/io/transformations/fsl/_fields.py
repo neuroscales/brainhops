@@ -3,7 +3,7 @@ from bagof.magic import KwOnly
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.io.transformations.base.affines import RAS, check_endpoint
+from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
 
 
 class RASToWarpField(_xforms.Affine):
@@ -20,7 +20,7 @@ class RASToWarpField(_xforms.Affine):
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        check_endpoint(self, "input", RAS)
+        _check_endpoint(self, "input", _RAS)
 
 
 class WarpFieldToRAS(_xforms.Affine):
@@ -35,4 +35,4 @@ class WarpFieldToRAS(_xforms.Affine):
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        check_endpoint(self, "output", RAS)
+        _check_endpoint(self, "output", _RAS)

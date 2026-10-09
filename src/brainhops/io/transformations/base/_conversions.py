@@ -25,10 +25,9 @@ one conversion.
 
 The generic converters of the data model rebuild a transformation as the
 class they are asked for. A format bound to coordinate systems checks its
-endpoints as it is built (see
-[`check_endpoint`][brainhops.io.transformations.base.affines.check_endpoint]),
-so a transformation between other systems is not relabelled as it, and
-its exact converters, named for each family, bridge the endpoints first.
+endpoints as it is built, so a transformation between other systems is
+not relabelled as it, and its exact converters, named for each family,
+bridge the endpoints first.
 A format that derives its systems from what it holds cannot check them,
 and refuses each family with [`no_exact_conversion`][] until it has
 exact converters. A format converted to its own class is changed by the

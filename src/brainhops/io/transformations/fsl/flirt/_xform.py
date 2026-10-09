@@ -7,7 +7,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.base.affines import RAS, check_endpoint
+from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
 
 from .._affines import _ImageGeometry
 from .._formats import FslAffineFormat
@@ -55,8 +55,8 @@ class FlirtTransform(
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        check_endpoint(self, "input", RAS)
-        check_endpoint(self, "output", RAS)
+        _check_endpoint(self, "input", _RAS)
+        _check_endpoint(self, "output", _RAS)
 
     @property
     def data(self) -> tx.Optional[np.ndarray]:

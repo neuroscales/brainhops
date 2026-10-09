@@ -18,11 +18,11 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.base.affines import RAS, RASToRAS
-from brainhops.io.transformations.base.conversions import (
+from brainhops.io.transformations.base._conversions import (
     affine_between,
     format_options,
 )
+from brainhops.io.transformations.base.affines import _RAS, RASToRAS
 
 from ._formats import NiftyRegAffineFormat
 
@@ -141,7 +141,7 @@ def _(
     # NiftyReg affine accept it.
     cls = NiftyRegAffine
     format_options(t, cls, kwargs)
-    matrix = affine_between(t, RAS, RAS, cls)
+    matrix = affine_between(t, _RAS, _RAS, cls)
     return cls(matrix=matrix[:-1])
 
 

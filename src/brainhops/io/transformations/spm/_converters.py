@@ -8,12 +8,12 @@ from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
-from brainhops.io.transformations.base.affines import RASToVoxel
-from brainhops.io.transformations.base.conversions import (
+from brainhops.io.transformations.base._conversions import (
     format_options,
     split_field_chain,
     unrepresentable,
 )
+from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.nifti._converters import (
     RAS,
     check_coordinates,

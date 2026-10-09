@@ -17,7 +17,7 @@ from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     _convert_withlog,
 )
-from brainhops.io.transformations.base.conversions import no_exact_conversion
+from brainhops.io.transformations.base._conversions import no_exact_conversion
 
 from ._xforms import LtaTransformation
 

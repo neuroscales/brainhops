@@ -2,9 +2,12 @@
 RAS and LPS coordinate systems.
 
 Each class is bound to the systems it names, and checks that its endpoints
-are compatible with them (see [`check_endpoint`][]). A transformation
-between other systems is therefore not relabelled as one of these classes:
-`Scaling(input=LPSmm(), output=LPSmm()).to(VoxelToRAS)` raises an
+are compatible with them. The names of the axes are not compared, and an
+endpoint with fewer axes is compared with the first axes of the system, as
+the world of a 2-D image is the first two axes of RAS or LPS. A
+transformation between other systems is therefore not relabelled as one of
+these classes: `Scaling(input=LPSmm(), output=LPSmm()).to(VoxelToRAS)`
+raises an
 [`IncompatibleSystemError`][brainhops.errors.IncompatibleSystemError]. An
 endpoint that is not known, or has axes that are not known, is accepted.
 """
@@ -17,17 +20,105 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.axes import Axis
 from brainhops.errors import IncompatibleSystemError
 
-VOXEL = _systems.VoxelCoordinateSystem()
+
+class VoxelToRAS(_xforms.Affine):
+    """Affine transformation from voxel coordinates to RAS millimetres."""
+
+    _input: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _VOXEL)
+        _check_endpoint(self, "output", _RAS)
+
+
+class RASToVoxel(_xforms.Affine):
+    """Affine transformation from RAS millimetres to voxel coordinates."""
+
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+    _output: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
+
+    # Both classes map the same spaces in opposite directions, so each is the
+    # inverse of the other. Declaring the pairing once, on the class defined
+    # second, links the two classes both ways.
+    _reverseof: tx.ClassVar[type] = VoxelToRAS
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _RAS)
+        _check_endpoint(self, "output", _VOXEL)
+
+
+class VoxelToLPS(_xforms.Affine):
+    """Affine transformation from voxel coordinates to LPS millimetres."""
+
+    _input: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _VOXEL)
+        _check_endpoint(self, "output", _LPS)
+
+
+class LPSToVoxel(_xforms.Affine):
+    """Affine transformation from LPS millimetres to voxel coordinates."""
+
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
+    _output: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
+
+    _reverseof: tx.ClassVar[type] = VoxelToLPS
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _LPS)
+        _check_endpoint(self, "output", _VOXEL)
+
+
+class RASToRAS(_xforms.Affine):
+    """Affine transformation from one RAS world space to another.
+
+    A typical example is the result of a registration, which maps the world
+    coordinates of one image to those of another. The class is a data model of
+    its own rather than a plain
+    [`Affine`][brainhops.datamodel.transformations.Affine], so that an affine
+    with arbitrary endpoints is never written to a format that can only store
+    RAS-to-RAS transformations.
+    """
+
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _RAS)
+        _check_endpoint(self, "output", _RAS)
+
+
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+_VOXEL = _systems.VoxelCoordinateSystem()
 """The voxels of a grid."""
 
-RAS = _systems.RASmm()
+_RAS = _systems.RASmm()
 """The RAS world, in millimetres."""
 
-LPS = _systems.LPSmm()
+_LPS = _systems.LPSmm()
 """The LPS world, in millimetres."""
 
 
-def check_endpoint(
+def _check_endpoint(
     t: _xforms.Transformation, name: str, expected: _systems.CoordinateSystem
 ) -> None:
     """
@@ -83,86 +174,3 @@ def _unnamed(axis: Axis) -> Axis:
         discrete=axis.discrete,
         orientation=axis.orientation,
     )
-
-
-class VoxelToRAS(_xforms.Affine):
-    """Affine transformation from voxel coordinates to RAS millimetres."""
-
-    _input: KwOnly[_systems.CoordinateSystem] = (
-        _systems.VoxelCoordinateSystem()
-    )
-    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
-
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        check_endpoint(self, "input", VOXEL)
-        check_endpoint(self, "output", RAS)
-
-
-class RASToVoxel(_xforms.Affine):
-    """Affine transformation from RAS millimetres to voxel coordinates."""
-
-    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
-    _output: KwOnly[_systems.CoordinateSystem] = (
-        _systems.VoxelCoordinateSystem()
-    )
-
-    # Both classes map the same spaces in opposite directions, so each is the
-    # inverse of the other. Declaring the pairing once, on the class defined
-    # second, links the two classes both ways.
-    _reverseof: tx.ClassVar[type] = VoxelToRAS
-
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        check_endpoint(self, "input", RAS)
-        check_endpoint(self, "output", VOXEL)
-
-
-class VoxelToLPS(_xforms.Affine):
-    """Affine transformation from voxel coordinates to LPS millimetres."""
-
-    _input: KwOnly[_systems.CoordinateSystem] = (
-        _systems.VoxelCoordinateSystem()
-    )
-    _output: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
-
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        check_endpoint(self, "input", VOXEL)
-        check_endpoint(self, "output", LPS)
-
-
-class LPSToVoxel(_xforms.Affine):
-    """Affine transformation from LPS millimetres to voxel coordinates."""
-
-    _input: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
-    _output: KwOnly[_systems.CoordinateSystem] = (
-        _systems.VoxelCoordinateSystem()
-    )
-
-    _reverseof: tx.ClassVar[type] = VoxelToLPS
-
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        check_endpoint(self, "input", LPS)
-        check_endpoint(self, "output", VOXEL)
-
-
-class RASToRAS(_xforms.Affine):
-    """Affine transformation from one RAS world space to another.
-
-    A typical example is the result of a registration, which maps the world
-    coordinates of one image to those of another. The class is a data model of
-    its own rather than a plain
-    [`Affine`][brainhops.datamodel.transformations.Affine], so that an affine
-    with arbitrary endpoints is never written to a format that can only store
-    RAS-to-RAS transformations.
-    """
-
-    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
-    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
-
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        check_endpoint(self, "input", RAS)
-        check_endpoint(self, "output", RAS)

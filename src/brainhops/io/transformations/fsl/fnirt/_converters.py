@@ -17,7 +17,7 @@ from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
-from brainhops.io.transformations.base.conversions import no_exact_conversion
+from brainhops.io.transformations.base._conversions import no_exact_conversion
 
 from ._base import FnirtWarpField
 
