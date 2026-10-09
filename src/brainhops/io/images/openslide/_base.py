@@ -37,17 +37,19 @@ from brainhops.io.images.base import _utils_raster as raster
 #   CONSTANTS
 # ----------------------------------------------------------------------
 
-# OpenSlide yields C-ordered (y, x, samples) RGBA; alpha only marks pixels
-# outside the scan and is composited away.
+# OpenSlide returns C-ordered (y, x, samples) RGBA pixels. The alpha channel
+# only marks the pixels outside the scanned area, and it is composited onto
+# the background colour.
 _STORAGE = "YXS"
 
-# Dask chunks group whole tiles up to at least this many pixels.
+# Each dask chunk groups whole tiles until it is at least this many pixels
+# wide along each axis (or covers the whole axis).
 _MIN_CHUNK = 1024
 
 _LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
 
-# Vendor name -> single-scale class, used by the multiscale classes to build
-# their levels. Filled by `_formats`.
+# This mapping gives the single-scale class of each vendor name. The multiscale
+# classes use it to build their levels, and `_formats` fills it.
 _LEVEL_CLASSES: tx.Dict[str, type] = {}
 
 
@@ -87,10 +89,11 @@ def _local_path(file: tx.Any) -> tx.Optional[str]:
 def _detect(filename: str, mtime: int, size: int) -> tx.Tuple[str, int]:
     """Return the vendor and level count of a file, or `("", 0)`.
 
-    Every format sniffs the same file, so the result is cached on the
-    modification time and size of the file.
+    Every format class sniffs the same file, so the result is cached. The
+    modification time and size of the file are part of the cache key, so
+    that a modified file is detected again.
     """
-    del mtime, size  # cache key only
+    del mtime, size  # these arguments only serve as the cache key
     try:
         vendor = openslide.OpenSlide.detect_format(filename)
         if not vendor:
@@ -133,8 +136,11 @@ class _Slide:
 
     @classmethod
     def from_content(cls, content: bytes, suffix: str) -> "_Slide":
-        """Write content to a temporary file, since OpenSlide opens slides only
-        by name. Multi-file formats cannot be read this way.
+        """Return a slide whose content is written to a temporary file.
+
+        OpenSlide opens slides only by name, so the content must be written to
+        a file first. Multi-file formats cannot be read this way, because the
+        temporary directory holds only the one file.
         """
         tempdir = tempfile.mkdtemp(prefix="brainhops-openslide-")
         filename = os.path.join(tempdir, "slide" + suffix)
@@ -193,9 +199,9 @@ def _bounding(key: tx.Any, n: int) -> tx.Tuple[int, int, tx.Any]:
         if not len(indices):
             return 0, 0, slice(0, 0)
         lo, hi = min(indices), max(indices) + 1
-        # the range ends at the last index whatever the sign of the step
+        # The range ends after the last index, whatever the sign of the step.
         return lo, hi, slice(start - lo, None, step)
-    return 0, n, key  # arrays read the whole axis
+    return 0, n, key  # an array index reads the whole axis
 
 
 class _SlideArray:
@@ -287,7 +293,7 @@ class _SlideArray:
         alpha = rgba[..., 3:4]
         rgb = rgba[..., :3]
         if not (alpha == 255).all():
-            # read_region yields RGBA that is not premultiplied
+            # read_region returns RGBA that is not premultiplied by alpha
             a = alpha.astype(np.uint16)
             rgb = (
                 rgb.astype(np.uint16) * a + self._background * (255 - a) + 127
@@ -299,9 +305,11 @@ class _SlideArray:
 def _level_data(
     slide: _Slide, level: int, lazy: tx.Optional[bool]
 ) -> ArrayProtocol:
-    """Return the data of a level: a dask array of whole tiles if `lazy` is
-    true, or if `lazy` is `None` and dask is the array backend, and a
-    [`_SlideArray`][] otherwise.
+    """Return the data of a level, as a [`_SlideArray`][] or a dask array.
+
+    The data is a dask array of whole tiles if `lazy` is true, or if `lazy` is
+    `None` and dask is the array backend. Otherwise, and whenever dask is not
+    installed, the data is a [`_SlideArray`][].
     """
     array = _SlideArray(slide, level)
     if lazy is None:
@@ -414,8 +422,8 @@ class OpenSlideFormat:
 
 
 class _OpenSlideMixin(OpenSlideFormat):
-    """Sniffing, opening and metadata, shared by single-scale and multiscale
-    images.
+    """Methods that sniff, open and describe slides, shared by single-scale and
+    multiscale images.
     """
 
     @classmethod
@@ -471,9 +479,9 @@ class _OpenSlideMixin(OpenSlideFormat):
     ) -> float:
         """Return the confidence that an open file is a slide of this vendor.
 
-        The file is sniffed through the name of the local file it was opened
-        from. A stream without such a name scores `NO` and is read only by
-        hint.
+        OpenSlide sniffs the file through the name of the local file that it
+        was opened from. A stream without such a name scores `NO`, so it is
+        read only by hint.
         """
         local = _local_path(file)
         if local is None:
@@ -491,7 +499,7 @@ class _OpenSlideMixin(OpenSlideFormat):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return `NO`: content in memory is read only by hint."""
+        """Return `NO`, because content in memory is read only by hint."""
         if error:
             if error is True:
                 error = SnifferContentError
@@ -605,7 +613,8 @@ class _OpenSlideMixin(OpenSlideFormat):
         return np.ascontiguousarray(rgb).transpose(1, 0, 2)
 
 
-# Metadata attributes shared by single-scale and multiscale images.
+# The metadata attributes below are shared by single-scale and multiscale
+# images.
 _Properties = tx.Annotated[
     tx.Optional[tx.Dict[str, str]],
     tx.Doc(
@@ -628,7 +637,8 @@ _Background = tx.Annotated[
     tx.Optional[str],
     tx.Doc(
         "The background colour of the slide (`RRGGBB`), which fills the "
-        "pixels outside the scanned area; white if absent."
+        "pixels outside the scanned area. It is white if the slide records "
+        "none."
     ),
 ]
 _Bounds = tx.Annotated[
@@ -668,7 +678,7 @@ class OpenSlideImage(
     properties: _Properties = None
     level: tx.Annotated[
         tx.Optional[int],
-        tx.Doc("The level that was read (0: full resolution)."),
+        tx.Doc("The level that was read, where 0 is the full resolution."),
     ] = None
     n_levels: _NLevels = None
     level_downsamples: _Downsamples = None
@@ -778,9 +788,10 @@ class OpenSlideMultiScaleImage(
     associated_images: _Associated = None
 
     PRIORITY: tx.ClassVar[int] = FileBasedImage.PRIORITY + 1
-    """Content in memory is not sniffed, so by hint a pyramid and a
-    single-scale class would tie. The pyramid is tried first, and declines a
-    `level` option.
+    """Content in memory is not sniffed, so when it is read by hint, the
+    multiscale and single-scale classes of a vendor would tie. The higher
+    priority makes the multiscale class be tried first. That class declines a
+    `level` option, which leaves such a request to the single-scale class.
     """
 
     @classmethod

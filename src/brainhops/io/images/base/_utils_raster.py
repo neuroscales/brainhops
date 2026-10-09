@@ -3,16 +3,17 @@
 Raster formats such as PNG, JPEG, TIFF or WebP store an array of samples
 and at most a pixel size, without an origin, an orientation or a world
 space. This module defines how every raster reader interprets such files,
-as [`brainhops.io.common.nifti`][brainhops.io.common.nifti] does for NIfTI.
-A backend only decodes the file to a C-ordered array and a description of
-its axes.
+as [`brainhops.io.common.nifti`][brainhops.io.common.nifti] does for NIfTI,
+so that a backend only has to decode the file to a C-ordered array and a
+description of its axes.
 
 1. An integer index is the centre of a pixel, as in NIfTI and ITK, so
    pixel `(0, 0)` covers `[-0.5, 0.5]` along both axes.
-2. Readers return a view of the decoded `(y, x)` array in the brainhops
-   order ([`to_canonical`][]): spatial axes first, fastest first, then
-   time, channels and other axes. Writers transpose back
-   ([`to_storage`][]).
+2. Readers return a view of the decoded `(y, x)` array with its axes in
+   the brainhops order, which [`to_canonical`][] computes. In that order,
+   the spatial axes come first, fastest first, and are followed by time,
+   channels and other axes. Writers transpose the data back with
+   [`to_storage`][].
 3. Row zero is the top row, so `y` points down. No orientation is
    attached to the axes.
 4. The components of a pixel lie along a
@@ -323,9 +324,10 @@ def to_storage(
 def default_axes(ndim: int, channel: bool = False) -> tx.List[Axis]:
     """Return the axes assumed for an array that is not described.
 
-    The axes are `x`, `y`, `z`, `t` and `c`, as far as there are
-    dimensions, then `dim<i>`. With `channel=True`, the last axis is a
-    channel axis and the others follow the same defaults.
+    The axes are named `x`, `y`, `z`, `t` and `c`, in that order, for as
+    many dimensions as there are, and any further axis `i` is named
+    `dim<i>`. With `channel=True`, the last axis is a channel axis, and
+    the other axes follow the same defaults.
     """
     if channel and ndim >= 1:
         others = default_axes(ndim - 1)
@@ -371,7 +373,7 @@ def pixel_system(axes: tx.Sequence[Axis]) -> CoordinateSystem:
     """Return the coordinate system of the raster index space.
 
     The axes count samples, fastest first. The system is named `"pixel"`
-    with two spatial axes and `"voxel"` otherwise.
+    when there are two spatial axes, and `"voxel"` otherwise.
     """
     axes = [replace(axis, unit=_INDEX) for axis in axes]
     name = "pixel" if len(spatial_axes(axes)) == 2 else "voxel"
@@ -382,7 +384,7 @@ def physical_system(
     axes: tx.Sequence[Axis],
     units: tx.Optional[tx.Mapping[str, tx.Any]] = None,
 ) -> CoordinateSystem:
-    """Return the `"physical"` system onto which pixel sizes map indices.
+    """Return the `"physical"` system, onto which pixel sizes map indices.
 
     Each axis takes the unit that `units` gives for its name, or no unit.
     """
@@ -461,9 +463,10 @@ def resolve_pixel_size(
     The caller's `pixel_size` takes precedence over the file metadata. It
     is one size for every spatial axis, one size per spatial axis, or a
     mapping that overrides the named axes only. Its unit is `unit`, or
-    else the unit that the metadata records for a spatial axis. Spatial
-    metadata sizes are converted to `unit` when it is given, and taken to
-    be in `unit` if they have no unit. `unit` alone never makes up a size.
+    else the unit that the metadata records for a spatial axis. The sizes
+    that the metadata records for spatial axes are converted to `unit`
+    when it is given, and they are taken to be in `unit` if they have no
+    unit. A `unit` given without any size never makes up a size.
 
     Returns
     -------
@@ -560,9 +563,10 @@ def level_transformation(
 
     A level downsampled by `f` has pixels `f` times larger and the same
     extent, so its pixel `i` is centred on base pixel `f * i + (f - 1) / 2`.
-    `scales` holds the full-resolution sizes and `origin` the position of
-    the first full-resolution pixel, by axis name. The result is a
-    [`Scaling`][], or an [`Affine`][] when there is a translation.
+    `scales` holds the full-resolution sizes, and `origin` holds the
+    position of the first full-resolution pixel, both by axis name. The
+    result is a [`Scaling`][], or an [`Affine`][] when there is a
+    translation.
     """
     level_scales = {}
     translation = []
@@ -657,7 +661,7 @@ def physical_pixel_size(
 
 
 def is_default_dpi(dpi: tx.Any) -> bool:
-    """Whether a resolution is a placeholder that says nothing of size.
+    """Return whether a resolution is a placeholder that gives no size.
 
     A resolution is a placeholder when every value matches one of
     [`DEFAULT_DPIS`][], or when it is missing or has a value that is not

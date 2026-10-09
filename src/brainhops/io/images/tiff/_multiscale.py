@@ -20,7 +20,7 @@ from brainhops.io.images.tiff._image import (
     _write_geometry,
 )
 
-# Score of a vendor whole-slide pyramid: above a single-scale TIFF (LIKELY),
+# A vendor whole-slide pyramid scores above a single-scale TIFF (LIKELY) and
 # below the dedicated OpenSlide reader (CERTAIN).
 _WHOLE_SLIDE = 0.9
 
@@ -41,11 +41,13 @@ class TiffMultiScaleImage(
     `"physical"` system, so the pyramid has no transformation of its own, like
     an OME-Zarr pyramid that declares no common transformation.
 
-    The pixel size of a level is the base size times its downsampling factor,
-    the base shape divided by its own shape along each axis. Levels are aligned
-    by their extent: pixel `i` of a level downsampled by `f` is centred on the
-    base coordinate `f * i + (f - 1) / 2`, the centre of the block of base
-    pixels that it summarises, as in block-averaged and OME-Zarr pyramids.
+    The pixel size of a level is the pixel size of the base level multiplied
+    by the downsampling factor of the level. Along each axis, this factor is
+    the base shape divided by the shape of the level. The levels are aligned by
+    their extent, so pixel `i` of a level downsampled by `f` is centred on the
+    base coordinate `f * i + (f - 1) / 2`. This coordinate is the centre of the
+    block of base pixels that the pixel summarises, as in block-averaged and
+    OME-Zarr pyramids.
     """
 
     dialect: tx.Annotated[
@@ -181,8 +183,8 @@ class TiffMultiScaleImage(
         bigtiff: tx.Optional[bool] = None,
         **options,
     ) -> tx.Callable[[tx.Any], None]:
-        """Return a writer of the pyramid, in OME-TIFF or plain TIFF, since
-        ImageJ has no pyramids.
+        """Return a function that writes the pyramid in OME-TIFF or plain TIFF,
+        since ImageJ cannot store pyramids.
 
         The full-resolution level is the main image, and the other levels are
         its SubIFDs. The pixel size is the one of the full-resolution level,

@@ -10,11 +10,12 @@ numpy alone.
 | [`AttachedNrrdImage`][] | `.nrrd`   | `attached`         |
 | [`DetachedNrrdImage`][] | `.nhdr`   | `nhdr`, `detached` |
 
-Both classes answer to the hint `nrrd`, and their own hints can also be
-qualified, as in `nrrd.attached` or `nrrd.nhdr`. Both derive from
-[`NrrdImage`][] and read either kind of file, since the content decides:
-a header that names a `data file` is detached. When an image is written,
-the file name decides which kind is produced.
+Both classes answer to the format hint `nrrd`, the format name that can
+be attached to a path to choose its reader. Their own hints can also be
+qualified, as in `nrrd.attached` or `nrrd.nhdr`. Both classes derive from
+[`NrrdImage`][] and read either kind of file, because the content decides
+the kind: a header that names a `data file` is detached. When an image
+is written, the file name decides which kind is produced.
 
 ```python
 import brainhops.io as io
@@ -47,8 +48,9 @@ add a time axis. Without a world space, a single transformation to
 `"physical"` is built from `spacings`, `axis mins` and `axis maxs`.
 
 When an image is written, the preferred transformation becomes the
-`space directions` and `space origin`, in the `space` of the source
-header, the anatomical space that the transformation maps to, or RAS. The
+`space directions` and `space origin`. These fields are expressed in the
+`space` of the source header, or else in the anatomical space that the
+transformation maps to, and in RAS by default. The
 `encoding`, `endian`, `datatype`, `space`, `keyvalue` and `data_file`
 options control the output. Key/value pairs and other descriptive fields
 of the source header, such as `content` and the `measurement frame`, are
