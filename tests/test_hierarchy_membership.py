@@ -138,7 +138,7 @@ def test_nametoclass_is_lowercase_keyed() -> None:
 
 
 # ----------------------------------------------------------------------
-#   SYMBOLS AND THE LIST OF ALL SETS (#390)
+#   SYMBOLS AND THE LIST OF ALL SETS
 # ----------------------------------------------------------------------
 
 
@@ -183,7 +183,7 @@ def test_symbol_table_matches_the_code() -> None:
 
 
 # ----------------------------------------------------------------------
-#   EXPLICIT DIMENSIONS IN TransformationFamily.parse (#391, #392)
+#   EXPLICIT DIMENSIONS IN TransformationFamily.parse
 # ----------------------------------------------------------------------
 
 
