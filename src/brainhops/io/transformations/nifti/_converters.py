@@ -8,18 +8,28 @@ raises a `ConversionError` that says what the format cannot hold.
 
 | Source                             | Format                        |
 | ---------------------------------- | ----------------------------- |
-| `Affine`, `Sequence` of affines    | `NiftiVoxelToRAS`             |
-| `Affine`, `Sequence` of affines    | `NiftiRASToVoxel`             |
-| `DisplacementField`, `Sequence`    | `NiftiRASDisplacementField`   |
-| `CoordinatesField`, `Sequence`     | `NiftiRASCoordinatesField`    |
+| any affine, `Sequence` of affines  | `NiftiVoxelToRAS`             |
+| any affine, `Sequence` of affines  | `NiftiRASToVoxel`             |
+| any field, `Sequence`              | `NiftiRASDisplacementField`   |
+| any field, `Sequence`              | `NiftiRASCoordinatesField`    |
 
-The endpoints are those of `t`, bridged to the format's (see
-[`brainhops.io.transformations.base.conversions`][]): an affine to LPS
-is flipped into RAS, and one whose systems are not known is taken to map
-the format's. A field is held only as NIfTI stores it -- its values,
-read back with linear interpolation and the nearest value outside the
-grid -- and a displacement field only between a world-to-grid affine and
-its inverse. A field of displacements is not stored as one of
+In this table, "any affine" means every family that has an affine
+form, which is `Identity`, `Translation`, `Scaling`, `Permutation`,
+`Linear` and `Rotation`, `Affine`, their tangents, and
+`SubspaceTransformation`. "Any field" means every family of fields. Each
+family is registered with its own converter so that its endpoints are
+bridged to those of the format. Otherwise, the converters of the data
+model would rebuild the transformation as the format with its original
+endpoints, and the format refuses endpoints that are not compatible
+with its own.
+
+The endpoints are those of `t`, bridged exactly to those of the format.
+An affine to LPS is flipped into RAS, and an affine whose systems are
+not known is taken to map the systems of the format. A field is held
+only as NIfTI stores it, which means that its values are read back with
+linear interpolation and with the nearest value outside the grid. A
+displacement field is held only between a world-to-grid affine and its
+inverse. A field of displacements is not stored as one of
 coordinates, or the reverse: the two extend differently outside their
 grid, so they are not the same map there.
 
@@ -28,9 +38,7 @@ helper it calls first (`_ras_displacement`, `_ras_coordinates`, or
 `affine_between`). Nothing is resampled or approximated. The options a
 converter is given are the format's own (`header=`, and `log=` and
 `steps=` for a displacement field); one that would change the map, such
-as `input=` or `matrix=`, is refused (see
-[`format_options`][brainhops.io.transformations.base.conversions.\
-format_options]).
+as `input=` or `matrix=`, is refused by `format_options`.
 """
 
 # dependencies
@@ -42,11 +50,15 @@ from bagof.magic import replace
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
+from brainhops.datamodel._transformations.compute.converters import (
+    _convert_withlog,
+    _convert_withsplines,
+    smart_replace,
+)
 from brainhops.datamodel.enums import BoundaryCondition
 
 # io
-from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
-from brainhops.io.transformations.base.conversions import (
+from brainhops.io.transformations.base._conversions import (
     affine_between,
     apply_affine,
     format_options,
@@ -54,6 +66,7 @@ from brainhops.io.transformations.base.conversions import (
     undoes,
     unrepresentable,
 )
+from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 from .affines import NiftiRASToVoxel, NiftiVoxelToRAS
 from .fields import NiftiRASCoordinatesField, NiftiRASDisplacementField
@@ -81,6 +94,13 @@ whose affine places the grid without changing the map."""
 # ----------------------------------------------------------------------
 
 
+@converter(_xforms.Identity, NiftiVoxelToRAS)
+@converter(_xforms.Translation, NiftiVoxelToRAS)
+@converter(_xforms.Scaling, NiftiVoxelToRAS)
+@converter(_xforms.Permutation, NiftiVoxelToRAS)
+@converter(_xforms.Linear, NiftiVoxelToRAS)
+@converter(_xforms.AffineExponential, NiftiVoxelToRAS)
+@converter(_xforms.SubspaceTransformation, NiftiVoxelToRAS)
 @converter(_xforms.Sequence, NiftiVoxelToRAS)
 @converter
 def _(
@@ -95,6 +115,13 @@ def _(
     return cls(matrix=matrix[:-1], **options)
 
 
+@converter(_xforms.Identity, NiftiRASToVoxel)
+@converter(_xforms.Translation, NiftiRASToVoxel)
+@converter(_xforms.Scaling, NiftiRASToVoxel)
+@converter(_xforms.Permutation, NiftiRASToVoxel)
+@converter(_xforms.Linear, NiftiRASToVoxel)
+@converter(_xforms.AffineExponential, NiftiRASToVoxel)
+@converter(_xforms.SubspaceTransformation, NiftiRASToVoxel)
 @converter(_xforms.Sequence, NiftiRASToVoxel)
 @converter
 def _(
@@ -118,7 +145,7 @@ def _(
 ) -> NiftiVoxelToRAS:
     # Within its own format, an affine is changed by the rules of any
     # affine (a new `matrix=`, say), which keep its type.
-    return replace(t, **kwargs) if kwargs else t
+    return _convert_withlog(t, cls, "matrix", **kwargs)
 
 
 # ----------------------------------------------------------------------
@@ -150,6 +177,8 @@ def _(
     return NiftiRASDisplacementField(transformations=chain, **options)
 
 
+@converter(_xforms.StationaryVelocityField, NiftiRASCoordinatesField)
+@converter(_xforms.CartesianField, NiftiRASCoordinatesField)
 @converter(_xforms.DisplacementField, NiftiRASCoordinatesField)
 @converter(_xforms.Sequence, NiftiRASCoordinatesField)
 @converter
@@ -174,8 +203,9 @@ def _(
     cls: tx.Type[NiftiRASDisplacementField],
     **kwargs,
 ) -> NiftiRASDisplacementField:
-    # Within its own format, a field is copied with the changes asked for.
-    return replace(t, **kwargs) if kwargs else t
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type.
+    return smart_replace(t, cls, **kwargs)
 
 
 @converter
@@ -186,7 +216,7 @@ def _(
 ) -> NiftiRASCoordinatesField:
     # Within its own format, a field is changed by the rules of any field
     # of coordinates (a new `field=`, say), which keep its type.
-    return replace(t, **kwargs) if kwargs else t
+    return _convert_withsplines(t, cls, **kwargs)
 
 
 # ----------------------------------------------------------------------

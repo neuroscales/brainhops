@@ -2,16 +2,18 @@
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
 
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.io.transformations.base.affines import RASToVoxel
-from brainhops.io.transformations.base.conversions import (
+from brainhops.datamodel._transformations.compute.converters import (
+    smart_replace,
+)
+from brainhops.io.transformations.base._conversions import (
     format_options,
     split_field_chain,
     unrepresentable,
 )
+from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.nifti._converters import (
     RAS,
     check_coordinates,
@@ -50,8 +52,9 @@ def _(
     cls: tx.Type[SpmCoordinatesField],
     **kwargs,
 ) -> SpmCoordinatesField:
-    # Within its own format, a field is copied with the changes asked for.
-    return replace(t, **kwargs) if kwargs else t
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type.
+    return smart_replace(t, cls, **kwargs)
 
 
 def _spm_coordinates(t: _xforms.Transformation, cls: type) -> tuple:

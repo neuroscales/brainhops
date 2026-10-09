@@ -4,13 +4,12 @@ __all__ = [
     "TransformationFormat",
     "AffineTransformationFormat",
     "affines",
-    "conversions",
     "fields",
     "load",
     "sniff",
 ]
 
-from . import affines, conversions, fields
+from . import affines, fields
 from ._base import TransformationFormat
 from ._formats import AffineTransformationFormat
 from ._load import load, sniff

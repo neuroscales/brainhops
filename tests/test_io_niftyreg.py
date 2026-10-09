@@ -286,10 +286,20 @@ def test_aladin_affine_is_written_from_a_matrix() -> None:
     np.testing.assert_allclose(np.loadtxt(_io.StringIO(text)), AFFINE, atol=0)
 
 
-def test_plain_affine_is_not_saved_as_niftyreg(tmp_path: Path) -> None:
-    """A plain Affine does not declare RAS-to-RAS."""
-    with pytest.raises(WriterError):
-        bio.save(xforms.Affine(matrix=AFFINE[:3]), tmp_path / "a.txt")
+def test_plain_affine_is_saved_as_niftyreg(tmp_path: Path) -> None:
+    """An Affine of unknown systems is taken to map RAS to RAS (#343)."""
+    bio.save(xforms.Affine(matrix=AFFINE[:3]), tmp_path / "a.txt")
+    back = load(tmp_path / "a.txt", hint="niftyreg")
+    assert isinstance(back, NiftyRegAffine)
+    np.testing.assert_array_equal(back.homogeneous_matrix, AFFINE)
+
+
+def test_a_voxel_affine_is_not_saved_as_niftyreg(tmp_path: Path) -> None:
+    """An Affine between voxel systems is not one between RAS systems."""
+    voxel = systems.VoxelCoordinateSystem()
+    affine = xforms.Affine(matrix=AFFINE[:3], input=voxel, output=voxel)
+    with pytest.raises(WriterError, match="NiftyRegAffine"):
+        bio.save(affine, tmp_path / "a.txt")
 
 
 # ----------------------------------------------------------------------

@@ -13,11 +13,11 @@ from brainhops.io.common.nifti._header import (
     _apply_overrides,
     _NiftiObject,
 )
-from brainhops.io.transformations.base.affines import RASToVoxel
-from brainhops.io.transformations.base.conversions import (
+from brainhops.io.transformations.base._conversions import (
     convert_instance,
     converts_to,
 )
+from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
     homogeneous_matrix,

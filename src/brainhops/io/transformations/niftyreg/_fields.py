@@ -14,6 +14,10 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._transformations.compute.convert import converter
+from brainhops.datamodel._transformations.compute.converters import (
+    smart_replace,
+)
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -34,6 +38,7 @@ from brainhops.io.common.nifti._header import (
     _nifti_vector_field,
     _NiftiObject,
 )
+from brainhops.io.transformations.base._conversions import no_exact_conversion
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
     homogeneous_matrix,
@@ -798,3 +803,32 @@ class NiftyRegVelocityField(NiftyRegVelocity):
         return self._write(
             positions, vox2world, DEF_VEL_FIELD, like, **overrides
         )
+
+
+# ----------------------------------------------------------------------
+#   CONVERSIONS
+# ----------------------------------------------------------------------
+
+
+@converter
+def _(
+    t: _xforms.Sequence, cls: tx.Type[NiftyRegSequence], **kwargs
+) -> NiftyRegSequence:
+    # NiftyReg stores a field on the grid of its file, in one of several
+    # encodings, and no exact conversion into it is written yet (#312).
+    # Without this refusal, the converters of the data model would
+    # rebuild a chain as the format with the same parameters, and the
+    # result would not be the map that the file says it holds.
+    raise no_exact_conversion(t, cls)
+
+
+@converter
+def _(
+    t: NiftyRegSequence, cls: tx.Type[NiftyRegSequence], **kwargs
+) -> NiftyRegSequence:
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type. A conversion
+    # into another variant of the format is not written yet.
+    if not isinstance(t, cls):
+        raise no_exact_conversion(t, cls)
+    return smart_replace(t, cls, **kwargs)

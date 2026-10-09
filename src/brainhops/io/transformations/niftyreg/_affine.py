@@ -5,6 +5,9 @@ import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
+from brainhops.datamodel._transformations.compute.converters import (
+    _convert_withlog,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -15,11 +18,11 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.base.affines import RASToRAS
-from brainhops.io.transformations.base.conversions import (
+from brainhops.io.transformations.base._conversions import (
+    affine_between,
     format_options,
-    unrepresentable,
 )
+from brainhops.io.transformations.base.affines import _RAS, RASToRAS
 
 from ._formats import NiftyRegAffineFormat
 
@@ -120,22 +123,34 @@ class NiftyRegAffine(
             yield " ".join(repr(float(value)) for value in row)
 
 
-@converter
-def _(t: RASToRAS, cls: tx.Type[NiftyRegAffine], **kwargs) -> NiftyRegAffine:
-    """Copy an explicitly RAS-to-RAS affine into NiftyReg's format."""
-    format_options(t, cls, kwargs)
-    return cls(matrix=t.matrix)
-
-
+@converter(_xforms.Identity, NiftyRegAffine)
+@converter(_xforms.Translation, NiftyRegAffine)
+@converter(_xforms.Scaling, NiftyRegAffine)
+@converter(_xforms.Permutation, NiftyRegAffine)
+@converter(_xforms.Linear, NiftyRegAffine)
+@converter(_xforms.AffineExponential, NiftyRegAffine)
+@converter(_xforms.SubspaceTransformation, NiftyRegAffine)
+@converter(_xforms.Sequence, NiftyRegAffine)
 @converter
 def _(
     t: _xforms.Affine, cls: tx.Type[NiftyRegAffine], **kwargs
 ) -> NiftyRegAffine:
-    """Refuse affines that do not declare the format's RAS-to-RAS map."""
+    # `affine_between` either converts `t` exactly or raises. It bridges
+    # the endpoints of `t` to RAS, which flips an affine between LPS
+    # spaces, and it reduces a chain to one affine. An affine whose
+    # systems are not known is taken to map RAS to RAS, because the
+    # endpoints of a NiftyReg affine accept unknown systems.
+    cls = NiftyRegAffine
     format_options(t, cls, kwargs)
-    raise unrepresentable(
-        t,
-        cls,
-        "NiftyReg stores an affine from RAS world coordinates to RAS world "
-        "coordinates, and this affine does not declare those endpoints.",
-    )
+    matrix = affine_between(t, _RAS, _RAS, cls)
+    return cls(matrix=matrix[:-1])
+
+
+@converter
+def _(
+    t: NiftyRegAffine, cls: tx.Type[NiftyRegAffine], **kwargs
+) -> NiftyRegAffine:
+    # A transformation that is already in this format is changed by the
+    # rules of any affine, for example when it is given a new `matrix=`,
+    # and these rules keep its type.
+    return _convert_withlog(t, cls, "matrix", **kwargs)

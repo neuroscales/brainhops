@@ -20,11 +20,12 @@ import brainhops.io as io
 from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.systems import RASmm
+from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.datamodel.transformations import (
     Affine,
     CoordinatesField,
     DisplacementField,
+    Scaling,
 )
 from brainhops.io.base import Format
 from brainhops.io.base._base import (
@@ -420,20 +421,21 @@ def test_a_single_image_is_not_written_as_ome_zarr(tmp_path) -> None:  # noqa: A
     "obj",
     [
         Affine(MATRIX, input=RASmm(), output=RASmm()),
+        Scaling([1.0, 2.0, 3.0], input=LPSmm(), output=LPSmm()),
         CoordinatesField(field=np.zeros((2, 3, 4, 3)), degree=3),
         DisplacementField(field=np.zeros((2, 3, 4, 3)), degree=3),
     ],
-    ids=["world-affine", "cubic-coordinates", "cubic-displacement"],
+    ids=["world-affine", "scaling", "cubic-coordinates", "cubic-displacement"],
 )
 def test_a_transformation_no_nifti_format_holds_is_refused(
     tmp_path,  # noqa: ANN001
     obj: tx.Any,
 ) -> None:
     # A NIfTI transformation maps voxels to RAS, or RAS to RAS through a
-    # linearly interpolated field. One that does not -- a world-to-world
-    # affine, a field interpolated with cubic splines -- would come back
-    # meaning something it did not say, so it is refused, with each
-    # format's reason.
+    # linearly interpolated field. A transformation that does not, such
+    # as an affine or a scaling between world spaces, or a field
+    # interpolated with cubic splines, would be read back as a different
+    # map. It is therefore refused, with the reason of each format.
     with pytest.raises(WriterError, match="from_any"):
         io.save(obj, tmp_path / "transform.nii")
     assert not (tmp_path / "transform.nii").exists()
