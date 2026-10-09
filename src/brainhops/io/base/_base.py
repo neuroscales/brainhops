@@ -574,6 +574,11 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
     declare it, because `other` then holds a meaningful value for that field.
     Only keyword fields that the constructor accepts and that have a default
     are returned.
+
+    A dispatcher is not counted among the formats that declare a field.
+    `MetadataFormat` declares the `raw` field of every metadata format, but
+    the record of one format means nothing to another, so `raw` is reset
+    when metadata is copied from another format.
     """
     if isinstance(other, cls):
         return []
@@ -581,6 +586,8 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
     owners: tx.Dict[str, tx.List[type]] = {}
     for klass in cls.__mro__:
         if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
+            continue
+        if "_REGISTRY" in klass.__dict__:
             continue
         names = [field.name for field in fields(klass)]
         if issubclass(klass, (Format, FileReader, FileWriter)):

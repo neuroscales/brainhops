@@ -146,6 +146,65 @@ def test_the_former_options_are_gone() -> None:
             smartproperty(**{option: True})
 
 
+def _views_box() -> type:
+    # `value` is computed from `_source`, and its setter is given with the
+    # `setter` decorator. `twice` is a cached view that depends on `value`.
+    class Box:
+        def __init__(self, source: int) -> None:
+            self._source = source
+
+        @smartproperty(cache=True, invalidates=("value", "twice"))
+        def value(self) -> int:
+            return self._source
+
+        @value.setter
+        def value(self, value: int) -> None:
+            self._source = value
+
+        @smartproperty(cache=True, fset=False)
+        def twice(self) -> int:
+            return 2 * self.value
+
+    return Box
+
+
+def test_a_setter_given_with_the_decorator_keeps_the_invalidation() -> None:
+    box = _views_box()(1)
+    assert box.value == 1 and box.twice == 2
+    assert box._cache_value == 1 and box._cache_twice == 2
+    box.value = 3
+    assert "_cache_value" not in box.__dict__
+    assert "_cache_twice" not in box.__dict__
+    assert box.value == 3 and box.twice == 6
+
+
+def test_the_getter_and_deleter_decorators_keep_the_invalidation() -> None:
+    class Box:
+        def __init__(self) -> None:
+            self.deleted = False
+
+        @smartproperty(cache=True, invalidates="value")
+        def value(self) -> int:
+            return 1
+
+        @value.deleter
+        def value(self) -> None:
+            self.deleted = True
+
+        @value.setter
+        def value(self, value: int) -> None:
+            self._value = value
+
+    box = Box()
+    assert box.value == 1 and box._cache_value == 1
+    box.value = 2
+    assert "_cache_value" not in box.__dict__ and box.value == 2
+    del box.value
+    assert box.deleted
+    # A getter replaced after the declaration keeps the invalidation too.
+    assert Box.value.getter(lambda self: 5).invalidates == ("value",)
+
+
 # smartsetter
 
 
