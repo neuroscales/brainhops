@@ -31,10 +31,11 @@ class SimplifyPolicy(StrEnum):
       and no lazy inverse is materialized. Matrix transformations are
       assumed invertible when square, surjective when wide and injective
       when tall.
-    - `numeric`: values are read as well, for zero tests, diagonality,
-      orthogonality and rank. A typed inverse may be materialized when a
-      leaf is downcast, and the rank replaces the shape assumption, so a
-      singular square matrix is not invertible.
+    - `numeric`: values are read as well, so that zero entries,
+      diagonality, orthogonality and rank can be tested. A typed inverse
+      may be materialized when a transformation is rewritten as the
+      cheapest type that it belongs to. The rank replaces the assumption
+      based on the shape, so a singular square matrix is not invertible.
     """
 
     none = "none"
@@ -75,10 +76,10 @@ class StoreEnum(StrEnum):
     The member is given by the `store` flag of
     [`TransformationField`][brainhops.datamodel.transformations.TransformationField].
 
-    - `"values"`: `data` holds the field's values; its `field` view is
-      `data` itself.
-    - `"coefficients"`: `data` holds spline coefficients; its `field` view
-      is `data` decoded to values.
+    - `"values"`: `data` holds the values of the field, and the `field`
+      view of the transformation is `data` itself.
+    - `"coefficients"`: `data` holds spline coefficients, and the `field`
+      view of the transformation decodes them into values.
 
     Each member also has an upper-case alias, and `coefficients` is also
     spelled `coeffs`.
@@ -91,7 +92,8 @@ class StoreEnum(StrEnum):
     def from_coefficients(cls, coefficients: bool) -> "StoreEnum":
         """Return the member matching a boolean `coefficients` flag.
 
-        File formats state whether they store coefficients as a boolean.
+        File formats state with a boolean whether they store coefficients,
+        and this method turns that boolean into a member.
         """
         return cls.coefficients if coefficients else cls.values
 
@@ -221,9 +223,10 @@ class AnatomicalOrientationValue(StrEnum):
 # ----------------------------------------------------------------------
 #   METADATA TERMS
 # ----------------------------------------------------------------------
-# Known terms of free-text metadata fields. A field typed `Union[<Enum>, str]`
-# holds a member when its value matches one and the string otherwise, so these
-# lists do not close the vocabulary.
+# The enumerations below list the known terms of free-text metadata fields.
+# A field typed `Union[<Enum>, str]` holds a member when its value matches
+# one, and the plain string otherwise, so these lists do not restrict the
+# vocabulary.
 
 
 # ruff: disable[E501]
@@ -232,8 +235,8 @@ class SpaceEnum(StrEnum):
     """Known labels of a world space.
 
     The labels are used by the metadata fields `space`, `input_space` and
-    `output_space`. An unlisted label is kept as a plain string. The members are grouped
-    as follows.
+    `output_space`. An unlisted label is kept as a plain string. The
+    members are grouped as follows.
 
     - NIfTI names of the `sform_code` and `qform_code` values:
       `scanner` (1, scanner-based anatomical coordinates), `aligned`
@@ -304,8 +307,9 @@ class SpaceEnum(StrEnum):
 class IntentEnum(StrEnum):
     """Known values of the `intent` metadata field.
 
-    The intent states what the values of an image represent. The members are the NIfTI intent names as nibabel spells them; each
-    value is the member name with spaces for underscores. An unlisted
+    The intent states what the values of an image represent. The members
+    are the NIfTI intent names as nibabel spells them, and each value is
+    the member name with its underscores replaced by spaces. An unlisted
     intent is kept as a plain string. The NIfTI codes are listed below.
 
     - Statistical distributions: `correlation` (2), `t_test` (3),
@@ -377,9 +381,9 @@ class IntentEnum(StrEnum):
 class Manufacturer(StrEnum):
     """Known values of the `manufacturer` metadata field.
 
-    The names follow BIDS `Manufacturer`, spelled as converters such as
-    dcm2niix normalise the DICOM Manufacturer tag. Other manufacturers are
-    kept as plain strings.
+    The names follow the BIDS `Manufacturer` field, spelled as converters
+    such as dcm2niix normalise the DICOM Manufacturer tag. Other
+    manufacturers are kept as plain strings.
     """
 
     Siemens = "Siemens"

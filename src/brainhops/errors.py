@@ -7,9 +7,11 @@ if tx.TYPE_CHECKING:
 class AdaptationError(TypeError):
     """A coordinate system cannot be adapted to another.
 
-    Adaptation reorders, rescales and flips shared axes. It fails when a
-    required axis has no match in the other system, or when matched axes have
-    incompatible units. The message names both systems and the axes concerned.
+    Adaptation reorders, rescales and flips the axes that two coordinate
+    systems share. It fails when an axis that must be matched has no
+    counterpart in the other system, or when two matched axes have
+    incompatible units. The error message names both systems and the axes
+    that could not be reconciled.
     """
 
 
@@ -20,22 +22,31 @@ class CompositionError(TypeError):
 class DomainError(ValueError):
     """A transformation lies outside the domain of an operator.
 
-    [`Transformation.square`][] and [`Transformation.sqrt`][] require a
-    transformation from a space to itself. The principal square root and
-    logarithm (as in `.to(log=True)`) also require a linear part without
-    eigenvalues on the closed negative real axis, which excludes singular
-    matrices, reflections and half-turns. The operation raises this error
-    rather than return a complex, non-principal or approximate result. An
-    operator that brainhops cannot compute raises NotImplementedError instead.
+    The square and the square root of a transformation (see
+    [`Transformation.square`][] and [`Transformation.sqrt`][]) are defined
+    only for a transformation that maps a space to itself. The principal
+    square root, and the principal logarithm that `.to(log=True)` computes,
+    also require the linear part to have no eigenvalue on the closed negative
+    real axis, a condition that excludes singular matrices, reflections and
+    rotations by a half turn. Rather than return a complex, non-principal or
+    approximate result, the operation raises this error.
+
+    When the operator is defined for a transformation but brainhops does not
+    know how to compute it, the operation raises `NotImplementedError`
+    instead.
     """
 
 
 class RestrictionError(TypeError):
     """A transformation cannot be restricted to a block of axes.
 
-    Either no restriction rule exists for its type, or the block cannot be cut
-    out soundly, as in a chain where the block is coupled to other axes.
-    Factoring leaves such a chain unfactored rather than drop a piece.
+    Restricting a transformation extracts the part of it that maps a subset
+    of the input axes to a subset of the output axes. The restriction fails
+    when no restriction rule exists for the type of the transformation, or
+    when the block cannot be cut out soundly, for example in a chain where
+    the block is coupled to other axes. When the factoring pass, which splits
+    a chain into groups of axes that transform independently, meets this
+    error, it leaves the chain unfactored rather than drop a piece.
     """
 
 
@@ -64,8 +75,8 @@ class LossyConversionError(ConversionError):
 class AxisError(ValueError):
     """A list of axes cannot be read as a vector field.
 
-    A vector field has grid axes and exactly one vector axis, of type
-    `displacement` or `coordinate`.
+    The axes of a vector field must include exactly one vector axis, whose
+    type is `displacement` or `coordinate`. The other axes are grid axes.
     """
 
 
@@ -144,7 +155,7 @@ class AmbiguousFormatError(ParserError):
 
 
 class WriterError(ParserError):
-    """The base class of writer errors, itself a parser error."""
+    """The base class of writer errors, which is a kind of parser error."""
 
     pass
 

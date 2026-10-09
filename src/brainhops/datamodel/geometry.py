@@ -31,8 +31,8 @@ def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
 
 
 class _GeometryFields(DataModelBase):
-    # `Sequence` serves this slot as `transformations`, which is also the
-    # name of the constructor argument.
+    # The `Sequence` base exposes this slot as `transformations`, which is
+    # also the name of the constructor argument.
     _transformations: tx.Annotated[
         tx.Tuple[CartesianField, Transformation],
         tx.Doc("A cartesian field and a voxel-to-world transformation."),
@@ -76,7 +76,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
 
     @property
     def grid(self) -> CartesianField:
-        """Cartesian field that defines the image grid, the first element."""
+        """Cartesian field of the image grid, the first element of the pair."""
         return self.transformations[0]
 
     @grid.setter
@@ -153,9 +153,9 @@ class Geometry(_GeometryFields, ImmutableSequence):
         )
 
     def _flattened(self) -> tx.Self:
-        # Only the transformation is flattened, never merging the grid into
-        # it. The systems of the geometry are propagated onto both parts, as
-        # in `Sequence._flattened`.
+        # Only the transformation is flattened, and the grid is never merged
+        # into it. The systems of the geometry are propagated onto both parts,
+        # as in `Sequence._flattened`.
         grid, transformation = self.grid, self.transformation
         if grid.input is None and self.input is not None:
             grid = grid.to(input=self.input)
