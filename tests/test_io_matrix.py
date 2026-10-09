@@ -14,10 +14,10 @@ import scipy.io
 
 from brainhops.datamodel import systems
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     Confidence,
     ParserContentError,
-    TextFileParser,
+    TextFileReader,
 )
 from brainhops.io.common import _arrays as arrays
 from brainhops.io.transformations import FileBasedTransformation, load, sniff
@@ -677,13 +677,13 @@ def test_array_parsers_are_generic() -> None:
 def test_text_parsers_reuse_text_plumbing() -> None:
     """Text parsers read in text mode and reject undecodable bytes."""
     for parser in (arrays.TxtArrayParser, arrays.CsvArrayParser):
-        assert issubclass(parser, TextFileParser)
-        assert not issubclass(parser, BinaryFileParser)
+        assert issubclass(parser, TextFileReader)
+        assert not issubclass(parser, BinaryFileReader)
         assert parser._READ_MODE == "rt"
         assert parser.sniff_bytes(b"\xff\xfe1 2\n") == Confidence.NO
         assert parser.sniff_bytes(b"1 2\x00\n3 4") == Confidence.NO
     for parser in (arrays.NpyArrayParser, arrays.MatArrayParser):
-        assert issubclass(parser, BinaryFileParser)
+        assert issubclass(parser, BinaryFileReader)
         assert parser._READ_MODE == "rb"
 
 

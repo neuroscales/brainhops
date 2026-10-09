@@ -16,8 +16,8 @@ from brainhops.io.base._base import (
     format_registry,
 )
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
-    FileParser,
+    BinaryFileReader,
+    FileReader,
     FileSniffer,
 )
 
@@ -93,7 +93,7 @@ def test_resolution_does_not_depend_on_base_order() -> None:
     class Root(FileBasedObject):
         pass
 
-    class Special(BinaryFileParser):
+    class Special(BinaryFileReader):
         @classmethod
         def from_file(cls, file, **kwargs):  # noqa: ANN001, ANN206
             return "special-reader"
@@ -117,10 +117,10 @@ def test_the_generic_ladder_redispatches_through_cls() -> None:
         (FileSniffer, "sniff_fileobj"): "sniff_content",
         (FileSniffer, "sniff_text"): "sniff_lines",
         (FileSniffer, "sniff_lines"): "sniff_line",
-        (FileParser, "from_file"): "from_fileobj",
-        (FileParser, "from_fileobj"): "from_content",
-        (FileParser, "from_text"): "from_lines",
-        (FileParser, "from_lines"): "from_line",
+        (FileReader, "from_file"): "from_fileobj",
+        (FileReader, "from_fileobj"): "from_content",
+        (FileReader, "from_text"): "from_lines",
+        (FileReader, "from_lines"): "from_line",
     }
     for (owner, name), nxt in rungs.items():
         source = inspect.getsource(getattr(owner, name).__func__)

@@ -17,7 +17,7 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserExistsError,
@@ -58,7 +58,7 @@ _MghObject = tx.Union[_mgh.MGHHeader, _mgh.MGHImage]
 
 
 class MghParser(
-    DataModelBase, FreesurferFormat, BinaryFileParser, BinaryFileWriter
+    DataModelBase, FreesurferFormat, BinaryFileReader, BinaryFileWriter
 ):
     """
     The base class of objects encoded as MGH or MGZ files.

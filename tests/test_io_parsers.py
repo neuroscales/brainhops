@@ -13,18 +13,18 @@ from brainhops.io.base._base import (
     register_format,
 )
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     Confidence,
     ParserExistsError,
     ParserNotImplementedError,
     SnifferContentError,
-    TextFileParser,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     preserve_position,
 )
 
 
-class Greeting(TextFileParser):
+class Greeting(TextFileReader):
     """A one-line text format that exercises the base contracts."""
 
     EXTENSIONS = (".greet",)
@@ -40,7 +40,7 @@ class Greeting(TextFileParser):
         return line.strip()
 
 
-class WritableGreeting(TextFileParserWriter):
+class WritableGreeting(TextFileReader, TextFileWriter):
     """The same format, writable."""
 
     def __init__(self, text: str) -> None:
@@ -206,7 +206,7 @@ def test_writing_then_reading_round_trips(tmp_path) -> None:  # noqa: ANN001
 def test_a_boolean_sniffer_is_a_valid_scoring_sniffer() -> None:
     """A boolean sniffer is valid, with True and False scoring 1.0 and 0.0."""
 
-    class Boolean(TextFileParser):
+    class Boolean(TextFileReader):
         @classmethod
         def sniff_line(cls, line, error=False, **kwargs) -> float:  # noqa: ANN001
             return line.startswith("X")
@@ -234,7 +234,7 @@ def test_the_writer_entry_point_does_not_shadow_the_converter() -> None:
 # ----------------------------------------------------------------------
 
 
-class HeaderOnly(BinaryFileParser):
+class HeaderOnly(BinaryFileReader):
     """A binary format that reads only a 4-byte header from the stream."""
 
     def __init__(self, magic: bytes) -> None:
@@ -245,7 +245,7 @@ class HeaderOnly(BinaryFileParser):
         return cls(file.read(4), **kwargs)
 
 
-class BytesOnly(BinaryFileParser):
+class BytesOnly(BinaryFileReader):
     """A binary format with only from_bytes."""
 
     def __init__(self, content: bytes) -> None:
@@ -256,7 +256,7 @@ class BytesOnly(BinaryFileParser):
         return cls(bytes(content), **kwargs)
 
 
-class Neither(BinaryFileParser):
+class Neither(BinaryFileReader):
     """A binary format that implements neither entry point."""
 
 

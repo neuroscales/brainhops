@@ -1,16 +1,20 @@
 # Reading and writing capabilities
 
-Reading and writing are independent. `FileReader` provides `sniff*`, `load`
-and `from_*`; `FileWriter` provides `save` and `to_*`. Neither capability
-adds fields to the object's representation. Text and binary variants supply
-the corresponding stream modes and adapters.
+Reading, writing and format dispatch have separate APIs. `FileReader`
+provides `sniff*`, `load` and `from_*` for one format; `FileWriter` provides
+`save` and `to_*`. `FormatDispatcher` selects among registered formats.
+Readers and dispatchers share private input adapter mixins, but neither
+inherits the other's public API. In particular, a reader's `sniff*` returns
+a confidence score; a dispatcher's `sniff*` returns a selected class or
+`None`. These capabilities add no fields to the object's representation.
+Text and binary variants supply the corresponding stream modes and adapters.
 
 An internal format representation may use any fields or third-party type.
-When implementing its own I/O, it can inherit `FileParser` (a `FileReader`)
+When implementing its own I/O, it can inherit `FileReader` (a `FileReader`)
 and a writer independently:
 
 ```python
-class LtaStruct(TextFileParser, TextFileWriter):
+class LtaStruct(TextFileReader, TextFileWriter):
     # Native fields and implementations of from_lines / to_lines.
     ...
 ```
@@ -21,8 +25,8 @@ Conversely, a parser does not acquire writing methods.
 
 Public format objects implement the Image/Transformation API and hold their
 internal representation. They can use the shared readers and writers without
-inheriting a parser. `FormatDispatcher` extends `FileReader` with selection
-among registered formats; `FileBasedObject` combines it with public `Format`
+inheriting a parser. `FormatDispatcher` owns the format-selection methods
+and reuses the input adapter mixins; `FileBasedObject` combines it with `Format`
 membership. A family owns a registry through `@format_registry`; a concrete
 format joins its ancestors' registries through `@register_format`.
 
@@ -57,11 +61,15 @@ dispatcher, not in generic object loading or saving. An object's metadata
 view may share its native representation; this capability split imposes no
 metadata schema or mutation policy.
 
-Existing `FileParserWriter`, `TextFileParserWriter`, and
-`BinaryFileParserWriter` remain compatibility combinations. Existing
-`WritableFileBased*` classes likewise still provide both routes. New code
-should compose the independent capabilities explicitly. Code that checks
-writing support should test `FileWriter`, not the combined compatibility
-classes; readable public objects are no longer necessarily `FileParser`s.
+The generic `FileParser`, `TextFileParser`, and `BinaryFileParser` bases are
+replaced by `FileReader`, `TextFileReader`, and `BinaryFileReader`. Replace
+the combined `*FileParserWriter` bases with the corresponding reader and
+writer bases explicitly. Format-specific parser names, such as `LtaParser`
+and `NiftiParser`, remain: a format parser may implement both routes.
+
+Existing `WritableFileBased*` classes still provide both routes. Code that
+checks writing support should test `FileWriter`. Dispatchers are neither
+`FileReader`s nor `FileSniffer`s; concrete public objects can additionally
+compose readers for their own format.
 
 # ::: brainhops.io.base.parsers

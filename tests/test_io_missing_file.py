@@ -29,14 +29,14 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
     ParserExistsError,
     SnifferExistsError,
-    TextFileParser,
+    TextFileReader,
 )
 from brainhops.io.images import FileBasedImage  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations import FileBasedTransformation  # noqa: E402
 
 
-class Greeting(TextFileParser):
+class Greeting(TextFileReader):
     """A one-line text format that can also be read from memory."""
 
     EXTENSIONS = (".greet",)

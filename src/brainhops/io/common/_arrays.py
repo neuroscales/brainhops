@@ -56,13 +56,13 @@ from brainhops._core import path
 from brainhops._core.peek import peekable_lines
 from brainhops._core.streams import preserve_position
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     Confidence,
-    FileParser,
+    FileReader,
     ParserContentError,
     ParserNotImplementedError,
     SnifferContentError,
-    TextFileParser,
+    TextFileReader,
     _not_text,
 )
 
@@ -392,7 +392,7 @@ _Reader = tx.Callable[
 """A container reader, which returns one array or a mapping of named arrays."""
 
 
-class ArrayParser(FileParser):
+class ArrayParser(FileReader):
     """
     The abstract base of the readers of one generic array container.
 
@@ -553,7 +553,7 @@ class ArrayParser(FileParser):
         return score
 
 
-class TextArrayParser(ArrayParser, TextFileParser):
+class TextArrayParser(ArrayParser, TextFileReader):
     """
     The base of the readers of two-dimensional text arrays.
 
@@ -703,7 +703,7 @@ class TsvArrayParser(TextArrayParser):
         return any("\t" in line for line in lines)
 
 
-class _BinaryArrayParser(ArrayParser, BinaryFileParser):
+class _BinaryArrayParser(ArrayParser, BinaryFileReader):
     """An array container that is never text."""
 
     @classmethod

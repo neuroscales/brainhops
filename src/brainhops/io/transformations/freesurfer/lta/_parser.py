@@ -10,7 +10,7 @@ from brainhops._core.peek import peekable_lines
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
-    TextFileParser,
+    TextFileReader,
     TextFileWriter,
 )
 
@@ -24,12 +24,12 @@ _FIRST_LINE = re.compile(r"^type\s*=\s*\d+$")
 # ----------------------------------------------------------------------
 
 
-class LtaParser(Magic, TextFileParser, TextFileWriter):
+class LtaParser(Magic, TextFileReader, TextFileWriter):
     """Mixin that lets a class be sniffed, read and written as LTA.
 
     `LtaStruct` and its blocks inherit their `sniff*`, `from_*` and `to_*`
     methods from this class, which follows the contract of
-    [`TextFileParser`][] and [`TextFileWriter`][]. These bases provide the
+    [`TextFileReader`][] and [`TextFileWriter`][]. These bases provide the
     public entry points, such as `load` and `save`, and this class implements
     the format-specific steps: `sniff_line`, `from_lines` and `to_lines`.
 

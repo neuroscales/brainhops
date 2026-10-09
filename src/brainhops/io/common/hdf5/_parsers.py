@@ -15,7 +15,7 @@ from brainhops._core.streams import preserve_position
 
 # io
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserExistsError,
@@ -41,7 +41,7 @@ def _raise_or(
     return Confidence.NO
 
 
-class Hdf5Parser(BinaryFileParser):
+class Hdf5Parser(BinaryFileReader):
     """
     A mixin that reads a format stored in HDF5.
 

@@ -23,7 +23,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     Confidence,
     ParserContentError,
     ParserExistsError,
@@ -663,7 +663,7 @@ _Associated = tx.Annotated[
 
 
 class OpenSlideImage(
-    _OpenSlideMixin, BinaryFileParser, FileBasedImage, SingleScaleImage
+    _OpenSlideMixin, BinaryFileReader, FileBasedImage, SingleScaleImage
 ):
     """A single level of a whole-slide image, read with OpenSlide.
 
@@ -769,7 +769,7 @@ class OpenSlideImage(
 
 
 class OpenSlideMultiScaleImage(
-    _OpenSlideMixin, BinaryFileParser, FileBasedImage, MultiScaleImage
+    _OpenSlideMixin, BinaryFileReader, FileBasedImage, MultiScaleImage
 ):
     """A whole-slide image read with OpenSlide, as a pyramid.
 

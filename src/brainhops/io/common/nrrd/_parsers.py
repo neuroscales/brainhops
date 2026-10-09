@@ -13,7 +13,7 @@ from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserExistsError,
@@ -35,7 +35,7 @@ from ._header import NrrdHeader
 # ----------------------------------------------------------------------
 
 
-class NrrdParser(DataModelBase, BinaryFileParser, BinaryFileWriter):
+class NrrdParser(DataModelBase, BinaryFileReader, BinaryFileWriter):
     """Base class for objects stored as NRRD files.
 
     Concrete formats give the values a meaning and provide [`_nrrd_header`][]

@@ -18,13 +18,16 @@ from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
-    BinaryFileReader,
     BinaryFileWriter,
     FileReader,
     FileWriter,
-    TextFileReader,
     TextFileWriter,
+    _BinarySniffAdapters,
+    _FileReadAdapters,
+    _FileSniffAdapters,
     _passthrough_from_fileobj,
+    _TextReadAdapters,
+    _TextSniffAdapters,
 )
 from brainhops.io.base.specs import SourceSpec
 
@@ -121,14 +124,18 @@ class Format:
     PRIORITY: tx.ClassVar[int] = 0
 
 
-class FormatDispatcher(FileReader):
+class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
     """Dispatch between the formats registered under a dispatcher.
 
     On a class decorated with [`format_registry`][], the `sniff*` methods
     identify the registered format that matches the input, and `load` and the
     `from_*` methods choose a format and delegate to it. On a class without a
     registry, which is a concrete format, every method behaves as the
-    [`FileReader`][] method it overrides.
+    corresponding input adapter or concrete reader method.
+
+    Dispatchers and readers have independent APIs. They share only input
+    adapter mixins; this class inherits neither `FileReader` nor
+    `FileSniffer`, whose sniffing contract returns confidence scores.
 
     The mixin owns no registry itself. A kind that the generic `load` must
     never return, such as `FileBasedMetadata`, can therefore dispatch between
@@ -183,6 +190,25 @@ class FormatDispatcher(FileReader):
             "sniff_file",
             error,
             f"file: {file}",
+            **kwargs,
+        )
+
+    @classmethod
+    def sniff_filename(
+        cls,
+        filename: path.FilenameLike,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> tx.Optional[type]:
+        """Identify the registered format that matches a path."""
+        if not cls._is_dispatcher():
+            return super().sniff_filename(filename, error=error, **kwargs)
+        return sniff(
+            Source(filename),
+            cls._REGISTRY,
+            "sniff_filename",
+            error,
+            f"file: {filename}",
             **kwargs,
         )
 
@@ -452,25 +478,27 @@ class WritableFileBasedObject(FileBasedObject, FileWriter):
 
 
 @format_registry
-class TextFileBasedObject(TextFileReader, FileBasedObject):
+class TextFileBasedObject(
+    FileBasedObject, _TextReadAdapters, _TextSniffAdapters
+):
     """Object stored in a text file."""
 
 
 @format_registry
-class BinaryFileBasedObject(BinaryFileReader, FileBasedObject):
+class BinaryFileBasedObject(FileBasedObject, _BinarySniffAdapters):
     """Object stored in a binary file."""
 
 
 @format_registry
 class WritableTextFileBasedObject(
-    TextFileReader, TextFileWriter, WritableFileBasedObject
+    TextFileBasedObject, TextFileWriter, WritableFileBasedObject
 ):
     """Object stored in a writable text file."""
 
 
 @format_registry
 class WritableBinaryFileBasedObject(
-    BinaryFileReader, BinaryFileWriter, WritableFileBasedObject
+    BinaryFileBasedObject, BinaryFileWriter, WritableFileBasedObject
 ):
     """Object stored in a writable binary file."""
 
@@ -492,7 +520,7 @@ class _FileBasedModelMixin:
         To take effect, this `from_any` must precede `DataModelBase.from_any`
         in the MRO, but `FileBasedObject` comes after the data model in every
         file-based class. Parser bases declare the data model first, as in
-        `NiftiParser(DataModelBase, BinaryFileParser, BinaryFileWriter)`.
+        `NiftiParser(DataModelBase, BinaryFileReader, BinaryFileWriter)`.
         Their chain leads to `FileBasedObject`, so listing it first makes
         the MRO of `NiftiImage` inconsistent. Listing data models last would
         require reordering every parser, dispatcher and format, and the file

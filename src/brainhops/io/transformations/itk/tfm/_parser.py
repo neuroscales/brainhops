@@ -9,7 +9,7 @@ from brainhops._core.peek import peekable_lines
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
-    TextFileParser,
+    TextFileReader,
 )
 
 from .._common import ItkStruct, ItkTransformClass, _application_order
@@ -28,7 +28,7 @@ _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 class TfmTransformParser(
     Magic,
-    TextFileParser,
+    TextFileReader,
     convert=True,
     repr=HIDE_IF_NONE,
 ):

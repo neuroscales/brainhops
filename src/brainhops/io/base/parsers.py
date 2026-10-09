@@ -1,8 +1,8 @@
 """Independent sniffing, reading and writing capabilities for file formats.
 
-Readers are shared by native parsers and public format dispatchers. Writers
-do not inherit reading or sniffing. The combined ``*ParserWriter`` classes
-remain compatibility wrappers; new implementations compose the capabilities.
+Native format parsers compose readers and writers independently. Dispatchers
+have their own selection API and share only the private adapter mixins.
+Writers do not inherit reading or sniffing.
 
 The errors that these classes raise are also importable from here.
 """
@@ -12,18 +12,12 @@ __all__ = [
     "FileSniffer",
     "FileReader",
     "FileWriter",
-    "FileParser",
-    "FileParserWriter",
     "BinaryFileSniffer",
     "BinaryFileReader",
     "BinaryFileWriter",
-    "BinaryFileParser",
-    "BinaryFileParserWriter",
     "TextFileSniffer",
     "TextFileReader",
     "TextFileWriter",
-    "TextFileParser",
-    "TextFileParserWriter",
 ]
 
 from collections.abc import Iterable
@@ -88,14 +82,12 @@ class Confidence:
 # ---- sniff -----------------------------------------------------------
 
 
-class FileSniffer:
-    """Class that can sniff files to decide whether they are of its type.
+class _FileSniffAdapters:
+    """Input adaptation for sniffing, with no format-selection policy.
 
-    Sniffing a file means inspecting its content and returning a confidence
-    score between 0 and 1. The `sniff*` methods form a chain in which each
-    method turns its input into a simpler form and passes it on, from a path
-    to an open file, then to content, and finally to [`sniff_bytes`][] or
-    [`sniff_line`][], which a concrete format overrides.
+    Public sniffers and dispatchers share these adapters, but declare their
+    own contracts: a sniffer scores one format, a dispatcher selects a class.
+    A dispatcher's concrete subclasses use the adapters as fallbacks.
     """
 
     _READ_MODE: str = "r"
@@ -343,13 +335,21 @@ class FileSniffer:
 # ---- from ------------------------------------------------------------
 
 
+class FileSniffer(_FileSniffAdapters):
+    """Inspect content and return a confidence score between 0 and 1.
+
+    Concrete readers implement `sniff_bytes` or `sniff_line`. Format
+    dispatchers are not sniffers: their public methods select a class.
+    """
+
+
 def _passthrough_from_fileobj(func: tx.Callable) -> tx.Callable:
     """Mark a `from_fileobj` as a passthrough.
 
     A passthrough implementation does not read the stream itself. Instead, it
     ends up passing the whole stream to `from_bytes`, as the default
     implementation does, or as a mixin does when it only forwards the call to
-    `super()`. [`FileParser.from_bytes`][] never falls back to a passthrough,
+    `super()`. [`FileReader.from_bytes`][] never falls back to a passthrough,
     because the fallback would loop.
     """
     func._passthrough_from_fileobj = True
@@ -381,8 +381,8 @@ def _overrides_from_fileobj(cls: type) -> bool:
     return False
 
 
-class FileReader(FileSniffer):
-    """Input adapters shared by native parsers and public formats."""
+class _FileReadAdapters:
+    """Reusable input adapters, independent of parsing and format selection."""
 
     @classmethod
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
@@ -547,6 +547,14 @@ class FileReader(FileSniffer):
         )
 
 
+class FileReader(_FileReadAdapters, FileSniffer):
+    """Read one format, with sniffing that returns a confidence score.
+
+    Format dispatchers independently use the adapter mixins; they do not
+    inherit this reader API.
+    """
+
+
 # ---- to --------------------------------------------------------------
 
 
@@ -653,7 +661,7 @@ class FileWriter:
 # ----------------------------------------------------------------------
 
 
-class TextFileSniffer(FileSniffer):
+class _TextSniffAdapters(_FileSniffAdapters):
     """Class that can sniff text files for its type."""
 
     _READ_MODE: str = "rt"
@@ -700,6 +708,10 @@ class TextFileSniffer(FileSniffer):
         return cls.sniff_text(text, **kwargs)
 
 
+class TextFileSniffer(_TextSniffAdapters, FileSniffer):
+    """Score text content using the shared text adapters."""
+
+
 def _not_text(
     cls: type, error: tx.Union[bool, tx.Type[Exception]], cause: Exception
 ) -> float:
@@ -718,7 +730,7 @@ def _not_text(
     return Confidence.NO
 
 
-class TextFileReader(TextFileSniffer, FileReader):
+class _TextReadAdapters(_FileReadAdapters):
     """Class that can read text files of its type."""
 
     @classmethod
@@ -729,6 +741,10 @@ class TextFileReader(TextFileSniffer, FileReader):
         """
         encoding = kwargs.pop("encoding", "utf-8")
         return cls.from_text(content.decode(encoding), **kwargs)
+
+
+class TextFileReader(_TextReadAdapters, TextFileSniffer, FileReader):
+    """Read one text format and score its content."""
 
 
 class TextFileWriter(FileWriter):
@@ -748,10 +764,14 @@ class TextFileWriter(FileWriter):
 # ----------------------------------------------------------------------
 
 
-class BinaryFileSniffer(FileSniffer):
+class _BinarySniffAdapters(_FileSniffAdapters):
     """Class that can sniff binary files for its type."""
 
     _READ_MODE: str = "rb"
+
+
+class BinaryFileSniffer(_BinarySniffAdapters, FileSniffer):
+    """Score binary content using binary stream adapters."""
 
 
 class BinaryFileReader(BinaryFileSniffer, FileReader):
@@ -764,34 +784,3 @@ class BinaryFileWriter(FileWriter):
     """Output adapters for binary files, without any reading methods."""
 
     _WRITE_MODE: str = "wb"
-
-
-# ----------------------------------------------------------------------
-#   PARSERS AND COMPATIBILITY COMBINATIONS
-# ----------------------------------------------------------------------
-
-
-class FileParser(FileReader):
-    """Reader base for a native format representation."""
-
-
-class TextFileParser(TextFileReader, FileParser):
-    """Reader base for a native text format representation."""
-
-
-class BinaryFileParser(BinaryFileReader, FileParser):
-    """Reader base for a native binary format representation."""
-
-
-class FileParserWriter(FileParser, FileWriter):
-    """Compatibility combination; prefer explicit reader and writer bases."""
-
-
-class TextFileParserWriter(TextFileParser, TextFileWriter, FileParserWriter):
-    """Compatibility combination of text parsing and writing."""
-
-
-class BinaryFileParserWriter(
-    BinaryFileParser, BinaryFileWriter, FileParserWriter
-):
-    """Compatibility combination of binary parsing and writing."""

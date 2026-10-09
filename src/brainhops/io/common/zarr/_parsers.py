@@ -12,7 +12,7 @@ from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base.parsers import (
     Confidence,
-    FileParser,
+    FileReader,
     FileWriter,
     ParserExistsError,
     ParserTypeError,
@@ -23,7 +23,7 @@ from brainhops.io.base.parsers import (
 StoreLike = tx.Union[str, path.PathLike, tx.Any]
 
 
-class ZarrParser(DataModelBase, FileParser):
+class ZarrParser(DataModelBase, FileReader):
     """Base class for parsers that read a Zarr store.
 
     A concrete parser lists this class before its file-based bases and

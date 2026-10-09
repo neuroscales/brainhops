@@ -8,26 +8,24 @@ import typing_extensions as tx
 
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base import (
+    BinaryFileBasedObject,
     FileBasedObject,
     Format,
     FormatDispatcher,
     TextFileBasedObject,
+    WritableBinaryFileBasedObject,
     WritableFileBasedObject,
+    WritableTextFileBasedObject,
     format_registry,
     register_format,
     save,
 )
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
-    BinaryFileParserWriter,
     BinaryFileReader,
     BinaryFileWriter,
-    FileParser,
-    FileParserWriter,
     FileReader,
+    FileSniffer,
     FileWriter,
-    TextFileParser,
-    TextFileParserWriter,
     TextFileReader,
     TextFileWriter,
 )
@@ -39,9 +37,6 @@ from brainhops.io.base.parsers import (
         FileReader,
         TextFileReader,
         BinaryFileReader,
-        FileParser,
-        TextFileParser,
-        BinaryFileParser,
         FileBasedObject,
     ],
 )
@@ -65,17 +60,99 @@ def test_writers_do_not_acquire_reading(writer: type) -> None:
 def test_format_membership_and_public_adapters_do_not_imply_parsing() -> None:
     assert not hasattr(Format, "load")
     assert not hasattr(Format, "save")
-    assert not issubclass(FormatDispatcher, FileParser)
-    assert not issubclass(FileBasedObject, FileParser)
-    assert not issubclass(WritableFileBasedObject, FileParser)
 
 
 @pytest.mark.parametrize(
-    "base",
-    [FileParserWriter, TextFileParserWriter, BinaryFileParserWriter],
+    "dispatcher",
+    [
+        FormatDispatcher,
+        FileBasedObject,
+        TextFileBasedObject,
+        BinaryFileBasedObject,
+        WritableFileBasedObject,
+        WritableTextFileBasedObject,
+        WritableBinaryFileBasedObject,
+    ],
 )
-def test_legacy_combinations_still_supply_both_routes(base: type) -> None:
-    class Record(base):
+def test_dispatchers_do_not_inherit_the_reader_contract(
+    dispatcher: type,
+) -> None:
+    assert not issubclass(dispatcher, FileReader)
+    assert not issubclass(dispatcher, FileSniffer)
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "sniff",
+        "sniff_file",
+        "sniff_filename",
+        "sniff_fileobj",
+        "sniff_content",
+        "sniff_bytes",
+        "sniff_text",
+        "sniff_lines",
+        "sniff_line",
+    ],
+)
+@pytest.mark.parametrize("matches", [True, False])
+def test_sniff_selects_a_class_on_dispatchers_and_scores_on_readers(
+    method: str, matches: bool, tmp_path: Path
+) -> None:
+    class Native(TextFileReader):
+        @classmethod
+        def sniff_line(cls, line: str, **kwargs) -> float:
+            return 0.75 if line == "HELLO" else 0.0
+
+    @format_registry
+    class Family(TextFileBasedObject):
+        pass
+
+    @register_format
+    class Public(Family):
+        @classmethod
+        def sniff_line(cls, line: str, **kwargs) -> float:
+            return Native.sniff_line(line, **kwargs)
+
+    content = "HELLO" if matches else "OTHER"
+    filename = tmp_path / "content"
+    filename.write_text(content)
+    sources = {
+        "sniff": filename,
+        "sniff_file": filename,
+        "sniff_filename": filename,
+        "sniff_fileobj": io.StringIO(content),
+        "sniff_content": content,
+        "sniff_bytes": content.encode(),
+        "sniff_text": content,
+        "sniff_lines": [content],
+        "sniff_line": content,
+    }
+    try:
+        assert getattr(Native, method)(sources[method]) == (
+            0.75 if matches else 0.0
+        )
+        assert getattr(Family, method)(sources[method]) is (
+            Public if matches else None
+        )
+    finally:
+        for base in Public.__mro__[1:]:
+            if "_REGISTRY" in base.__dict__:
+                base._REGISTRY.discard(Public)
+
+
+@pytest.mark.parametrize(
+    "reader,writer",
+    [
+        (FileReader, FileWriter),
+        (TextFileReader, TextFileWriter),
+        (BinaryFileReader, BinaryFileWriter),
+    ],
+)
+def test_format_parsers_compose_both_routes(
+    reader: type, writer: type
+) -> None:
+    class Record(reader, writer):
         @classmethod
         def from_line(cls, line: str, **kwargs) -> tx.Self:
             return cls()
@@ -83,7 +160,7 @@ def test_legacy_combinations_still_supply_both_routes(base: type) -> None:
         def to_line(self, **kwargs) -> str:
             return "record"
 
-    assert issubclass(Record, FileParser)
+    assert issubclass(Record, FileReader)
     assert issubclass(Record, FileWriter)
     assert Record.from_text("record").to_text() == "record"
 

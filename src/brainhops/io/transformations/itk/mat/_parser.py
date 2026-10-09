@@ -9,7 +9,7 @@ from brainhops._core import path
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
@@ -64,7 +64,7 @@ class _Variable(tx.NamedTuple):
 
 class MatTransformParser(
     Magic,
-    BinaryFileParser,
+    BinaryFileReader,
     BinaryFileWriter,
     convert=True,
     repr=HIDE_IF_NONE,

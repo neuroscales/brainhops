@@ -15,7 +15,7 @@ from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
@@ -62,7 +62,7 @@ class AfniFormat:
 
 
 class AfniParser(
-    DataModelBase, AfniFormat, BinaryFileParser, BinaryFileWriter
+    DataModelBase, AfniFormat, BinaryFileReader, BinaryFileWriter
 ):
     """
     The base class of objects stored as an AFNI dataset.

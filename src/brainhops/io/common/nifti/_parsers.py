@@ -17,7 +17,7 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserExistsError,
@@ -42,7 +42,7 @@ from ._header import (
 )
 
 
-class NiftiParser(DataModelBase, BinaryFileParser, BinaryFileWriter):
+class NiftiParser(DataModelBase, BinaryFileReader, BinaryFileWriter):
     """Base class for objects stored as NIfTI files."""
 
     HINTS = ("nifti",)
