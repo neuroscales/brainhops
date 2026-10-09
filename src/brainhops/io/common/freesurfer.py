@@ -1,45 +1,25 @@
 """
-The volume geometry shared by every FreeSurfer format.
+Volume geometry shared by the FreeSurfer formats.
 
-FreeSurfer describes the world placement of a volume the same way in
-every file that records one -- the header of an MGH/MGZ image, the source
-and destination blocks of an LTA transform, the source and atlas
-geometries of a non-linear morph (`.m3z`), ... -- with:
+MGH headers, LTA files and `.m3z` files all describe a volume by its
+shape, its voxel size in millimetres, the direction cosines `x_ras`,
+`y_ras` and `z_ras` (the columns of the rotation part of the
+voxel-to-RAS matrix), and the RAS coordinate `c_ras` of its centre.
 
-- the volume's shape, in voxels (`width, height, depth`);
-- the voxel size (`xsize, ysize, zsize`), in millimetres;
-- the direction cosines of each voxel axis in RAS (`x_ras`, `y_ras`,
-  `z_ras`), which form the columns of the rotation part of the
-  voxel-to-RAS matrix;
-- the RAS coordinates of the centre of the volume (`c_ras`, `Pxyz_c`).
-
-Three coordinate systems derive from it:
-
-- **scanner RAS**, the world space the volume was acquired in
-  (`mri_info --vox2ras`);
-- **tkr RAS** (also "surface RAS" or "tkregister RAS"), the space
-  FreeSurfer surfaces live in. It has the same voxel sizes but drops the
-  direction cosines and `c_ras`: the centre of the volume is the origin,
-  and the axes are those of a conformed (LIA) volume
-  (`mri_info --vox2ras-tkr`);
-- **physical** (or "physvox"), the scaled voxel space shifted so that
-  its origin is the centre of the volume. It is the space between
-  voxels and scanner RAS used by LTA files of type `LINEAR_PHYSVOX`.
+Three coordinate systems are involved. Scanner RAS is the acquisition
+space (`mri_info --vox2ras`). Tkr RAS, where surfaces live
+(`mri_info --vox2ras-tkr`), has the same voxel sizes but conformed LIA
+axes and its origin at the centre of the volume. The physical space,
+used by `LINEAR_PHYSVOX` transforms, is the scaled voxel space shifted
+to the centre of the volume.
 
 !!! note "The centre of the volume"
-    FreeSurfer places the centre of the volume at voxel coordinate
-    `shape / 2`, not at `(shape - 1) / 2`. With 0-based voxel
-    coordinates whose integers are voxel centres, the centre therefore
-    falls half a voxel past the true centre of an even-sized volume.
-    This is FreeSurfer's convention, and every matrix here follows it so
-    that it matches FreeSurfer and `nibabel` exactly.
+    FreeSurfer puts the centre of the volume at voxel coordinate
+    `shape / 2`, which lies half a voxel past the true centre along
+    axes of even size. The functions follow this convention to match
+    FreeSurfer and nibabel exactly.
 
-The functions take the geometry as plain values, so that each format
-reads it from wherever it stores it.
-
-Every FreeSurfer format -- MGH/MGZ images, LTA transforms, morphs, ... --
-derives from [`FreesurferFormat`][brainhops.io.base.freesurfer.
-FreesurferFormat], so that the `"freesurfer"` hint selects them all.
+All FreeSurfer formats derive from [`FreesurferFormat`][].
 """
 
 __all__ = [
@@ -55,11 +35,9 @@ __all__ = [
     "mat2orient",
 ]
 
-# externals
 import numpy as np
 import typing_extensions as tx
 
-# type hints
 _3Ints = tx.Tuple[int, int, int]
 _3Floats = tx.Tuple[float, float, float]
 _3Flips = tx.Tuple[tx.Literal[-1, 1], tx.Literal[-1, 1], tx.Literal[-1, 1]]
@@ -68,40 +46,38 @@ _Vec = tx.Sequence[float]
 
 class FreesurferFormat:
     """
-    A format of the FreeSurfer family, whatever it stores.
+    The base format of the FreeSurfer family: MGH and MGZ images, and LTA
+    and M3Z transformations.
 
-    It is the shared base of the FreeSurfer image formats (MGH/MGZ) and
-    transformation formats (LTA, M3Z), and carries the `"freesurfer"` hint
-    they all answer to. Each format adds its own hints (`"mgh"`,
-    `"lta"`, `"m3z"`, ...), which are then also reachable as
-    `"freesurfer.mgh"`, `"freesurfer.lta"`, ...
+    The hint `"freesurfer"` selects them all. Subclass hints such as
+    `"mgh"`, `"lta"` or `"m3z"` can also be reached as `"freesurfer.mgh"`.
     """
 
     HINTS = ("freesurfer",)
 
 
 FS_DEFAULT_XRAS: _3Floats = (-1.0, 0.0, 0.0)
-"""Direction cosine of the first voxel axis of a default (LIA) volume."""
+"""The direction of the first voxel axis of the default LIA volume."""
 
 FS_DEFAULT_YRAS: _3Floats = (0.0, 0.0, -1.0)
-"""Direction cosine of the second voxel axis of a default (LIA) volume."""
+"""The direction of the second voxel axis of the default LIA volume."""
 
 FS_DEFAULT_ZRAS: _3Floats = (0.0, 1.0, 0.0)
-"""Direction cosine of the third voxel axis of a default (LIA) volume.
+"""
+The direction of the third voxel axis of the default LIA volume.
 
-FreeSurfer falls back on these three -- a coronal, "conformed" LIA
-orientation -- with a 1 mm voxel size and a zero `c_ras` when a volume
-records no valid geometry (an MGH header whose `goodRASFlag` is not
-positive, an LTA volume marked invalid).
+When a volume records no valid geometry (an MGH `goodRASFlag` that is
+not positive, or an LTA volume marked invalid), FreeSurfer falls back
+on these coronal conformed directions, 1 mm voxels and a zero `c_ras`.
 """
 
 
 def fs_vox2phys(shape: tx.Sequence[int], voxelsize: _Vec) -> np.ndarray:
     """
-    The `(4, 4)` matrix from voxel to physical (centred scaled voxel) space.
+    Return the `(4, 4)` voxel-to-physical matrix.
 
-    It scales by the voxel size and moves the origin to the centre of the
-    volume, voxel `shape / 2`.
+    The matrix scales by the voxel size and moves the origin to the centre
+    of the volume, at voxel `shape / 2`.
     """
     shape = np.asarray(shape, dtype=np.float64)[:3]
     voxelsize = np.asarray(voxelsize, dtype=np.float64)[:3]
@@ -113,7 +89,7 @@ def fs_vox2phys(shape: tx.Sequence[int], voxelsize: _Vec) -> np.ndarray:
 
 def fs_phys2ras(xras: _Vec, yras: _Vec, zras: _Vec, cras: _Vec) -> np.ndarray:
     """
-    The `(4, 4)` matrix from physical space to scanner RAS.
+    Return the `(4, 4)` physical-to-scanner-RAS matrix.
 
     Its columns are the three direction cosines and the centre of the
     volume.
@@ -134,16 +110,15 @@ def fs_vox2ras(
     zras: _Vec,
     cras: _Vec,
 ) -> np.ndarray:
-    """The `(4, 4)` matrix from voxel space to scanner RAS."""
+    """Return the `(4, 4)` voxel-to-scanner-RAS matrix."""
     return fs_phys2ras(xras, yras, zras, cras) @ fs_vox2phys(shape, voxelsize)
 
 
 def fs_vox2tkr(shape: tx.Sequence[int], voxelsize: _Vec) -> np.ndarray:
     """
-    The `(4, 4)` matrix from voxel space to tkr (surface) RAS.
+    Return the `(4, 4)` voxel-to-tkr-RAS matrix, FreeSurfer's `Torig`.
 
-    This is FreeSurfer's `Torig`: the voxel-to-RAS matrix of the same
-    volume with default (LIA) direction cosines and a zero `c_ras`. It
+    The matrix uses the default LIA directions and a zero `c_ras`, so it
     depends only on the shape and the voxel size.
     """
     return fs_vox2ras(
@@ -160,23 +135,17 @@ def fs_geometry_from_vox2ras(
     vox2ras: np.ndarray, shape: tx.Sequence[int]
 ) -> tx.Tuple[_3Floats, _3Floats, _3Floats, _3Floats, _3Floats]:
     """
-    Decompose a voxel-to-RAS matrix into FreeSurfer's volume geometry.
+    Recover `(voxelsize, xras, yras, zras, cras)` from a voxel-to-RAS
+    matrix.
 
-    This is the inverse of [`fs_vox2ras`][]: the voxel size is the norm
-    of each column, the direction cosines are the normalised columns, and
-    the centre is the RAS position of voxel `shape / 2`. A matrix with a
-    shear, which FreeSurfer cannot store, loses it: the direction cosines
-    are then not orthogonal, exactly as FreeSurfer would write them.
-
-    Returns
-    -------
-    voxelsize, xras, yras, zras, cras : tuple of three floats each
+    This is the inverse of [`fs_vox2ras`][]. A shear cannot be represented
+    and is lost; the cosines are then not orthogonal, as FreeSurfer writes
+    them.
     """
     vox2ras = np.asarray(vox2ras, dtype=np.float64)
     linear = vox2ras[:3, :3]
     voxelsize = np.linalg.norm(linear, axis=0)
-    # A degenerate axis has no direction: keep the default rather than
-    # divide by zero.
+    # A zero axis gets a zero cosine rather than a division by zero.
     safe = np.where(voxelsize > 0, voxelsize, 1.0)
     cosines = linear / safe
     centre = np.ones(4)
@@ -196,21 +165,17 @@ def fs_geometry_from_vox2ras(
 
 
 def mat2code(vox2ras: np.ndarray) -> tx.Tuple[_3Ints, _3Flips]:
-    """Convert a vox2ras matrix to an orientation code.
-
-    Parameters
-    ----------
-    vox2ras : np.ndarray
-        A 4x4 vox2ras matrix.
+    """
+    Compute the orientation code of a `(4, 4)` voxel-to-RAS matrix.
 
     Returns
     -------
-    permut : (int, int, int)
-        A tuple of three integers representing the permutation of axes.
-    flips : ({-1, 1}, {-1, 1}, {-1, 1})
-        A tuple of three integers representing the flips of axes.
+    permut : array of int
+        The RAS axis on which each voxel axis runs.
+    flips : array of int
+        The direction, -1 or 1, of each voxel axis along its RAS axis.
     """
-    vox2ras = vox2ras[:3, :3]  # keep linear part only
+    vox2ras = vox2ras[:3, :3]
     phys2ras = vox2ras / np.linalg.norm(vox2ras, axis=0)
     u, _, vh = np.linalg.svd(phys2ras)
     ortho = u @ vh
@@ -222,24 +187,13 @@ def mat2code(vox2ras: np.ndarray) -> tx.Tuple[_3Ints, _3Flips]:
 
 
 def code2orient(permut: _3Ints, flips: _3Flips) -> str:
-    """Convert a permutation and flip code to an orientation string.
+    """
+    Convert an orientation code, as [`mat2code`][] returns it, to a string.
 
-    Parameters
-    ----------
-    permut : (int, int, int)
-        A tuple of three integers representing the permutation of axes.
-    flips : ({-1, 1}, {-1, 1}, {-1, 1})
-        A tuple of three integers representing the flips of axes.
-
-    Returns
-    -------
-    orient : str
-        Three uppercase letters representing the orientation of the axes.
-        Letters correspond to each voxel axis (F-ordered) and can take values:
-        - 'L' (right-to-left) or 'R' (left-to-right)
-        - 'P' (anterior-to-posterior) or 'A' (posterior-to-anterior)
-        - 'I' (superior-to-inferior) or 'S' (inferior-to-superior)
-
+    The string holds one letter per voxel axis, in voxel order: `L`
+    (right-to-left) or `R` (left-to-right), `P` (anterior-to-posterior) or
+    `A` (posterior-to-anterior), and `I` (superior-to-inferior) or `S`
+    (inferior-to-superior).
     """
     names = [["L", "R"], ["P", "A"], ["I", "S"]]
     name = "".join([names[p][int(f > 0)] for p, f in zip(permut, flips)])
@@ -247,7 +201,9 @@ def code2orient(permut: _3Ints, flips: _3Flips) -> str:
 
 
 def mat2orient(vox2ras: np.ndarray) -> str:
-    """Convert a vox2ras matrix to an orientation string, such as
-    `"LIA"`."""
+    """
+    Return the orientation string, such as `"LIA"`, of a voxel-to-RAS
+    matrix.
+    """
     permut, flips = mat2code(vox2ras)
     return code2orient(permut, flips)

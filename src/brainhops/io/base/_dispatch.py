@@ -1,15 +1,11 @@
-"""
-Format dispatch: choosing which registered parser should read an input.
+"""Choice of the registered parser that reads an input.
 
-Kept apart from `_base` because none of it depends on the class
-hierarchy -- it works on a registry (any set of parser classes) and an
-input, and is the part worth reading on its own when reasoning about why
-a given file was read by a given parser.
+Dispatch depends only on a registry, a set of parser classes, and on the input,
+not on the class hierarchy. This module explains why a parser was chosen.
 """
 
 __all__ = ["Source", "parse", "sniff"]
 
-# stdlib
 import inspect
 from collections.abc import Iterable
 from io import BytesIO, StringIO
@@ -17,11 +13,9 @@ from os import DirEntry, PathLike, sep
 from os.path import basename
 from urllib.parse import urlsplit
 
-# dependencies
 import typing_extensions as tx
 from bagof.magic import fields
 
-# internals
 from brainhops._core import path
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
@@ -34,25 +28,23 @@ from brainhops.io.base.specs import SourceSpec, format_hints, parser_for
 
 _T = tx.TypeVar("_T")
 
-# Hints of formats that are not registered because an optional dependency
-# is missing, with what to install: hint -> (package, extra).
+# Formats left unregistered for lack of an optional dependency, by hint:
+# hint -> (package, extra).
 _MISSING_FORMATS: tx.Dict[str, tx.Tuple[str, str]] = {}
 
 
 def register_missing_format(
     hints: tx.Iterable[str], package: str, extra: str
 ) -> None:
-    """
-    Record that the format answering to `hints` is not registered because
-    `package` is not installed, so that asking for it by hint says what
-    to install (`pip install brainhops[extra]`).
+    """Record that the formats answering to `hints` need `package`.
+
+    Requesting one of them by hint then names the extra to install.
     """
     for hint in hints:
         _MISSING_FORMATS[str(hint).lower()] = (package, extra)
 
 
 def _missing_formats(hints: tx.Iterable[str]) -> str:
-    """What to install for the requested hints of missing formats."""
     needs = sorted(
         {_MISSING_FORMATS[h] for h in hints if h in _MISSING_FORMATS}
     )
@@ -64,23 +56,15 @@ def _missing_formats(hints: tx.Iterable[str]) -> str:
 
 
 class Source:
-    """
-    Hands out a fresh, rewound view of a parse input.
+    """A parse input that can be read again from the start.
 
-    Dispatch is speculative: we may sniff a stream and then parse it, or
-    try several parsers in turn. Each of those consumes the input, so
-    every attempt must start from the same place.
+    Dispatch sniffs and parses an input with several parsers in turn, and each
+    attempt consumes it. Paths and in-memory content are returned as they are,
+    seekable streams are rewound, non-seekable streams are read once into
+    memory, and one-shot iterables of lines are materialized into a list.
 
-    - Paths and byte/text content are immutable and handed back as-is.
-    - Seekable streams are rewound to their initial position.
-    - Non-seekable streams (stdin, sockets, pipes) are read once into
-      memory and re-wrapped in a fresh buffer for every attempt.
-    - One-shot iterables of lines are materialized once into a list.
-
-    A `str` is a path, like an `os.PathLike`. Text held in memory is
-    wrapped with `Source.content`, which the content entry points
-    (`from_text`, `sniff_text`, ...) use: only they know that their `str`
-    is text, and the type alone cannot tell.
+    A `str` is a path. Text held in memory must be wrapped with [`content`][],
+    because the type alone cannot tell the two apart.
     """
 
     def __init__(self, other: tx.Any) -> None:
@@ -104,7 +88,7 @@ class Source:
                     else StringIO
                 )
         elif isinstance(other, (str, bytes, bytearray, PathLike)):
-            pass  # immutable, and `str`/`bytes` are Iterable: check first
+            pass  # str and bytes are Iterable, so they are tested first.
         elif isinstance(other, Iterable) and not isinstance(
             other, (list, tuple)
         ):
@@ -117,12 +101,12 @@ class Source:
         try:
             return bool(other.seekable())
         except AttributeError:
-            return True  # old-style file objects have no `seekable()`
+            return True  # Old-style file objects lack seekable().
         except Exception:
             return False
 
     def get(self) -> tx.Any:
-        """A fresh view of the input, positioned at the start."""
+        """Return a fresh view of the input, positioned at its start."""
         if self.buffer is not None:
             return self.factory(self.buffer)
         if self.pos is not None:
@@ -136,66 +120,56 @@ class Source:
 
     @classmethod
     def content(cls, other: tx.Any) -> "Source":
-        """Wrap content held in memory, where a `str` is text rather than
-        a path."""
+        """Wrap in-memory content, where a `str` is text and not a path."""
         source = cls(other)
         source.path = None
         return source
 
     @property
     def missing(self) -> tx.Optional[path.Path]:
-        """The path the input names, if it names a file that does not
-        exist."""
+        """The path that the input names, if that file is missing.
+
+        The value is `None` if the file exists or its existence cannot be
+        checked.
+        """
         if self.path is None:
             return None
         filename = path.Path(self.path)
         try:
             exists = filename.exists()
         except Exception:
-            return None  # cannot tell (a remote store, say): not missing
+            return None  # Existence cannot be checked (remote store).
         return None if exists else filename
 
     @property
     def name(self) -> tx.Optional[str]:
-        """The file name, if the input is a named file."""
+        """The base name of the file that the input names, or `None`."""
         if self.path is not None:
             return _to_filename(self.path)
         if isinstance(self.other, (str, bytes, bytearray, PathLike)):
-            # Content wrapped with `Source.content`: its text is not a
-            # file name, whatever it looks like.
+            # Content wrapped by Source.content is never a file name.
             return None
-        return _to_filename(self.other)  # an open file, by its `.name`
+        return _to_filename(self.other)  # An open file is named by its .name.
 
     def __repr__(self) -> str:
-        """Describe the source by its file name, or as plain content when
-        it has none."""
         name = self.name
         return f"file {name!r}" if name else "input content"
 
 
 def _to_filename(other: tx.Any) -> tx.Optional[str]:
+    """Return the base name of the file that `other` names, or `None`.
+
+    The name is taken from the text of the path without touching storage,
+    because `os.fspath` raises on remote paths and downloads cloud paths. For a
+    URL, the name is the last segment of its path, without query or fragment;
+    for an fsspec chain such as `simplecache::s3://...`, it comes from the last
+    link.
     """
-    The base name of the file `other` names, or `None` if it names none.
-
-    A path names its file, and an open file object names the file it was
-    opened from. Content, and a stream with no name, name nothing.
-
-    The name is read from the text of the path, and storage is never
-    touched. `os.fspath` is not used: it raises on a remote path, and
-    downloads a cloud path to a local cache. Every path object we know of
-    gives its location, local or remote, as `str()`.
-
-    A URL names the file at the end of its path. A query and a fragment
-    are not part of that path, so `https://host/x.nii.gz?token=...` names
-    `x.nii.gz`, and the last link of an fsspec chain
-    (`simplecache::s3://...`) is the file.
-    """
-    # FIXME: this should be in _core.path, probably.
-    # Also, why not return a `Path`?
-    # Also, this function is called to_filename but returns a base name (?)
+    # TODO: move to brainhops._core.path, and rename, since it returns a
+    # base name rather than a file name.
 
     if isinstance(other, DirEntry):
-        # A directory entry is a local path, but `str()` gives its repr.
+        # str() of a DirEntry gives its repr.
         text = other.path
     elif isinstance(other, (str, path.PathLike)):
         text = str(other)
@@ -207,30 +181,28 @@ def _to_filename(other: tx.Any) -> tx.Optional[str]:
 
 
 def _base_name(text: str) -> str:
-    """The last component of a local path or of the path of a URL."""
-    # FIXME Can we not use `bagof.paths.Path` instead? It's made for this.
+    """Return the last component of a local path or of the path of a URL."""
+    # TODO: use bagof.paths.Path instead.
     if "::" in text and "://" in text:
-        # An fsspec chain: the last link is the file, the others are
-        # layers over it (caches, archives).
+        # In an fsspec chain, the last link is the file and the others are
+        # layers
+        # such as caches or archives.
         text = text.rsplit("::", 1)[-1]
     if _has_scheme(text):
-        # The name is in the path of the URL, not in its query or
-        # fragment, which may hold slashes and dots of their own.
+        # The query and fragment may contain slashes and dots.
         text = urlsplit(text).path
-        # Trailing slashes matter for directory-based formats (.zarr)
+        # Strip trailing slashes so that directory stores such as .zarr are
+        # named.
         return text.rstrip("/").rsplit("/", 1)[-1]
     return basename(text.rstrip("/" + sep))
 
 
 def _has_scheme(text: str) -> bool:
-    """
-    Whether `text` opens with a URL scheme (`s3:`, `https:`, `file:`).
+    """Whether `text` starts with a URL scheme such as `s3:`.
 
-    A scheme is a letter followed by letters, digits, `+`, `-` or `.`,
-    and is at least two characters long here, so that a Windows drive
-    letter such as `C:` is not read as one.
+    A scheme has at least two characters, so a drive such as `C:` is not one.
     """
-    # FIXME Can we not use `bagof.paths.Path` instead? It's made for this.
+    # TODO: use bagof.paths.Path instead.
     scheme, colon, _ = text.partition(":")
     return (
         bool(colon)
@@ -242,16 +214,12 @@ def _has_scheme(text: str) -> bool:
 
 
 def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
-    """
-    How much of `name` this format accounts for, or `None` if it cannot.
+    """Measure how much of a file name a format accounts for.
 
-    Returns `(extension, prefix)`, the lengths of the longest declared
-    extension and prefix that matched. Longer is more specific: a parser
-    declaring `".nii.gz"` beats one declaring `".gz"`, and one requiring
-    `"iy_"` beats one requiring `"y_"`.
-
-    A format that declares prefixes and matches none of them is out of
-    the running entirely -- the constraint is a requirement, not a hint.
+    The result holds the lengths of the longest matching declared extension and
+    prefix, so that `.nii.gz` beats `.gz` and `iy_` beats `y_`. It is `None`
+    when no extension matches, or when the format declares prefixes and none
+    matches, because a prefix is a requirement rather than a hint.
     """
     extension = None
     for ext in cls.EXTENSIONS:
@@ -272,18 +240,12 @@ def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
 
 
 def _registry_depth(cls: type) -> int:
-    """
-    How many dispatcher levels a format sits under.
+    """Count the dispatcher levels above a format.
 
-    A format registered under both `FileBasedImage` and the root
-    `FileBasedObject` has been classified more finely than one sitting
-    under the root alone, and is preferred when nothing else separates
-    them.
-
-    This is the one defensible reading of "MRO depth": it counts
-    *registry* levels, which carry meaning, rather than classes, which
-    do not -- a deep hierarchy inside one format family says nothing
-    about how well that format matches the file at hand.
+    A format registered under `FileBasedImage` is classified more finely than
+    one registered only under the root, and wins a tie. Registry levels are
+    counted rather than classes, because hierarchy depth says nothing about
+    match quality.
     """
     return sum(1 for base in cls.__mro__ if "_REGISTRY" in base.__dict__)
 
@@ -291,12 +253,9 @@ def _registry_depth(cls: type) -> int:
 def _drop_base_classes(
     candidates: tx.List[tx.Tuple[type, tx.Any]],
 ) -> tx.List[tx.Tuple[type, tx.Any]]:
-    """
-    Drop candidates that are proper base classes of another candidate.
+    """Drop candidates that are base classes of another candidate.
 
-    A subclass is strictly more specific than its base, so when both
-    claim the same content the subclass wins. This is the rule
-    `functools.singledispatch` uses.
+    The subclass is more specific, as in `functools.singledispatch`.
     """
     classes = [cls for cls, _ in candidates]
     return [
@@ -313,24 +272,21 @@ def _specificity(
     match: tx.Optional[tx.Tuple[int, int]],
     score: tx.Optional[tx.Dict[type, float]],
 ) -> tx.Tuple:
-    """
-    Sort key ordering candidates from most to least specific.
+    """Return the sort key of a candidate, most specific first.
 
-    Every component is a statement about the *file*, or about what the
-    parser claims to handle -- never about accidents of import order.
-    In decreasing precedence:
+    The criteria, in order of precedence, concern what the file or the parser
+    declares and never the import order:
 
-    1. Sniffer confidence.
-    2. How much of the filename the extension accounted for.
-    3. How much of it the required prefix accounted for.
-    4. How finely the format is classified (`_registry_depth`).
-    5. How narrow a surface it declares: a parser claiming `.lta` alone
-       is more specific than one claiming five extensions, and both are
-       more specific than one claiming none.
-    6. Explicit `PRIORITY`.
+    1. the confidence of the sniffer;
+    2. the length of the matching extension;
+    3. the length of the matching required prefix;
+    4. the registry depth;
+    5. the narrowness of the declared extensions: a parser declaring `.lta`
+       alone beats one declaring five, and both beat one declaring none;
+    6. the explicit `PRIORITY`.
 
-    Candidates that tie on all of these are genuinely indistinguishable,
-    and dispatch refuses to guess between them.
+    Candidates with equal keys cannot be told apart, and dispatch does not
+    guess.
     """
     extension, prefix = match or (0, 0)
     return (
@@ -348,12 +304,10 @@ def _tiers(
     candidates: tx.List[tx.Tuple[type, tx.Any]],
     score: tx.Optional[tx.Dict[type, float]] = None,
 ) -> tx.List[tx.List[type]]:
-    """
-    Group candidates into tiers of equal specificity, best tier first.
+    """Group candidates into tiers of equal specificity, best first.
 
-    A tier with more than one member holds parsers that nothing can
-    separate; `_parse` treats that as an ambiguity rather than picking
-    one at random.
+    A tier with several members holds parsers that nothing can separate, which
+    [`parse`][] treats as an ambiguity.
     """
     groups = {}
     for cls, match in _drop_base_classes(candidates):
@@ -369,17 +323,12 @@ def _candidates(
     allowed: tx.Optional[tx.Set[type]] = None,
     **kwargs,
 ) -> tx.List[tx.List[type]]:
-    """
-    Rank the formats that could read `source`, best tier first.
+    """Rank the formats that could read `source`, best tier first.
 
-    Shared by `parse` and `sniff`, so that "which format would read this"
-    and "which format did read this" can never disagree.
-
-    Extension and confidence are weighed together rather than in separate
-    passes. An extension pass that short-circuited would put every reader
-    of a shared container -- every `.nii` reader, say -- into one
-    undifferentiated tier and call it an ambiguity, throwing away the
-    very scores that can tell them apart.
+    [`parse`][] and [`sniff`][] share this ranking, so they agree. Extension
+    and confidence are weighed together: ranking by extension first would put
+    every `.nii` reader into one ambiguous tier and discard the scores that
+    separate them.
     """
     name = source.name
     scores: tx.Dict[type, float] = {}
@@ -398,9 +347,9 @@ def _candidates(
             if errors is not None:
                 errors.append((subclass, fn_sniff, e))
             score = 0.0
-        # A matching extension keeps a parser in the running even when
-        # its sniffer declines: sniffers are optional, and a name is
-        # evidence too. It still sorts below anything that scored.
+        # Sniffers are optional and the name is evidence, so a matching
+        # extension
+        # keeps a parser in the running below anything that scored.
         if score > 0 or match is not None:
             scores[subclass] = score
             candidates.append((subclass, match))
@@ -419,48 +368,44 @@ def parse(
     options: tx.Optional[tx.Mapping[str, tx.Union[str, SourceSpec]]] = None,
     **kwargs,
 ) -> _T:
-    """
-    Find the parser in `registry` that best matches `source`, and use it.
+    """Read `source` with the registered parser that matches it best.
 
-    Every registered format is scored by its sniffer and by how well
-    the filename matches, and the most specific one wins. If none of
-    them recognizes the content, and only if asked, every format is
-    tried in turn.
+    Formats are ranked by sniffer score and file name match, and tried from the
+    most specific. In a tie, every tied format is tried, and the result counts
+    only if exactly one succeeds. If `brute` is set and no ranked format
+    succeeds, every remaining allowed format is tried in turn.
 
     !!! note "Why brute force is opt-in"
-        Running arbitrary readers over arbitrary bytes can succeed on a
-        partial parse and quietly return a wrong-format object, so it
-        must be asked for rather than happening behind the caller's back.
+        A reader applied to arbitrary bytes may succeed on a partial parse and
+        quietly return an object of the wrong format.
 
     Parameters
     ----------
     source : Source
-        The input, wrapped so that every attempt sees it from the same
-        position.
-    registry : set[type]
+        The input.
+    registry : set of type
         The formats to choose between.
-    fn_parse : str
-        Name of the parsing method to call, e.g. `"from_file"`.
-    fn_sniff : str
-        Name of the matching sniffing method, e.g. `"sniff_file"`.
+    fn_parse, fn_sniff : str
+        The names of the parsing and sniffing methods, such as `"from_file"`
+        and `"sniff_file"`.
     brute : bool
-        Try every parser in turn if none recognized the input.
-    **kwargs
-        Parser-specific options.
-
-    Returns
-    -------
-    obj
-        The parsed object.
+        Whether to try every format when none recognizes the input.
+    hints, hint : str or iterable of str
+        Only formats answering to one of these hints are allowed, and they are
+        tried even if none sniffs the input positively.
+    options : mapping, optional
+        Source options. Only formats accepting every option are allowed.
 
     Raises
     ------
     AmbiguousFormatError
-        If several equally specific parsers can all read the content.
+        If several equally specific parsers can all read the input.
+    ParserExistsError
+        If the input names a file that does not exist.
     ParserContentError
-        If no parser could read the content.
+        If an option is given twice, if no parser accepts the hints and
+        options, or if no parser could read the input.
     """
-    # FIXME: hints/hint/options are not documented
 
     errors: tx.List[tx.Tuple[type, str, Exception]] = []
     tried: tx.List[type] = []
@@ -515,9 +460,8 @@ def parse(
                 if ok:
                     return True, result
                 continue
-            # Nothing separates these parsers. Try them all: if only one
-            # can actually read the content, the ambiguity was merely
-            # apparent and there is nothing to complain about.
+            # If only one tier-mate reads the content, the tie was only
+            # apparent.
             winners = []
             for subclass in tier:
                 ok, result = attempt(subclass)
@@ -536,16 +480,15 @@ def parse(
     tiers = _candidates(
         source, registry, fn_sniff, errors, allowed=allowed, **kwargs
     )
-    # Hints are an explicit allowlist. If nothing in that allowlist sniffs
-    # the source (an unknown extension is a common reason), try the allowed
-    # formats instead of silently widening back to the full registry.
+    # Hints are an explicit allowlist: if nothing in it sniffs positively, for
+    # example because of an unknown extension, try the allowed formats rather
+    # than widening to the full registry.
     if requested_hints and not tiers:
         tiers = _tiers([(subclass, None) for subclass in allowed])
     ok, result = walk(tiers)
     if ok:
         return result
 
-    # --- Brute force ---------------------------------------------------
     if brute:
         for subclass in sorted(allowed, key=lambda c: c.__qualname__):
             if subclass in tried:
@@ -554,12 +497,15 @@ def parse(
             if ok:
                 return result
 
-    # --- Failure) Raise -----------------------------------------------
     raise _failure(source, list(allowed), errors)
 
 
 def _field_annotations(cls: type) -> tx.Dict[str, tx.Any]:
-    """Resolved field annotations, including custom ``Annotated`` data."""
+    """Return the resolved field annotations of `cls`.
+
+    `Annotated` metadata is kept. If resolution fails, the raw annotations are
+    merged along the MRO.
+    """
     try:
         annotations = tx.get_type_hints(cls, include_extras=True)
     except Exception:
@@ -570,7 +516,10 @@ def _field_annotations(cls: type) -> tx.Dict[str, tx.Any]:
 
 
 def _option_fields(cls: type) -> tx.Dict[str, tx.Tuple[str, tx.Any]]:
-    """Source option names mapped to concrete Magic fields and types."""
+    """Map each source option name to a field name and annotation.
+
+    Option names are the public aliases of keyword fields.
+    """
     try:
         magic_fields = fields(cls)
     except (TypeError, AttributeError):
@@ -644,16 +593,11 @@ def _failure(
     registry: tx.List[type],
     errors: tx.List[tx.Tuple[type, str, Exception]],
 ) -> Exception:
-    """
-    Build an informative error out of everything that went wrong.
+    """Build the error that reports why parsing failed.
 
-    Swallowing every exception and reporting a bare "cannot parse" hides
-    real bugs inside the *correct* reader, so we report what each parser
-    actually complained about, and chain the last one.
-
-    A path to a file that does not exist is reported as exactly that,
-    a `FileNotFoundError`, rather than as a list of parsers that each
-    failed to open it.
+    Each parser's own complaint is listed, so that a bug in the correct reader
+    is not hidden, and the last one is chained. A missing file is reported as a
+    [`ParserExistsError`][] rather than as every parser failing to open it.
     """
     if not registry:
         return ParserContentError(
@@ -678,8 +622,8 @@ def _failure(
         for cls, fn, e in errors
     )
     failure = ParserContentError(f"Cannot parse {source}. Tried:\n{detail}")
-    # `raise ... from ...` is not available to a function that *returns*
-    # the exception, so chain it by hand.
+    # The exception is returned rather than raised, so the cause is set by
+    # hand.
     failure.__cause__ = errors[-1][2]
     return failure
 
@@ -694,49 +638,35 @@ def sniff(
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
     **kwargs,
 ) -> tx.Optional[type]:
-    """
-    Identify which registered format would read this content.
+    """Identify the registered format that would read `source`.
 
-    A dispatcher answers *which* format, not *how confident*: the score
-    belongs to a format judging itself, and once several formats have
-    been compared the interesting answer is the winner. Ask the returned
-    class to score itself if the number is what you wanted.
-
-    The ranking is the one `parse` uses, so the answer is what `load`
-    would actually reach for.
+    The answer is a format, not a confidence, and is ranked as in [`parse`][].
 
     !!! note "`None` is not the same as a failed load"
-        `parse` can resolve an ambiguous top tier by *trying* each
-        candidate -- if only one parses, there was no real ambiguity.
-        `sniff` does not parse, so it cannot do that, and reports no
-        single answer instead. A `None` here does not guarantee that
-        `load` will fail.
+        [`parse`][] can resolve a tie by trying each candidate. This function
+        does not parse, so it reports a tie as `None`.
 
     Parameters
     ----------
-    source : Source
-        The input to identify.
-    registry : set[type]
-        The formats to choose between.
-    fn_sniff : str
-        Name of the sniffing method to call, e.g. `"sniff_file"`.
-    error : bool | type[Exception]
-        If not False, raise instead of returning `None`.
+    error : bool or type of Exception
+        If not false, raise instead of returning `None`.
     what : str
-        How to describe the input in an error message.
-    **kwargs
-        Parser-specific options.
+        A description of the input for error messages.
 
     Returns
     -------
-    format : type | None
-        The best-matching format, or `None` if no single one stands out.
+    type or None
+        The best-matching format, or `None` if no single format stands out.
 
     Raises
     ------
     SnifferExistsError
-        If `error` is set, no single format stands out, and the input
-        names a file that does not exist. It is a `FileNotFoundError`.
+        If `error` is set, no single format stands out, and the input names a
+        missing file.
+    AmbiguousFormatError
+        If `error` is set and the top tier is tied.
+    SnifferContentError
+        If `error` is set and no format recognizes the input.
     """
     requested_hints = _normalize_hints(hints, hint)
     allowed = {
@@ -767,21 +697,12 @@ def sniff(
 
 
 def _describe(cls: type) -> str:
-    """
-    What a format holds, in the words of its own docstring.
+    """Describe a format by the first paragraph of its own docstring.
 
-    The first paragraph of the class's own docstring, on one line and
-    without its final full stop. A docstring inherited from a base class
-    describes the base, not this format, so it is not used.
-
-    A data model without a docstring of its own is given one that lists
-    its fields under an `Attributes` heading. A paragraph that opens with
-    a section heading, underlined with dashes, describes nothing, so no
-    description is given.
-
-    `bagof` writes that generated list into the class's own `__doc__`,
-    after the docstring the class was written with, so the two cannot be
-    told apart by where they live -- only by the heading.
+    The paragraph is joined into one line without its final period. Inherited
+    docstrings describe a base class and are ignored, and so is the docstring
+    that bagof generates for a data model, which opens with an underlined
+    heading.
     """
     doc = cls.__dict__.get("__doc__")
     if not isinstance(doc, str) or not doc.strip():
@@ -796,14 +717,10 @@ def _describe(cls: type) -> str:
 def _selecting_hint(
     cls: type, candidates: tx.Sequence[type]
 ) -> tx.Optional[str]:
-    """
-    The shortest hint that selects `cls` among the formats that tied.
+    """Return the hint that selects `cls` among tied formats, or `None`.
 
-    A hint that none of the other tied formats answers to settles the
-    tie: every format that ranked above them has already failed on this
-    content, and every other one ranks below `cls`. The fewest dotted
-    parts win, then the shortest string, so the plainest word (`"itk"`
-    rather than `"itk.displacements"`) is the one offered.
+    Such a hint is one that no other tied format answers to; fewer dotted parts
+    and then shorter hints are preferred, so `itk` beats `itk.displacements`.
     """
     taken = set()
     for other in candidates:
@@ -817,16 +734,10 @@ def _selecting_hint(
 
 
 def _ambiguity_message(subject: str, candidates: tx.Iterable[type]) -> str:
-    """
-    Tell a user which formats a file could be, and how to choose one.
+    """Explain which formats an input could be in.
 
-    Each candidate is named, described in its own words, and given the
-    `hint=` value that selects it -- or, when no hint can, the call to
-    its own `load`. The message ends with how to use either.
-
-    How to make the formats tell such content apart (a sniffer, or a
-    `PRIORITY`) is a question for whoever maintains them, and is left to
-    the docstring of `AmbiguousFormatError` rather than put to the user.
+    Each candidate is listed with the `hint=` value or the `load` call that
+    selects it.
     """
     candidates = sorted(candidates, key=lambda cls: cls.__name__)
     lines = [
@@ -867,7 +778,10 @@ def _normalize_hints(
     hints: tx.Iterable[str],
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]],
 ) -> tx.FrozenSet[str]:
-    """Normalize the singular convenience spelling and union spelling."""
+    """Merge `hint` and `hints` into one lowercase set.
+
+    Each may be a string or an iterable of strings.
+    """
     result = [hints] if isinstance(hints, str) else list(hints)
     if hint is not None:
         result.extend([hint] if isinstance(hint, str) else hint)

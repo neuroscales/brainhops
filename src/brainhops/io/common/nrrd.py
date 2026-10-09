@@ -1,11 +1,7 @@
-"""
-The shared NRRD-reading and NRRD-writing machinery behind every NRRD-based
-format.
+"""Reading and writing machinery shared by all NRRD-based formats.
 
-A NRRD ("Nearly Raw Raster Data") file is a text header followed by the
-sample values. The header and the values are either in the same file
-(*attached*, `.nrrd`) or the header names the file(s) that hold them
-(*detached*, `.nhdr` with its `.raw`, `.raw.gz`, ...).
+A NRRD file is a text header followed by the samples, which are either attached
+in the same `.nrrd` file or detached in data files that a `.nhdr` header names:
 
 ```
 NRRD0004
@@ -26,43 +22,13 @@ DWMRI_b-value:=1000
 <data>
 ```
 
-The conventions below follow the format specification
-(<https://teem.sourceforge.net/nrrd/format.html>).
+The module follows the NRRD specification and supports every encoding, every
+scalar type except `block`, and all three forms of the `data file` field. Raw
+data in a single local file are memory-mapped when read from a path.
 
-* **Magic.** The first line is `NRRD000X`, with `X` the version (1-5).
-* **Lines.** `field: value` lines (the field names are matched without
-  regard to case, and the spellings without a space -- `datafile`,
-  `byteskip`, `axismins`, `centerings`, ... -- are accepted), `key:=value`
-  pairs (`\\n` and `\\\\` are escapes in both), and `#` comments. The
-  header ends at the first empty line, after which an attached header's
-  data start; a detached header may also end at the end of its file.
-* **Types.** Every spelling of the specification (`short`, `int16`,
-  `int16_t`, `signed short int`, ...) of the signed and unsigned 8 to 64
-  bit integers, `float` and `double`. `block` is not supported.
-* **Encodings.** `raw`, `ascii` (`txt`, `text`), `hex`, `gzip` (`gz`) and
-  `bzip2` (`bz2`). `endian` is required for multi-byte types in a binary
-  encoding.
-* **Data files.** `data file: <name>`, relative to the header's
-  directory unless absolute; `data file: <format> <min> <max> <step>
-  [<subdim>]`, a `printf` pattern expanded over the inclusive range; and
-  `data file: LIST [<subdim>]`, followed by one file name per line until
-  the end of the header. Several files are read in order and concatenated,
-  each holding as many samples.
-* **Skips.** `line skip` lines are skipped first, in the file as stored.
-  `byte skip` bytes are then skipped -- after decompression for `gzip` and
-  `bzip2` (as `pynrrd` and teem do) -- and `byte skip: -1` means that the
-  data are the last bytes of the (decompressed) file.
-
-Reading an attached `raw` file, or a detached one with a single `raw` data
-file, from a local path memory-maps the values, so nothing but the header
-is read until they are indexed.
-
-!!! note "Why not `pynrrd`"
-    NRRD headers are simple text, and `pynrrd` covers fewer of them than
-    this parser does: it reads neither the `LIST` nor the pattern forms
-    of `data file`, nor the `hex` encoding, and always reads the values
-    into memory. A dedicated parser keeps the dependencies to numpy and
-    the standard library (`gzip`, `bz2`).
+!!! note "Why not pynrrd"
+    pynrrd supports neither `LIST` or pattern data files nor `hex`, and it
+    always loads the data into memory.
 """
 
 __all__ = [
@@ -76,7 +42,6 @@ __all__ = [
     "read_data",
 ]
 
-# stdlib
 import bz2
 import gzip
 import math
@@ -85,12 +50,10 @@ import re
 import zlib
 from io import BytesIO
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Factory, Magic
 
-# internals
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._utils_files import local_path as _local_path
@@ -107,7 +70,7 @@ from brainhops.io.base.parsers import (
 )
 
 NRRD_MAGIC = b"NRRD000"
-"""The first seven bytes of every NRRD file; a version digit follows."""
+"""The first seven bytes of every NRRD file, before the version."""
 
 _MAX_HEADER_LINES = 1_000_000
 
@@ -182,7 +145,7 @@ _TYPE_NAMES = {
     "f4": "float",
     "f8": "double",
 }
-"""The type name written for each numpy type (the `pynrrd` spelling)."""
+"""NRRD type name written for each NumPy type code."""
 
 _ENCODINGS = {
     "raw": "raw",
@@ -241,7 +204,7 @@ _FIELDS = (
     "byte skip",
     "data file",
 )
-"""Every field of the specification, in the order they are written."""
+"""All fields of the specification, in writing order."""
 
 SPACES = {
     "right-anterior-superior": ("RAS", 3),
@@ -257,7 +220,7 @@ SPACES = {
     "3d-right-handed-time": ("3D-right-handed-time", 4),
     "3d-left-handed-time": ("3D-left-handed-time", 4),
 }
-"""Each `space` of the specification: its abbreviation and dimension."""
+"""Canonical space names, mapped to abbreviation and dimension."""
 
 _SPACE_NAMES = {abbr.lower(): name for name, (abbr, _) in SPACES.items()}
 
@@ -269,14 +232,12 @@ _NONE = ("none", "???")
 
 
 def nrrd_dtype(name: str, endian: tx.Optional[str] = None) -> np.dtype:
-    """
-    The numpy type of a NRRD `type`, in the byte order of `endian`
-    (`"little"` or `"big"`; the native order when it is not given).
+    """Return the NumPy data type of a NRRD type name and byte order.
 
     Raises
     ------
     ParserContentError
-        If the type is unknown, or is `block`.
+        If the type is unknown.
     """
     key = " ".join(str(name).split()).lower()
     if key not in _TYPES:
@@ -288,15 +249,12 @@ def nrrd_dtype(name: str, endian: tx.Optional[str] = None) -> np.dtype:
 
 
 def dtype_to_nrrd(dtype: tx.Any) -> str:
-    """
-    The NRRD `type` of a numpy type (or of a NRRD type name).
-
-    Booleans are stored as `uint8` and half floats as `float`.
+    """Return the NRRD type name of a NumPy data type.
 
     Raises
     ------
     WriterError
-        If NRRD has no type for it (complex numbers, strings, ...).
+        If NRRD has no matching type.
     """
     if isinstance(dtype, str) and " ".join(dtype.split()).lower() in _TYPES:
         return _TYPE_NAMES[_TYPES[" ".join(dtype.split()).lower()]]
@@ -343,7 +301,10 @@ def _format_float(value: float) -> str:
 
 
 def _parse_vectors(value: str) -> tx.List[tx.Optional[tx.List[float]]]:
-    """`none (1,0,0) (0,1,0)` -> `[None, [1, 0, 0], [0, 1, 0]]`."""
+    """Parse a list of vectors.
+
+    `"none (1,0,0) (0,1,0)"` gives `[None, [1, 0, 0], [0, 1, 0]]`.
+    """
     out: tx.List[tx.Optional[tx.List[float]]] = []
     for token in re.findall(r"\([^)]*\)|[^\s()]+", value):
         if token.lower() in _NONE:
@@ -365,7 +326,7 @@ def _format_vectors(vectors: tx.Iterable[tx.Any]) -> str:
 
 
 def _parse_strings(value: str) -> tx.List[str]:
-    """`"mm" "" "s"` -> `["mm", "", "s"]`."""
+    """Parse quoted strings: `'"mm" "" "s"'` gives `["mm", "", "s"]`."""
     return [_unescape(s) for s in re.findall(r'"((?:[^"\\]|\\.)*)"', value)]
 
 
@@ -382,30 +343,21 @@ def _format_strings(values: tx.Iterable[str]) -> str:
 
 
 class NrrdHeader(Magic, frozen=True):
-    """
-    A NRRD header: its fields and key/value pairs, as written.
-
-    The fields are kept as text, under their canonical names (`"data
-    file"`, `"space directions"`, ...), so that every one of them is
-    written back as it was read. The methods decode the ones that the
-    readers need.
+    """The header of a NRRD file, with the fields kept as text so that they are
+    written back as read.
     """
 
     version: int = 5
-    """The version of the magic line (`NRRD000X`)."""
+    """Format version, from the magic line."""
 
     fields: tx.Dict[str, str] = Factory(dict)
-    """The fields, by canonical name, as text, in the order they were
-    read. The file names of a `data file: LIST` are in `data_files`."""
+    """Fields as text, by canonical name, in reading order."""
 
     keyvalue: tx.Dict[str, str] = Factory(dict)
-    """The `key:=value` pairs, unescaped."""
+    """Unescaped `key:=value` pairs."""
 
     data_files: tx.Tuple[str, ...] = ()
-    """The data files of a detached header, in order (the `LIST` and
-    pattern forms expanded); empty for an attached header."""
-
-    # --- decoded fields -----------------------------------------------
+    """Detached data files in order; empty when the data are attached."""
 
     def _field(self, name: str) -> tx.Optional[str]:
         value = self.fields.get(name)
@@ -413,7 +365,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def dimension(self) -> int:
-        """The number of axes."""
+        """Number of axes."""
         value = self._field("dimension")
         if value is None:
             raise ParserContentError("The NRRD header has no 'dimension'.")
@@ -421,7 +373,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def sizes(self) -> tx.Tuple[int, ...]:
-        """The number of samples along each axis, fastest first."""
+        """Number of samples along each axis, fastest axis first."""
         value = self._field("sizes")
         if value is None:
             raise ParserContentError("The NRRD header has no 'sizes'.")
@@ -435,7 +387,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def encoding(self) -> str:
-        """The canonical encoding: raw, ascii, hex, gzip or bzip2."""
+        """Canonical encoding: `raw`, `ascii`, `hex`, `gzip` or `bzip2`."""
         value = (self._field("encoding") or "").lower()
         if value not in _ENCODINGS:
             raise ParserContentError(f"Unsupported NRRD encoding: {value!r}")
@@ -443,13 +395,16 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def endian(self) -> tx.Optional[str]:
-        """`"little"`, `"big"`, or `None` when the header says nothing."""
+        """Lower-cased byte order, or `None` if absent."""
         value = self._field("endian")
         return None if value is None else value.lower()
 
     @property
     def dtype(self) -> np.dtype:
-        """The numpy type of the stored values, in their byte order."""
+        """NumPy data type of the stored values, with the byte order.
+
+        Multi-byte types in a binary encoding require an `endian` field.
+        """
         value = self._field("type")
         if value is None:
             raise ParserContentError("The NRRD header has no 'type'.")
@@ -467,17 +422,17 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def count(self) -> int:
-        """The number of samples."""
+        """Total number of samples."""
         return int(np.prod(self.sizes, dtype=np.int64))
 
     @property
     def nbytes(self) -> int:
-        """The number of bytes of the (decoded) values."""
+        """Size of the decoded values in bytes."""
         return self.count * self.dtype.itemsize
 
     @property
     def line_skip(self) -> int:
-        """The number of lines to skip before the data."""
+        """Number of lines to skip before the data."""
         value = int(self._field("line skip") or 0)
         if value < 0:
             raise ParserContentError(f"Invalid NRRD line skip: {value}")
@@ -485,7 +440,10 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def byte_skip(self) -> int:
-        """The number of bytes to skip before the data, or -1."""
+        """Number of bytes to skip before the data.
+
+        A value of -1 means that the data are the last bytes of the file.
+        """
         value = int(self._field("byte skip") or 0)
         if value < -1:
             raise ParserContentError(f"Invalid NRRD byte skip: {value}")
@@ -493,8 +451,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def space(self) -> tx.Optional[str]:
-        """The canonical `space` (`"left-posterior-superior"`, ...), or
-        `None` when the header has none."""
+        """Canonical space name, or `None`; abbreviations are accepted."""
         value = self._field("space")
         if value is None:
             return None
@@ -506,8 +463,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def space_dimension(self) -> tx.Optional[int]:
-        """The dimension of the world space, from `space` or `space
-        dimension`; `None` when the header has neither."""
+        """Dimension of the world space, or `None` if unknown."""
         space = self.space
         if space is not None:
             return SPACES[space][1]
@@ -518,8 +474,10 @@ class NrrdHeader(Magic, frozen=True):
     def space_directions(
         self,
     ) -> tx.Optional[tx.List[tx.Optional[np.ndarray]]]:
-        """One vector per axis (`None` for a non-spatial axis), or `None`
-        when the header has no `space directions`."""
+        """Direction vector of each axis, or `None` if the field is absent.
+
+        The vector of a non-spatial axis is `None`.
+        """
         value = self._field("space directions")
         if value is None:
             return None
@@ -544,7 +502,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def space_origin(self) -> tx.Optional[np.ndarray]:
-        """The position of the centre of the first sample, or `None`."""
+        """Position of the first sample, or `None`."""
         value = self._field("space origin")
         if value is None:
             return None
@@ -555,7 +513,7 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def measurement_frame(self) -> tx.Optional[np.ndarray]:
-        """The measurement frame, one vector per column, or `None`."""
+        """Measurement frame with one vector per column, or `None`."""
         value = self._field("measurement frame")
         if value is None:
             return None
@@ -590,51 +548,52 @@ class NrrdHeader(Magic, frozen=True):
 
     @property
     def kinds(self) -> tx.List[tx.Optional[str]]:
-        """The kind of each axis, in lower case (`None` when unknown)."""
+        """Lower-cased kind of each axis, or `None`."""
         return self._words("kinds")
 
     @property
     def centers(self) -> tx.List[tx.Optional[str]]:
-        """The centering of each axis: `"cell"`, `"node"` or `None`."""
+        """Lower-cased centering of each axis, or `None`."""
         return self._words("centers")
 
     @property
     def spacings(self) -> tx.List[float]:
-        """The spacing of each axis (`nan` when unknown)."""
+        """Spacing of each axis, or NaN."""
         return self._floats("spacings")
 
     @property
     def axis_mins(self) -> tx.List[float]:
-        """The `axis mins` (`nan` when unknown)."""
+        """Minimum position along each axis, or NaN."""
         return self._floats("axis mins")
 
     @property
     def axis_maxs(self) -> tx.List[float]:
-        """The `axis maxs` (`nan` when unknown)."""
+        """Maximum position along each axis, or NaN."""
         return self._floats("axis maxs")
 
     @property
     def units(self) -> tx.List[tx.Optional[str]]:
-        """The unit of each axis (`None` when not given)."""
+        """Unit of each axis, or `None`."""
         return [v or None for v in self._per_axis("units", _parse_strings)]
 
     @property
     def space_units(self) -> tx.List[tx.Optional[str]]:
-        """The unit of each world axis (`None` when not given)."""
+        """Unit of each world axis, or `None`."""
         value = self._field("space units")
         if value is None:
             return [None] * (self.space_dimension or 0)
         return [v or None for v in _parse_strings(value)]
 
-    # --- parsing ------------------------------------------------------
-
     @classmethod
     def from_lines(
         cls, lines: tx.Iterable[str], version: int = 5
     ) -> "NrrdHeader":
-        """
-        Parse the lines of a header, after its magic line and up to the
-        empty line that ends it.
+        """Build a header from the lines that follow the magic line.
+
+        Raises
+        ------
+        ParserContentError
+            If a line cannot be parsed or a required field is missing.
         """
         fields: tx.Dict[str, str] = {}
         keyvalue: tx.Dict[str, str] = {}
@@ -682,12 +641,10 @@ class NrrdHeader(Magic, frozen=True):
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO) -> tx.Tuple["NrrdHeader", int]:
-        """
-        Read a header from a binary stream, from its magic line.
+        """Read a header from a binary stream positioned at the magic line.
 
-        Returns the header and the offset, relative to the start of the
-        stream, of the first byte after the header (where attached data
-        start).
+        Return the header and the number of bytes read, which is where attached
+        data begin.
         """
         start = file.tell()
         magic = file.readline(64)
@@ -712,11 +669,8 @@ class NrrdHeader(Magic, frozen=True):
         header = cls.from_lines(lines, version=version)
         return header, file.tell() - start
 
-    # --- writing ------------------------------------------------------
-
     def to_text(self) -> str:
-        """The text of the header, from its magic line, without the empty
-        line that separates it from attached data."""
+        """Return the header text, without the empty line that ends it."""
         lines = [f"NRRD000{self.version}"]
         for name in _FIELDS:
             if name in self.fields and name != "data file":
@@ -733,10 +687,7 @@ class NrrdHeader(Magic, frozen=True):
 
 
 def _data_files(value: str) -> tx.Tuple[tx.List[str], bool]:
-    """
-    The files named by a `data file` value, and whether the names follow
-    on the next lines (`LIST`).
-    """
+    """Return the names in a `data file` value and whether a `LIST` follows."""
     parts = value.split()
     if parts and parts[0] == "LIST":
         return [], True
@@ -761,10 +712,7 @@ def _data_files(value: str) -> tx.Tuple[tx.List[str], bool]:
 def _decode_part(
     file: tx.BinaryIO, start: int, header: NrrdHeader, nbytes: int
 ) -> bytes:
-    """
-    The decoded bytes of one data file (or of the data after an attached
-    header), from `start`: skips, decompression, text decoding.
-    """
+    """Read and decode the values of one data file from `start`."""
     file.seek(start)
     for _ in range(header.line_skip):
         file.readline()
@@ -804,7 +752,7 @@ def _decode_part(
 
 
 def _gunzip(content: bytes) -> bytes:
-    """Decompress gzip data, ignoring anything after its last member."""
+    """Decompress gzip members, ignoring trailing data."""
     out = []
     while content[:2] == b"\x1f\x8b":
         decomp = zlib.decompressobj(16 + zlib.MAX_WBITS)
@@ -821,20 +769,18 @@ def read_data(
     offset: int,
     mmap: bool = True,
 ) -> np.ndarray:
-    """
-    The values of a NRRD image, as an array of shape `sizes` in F order.
+    """Read the values of a NRRD image as an F-ordered array.
 
-    Parameters
-    ----------
-    header : NrrdHeader
-        The header.
-    file : path | bytes
-        The header file (path) or its content (bytes), used when the data
-        are attached, and to find detached data files.
-    offset : int
-        The offset of the first byte after the header.
-    mmap : bool
-        Memory-map a single uncompressed local data file.
+    `file` is the path of the header, against which relative data-file names
+    are resolved, or the file content as bytes. `offset` is the position of the
+    first byte after the header.
+
+    Raises
+    ------
+    ParserExistsError
+        If a data file does not exist.
+    ParserContentError
+        If detached data are read without a path, or the data are too short.
     """
     count, nbytes, dtype = header.count, header.nbytes, header.dtype
     if header.data_files:
@@ -912,9 +858,12 @@ def read_data(
 
 
 def encode_data(header: NrrdHeader, data: tx.Any) -> bytes:
-    """
-    Encode an array of shape `sizes` (indexed in NRRD axis order) into the
-    bytes of the data file, in the header's type, byte order and encoding.
+    """Encode an array as data-file bytes, as the header describes.
+
+    Raises
+    ------
+    WriterError
+        If the shape of the array does not match the header.
     """
     array = np.asarray(data)
     if tuple(array.shape) != tuple(header.sizes):
@@ -965,16 +914,10 @@ _DATA_EXTENSIONS = {
 
 
 class NrrdParser(DataModelBase, BinaryFileParserWriter):
-    """
-    Base class for objects that are encoded by a NRRD file.
+    """Base class for objects stored as NRRD files.
 
-    It reads and writes the container -- the header and the sample
-    values -- for every NRRD-based format. What the values mean is for
-    the concrete format to say, through `_nrrd_header` and `_nrrd_data`
-    when writing.
-
-    Reading a `raw` file from a local path memory-maps the values, so
-    nothing but the header is read until they are indexed.
+    Concrete formats give the values a meaning and provide [`_nrrd_header`][]
+    and [`_nrrd_data`][] for writing.
     """
 
     HINTS = ("nrrd",)
@@ -1004,25 +947,25 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
 
     @property
     def header(self) -> tx.Optional[NrrdHeader]:
-        """The NRRD header this object was read from, if any."""
+        """The header that the object was read from, if any."""
         return getattr(self, "_header", None)
 
     @header.setter
     def header(self, value: tx.Optional[NrrdHeader]) -> None:
         self._header = value
 
-    # --- reading ------------------------------------------------------
-
     @classmethod
     def _from_header(
         cls, header: NrrdHeader, dataobj: tx.Any, **kwargs
     ) -> tx.Self:
-        """Build the object from a decoded header and its stored values."""
+        """Build an object from a header and its values; formats override this
+        hook.
+        """
         return cls(header=header, dataobj=dataobj, **kwargs)
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
-        """Build the object from a NRRD file (path or file object)."""
+        """Read an object from a path or a file object."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):
@@ -1033,12 +976,9 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
     def from_filename(
         cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
     ) -> tx.Self:
-        """
-        Build the object from the path of a `.nrrd` or `.nhdr` file.
+        """Read an object from a `.nrrd` or `.nhdr` path.
 
-        The values of a `raw` local data file are memory-mapped unless
-        `mmap` is false. Detached data files are found relative to the
-        header's directory.
+        Raw local data are memory-mapped unless `mmap` is false.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -1051,11 +991,9 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
-        """
-        Build the object from an open NRRD file object.
+        """Read an object from a file object, without memory mapping.
 
-        Detached data files are resolved against the stream's `name`,
-        when it has one.
+        Detached data files are resolved against the name of the stream.
         """
         kwargs.pop("mmap", None)
         name = getattr(file, "name", None)
@@ -1071,14 +1009,12 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        """Build the object from the bytes of an attached NRRD file."""
+        """Read an object from the bytes of a NRRD file with attached data."""
         kwargs.pop("mmap", None)
         content = bytes(content)
         header, offset = NrrdHeader.from_fileobj(BytesIO(content))
         data = read_data(header, content, offset, mmap=False)
         return cls._from_header(header, data, **kwargs)
-
-    # --- sniffing -----------------------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -1087,8 +1023,10 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that a stream holds a NRRD
-        file of its own kind."""
+        """Return the confidence that a stream holds this kind of NRRD file.
+
+        The parsed header is scored with [`_score_header`][].
+        """
         base_error = None
         score = Confidence.NO
         try:
@@ -1113,43 +1051,43 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold a NRRD file of
-        its own kind."""
+        """Return the confidence that bytes hold this kind of NRRD file."""
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def _score_header(cls, header: NrrdHeader) -> float:
-        """
-        How well a valid NRRD header matches *this* class.
+        """Return how well a valid header matches this class.
 
-        Called once the header has been parsed, so the answer is never
-        "not NRRD". A concrete format overrides it.
+        Concrete formats override this hook; the base implementation returns
+        `Confidence.MAYBE`.
         """
         return Confidence.MAYBE
 
-    # --- writing ------------------------------------------------------
-
     def _nrrd_header(self, **kwargs) -> NrrdHeader:
-        """The header to write. Each concrete format builds its own."""
+        """Return the header to write; the base implementation raises
+        `WriterError`.
+        """
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to NRRD."
         )
 
     def _nrrd_data(self, header: NrrdHeader) -> tx.Any:
-        """The array, in the header's axis order, to write."""
+        """Return the array to write; the base implementation raises
+        `WriterError`.
+        """
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to NRRD."
         )
 
     def to_bytes(self, **kwargs) -> bytes:
-        """The bytes of an attached NRRD file."""
+        """Return the bytes of a NRRD file with attached data."""
         kwargs.pop("data_file", None)
         header = self._nrrd_header(**kwargs)
         data = encode_data(header, self._nrrd_data(header))
         return header.to_text().encode("utf-8") + b"\n" + data
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write an attached NRRD file to a stream."""
+        """Write a NRRD file with attached data to a stream."""
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(
@@ -1158,14 +1096,10 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
         data_file: tx.Optional[str] = None,
         **kwargs,
     ) -> None:
-        """
-        Write to a path: an attached file, or, for a `.nhdr` name (or when
-        `data_file` is given), a detached header and its data file.
+        """Write the object to a path.
 
-        The data file of a detached header is named after it, with an
-        extension that says its encoding (`.raw`, `.raw.gz`, `.raw.bz2`,
-        `.txt`, `.hex`), unless `data_file` names it (relative to the
-        header's directory).
+        The data are written to a separate file when the name ends with `.nhdr`
+        or `data_file` is given.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -1195,7 +1129,7 @@ class NrrdParser(DataModelBase, BinaryFileParserWriter):
             f.write(header.to_text().encode("utf-8"))
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path (variant chosen by extension) or a stream."""
+        """Write the object to a path or a stream."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):

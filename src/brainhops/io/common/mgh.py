@@ -1,50 +1,35 @@
 """
-The shared MGH/MGZ-reading and MGH/MGZ-writing machinery.
+Reading and writing of MGH and MGZ files.
 
-MGH is FreeSurfer's volume format, and MGZ is the same bytes gzipped.
-A file holds, in order and big-endian:
+MGH is the big-endian volume format of FreeSurfer, and MGZ is the same
+format gzipped. A file holds a fixed header (version, dimensions, voxel
+type, `goodRASFlag`, and the geometry described in
+[`brainhops.io.common.freesurfer`][]), the voxels in Fortran order, an
+optional footer of acquisition parameters, and optional trailing tags
+such as the command history.
 
-1. a fixed 284-byte header: `version` (always 1), the four dimensions
-   `width, height, depth, nframes`, the voxel `type`, `dof`,
-   `goodRASFlag`, the voxel size `delta`, the direction cosines `Mdc` and
-   the RAS centre of the volume `Pxyz_c` (see
-   [`brainhops.io.base.freesurfer`][]);
-2. the voxels, x fastest, then y, z and frames (F order);
-3. an optional footer of MRI acquisition parameters: `TR` (ms),
-   `flip_angle` (radians), `TE` (ms), `TI` (ms) and `FoV`;
-4. optional trailing *tags* (the command line history, the talairach
-   transform file name, ...).
+The header and voxels are read and written with nibabel. The trailing
+tags and the `goodRASFlag`, which nibabel drops or resets to 1, are
+read from the raw bytes so that a file round-trips.
 
-The header and the voxels are read and written with `nibabel`
-(`nibabel.freesurfer.mghformat`). Two pieces `nibabel` drops are read
-here from the raw bytes, so that a file round-trips:
-
-- the trailing tags, kept verbatim as bytes;
-- `goodRASFlag`, which `nibabel` silently resets to 1 (see below).
-
-!!! warning "`goodRASFlag`"
-    When `goodRASFlag` is not positive, FreeSurfer ignores the voxel size,
-    the direction cosines and the centre stored in the header and uses
-    its defaults instead: 1 mm voxels, coronal LIA direction cosines and
-    a zero centre. `nibabel` also resets the voxel size and the centre,
-    but its default direction cosines are those of an LSP volume, which
-    disagrees with FreeSurfer (and with `nibabel`'s own tkr matrix). The
-    readers here follow FreeSurfer.
+!!! warning "goodRASFlag"
+    When the flag is not positive, FreeSurfer ignores the stored
+    geometry and uses 1 mm voxels, coronal LIA cosines and a zero
+    centre. nibabel's default cosines are LSP instead, which disagrees
+    with FreeSurfer and with nibabel's own tkr matrix. This module
+    follows FreeSurfer.
 """
 
 __all__ = ["MghParser", "MGH_HEADER_SIZE", "MGH_FOOTER_SIZE"]
 
-# stdlib
 import gzip
 import struct
 from io import BytesIO
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from nibabel.freesurfer import mghformat as _mgh
 
-# internals
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
 from brainhops._core.typing import ArrayProtocol
@@ -76,19 +61,19 @@ from brainhops.io.common.nifti import (
 )
 
 MGH_HEADER_SIZE = 284
-"""Size in bytes of the fixed MGH header; the voxels start right after."""
+"""The size in bytes of the fixed MGH header, after which the voxels start."""
 
 MGH_FOOTER_SIZE = 20
-"""Size in bytes of the MRI-parameter footer (five big-endian floats)."""
+"""The size in bytes of the footer, five big-endian floats."""
 
-# The leading fields of the header, enough to recognise a file:
-# version, 4 dims, type, dof (all int32), goodRASFlag (int16).
+# The leading header fields, enough to recognise a file: the version, the
+# four dimensions, the type and dof (int32), and goodRASFlag (int16).
 _PREFIX = struct.Struct(">7ih")
 
-# Voxel types an MGH file can hold, by code: UCHAR, INT, FLOAT, SHORT.
+# MGH voxel type codes: UCHAR, INT, FLOAT, SHORT.
 _MGH_TYPES = {0: 1, 1: 4, 3: 4, 4: 2}
 
-# The four axes of an MGH volume, in storage (F) order.
+# The four MGH axes, in storage (Fortran) order.
 _MGH_AXES = [
     Axis("x", "space"),
     Axis("y", "space"),
@@ -97,14 +82,16 @@ _MGH_AXES = [
 ]
 
 _MRI_PARAMS = ("tr", "flip_angle", "te", "ti", "fov")
-"""The footer fields, as `nibabel` names them."""
+"""The footer fields, as nibabel names them."""
 
 _MghObject = tx.Union[_mgh.MGHHeader, _mgh.MGHImage]
 
 
 def _read_prefix(fileobj: tx.BinaryIO) -> tx.Optional[tuple]:
-    """Read and unpack the leading header fields of a (decompressed)
-    stream, or `None` when there are too few bytes."""
+    """
+    Read the leading header fields of a decompressed stream, or `None` if
+    the stream is too short.
+    """
     raw = fileobj.read(_PREFIX.size)
     if len(raw) < _PREFIX.size:
         return None
@@ -112,7 +99,7 @@ def _read_prefix(fileobj: tx.BinaryIO) -> tx.Optional[tuple]:
 
 
 def _valid_prefix(prefix: tx.Optional[tuple]) -> bool:
-    """Whether the leading header fields describe an MGH volume."""
+    """Tell whether the leading fields describe an MGH volume."""
     if prefix is None:
         return False
     version, *dims, dtype, _dof, _flag = prefix
@@ -121,18 +108,16 @@ def _valid_prefix(prefix: tx.Optional[tuple]) -> bool:
 
 class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     """
-    Base class for objects that are encoded by an MGH or MGZ file.
+    The base class of objects encoded as MGH or MGZ files.
 
-    It holds the `nibabel` image or header (`image` and `header`, as in
-    [`NiftiParser`][brainhops.io.base.nifti.NiftiParser]), the raw
-    `goodRASFlag` and the trailing tags, and exposes the voxels, the voxel
-    coordinate system and the voxel-to-RAS matrices FreeSurfer derives
-    from the header.
+    As in [`NiftiParser`][brainhops.io.common.nifti.NiftiParser], the
+    object holds a nibabel image or header, together with the raw
+    `goodRASFlag` and the trailing tags. It exposes the voxels, their
+    coordinate system, and the voxel-to-RAS matrices that FreeSurfer
+    derives from the header.
     """
 
     HINTS = ("mgh", "mgz")
-
-    # --- MGH API ------------------------------------------------------
 
     image: tx.Annotated[
         tx.Optional[_mgh.MGHImage],
@@ -184,8 +169,10 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
 
     @property
     def header(self) -> tx.Optional[_mgh.MGHHeader]:
-        """The `nibabel` MGH header: the one set explicitly, or else the
-        header of `image`, or `None`."""
+        """
+        The nibabel MGH header: the one set explicitly, or else that of the
+        image.
+        """
         if getattr(self, "_header", None) is not None:
             return self._header
         if self.image is not None:
@@ -199,11 +186,10 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     @property
     def tags(self) -> bytes:
         """
-        The raw bytes of the trailing tags (empty when there are none).
+        The raw bytes of the trailing tags, written back verbatim.
 
-        They are kept verbatim and written back after the footer, so that
-        they survive a round trip. They are read lazily from the source
-        file when the object was loaded from a path.
+        For an object loaded from a path, the tags are read lazily from that
+        file.
         """
         if getattr(self, "_tags", None) is not None:
             return self._tags
@@ -226,17 +212,15 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     @property
     def mri_params(self) -> tx.Dict[str, float]:
         """
-        The MRI acquisition parameters of the footer.
+        The acquisition parameters of the footer, a zero meaning not recorded.
 
-        `tr`, `te` and `ti` are in milliseconds, `flip_angle` in radians
-        and `fov` in millimetres. A value of zero means "not recorded".
+        The repetition, echo and inversion times are in milliseconds, the flip
+        angle in radians, and the field of view in millimetres.
         """
         header = self.header
         if header is None:
             return {name: 0.0 for name in _MRI_PARAMS}
         return {name: float(header[name]) for name in _MRI_PARAMS}
-
-    # --- geometry -----------------------------------------------------
 
     @property
     def shape(self) -> tx.Optional[tx.Tuple[int, ...]]:
@@ -248,10 +232,11 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         return tuple(int(d) for d in header.get_data_shape())
 
     def _geometry(self) -> tx.Tuple[tuple, tuple, tuple, tuple, tuple]:
-        """The voxel size, direction cosines and centre in effect.
+        """
+        Return the voxel size, direction cosines and centre in effect.
 
-        FreeSurfer's defaults replace the stored values when
-        `goodRASFlag` was not positive.
+        The FreeSurfer defaults replace the stored values when the
+        `goodRASFlag` is not positive.
         """
         header = self.header
         if self._good_ras is False:
@@ -273,7 +258,7 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
 
     @property
     def voxel_size(self) -> tx.Optional[tx.Tuple[float, float, float]]:
-        """The voxel size in millimetres, `None` without a header."""
+        """The voxel size in millimetres."""
         if self.header is None:
             return None
         return self._geometry()[0]
@@ -283,9 +268,8 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         """
         The `(4, 4)` voxel-to-scanner-RAS matrix (`mri_info --vox2ras`).
 
-        Equal to `nibabel`'s `header.get_vox2ras()`, except when
-        `goodRASFlag` was not positive, where FreeSurfer's defaults are
-        used.
+        The matrix equals nibabel's `header.get_vox2ras()`, except that the
+        FreeSurfer defaults apply when the `goodRASFlag` is not positive.
         """
         if self.header is None:
             return None
@@ -294,21 +278,18 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
 
     @property
     def vox2tkr(self) -> tx.Optional[np.ndarray]:
-        """
-        The `(4, 4)` voxel-to-tkr (surface) RAS matrix
-        (`mri_info --vox2ras-tkr`, `header.get_vox2ras_tkr()`).
-        """
+        """The `(4, 4)` voxel-to-tkr-RAS matrix (`mri_info --vox2ras-tkr`)."""
         if self.header is None:
             return None
         shape = self.header["dims"][:3]
         return fs_vox2tkr(shape, self._geometry()[0])
 
-    # --- datamodel ----------------------------------------------------
-
     @property
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The voxels, `(x, y, z)` or `(x, y, z, frames)`, read lazily
-        from `image` and cached, unless set explicitly."""
+        """
+        The voxels, read lazily from the image and cached, unless set
+        explicitly.
+        """
         if getattr(self, "_data", None) is not None:
             return self._data
         if self.image is not None:
@@ -322,8 +303,10 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
-        """The voxel coordinate system `(x, y, z[, t])`, in F order,
-        derived from `header` unless set explicitly."""
+        """
+        The voxel coordinate system, derived from the header unless set
+        explicitly.
+        """
         if getattr(self, "_system", None) is not None:
             return self._system
         if self.header is None:
@@ -335,24 +318,17 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     def system(self, value: tx.Optional[CoordinateSystem]) -> None:
         self._system = value
 
-    # --- BinaryFileParser API -----------------------------------------
-
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
         """
-        Build the object from an MGH or MGZ file.
+        Build an object from an MGH or MGZ file.
 
-        A local file whose name matches its content (`.mgz` or `.mgh.gz`
-        when gzipped, `.mgh` when not) is handed to `nibabel` by
-        path, through `from_filename`, so that the voxels are
-        memory-mapped and read lazily.
-
-        `nibabel` cannot open any other file by name: a remote one (which
-        has no local path), or one whose name it would take for another
-        codec (it picks the codec from the name). Such a file is read
-        into memory and handed to `nibabel` as a stream (see
-        [`from_fileobj`][]): the stream `nibabel` reads the voxels from
-        lazily must outlive the file, which is closed on return.
+        A local file whose name matches its content (`.mgz` or `.mgh.gz` when
+        gzipped, `.mgh` otherwise) is handed to nibabel by path, so that its
+        voxels are memory-mapped and read lazily. nibabel chooses the codec
+        from the name, so any other file is read into memory and parsed as a
+        stream; the in-memory stream outlives the file, which is closed on
+        return.
         """
         if isinstance(file, str):
             file = path.Path(file)
@@ -387,18 +363,12 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
         """
-        Build the object from an open MGH or MGZ file object.
+        Build an object from an open MGH or MGZ file.
 
-        The image is read with `nibabel`'s stream API, gzipped or not
-        (the compression is sniffed from the magic bytes, as a stream has
-        no name). As for NIfTI, the voxels are read lazily from the
-        stream, so the caller keeps it open for as long as they may be
-        read; the header, `goodRASFlag` and trailing tags are read right
-        away.
-
-        A stream that cannot seek is read into memory first: the leading
-        bytes must be read twice (for `goodRASFlag`, then by `nibabel`),
-        and its compression cannot be sniffed otherwise.
+        As for NIfTI, the voxels are read lazily from the stream, which the
+        caller must keep open, while the header, the `goodRASFlag` and the tags
+        are read immediately. A stream that cannot seek is first read into
+        memory.
         """
         if not _seekable(fileobj):
             fileobj = BytesIO(fileobj.read())
@@ -418,35 +388,34 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
 
     @classmethod
     def from_bytes(cls, data: bytes, **kwargs) -> tx.Self:
-        """Build the object from MGH bytes (or gzipped MGZ bytes)."""
+        """Build an object from the bytes of an MGH or MGZ file."""
         return cls.from_fileobj(BytesIO(data), **kwargs)
 
     @classmethod
     def from_nibabel(cls, mgh: _MghObject, **kwargs) -> tx.Self:
-        """Build the object from an already-loaded `nibabel` MGH header
-        or image."""
+        """Build an object from a loaded nibabel MGH header or image."""
         if isinstance(mgh, _mgh.MGHHeader):
             return cls(header=mgh, **kwargs)
         if isinstance(mgh, _mgh.MGHImage):
             return cls(image=mgh, header=mgh.header, **kwargs)
         raise TypeError(f"Expected an MGH image or header, got {type(mgh)}")
 
-    # --- FileParserWriter API -----------------------------------------
-
     def to_nibabel(self, **kwargs) -> _mgh.MGHImage:
-        """Build the `nibabel` image that encodes this object.
+        """
+        Build the nibabel image that encodes the object.
 
-        Each concrete MGH format overrides this method; the other writer
-        methods are defined in terms of it."""
+        Each concrete format overrides this method, on which the other writing
+        methods rely.
+        """
         raise WriterNotImplementedError(
             f"{type(self).__name__} does not know how to write itself to MGH."
         )
 
     def to_bytes(self, compress: bool = False, **kwargs) -> bytes:
         """
-        Return the MGH encoding of the object: header, voxels, footer and
-        trailing tags. With `compress=True`, return the gzipped (MGZ)
-        encoding instead.
+        Return the MGH encoding: header, voxels, footer and tags.
+
+        With `compress`, the result is gzipped into MGZ.
         """
         stream = BytesIO()
         image = self.to_nibabel(**kwargs)
@@ -458,8 +427,10 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         return content
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the object to a file, gzipped (MGZ) when its name ends
-        with `.mgz` or `.gz`, unless `compress` says otherwise."""
+        """
+        Write the file, gzipped when its name ends with `.mgz` or `.gz` unless
+        `compress` says otherwise.
+        """
         if isinstance(filename, str):
             filename = path.Path(filename)
         if "compress" not in kwargs:
@@ -470,11 +441,8 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
             f.write(self.to_bytes(**kwargs))
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the MGH encoding of the object (MGZ with
-        `compress=True`) to an open file object."""
+        """Write the MGH (or, with `compress`, MGZ) encoding to a file."""
         file.write(self.to_bytes(**kwargs))
-
-    # --- BinaryFileSniffer API ----------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -484,12 +452,11 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         **kwargs,
     ) -> float:
         """
-        Score how confident the class is that an open file object holds
-        an MGH header, gzipped or not.
+        Return the confidence that an open file holds an MGH header.
 
-        The content is recognised from its leading fields -- a version of
-        1, four positive dimensions and a known voxel type -- not from the
-        file name.
+        The file may be gzipped. It is recognised from its leading fields (the
+        version 1, four positive dimensions and a known voxel type), not from
+        its name.
         """
         try:
             with preserve_position(file):
@@ -511,14 +478,15 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold an MGH
-        header, gzipped or not."""
+        """Return the confidence that bytes hold an MGH header."""
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
 
 def _good_ras(prefix: tx.Optional[tuple]) -> tx.Optional[bool]:
-    """Whether the `goodRASFlag` of the leading header fields is
-    positive, or `None` when they could not be read."""
+    """
+    Tell whether the `goodRASFlag` of the leading fields is positive, or
+    `None` if they could not be read.
+    """
     return None if prefix is None else prefix[-1] > 0
 
 
@@ -529,14 +497,10 @@ def _mgh_from_filename(
     keep_file_open: tx.Optional[bool] = None,
 ) -> _mgh.MGHImage:
     """
-    `nibabel`'s `MGHImage.from_filename`, but closing the file the header
-    is read from.
+    Load an image like nibabel's `MGHImage.from_filename`, but close the
+    file the header is read from, which nibabel leaks.
 
-    `nibabel`'s `MGHImage.from_file_map` opens the file to read the
-    header and never closes it, which leaks a file handle (and emits a
-    `ResourceWarning` when it is collected). The voxels are still read
-    lazily: the array proxy holds the file name, and opens the file
-    itself when they are read.
+    The voxels stay lazy, because the array proxy opens the file itself.
     """
     klass = _mgh.MGHImage
     if mmap not in (True, False, "c", "r"):
@@ -555,7 +519,7 @@ def _mgh_from_filename(
 
 
 def _seekable(fileobj: tx.IO) -> bool:
-    """Whether a stream can seek (a stream that cannot say cannot)."""
+    """Tell whether a stream can seek (no answer means no)."""
     try:
         return bool(fileobj.seekable())
     except Exception:
@@ -563,9 +527,12 @@ def _seekable(fileobj: tx.IO) -> bool:
 
 
 def _read_tags(stream: tx.BinaryIO, header: _mgh.MGHHeader) -> bytes:
-    """Read the raw bytes after the footer of a decompressed stream.
+    """
+    Read the raw bytes after the footer of a decompressed stream.
 
-    Offsets are from the start of the stream, as `nibabel` takes them."""
+    Offsets are counted from the start of the stream, as nibabel counts
+    them.
+    """
     offset = int(header.get_footer_offset()) + MGH_FOOTER_SIZE
     try:
         stream.seek(offset)

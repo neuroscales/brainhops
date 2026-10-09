@@ -1,5 +1,7 @@
-"""The format-independent base shared by every file-based object, whatever
-its kind."""
+"""Concrete file formats shared by images and transformations.
+
+NIfTI requires nibabel, and Zarr requires `abczarr` with a backend driver.
+"""
 
 __all__ = [
     "FileBasedObject",
@@ -32,8 +34,6 @@ from brainhops._core.dependencies import (
     has_abczarr_driver,
 )
 
-# FIXME: do not import anything from common here. Have "clients" import
-# from common directly.
 from . import afni, freesurfer, mgh, minc, mrtrix
 
 if HAS_NIBABEL:
@@ -41,9 +41,7 @@ if HAS_NIBABEL:
 
     __all__ += ["mgh", "minc", "nifti"]
 
-# The Zarr store adapter needs abczarr and at least one backend driver.
-# abczarr alone cannot open a store, so the adapter is exposed only when a
-# driver is present.
+# abczarr cannot open a store without a backend driver.
 if has_abczarr_driver():
     from . import zarr
 

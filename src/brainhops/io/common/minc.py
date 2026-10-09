@@ -1,56 +1,36 @@
 """
-The shared MINC-reading machinery.
+Reading of MINC files.
 
-MINC is the volume format of the Montreal Neurological Institute (MNI)
-and of the MINC toolkit. It comes in two containers, both with the
-extension `.mnc`:
+MINC, the volume format of the MINC toolkit, comes in two containers
+that share the `.mnc` extension. A MINC1 file is a NetCDF classic file
+whose `image` variable holds the voxels. A MINC2 file is an HDF5 file
+whose voxels are the dataset `/minc-2.0/image/0/image`. In both, each
+dimension is described by a variable of its own name, and the
+dimensions are listed slowest first, in any order.
 
-- **MINC1** is a NetCDF classic file (magic `CDF\\x01`, or `CDF\\x02`
-  for the 64-bit offset variant). The voxels are the variable `image`,
-  whose dimensions name the axes, and each spatial dimension is
-  described by a variable of the same name.
-- **MINC2** is an HDF5 file with a root group `/minc-2.0`. The voxels are
-  the dataset `/minc-2.0/image/0/image`, whose attribute `dimorder`
-  names the axes, and each dimension is described by a dataset under
-  `/minc-2.0/dimensions`.
-
-In both, the dimensions are listed slowest first (C order), in any order:
-`zspace, yspace, xspace` is common (transverse slices), but sagittal or
-coronal orders are just as valid. A dimension is described by its
-`start`, its `step` (which may be negative), its `direction_cosines`
-and its `units`. The *world* coordinates of a voxel are
+A dimension has a `start`, a `step`, which may be negative, and
+`direction_cosines`. World coordinates, in RAS millimetres by default,
+are
 
 ```
 world = sum_d (start_d + index_d * step_d) * direction_cosines_d
 ```
 
-over the spatial dimensions `xspace`, `yspace` and `zspace`, in a world
-space whose axes run left-to-right, posterior-to-anterior and
-inferior-to-superior (RAS), in millimetres by default. A dimension
-without direction cosines runs along its own world axis.
+over the spatial dimensions `xspace`, `yspace` and `zspace`. Integer
+voxels are scaled to real values through `image-min` and `image-max`.
+Files are read with nibabel (and h5py for MINC2), which cannot write
+MINC.
 
-Integer voxels are scaled to real values through `image-min` and
-`image-max`, which map the valid range of the type to real values,
-possibly with one scaling per slice.
-
-The headers and the voxels are read with `nibabel` (`nibabel.minc1`,
-`nibabel.minc2`); MINC2 needs `h5py`, imported only when a MINC2 file
-is read. `nibabel` cannot write MINC, so neither can `brainhops`.
-
-!!! warning "Limitations, inherited from `nibabel`"
-    Dimensions with irregular spacing (`spacing = "irregular"`) and
-    dimensions that have no describing variable (such as MINC's
-    `vector_dimension`, used for RGB volumes and displacement grids)
-    are not supported, nor is a volume without `image-min` and
-    `image-max` (which the MINC library always writes).
+!!! warning "Limitations, inherited from nibabel"
+    Irregularly spaced dimensions are not supported, nor are dimensions
+    without a describing variable (such as `vector_dimension`), nor
+    volumes without `image-min` and `image-max`.
 """
 
 __all__ = ["MincParser", "MincDimension", "minc_version"]
 
-# stdlib
 from io import BytesIO
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
@@ -58,7 +38,6 @@ from nibabel import minc1 as _minc1
 from nibabel import minc2 as _minc2
 from nibabel.externals.netcdf import netcdf_file as _netcdf_file
 
-# internals
 from brainhops._core import path
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import ArrayProtocol
@@ -79,17 +58,19 @@ _NETCDF_MAGICS = (b"CDF\x01", b"CDF\x02")
 """The magic numbers of NetCDF classic files (MINC1)."""
 
 _HDF5_SIGNATURE = b"\x89HDF\r\n\x1a\n"
-"""The signature at the start of an HDF5 file (MINC2)."""
+"""The signature of HDF5 files (MINC2)."""
 
 _MINC2_ROOT = "minc-2.0"
 """The root group of a MINC2 file."""
 
 _SNIFF_SIZE = 1 << 16
-"""How many leading bytes of a MINC1 file are searched for its
-dimension names (the NetCDF header lists them first)."""
+"""
+The number of leading bytes of a MINC1 file searched for dimension
+names.
+"""
 
 SPATIAL_DIMENSIONS = ("xspace", "yspace", "zspace")
-"""The names of the spatial MINC dimensions, in world-axis order."""
+"""The spatial MINC dimensions, in world-axis order."""
 
 _DEFAULT_COSINES = {
     "xspace": (1.0, 0.0, 0.0),
@@ -97,8 +78,7 @@ _DEFAULT_COSINES = {
     "zspace": (0.0, 0.0, 1.0),
 }
 
-# The axes that the usual MINC dimensions stand for. Any other dimension
-# keeps its own name and has no type.
+# Other dimensions keep their own name and have no axis type.
 _AXES = {
     "xspace": ("x", "space"),
     "yspace": ("y", "space"),
@@ -107,56 +87,52 @@ _AXES = {
 }
 
 _Source = tx.Union[str, bytes]
-"""Where the voxels are read from: a local path, or the file's bytes."""
+"""The source of the voxels: a local path, or the file bytes."""
 
 
 class MincDimension(Magic, frozen=True):
     """
-    One dimension of a MINC volume, as its header describes it.
+    One dimension of a MINC volume, as the header describes it.
 
-    The attributes the file does not record are `None`; the properties
-    give MINC's defaults instead.
+    Unrecorded attributes are `None`; the properties give the defaults.
     """
 
     name: str
-    """The MINC name of the dimension (`"xspace"`, `"time"`, ...)."""
+    """The MINC name of the dimension, such as `"xspace"` or `"time"`."""
 
     length: int
-    """The number of samples along the dimension."""
+    """The number of samples."""
 
     start: tx.Optional[float] = None
-    """The world coordinate of the first sample, along the direction
-    cosines (MINC's default is 0)."""
+    """The world coordinate of the first sample."""
 
     step: tx.Optional[float] = None
-    """The distance between two samples, possibly negative (MINC's
-    default is 1)."""
+    """The distance between samples, which may be negative."""
 
     direction_cosines: tx.Optional[tx.Tuple[float, ...]] = None
-    """The world direction of the dimension, for a spatial one (MINC's
-    default is its own world axis)."""
+    """The world direction of a spatial dimension."""
 
     units: tx.Optional[str] = None
-    """The unit of `start` and `step`, as written in the file."""
+    """The unit of `start` and `step`, as written."""
 
     @property
     def is_spatial(self) -> bool:
-        """Whether the dimension is one of `xspace`, `yspace`, `zspace`."""
+        """Whether the dimension is `xspace`, `yspace` or `zspace`."""
         return self.name in SPATIAL_DIMENSIONS
 
     @property
     def origin(self) -> float:
-        """`start`, or 0 when the file does not record it."""
+        """The `start`, or 0 if it is not recorded."""
         return 0.0 if self.start is None else float(self.start)
 
     @property
     def spacing(self) -> float:
-        """`step`, or 1 when the file does not record it."""
+        """The `step`, or 1 if it is not recorded."""
         return 1.0 if self.step is None else float(self.step)
 
     @property
     def cosines(self) -> tx.Tuple[float, float, float]:
-        """`direction_cosines`, or the dimension's own world axis."""
+        """The `direction_cosines`, or else the world axis of the dimension."""
         if self.direction_cosines is not None:
             return tuple(float(c) for c in self.direction_cosines)
         return _DEFAULT_COSINES.get(self.name, (0.0, 0.0, 0.0))
@@ -164,11 +140,10 @@ class MincDimension(Magic, frozen=True):
 
 def minc_version(head: bytes) -> tx.Optional[int]:
     """
-    The MINC version that the leading bytes of a file suggest: 1 for a
-    NetCDF classic file, 2 for an HDF5 file, `None` otherwise.
+    Return the MINC version that the leading bytes suggest, or `None`.
 
-    An HDF5 file is only a MINC2 candidate: it must still hold a
-    `/minc-2.0` group.
+    NetCDF content suggests version 1, and HDF5 content version 2, although
+    a MINC2 file also needs the `/minc-2.0` group.
     """
     head = bytes(head[:8])
     if head[:4] in _NETCDF_MAGICS:
@@ -180,28 +155,25 @@ def minc_version(head: bytes) -> tx.Optional[int]:
 
 class MincParser(DataModelBase, BinaryFileParser):
     """
-    Base class for objects that are encoded by a MINC1 or MINC2 file.
+    The base class of objects encoded as MINC1 or MINC2 files.
 
-    It holds the dimensions of the volume ([`dimensions`][]), in the
-    order the file stores them (slowest first), and reads the voxels on
-    first access, scaled to real values, from the file it was loaded
-    from. The voxel coordinate system and the voxel-to-world matrix are
-    those of the array in F order, i.e. with the axes reversed, so that
-    the fastest-varying dimension comes first.
+    The object holds the dimensions as the file lists them, and reads the
+    voxels from the source file on first access. The coordinate system and
+    the voxel-to-world matrix are those of the Fortran-ordered array.
 
-    A concrete format sets `VERSION` (1 or 2) and is only recognised in
-    files of that version. A class with no version reads both, and
-    returns an object of the matching class among its `VARIANTS`.
+    A concrete format sets [`VERSION`][] and reads only that version. A
+    class without a version reads both, and returns an object of the
+    matching class among its [`VARIANTS`][].
     """
 
     HINTS = ("minc",)
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc",)
 
     VERSION: tx.ClassVar[tx.Optional[int]] = None
-    """The MINC version read by this class, or `None` for both."""
+    """The MINC version this class reads, or `None` for both."""
 
     VARIANTS: tx.ClassVar[tx.Tuple[type, ...]] = ()
-    """The classes that a class with no `VERSION` hands files to."""
+    """The classes to which a versionless class hands files."""
 
     dimensions: tx.Annotated[
         tx.Tuple[MincDimension, ...],
@@ -223,17 +195,14 @@ class MincParser(DataModelBase, BinaryFileParser):
         ),
     ] = None
 
-    # --- geometry -----------------------------------------------------
-
     @property
     def version(self) -> tx.Optional[int]:
-        """The MINC version of the file (1 or 2)."""
+        """The MINC version of the file, 1 or 2."""
         return self.VERSION
 
     @property
     def shape(self) -> tx.Optional[tx.Tuple[int, ...]]:
-        """The shape of the volume in F order (fastest dimension
-        first)."""
+        """The shape of the volume, in Fortran order (fastest first)."""
         if self.dimensions:
             return tuple(d.length for d in reversed(self.dimensions))
         data = getattr(self, "_data", None)
@@ -242,11 +211,10 @@ class MincParser(DataModelBase, BinaryFileParser):
     @property
     def vox2world(self) -> tx.Optional[np.ndarray]:
         """
-        The `(4, 4)` voxel-to-world (RAS) matrix of the F-ordered array.
+        The `(4, 4)` voxel-to-world (RAS) matrix of the Fortran-ordered array.
 
-        Its columns follow the spatial axes of [`system`][] (the
-        non-spatial ones, such as time, are skipped). It is `None` unless
-        the volume has the three spatial dimensions.
+        Non-spatial axes, such as time, are skipped. The matrix is `None`
+        unless the volume has all three spatial dimensions.
         """
         spatial = [d for d in reversed(self.dimensions) if d.is_spatial]
         if len(spatial) != 3:
@@ -257,12 +225,13 @@ class MincParser(DataModelBase, BinaryFileParser):
         matrix[:3, 3] = cosines @ [d.origin for d in spatial]
         return matrix
 
-    # --- datamodel ----------------------------------------------------
-
     @property
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The voxels in F order, scaled to real values, read on first
-        access and cached, unless set explicitly."""
+        """
+        The voxels in Fortran order, scaled to real values.
+
+        They are read on first access and cached, unless set explicitly.
+        """
         if getattr(self, "_data", None) is not None:
             return self._data
         if self._source is None or not self.dimensions:
@@ -277,8 +246,10 @@ class MincParser(DataModelBase, BinaryFileParser):
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
-        """The voxel coordinate system, in F order, derived from the
-        dimensions unless set explicitly."""
+        """
+        The voxel coordinate system in Fortran order, derived from the
+        dimensions unless set explicitly.
+        """
         if getattr(self, "_system", None) is not None:
             return self._system
         if not self.dimensions:
@@ -290,11 +261,9 @@ class MincParser(DataModelBase, BinaryFileParser):
     def system(self, value: tx.Optional[CoordinateSystem]) -> None:
         self._system = value
 
-    # --- variants -----------------------------------------------------
-
     @classmethod
     def _variant(cls, version: tx.Optional[int]) -> type:
-        """The class that reads a file of this version."""
+        """Return the class that reads a file of a given version."""
         if cls.VERSION is not None:
             if cls.VERSION == version:
                 return cls
@@ -306,8 +275,6 @@ class MincParser(DataModelBase, BinaryFileParser):
             f"{cls.__name__} does not read MINC{version or ''} files."
         )
 
-    # --- BinaryFileSniffer API ----------------------------------------
-
     @classmethod
     def sniff_filename(
         cls,
@@ -315,8 +282,11 @@ class MincParser(DataModelBase, BinaryFileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score a file by its content (a MINC2 file is opened by name,
-        so that only its header is read)."""
+        """
+        Score a file from its content.
+
+        A local MINC2 file is opened by name, so that only its header is read.
+        """
         if isinstance(filename, str):
             filename = path.Path(filename)
         if _is_local(filename) and path.exists(filename):
@@ -334,13 +304,12 @@ class MincParser(DataModelBase, BinaryFileParser):
         **kwargs,
     ) -> float:
         """
-        Score how confident the class is that an open file object holds
-        a MINC file of its version, from its content.
+        Return the confidence that an open file holds a MINC file of the
+        version of this class.
 
-        A MINC1 file is a NetCDF file (gzipped or not) whose header names
-        a MINC spatial dimension and an `image` variable; a NetCDF file
-        that does not is only weakly accepted. A MINC2 file is an HDF5
-        file with a `/minc-2.0` group.
+        A NetCDF file, gzipped or not, is certainly MINC1 when its header names
+        a spatial dimension and an `image` variable, and weakly accepted
+        otherwise. An HDF5 file is MINC2 when it has a `/minc-2.0` group.
         """
         score = Confidence.NO
         try:
@@ -367,29 +336,25 @@ class MincParser(DataModelBase, BinaryFileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold a MINC file
-        of its version."""
+        """Return the confidence that bytes hold a MINC file."""
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def _reads(cls, version: tx.Optional[int]) -> bool:
-        """Whether this class (or one of its variants) reads a version."""
+        """Tell whether this class, or one of its variants, reads a version."""
         if version is None:
             return False
         if cls.VERSION is not None:
             return cls.VERSION == version
         return any(v.VERSION == version for v in cls.VARIANTS)
 
-    # --- BinaryFileParser API -----------------------------------------
-
     @classmethod
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
         """
-        Build the object from a MINC file.
+        Build an object from a MINC file, reading only its header.
 
-        Only the header is read: the voxels are read from the file, by
-        name, on first access. A file that is not local, or that is
-        gzipped, is read into memory first.
+        The voxels are read from the file, by name, on first access. A file
+        that is not local, or that is gzipped, is read into memory first.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -404,22 +369,22 @@ class MincParser(DataModelBase, BinaryFileParser):
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """Build the object from an open MINC file object (gzipped or
-        not), which is read into memory."""
+        """
+        Build an object from an open MINC file, gzipped or not, by reading it
+        into memory.
+        """
         with preserve_position(file):
             content = open_compressed(file).read()
         return cls._from_source(bytes(content), **kwargs)
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        """Build the object from the bytes of a MINC file (gzipped or
-        not)."""
+        """Build an object from the bytes of a MINC file, gzipped or not."""
         return cls.from_fileobj(BytesIO(bytes(content)), **kwargs)
 
     @classmethod
     def _from_source(cls, source: _Source, **kwargs) -> tx.Self:
-        """Read the header of a MINC file, and keep where it came from to
-        read the voxels later."""
+        """Read the header, and keep the source to read the voxels later."""
         if isinstance(source, str):
             with open(source, "rb") as f:
                 head = f.read(8)
@@ -436,13 +401,13 @@ class MincParser(DataModelBase, BinaryFileParser):
 
 
 def _axis(name: str) -> Axis:
-    """The voxel axis that a MINC dimension stands for."""
+    """Return the voxel axis that a MINC dimension stands for."""
     axis_name, axis_type = _AXES.get(name, (name, None))
     return Axis(axis_name, axis_type, unit="index")
 
 
 def _score(score: float, error: tx.Union[bool, tx.Type[Exception]]) -> float:
-    """Return a score, or raise when it is zero and asked to."""
+    """Return a score, or raise if it is zero and the caller asks to."""
     if score or not error:
         return score
     if error is True:
@@ -451,7 +416,7 @@ def _score(score: float, error: tx.Union[bool, tx.Type[Exception]]) -> float:
 
 
 def _sniff_minc1(head: bytes) -> float:
-    """Score the leading bytes of a NetCDF file as a MINC1 file."""
+    """Score the leading bytes of a NetCDF file as MINC1."""
     named = any(name.encode() in head for name in SPATIAL_DIMENSIONS)
     if named and b"image" in head:
         return Confidence.CERTAIN
@@ -459,7 +424,7 @@ def _sniff_minc1(head: bytes) -> float:
 
 
 def _sniff_minc2(file: tx.Union[str, tx.IO]) -> float:
-    """Score an HDF5 file (a path or a stream) as a MINC2 file."""
+    """Score an HDF5 file, given by path or stream, as MINC2."""
     import h5py
 
     try:
@@ -476,13 +441,10 @@ def _read_minc(
     read: tx.Callable[[tx.Any, _minc1.Minc1File, int], tx.Any],
 ) -> tx.Any:
     """
-    Open a MINC file with `nibabel`, read it, and close it.
+    Open a MINC file with nibabel, apply `read` to it, and close it.
 
-    `read(container, mfile, version)` is handed the container (the
-    NetCDF or HDF5 file) and the `nibabel` MINC file that reads the
-    voxels from it. What it returns must not refer to the file's
-    content: a MINC1 file on disk is memory-mapped (so that its header is
-    read without its voxels), and the map is closed on return.
+    The result of `read` must not refer to the file content, because a
+    MINC1 file on disk is memory-mapped and the map is closed on return.
     """
     try:
         if version == 1:
@@ -509,8 +471,8 @@ def _read_minc(
             ValueError,
             _minc1.MincError,
         ) as e:
-            # Raised outside of this block: the traceback would otherwise
-            # keep the (memory-mapped) variables alive past `close`.
+            # Raise outside this block: a held traceback would keep
+            # memory-mapped variables alive past close.
             failure = repr(e)
         if failure is not None:
             raise ParserContentError(
@@ -528,18 +490,17 @@ def _read_minc(
 def _read_voxels(
     container: tx.Any, mfile: _minc1.Minc1File, version: int
 ) -> np.ndarray:
-    """The voxels of an open MINC file, scaled, in file (C) order."""
+    """Read the scaled voxels of an open file, in file (C) order."""
     array = mfile.get_scaled_data()
-    # Native byte order (MINC1 is big-endian), in a copy that outlives the
-    # (possibly memory-mapped) file.
+    # Copy into native byte order (MINC1 is big-endian), so that the result
+    # outlives a memory-mapped file.
     return np.array(array, dtype=array.dtype.newbyteorder("="))
 
 
 def _read_dimensions(
     container: tx.Any, mfile: _minc1.Minc1File, version: int
 ) -> tx.Tuple[MincDimension, ...]:
-    """The dimensions of the image of an open MINC file (its NetCDF or
-    HDF5 container), slowest first."""
+    """Read the dimensions of the image of an open file, slowest first."""
     if version == 1:
         image = container.variables["image"]
         names = list(image.dimensions)
@@ -573,7 +534,7 @@ def _read_dimensions(
 
 
 def _float(value: tx.Any) -> tx.Optional[float]:
-    """A scalar attribute as a float (NetCDF stores it as an array)."""
+    """Read a scalar attribute, which NetCDF stores as an array."""
     if value is None:
         return None
     value = np.asarray(value, dtype=np.float64).reshape(-1)
@@ -581,7 +542,7 @@ def _float(value: tx.Any) -> tx.Optional[float]:
 
 
 def _floats(value: tx.Any) -> tx.Optional[tx.Tuple[float, ...]]:
-    """A vector attribute as a tuple of floats."""
+    """Read a vector attribute of three floats, or `None`."""
     if value is None:
         return None
     value = np.asarray(value, dtype=np.float64).reshape(-1)
@@ -589,7 +550,7 @@ def _floats(value: tx.Any) -> tx.Optional[tx.Tuple[float, ...]]:
 
 
 def _string(value: tx.Any) -> tx.Optional[str]:
-    """A string attribute as a `str`."""
+    """Read a string attribute, or `None` if it is empty."""
     if value is None:
         return None
     if isinstance(value, np.ndarray):

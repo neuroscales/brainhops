@@ -1,9 +1,9 @@
-"""Units in NIfTI headers, and how they map onto brainhops units.
+"""Units of NIfTI headers and their brainhops equivalents.
 
-A NIfTI header stores its units in one byte, `xyzt_units`: the spatial
-unit in bits 0-2 and the temporal unit in bits 3-5. `nibabel` reads them
-back as labels (`header.get_xyzt_units()`) and writes them from labels
-(`header.set_xyzt_units(space, time)`):
+A NIfTI header stores its units in the single byte `xyzt_units`: the spatial
+unit in bits 0 to 2 and the temporal unit in bits 3 to 5. nibabel reads and
+writes them as labels, with `header.get_xyzt_units()` and
+`header.set_xyzt_units(space, time)`.
 
 | Slot  | Code | Label       | brainhops unit             |
 | ----- | ---- | ----------- | -------------------------- |
@@ -19,40 +19,22 @@ back as labels (`header.get_xyzt_units()`) and writes them from labels
 | time  | 40   | `"ppm"`     | none -- `None`, and a warning |
 | time  | 48   | `"rads"`    | none -- `None`, and a warning |
 
-[`nifti_to_unit`][] reads a code, and [`unit_to_nifti`][] writes one. Every
-reader and writer of NIfTI headers goes through them, and the policies
-below are theirs.
+Every NIfTI reader and writer goes through [`nifti_to_unit`][] and
+[`unit_to_nifti`][], which own the policies below.
 
-Reading
--------
-* An **unknown spatial unit is read as millimetres.** The format calls the
-  field "unknown", but every reader in the ecosystem -- FSL, SPM,
-  FreeSurfer, AFNI, ITK and the viewers -- treats the affine as
-  millimetres, and a header that means metres or microns says so. This is
-  a lossy normalisation: such a header is written back with `"mm"`, not
-  `"unknown"`.
-* An **unknown temporal unit is read as `None`**, an unspecified unit.
-  Nothing places an image in space by its temporal unit, and `pixdim[4]`
-  is less consistently seconds than the spatial units are millimetres.
-* A **temporal code that is not a unit of time** -- `hz`, `ppm` and `rads`
-  are frequencies and spectral offsets, stored in the temporal slot --
-  has no brainhops unit. It is read as `None`, with a
-  [`NiftiUnitWarning`][].
+An unknown spatial unit is read as millimetres. The format calls it unknown,
+but FSL, SPM, FreeSurfer, AFNI, ITK and viewers all treat the affine as
+millimetres, and a header meaning metres or microns says so. The reading is
+lossy, since the unit is written back as `"mm"`. An unknown temporal unit is
+read as `None`, because nothing depends on it and `pixdim[4]` is less
+consistently in seconds. The temporal codes that are not units of time, `hz`,
+`ppm` and `rads`, are read as `None` with a [`NiftiUnitWarning`][].
 
-Writing
--------
-* `None` (an unspecified unit) is written as `"unknown"`.
-* An **index unit is never written**: it says that an axis indexes an array,
-  which a NIfTI voxel space always does, and has no code. Asking for one
-  raises a `ValueError`.
-* A unit of the wrong kind for its slot (a second for the spatial unit)
-  raises a `ValueError`.
-* A **unit with no NIfTI code** is written as `"unknown"`, with a
-  [`NiftiUnitWarning`][]: a unit is metadata, and refusing to write the
-  image over it would lose the data along with it. A *spatial* unit can be
-  asked for its nearest code instead (`nearest=True`), which is what the
-  image writer does: it then rescales the affine by the ratio between the
-  two units, so the stored geometry keeps its physical size.
+When writing, `None` becomes `"unknown"`. An index unit, or a unit of the wrong
+kind for its slot, raises `ValueError`. A unit without a NIfTI code is written
+as `"unknown"` with a warning rather than refused, since the unit is only
+metadata. A spatial unit can instead ask for the nearest code, as the image
+writer does before rescaling the affine to keep the physical size.
 """
 
 __all__ = [
@@ -63,14 +45,11 @@ __all__ = [
     "unit_to_nifti",
 ]
 
-# stdlib
 import warnings
 from math import log10
 
-# externals
 import typing_extensions as tx
 
-# internals
 from brainhops.datamodel.units import (
     Unit,
     is_indexunit,
@@ -87,7 +66,7 @@ NIFTI_SPACE_CODES: tx.Dict[str, int] = {
     "mm": 2,
     "micron": 3,
 }
-"""The NIfTI code of each spatial label."""
+"""The NIfTI code of each spatial unit label."""
 
 NIFTI_TIME_CODES: tx.Dict[str, int] = {
     "unknown": 0,
@@ -98,13 +77,13 @@ NIFTI_TIME_CODES: tx.Dict[str, int] = {
     "ppm": 40,
     "rads": 48,
 }
-"""The NIfTI code of each temporal label."""
+"""The NIfTI code of each temporal unit label."""
 
 _CODES = {"space": NIFTI_SPACE_CODES, "time": NIFTI_TIME_CODES}
 
-# The name of the brainhops unit of each label that has one. `"unknown"` is
-# a policy, not a unit, and is handled on its own. Units are built from
-# these names when they are needed, since building one may import pint.
+# The brainhops unit name of each label that has one; "unknown" is a
+# policy, handled apart. Units are built lazily, since building one may
+# import pint.
 _UNITS = {
     "space": {
         "meter": "meter",
@@ -118,7 +97,6 @@ _UNITS = {
     },
 }
 
-# The label of each brainhops unit that has one, by unit name.
 _LABELS = {
     kind: {name: label for label, name in table.items()}
     for kind, table in _UNITS.items()
@@ -130,11 +108,15 @@ _UNKNOWN = "unknown"
 
 
 class NiftiUnitWarning(UserWarning):
-    """A unit could not be carried between a NIfTI header and brainhops."""
+    """Warning that a unit cannot be carried between NIfTI and brainhops."""
 
 
 def _label(value: tx.Union[str, int, None], kind: _Kind) -> str:
-    """The NIfTI label of a label or a code, in the slot `kind`."""
+    """Return the NIfTI label of a label or code.
+
+    `None` and `""` read as `"unknown"`; anything else unknown raises
+    `ValueError`.
+    """
     codes = _CODES[kind]
     if value is None or value == "":
         return _UNKNOWN
@@ -154,23 +136,22 @@ def _label(value: tx.Union[str, int, None], kind: _Kind) -> str:
 def nifti_to_unit(
     value: tx.Union[str, int, None], kind: _Kind
 ) -> tx.Optional[Unit]:
-    """
-    The brainhops unit of a NIfTI unit label or code.
+    """Return the brainhops unit of a NIfTI unit label or code.
 
     Parameters
     ----------
-    value : str | int | None
-        A label as `nibabel` writes it (`"mm"`, `"sec"`, ...), or the code
-        of one. `None` and `""` read as `"unknown"`.
+    value : str, int or None
+        A label as nibabel writes it, such as `"mm"` or `"sec"`, or its code.
+        `None` and `""` read as `"unknown"`.
     kind : {"space", "time"}
-        The slot of `xyzt_units` the value comes from.
+        The slot of `xyzt_units`.
 
     Returns
     -------
-    Unit | None
-        The unit. An unknown spatial unit is a millimetre, an unknown
-        temporal unit is `None`, and a temporal code that is not a unit of
-        time is `None`, with a [`NiftiUnitWarning`][].
+    Unit or None
+        The unit. An unknown spatial unit is a millimetre, and an unknown
+        temporal unit or a temporal code that is not a time is `None`, with a
+        [`NiftiUnitWarning`][] in the latter case.
 
     Raises
     ------
@@ -195,33 +176,30 @@ def nifti_to_unit(
 def unit_to_nifti(
     unit: tx.Optional[Unit], kind: _Kind, *, nearest: bool = False
 ) -> str:
-    """
-    The NIfTI label a brainhops unit is written under.
+    """Return the NIfTI label under which a brainhops unit is written.
 
     Parameters
     ----------
-    unit : Unit | None
+    unit : Unit or None
         The unit to write.
     kind : {"space", "time"}
-        The slot of `xyzt_units` the unit goes to.
+        The slot of `xyzt_units`.
     nearest : bool
-        For a spatial unit with no NIfTI code, return the label of the
-        nearest one NIfTI has (in log scale) rather than `"unknown"`. The
-        caller is then responsible for rescaling what is measured in it.
+        For a spatial unit without a NIfTI code, return the nearest label on a
+        logarithmic scale instead of `"unknown"`. The caller must then rescale
+        what the unit measures.
 
     Returns
     -------
     str
-        A label for `nibabel`'s `set_xyzt_units`: the unit's own, the
-        nearest one (`nearest=True`, spatial units), or `"unknown"` for an
-        unspecified unit or -- with a [`NiftiUnitWarning`][] -- a unit with
-        no NIfTI code.
+        The label for `set_xyzt_units`: the unit's own, the nearest one, or
+        `"unknown"` for `None`, for a unit that is not physical, and, with a
+        [`NiftiUnitWarning`][], for a unit without a code.
 
     Raises
     ------
     ValueError
-        If `unit` is an index unit, which is never written, or a unit of
-        another kind than `kind`.
+        For an index unit, or a unit of the wrong kind.
     """
     if unit is None:
         return _UNKNOWN
@@ -258,6 +236,6 @@ def unit_to_nifti(
 
 
 def nifti_unit_meters(label: str) -> tx.Optional[float]:
-    """The size in metres of a NIfTI spatial label, or `None`."""
+    """Return the size in metres of a NIfTI spatial label, or `None`."""
     name = _UNITS["space"].get(label)
     return None if name is None else float(Unit(name).scale)

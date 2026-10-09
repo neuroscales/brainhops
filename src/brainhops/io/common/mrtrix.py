@@ -1,84 +1,37 @@
 """
-The shared MRtrix-reading and MRtrix-writing machinery behind every
-MRtrix-based image and transformation format.
+Reading and writing of MRtrix images.
 
-An MRtrix image is a text header followed by raw voxel data. The header
-and the data are either in the same file (`.mif`, or `.mif.gz` when the
-whole file is gzip-compressed) or in two files (`.mih` for the header,
-and the data file it names, conventionally `.dat`).
+This module holds what the MRtrix image and transformation formats
+share: the header, and the decoding and encoding of voxel data. An
+MRtrix image is a text header followed by raw voxel values, either in
+one file (`.mif`, or `.mif.gz` gzipped) or in two (a `.mih` header and
+the data file it names). The header is a list of `key: value` lines
+between `mrtrix image` and `END`, where `#` starts a comment:
 
-The header is a list of `key: value` lines, between a first line that
-reads `mrtrix image` and a last line that reads `END`::
+```text
+mrtrix image
+dim: 64,64,32,7
+vox: 2,2,2.5,nan
+layout: -0,-1,+2,+3
+datatype: Float32LE
+transform: 0.996, 0.087, 0, -61.2
+transform: -0.087, 0.996, 0, -70.5
+transform: 0, 0, 1, -40
+scaling: 0,1
+dw_scheme: 0,0,1,0
+dw_scheme: 0,1,0,1000
+file: . 552
+END
+```
 
-    mrtrix image
-    dim: 64,64,32,7
-    vox: 2,2,2.5,nan
-    layout: -0,-1,+2,+3
-    datatype: Float32LE
-    transform: 0.996, 0.087, 0, -61.2
-    transform: -0.087, 0.996, 0, -70.5
-    transform: 0, 0, 1, -40
-    scaling: 0,1
-    dw_scheme: 0,0,1,0
-    dw_scheme: 0,1,0,1000
-    file: . 552
-    END
-
-The conventions below were checked against the MRtrix3 sources
-(`core/formats/mrtrix_utils.{h,cpp}`, `core/formats/mrtrix{,_gz}.cpp`,
-`core/file/key_value.cpp`, `core/stride.h`, `core/raw.h`,
-`core/header.cpp`, `core/transform.h`, `core/datatype.cpp`).
-
-* **Comments.** Everything after a `#` on a line is a comment, and is
-  dropped. A value cannot therefore contain a `#`.
-* **Keys.** The compulsory keys (`dim`, `vox`, `layout`, `datatype`,
-  `transform`, `scaling`) are matched case-insensitively. Any other key
-  is kept as it is spelled. A key that appears on several lines (the
-  three rows of `transform`, the rows of a `dw_scheme`, the entries of a
-  `command_history`) has one value per line; the other keys are
-  collected as their lines joined by newlines, which is how MRtrix holds
-  them.
-* **`dim`, `vox`.** The size and the voxel size of each axis. `vox` may
-  hold fewer entries than `dim` (but at least three, or as many as
-  `dim` when it has fewer), and may hold `nan` for an axis that has no
-  physical size.
-* **`layout`.** One signed integer per axis, such as `-0,-1,+2`. The
-  absolute value is the *rank* of the axis in the file: the axis of
-  rank 0 changes fastest, the one of rank 1 next, and so on. The sign
-  says whether the voxels along the axis are stored in increasing
-  (`+`) or decreasing (`-`) order of their index. Voxel `[0, 0, ...]`
-  is therefore *not* the first value in the file when any axis is
-  negative: it is `sum((size[i] - 1) * |stride[i]|)` values in, over
-  the negative axes. `layout: +0,+1,+2` is a plain Fortran-ordered
-  (x fastest) array.
-* **`datatype`.** One of `Bit`, `Int8`, `UInt8`, `[U]Int{16,32,64}`,
-  `Float{32,64}` and `CFloat{32,64}`, the multi-byte ones optionally
-  suffixed with `LE` or `BE`. Without a suffix the byte order is the
-  native one of the machine. `Bit` packs eight voxels per byte, the
-  first one in the most significant bit.
-* **`transform`.** Three rows of four numbers, the top of a `4x4`
-  matrix that maps *voxel coordinates multiplied by the voxel sizes*
-  (not plain voxel indices) to scanner coordinates, in millimetres,
-  in RAS+ (x to the right, y to the front, z up), like a NIfTI sform.
-  The voxel-to-scanner matrix is `transform @ diag(vox[:3], 1)`. MRtrix
-  writes the three direction columns at unit length; one that is not is
-  normalised and its length moved into the voxel size, which leaves the
-  voxel-to-scanner matrix unchanged.
-* **Missing transform.** When `transform` is absent (or not finite),
-  MRtrix centres the field of view on the origin: the rotation is the
-  identity, and the translation is `-0.5 * (size - 1) * vox` along
-  each of the first three axes. It is *not* the identity.
-* **`scaling`.** `offset,scale`: a stored value `v` means
-  `offset + scale * v`.
-* **`file`.** `file: <name> [<offset>]`. A name of `.` means the data
-  follow the header in the same file, `offset` bytes from its start.
-  Any other name is the data file, relative to the header's directory,
-  and its offset defaults to zero.
-
-This module holds what an image reader and a transformation reader
-(an MRtrix warp, for instance) share: the header, the decoding of the
-voxel data into an array whose axes are the header's axes, and the
-encoding of such an array back into bytes.
+`layout` gives the storage rank and direction of each axis (see
+[`parse_layout`][]). `transform` maps voxel coordinates multiplied by
+the voxel sizes, not voxel indices, to scanner RAS millimetres; without
+one, MRtrix centres the field of view on the origin rather than
+assuming the identity. `scaling` gives `offset,scale`, by which a
+stored value `v` means `offset + scale * v`. `file` names the data file
+and an offset, where `.` means the header file itself. The conventions
+follow the MRtrix3 sources.
 """
 
 __all__ = [
@@ -87,7 +40,6 @@ __all__ = [
     "MRTRIX_MAGIC",
 ]
 
-# stdlib
 import gzip
 import math
 import os
@@ -95,11 +47,9 @@ import re
 from collections import OrderedDict
 from io import BytesIO
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# internals
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
 from brainhops.datamodel.base import DataModelBase
@@ -119,22 +69,24 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common._geometry import Arrangement, arrange_voxel_to_ras
 
 MRTRIX_MAGIC = "mrtrix image"
-"""The line every MRtrix header starts with."""
+"""The first line of every MRtrix header."""
 
 _MAGIC_BYTES = MRTRIX_MAGIC.encode("ascii")
 
 _END = "END"
-"""The line every MRtrix header ends with."""
+"""The last line of every MRtrix header."""
 
 _RESERVED = ("dim", "vox", "layout", "datatype", "transform", "scaling")
-"""The keys MRtrix decodes itself, matched case-insensitively."""
+"""The keys MRtrix decodes itself, which are case-insensitive."""
 
 _FILE = "file"
-"""The key that says where the voxel data are."""
+"""The key that gives the location of the data."""
 
 _MAX_HEADER_LINES = 1_000_000
-"""A bound on the header length, so a stray binary file is not read whole
-while looking for an `END` that never comes."""
+"""
+A bound on the header length, so that a stray binary file is not read
+whole in search of `END`.
+"""
 
 
 # ----------------------------------------------------------------------
@@ -155,7 +107,7 @@ _DTYPES = {
     "cfloat32": "c8",
     "cfloat64": "c16",
 }
-"""The numpy type of each MRtrix data type, without its byte order."""
+"""The NumPy type of each MRtrix data type, without byte order."""
 
 _NAMES = {
     "int8": "Int8",
@@ -171,23 +123,22 @@ _NAMES = {
     "cfloat32": "CFloat32",
     "cfloat64": "CFloat64",
 }
-"""The spelling MRtrix writes each data type with."""
+"""The spelling MRtrix writes for each data type."""
 
 _BIT = "bit"
 
 
 def mrtrix_dtype(spec: str) -> tx.Optional[np.dtype]:
     """
-    The numpy data type of an MRtrix data type, or `None` for `Bit`.
+    Return the NumPy dtype of an MRtrix data type, or `None` for `Bit`.
 
-    The byte order is the suffix's (`LE`, `BE`), or the machine's when
-    there is none, as MRtrix does. The specifier is matched
-    case-insensitively.
+    The name is case-insensitive. As in MRtrix, the byte order is given by
+    an `LE` or `BE` suffix, and is the native one otherwise.
 
     Raises
     ------
     ParserContentError
-        If the specifier is not an MRtrix data type.
+        If the name is not an MRtrix data type.
     """
     key = spec.strip().lower()
     if key == _BIT:
@@ -205,16 +156,20 @@ def mrtrix_dtype(spec: str) -> tx.Optional[np.dtype]:
 
 def dtype_to_mrtrix(dtype: tx.Any) -> str:
     """
-    The MRtrix data type that stores a numpy data type exactly.
+    Return the MRtrix data type that stores a dtype exactly.
 
-    A multi-byte type is always given its byte order (`LE` or `BE`), as
-    MRtrix itself writes it. A boolean is `Bit`. A type MRtrix cannot
-    store (`float16`, `float128`, strings, ...) raises `WriterError`.
+    Booleans are stored as `Bit`, and multi-byte types always carry an `LE`
+    or `BE` suffix, as MRtrix writes them.
+
+    Raises
+    ------
+    WriterError
+        If MRtrix cannot store the dtype, such as float16 or strings.
     """
     if isinstance(dtype, str) and dtype.strip().lower() == _BIT:
         return "Bit"
     if isinstance(dtype, str) and _is_mrtrix_spec(dtype):
-        # Already an MRtrix specifier: normalise its spelling.
+        # normalise the spelling of an MRtrix data type
         np_dtype = mrtrix_dtype(dtype)
         return dtype_to_mrtrix(np_dtype)
     dtype = np.dtype(dtype)
@@ -247,18 +202,17 @@ def _is_mrtrix_spec(spec: str) -> bool:
 
 def parse_layout(spec: str, ndim: int) -> tx.Tuple[int, ...]:
     """
-    Parse an MRtrix `layout` into signed, one-based symbolic strides.
+    Parse a layout into signed one-based strides.
 
-    `-0,-1,+2` becomes `(-1, -2, 3)`: the absolute value minus one is
-    the rank of the axis in the file (0 changes fastest), and the sign
-    is the direction the axis is stored in. The one-based spelling is
-    the one MRtrix uses internally, and keeps the sign of rank 0.
+    For example, `-0,-1,+2` becomes `(-1, -2, 3)`. The absolute value minus
+    one is the rank, from 0 for the fastest axis, and the sign is the
+    storage direction. Counting from one keeps the sign of rank 0.
 
     Raises
     ------
     ParserContentError
-        If the layout is malformed, has the wrong number of axes, or
-        does not give each axis a distinct rank.
+        If the layout is malformed, has the wrong number of axes, or does
+        not give the axes distinct ranks.
     """
     entries = [entry.strip() for entry in spec.split(",")]
     strides = []
@@ -282,14 +236,14 @@ def parse_layout(spec: str, ndim: int) -> tx.Tuple[int, ...]:
 
 
 def format_layout(strides: tx.Sequence[int]) -> str:
-    """Spell signed one-based symbolic strides as an MRtrix `layout`."""
+    """Spell signed one-based strides as a layout."""
     return ",".join(
         ("+" if s > 0 else "-") + str(abs(int(s)) - 1) for s in strides
     )
 
 
 def default_layout(ndim: int) -> tx.Tuple[int, ...]:
-    """The layout of a Fortran-ordered array: `+0,+1,+2,...`."""
+    """Return the Fortran-order layout `+0,+1,+2,...`."""
     return tuple(range(1, ndim + 1))
 
 
@@ -297,11 +251,8 @@ def _storage_shape(
     dim: tx.Sequence[int], strides: tx.Sequence[int]
 ) -> tx.Tuple[tx.Tuple[int, ...], tx.List[int]]:
     """
-    The C-ordered shape the values have in the file, and where each
-    header axis sits in it.
-
-    The slowest axis (highest rank) comes first in the C-ordered shape.
-    `position[i]` is the index, in that shape, of header axis `i`.
+    Return the C-ordered file shape and the position of each header axis
+    in it.
     """
     ndim = len(dim)
     ranks = [abs(s) - 1 for s in strides]
@@ -316,13 +267,9 @@ def storage_to_image(
     stored: np.ndarray, dim: tx.Sequence[int], strides: tx.Sequence[int]
 ) -> np.ndarray:
     """
-    View the values as they are stored as an array of the header's axes.
+    View stored values as an array indexed in header axis order.
 
-    `stored` holds the values in file order, either flat or already
-    shaped. The result is indexed `[i0, i1, ...]` in the order of the
-    header's axes, and is a view of `stored` (a transposition, and a
-    reversal of the negative axes), so a memory-mapped file stays
-    memory-mapped.
+    The result is a view, so that a memory map stays one.
     """
     shape, position = _storage_shape(dim, strides)
     stored = stored.reshape(shape)
@@ -335,10 +282,9 @@ def storage_to_image(
 
 def image_to_storage(image: tx.Any, strides: tx.Sequence[int]) -> np.ndarray:
     """
-    Reorder an array of the header's axes into the order of the file.
+    Reorder an array of header axes into file order.
 
-    The inverse of `storage_to_image`. The result is a C-ordered view
-    when possible; `np.ascontiguousarray` of it is what the file holds.
+    This is the inverse of [`storage_to_image`][].
     """
     image = np.asarray(image)
     ndim = image.ndim
@@ -359,7 +305,7 @@ def image_to_storage(image: tx.Any, strides: tx.Sequence[int]) -> np.ndarray:
 
 
 def _format_float(value: float) -> str:
-    """A float spelled the shortest way that reads back exactly."""
+    """Spell a float in the shortest way that reads back exactly."""
     value = float(value)
     if math.isnan(value):
         return "nan"
@@ -383,14 +329,10 @@ class MrtrixHeader:
     """
     The content of an MRtrix image header.
 
-    The keys MRtrix decodes are held decoded: `dim`, `vox`, `layout`,
-    `datatype`, `transform`, `scaling` and `file`. Every other key is
-    kept in `keyval`, in the order it was read, with the lines of a
-    repeated key joined by newlines, so the header writes back as it was
-    read.
-
-    The header is plain data: building or changing one never touches a
-    file.
+    Keys other than `dim`, `vox`, `layout`, `datatype`, `transform`,
+    `scaling` and `file` are kept in `keyval`, in order and with the lines
+    of a repeated key joined by newlines, so that the header is written
+    back as read. A header is plain data, which never touches a file.
     """
 
     def __init__(
@@ -431,8 +373,6 @@ class MrtrixHeader:
         self.keyval = OrderedDict(keyval or {})
         """Every other key, with its lines joined by newlines."""
 
-    # --- derived ------------------------------------------------------
-
     @property
     def ndim(self) -> int:
         """The number of axes."""
@@ -440,7 +380,7 @@ class MrtrixHeader:
 
     @property
     def dtype(self) -> tx.Optional[np.dtype]:
-        """The numpy data type of the stored values, `None` for `Bit`."""
+        """The NumPy dtype of the stored values, or `None` for `Bit`."""
         return mrtrix_dtype(self.datatype)
 
     @property
@@ -465,9 +405,8 @@ class MrtrixHeader:
         """
         The voxel size of each axis, as MRtrix uses it.
 
-        Missing entries are `nan`. A spatial voxel size that is not
-        finite is replaced by the mean of the finite spatial ones (or 1
-        when there is none), which is what MRtrix does.
+        Missing sizes are `nan`, and a non-finite spatial size is replaced by
+        the mean of the finite ones (or 1).
         """
         vox = list(self.vox[: self.ndim])
         vox += [math.nan] * (self.ndim - len(vox))
@@ -482,12 +421,10 @@ class MrtrixHeader:
 
     def default_transform(self) -> np.ndarray:
         """
-        The `(3, 4)` transform MRtrix assumes when the header has none.
+        Return the `(3, 4)` transform MRtrix assumes when the header has none.
 
-        The rotation is the identity, and the field of view is centred
-        on the origin: the translation is `-0.5 * (size - 1) * vox` along
-        each of the first three axes (an axis the image does not have
-        counts as one voxel).
+        The rotation is the identity, and the field of view is centred on the
+        origin.
         """
         dim = list(self.dim[:3]) + [1] * (3 - min(3, self.ndim))
         vox = list(self.spacing[:3]) + [1.0] * (3 - min(3, self.ndim))
@@ -498,13 +435,10 @@ class MrtrixHeader:
 
     def voxel_to_scanner(self) -> np.ndarray:
         """
-        The `(4, 4)` matrix from voxel indices to scanner RAS+ mm.
+        Return the `(4, 4)` matrix from voxel indices to scanner RAS.
 
-        The stored transform maps coordinates scaled by the voxel sizes,
-        so the matrix is `transform @ diag(vox[0], vox[1], vox[2], 1)`.
-        An image with fewer than three axes is given unit-size extra
-        axes, as MRtrix does. A missing or non-finite transform is
-        replaced by `default_transform`.
+        The matrix is `transform @ diag(vox[0], vox[1], vox[2], 1)`, with
+        [`default_transform`][] replacing a missing or non-finite transform.
         """
         transform = self.transform
         if transform is None or not np.all(np.isfinite(transform)):
@@ -514,21 +448,18 @@ class MrtrixHeader:
         matrix[:3, :4] = transform
         return matrix @ np.diag(vox + [1.0])
 
-    # --- reading ------------------------------------------------------
-
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str]) -> "MrtrixHeader":
         """
-        Parse header lines, from `mrtrix image` up to `END`.
+        Parse the header lines from `mrtrix image` to `END`.
 
-        Lines after `END` are ignored, so the decoded text of a whole
-        file can be handed over.
+        Lines after `END` are ignored.
 
         Raises
         ------
         ParserContentError
-            If the first line is not `mrtrix image`, or a compulsory key
-            (`dim`, `vox`, `datatype`) is missing, or a key is malformed.
+            If the first line is wrong, if `END`, `dim`, `vox` or `datatype` is
+            missing, or if an entry is malformed.
         """
         lines = iter(lines)
         first = next(lines, None)
@@ -551,7 +482,7 @@ class MrtrixHeader:
             key, colon, value = line.partition(":")
             key, value = key.strip(), value.strip()
             if not colon or not key:
-                # MRtrix ignores a malformed line.
+                # MRtrix ignores malformed lines.
                 continue
             lkey = key.lower()
             if lkey == "dim":
@@ -590,9 +521,9 @@ class MrtrixHeader:
             raise ParserContentError(f"Invalid MRtrix voxel sizes: {vox}")
         if not datatype:
             raise ParserContentError("The MRtrix header has no 'datatype'.")
-        mrtrix_dtype(datatype)  # validate
-        # MRtrix requires a layout. A header without one is read as a
-        # Fortran-ordered array, the layout MRtrix gives a new image.
+        mrtrix_dtype(datatype)
+        # MRtrix requires a layout; without one, read the Fortran order that
+        # MRtrix gives a new image.
         strides = (
             parse_layout(layout, len(dim))
             if layout
@@ -639,16 +570,16 @@ class MrtrixHeader:
 
     @classmethod
     def from_text(cls, text: str) -> "MrtrixHeader":
-        """Parse a header from its text."""
+        """Parse a header from text."""
         return cls.from_lines(text.splitlines())
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO) -> tx.Tuple["MrtrixHeader", int]:
         """
-        Read a header from a binary stream, up to its `END` line.
+        Read a header from a binary stream, and return it with the number of
+        bytes read.
 
-        The stream is left just after the `END` line. Returns the header
-        and the number of bytes it took.
+        The stream is left just after the `END` line.
 
         Raises
         ------
@@ -672,18 +603,14 @@ class MrtrixHeader:
         text = b"".join(raw).decode("utf-8", "replace")
         return cls.from_text(text), nbytes
 
-    # --- writing ------------------------------------------------------
-
     def to_lines(
         self, file: tx.Optional[tx.Tuple[str, tx.Optional[int]]] = None
     ) -> tx.List[str]:
         """
-        The header's lines, from `mrtrix image` up to `END`.
+        Return the header lines, from `mrtrix image` to `END`.
 
-        `file` is the `(name, offset)` of the data, written in the
-        `file:` line; an offset of `None` is left out. It defaults to the
-        header's own `file`, and no `file:` line is written when there
-        is none.
+        The `file` argument, which defaults to the `file` of the header, is the
+        `(name, offset)` of the `file:` line; an offset of `None` is omitted.
         """
         lines = [MRTRIX_MAGIC]
         lines.append("dim: " + ",".join(str(d) for d in self.dim))
@@ -713,17 +640,15 @@ class MrtrixHeader:
         return lines
 
     def to_text(self, *args, **kwargs) -> str:
-        """The header's text, newline-terminated."""
+        """Return the header text, terminated by a newline."""
         return "\n".join(self.to_lines(*args, **kwargs)) + "\n"
 
     def embedded(self, align: int = 4) -> bytes:
         """
-        The header of a single-file image, padded up to its data.
+        Return the header of a single-file image, padded up to its data.
 
-        The `file: . <offset>` line points just past the header, at an
-        offset aligned on `align` bytes (MRtrix aligns on four). The
-        offset is part of the header it measures, so it is found by
-        iteration.
+        The data offset is aligned on `align` bytes. Since the offset is part
+        of the header it measures, it is found by iteration.
         """
         offset = 0
         while True:
@@ -734,7 +659,7 @@ class MrtrixHeader:
             offset = needed
 
     def copy(self) -> "MrtrixHeader":
-        """A copy that can be changed without changing this one."""
+        """Return an independent copy."""
         return MrtrixHeader(
             dim=self.dim,
             vox=self.vox,
@@ -766,13 +691,16 @@ class MrtrixHeader:
 
 def decode_data(header: MrtrixHeader, buffer: tx.Any) -> np.ndarray:
     """
-    Decode the stored values into an array of the header's axes.
+    Decode stored values into an array of header axes.
 
-    `buffer` holds the voxel data, from its first byte: `bytes`, a
-    `memoryview`, or a one-dimensional `uint8` array (a memory map). The
-    result is a view of it whenever the data type allows one; packed bits
-    are unpacked into a new boolean array. Intensity scaling is not
-    applied.
+    The buffer holds the voxel data from their first byte. The result is a
+    view of the buffer, except for `Bit` data, which are unpacked into a
+    new boolean array. Intensity scaling is not applied.
+
+    Raises
+    ------
+    ParserContentError
+        If the buffer holds fewer values than the header requires.
     """
     count = header.count
     if header.is_bit:
@@ -794,11 +722,14 @@ def decode_data(header: MrtrixHeader, buffer: tx.Any) -> np.ndarray:
 
 def encode_data(header: MrtrixHeader, data: tx.Any) -> bytes:
     """
-    Encode an array of the header's axes into the bytes of the file.
+    Encode an array of header axes into the bytes of the file.
 
-    The values are converted to the header's data type, rounding when a
-    floating-point array is stored as integers, and laid out as the
-    header's `layout` says.
+    Floats stored as integers are rounded.
+
+    Raises
+    ------
+    WriterError
+        If the shape of the array disagrees with the header.
     """
     array = np.asarray(data)
     if tuple(array.shape) != tuple(header.dim):
@@ -818,11 +749,8 @@ def encode_data(header: MrtrixHeader, data: tx.Any) -> bytes:
 
 def _read_buffer(file: tx.Any, offset: int, nbytes: int, mmap: bool) -> tx.Any:
     """
-    The `nbytes` bytes at `offset` in an uncompressed data file.
-
-    A local file is memory-mapped (read-only) unless `mmap` is false, so
-    nothing is read until it is indexed. Any other path is read through
-    its `open`.
+    Read `nbytes` bytes at `offset` in an uncompressed data file,
+    memory-mapping a local file unless `mmap` is false.
     """
     local = _local_path(file)
     if local is not None and mmap and nbytes > 0:
@@ -835,7 +763,7 @@ def _read_buffer(file: tx.Any, offset: int, nbytes: int, mmap: bool) -> tx.Any:
 
 
 def _is_gzip(file: tx.Any) -> bool:
-    """Whether a path names a gzip-compressed file, from its content."""
+    """Tell whether a path names a gzip file, judged by its content."""
     try:
         with _open_path(file) as f:
             return f.read(2) == b"\x1f\x8b"
@@ -850,13 +778,11 @@ def _is_gzip(file: tx.Any) -> bool:
 
 MRTRIX_POLICY = dict(fill_space=True)
 """
-Where MRtrix stores the axes of an array (see
-[`plan_axes`][brainhops.io.base._geometry.plan_axes]).
+Where MRtrix stores the axes of an array, as a policy of
+[`plan_axes`][brainhops.io.common._geometry.plan_axes].
 
-MRtrix reads its first three axes as spatial, and gives the others no
-meaning of their own: they are stored after the spatial ones, time first,
-then the channels, then the others. A slice with other axes is given a
-`z` axis of size one, so they are not read as spatial.
+A slice with non-spatial axes gets a `z` axis of size one, so that
+those axes are not read as spatial.
 """
 
 
@@ -864,25 +790,17 @@ def voxel_to_ras(
     xform: Transformation, voxel_axes: tx.Optional[tx.List[tx.Any]] = None
 ) -> Arrangement:
     """
-    The voxel-to-RAS geometry of a voxel-to-world transformation, with
-    the axes placed where MRtrix stores them.
+    Return the voxel-to-RAS geometry of a voxel-to-world transformation,
+    with the axes placed where MRtrix stores them.
 
-    The transformation is reduced to an affine (a `Scaling`, a `Sequence`
-    of affines, ...). The axes are placed by the types and names their
-    spaces declare (`voxel_axes` are those of the data, see
-    [`arrange_voxel_to_ras`][brainhops.io.base._geometry.
-    arrange_voxel_to_ras] and `MRTRIX_POLICY`). A map with fewer than
-    three dimensions is embedded in three. A map over more axes keeps its
-    three spatial ones in the `(4, 4)` matrix, when it does not mix them
-    with the others, and the scale and offset of the others apart. The
-    world space is turned into RAS from the anatomical orientation of its
-    axes; a world space with no orientation is taken to be RAS already.
+    The axes are placed by what their spaces declare, where `voxel_axes`
+    are the axes of the data (see [`arrange_voxel_to_ras`][]).
 
     Raises
     ------
     UnrepresentableTransformationError
-        If the transformation has no affine representation, or mixes the
-        spatial axes with the others.
+        If the transformation has no affine form, or if it mixes the spatial
+        axes with the others.
     """
     return arrange_voxel_to_ras(
         xform, voxel_axes, "MRtrix", "scanner", **MRTRIX_POLICY
@@ -893,18 +811,14 @@ def split_voxel_to_scanner(
     matrix: np.ndarray,
 ) -> tx.Tuple[np.ndarray, tx.Tuple[float, float, float]]:
     """
-    Split a voxel-to-scanner matrix into an MRtrix transform and voxel
-    sizes.
-
-    The voxel sizes are the lengths of the three direction columns, and
-    the transform holds the unit-length directions and the translation:
-    `matrix == [transform; 0 0 0 1] @ diag(vox, 1)`.
+    Split a voxel-to-scanner matrix into an MRtrix transform of unit
+    directions and the voxel sizes.
 
     Raises
     ------
     WriterError
-        If a direction column has zero length, so no voxel size can be
-        derived.
+        If a direction column has zero length, or if the matrix is not
+        finite.
     """
     matrix = np.asarray(matrix, dtype=float)
     vox = np.linalg.norm(matrix[:3, :3], axis=0)
@@ -925,16 +839,12 @@ def split_voxel_to_scanner(
 
 class MrtrixParser(DataModelBase, BinaryFileParserWriter):
     """
-    Base class for objects that are encoded by an MRtrix image file.
+    The base class of objects encoded as an MRtrix image.
 
-    It reads and writes the container -- the header and the raw voxel
-    values -- for every MRtrix-based format: an image, and later a warp.
-    What the values mean is for the concrete format to say, through
-    `_mrtrix_header` and `_mrtrix_data` when writing.
-
-    Reading a `.mif` or a `.mih` from a local path memory-maps the data,
-    so nothing but the header is read until the data are indexed. A
-    `.mif.gz`, a file object or bytes are read into memory.
+    The class reads and writes the container, a header and its raw values,
+    and a concrete format provides `_mrtrix_header` and `_mrtrix_data` on
+    write. The data of a local `.mif` or `.mih` file are memory-mapped, so
+    only the header is read until they are indexed.
     """
 
     HINTS = ("mrtrix",)
@@ -963,7 +873,7 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
 
     @property
     def header(self) -> tx.Optional[MrtrixHeader]:
-        """The MRtrix header this object was read from, if any."""
+        """The header this object was read from, if any."""
         return getattr(self, "_header", None)
 
     @header.setter
@@ -972,11 +882,9 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
 
     def _scaled_data(self) -> tx.Optional[tx.Any]:
         """
-        The stored values with the header's intensity scaling applied.
+        Return the stored values with the intensity scaling of the header.
 
-        Without scaling (or with the identity one), the stored values are
-        returned as they are, so a memory map stays one. With scaling,
-        the values are read and scaled, to at least single precision.
+        Unscaled values are returned unchanged, so that a memory map stays one.
         """
         raw = getattr(self, "dataobj", None)
         if raw is None:
@@ -989,18 +897,16 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         dtype = np.result_type(np.asarray(raw).dtype, np.float32)
         return offset + scale * np.asarray(raw, dtype=dtype)
 
-    # --- reading ------------------------------------------------------
-
     @classmethod
     def _from_header(
         cls, header: MrtrixHeader, dataobj: tx.Any, **kwargs
     ) -> tx.Self:
-        """Build the object from a decoded header and its stored values."""
+        """Build an object from a decoded header and its stored values."""
         return cls(header=header, dataobj=dataobj, **kwargs)
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
-        """Build the object from an MRtrix file (path or file object)."""
+        """Build an object from an MRtrix file, by path or file object."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):
@@ -1012,11 +918,9 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
     ) -> tx.Self:
         """
-        Build the object from the path of a `.mif`, `.mih` or `.mif.gz`.
+        Build an object from the path of a `.mif`, `.mih` or `.mif.gz` file.
 
-        The data of an uncompressed local file are memory-mapped unless
-        `mmap` is false. A `.mih` header is followed to the data file it
-        names, relative to the header's directory.
+        Uncompressed local data are memory-mapped unless `mmap` is false.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -1045,11 +949,9 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
         """
-        Build the object from an open MRtrix file object, gzipped or not.
+        Build an object from an open MRtrix file, gzipped or not.
 
-        The data of a single-file image are read from the stream. A
-        header that names a separate data file is resolved against the
-        stream's `name`, when it has one.
+        A separate data file is found from the name of the stream.
         """
         kwargs.pop("mmap", None)
         with preserve_position(file):
@@ -1061,8 +963,7 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        """Build the object from the bytes of a single-file MRtrix image
-        (gzipped or not)."""
+        """Build an object from the bytes of a single-file image."""
         kwargs.pop("mmap", None)
         content = bytes(content)
         if content[:2] == b"\x1f\x8b":
@@ -1090,8 +991,6 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
             buffer = _read_buffer(datafile, offset, header.nbytes, False)
         return cls._from_header(header, decode_data(header, buffer), **kwargs)
 
-    # --- sniffing -----------------------------------------------------
-
     @classmethod
     def sniff_fileobj(
         cls,
@@ -1099,8 +998,7 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that a stream holds an MRtrix
-        image, gzipped or not."""
+        """Return the confidence that a stream holds an MRtrix image."""
         score = Confidence.NO
         base_error = None
         try:
@@ -1125,45 +1023,41 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold an MRtrix
-        image, gzipped or not."""
+        """Return the confidence that bytes hold an MRtrix image."""
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def _score_header(cls, header: MrtrixHeader) -> float:
         """
-        How well a valid MRtrix header matches *this* class.
+        Score how well a valid header matches this class.
 
-        Called once the header has been parsed, so the answer is never
-        "not MRtrix". A concrete format overrides it to tell its own kind
-        of MRtrix file (an image, a warp) from the others.
+        A concrete format overrides the score to tell its own kind of image,
+        such as a warp, from the others.
         """
         return Confidence.MAYBE
 
-    # --- writing ------------------------------------------------------
-
     def _mrtrix_header(self, **kwargs) -> MrtrixHeader:
-        """The header to write. Each concrete format builds its own."""
+        """Build the header to write; each concrete format defines it."""
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to "
             f"MRtrix."
         )
 
     def _mrtrix_data(self) -> tx.Any:
-        """The array of the header's axes to write."""
+        """Return the array of header axes to write."""
         raise WriterError(
             f"{type(self).__name__} does not know how to write itself to "
             f"MRtrix."
         )
 
     def to_bytes(self, **kwargs) -> bytes:
-        """The bytes of a single-file, uncompressed `.mif`."""
+        """Return the bytes of a single-file, uncompressed `.mif` image."""
         header = self._mrtrix_header(**kwargs)
         data = encode_data(header, self._mrtrix_data_for(header))
         return header.embedded() + data
 
     def _mrtrix_data_for(self, header: MrtrixHeader) -> tx.Any:
-        """The data to write, mapped through the header's scaling."""
+        """Return the data to write, mapped through the header scaling."""
         data = self._mrtrix_data()
         if header.scaling and tuple(header.scaling) != (0.0, 1.0):
             offset, scale = header.scaling
@@ -1171,17 +1065,15 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
         return data
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write a single-file, uncompressed `.mif` to a stream."""
+        """Write a single-file, uncompressed `.mif` image to a stream."""
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """
-        Write to a path, in the variant its extension names.
+        Write to a path, in the variant that its extension names.
 
-        * `.mif`: header and data in one file;
-        * `.mif.gz`: the same, gzip-compressed;
-        * `.mih`: the header, and the data in a `.dat` file next to it
-          (named after the header), which the header points to.
+        A `.mif` file holds the header and the data, gzipped for `.mif.gz`. A
+        `.mih` header points to the data, written next to it in a `.dat` file.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -1205,7 +1097,7 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
             f.write(content)
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path (variant chosen by extension) or a stream."""
+        """Write to a path or a stream."""
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):
@@ -1214,7 +1106,15 @@ class MrtrixParser(DataModelBase, BinaryFileParserWriter):
 
 
 def _data_location(header: MrtrixHeader) -> tx.Tuple[str, int]:
-    """The `(name, offset)` of the data, checked as MRtrix does."""
+    """
+    Return the `(name, offset)` of the data, checked as MRtrix does.
+
+    Raises
+    ------
+    ParserContentError
+        If the header has no `file` entry, or an embedded image has no
+        positive offset.
+    """
     if header.file is None:
         raise ParserContentError(
             "The MRtrix header has no 'file' entry, so its data cannot be "
