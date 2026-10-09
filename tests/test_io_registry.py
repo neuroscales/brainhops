@@ -5,7 +5,6 @@ import typing_extensions as tx
 
 from brainhops.io.base._base import (
     FileBasedObject,
-    TextFileBasedObject,
     format_registry,
     register_format,
 )
@@ -13,6 +12,7 @@ from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     Confidence,
     ParserContentError,
+    TextFileReader,
 )
 
 
@@ -23,7 +23,7 @@ def root() -> type:
     """
 
     @format_registry
-    class Root(TextFileBasedObject):
+    class Root(FileBasedObject, TextFileReader):
         pass
 
     return Root
@@ -62,10 +62,8 @@ def test_register_format_fills_every_ancestor_registry(root: type) -> None:
     fmt = _format(root, "A", EXTENSIONS=(".a",))
     assert fmt in root._REGISTRY
     assert fmt in FileBasedObject._REGISTRY
-    assert fmt in TextFileBasedObject._REGISTRY
     # Keep the real registries clean.
-    for base in (FileBasedObject, TextFileBasedObject):
-        base._REGISTRY.discard(fmt)
+    FileBasedObject._REGISTRY.discard(fmt)
 
 
 def test_dispatchers_are_not_registered_as_formats(root: type) -> None:
@@ -84,7 +82,6 @@ def test_registering_twice_is_a_no_op(root: type) -> None:
     register_format(fmt)
     assert len(root._REGISTRY) == before
     FileBasedObject._REGISTRY.discard(fmt)
-    TextFileBasedObject._REGISTRY.discard(fmt)
 
 
 # ----------------------------------------------------------------------
@@ -155,7 +152,6 @@ def test_longest_matching_extension_wins(root: type, tmp_path) -> None:  # noqa:
     assert root.from_file(scan) == "narrow"
     for fmt in (broad, narrow):
         FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
 
 
 def test_a_prefix_constraint_beats_an_unconstrained_format(
@@ -197,7 +193,6 @@ def test_a_prefix_constraint_beats_an_unconstrained_format(
         assert root.from_file(target) == expected
     for fmt in (generic, spm):
         FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
 
 
 def test_a_subclass_outranks_its_own_base(root: type) -> None:
@@ -215,7 +210,6 @@ def test_a_subclass_outranks_its_own_base(root: type) -> None:
     assert root.from_line("X hello") == "derived"
     for fmt in (base, derived):
         FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
 
 
 def test_indistinguishable_formats_raise_rather_than_guess(
@@ -336,7 +330,6 @@ def test_a_longer_required_prefix_is_more_specific(
     assert root.from_file(target) == "long"
     for fmt in (short, long_):
         FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
 
 
 def test_declaring_more_prefixes_does_not_buy_specificity(

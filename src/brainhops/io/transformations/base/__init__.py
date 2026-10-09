@@ -2,7 +2,6 @@
 
 __all__ = [
     "FileBasedTransformation",
-    "WritableFileBasedTransformation",
     "TransformationFormat",
     "AffineTransformationFormat",
     "affines",
@@ -13,6 +12,6 @@ __all__ = [
 ]
 
 from . import affines, conversions, fields
-from ._base import FileBasedTransformation, WritableFileBasedTransformation
+from ._base import FileBasedTransformation
 from ._formats import AffineTransformationFormat, TransformationFormat
 from ._load import load, sniff

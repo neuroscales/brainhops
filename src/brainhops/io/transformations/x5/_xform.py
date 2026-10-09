@@ -15,7 +15,7 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
 )
 from brainhops.io.common.hdf5 import Hdf5ParserWriter
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import FileBasedTransformation
 
 from ._blocks import node_to_transformation, transformation_to_nodes
 from ._struct import (
@@ -156,7 +156,7 @@ class X5TransformParser(
 class X5Transform(
     X5TransformParser,
     _xforms.Sequence,
-    WritableFileBasedTransformation,
+    FileBasedTransformation,
 ):
     """A transformation stored in a BIDS X5 (`.x5`) file.
 

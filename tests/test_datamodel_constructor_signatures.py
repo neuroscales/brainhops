@@ -98,7 +98,6 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     },
     "brainhops.io.transformations.base._base": {
         "FileBasedTransformation": (),
-        "WritableFileBasedTransformation": (),
     },
     "brainhops.io.transformations.base.affines": {
         "LPSToVoxel": ("data",),

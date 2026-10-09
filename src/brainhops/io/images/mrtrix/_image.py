@@ -31,7 +31,7 @@ from brainhops.io.common.mrtrix._geometry import (
     split_voxel_to_scanner,
     voxel_to_ras,
 )
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import FileBasedImage
 
 _INDEX = "index"
 _MM = "millimeter"
@@ -63,7 +63,7 @@ def _mrtrix_axes(ndim: int) -> tx.List[Axis]:
 
 
 @register_format
-class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
+class MrtrixImage(MrtrixParser, FileBasedImage, SingleScaleImage):
     """An image stored in an MRtrix file (`.mif`, `.mif.gz` or `.mih`).
 
     The data are indexed `[x, y, z, ...]` in Fortran order, whatever

@@ -9,13 +9,10 @@ The errors that these classes raise are also importable from here.
 
 __all__ = [
     "Confidence",
-    "FileSniffer",
     "FileReader",
     "FileWriter",
-    "BinaryFileSniffer",
     "BinaryFileReader",
     "BinaryFileWriter",
-    "TextFileSniffer",
     "TextFileReader",
     "TextFileWriter",
 ]
@@ -335,14 +332,6 @@ class _FileSniffAdapters:
 # ---- from ------------------------------------------------------------
 
 
-class FileSniffer(_FileSniffAdapters):
-    """Inspect content and return a confidence score between 0 and 1.
-
-    Concrete readers implement `sniff_bytes` or `sniff_line`. Format
-    dispatchers are not sniffers: their public methods select a class.
-    """
-
-
 def _passthrough_from_fileobj(func: tx.Callable) -> tx.Callable:
     """Mark a `from_fileobj` as a passthrough.
 
@@ -547,7 +536,7 @@ class _FileReadAdapters:
         )
 
 
-class FileReader(_FileReadAdapters, FileSniffer):
+class FileReader(_FileReadAdapters, _FileSniffAdapters):
     """Read one format, with sniffing that returns a confidence score.
 
     Format dispatchers independently use the adapter mixins; they do not
@@ -708,10 +697,6 @@ class _TextSniffAdapters(_FileSniffAdapters):
         return cls.sniff_text(text, **kwargs)
 
 
-class TextFileSniffer(_TextSniffAdapters, FileSniffer):
-    """Score text content using the shared text adapters."""
-
-
 def _not_text(
     cls: type, error: tx.Union[bool, tx.Type[Exception]], cause: Exception
 ) -> float:
@@ -743,7 +728,7 @@ class _TextReadAdapters(_FileReadAdapters):
         return cls.from_text(content.decode(encoding), **kwargs)
 
 
-class TextFileReader(_TextReadAdapters, TextFileSniffer, FileReader):
+class TextFileReader(_TextReadAdapters, _TextSniffAdapters, FileReader):
     """Read one text format and score its content."""
 
 
@@ -764,20 +749,10 @@ class TextFileWriter(FileWriter):
 # ----------------------------------------------------------------------
 
 
-class _BinarySniffAdapters(_FileSniffAdapters):
-    """Class that can sniff binary files for its type."""
-
-    _READ_MODE: str = "rb"
-
-
-class BinaryFileSniffer(_BinarySniffAdapters, FileSniffer):
-    """Score binary content using binary stream adapters."""
-
-
-class BinaryFileReader(BinaryFileSniffer, FileReader):
+class BinaryFileReader(FileReader):
     """Class that can read binary files of its type."""
 
-    ...
+    _READ_MODE: str = "rb"
 
 
 class BinaryFileWriter(FileWriter):

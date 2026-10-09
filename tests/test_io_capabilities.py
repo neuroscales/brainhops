@@ -8,14 +8,8 @@ import typing_extensions as tx
 
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base import (
-    BinaryFileBasedObject,
     FileBasedObject,
     Format,
-    FormatDispatcher,
-    TextFileBasedObject,
-    WritableBinaryFileBasedObject,
-    WritableFileBasedObject,
-    WritableTextFileBasedObject,
     format_registry,
     register_format,
     save,
@@ -24,8 +18,8 @@ from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     FileReader,
-    FileSniffer,
     FileWriter,
+    ParserContentError,
     TextFileReader,
     TextFileWriter,
 )
@@ -58,27 +52,21 @@ def test_writers_do_not_acquire_reading(writer: type) -> None:
 
 
 def test_format_membership_and_public_adapters_do_not_imply_parsing() -> None:
-    assert not hasattr(Format, "load")
+    assert hasattr(Format, "load")
     assert not hasattr(Format, "save")
 
 
 @pytest.mark.parametrize(
     "dispatcher",
     [
-        FormatDispatcher,
+        Format,
         FileBasedObject,
-        TextFileBasedObject,
-        BinaryFileBasedObject,
-        WritableFileBasedObject,
-        WritableTextFileBasedObject,
-        WritableBinaryFileBasedObject,
     ],
 )
 def test_dispatchers_do_not_inherit_the_reader_contract(
     dispatcher: type,
 ) -> None:
     assert not issubclass(dispatcher, FileReader)
-    assert not issubclass(dispatcher, FileSniffer)
 
 
 @pytest.mark.parametrize(
@@ -105,11 +93,11 @@ def test_sniff_selects_a_class_on_dispatchers_and_scores_on_readers(
             return 0.75 if line == "HELLO" else 0.0
 
     @format_registry
-    class Family(TextFileBasedObject):
+    class Family(FileBasedObject):
         pass
 
     @register_format
-    class Public(Family):
+    class Public(TextFileReader, Family):
         @classmethod
         def sniff_line(cls, line: str, **kwargs) -> float:
             return Native.sniff_line(line, **kwargs)
@@ -200,14 +188,14 @@ class Note(DataModelBase):
 @pytest.fixture
 def public_formats() -> tx.Iterator[tx.Tuple[type, type, type]]:
     @register_format
-    class Export(Note, Format, TextFileWriter):
+    class Export(Note, FileBasedObject, TextFileWriter):
         EXTENSIONS = (".capability",)
 
         def to_line(self, **kwargs) -> str:
             return self.text
 
     @register_format
-    class ReadOnly(Note, TextFileBasedObject):
+    class ReadOnly(Note, FileBasedObject, TextFileReader):
         # A longer extension must not hide the eligible writer on save.
         EXTENSIONS = (".readonly.capability",)
 
@@ -233,14 +221,37 @@ def test_write_only_public_formats_are_not_load_candidates(
     public_formats: tx.Tuple[type, type, type],
 ) -> None:
     export, read_only, _ = public_formats
-    assert export in Format._REGISTRY
-    assert export not in FileBasedObject._REGISTRY
-    assert not hasattr(export, "load")
+    assert export in FileBasedObject._REGISTRY
+    assert export not in FileBasedObject._reader_formats()
+    assert not issubclass(export, FileReader)
     assert read_only in FileBasedObject._REGISTRY
     assert not hasattr(read_only, "save")
 
 
-def test_save_selects_capabilities_without_the_legacy_base(
+def test_dispatch_ignores_export_only_formats_even_with_matching_names(
+    tmp_path: Path,
+) -> None:
+    @format_registry
+    class Family(Format):
+        pass
+
+    @register_format
+    class Export(Family, TextFileWriter):
+        EXTENSIONS = (".exportonly",)
+
+        @classmethod
+        def sniff_line(cls, line: str, **kwargs) -> float:
+            pytest.fail("An export-only format must not be sniffed")
+
+    filename = tmp_path / "file.exportonly"
+    filename.write_text("content")
+    assert Family.sniff(filename) is None
+    assert Family.sniff_filename(filename) is None
+    with pytest.raises(ParserContentError):
+        Family.load(filename)
+
+
+def test_save_selects_writer_capabilities(
     public_formats: tx.Tuple[type, type, type],
     tmp_path: Path,
 ) -> None:
@@ -249,7 +260,7 @@ def test_save_selects_capabilities_without_the_legacy_base(
         (export, ".readonly.capability"),
         (read_write, ".readwrite"),
     ):
-        assert not issubclass(fmt, WritableFileBasedObject)
+        assert issubclass(fmt, FileWriter)
         target = tmp_path / ("note" + suffix)
         save(Note(text="converted"), target)
         assert target.read_text() == "converted\n"
@@ -260,7 +271,7 @@ def test_save_selects_capabilities_without_the_legacy_base(
 
 def test_standalone_metadata_dispatch_does_not_join_public_formats() -> None:
     @format_registry
-    class MetadataFormats(FormatDispatcher):
+    class MetadataFormats(Format):
         pass
 
     @register_format
@@ -274,5 +285,4 @@ def test_standalone_metadata_dispatch_does_not_join_public_formats() -> None:
             return cls()
 
     assert isinstance(MetadataFormats.from_text("metadata"), Metadata)
-    assert Metadata not in Format._REGISTRY
     assert Metadata not in FileBasedObject._REGISTRY

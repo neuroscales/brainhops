@@ -15,12 +15,15 @@ import typing_extensions as tx
 import brainhops.io as io
 from brainhops._core.dependencies import has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
+from brainhops.io.base import FileBasedObject
 from brainhops.io.base._base import (
-    WritableTextFileBasedObject,
     register_format,
 )
 from brainhops.io.base._dispatch import Source, _to_filename
-from brainhops.io.base.parsers import ParserError
+from brainhops.io.base.parsers import (
+    ParserError,
+    TextFileWriter,
+)
 
 
 class RemotePath(os.PathLike):
@@ -146,7 +149,7 @@ def note_formats() -> tx.Iterator[tx.Tuple[type, type]]:
             yield f"{name}:{self.text}"
 
         namespace = {"to_lines": to_lines, "EXTENSIONS": extensions}
-        bases = (Note, WritableTextFileBasedObject)
+        bases = (Note, FileBasedObject, TextFileWriter)
         return register_format(type(name, bases, namespace))
 
     made = (make("Short", (".n",)), make("Long", (".long.n",)))

@@ -1,9 +1,8 @@
-__all__ = ["FileBasedTransformation", "WritableFileBasedTransformation"]
+__all__ = ["FileBasedTransformation"]
 
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import (
     FileBasedObject,
-    WritableFileBasedObject,
     _FileBasedModelMixin,
     format_registry,
 )
@@ -23,10 +22,3 @@ class FileBasedTransformation(
     decorator, after which [`load`][brainhops.io.transformations.load] can
     select that reader.
     """
-
-
-@format_registry
-class WritableFileBasedTransformation(
-    FileBasedTransformation, WritableFileBasedObject
-):
-    """File-based transformation that can also be written."""

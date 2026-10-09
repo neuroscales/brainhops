@@ -20,7 +20,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import FileBasedTransformation
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -156,7 +156,7 @@ class M3zMorph(
     M3zFormat,
     M3zParser,
     _xforms.ImmutableSequence,
-    WritableFileBasedTransformation,
+    FileBasedTransformation,
 ):
     """Non-linear transformation stored in a FreeSurfer morph.
 

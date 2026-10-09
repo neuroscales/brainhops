@@ -30,11 +30,11 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import FileBasedImage
 
 
 @register_format
-class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
+class NiftiImage(NiftiParser, FileBasedImage, SingleScaleImage):
     """An image stored in a NIfTI file.
 
     !!! note "Why the bases are in this order"

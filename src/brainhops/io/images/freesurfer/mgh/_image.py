@@ -22,7 +22,7 @@ from brainhops.io.common._geometry import (
 from brainhops.io.common.mgh import MghParser
 from brainhops.io.common.mgh._constants import _MRI_PARAMS
 from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import FileBasedImage
 
 _SCANNER = "scanner"
 """Name of the scanner RAS space, the preferred world space."""
@@ -48,7 +48,7 @@ _MGH_DTYPES = {
 
 
 @register_format
-class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
+class MghImage(MghParser, FileBasedImage, SingleScaleImage):
     """An image stored in a FreeSurfer MGH or MGZ file.
 
     The voxels are in Fortran order, and the data are indexed `(x, y, z)`

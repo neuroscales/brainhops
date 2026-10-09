@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import FileBasedTransformation
 from brainhops.io.transformations.itk._common import ItkStruct
 
 from ._blocks import fixed_geometry, map_to_block, transformation_to_map
@@ -50,7 +50,7 @@ class ElastixTransform(
     TextFileReader,
     TextFileWriter,
     _xforms.Sequence,
-    WritableFileBasedTransformation,
+    FileBasedTransformation,
     repr=HIDE_IF_NONE,
     reverse=False,  # keep `transformations` the first positional field
 ):

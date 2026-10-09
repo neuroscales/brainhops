@@ -24,7 +24,7 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
-    WritableFileBasedTransformation,
+    FileBasedTransformation,
 )
 
 from .._formats import FreesurferTransformationFormat
@@ -59,7 +59,7 @@ class LtaTransformation(
     TextFileReader,
     TextFileWriter,
     _xforms.Affine,
-    WritableFileBasedTransformation,
+    FileBasedTransformation,
     reverse=False,  # `struct` must be the last field
 ):
     """Transformation that can be encoded as a Linear Transform Array.

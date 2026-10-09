@@ -27,6 +27,7 @@ from brainhops.datamodel.transformations import (
     MultiscaleField,
     Scaling,
 )
+from brainhops.io.base.parsers import FileWriter
 
 # The module imports abczarr itself, so the skip must come first.
 abczarr = pytest.importorskip("abczarr")
@@ -151,10 +152,11 @@ def test_from_node_refuses_a_node_without_ome(tmp_path: Path) -> None:
 
 def test_field_is_a_registered_file_format() -> None:
     from brainhops.io.transformations.base import (
-        WritableFileBasedTransformation,
+        FileBasedTransformation,
     )
 
-    assert issubclass(OmeZarrField, WritableFileBasedTransformation)
+    assert issubclass(OmeZarrField, FileWriter)
+    assert OmeZarrField in FileBasedTransformation._REGISTRY
 
 
 def test_load_discovers_the_field_format(tmp_path: Path) -> None:

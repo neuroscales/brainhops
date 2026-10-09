@@ -8,7 +8,6 @@ import typing_extensions as tx
 from brainhops._core.path import exists
 from brainhops.io.base._base import (
     FileBasedObject,
-    TextFileBasedObject,
     format_registry,
     register_format,
 )
@@ -115,7 +114,7 @@ def test_dispatch_works_over_a_non_seekable_stream() -> None:
     """A pipe cannot rewind, so dispatch buffers it."""
 
     @format_registry
-    class Root(TextFileBasedObject):
+    class Root(FileBasedObject, TextFileReader):
         pass
 
     fmt = register_format(
@@ -141,7 +140,6 @@ def test_dispatch_works_over_a_non_seekable_stream() -> None:
         assert Root.from_fileobj(Pipe("HELLO world\n")) == "HELLO world"
     finally:
         FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
 
 
 # ----------------------------------------------------------------------
@@ -221,10 +219,13 @@ def test_the_writer_entry_point_does_not_shadow_the_converter() -> None:
     from brainhops.datamodel.transformations import Transformation
     from brainhops.io.base.parsers import FileWriter
     from brainhops.io.transformations.base import (
-        WritableFileBasedTransformation,
+        FileBasedTransformation,
     )
 
-    mro = WritableFileBasedTransformation.__mro__
+    class WritableTransformation(FileBasedTransformation, FileWriter):
+        pass
+
+    mro = WritableTransformation.__mro__
     assert next(c for c in mro if "to" in c.__dict__) is Transformation
     assert next(c for c in mro if "save" in c.__dict__) is FileWriter
 
@@ -301,15 +302,15 @@ def test_a_bytes_only_parser_still_loads_from_a_fileobj() -> None:
 
 
 def test_a_dispatcher_mixin_does_not_count_as_a_fileobj_override() -> None:
-    from brainhops.io.base._base import FormatDispatcher
+    from brainhops.io.base._base import Format
 
-    class Concrete(FormatDispatcher, Neither):
+    class Concrete(Format, Neither):
         pass
 
     with pytest.raises(ParserNotImplementedError):
         Concrete.from_bytes(b"data")
 
-    class ConcreteHeader(FormatDispatcher, HeaderOnly):
+    class ConcreteHeader(Format, HeaderOnly):
         pass
 
     assert ConcreteHeader.from_bytes(b"WXYZ!").magic == b"WXYZ"

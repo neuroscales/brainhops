@@ -12,13 +12,12 @@ import pytest
 
 from brainhops.io.base._base import (
     FileBasedObject,
-    FormatDispatcher,
+    Format,
     format_registry,
 )
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     FileReader,
-    FileSniffer,
 )
 
 nb = pytest.importorskip("nibabel")
@@ -63,7 +62,7 @@ def test_the_format_specific_reader_wins(cls: type, method: str) -> None:
 
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
 def test_binary_read_mode_survives_the_diamond(cls: type) -> None:
-    """With the text read mode of FileSniffer, NIfTI sniffing would fail."""
+    """With the text read mode of FileReader, NIfTI sniffing would fail."""
     assert cls._READ_MODE == "rb"
 
 
@@ -74,16 +73,16 @@ def test_concrete_formats_are_not_dispatchers(cls: type) -> None:
 
 
 def test_dispatcher_overrides_are_pass_throughs_for_concrete_formats() -> None:
-    """For non-dispatchers, FormatDispatcher overrides defer to super()."""
+    """For non-dispatchers, Format overrides defer to super()."""
     overridden = [
         name
-        for name, value in vars(FormatDispatcher).items()
+        for name, value in vars(Format).items()
         if (name.startswith(("from_", "sniff")) or name == "load")
         and isinstance(value, classmethod)
     ]
     assert overridden, "no reading methods found to check"
     for name in overridden:
-        source = inspect.getsource(getattr(FormatDispatcher, name).__func__)
+        source = inspect.getsource(getattr(Format, name).__func__)
         assert "_is_dispatcher()" in source, name
         assert "super()." + name in source, name
 
@@ -105,7 +104,7 @@ def test_resolution_does_not_depend_on_base_order() -> None:
         pass
 
     assert _owner(SpecialFirst, "from_file") is Special
-    assert _owner(RootFirst, "from_file") is FormatDispatcher
+    assert _owner(RootFirst, "from_file") is Format
     assert SpecialFirst.from_file("x") == "special-reader"
     assert RootFirst.from_file("x") == "special-reader"
 
@@ -113,10 +112,10 @@ def test_resolution_does_not_depend_on_base_order() -> None:
 def test_the_generic_ladder_redispatches_through_cls() -> None:
     """Ladder rungs call cls.<next>, so subclass overrides are honoured."""
     rungs = {
-        (FileSniffer, "sniff_file"): "sniff_fileobj",
-        (FileSniffer, "sniff_fileobj"): "sniff_content",
-        (FileSniffer, "sniff_text"): "sniff_lines",
-        (FileSniffer, "sniff_lines"): "sniff_line",
+        (FileReader, "sniff_file"): "sniff_fileobj",
+        (FileReader, "sniff_fileobj"): "sniff_content",
+        (FileReader, "sniff_text"): "sniff_lines",
+        (FileReader, "sniff_lines"): "sniff_line",
         (FileReader, "from_file"): "from_fileobj",
         (FileReader, "from_fileobj"): "from_content",
         (FileReader, "from_text"): "from_lines",

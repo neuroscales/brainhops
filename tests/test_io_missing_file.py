@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
+from brainhops.io.base.parsers import TextFileReader
+
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
@@ -19,7 +21,6 @@ from brainhops.cli._io import load_image, load_transform  # noqa: E402
 from brainhops.io.base import ImageSpec  # noqa: E402
 from brainhops.io.base._base import (  # noqa: E402
     FileBasedObject,
-    TextFileBasedObject,
     format_registry,
     register_format,
 )
@@ -29,7 +30,6 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
     ParserExistsError,
     SnifferExistsError,
-    TextFileReader,
 )
 from brainhops.io.images import FileBasedImage  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
@@ -197,7 +197,7 @@ def test_dispatched_sniff_still_predicts_from_the_name(missing) -> None:  # noqa
 @pytest.fixture
 def greeting_root() -> tx.Iterator[type]:
     @format_registry
-    class Root(TextFileBasedObject):
+    class Root(FileBasedObject, TextFileReader):
         pass
 
     fmt = register_format(
@@ -215,7 +215,6 @@ def greeting_root() -> tx.Iterator[type]:
         yield Root
     finally:
         FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
 
 
 def test_dispatched_text_is_content_not_a_path(greeting_root) -> None:  # noqa: ANN001

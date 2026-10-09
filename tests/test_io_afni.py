@@ -20,9 +20,10 @@ from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling
-from brainhops.io.base import FileBasedObject, WritableFileBasedObject
+from brainhops.io.base import FileBasedObject
 from brainhops.io.base.parsers import (
     Confidence,
+    FileWriter,
     ParserContentError,
     ParserError,
     ParserExistsError,
@@ -37,7 +38,7 @@ from brainhops.io.common.afni._geometry import (
     afni_geometry_from_matrix,
     afni_view,
 )
-from brainhops.io.images import FileBasedImage, WritableFileBasedImage
+from brainhops.io.images import FileBasedImage
 from brainhops.io.images.afni import AfniImage
 
 # ----------------------------------------------------------------------
@@ -543,8 +544,7 @@ def test_dispatch_by_extension_and_hints(tmp_path) -> None:  # noqa: ANN001
 def test_the_format_is_registered() -> None:
     assert AfniImage in FileBasedObject._REGISTRY
     assert AfniImage in FileBasedImage._REGISTRY
-    assert AfniImage in WritableFileBasedObject._REGISTRY
-    assert AfniImage in WritableFileBasedImage._REGISTRY
+    assert issubclass(AfniImage, FileWriter)
 
 
 def test_sniffing(tmp_path) -> None:  # noqa: ANN001

@@ -1,11 +1,10 @@
-__all__ = ["FileBasedImage", "WritableFileBasedImage"]
+__all__ = ["FileBasedImage"]
 
 import typing_extensions as tx
 
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import (
     FileBasedObject,
-    WritableFileBasedObject,
     _FileBasedModelMixin,
     format_registry,
 )
@@ -33,8 +32,3 @@ class FileBasedImage(_FileBasedModelMixin, Image, FileBasedObject):
     A NIfTI file, for instance, is both an image and a set of affines, and
     it is read as an image when nothing else separates the two.
     """
-
-
-@format_registry
-class WritableFileBasedImage(FileBasedImage, WritableFileBasedObject):
-    """A file-based image that can also be written to disk."""

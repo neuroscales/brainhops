@@ -15,7 +15,7 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import FileBasedImage
 from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.pillow._utils import (
     EXTENSIONS,
@@ -57,7 +57,7 @@ def _dpi_pair(dpi: tx.Any) -> tx.Tuple[float, float]:
 class PillowImage(
     BinaryFileReader,
     BinaryFileWriter,
-    WritableFileBasedImage,
+    FileBasedImage,
     SingleScaleImage,
 ):
     """A two-dimensional raster image, read and written with Pillow.

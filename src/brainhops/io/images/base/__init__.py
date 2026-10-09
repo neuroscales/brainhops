@@ -2,10 +2,9 @@
 
 __all__ = [
     "FileBasedImage",
-    "WritableFileBasedImage",
     "load",
     "sniff",
 ]
 
-from ._base import FileBasedImage, WritableFileBasedImage
+from ._base import FileBasedImage
 from ._load import load, sniff

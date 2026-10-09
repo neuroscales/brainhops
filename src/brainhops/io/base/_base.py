@@ -1,14 +1,8 @@
 __all__ = [
     "format_registry",
     "Format",
-    "FormatDispatcher",
     "register_format",
     "FileBasedObject",
-    "WritableFileBasedObject",
-    "TextFileBasedObject",
-    "BinaryFileBasedObject",
-    "WritableTextFileBasedObject",
-    "WritableBinaryFileBasedObject",
 ]
 
 import typing_extensions as tx
@@ -18,16 +12,12 @@ from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
-    BinaryFileWriter,
     FileReader,
     FileWriter,
-    TextFileWriter,
-    _BinarySniffAdapters,
     _FileReadAdapters,
     _FileSniffAdapters,
     _passthrough_from_fileobj,
     _TextReadAdapters,
-    _TextSniffAdapters,
 )
 from brainhops.io.base.specs import SourceSpec
 
@@ -107,24 +97,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
 # ----------------------------------------------------------------------
 
 
-@format_registry
-class Format:
-    """Public format membership, independent of reading and writing.
-
-    Concrete public formats register here with `register_format`. Reading
-    public objects inherit `FileBasedObject`; writing adds `FileWriter`.
-    Generic saving selects writers from this registry. Generic loading uses
-    the narrower `FileBasedObject` registry, so write-only formats and
-    standalone metadata readers are not candidates. Native parser
-    representations do not inherit this class.
-    """
-
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = ()
-    PREFIXES: tx.ClassVar[tx.Tuple[str, ...]] = ()
-    PRIORITY: tx.ClassVar[int] = 0
-
-
-class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
+class Format(_FileReadAdapters, _FileSniffAdapters):
     """Dispatch between the formats registered under a dispatcher.
 
     On a class decorated with [`format_registry`][], the `sniff*` methods
@@ -134,8 +107,8 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
     corresponding input adapter or concrete reader method.
 
     Dispatchers and readers have independent APIs. They share only input
-    adapter mixins; this class inherits neither `FileReader` nor
-    `FileSniffer`, whose sniffing contract returns confidence scores.
+    adapter mixins; this class does not inherit `FileReader`, whose
+    sniffing contract returns confidence scores.
 
     The mixin owns no registry itself. A kind that the generic `load` must
     never return, such as `FileBasedMetadata`, can therefore dispatch between
@@ -154,6 +127,39 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
     def _is_dispatcher(cls) -> bool:
         return "_REGISTRY" in cls.__dict__
 
+    @classmethod
+    def _reader_formats(cls) -> tx.Set[type]:
+        """Select readable candidates without requiring reader inheritance.
+
+        A public format can implement a read route directly or inherit it
+        from its native parser. Writers with only default input adapters are
+        export-only and must not be selected by sniffing or loading.
+        """
+        adapters = (Format, _FileReadAdapters, _TextReadAdapters)
+        routes = (
+            "load",
+            "from_spec",
+            "from_file",
+            "from_filename",
+            "from_fileobj",
+            "from_content",
+            "from_bytes",
+            "from_text",
+            "from_lines",
+            "from_line",
+        )
+        return {
+            candidate
+            for candidate in cls._REGISTRY
+            if not issubclass(candidate, FileWriter)
+            or any(
+                name in base.__dict__
+                for base in candidate.__mro__
+                if base not in adapters
+                for name in routes
+            )
+        }
+
     # ---- sniff -------------------------------------------------------
 
     @classmethod
@@ -171,7 +177,12 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
         if not cls._is_dispatcher():
             return super().sniff(file, error=error, **kwargs)
         return sniff(
-            Source(file), cls._REGISTRY, "sniff", error, f"{file}", **kwargs
+            Source(file),
+            cls._reader_formats(),
+            "sniff",
+            error,
+            f"{file}",
+            **kwargs,
         )
 
     @classmethod
@@ -186,7 +197,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().sniff_file(file, error=error, **kwargs)
         return sniff(
             Source(file),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "sniff_file",
             error,
             f"file: {file}",
@@ -205,7 +216,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().sniff_filename(filename, error=error, **kwargs)
         return sniff(
             Source(filename),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "sniff_filename",
             error,
             f"file: {filename}",
@@ -224,7 +235,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().sniff_fileobj(file, error=error, **kwargs)
         return sniff(
             Source(file),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "sniff_fileobj",
             error,
             f"file object: {file}",
@@ -243,7 +254,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().sniff_content(content, error=error, **kwargs)
         return sniff(
             Source.content(content),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "sniff_content",
             error,
             "input content",
@@ -262,7 +273,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().sniff_bytes(content, error=error, **kwargs)
         return sniff(
             Source.content(content),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "sniff_bytes",
             error,
             "input content",
@@ -281,7 +292,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().sniff_text(text, error=error, **kwargs)
         return sniff(
             Source.content(text),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "sniff_text",
             error,
             "input text",
@@ -300,7 +311,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().sniff_lines(lines, error=error, **kwargs)
         return sniff(
             Source.content(lines),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "sniff_lines",
             error,
             "input lines",
@@ -319,7 +330,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().sniff_line(line, error=error, **kwargs)
         return sniff(
             Source.content(line),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "sniff_line",
             error,
             "input line",
@@ -340,7 +351,9 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return cls.from_spec(other, **kwargs)
         if not cls._is_dispatcher():
             return super().load(other, **kwargs)
-        return parse(Source(other), cls._REGISTRY, "load", "sniff", **kwargs)
+        return parse(
+            Source(other), cls._reader_formats(), "load", "sniff", **kwargs
+        )
 
     @classmethod
     def from_spec(cls, spec: SourceSpec, **kwargs) -> tx.Self:
@@ -352,7 +365,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().from_spec(spec, **kwargs)
         return parse(
             Source(spec.path),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "load",
             "sniff",
             hints=spec.hints,
@@ -370,7 +383,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().from_file(file, **kwargs)
         return parse(
             Source(file),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "from_file",
             "sniff_file",
             **kwargs,
@@ -384,7 +397,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().from_fileobj(file, **kwargs)
         return parse(
             Source(file),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "from_fileobj",
             "sniff_fileobj",
             **kwargs,
@@ -397,7 +410,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().from_content(content, **kwargs)
         return parse(
             Source.content(content),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "from_content",
             "sniff_content",
             **kwargs,
@@ -410,7 +423,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().from_bytes(content, **kwargs)
         return parse(
             Source.content(content),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "from_bytes",
             "sniff_bytes",
             **kwargs,
@@ -423,7 +436,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().from_text(text, **kwargs)
         return parse(
             Source.content(text),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "from_text",
             "sniff_text",
             **kwargs,
@@ -436,7 +449,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().from_lines(lines, **kwargs)
         return parse(
             Source.content(lines),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "from_lines",
             "sniff_lines",
             **kwargs,
@@ -449,7 +462,7 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
             return super().from_line(line, **kwargs)
         return parse(
             Source.content(line),
-            cls._REGISTRY,
+            cls._reader_formats(),
             "from_line",
             "sniff_line",
             **kwargs,
@@ -457,50 +470,15 @@ class FormatDispatcher(_FileReadAdapters, _FileSniffAdapters):
 
 
 @format_registry
-class FileBasedObject(FormatDispatcher, Format):
+class FileBasedObject(Format):
     """Root of all objects stored in files.
 
     Subclasses decorated with [`format_registry`][] dispatch between the
     formats of their kind, such as images or transformations. Formats decorated
     with [`register_format`][] are added to every ancestor registry, so both
-    the scoped and the generic entry points find them. [`FormatDispatcher`][]
+    the scoped and the generic entry points find them. [`Format`][]
     describes the dispatch.
     """
-
-
-@format_registry
-class WritableFileBasedObject(FileBasedObject, FileWriter):
-    """Compatibility base for public formats that both read and write.
-
-    New formats may combine `FileBasedObject` and `FileWriter` directly.
-    A write-only public format combines `Format` and `FileWriter` instead.
-    """
-
-
-@format_registry
-class TextFileBasedObject(
-    FileBasedObject, _TextReadAdapters, _TextSniffAdapters
-):
-    """Object stored in a text file."""
-
-
-@format_registry
-class BinaryFileBasedObject(FileBasedObject, _BinarySniffAdapters):
-    """Object stored in a binary file."""
-
-
-@format_registry
-class WritableTextFileBasedObject(
-    TextFileBasedObject, TextFileWriter, WritableFileBasedObject
-):
-    """Object stored in a writable text file."""
-
-
-@format_registry
-class WritableBinaryFileBasedObject(
-    BinaryFileBasedObject, BinaryFileWriter, WritableFileBasedObject
-):
-    """Object stored in a writable binary file."""
 
 
 # ----------------------------------------------------------------------

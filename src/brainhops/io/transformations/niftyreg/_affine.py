@@ -14,7 +14,7 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common._arrays import TxtArrayParser, is_numeric_array
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import FileBasedTransformation
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.conversions import (
     format_options,
@@ -42,7 +42,7 @@ class NiftyRegAffine(
     TextFileReader,
     TextFileWriter,
     RASToRAS,
-    WritableFileBasedTransformation,
+    FileBasedTransformation,
 ):
     """
     Affine written by `reg_aladin -aff`.

@@ -15,6 +15,8 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
+from brainhops.io.base.parsers import FileWriter
+
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
@@ -29,7 +31,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     WriterError,
 )
 from brainhops.io.transformations.base import (  # noqa: E402
-    WritableFileBasedTransformation,
+    FileBasedTransformation,
 )
 from brainhops.io.transformations.base.affines import (  # noqa: E402
     LPSToVoxel,
@@ -490,7 +492,8 @@ def test_save_gives_each_format_reason_to_refuse(tmp_path) -> None:  # noqa: ANN
 
 
 def test_fnirt_is_offered_for_writing() -> None:
-    assert FnirtWarpField in WritableFileBasedTransformation._REGISTRY
+    assert issubclass(FnirtWarpField, FileWriter)
+    assert FnirtWarpField in FileBasedTransformation._REGISTRY
 
 
 def test_a_fnirt_warp_is_written(tmp_path) -> None:  # noqa: ANN001
