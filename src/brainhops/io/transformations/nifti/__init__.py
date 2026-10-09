@@ -20,14 +20,6 @@ of the same kind.
 `POINTSET` (1008) would describe coordinates better, but the standard ties it
 to a flat list of points (`dim[2] = dim[3] = dim[4] = 1`), so readers,
 brainhops included, would misread a grid written with it.
-
-!!! warning "Coordinates fields written by older versions of brainhops"
-    Older versions of brainhops wrote RAS coordinates under `DISPVECT`, with no
-    marker. Such a file is byte for byte a standard displacement field, so it
-    is read as one, and guessing from the values is refused. The file is read
-    correctly with `load(path, hint="nifti.coordinates")` or
-    `NiftiRASCoordinatesField.from_file(path)`, and saving it rewrites it under
-    the `VECTOR` intent.
 """
 
 __all__ = [
