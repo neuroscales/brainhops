@@ -26,7 +26,7 @@ from brainhops.datamodel.transformations import (
     CoordinatesField,
     DisplacementField,
 )
-from brainhops.io.base import FileBasedObject
+from brainhops.io.base import Format
 from brainhops.io.base._base import (
     register_format,
 )
@@ -80,7 +80,7 @@ def _note_format(name: str, model: type = Note, **attrs: tx.Any) -> type:
 
     namespace = {"to_lines": to_lines}
     namespace.update(attrs)
-    return type(name, (model, FileBasedObject, TextFileWriter), namespace)
+    return type(name, (model, Format, TextFileWriter), namespace)
 
 
 @pytest.fixture

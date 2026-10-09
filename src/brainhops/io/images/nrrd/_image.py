@@ -21,7 +21,7 @@ from brainhops.io.common._geometry import (
     RAS_FROM_ORIENTATION,
     reduce_to_affine,
 )
-from brainhops.io.common.nrrd import NrrdHeader, NrrdParser
+from brainhops.io.common.nrrd import NrrdHeader, NrrdReaderWriter
 from brainhops.io.common.nrrd._codecs import (
     _format_float,
     _format_strings,
@@ -331,7 +331,7 @@ def _nrrd_to_transformations(header: NrrdHeader) -> tx.List[Transformation]:
 # ----------------------------------------------------------------------
 
 
-class NrrdImage(NrrdParser, ImageFormat, SingleScaleImage):
+class NrrdImage(NrrdReaderWriter, ImageFormat, SingleScaleImage):
     """An image stored in a NRRD file, attached or detached.
 
     This class is the unregistered base of [`AttachedNrrdImage`][] and

@@ -15,7 +15,7 @@ from brainhops.datamodel.units import (
     is_physicalunit,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.common.minc import MincDimension, MincParser
+from brainhops.io.common.minc import MincDimension, MincReader
 from brainhops.io.images.base import ImageFormat
 
 _PHYSICAL = "physical"
@@ -33,7 +33,7 @@ _RAS_ORIENTATION = {
 _UNIT_TYPES = {"space": SpaceUnit, "time": TimeUnit}
 
 
-class MincImage(MincParser, ImageFormat, SingleScaleImage):
+class MincImage(MincReader, ImageFormat, SingleScaleImage):
     """An image stored in a MINC file, of version 1 or 2.
 
     This class answers to the format hint `"minc"` and reads both
@@ -54,7 +54,7 @@ class MincImage(MincParser, ImageFormat, SingleScaleImage):
     !!! note "Why the bases are in this order"
         As for [`NiftiImage`][brainhops.io.images.nifti.NiftiImage],
         [`SingleScaleImage`][] comes last because its `data` field has no
-        default, and [`MincParser`][] comes first so that its lazy
+        default, and [`MincReader`][] comes first so that its lazy
         properties take precedence.
     """
 
@@ -137,7 +137,7 @@ def _unit(dimension: MincDimension, axis_type: tx.Optional[str]) -> tx.Any:
     return unit
 
 
-def _minc_to_transformations(image: MincParser) -> tx.List[Transformation]:
+def _minc_to_transformations(image: MincReader) -> tx.List[Transformation]:
     """Return the voxel-to-physical and voxel-to-world transformations."""
     voxel_space = image.system
     axes = list(voxel_space.axes)

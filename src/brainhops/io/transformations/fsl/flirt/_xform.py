@@ -11,13 +11,13 @@ from brainhops.io.transformations.base import TransformationFormat
 from .._affines import _ImageGeometry
 from .._formats import FslAffineFormat
 from .._repr import stored_repr
-from ._parser import FlirtMatrixParser
+from ._parser import FlirtMatrixReader
 
 
 @register_format
 class FlirtTransform(
     FslAffineFormat,
-    FlirtMatrixParser,
+    FlirtMatrixReader,
     _xforms.Affine,
     TransformationFormat,
 ):

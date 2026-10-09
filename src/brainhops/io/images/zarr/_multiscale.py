@@ -17,7 +17,7 @@ from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.zarr import StoreLike, ZarrParserWriter
+from brainhops.io.common.zarr import StoreLike, ZarrReaderWriter
 from brainhops.io.common.zarr._parsers import _as_node
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.zarr import _axisorder
@@ -60,7 +60,7 @@ class OmeZarrLevel(ZarrImage):
 
 
 @register_format
-class OmeZarrImage(ZarrParserWriter, ImageFormat, MultiScaleImage):
+class OmeZarrImage(ZarrReaderWriter, ImageFormat, MultiScaleImage):
     """Multiscale image backed by an OME-Zarr pyramid.
 
     Each level is a single-scale image placed by the coordinate

@@ -2,7 +2,6 @@ __all__ = [
     "format_registry",
     "Format",
     "register_format",
-    "FileBasedObject",
 ]
 
 import typing_extensions as tx
@@ -29,18 +28,27 @@ _T = tx.TypeVar("_T")
 # ----------------------------------------------------------------------
 
 
-def format_registry(cls: tx.Type[_T]) -> tx.Type[_T]:
+def format_registry(
+    cls: tx.Optional[tx.Type[_T]] = None, *, isolated: bool = False
+) -> tx.Any:
     """Give a class its own format registry, which makes it a dispatcher.
 
     A dispatcher is a class that does not read a format itself but chooses
     among the formats registered under it. Its `sniff*` methods return the
     best-scoring registered format, and its `load` and `from_*` methods choose
     that format and delegate to it. The decorator is applied to the root
-    [`FileBasedObject`][] and to the base class of each kind of object, such
+    [`Format`][] and to the base class of each kind of object, such
     as `ImageFormat` and `TransformationFormat`. A dispatcher is never
     added to the registries of its ancestors; only classes decorated with
     [`register_format`][] are.
+
+    Set `isolated=True` for a standalone family such as metadata. Its
+    concrete formats register within that family and nested registries,
+    but registration stops before reaching its ancestors.
     """
+    if cls is None:
+        return lambda cls: format_registry(cls, isolated=isolated)
+
     # Registration uses a decorator rather than a metaclass because data
     # models already use the bagof.magic metaclass. A derived metaclass would
     # also run on the throwaway classes that bagof builds to compute MROs, and
@@ -50,11 +58,12 @@ def format_registry(cls: tx.Type[_T]) -> tx.Type[_T]:
     # The registry is set in cls.__dict__ so that a class that owns a registry
     # can be told apart from a class that inherits one.
     cls._REGISTRY = set()
+    cls._REGISTRY_ISOLATED = isolated
     return cls
 
 
 def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
-    """Register a concrete format into the registry of every ancestor.
+    """Register a concrete format into ancestor registries up to isolation.
 
     A format such as `NiftiImage` is thereby found both by `images.load` and by
     the generic [`load`][brainhops.io.base.load]. Registration is idempotent,
@@ -65,7 +74,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
         whereas a dispatcher is in no registry at all, so each format is tried
         once per load. If a dispatcher were registered, its formats would be
         tried twice, once directly and once through the dispatcher, and
-        `FileBasedObject.load` would recurse into itself.
+        `Format.load` would recurse into itself.
 
     !!! note "Order does not matter"
         A registry is an unordered set, because registration follows import
@@ -84,11 +93,18 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
             f"dispatches to formats rather than being one; it must not "
             f"also be decorated with @register_format."
         )
-    for base in cls.__mro__[1:]:
-        # The test uses __dict__ rather than hasattr, because hasattr would
-        # also see registries that `base` merely inherits.
+    pending = list(cls.__bases__)
+    visited = set()
+    while pending:
+        base = pending.pop()
+        if base in visited:
+            continue
+        visited.add(base)
         if "_REGISTRY" in base.__dict__:
             base._REGISTRY.add(cls)
+            if base.__dict__.get("_REGISTRY_ISOLATED", False):
+                continue
+        pending.extend(base.__bases__)
     return cls
 
 
@@ -97,6 +113,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
 # ----------------------------------------------------------------------
 
 
+@format_registry
 class Format(_FileReadAdapters, _FileSniffAdapters):
     """Dispatch between the formats registered under a dispatcher.
 
@@ -110,9 +127,10 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
     adapter mixins; this class does not inherit `FileReader`, whose
     sniffing contract returns confidence scores.
 
-    The mixin owns no registry itself. A kind that the generic `load` must
-    never return, such as `FileBasedMetadata`, can therefore dispatch between
-    its own formats without joining the registry of [`FileBasedObject`][].
+    This class owns the root registry used by generic loading and saving.
+    A standalone family, such as metadata, uses
+    `@format_registry(isolated=True)` to keep its formats out of ancestor
+    registries while retaining the same dispatch API.
 
     !!! note "`sniff*` means something different on a dispatcher"
         A concrete format returns its confidence, between 0 and 1, that the
@@ -467,18 +485,6 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
             "sniff_line",
             **kwargs,
         )
-
-
-@format_registry
-class FileBasedObject(Format):
-    """Root of all objects stored in files.
-
-    Subclasses decorated with [`format_registry`][] dispatch between the
-    formats of their kind, such as images or transformations. Formats decorated
-    with [`register_format`][] are added to every ancestor registry, so both
-    the scoped and the generic entry points find them. [`Format`][]
-    describes the dispatch.
-    """
 
 
 # ----------------------------------------------------------------------

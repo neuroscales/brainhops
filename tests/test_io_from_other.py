@@ -153,9 +153,9 @@ def test_an_instance_of_the_format_keeps_what_was_set_on_it(tmp_path) -> None:  
 
 
 def _file_based_classes() -> list:
-    from brainhops.io.base import FileBasedObject
+    from brainhops.io.base import Format
 
-    found = set(FileBasedObject._REGISTRY)
+    found = set(Format._REGISTRY)
     found |= {ImageFormat, TransformationFormat}
     return sorted(found, key=lambda cls: cls.__qualname__)
 

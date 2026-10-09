@@ -29,9 +29,9 @@ true matrix as the NIfTI sform.
 
 __all__ = [
     "AfniFormat",
-    "AfniParser",
+    "AfniReaderWriter",
     "AfniHeader",
 ]
 
 from ._header import AfniHeader
-from ._parsers import AfniFormat, AfniParser
+from ._parsers import AfniFormat, AfniReaderWriter

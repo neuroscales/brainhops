@@ -40,7 +40,7 @@ from ._utils import (
 )
 
 
-class MincParser(DataModelBase, BinaryFileReader):
+class MincReader(DataModelBase, BinaryFileReader):
     """
     The base class of objects encoded as MINC1 or MINC2 files.
 

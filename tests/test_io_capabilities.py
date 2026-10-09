@@ -11,7 +11,6 @@ from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import (
-    FileBasedObject,
     Format,
     format_registry,
     register_format,
@@ -36,7 +35,7 @@ from brainhops.io.transformations import TransformationFormat
         FileReader,
         TextFileReader,
         BinaryFileReader,
-        FileBasedObject,
+        Format,
     ],
 )
 def test_readers_do_not_acquire_writing(reader: type) -> None:
@@ -65,7 +64,6 @@ def test_format_membership_and_public_adapters_do_not_imply_parsing() -> None:
     "dispatcher",
     [
         Format,
-        FileBasedObject,
         ImageFormat,
         TransformationFormat,
     ],
@@ -108,7 +106,7 @@ def test_sniff_selects_a_class_on_dispatchers_and_scores_on_readers(
             return 0.75 if line == "HELLO" else 0.0
 
     @format_registry
-    class Family(FileBasedObject):
+    class Family(Format):
         pass
 
     @register_format
@@ -203,14 +201,14 @@ class Note(DataModelBase):
 @pytest.fixture
 def public_formats() -> tx.Iterator[tx.Tuple[type, type, type]]:
     @register_format
-    class Export(Note, FileBasedObject, TextFileWriter):
+    class Export(Note, Format, TextFileWriter):
         EXTENSIONS = (".capability",)
 
         def to_line(self, **kwargs) -> str:
             return self.text
 
     @register_format
-    class ReadOnly(Note, FileBasedObject, TextFileReader):
+    class ReadOnly(Note, Format, TextFileReader):
         # A longer extension must not hide the eligible writer on save.
         EXTENSIONS = (".readonly.capability",)
 
@@ -236,17 +234,17 @@ def test_write_only_public_formats_are_not_load_candidates(
     public_formats: tx.Tuple[type, type, type],
 ) -> None:
     export, read_only, _ = public_formats
-    assert export in FileBasedObject._REGISTRY
-    assert export not in FileBasedObject._reader_formats()
+    assert export in Format._REGISTRY
+    assert export not in Format._reader_formats()
     assert not issubclass(export, FileReader)
-    assert read_only in FileBasedObject._REGISTRY
+    assert read_only in Format._REGISTRY
     assert not hasattr(read_only, "save")
 
 
 def test_dispatch_ignores_export_only_formats_even_with_matching_names(
     tmp_path: Path,
 ) -> None:
-    @format_registry
+    @format_registry(isolated=True)
     class Family(Format):
         pass
 
@@ -285,7 +283,7 @@ def test_save_selects_writer_capabilities(
 
 
 def test_standalone_metadata_dispatch_does_not_join_public_formats() -> None:
-    @format_registry
+    @format_registry(isolated=True)
     class MetadataFormats(Format):
         pass
 
@@ -300,4 +298,4 @@ def test_standalone_metadata_dispatch_does_not_join_public_formats() -> None:
             return cls()
 
     assert isinstance(MetadataFormats.from_text("metadata"), Metadata)
-    assert Metadata not in FileBasedObject._REGISTRY
+    assert Metadata not in Format._REGISTRY

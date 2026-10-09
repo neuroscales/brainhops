@@ -16,7 +16,7 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.nifti import NiftiParser
+from brainhops.io.common.nifti import NiftiReaderWriter
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_NONE,
@@ -34,16 +34,16 @@ from brainhops.io.images.base import ImageFormat
 
 
 @register_format
-class NiftiImage(NiftiParser, ImageFormat, SingleScaleImage):
+class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
     """An image stored in a NIfTI file.
 
     !!! note "Why the bases are in this order"
-        `SingleScaleImage.data` has no default, while [`NiftiParser`][]
+        `SingleScaleImage.data` has no default, while [`NiftiReaderWriter`][]
         contributes the defaulted fields `image` and `_header`. Fields are
         collected in reverse method resolution order, so
         [`SingleScaleImage`][] must come last; otherwise `data` would
         follow a defaulted field and `bagof` would reject the signature.
-        Leading with [`NiftiParser`][] also lets its lazy `data` and
+        Leading with [`NiftiReaderWriter`][] also lets its lazy `data` and
         `system` properties, which are read from the nibabel image on
         demand, take precedence over plain fields.
     """

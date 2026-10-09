@@ -7,15 +7,15 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserContentError
 from brainhops.io.common._arrays import (
-    ArrayParser,
-    CsvArrayParser,
-    Mat73ArrayParser,
-    MatArrayParser,
-    MatLegacyArrayParser,
-    NpyArrayParser,
-    NpzArrayParser,
-    TsvArrayParser,
-    TxtArrayParser,
+    ArrayReader,
+    CsvArrayReader,
+    Mat73ArrayReader,
+    MatArrayReader,
+    MatLegacyArrayReader,
+    NpyArrayReader,
+    NpzArrayReader,
+    TsvArrayReader,
+    TxtArrayReader,
     is_numeric_array,
 )
 from brainhops.io.transformations.base import (
@@ -39,7 +39,7 @@ _CONVENTIONS = (
 
 class MatrixAffine(
     AffineTransformationFormat,
-    ArrayParser,
+    ArrayReader,
     _xforms.Affine,
     TransformationFormat,
     repr=HIDE_IF_NONE,
@@ -51,7 +51,7 @@ class MatrixAffine(
     matrix in 2-D, and nothing else, so the caller gives its conventions as
     keyword arguments to `load` or `from_file`. This class is abstract, and
     each container has a registered subclass that mixes in its
-    [`ArrayParser`][]:
+    [`ArrayReader`][]:
 
     - [`TxtMatrixAffine`][]: whitespace-separated text (`.txt`, `.dat`, `.1D`),
       hint `"matrix.txt"`;
@@ -124,7 +124,7 @@ class MatrixAffine(
     index_base: tx.Optional[tx.Tuple[int, int]] = None
     """The `(input, output)` voxel index base used when reading."""
 
-    # --- ArrayParser hooks ----------------------------------------------
+    # --- ArrayReader hooks ----------------------------------------------
 
     @classmethod
     def _accepts_array(cls, array: np.ndarray) -> bool:
@@ -173,7 +173,7 @@ class MatrixAffine(
 
 
 @register_format
-class TxtMatrixAffine(TxtArrayParser, MatrixAffine):
+class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
     """
     Affine stored in a whitespace-separated text file.
 
@@ -182,38 +182,38 @@ class TxtMatrixAffine(TxtArrayParser, MatrixAffine):
     [`MatrixAffine`][].
     """
 
-    HINTS = TxtArrayParser.HINTS
+    HINTS = TxtArrayReader.HINTS
 
 
 @register_format
-class CsvMatrixAffine(CsvArrayParser, MatrixAffine):
+class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
     """
     Affine stored in a comma-separated `.csv` file. See [`MatrixAffine`][].
     """
 
-    HINTS = CsvArrayParser.HINTS
+    HINTS = CsvArrayReader.HINTS
 
 
 @register_format
-class TsvMatrixAffine(TsvArrayParser, MatrixAffine):
+class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
     """Affine stored in a tab-separated `.tsv` file. See [`MatrixAffine`][]."""
 
-    HINTS = TsvArrayParser.HINTS
+    HINTS = TsvArrayReader.HINTS
 
 
 @register_format
-class NpyMatrixAffine(NpyArrayParser, MatrixAffine):
+class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
     """
     Affine stored in a NumPy `.npy` file, read without unpickling.
 
     See [`MatrixAffine`][].
     """
 
-    HINTS = NpyArrayParser.HINTS
+    HINTS = NpyArrayReader.HINTS
 
 
 @register_format
-class NpzMatrixAffine(NpzArrayParser, MatrixAffine):
+class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
     """
     Affine stored in a NumPy `.npz` file, read without unpickling.
 
@@ -221,10 +221,10 @@ class NpzMatrixAffine(NpzArrayParser, MatrixAffine):
     2-D numeric array. See [`MatrixAffine`][].
     """
 
-    HINTS = NpzArrayParser.HINTS
+    HINTS = NpzArrayReader.HINTS
 
 
-class MatMatrixAffine(MatArrayParser, MatrixAffine):
+class MatMatrixAffine(MatArrayReader, MatrixAffine):
     """
     Affine stored in a MATLAB `.mat` file of any version.
 
@@ -235,11 +235,11 @@ class MatMatrixAffine(MatArrayParser, MatrixAffine):
     class does not compete with them. See [`MatrixAffine`][].
     """
 
-    HINTS = MatArrayParser.HINTS
+    HINTS = MatArrayReader.HINTS
 
 
 @register_format
-class MatLegacyMatrixAffine(MatLegacyArrayParser, MatMatrixAffine):
+class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
     """
     Affine stored in a MATLAB v4 or v5 to v7 `.mat` file, read with `scipy.io`.
 
@@ -248,7 +248,7 @@ class MatLegacyMatrixAffine(MatLegacyArrayParser, MatMatrixAffine):
 
 
 @register_format
-class Mat73MatrixAffine(Mat73ArrayParser, MatMatrixAffine):
+class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
     """
     Affine stored in a MATLAB v7.3 (HDF5) `.mat` file, read with `h5py`.
 
@@ -256,7 +256,7 @@ class Mat73MatrixAffine(Mat73ArrayParser, MatMatrixAffine):
     [`MatMatrixAffine`][].
     """
 
-    HINTS = Mat73ArrayParser.HINTS
+    HINTS = Mat73ArrayReader.HINTS
 
 
 MatMatrixAffine.VARIANTS = (MatLegacyMatrixAffine, Mat73MatrixAffine)

@@ -158,9 +158,9 @@ def test_name_beats_signature(tmp_path) -> None:  # noqa: ANN001
 
     path = tmp_path / "column.csv"
     path.write_text("1\n2\n3\n")
-    assert arrays.CsvArrayParser.sniff(path) == Confidence.LIKELY
-    assert arrays.CsvArrayParser.sniff_bytes(b"1\n2\n3\n") == Confidence.NO
-    assert arrays.TxtArrayParser.sniff_bytes(b"1\n2\n3\n") > Confidence.NO
+    assert arrays.CsvArrayReader.sniff(path) == Confidence.LIKELY
+    assert arrays.CsvArrayReader.sniff_bytes(b"1\n2\n3\n") == Confidence.NO
+    assert arrays.TxtArrayReader.sniff_bytes(b"1\n2\n3\n") > Confidence.NO
 
 
 def test_text_from_string_content() -> None:
@@ -627,7 +627,7 @@ def test_base_is_abstract(tmp_path) -> None:  # noqa: ANN001
     with pytest.raises(NotImplementedError):
         MatrixAffine.sniff_text(_text(A))
     with pytest.raises(NotImplementedError):
-        arrays.ArrayParser.from_bytes(b"")
+        arrays.ArrayReader.from_bytes(b"")
 
 
 def test_array_parsers_are_generic() -> None:
@@ -644,45 +644,45 @@ def test_array_parsers_are_generic() -> None:
     buffer = io.BytesIO()
     np.save(buffer, np.arange(24.0).reshape(2, 3, 4))
     content = buffer.getvalue()
-    name, array = raw(arrays.NpyArrayParser).from_bytes(content)
+    name, array = raw(arrays.NpyArrayReader).from_bytes(content)
     assert name is None and array.shape == (2, 3, 4)
-    assert arrays.NpyArrayParser.sniff_bytes(content) == Confidence.WEAK
+    assert arrays.NpyArrayReader.sniff_bytes(content) == Confidence.WEAK
     # The text base is lenient about separators; its readers are not.
     lines = ["1 2;3", "4,5\t6"]
-    name, array = raw(arrays.TextArrayParser).from_lines(lines)
+    name, array = raw(arrays.TextArrayReader).from_lines(lines)
     assert array.shape == (2, 3)
     with pytest.raises(ParserContentError):
-        raw(arrays.CsvArrayParser).from_lines(lines)
-    name, array = raw(arrays.CsvArrayParser).from_lines(["1, 2,3", "4,5 , 6"])
+        raw(arrays.CsvArrayReader).from_lines(lines)
+    name, array = raw(arrays.CsvArrayReader).from_lines(["1, 2,3", "4,5 , 6"])
     assert array.shape == (2, 3)
     expected = {
-        arrays.TxtArrayParser: (("txt",), (".txt", ".dat", ".1D")),
-        arrays.CsvArrayParser: (("csv",), (".csv",)),
-        arrays.TsvArrayParser: (("tsv",), (".tsv",)),
-        arrays.NpyArrayParser: (("npy",), (".npy",)),
-        arrays.NpzArrayParser: (("npz",), (".npz",)),
-        arrays.MatArrayParser: (("mat",), (".mat",)),
-        arrays.Mat73ArrayParser: (("mat73", "73"), (".mat",)),
+        arrays.TxtArrayReader: (("txt",), (".txt", ".dat", ".1D")),
+        arrays.CsvArrayReader: (("csv",), (".csv",)),
+        arrays.TsvArrayReader: (("tsv",), (".tsv",)),
+        arrays.NpyArrayReader: (("npy",), (".npy",)),
+        arrays.NpzArrayReader: (("npz",), (".npz",)),
+        arrays.MatArrayReader: (("mat",), (".mat",)),
+        arrays.Mat73ArrayReader: (("mat73", "73"), (".mat",)),
     }
     for parser, (hints, extensions) in expected.items():
         assert parser.__dict__["HINTS"] == hints
         assert parser.EXTENSIONS == extensions
     # The legacy reader inherits its hint.
-    assert "HINTS" not in arrays.MatLegacyArrayParser.__dict__
-    assert arrays.MatLegacyArrayParser.HINTS == ("mat",)
-    assert not arrays.TextArrayParser.EXTENSIONS
-    assert "HINTS" not in arrays.TextArrayParser.__dict__
+    assert "HINTS" not in arrays.MatLegacyArrayReader.__dict__
+    assert arrays.MatLegacyArrayReader.HINTS == ("mat",)
+    assert not arrays.TextArrayReader.EXTENSIONS
+    assert "HINTS" not in arrays.TextArrayReader.__dict__
 
 
 def test_text_parsers_reuse_text_plumbing() -> None:
     """Text parsers read in text mode and reject undecodable bytes."""
-    for parser in (arrays.TxtArrayParser, arrays.CsvArrayParser):
+    for parser in (arrays.TxtArrayReader, arrays.CsvArrayReader):
         assert issubclass(parser, TextFileReader)
         assert not issubclass(parser, BinaryFileReader)
         assert parser._READ_MODE == "rt"
         assert parser.sniff_bytes(b"\xff\xfe1 2\n") == Confidence.NO
         assert parser.sniff_bytes(b"1 2\x00\n3 4") == Confidence.NO
-    for parser in (arrays.NpyArrayParser, arrays.MatArrayParser):
+    for parser in (arrays.NpyArrayReader, arrays.MatArrayReader):
         assert issubclass(parser, BinaryFileReader)
         assert parser._READ_MODE == "rb"
 
@@ -711,9 +711,9 @@ def test_mat_dispatcher(tmp_path, fmt, variant) -> None:  # noqa: ANN001
     with pytest.raises(ParserContentError):
         other.from_file(path)
     content = path.read_bytes()
-    legacy, v73 = arrays.MatArrayParser.VARIANTS
+    legacy, v73 = arrays.MatArrayReader.VARIANTS
     parser, other = (v73, legacy) if fmt == "7.3" else (legacy, v73)
-    score = arrays.MatArrayParser.sniff_bytes(content)
+    score = arrays.MatArrayReader.sniff_bytes(content)
     assert score == parser.sniff_bytes(content) > 0
     assert other.sniff_bytes(content) == Confidence.NO
     assert sniff(path) is variant

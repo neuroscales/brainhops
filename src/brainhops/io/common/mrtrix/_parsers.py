@@ -41,7 +41,7 @@ from ._header import MrtrixHeader
 # ----------------------------------------------------------------------
 
 
-class MrtrixParser(DataModelBase, BinaryFileReader, BinaryFileWriter):
+class MrtrixReaderWriter(DataModelBase, BinaryFileReader, BinaryFileWriter):
     """
     The base class of objects encoded as an MRtrix image.
 

@@ -7,7 +7,7 @@ import typing_extensions as tx
 
 from brainhops._core.path import exists
 from brainhops.io.base._base import (
-    FileBasedObject,
+    Format,
     format_registry,
     register_format,
 )
@@ -114,7 +114,7 @@ def test_dispatch_works_over_a_non_seekable_stream() -> None:
     """A pipe cannot rewind, so dispatch buffers it."""
 
     @format_registry
-    class Root(FileBasedObject, TextFileReader):
+    class Root(Format, TextFileReader):
         pass
 
     fmt = register_format(
@@ -139,7 +139,7 @@ def test_dispatch_works_over_a_non_seekable_stream() -> None:
     try:
         assert Root.from_fileobj(Pipe("HELLO world\n")) == "HELLO world"
     finally:
-        FileBasedObject._REGISTRY.discard(fmt)
+        Format._REGISTRY.discard(fmt)
 
 
 # ----------------------------------------------------------------------

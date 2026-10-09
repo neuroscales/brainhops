@@ -1,4 +1,4 @@
-__all__ = ["M3zFormat", "M3zParser", "M3zMorph"]
+__all__ = ["M3zFormat", "M3zReaderWriter", "M3zMorph"]
 
 import zlib
 
@@ -50,7 +50,7 @@ class M3zFormat(FreesurferTransformationFormat):
     HINTS = ("m3z",)
 
 
-class M3zParser(
+class M3zReaderWriter(
     Magic,
     BinaryFileReader,
     BinaryFileWriter,
@@ -154,7 +154,7 @@ class M3zParser(
 @register_format
 class M3zMorph(
     M3zFormat,
-    M3zParser,
+    M3zReaderWriter,
     _xforms.ImmutableSequence,
     TransformationFormat,
 ):

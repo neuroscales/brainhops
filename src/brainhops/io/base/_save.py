@@ -16,7 +16,7 @@ from bagof.magic import fields
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base._base import FileBasedObject, Format
+from brainhops.io.base._base import Format
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
@@ -97,7 +97,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     """
     name = _to_filename(file)
     if name is None:
-        if isinstance(obj, FileBasedObject) and isinstance(obj, FileWriter):
+        if isinstance(obj, Format) and isinstance(obj, FileWriter):
             obj.save(file, **kwargs)
             return
         raise WriterError(
@@ -106,9 +106,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             f"file, or build the format you want and save that."
         )
 
-    registry = (
-        fmt for fmt in FileBasedObject._REGISTRY if issubclass(fmt, FileWriter)
-    )
+    registry = (fmt for fmt in Format._REGISTRY if issubclass(fmt, FileWriter))
     matches = ((fmt, _match_name(name, fmt)) for fmt in registry)
     claimed = [(fmt, match) for fmt, match in matches if match is not None]
     if not claimed:

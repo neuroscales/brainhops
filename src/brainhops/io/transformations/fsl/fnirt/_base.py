@@ -9,7 +9,7 @@ from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.nifti import NiftiParser
+from brainhops.io.common.nifti import NiftiReaderWriter
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -60,7 +60,7 @@ _SPLINE_DEGREE = {
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
-class _WritableNifti(TransformationFormat, NiftiParser):
+class _WritableNifti(TransformationFormat, NiftiReaderWriter):
     """
     A transformation read from or written to a NIfTI file.
 
@@ -142,7 +142,7 @@ class FnirtWarpField(
         return Confidence.NO
 
     # --- image keyword handling ---------------------------------------
-    # `NiftiParser.from_file` forwards keyword arguments to `nibabel.load`,
+    # `NiftiReaderWriter.from_file` forwards keywords to `nibabel.load`,
     # which rejects `moving=` and `reference=`, so these are set after parsing.
 
     @classmethod

@@ -51,8 +51,8 @@ def _nifti_vector_field(data: ArrayProtocol) -> ArrayProtocol:
 
     NIfTI stores a vector field with shape `(X, Y, Z, 1, 3)`, whereas readers
     expect `(X, Y, Z, 3)`. Any other array is returned unchanged. Unlike this
-    function, [`NiftiParser.data`][] keeps the axis so that it matches the
-    header.
+    function, [`NiftiReaderWriter.data`][] keeps the axis so that it matches
+    the header.
     """
     shape = tuple(int(d) for d in data.shape)
     if len(shape) == 5 and shape[3] == 1:

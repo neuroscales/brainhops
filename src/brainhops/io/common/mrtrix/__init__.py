@@ -35,9 +35,9 @@ follow the MRtrix3 sources.
 """
 
 __all__ = [
-    "MrtrixParser",
+    "MrtrixReaderWriter",
     "MrtrixHeader",
 ]
 
 from ._header import MrtrixHeader
-from ._parsers import MrtrixParser
+from ._parsers import MrtrixReaderWriter

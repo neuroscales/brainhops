@@ -26,7 +26,7 @@ _PARAMETERS_RE = re.compile(r"^Parameters:\s*(?P<values>.*)$")
 _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 
-class TfmTransformParser(
+class TfmTransformReader(
     Magic,
     TextFileReader,
     convert=True,

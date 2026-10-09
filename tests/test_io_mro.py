@@ -11,7 +11,6 @@ import inspect
 import pytest
 
 from brainhops.io.base._base import (
-    FileBasedObject,
     Format,
     format_registry,
 )
@@ -22,7 +21,7 @@ from brainhops.io.base.parsers import (
 
 nb = pytest.importorskip("nibabel")
 
-from brainhops.io.common.nifti import NiftiParser  # noqa: E402
+from brainhops.io.common.nifti import NiftiReaderWriter  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,
@@ -39,7 +38,7 @@ NIFTI_FORMATS = [
     SpmCoordinatesField,
 ]
 
-# Methods that NiftiParser specializes; the generic ladder re-dispatches
+# Methods that NiftiReaderWriter specializes; the generic ladder re-dispatches
 # into them.
 SPECIALIZED = [
     "from_file",
@@ -57,7 +56,7 @@ def _owner(cls: type, name: str) -> type:
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
 @pytest.mark.parametrize("method", SPECIALIZED)
 def test_the_format_specific_reader_wins(cls: type, method: str) -> None:
-    assert _owner(cls, method) is NiftiParser
+    assert _owner(cls, method) is NiftiReaderWriter
 
 
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
@@ -89,7 +88,7 @@ def test_dispatcher_overrides_are_pass_throughs_for_concrete_formats() -> None:
 
 def test_resolution_does_not_depend_on_base_order() -> None:
     @format_registry
-    class Root(FileBasedObject):
+    class Root(Format):
         pass
 
     class Special(BinaryFileReader):
@@ -128,7 +127,7 @@ def test_the_generic_ladder_redispatches_through_cls() -> None:
 
 
 def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noqa: ANN001
-    """NiftiParser.from_file keeps the nibabel handle and lazy voxels."""
+    """NiftiReaderWriter.from_file keeps the nibabel handle and lazy voxels."""
     import numpy as np
 
     img = nb.Nifti1Image(np.zeros((3, 4, 5), "float32"), np.eye(4))

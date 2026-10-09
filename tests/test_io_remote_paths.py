@@ -15,7 +15,7 @@ import typing_extensions as tx
 import brainhops.io as io
 from brainhops._core.dependencies import has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
-from brainhops.io.base import FileBasedObject
+from brainhops.io.base import Format
 from brainhops.io.base._base import (
     register_format,
 )
@@ -149,7 +149,7 @@ def note_formats() -> tx.Iterator[tx.Tuple[type, type]]:
             yield f"{name}:{self.text}"
 
         namespace = {"to_lines": to_lines, "EXTENSIONS": extensions}
-        bases = (Note, FileBasedObject, TextFileWriter)
+        bases = (Note, Format, TextFileWriter)
         return register_format(type(name, bases, namespace))
 
     made = (make("Short", (".n",)), make("Long", (".long.n",)))

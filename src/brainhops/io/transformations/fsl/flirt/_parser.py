@@ -19,7 +19,7 @@ from brainhops.io.common.nifti._header import _NiftiObject
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
-class FlirtMatrixParser(Magic, TextFileReader, repr=HIDE_IF_NONE):
+class FlirtMatrixReader(Magic, TextFileReader, repr=HIDE_IF_NONE):
     """Parser for FSL FLIRT `.mat` files.
 
     The file holds a plain-text (4, 4) matrix, one row per line. The matrix

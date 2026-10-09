@@ -13,7 +13,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     WriterError,
 )
-from brainhops.io.common._arrays import TxtArrayParser, is_numeric_array
+from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.conversions import (
@@ -38,7 +38,7 @@ def _is_homogeneous(array: np.ndarray) -> bool:
 @register_format
 class NiftyRegAffine(
     NiftyRegAffineFormat,
-    TxtArrayParser,
+    TxtArrayReader,
     TextFileReader,
     TextFileWriter,
     RASToRAS,
@@ -72,7 +72,7 @@ class NiftyRegAffine(
     # rejected.
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 1 << 16
 
-    # --- ArrayParser hooks --------------------------------------------
+    # --- ArrayReader hooks --------------------------------------------
 
     @classmethod
     def _accepts_array(cls, array: np.ndarray) -> bool:

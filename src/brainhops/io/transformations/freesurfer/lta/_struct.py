@@ -4,7 +4,11 @@ import typing_extensions as tx
 from bagof.magic import Factory
 
 from ._enums import LtaMatrixType, LtaType, LtaValidity
-from ._parser import LtaParser, MatrixParser, VolumeInfoParser
+from ._parser import (
+    LtaReaderWriter,
+    MatrixReaderWriter,
+    VolumeInfoReaderWriter,
+)
 
 _2Ints = tx.Tuple[int, int]
 _3Ints = tx.Tuple[int, int, int]
@@ -14,17 +18,17 @@ _MatrixComplex = tx.Tuple[tx.Tuple[complex, ...], ...]
 _Matrix = tx.Union[_MatrixFloat, _MatrixComplex]
 
 
-class LtaStruct(LtaParser):
+class LtaStruct(LtaReaderWriter):
     """In-memory representation of an LTA file.
 
-    Parsing is implemented by the parent classes `LtaParser`, `MatrixParser`
-    and `VolumeInfoParser`.
+    Reading and writing are implemented by `LtaReaderWriter`,
+    `MatrixReaderWriter` and `VolumeInfoReaderWriter`.
 
     !!! note "Reference"
         https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/LtaFormat
     """
 
-    class Affine(MatrixParser):
+    class Affine(MatrixReaderWriter):
         """ASCII-encoded matrix.
 
         This encoding is used throughout FreeSurfer, not only in LTA files, and
@@ -90,7 +94,7 @@ class LtaStruct(LtaParser):
                 return (len(self.matrix), 0)
             return (len(self.matrix), len(self.matrix[0]))
 
-    class VolumeInfo(VolumeInfoParser):
+    class VolumeInfo(VolumeInfoReaderWriter):
         """Geometry of a volume."""
 
         valid: LtaValidity = LtaValidity.VOLUME_INFO_INVALID

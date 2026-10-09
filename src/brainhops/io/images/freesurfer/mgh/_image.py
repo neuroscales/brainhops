@@ -19,7 +19,7 @@ from brainhops.io.common._geometry import (
     arrange_voxel_to_ras,
     declared_axes,
 )
-from brainhops.io.common.mgh import MghParser
+from brainhops.io.common.mgh import MghReaderWriter
 from brainhops.io.common.mgh._constants import _MRI_PARAMS
 from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
 from brainhops.io.images.base import ImageFormat
@@ -48,7 +48,7 @@ _MGH_DTYPES = {
 
 
 @register_format
-class MghImage(MghParser, ImageFormat, SingleScaleImage):
+class MghImage(MghReaderWriter, ImageFormat, SingleScaleImage):
     """An image stored in a FreeSurfer MGH or MGZ file.
 
     The voxels are in Fortran order, and the data are indexed `(x, y, z)`
@@ -59,9 +59,9 @@ class MghImage(MghParser, ImageFormat, SingleScaleImage):
     [`Affine`][] to `"tkr"` (`header.get_vox2ras_tkr()`), and the
     preferred [`Affine`][] to `"scanner"` (`header.get_vox2ras()`). The
     footer parameters
-    ([`mri_params`][brainhops.io.common.mgh.MghParser.mri_params]), the raw
-    `goodRASFlag` and the trailing tags
-    ([`tags`][brainhops.io.common.mgh.MghParser.tags]) are kept on the
+    ([`mri_params`][brainhops.io.common.mgh.MghReaderWriter.mri_params]),
+    the raw `goodRASFlag` and the trailing tags
+    ([`tags`][brainhops.io.common.mgh.MghReaderWriter.tags]) are kept on the
     object and written back.
 
     !!! note "`goodRASFlag`"
@@ -72,7 +72,7 @@ class MghImage(MghParser, ImageFormat, SingleScaleImage):
     !!! note "Why the bases are in this order"
         As for [`NiftiImage`][brainhops.io.images.nifti.NiftiImage],
         [`SingleScaleImage`][] comes last because its `data` field has no
-        default, and [`MghParser`][] comes first so that its lazy
+        default, and [`MghReaderWriter`][] comes first so that its lazy
         properties take precedence.
     """
 
@@ -175,7 +175,7 @@ class MghImage(MghParser, ImageFormat, SingleScaleImage):
 # ----------------------------------------------------------------------
 
 
-def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
+def _mgh_to_transformations(image: MghReaderWriter) -> tx.List[Transformation]:
     """Return the scaling, tkr RAS and scanner RAS transformations."""
     voxel_space = image.system
     axes = list(voxel_space.axes)

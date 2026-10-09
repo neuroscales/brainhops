@@ -486,7 +486,9 @@ def test_write_refuses_other_chains(tmp_path: Path) -> None:
 
 def test_a_morph_compares_by_identity() -> None:
     # Identity comparison holds although the parser base comes first.
-    from brainhops.io.transformations.freesurfer.m3z._xform import M3zParser
+    from brainhops.io.transformations.freesurfer.m3z._xform import (
+        M3zReaderWriter,
+    )
 
     def make() -> M3zMorph:
         return M3zMorph(transformations=[xforms.Affine(matrix=np.eye(4)[:3])])
@@ -495,4 +497,4 @@ def test_a_morph_compares_by_identity() -> None:
     assert morph == morph
     assert morph != make()
     assert {morph: 1}[morph] == 1
-    assert M3zParser.__eq__ is object.__eq__
+    assert M3zReaderWriter.__eq__ is object.__eq__

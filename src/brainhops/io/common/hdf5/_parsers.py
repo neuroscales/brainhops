@@ -41,7 +41,7 @@ def _raise_or(
     return Confidence.NO
 
 
-class Hdf5Parser(BinaryFileReader):
+class Hdf5Reader(BinaryFileReader):
     """
     A mixin that reads a format stored in HDF5.
 
@@ -198,7 +198,7 @@ class Hdf5Parser(BinaryFileReader):
                     f.close()
 
 
-class Hdf5ParserWriter(Hdf5Parser, BinaryFileWriter):
+class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
     """
     A mixin that reads and writes a format stored in HDF5.
 

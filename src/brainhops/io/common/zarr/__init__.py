@@ -7,9 +7,9 @@ as Zarr are loaded and saved like any other format.
 """
 
 __all__ = [
-    "ZarrParser",
-    "ZarrParserWriter",
+    "ZarrReader",
+    "ZarrReaderWriter",
     "StoreLike",
 ]
 
-from ._parsers import StoreLike, ZarrParser, ZarrParserWriter
+from ._parsers import StoreLike, ZarrReader, ZarrReaderWriter

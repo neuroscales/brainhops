@@ -61,7 +61,7 @@ class AfniFormat:
 # ----------------------------------------------------------------------
 
 
-class AfniParser(
+class AfniReaderWriter(
     DataModelBase, AfniFormat, BinaryFileReader, BinaryFileWriter
 ):
     """

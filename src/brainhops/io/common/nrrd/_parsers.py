@@ -35,7 +35,7 @@ from ._header import NrrdHeader
 # ----------------------------------------------------------------------
 
 
-class NrrdParser(DataModelBase, BinaryFileReader, BinaryFileWriter):
+class NrrdReaderWriter(DataModelBase, BinaryFileReader, BinaryFileWriter):
     """Base class for objects stored as NRRD files.
 
     Concrete formats give the values a meaning and provide [`_nrrd_header`][]
