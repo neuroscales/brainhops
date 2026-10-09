@@ -89,8 +89,8 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
 
     # Tetrahedra come in batches that share the same vertex pattern,
     # so that each batch can be processed in a vectorized way.
-    for src1, dst1 in zip(_yield_thetrahedra(src), _yield_thetrahedra(dst)):
-        _process_thetrahedron(src1, dst1, out)
+    for src1, dst1 in zip(_yield_tetrahedra(src), _yield_tetrahedra(dst)):
+        _process_tetrahedron(src1, dst1, out)
 
     out -= src
 
@@ -116,7 +116,7 @@ X, Y, Z = 0, 1, 2
 BATCH_AXIS, VERTEX_AXIS, SPACE_AXIS = 0, 1, 2
 
 
-def _process_thetrahedron(
+def _process_tetrahedron(
     src: np.ndarray, dst: np.ndarray, out: np.ndarray
 ) -> None:
     """Fill the voxels that a batch of displaced tetrahedra covers.
@@ -185,7 +185,7 @@ def _process_triangle(
 
     The array `tri` has shape (N, 3, 2) and holds the (x, y) coordinates of
     the vertices of the triangles in the target domain. The other arguments
-    are the same as in `_process_thetrahedron`.
+    are the same as in `_process_tetrahedron`.
     """
 
     idx = np.argsort(tri[:, :, Y : Y + 1], axis=VERTEX_AXIS)
@@ -390,7 +390,7 @@ def _truncate_and_stack3d(
     return np.stack(tuple(vertices), axis=1)
 
 
-def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
+def _yield_tetrahedra(field: np.ndarray) -> _tx.Iterator[np.ndarray]:
     """Yield batches of tetrahedra from a field of vertex coordinates.
 
     All the tetrahedra in a batch share the same vertex pattern, and each
@@ -538,7 +538,7 @@ def yield_red(
     x101: np.ndarray,
     x110: np.ndarray,
     x111: np.ndarray,
-) -> _tx.Generator:
+) -> _tx.Iterator[np.ndarray]:
     # A red cube is cut into five tetrahedra. Four of them are
     # trirectangular tetrahedra, which have three right angles at their tip
     # vertex (https://en.wikipedia.org/wiki/Trirectangular_tetrahedron).
@@ -583,7 +583,7 @@ def yield_black(
     x101: np.ndarray,
     x110: np.ndarray,
     x111: np.ndarray,
-) -> _tx.Generator:
+) -> _tx.Iterator[np.ndarray]:
     # A black cube is also cut into five tetrahedra. Four of them are
     # trirectangular tetrahedra whose tips are at 010, 001, 100 and 111,
     # which are the four corners that are not tips in a red cube. The
