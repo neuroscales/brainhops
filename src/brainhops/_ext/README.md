@@ -1,29 +1,18 @@
-This folder contains modules that have a more general purpose than 
-brainhops, and are used by it. They are intended to become their 
-own packages one day (and then become external dependencies of brainhop).
+This folder holds modules that are more general than brainhops but are
+used by it. Each of them is meant to become a standalone package one day,
+and a dependency of brainhops. They are kept here while their interfaces
+still change too often to be published separately.
 
-While they are being developed and their API changing too often, they are 
-kept here.
-
-* `struct`: a library that provides similar tools as `dataclasses.@dataclass`,
-  `attrs.@define`, or `pydantic.BaseModel`; with additional features.
-  It is closer to pydantic in that it's default behaviour relies on inheritance
-  rater than decorators (although a decorator is also available). However,
-  its implementation relies heavily on ports from `dataclasses`.
-  The main advantage for us is that it is ours so we have more flexibility
-  when it comes to adding features we think we need for our models, and
-  we can ensure backward compatibility to python versions of our choice.
-
-* `invfield`: a compact implementation of John Ashburner's displacement 
-  field inversion. It is an independent implementation based on his paper,
-  not a port of the SPM implementation.
-
-* `npfileobj`: a class that implements "lazy" array-like semantics for 
-  array data that is stored contiguously on arbitrary file systems
-  (not necessary local ones). It is based in parts on `nibabel.ArrayProxy`
-  (except that it does not load data on `__getitem__`, but instead
-  builds a "strided" proxy). It's in very early WIP, and will involve
-  copying lots of nibabel code. 
-  
-  It might not even be useful (can we just wrap a `nibabel.ArrayProxy` 
-  in a `dask.array`? Would chunking work correctly?)
+- `invfield` is a compact implementation of John Ashburner's inversion of
+  displacement fields, in two and three dimensions. It treats the field as
+  a mesh in which each cell defines an affine transformation, and inverts
+  that piecewise-affine map exactly. It was written independently from the
+  published papers and is not a port of the SPM code. brainhops uses it to
+  invert displacement and coordinate fields.
+- `npfileobj` is intended to provide lazy, array-like access to data
+  stored contiguously behind any file-like object, including files that are
+  not on a local file system. It is partly modelled on
+  `nibabel.ArrayProxy`, except that indexing does not load data but returns
+  a strided proxy. The module is an early work in progress and is not used
+  by brainhops yet. It may turn out to be unnecessary if wrapping
+  `nibabel.ArrayProxy` in a `dask.array` gives correct chunking.
