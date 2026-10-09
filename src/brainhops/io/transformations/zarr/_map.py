@@ -13,12 +13,14 @@ Each OME coordinate transformation is read as a brainhops transformation:
 | `displacements`, `coordinates`   | the field read from its node          |
 | `sequence`                       | [`Sequence`][] of the mapped children |
 
-On write, a per-axis scale and translation is written in that lean form, and
-any other affine in full, so that rotations and shears are kept.
+On write, an affine that only scales and translates each axis is written
+as a `scale` and a `translation`. Any other affine is written in full as an
+`affine`, so that rotations and shears are kept.
 
-Both directions dispatch with a [`Function`][] to the converter registered for
-the nearest supertype, and a tie between incomparable types goes to the
-earliest registration. A new kind is supported by registering a converter.
+In both directions, a [`Function`][] selects the converter that is
+registered for the nearest supertype of the transformation. When two
+incomparable types tie, the converter that was registered first is used. A
+new kind of transformation is supported by registering a converter for it.
 """
 
 import itertools
@@ -53,8 +55,9 @@ class OmeMappingError(ValueError):
 # ----------------------------------------------------------------------
 #   axis reordering
 # ----------------------------------------------------------------------
-# Parameters are stored in the OME axis order and read into the brainhops
-# order, by permuting matrix rows and linear columns or vector entries.
+# Parameters are stored in the OME axis order and are read into the
+# brainhops axis order by permuting the rows and the linear columns of a
+# matrix, or the entries of a vector.
 
 
 def permute_vector(
@@ -96,8 +99,9 @@ def _invert_perm(perm: tx.Sequence[int]) -> tx.List[int]:
 def _map_axis_transform(
     mapping: tx.Sequence[int], perm: tx.Sequence[int], ndim: int
 ) -> Transformation:
-    # A bijective axis map is a permutation; a map that names a subset of the
-    # input axes is a projection that drops the others.
+    # An axis map that names every input axis exactly once is a permutation.
+    # An axis map that names only a subset of the input axes is a projection
+    # that drops the other axes.
     mapping = list(mapping)
     inverse = _invert_perm(perm)
     if sorted(mapping) == list(range(ndim)):
@@ -105,8 +109,9 @@ def _map_axis_transform(
         # input axis that it names is mapped back by the inverse permutation.
         return Permutation(permutation=[inverse[mapping[p]] for p in perm])
     if mapping == sorted(mapping) and set(mapping) <= set(range(ndim)):
-        # An increasing subset drops the omitted input axes; the dropped axes
-        # are reported in brainhops order, and no axis is created.
+        # A map that lists an increasing subset of the input axes drops the
+        # omitted ones. The dropped axes are reported in brainhops order, and
+        # no axis is created.
         dropped_stored = [i for i in range(ndim) if i not in mapping]
         dropped = sorted(inverse[i] for i in dropped_stored)
         return Projection(dropped=dropped, created=[])
@@ -125,8 +130,9 @@ _from_order = itertools.count()
 
 
 def _from_ome(ome_type: type) -> tx.Callable:
-    # Dispatch on the OME transform only: the other arguments are matched by
-    # `object`. Decreasing priorities make the earliest registration win a tie.
+    # The dispatch looks only at the OME transform, because the other
+    # arguments are matched by `object`. Each registration has a lower
+    # priority than the previous one, so the earliest registration wins a tie.
     def register(func: tx.Callable) -> tx.Callable:
         _from_ome_fn.register(
             (ome_type, object, object, object),
@@ -287,8 +293,8 @@ def _read_field(
 # Writers return the JSON of one OME coordinate transformation, with its
 # parameters reordered by storage_perm into the stored OME order.
 
-# OME types that only the richer OME-NGFF versions carry: scale and translation
-# exist in every version, but the others do not.
+# These OME types exist only in the richer OME-NGFF versions, whereas scale
+# and translation exist in every version.
 _RICH_TYPES = frozenset(
     {"rotation", "affine", "mapAxis", "displacements", "coordinates"}
 )
@@ -298,8 +304,9 @@ _to_order = itertools.count()
 
 
 def _to_ome_for(brainhops_type: type) -> tx.Callable:
-    # Dispatch on the transformation only: the other arguments are matched by
-    # `object`. Decreasing priorities make the earliest registration win a tie.
+    # The dispatch looks only at the transformation, because the other
+    # arguments are matched by `object`. Each registration has a lower
+    # priority than the previous one, so the earliest registration wins a tie.
     def register(func: tx.Callable) -> tx.Callable:
         _to_ome_fn.register(
             (brainhops_type, object, object),
@@ -315,16 +322,18 @@ def to_ome(
 ) -> tx.Dict[str, tx.Any]:
     """Map a brainhops transformation to one OME coordinate transformation.
 
-    A per-axis scale and translation is written in its lean form, any other
-    affine is written in full, and a sequence is written as a sequence of its
-    mapped children. The parameters are reordered by `storage_perm`, from the
-    brainhops order to the stored OME order.
+    An affine that only scales and translates each axis is written in the
+    lean form of a `scale`, followed by a `translation` when the translation
+    is not zero. Any other affine is written in full, and a sequence is
+    written as a sequence of its mapped children. The parameters are
+    reordered by `storage_perm`, from the brainhops axis order to the stored
+    OME order.
 
     Raises
     ------
     OmeMappingError
-        If the transformation does not reduce to an affine, as a field does
-        not.
+        If the transformation does not reduce to an affine, which is the
+        case for a field.
     """
     # A type with no registered ancestor falls back to the affine writer.
     try:
@@ -338,11 +347,11 @@ def scale_translation_from_affine(
 ) -> tx.Optional[tx.Tuple[np.ndarray, np.ndarray]]:
     """Return the per-axis scale and translation of a diagonal affine.
 
-    `matrix` is a compact affine, or `None` for the identity, which gives a
-    scale of ones and a translation of zeros. `None` is returned when the
-    linear block is not square or has an off-diagonal term (beyond a tolerance
-    of 1e-8), such as a rotation or a shear, so that the affine must be written
-    in full.
+    The argument `matrix` is a compact affine, or `None` for the identity,
+    whose scale is all ones and whose translation is all zeros. The function
+    returns `None` when the linear block is not square, or when it has an
+    off-diagonal term larger than 1e-8 in absolute value, as a rotation or a
+    shear does. Such an affine must be written in full.
     """
     if matrix is None:
         return np.ones(ndim), np.zeros(ndim)
@@ -378,7 +387,8 @@ def _matrix_to_list(matrix: tx.Any) -> tx.List[tx.List[float]]:
 def _scale_translation_entry(
     scale: tx.Any, translation: tx.Any
 ) -> tx.Dict[str, tx.Any]:
-    # Leanest form: a scale alone, or a sequence of a scale and a translation.
+    # The leanest form is a scale alone when the translation is zero, and
+    # otherwise a sequence of a scale and a translation.
     scale = np.asarray(scale, dtype=float)
     translation = np.asarray(translation, dtype=float)
     scale_entry = {
@@ -400,7 +410,8 @@ def _scale_translation_entry(
 def _affine_to_ome(
     transform: Transformation, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
-    # Diagonal affines become a scale and translation; others stay affines.
+    # A diagonal affine is written as a scale and a translation, and any
+    # other affine is written as an affine.
     affine = transform.to(Affine, error=None)
     if affine is None:
         raise OmeMappingError(

@@ -38,7 +38,8 @@ from ._struct import (
     write_m3z,
 )
 
-# Enough compressed bytes to hold the 24-byte header once decompressed.
+# This many compressed bytes are enough to hold the 24-byte header once
+# they are decompressed.
 _SNIFF_SIZE = 1024
 
 
@@ -60,7 +61,7 @@ class M3zParser(
     """
 
     struct: tx.Optional[M3zStruct] = field(default=None, repr=False)
-    """The raw content of the file, every node and every tag.
+    """The raw content of the file, including every node and every tag.
 
     See [`M3zStruct`][].
     """
@@ -74,7 +75,8 @@ class M3zParser(
     ) -> float:
         """Score an open binary file from its first bytes only.
 
-        A morph weighs tens of megabytes, but its header only 24 bytes.
+        A morph takes up tens of megabytes, but its header takes only 24
+        bytes, so only the start of the file is read.
         """
         with preserve_position(file):
             head = file.read(_SNIFF_SIZE)
@@ -150,28 +152,34 @@ class M3zMorph(
 ):
     """Non-linear transformation stored in a FreeSurfer morph.
 
-    The morph maps atlas (target) scanner RAS to source scanner RAS, as
-    `mri_vol2vol --m3z` applies it to pull the source onto the atlas grid. It
-    is the
+    The morph maps scanner RAS coordinates of the atlas, which is the
+    target, to scanner RAS coordinates of the source image. This is the
+    direction in which `mri_vol2vol --m3z` applies the morph to pull the
+    source onto the atlas grid. The morph is the
     [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]
     of
 
-    1. a [`RASToVoxel`][], from atlas RAS to the voxels of the node grid; 2. a
-    [`CoordinatesField`][brainhops.datamodel.transformations.CoordinatesField]
-       holding the position of each node in source voxels;
+    1. a [`RASToVoxel`][], from atlas RAS to the voxels of the node grid;
+    2. a
+       [`CoordinatesField`][brainhops.datamodel.transformations.CoordinatesField]
+       that holds the position of each node in source voxels;
     3. a [`VoxelToRAS`][], from source voxels to source RAS.
 
-    With RAS positions (`GCAM_RAS`), the first step is followed by a
-    [`RASCoordinatesField`][] instead.
+    When the positions are RAS coordinates (`GCAM_RAS`), the first step is
+    followed by a [`RASCoordinatesField`][] instead, and there is no third
+    step.
 
-    The raw content of the file (spacing, geometries, original positions,
-    GCA node indices, labels and linear transform) stays in [`struct`][], an
-    [`M3zStruct`][], for example `morph.struct.atlas_geometry.vox2ras`.
+    The raw content of the file, which includes the spacing, the
+    geometries, the original positions, the GCA node indices, the labels and
+    the linear transform, stays in [`struct`][], an [`M3zStruct`][]. For
+    example, the voxel-to-RAS matrix of the atlas is
+    `morph.struct.atlas_geometry.vox2ras`.
 
     !!! note "What is written"
         A morph whose chain was not assigned is written back as it was read.
-        One whose `transformations` were assigned, including one built from
-        scratch, is written from them (see [`to_struct`][]).
+        A morph whose `transformations` were assigned, including a morph
+        built from scratch, is written from the assigned chain, as described
+        in [`to_struct`][].
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
@@ -229,32 +237,40 @@ class M3zMorph(
     ) -> M3zStruct:
         """Return the raw content that encodes this morph.
 
-        Without an assigned chain, the result is `struct`. An assigned chain
-        must have the shape that the reader builds: three transformations
-        (atlas RAS to node voxels, a field of source voxel coordinates, source
-        voxels to RAS), or two (the first affine and a field of source RAS
-        coordinates). Both geometries are rebuilt from the affines, and
-        whatever the chain does not describe comes from `struct` if there is
-        one, or from the arguments.
+        When no chain has been assigned, the result is `struct`. An assigned
+        chain must have one of the two shapes that the reader builds. The
+        first shape has three transformations: atlas RAS to node voxels, a
+        field of source voxel coordinates, and source voxels to RAS. The
+        second shape has two: the same first affine, followed by a field of
+        source RAS coordinates.
+
+        The atlas geometry is rebuilt from the first affine, and with three
+        transformations, the source geometry is rebuilt from the last one.
+        Whatever the chain does not describe is taken from the arguments,
+        then from `struct` if there is one, and otherwise from defaults.
 
         Parameters
         ----------
         spacing : int, optional
-            Atlas voxels between nodes. Defaults to that of `struct`, or 1.
+            Number of atlas voxels between nodes. The default is the spacing
+            of `struct`, or 1 when there is no struct.
         image_shape : (int, int, int), optional
-            Shape of the source image, on which its RAS centre depends.
-            Defaults to that of `struct`; required without a struct for a voxel
-            field.
+            Shape of the source image, on which the RAS centre of the image
+            depends. The default is the shape that `struct` records. The
+            argument is required for a field of voxel coordinates when no
+            source geometry is recorded.
         atlas_shape : (int, int, int), optional
-            Shape of the atlas. Defaults to that of `struct`, or to the node
-            grid shape times `spacing`.
+            Shape of the atlas. The default is the shape that `struct`
+            records, or else the shape of the node grid multiplied by
+            `spacing`.
 
         Raises
         ------
         UnrepresentableTransformationError
-            If the chain has neither of the two shapes.
+            If the chain has neither of the two shapes, or if its field is
+            not a 3-D grid of 3-vectors.
         WriterError
-            If the shape of the source image is needed and unknown.
+            If the shape of the source image is needed but unknown.
         """
         explicit = getattr(self, "_transformations", None)
         if explicit is None:

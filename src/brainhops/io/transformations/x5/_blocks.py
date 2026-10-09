@@ -37,7 +37,7 @@ from brainhops.io.transformations.base.fields import (
 from ._struct import X5Domain, X5Node
 
 _NDIM = 3
-"""The number of spatial dimensions, since X5 worlds are RAS."""
+"""The number of spatial dimensions, which is 3 because X5 worlds are RAS."""
 
 DISPLACEMENTS = ("displacements", "displacement", "deltas", "relative")
 """The `Representation` values of relative displacement fields."""
@@ -60,7 +60,8 @@ _BSPLINE_SUBTYPES = ("bspline", "b-spline")
 """The `SubType` values of B-spline fields."""
 
 _BSPLINE_DEGREE = 3
-"""The degree of X5 B-splines: nitransforms only evaluates cubics."""
+"""The degree of X5 B-splines, which is 3 because nitransforms only
+evaluates cubic B-splines."""
 
 _KINDS = ("space",) * _NDIM + ("vector",)
 
@@ -194,8 +195,9 @@ def node_to_transformation(node: X5Node) -> _xforms.Transformation:
     Raises
     ------
     ParserNotImplementedError
-        If the node is valid but unrepresentable: a `composite` transform, a
-        stack of affines, or a field that is not on a regular 3-D grid.
+        If the node is valid but cannot be represented, as is the case for
+        a `composite` transform, a stack of affines, or a field that is not
+        on a regular 3-D grid.
     ParserContentError
         If the node is malformed or of an unknown `Type`.
     """
@@ -378,16 +380,17 @@ def transformation_to_nodes(
 
     The first rule that applies is used:
 
-    - A RAS displacement chain (affine, displacement field, affine), such as an
-      [`X5DisplacementField`][] or a NIfTI `DISPVECT` field, becomes a node of
-      displacements.
+    - A RAS displacement chain, which is an affine followed by a
+      displacement field and another affine, becomes a node of
+      displacements. Examples are an [`X5DisplacementField`][] and a NIfTI
+      `DISPVECT` field.
     - The same chain whose field stores coefficients, such as an
       [`X5BSplineField`][], becomes a `bspline` node. Coefficients of another
       degree or boundary condition are refitted to cubic coefficients with a
       zero boundary.
-    - A RAS coordinate chain (affine, coordinate field), such as an
-      [`X5CoordinatesField`][] or an SPM `y_` field, becomes a node of
-      deformations.
+    - A RAS coordinate chain, which is an affine followed by a coordinate
+      field, becomes a node of deformations. Examples are an
+      [`X5CoordinatesField`][] and an SPM `y_` field.
     - A transformation that converts to an affine becomes a linear node.
     - Any other sequence becomes the nodes of its elements.
 

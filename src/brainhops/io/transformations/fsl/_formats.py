@@ -1,4 +1,4 @@
-"""Format families of FSL transformations, used for dispatch hints."""
+"""Format families of FSL transformations, which define their hints."""
 
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,

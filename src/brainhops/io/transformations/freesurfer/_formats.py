@@ -1,4 +1,4 @@
-"""Format family of FreeSurfer transformations, used for dispatch hints."""
+"""Format family of FreeSurfer transformations, which defines their hints."""
 
 from brainhops.io.common.freesurfer import FreesurferFormat
 from brainhops.io.transformations.base import TransformationFormat

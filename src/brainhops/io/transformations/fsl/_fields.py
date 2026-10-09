@@ -5,12 +5,12 @@ from brainhops.datamodel import transformations as _xforms
 
 
 class RASToWarpField(_xforms.Affine):
-    """Affine transformation from reference world (RAS) to an FNIRT warp grid.
+    """Affine transformation from the reference RAS space to a warp grid.
 
-    The warp grid is the grid on which the warp field is stored: the voxel
-    grid of the reference image for a dense deformation field, or the coarse
-    grid of B-spline knots for a coefficient field. Coordinates on the warp
-    grid are the positions at which the spline basis of the warp is
+    The warp grid is the grid on which an FNIRT warp field is stored. It is
+    the voxel grid of the reference image for a dense deformation field, and
+    the coarse grid of B-spline knots for a coefficient field. Coordinates on
+    the warp grid are the positions at which the spline basis of the warp is
     evaluated.
     """
 
@@ -18,11 +18,11 @@ class RASToWarpField(_xforms.Affine):
 
 
 class WarpFieldToRAS(_xforms.Affine):
-    """Affine transformation from an FNIRT warp grid to moving world (RAS).
+    """Affine transformation from an FNIRT warp grid to the moving RAS space.
 
     The affine carries a warped position on the warp grid into the world
-    coordinates of the moving image. It folds in the scaled-mm geometry of
-    the moving image and the initial FLIRT affine.
+    coordinates of the moving image. It includes both the scaled-mm geometry
+    of the moving image and the initial FLIRT affine.
     """
 
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()

@@ -6,8 +6,8 @@ is read, as described in
 [`MatrixAffine`][brainhops.io.transformations.matrix.MatrixAffine]. Each
 container has its own reader: [`TxtMatrixAffine`][], [`CsvMatrixAffine`][],
 [`TsvMatrixAffine`][], [`NpyMatrixAffine`][], [`NpzMatrixAffine`][] and
-[`MatMatrixAffine`][], which dispatches to [`MatLegacyMatrixAffine`][] or
-[`Mat73MatrixAffine`][] by MATLAB version.
+[`MatMatrixAffine`][], which hands the file to [`MatLegacyMatrixAffine`][] or
+[`Mat73MatrixAffine`][] according to its MATLAB version.
 
 !!! example "Reading a 1-based voxel-to-voxel matrix saved by MATLAB"
     ```python

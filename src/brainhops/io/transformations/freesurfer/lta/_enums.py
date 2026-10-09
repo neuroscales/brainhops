@@ -10,7 +10,7 @@ class LtaType(int, Enum):
     for example voxel to voxel or RAS to RAS.
     """
 
-    # Affine types.
+    # These values are the types of affine transformations.
     LINEAR_VOX_TO_VOX = 0
     LINEAR_VOXEL_TO_VOXEL = LINEAR_VOX_TO_VOX
     LINEAR_RAS_TO_RAS = 1
@@ -18,7 +18,7 @@ class LtaType(int, Enum):
     LINEAR_CORONAL_RAS_TO_CORONAL_RAS = 21
     LINEAR_COR_TO_COR = LINEAR_CORONAL_RAS_TO_CORONAL_RAS
     LINEAR_RSA_TO_RSA = LINEAR_COR_TO_COR
-    # File types, which are invalid in an LTA file.
+    # These values are file types, which are invalid in an LTA file.
     TRANSFORM_ARRAY_TYPE = 10
     MORPH_3D_TYPE = 11
     MNI_TRANSFORM_TYPE = 12
@@ -34,7 +34,7 @@ class LtaMatrixType(int, Enum):
 
 
 class LtaValidity(int, Enum):
-    """Whether a volume-geometry block is populated."""
+    """Flag that records whether a volume-geometry block is populated."""
 
     VOLUME_INFO_INVALID = 0
     VOLUME_INFO_VALID = 1

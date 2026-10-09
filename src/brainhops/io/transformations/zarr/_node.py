@@ -3,10 +3,10 @@
 A field is stored in its own node. In OME-Zarr 0.6, that node carries `ome`
 metadata that names typed axes, including the axis of vector components. An
 older node is a bare array, which can only name its axes through its
-`dimension_names`. The functions of this module read a node without deciding
-its layout: they return the array as stored, and its axes as
-[`Axis`][brainhops.datamodel.axes.Axis] objects, and callers reorder them as
-they need.
+`dimension_names`. The functions of this module read a node without
+interpreting its layout. They return the array as stored and its axes as
+[`Axis`][brainhops.datamodel.axes.Axis] objects, and the callers reorder the
+axes as they need.
 """
 
 import typing_extensions as tx
@@ -15,7 +15,7 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.io.transformations.zarr._axes import _to_axis
 
-# Axis types that carry the components of a field's vectors.
+# These axis types carry the components of a field's vectors.
 _VECTOR_TYPES = ("displacement", "coordinate")
 
 

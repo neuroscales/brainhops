@@ -17,9 +17,11 @@ class FileBasedTransformation(
 ):
     """Base class of transformations that are stored in files.
 
-    The class dispatches to the concrete formats. A reader derives from it and
-    opts in with the `@register_format` decorator, after which
-    [`load`][brainhops.io.transformations.load] can select that reader.
+    Loading a file through this class selects the concrete format that
+    matches the file and delegates the reading to it. A reader of a concrete
+    format derives from the class and opts in with the `@register_format`
+    decorator, after which [`load`][brainhops.io.transformations.load] can
+    select that reader.
     """
 
 

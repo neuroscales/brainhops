@@ -39,8 +39,8 @@ def _system(
 ) -> tx.Optional[LtaCoordinateSystem]:
     """Return the system of a volume.
 
-    `None` is returned, and the system is unknown, when the struct records no
-    geometry for the volume.
+    When the struct records no geometry for the volume, the system is
+    unknown and `None` is returned.
     """
     return None if info is None else cls.from_struct(info)
 
@@ -63,17 +63,18 @@ class LtaTransformation(
 ):
     """Transformation that can be encoded as a Linear Transform Array.
 
-    LTA, the default linear-transform format of FreeSurfer, represents
+    LTA, the default linear-transform format of FreeSurfer, can represent
     several kinds of affine. This class is the registered format for `.lta`
-    files, read by `io.load` and written by `io.save`. The views
+    files, which `io.load` reads and `io.save` writes. The views
     [`LtaTransformationVoxToVox`][], [`LtaTransformationPhysToPhys`][] and
     [`LtaTransformationRASToRAS`][] read the same files but are not
     registered, since each would claim every `.lta` file.
 
     !!! note "What is written"
-        An untouched transformation is written back as its struct. One whose
-        `matrix`, `input` or `output` was set, including one converted from
-        another affine, is written with the LTA type of its systems:
+        A transformation that has not been modified is written back as its
+        struct. A transformation whose `matrix`, `input` or `output` was
+        set, including one converted from another affine, is written with
+        the LTA type that matches its systems:
 
         | `input` and `output`  | LTA type                    |
         | --------------------- | --------------------------- |
@@ -93,9 +94,10 @@ class LtaTransformation(
     def input(self) -> LtaCoordinateSystem:
         """The input coordinate system.
 
-        Unless set, it is `RASmm` or `RSAmm` for the RAS and RSA types, and is
-        built from the source geometry for the voxel and physical types (`None`
-        without a geometry).
+        Unless the system was set explicitly, it follows from the LTA type.
+        It is `RASmm` for the RAS type and `RSAmm` for the RSA type. For the
+        voxel and physical types, it is built from the source geometry, and
+        it is `None` when the file records no source geometry.
         """
         if getattr(self, "_input", None) is not None:
             return self._input
@@ -113,8 +115,8 @@ class LtaTransformation(
     def output(self) -> LtaCoordinateSystem:
         """The output coordinate system.
 
-        Unless set, it follows from the struct type and the destination
-        geometry.
+        Unless the system was set explicitly, it follows from the LTA type
+        and from the destination geometry, in the same way as `input`.
         """
         if getattr(self, "_output", None) is not None:
             return self._output
@@ -132,7 +134,8 @@ class LtaTransformation(
     def data(self) -> np.ndarray:
         """The `(3, 4)` affine matrix.
 
-        Unless set, it is the affine block of the struct, without its last row.
+        Unless the matrix was set explicitly, it is the matrix stored in the
+        struct, without its last row.
         """
         if getattr(self, "_data", None) is not None:
             return self._data
@@ -209,11 +212,12 @@ class LtaTransformation(
         """Return the [`LtaStruct`][] that encodes the transformation.
 
         If the matrix, input and output all come from the current struct, that
-        struct is returned. Otherwise a new struct takes its type from the
-        systems (see [`LtaTransformation`][]), its matrix from `matrix`, its
-        volume geometries from the systems (voxel and physical types) or from
-        the current struct (RAS and RSA types), and its other header fields
-        from the current struct.
+        struct is returned. Otherwise, a new struct is built. Its type follows
+        from the systems, as described in [`LtaTransformation`][], and its
+        matrix is `matrix`. Its volume geometries come from the systems for
+        the voxel and physical types, and from the current struct for the RAS
+        and RSA types. Its other header fields are copied from the current
+        struct.
 
         Raises
         ------
@@ -393,7 +397,8 @@ def _as_block(
 ) -> LtaStruct.VolumeInfo:
     """Return a volume geometry as a block of type `cls`.
 
-    Without a geometry the block is invalid, as FreeSurfer writes it.
+    When there is no geometry, the block is marked as invalid, which is how
+    FreeSurfer writes a missing geometry.
     """
     if info is None:
         return cls(valid=LtaValidity.VOLUME_INFO_INVALID)
@@ -415,8 +420,9 @@ def _build_struct(xform: LtaTransformation) -> LtaStruct:
         return isinstance(src_system, cls) and isinstance(dst_system, cls)
 
     if both(_systems.RASmm) or both(_systems.RSAmm):
-        # A RAS-to-RAS affine does not depend on the geometry, but FreeSurfer
-        # tools use it, so it is kept.
+        # A RAS-to-RAS affine does not depend on the volume geometries, but
+        # FreeSurfer tools use them, so the geometries of the current struct
+        # are kept.
         lta_type = (
             LtaType.LINEAR_RAS_TO_RAS
             if both(_systems.RASmm)

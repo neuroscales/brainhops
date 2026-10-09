@@ -5,11 +5,15 @@ from brainhops.io.transformations.base import FileBasedTransformation
 class ItkTransform(_xforms.MutableSequence, FileBasedTransformation):
     """Base class for transformations stored in ITK files.
 
-    An ITK file holds a chain of blocks, each of which is parsed directly into
-    a transformation. A file may hold any number of blocks in any order, so the
-    chain is a
+    An ITK file holds a chain of blocks, and the parser turns each block
+    directly into a transformation, such as an
+    [`ItkAffineBase`][brainhops.io.transformations.itk.ItkAffineBase] or an
+    [`ItkDisplacementBase`][brainhops.io.transformations.itk.ItkDisplacementBase].
+    A file may hold any number of blocks in any order, so the chain can be
+    edited and the class is a
     [`MutableSequence`][brainhops.datamodel.transformations.MutableSequence].
-    The class is not registered as a format; its concrete subclasses are.
+    The class itself is not registered as a format, but its concrete
+    subclasses are.
     """
 
     HINTS = ("itk", "ants")

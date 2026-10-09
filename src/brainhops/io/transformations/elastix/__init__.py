@@ -40,24 +40,28 @@ The classic syntax (`itkParameterFileParser.cxx`) has one
 double-quoted string without escapes. `//` starts a comment, tabs count as
 blanks, names may not repeat, and booleans are quoted words such as
 `"true"`. The TOML syntax has one `Name = value` or `Name = [value, ...]`
-entry per line and `#` comments; only the one-line subset that elastix
-writes is parsed, since Python has no TOML parser before 3.11.
+entry per line, and `#` starts a comment. Only the one-line subset of TOML
+that elastix writes is parsed, because Python has no TOML parser before
+3.11.
 
 The parsed map is kept in file order in
 [`parameter_map`][brainhops.io.transformations.elastix.ElastixTransform.parameter_map].
-Registration parameter files share the syntax, so a file is claimed only if it
-names a `Transform` and carries its parameters.
+Registration parameter files share the syntax, so a file is recognised as a
+transform only if it names a `Transform` and gives its parameters.
 
 ## Conventions
 
 Points live in ITK physical space, which is LPS in millimetres. The
-transform maps fixed-image points to moving-image points, the pull
-direction of transformix, so the transformation read has the fixed LPS
-space as input and the moving LPS space as output.
+transform maps points of the fixed image to points of the moving image,
+which is the pull direction that transformix uses to resample. The
+transformation that is read therefore has the fixed LPS space as input and
+the moving LPS space as output.
 
-Each transform is decoded into the block of
-[`brainhops.io.transformations.itk`][] that carries the same parameters,
-`y = M (x - c) + c + t` with center `c`:
+Each elastix transform is decoded into the block of
+[`brainhops.io.transformations.itk`][] that has the same parameters, where
+a block represents one ITK transform as a file stores it. The linear
+blocks map a point `x` to `y = M (x - c) + c + t`, where `c` is the
+center:
 
 | elastix `Transform`          | Parameters                                     | Block                     |
 | ---------------------------- | ---------------------------------------------- | ------------------------- |
@@ -75,17 +79,17 @@ The center is `CenterOfRotationPoint`, in world coordinates. Maps that use
 ITK's own `ITKTransformParameters` and `ITKTransformFixedParameters` are read
 as well. The entries `Size`, `Index`, `Spacing`, `Origin` and `Direction`
 describe the fixed grid onto which transformix resamples. A transformation has
-no slot for an output domain, so this grid is exposed as
+no place for an output domain, so this grid is exposed separately as
 [`fixed_geometry`][brainhops.io.transformations.elastix.ElastixTransform.fixed_geometry],
 a [`Geometry`][brainhops.datamodel.geometry.Geometry] whose transformation maps
 voxels to LPS.
 
 `Direction` and `GridDirection` are written column by column
 (`Conversion::ToVectorOfStrings` on an `itk::Matrix`), which is the
-transpose of ITK's row-major fixed parameters. B-spline coefficients are
-`D` images of world-space displacements, stored back to back with x
-fastest, over a region that starts at `GridIndex`; the first coefficient
-sits at
+transpose of ITK's row-major fixed parameters. B-spline coefficients form
+`D` images of world-space displacements, which are stored one after the
+other with x varying fastest. The images cover a region that starts at
+`GridIndex`, so the first coefficient lies at
 `GridOrigin + GridDirection @ diag(GridSpacing) @ GridIndex`.
 
 ## Chains
@@ -102,23 +106,23 @@ initial transform is also kept, as an `ElastixTransform`, in `initial`.
 A relative name is looked up as elastix does, in the working directory and
 then next to the naming file. elastix writes absolute paths, which break
 when the output folder moves, so a name that is not found is retried by
-its base name next to the file. `initial=False` reads the file's own
-transform only, and `initial=<file name>` or `initial=<transformation>`
-supplies the initial transform.
+its base name next to the file. With `initial=False`, only the file's own
+transform is read, and `initial=<file name>` or `initial=<transformation>`
+supplies the initial transform instead.
 
 ## Writing
 
 An unmodified file is written back as it was read, without rewriting its
-initial files. Otherwise the chain must reduce to one transform. A block
-that elastix has (translation, Euler, similarity, affine or B-spline) keeps
-its class and center, and anything else that reduces to an affine is
+initial files. Otherwise, the chain must reduce to one transform. A block
+that elastix supports (translation, Euler, similarity, affine or B-spline)
+keeps its class and center, and anything else that reduces to an affine is
 written as an `AffineTransform` centered on the origin. The fixed-image
 geometry and the other parameters are kept.
 
 ## Not supported
 
 - `HowToCombineTransforms "Add"`, since `T1(x) + T0(x) - x` is not a
-  chain; such a file is refused unless `initial=False`.
+  chain. Such a file is refused unless `initial=False`.
 - `DeformationFieldTransform` (a separate image), `SplineKernelTransform`, `WeightedCombinationTransform`,
   `MultiBSplineTransformWithNormal`, `BSplineTransformWithDiffusion`, the
   `*StackTransform` family, `ExternalTransform`, and cyclic B-splines

@@ -1,11 +1,14 @@
 """Decoding of elastix transforms into ITK blocks, and encoding back.
 
-elastix transforms are ITK transforms ("Advanced" reimplementations with
-the same parameterization) acting on LPS, so each is decoded into an ITK
-block of [`brainhops.io.transformations.itk`][]. Only the items specific
-to elastix are translated here: the name of the center of rotation,
-column-major direction matrices, and B-spline grids that start at a
-non-zero index.
+The transforms of elastix, which elastix calls "Advanced" transforms, are
+reimplementations of ITK transforms. They have the same parameters as the
+ITK transforms and act on LPS coordinates. Each elastix transform is
+therefore decoded into a block of [`brainhops.io.transformations.itk`][],
+that is, the representation of one ITK transform as a file stores it.
+Only the details that are specific to elastix are translated here: the
+name under which the center of rotation is stored, direction matrices that
+are stored column by column, and B-spline grids that start at a non-zero
+index.
 """
 
 import math
@@ -51,7 +54,8 @@ SUPPORTED = (
 #   B-SPLINE BLOCKS
 # ----------------------------------------------------------------------
 # An ITK BSplineTransform is cubic, while elastix reads the degree from
-# `BSplineTransformSplineOrder`, hence one block per degree.
+# `BSplineTransformSplineOrder`, so this module defines one block class
+# per degree.
 
 
 class _ElastixBSplineStruct(ItkBSplineStruct):
@@ -100,8 +104,9 @@ def ndim_of(pmap: ParameterMap) -> int:
 def direction_of(pmap: ParameterMap, name: str, ndim: int) -> np.ndarray:
     """Read a direction matrix, which elastix stores column by column.
 
-    elastix writes and reads the cosines columns first
-    (`Conversion::ToVectorOfStrings`), the transpose of ITK's row-major order.
+    elastix writes and reads the direction cosines column by column
+    (`Conversion::ToVectorOfStrings`), which is the transpose of the
+    row-major order of ITK.
     """
     values = get_floats(pmap, name)
     if values is None:
@@ -133,8 +138,9 @@ def _vector(
 def fixed_geometry(pmap: ParameterMap) -> tx.Optional[Geometry]:
     """Return the geometry of the fixed image onto which transformix resamples.
 
-    The voxel-to-LPS affine is that of the first voxel of the largest
-    possible region, so it includes the start `Index`, almost always zero.
+    The voxel-to-LPS affine places voxel zero at the first voxel of the
+    largest possible region. The affine therefore includes the start
+    `Index`, which is almost always zero.
     """
     if "Size" not in pmap:
         return None
@@ -151,7 +157,8 @@ def fixed_geometry(pmap: ParameterMap) -> tx.Optional[Geometry]:
     if ndim == 3:
         vox2lps = VoxelToLPS(matrix=matrix)
     else:
-        # `VoxelToLPS` names 3-D spaces only, unlike ITK blocks.
+        # `VoxelToLPS` names 3-D spaces only, whereas ITK blocks can have
+        # any number of dimensions.
         vox2lps = _xforms.Affine(
             matrix=matrix,
             input=_systems.VoxelCoordinateSystem(),
@@ -166,7 +173,11 @@ def fixed_geometry(pmap: ParameterMap) -> tx.Optional[Geometry]:
 
 
 def _parameters(pmap: ParameterMap) -> np.ndarray:
-    """Return the parameters, checked against `NumberOfParameters`."""
+    """Return the transform parameters of a parameter map.
+
+    `ITKTransformParameters` takes precedence when it is present. Otherwise,
+    `TransformParameters` is read and checked against `NumberOfParameters`.
+    """
     params = get_floats(pmap, "ITKTransformParameters")
     if params is not None:
         return params
@@ -190,8 +201,8 @@ def _center(pmap: ParameterMap, ndim: int) -> np.ndarray:
 
     elastix 3.402 and later write `CenterOfRotationPoint`, and maps with ITK
     fixed parameters may hold the center in `ITKTransformFixedParameters`.
-    The older `CenterOfRotation`, a voxel index of the fixed image, is no
-    longer read by elastix or here.
+    The older `CenterOfRotation`, a voxel index of the fixed image, is read
+    neither by current elastix nor by this function.
     """
     center = _vector(pmap, "CenterOfRotationPoint", ndim)
     if center is not None:
@@ -239,7 +250,11 @@ def _struct(
 def _affine_struct(
     ndim: int, matrix: np.ndarray, translation: np.ndarray, center: np.ndarray
 ) -> ItkStruct:
-    """Build an ITK `AffineTransform` block, `y = M (x - c) + c + t`."""
+    """Build an ITK `AffineTransform` block, `y = M (x - c) + c + t`.
+
+    The block stores the matrix row by row, then the translation, and it
+    keeps the center as its fixed parameters.
+    """
     params = np.concatenate([np.asarray(matrix).ravel(), translation])
     return _struct(_ITKT.AffineTransform, ndim, params, center)
 
@@ -247,8 +262,9 @@ def _affine_struct(
 def _dti_matrix(params: np.ndarray, ndim: int) -> np.ndarray:
     """Return the matrix of an `AffineDTITransform`.
 
-    The product is `R @ Gx @ Gy [@ Gz] @ S` (`itkAffineDTI{2,3}DTransform`),
-    with rotations turning the opposite way to those of `EulerTransform`.
+    The matrix is the product `R @ Gx @ Gy [@ Gz] @ S`, as in
+    `itkAffineDTI{2,3}DTransform`, where the rotations turn in the opposite
+    direction to those of `EulerTransform`.
     """
     if ndim == 2:
         (a,), (gx, gy), (sx, sy) = params[0:1], params[1:3], params[3:5]
@@ -274,9 +290,10 @@ def _dti_matrix(params: np.ndarray, ndim: int) -> np.ndarray:
 def _bspline(pmap: ParameterMap, ndim: int, params: np.ndarray) -> ItkStruct:
     """Decode an elastix B-spline into an ITK B-spline block.
 
-    The coefficients are `D` scalar images of world-space displacements
-    stored back to back with x fastest, as in ITK, over the grid region that
-    starts at `GridIndex`. The first coefficient therefore sits at
+    The coefficients form `D` scalar images of world-space displacements,
+    one per dimension. As in ITK, the images are stored one after the other
+    with x varying fastest, and they cover the grid region that starts at
+    `GridIndex`. The first coefficient therefore lies at
     `GridOrigin + GridDirection @ diag(GridSpacing) @ GridIndex`.
     """
     if get_bool(pmap, "UseCyclicTransform"):
@@ -301,7 +318,8 @@ def _bspline(pmap: ParameterMap, ndim: int, params: np.ndarray) -> ItkStruct:
     direction = direction_of(pmap, "GridDirection", ndim)
     _check_length("B-spline", params, ndim * int(np.prod(size)))
     origin = origin + direction @ (spacing * index)
-    # ITK fixed parameters: size, origin, spacing, then direction by rows.
+    # The ITK fixed parameters are the size, the origin and the spacing,
+    # followed by the direction matrix row by row.
     fixed = np.concatenate([size, origin, spacing, direction.ravel()])
     return _struct(
         _ITKT.BSplineTransform, ndim, params, fixed, cls=_BSPLINES[degree]
@@ -311,8 +329,8 @@ def _bspline(pmap: ParameterMap, ndim: int, params: np.ndarray) -> ItkStruct:
 def map_to_block(pmap: ParameterMap) -> ItkStruct:
     """Decode the transform of a parameter map into an ITK block.
 
-    The block maps fixed-image LPS to moving-image LPS and excludes the
-    initial transform.
+    The block maps LPS coordinates of the fixed image to LPS coordinates of
+    the moving image, and it does not include the initial transform.
     """
     name = get_string(pmap, "Transform")
     if name is None:
@@ -385,8 +403,9 @@ def map_to_block(pmap: ParameterMap) -> ItkStruct:
 #   ENCODING
 # ----------------------------------------------------------------------
 
-#: Parameters of the transform itself, which a writer replacing the
-#: transform drops, keeping those of the fixed image, resampler and pixels.
+#: Parameters that describe the transform itself. A writer that replaces
+#: the transform drops these parameters, and it keeps the parameters of the
+#: fixed image, of the resampler and of the pixels.
 TRANSFORM_KEYS = (
     "Transform",
     "NumberOfParameters",
@@ -408,8 +427,9 @@ TRANSFORM_KEYS = (
     "UseCyclicTransform",
 )
 
-#: The elastix transform that stores the parameters of each ITK block
-#: unchanged, with the center in `CenterOfRotationPoint`.
+#: For each class of ITK block, the elastix transform that stores the
+#: parameters of the block unchanged, with the center in
+#: `CenterOfRotationPoint`.
 _ELASTIX_NAMES = {
     _ITKT.TranslationTransform: "TranslationTransform",
     _ITKT.Euler2DTransform: "EulerTransform",
@@ -430,7 +450,11 @@ def _floats(values: tx.Any) -> tx.Tuple[float, ...]:
 
 
 def _block_map(block: ItkStruct) -> tx.Optional[ParameterMap]:
-    """Return the elastix parameters of a block, if elastix has its class."""
+    """Return the elastix parameters of an ITK block.
+
+    The result is `None` when elastix has no transform with the same
+    parameters as the block.
+    """
     ndim = int(block.ndim_input)
     params = np.asarray(block.parameters, dtype=np.float64).ravel()
     fixed = np.asarray(block.fixed_parameters, dtype=np.float64).ravel()
@@ -468,7 +492,8 @@ def _block_map(block: ItkStruct) -> tx.Optional[ParameterMap]:
 def _affine_map(xform: _xforms.Transformation) -> ParameterMap:
     """Encode an affine as an `AffineTransform` centered on the origin.
 
-    With `c = 0`, `y = M x + t`, so the translation is the last column.
+    With the center `c` at zero, the transform maps `x` to `M x + t`, so
+    the translation is the last column of the affine matrix.
     """
     affine = xform
     if not isinstance(affine, _xforms.Affine):
