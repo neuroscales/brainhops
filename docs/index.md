@@ -2,7 +2,9 @@
 icon: octicons/rocket-24
 ---
 
-<center><img src="images/logo.png" alt="brainhops logo" width="50%" /></center>
+<p align="center">
+  <img src="images/logo.png" alt="brainhops logo" width="50%" />
+</p>
 
 # Getting started
 
@@ -12,23 +14,28 @@ icon: octicons/rocket-24
 pip install brainhops
 ```
 
+!!! warning "Early development"
+    brainhops is in a very early stage of development, and its interfaces
+    may change at any time.
+
 ## Description
 
-`brainhops` is a python library to apply spatial transformations to
-images. It aims to support most image and transformation formats used in
-neuroimaging and in microscopy. Most importantly, it aims to scale to
-very large images. To this end, it supports multiple array backends
-(`numpy`, `cupy`, `dask.array`), which allows user to benefit from their
-acceleration and parallelization capabilities.
+brainhops is a library for applying spatial transformations to images. It
+aims to support most of the image and transformation formats used in
+neuroimaging and microscopy.
 
-`brainhops` can be used through two different interfaces:
+A central aim of brainhops is to scale to very large images. Arrays can
+live in several backends (`numpy`, `cupy` and `dask.array`), so the same
+code can run on a GPU or in parallel over chunks of an image that does not
+fit in memory.
 
-- a [**command-line interface**](/start/cli/) (`brainhops --help`),
-  which exposes a subset of functionalities such as
+brainhops has two interfaces:
 
-    * applying chains of transformations to images, meshes or point clouds;
-    * converting between different images and transformations formats.
-
-- a [**python API**](/start/python/) (`import brainhops`) that abstracts
-  away many types of spatial transformations and interfaces with most
+- The [command-line interface](start/cli.md), invoked as `brainhops`,
+  exposes a subset of the library. Its `reslice` command applies a chain of
+  transformations to an image and resamples the result onto a reference
+  grid. Commands for combining transformations and for converting between
+  formats are planned but not implemented yet.
+- The [Python interface](start/python.md), imported as `brainhops`, models
+  many kinds of spatial transformation and reads and writes most
   neuroimaging and microscopy formats.
