@@ -1,9 +1,10 @@
-"""
+"""Type hints shared across the package.
+
 !!! warning "Internal module"
-    `brainhops._core.typing` is internal. It is documented here only to
-    explain the type hints that appear in the public API. Do not import
-    it, and do not rely on anything in it: its contents can change or
-    disappear without notice.
+    `brainhops._core.typing` is an internal module. It is documented only
+    to explain the type hints that appear in the public interface, and it
+    should not be imported or relied upon. It may change or disappear
+    without notice.
 """
 
 __all__ = [
@@ -21,7 +22,6 @@ __all__ = [
     "dkt",
     "is_instance_or_subclass",
 ]
-# externals
 import typing_extensions as tx
 from bagof.core.magic import safe_get_origin
 from bagof.hints import array as art
@@ -38,9 +38,11 @@ T = tx.TypeVar("T")
 def is_instance_or_subclass(
     obj: tx.Any, cls: tx.Union[type, tx.Tuple[type, ...]]
 ) -> bool:
-    """Whether `obj` is an instance of `cls`, or a class that subclasses it.
+    """Return whether an object is an instance or a subclass of a class.
 
-    `False` for anything else, such as `None` or a class outside `cls`.
+    Classes are tested with `issubclass` and other objects with
+    `isinstance`, so the function returns `False` for unrelated classes and
+    for objects such as `None`.
     """
     if isinstance(obj, type):
         return issubclass(obj, cls)
@@ -48,32 +50,32 @@ def is_instance_or_subclass(
 
 
 Deactivated = tx.ClassVar
-"""
-Marking a field as a `ClassVar` makes it virtually innert for itx magic
-metatype. It allows to "deactivate" an inherited field, so that it
-does not appear in the `__init__` signature or in `__repr__`.
+"""Marker that deactivates an inherited field.
 
-It stays listed in `fields(cls)`, but with `init=False` and `var=False`.
+A field redeclared with this marker in a subclass becomes inert. The
+field disappears from the signature of `__init__` and from the generated
+`__repr__`, but it is still listed by `fields(cls)`, with `init=False`
+and `var=False`.
 """
 
 Derived = tx.ClassVar
-"""
-Same idea as `Deactivated`, but with a more semantic names for fields
-that are proper fields in a base class, but become "virtual" (derived)
-in a child class.
+"""Marker for an inherited field that a subclass derives from other data.
+
+The marker behaves like [`Deactivated`][]. It is used when a field that is
+stored by a base class becomes virtual in a subclass.
 """
 
 Const = tx.Annotated[T, Frozen(), NoInit()]
-"""A field that is frozen and cannot be set through the constructor."""
+"""Field that is frozen and cannot be set through the constructor."""
 
 HiddenConst = tx.Annotated[Const[T], NoRepr()]
-"""A `Const` field that is also hidden from the generated `__repr__`."""
+"""Constant field that is also hidden from the generated `__repr__`."""
 
 npscalar = tx.Union[T, ndarray[tx.Tuple[()], dtype[T]]]
-"""A plain scalar, or a zero-dimensional array holding one."""
+"""Scalar, given either as a plain value or as a 0-d array."""
 
 npvector = ndarray[tx.Tuple[int], dtype[T]]
-"""A one-dimensional array."""
+"""One-dimensional array."""
 
 npmatrix = ndarray[tx.Tuple[int, int], dtype[T]]
-"""A two-dimensional array."""
+"""Two-dimensional array."""

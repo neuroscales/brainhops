@@ -1,10 +1,4 @@
-"""The command-line entry point and its subcommand dispatcher.
-
-`build_parser` assembles the top-level parser and registers every
-subcommand. `main` parses the arguments, calls the selected command and
-turns a `CliError` into a message on standard error and a non-zero exit
-code.
-"""
+"""Entry point and dispatcher of the command-line interface."""
 
 from __future__ import annotations
 
@@ -18,7 +12,7 @@ from ._errors import CliError
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the top-level parser with every subcommand registered."""
+    """Build the top-level parser with all the subcommands."""
     parser = argparse.ArgumentParser(
         prog="brainhops",
         description="Scalable spatial transforms.",
@@ -34,12 +28,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: tx.Optional[tx.Sequence[str]] = None) -> int:
-    """Run the command line and return the process exit code.
+    """Run the command-line program and return its exit code.
 
-    Arguments are read from `argv`, or from the process arguments when
-    `argv` is `None`. With no command, the help text is printed and the
-    exit code is `1`. A command that raises `CliError` prints its message
-    to standard error and returns the error's exit code.
+    `argv` defaults to the arguments of the process. Without a command, the
+    help is printed and 1 is returned. A [`CliError`][] is reported on
+    standard error, and its exit code is returned.
     """
     parser = build_parser()
     args = parser.parse_args(argv)

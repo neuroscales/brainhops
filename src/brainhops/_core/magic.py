@@ -1,20 +1,18 @@
-"""Magic extensions."""
+"""Helpers for the field tables of [`bagof.magic`][bagof.magic] classes."""
 
 import typing_extensions as tx
 from bagof.magic import Field
 
-MISSING = Field().type  # hack to access the unexported sentinel
+MISSING = Field().type  # bagof does not export its MISSING sentinel.
 
 
 def field_default(cls: type, name: str, fallback: tx.Any = None) -> tx.Any:
-    """
-    The default value a class declares for one of its fields.
+    """Return the default that a class declares for a field.
 
-    A default that a subclass overrides -- with `on={"_log": True}`, say
-    -- is recorded in the field table and not bound as a class attribute,
-    so `getattr(cls, name)` answers with the value the base class wrote.
-    `fallback` stands in for a name that is not a field, or a field with
-    no default.
+    A default overridden by a subclass, for example with
+    `on={"_log": True}`, lives in the field table, so `getattr(cls, name)`
+    would return the default of the base class. The `fallback` is returned
+    when there is no such field or no default.
     """
     field = getattr(cls, "__magic_fields__", {}).get(name)
     if field is None or field.default is MISSING:
@@ -23,33 +21,37 @@ def field_default(cls: type, name: str, fallback: tx.Any = None) -> tx.Any:
 
 
 def stores(cls: type, name: str) -> bool:
-    """
-    Whether `cls` keeps `name` as a field it is built with.
+    """Return whether a class stores a field that its constructor sets.
 
-    A name the class derives instead -- a `ClassVar` standing in for a
-    field of a base class, an `InitVar` used and thrown away -- is not
-    stored under it, so `replace()` has nothing to carry over for it and
-    a rebuild as another class has to be handed the value.
+    Derived names, such as a `ClassVar` that replaces a base field or a
+    discarded `InitVar`, are not stored, so [`replace`][] cannot carry them
+    over to another class.
     """
     field = getattr(cls, "__magic_fields__", {}).get(name)
     return field is not None and bool(field.init) and not field.var
 
 
 def replace(obj: tx.Any, cls: tx.Optional[type], **changes: tx.Any) -> tx.Any:
+    """Return a copy of a Magic object with some fields replaced.
+
+    Unlike [`replace`][bagof.magic.replace], the copy may be an instance of
+    another class `cls`; with `None`, the type is kept. Changes may name
+    fields by their aliases, and fields that the object lacks take their
+    defaults.
+
+    Raises
+    ------
+    TypeError
+        If a field is given twice, unknown, not accepted by the
+        constructor, or needed by the constructor but neither given nor
+        stored.
+    AttributeError
+        If a field to carry over was never set and has no default.
     """
-    A reimplementation of `bagof.magic.replace` that allows the type of
-    the returned object to be changed.
-    """
-    _field_table(obj, "replace")  # refuse a non-magic object here
+    _field_table(obj, "replace")  # Refuse non-Magic objects first.
     cls = cls or type(obj)
-    # Every field of the *target* class, pseudo-fields included: a change
-    # has to be turned down by name whether or not the name belongs to a
-    # real field, and a class that cannot tell two of its fields apart
-    # cannot say which one a change was meant for. The fields are the new
-    # class's, not the old one's: a rebuild that changes the type -- an
-    # `Identity` as an `Affine`, a tangent as the map it exponentiates --
-    # takes what the new class accepts. A field the new class has and the
-    # old object does not falls back to its default.
+    # The fields of the target class decide what is accepted, so that a
+    # rebuild as another class (Identity as Affine) takes what it accepts.
     keyed = _keyed(_fields_of(cls, "replace").values())
     given, arguments = {}, []
     aliases = {
@@ -66,9 +68,7 @@ def replace(obj: tx.Any, cls: tx.Optional[type], **changes: tx.Any) -> tx.Any:
             )
         given[preferred] = value
     for name, field in keyed.items():
-        # A field the constructor does not take -- one that can be
-        # passed neither by position nor by name, which is what `NoInit`
-        # says -- has no way in.
+        # The constructor does not accept this field, so it cannot be set.
         if not field.init:
             if name in given:
                 raise TypeError(
@@ -81,10 +81,9 @@ def replace(obj: tx.Any, cls: tx.Optional[type], **changes: tx.Any) -> tx.Any:
         elif not field.var:
             value = _value(obj, field, cls, "replace")
         elif field.build:
-            # An InitVar is used during construction and not stored, so
-            # there is nothing to carry over: its default stands in.
-            # The constructor resolves a factory itself, and this is
-            # what it would have been handed.
+            # An InitVar is not stored, so its default stands in. The
+            # constructor resolves a factory itself, and _HasFactory mimics
+            # what the constructor would receive.
             value = _HasFactory(field.factory)
         elif field.default is not MISSING:
             value = field.default
@@ -98,11 +97,9 @@ def replace(obj: tx.Any, cls: tx.Optional[type], **changes: tx.Any) -> tx.Any:
     if given:
         named = ", ".join(repr(name) for name in given)
         raise TypeError(f"{cls.__name__} has no field named {named}.")
-    # A positional-only field cannot be named and a keyword-only one
-    # cannot be counted off, so each value goes back the way its own
-    # field is allowed to be passed. Positional-only fields come first
-    # in the signature, in field order, which is the order they were
-    # collected in.
+    # Positional-only fields cannot be named and keyword-only fields cannot
+    # be counted, so each value is passed as its field allows. Positional-only
+    # fields come first in the signature, in field order.
     positional, keyword = [], {}
     for field, value in arguments:
         if field.positional and not field.kw:
@@ -113,11 +110,10 @@ def replace(obj: tx.Any, cls: tx.Optional[type], **changes: tx.Any) -> tx.Any:
 
 
 def _field_table(obj: tx.Any, caller: str) -> tx.Dict[str, Field]:
-    """Every field of an instance's class, pseudo-fields included.
+    """Return the field table of the class of an instance.
 
-    The lookup goes through `type(obj)` rather than `obj`, so a class
-    handed in by mistake is reported instead of being read as if it were
-    an instance: a class carries the table, its metaclass does not.
+    The lookup on `type(obj)` reports a class passed by mistake, since its
+    metaclass carries no table.
     """
     return _fields_of(type(obj), caller, obj)
 
@@ -125,7 +121,13 @@ def _field_table(obj: tx.Any, caller: str) -> tx.Dict[str, Field]:
 def _fields_of(
     cls: type, caller: str, shown: tx.Any = None
 ) -> tx.Dict[str, Field]:
-    """Every field a Magic class carries, pseudo-fields included."""
+    """Return the field table of a Magic class, including pseudo-fields.
+
+    Raises
+    ------
+    TypeError
+        If the class is not a Magic class.
+    """
     table = getattr(cls, "__magic_fields__", None)
     if table is None:
         raise TypeError(
@@ -136,21 +138,17 @@ def _fields_of(
 
 
 def _keyed(found: tx.Iterable[Field]) -> tx.Dict[str, Field]:
-    """Key fields by the name they are known by outside the class.
-
-    One name reaches one field: a class with two fields under a single
-    outside name is refused when it is built, so the keys here never
-    collide.
-    """
+    """Map fields by their public name, which is unique within a class."""
     return {field.public_name: field for field in found}
 
 
 def _value(obj: tx.Any, field: Field, cls: type, caller: str) -> tx.Any:
-    """The value a field holds, or a written error if it holds none.
+    """Return the value of a field, falling back on its default.
 
-    A rebuild as another class reads the fields that class declares, and
-    the object need not carry all of them: one it does not falls back to
-    the field's default, and only a field with no default is an error.
+    Raises
+    ------
+    AttributeError
+        If the field has neither a value nor a default.
     """
     has_value, value = _stored(obj, field)
     if has_value:
@@ -166,11 +164,7 @@ def _value(obj: tx.Any, field: Field, cls: type, caller: str) -> tx.Any:
 
 
 def _stored(obj: tx.Any, field: Field) -> tx.Tuple[bool, tx.Any]:
-    """Return (has_value, value) for a field on an object.
-
-    A field with no constructor parameter and no default only gets a
-    value when set by hand, so (False, None) is a normal result.
-    """
+    """Return whether a field holds a value on an object, and the value."""
     try:
         return True, getattr(obj, field.name)
     except AttributeError:

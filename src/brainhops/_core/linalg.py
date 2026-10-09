@@ -1,34 +1,28 @@
-# dependencies
 import numpy as np
 import scipy.linalg
 import typing_extensions as tx
 
-# api
 from brainhops.backends import cp, get_array_backend
 from brainhops.errors import DomainError
 
-# typing
 if tx.TYPE_CHECKING:
     from brainhops._core.typing import ArrayProtocol as _ArrayProtocol
 
 ArrayProtocol: tx.TypeAlias = "_ArrayProtocol"
 
-# constants
 
 _RTOL = float(np.sqrt(np.finfo(np.float64).eps))
-"""
-The relative tolerance below which an eigenvalue counts as zero, or as
-real, and an imaginary part as rounding error. Near the boundary of their
-domain the principal square root and logarithm are ill-conditioned, so a
-matrix that is within rounding of it is refused rather than answered.
-"""
+"""Relative tolerance of the eigenvalue tests.
 
-
-# --- linalg -----------------------------------------------------------
+The tolerance, the square root of the float64 machine epsilon, decides when an
+eigenvalue counts as zero or as real. Principal square roots and logarithms are
+ill-conditioned near the boundary of their domain, so matrices within rounding
+error of the boundary are refused rather than given an inaccurate answer.
+"""
 
 
 def inv(matrix: "ArrayProtocol") -> "ArrayProtocol":
-    """The inverse of a square matrix."""
+    """Return the inverse of a square matrix."""
     nx = get_array_backend(matrix)
     return nx.linalg.inv(matrix)
 
@@ -36,11 +30,12 @@ def inv(matrix: "ArrayProtocol") -> "ArrayProtocol":
 def sqrtm(
     matrix: "ArrayProtocol", what: str = "The square root of this matrix"
 ) -> "ArrayProtocol":
-    """
-    The principal square root of a square matrix.
+    """Return the principal square root of a square matrix.
 
-    `what` names the operation in the error a refusal raises, so that a
-    caller can say whose square root it was asking for.
+    The root is computed on the host with SciPy and converted back to the
+    backend of the input. The `what` argument names the operation in the
+    [`DomainError`][] raised when the matrix is not square or has no real
+    principal root.
     """
     host = to_host(matrix, dtype=np.float64)
     dtype = dtype_or_float64(matrix)
@@ -52,7 +47,10 @@ def sqrtm(
 def expm(
     tangent: ArrayProtocol, what: str = "The exponential of this matrix"
 ) -> ArrayProtocol:
-    """The exponential of a square matrix: every real one has one."""
+    """Return the exponential of a square matrix, which always exists.
+
+    The `what` argument names the operation in error messages.
+    """
     host = to_host(tangent)
     require_square(host, what)
     return to(scipy.linalg.expm(host), tangent)
@@ -61,15 +59,15 @@ def expm(
 def logm(
     matrix: ArrayProtocol, what: str = "The logarithm of this matrix"
 ) -> ArrayProtocol:
-    """The principal logarithm of a square matrix."""
+    """Return the principal logarithm of a square matrix.
+
+    The logarithm is computed and checked as in [`sqrtm`][].
+    """
     host = to_host(matrix, dtype=np.float64)
     dtype = dtype_or_float64(matrix)
     require_square(host, what)
     require_principal(host, what)
     return to(ensure_real(scipy.linalg.logm(host)), matrix, dtype=dtype)
-
-
-# --- checks utils -----------------------------------------------------
 
 
 class _BoolWithMessage:
@@ -91,17 +89,14 @@ class _BoolWithMessage:
         return self._value
 
 
-# --- checks -----------------------------------------------------------
-
-
 def is_positive(array: ArrayProtocol) -> bool:
-    """Whether all elements of an array are positive."""
+    """Return whether all the values of an array are strictly positive."""
     backend = get_array_backend(array)
     return not bool(backend.any(array <= 0))
 
 
 def require_positive(array: ArrayProtocol, what: str = "This") -> None:
-    """Refuse values that are not all positive."""
+    """Raise a [`DomainError`][] unless all values are strictly positive."""
     if not is_positive(array):
         raise DomainError(
             f"{what} is not defined: its values must all be positive, "
@@ -110,12 +105,12 @@ def require_positive(array: ArrayProtocol, what: str = "This") -> None:
 
 
 def is_square(matrix: ArrayProtocol) -> bool:
-    """Whether a matrix is square."""
+    """Return whether an array is a square two-dimensional matrix."""
     return matrix.ndim == 2 and matrix.shape[0] == matrix.shape[1]
 
 
 def require_square(matrix: ArrayProtocol, what: str = "This") -> None:
-    """Refuse a matrix that is not square."""
+    """Raise a [`DomainError`][] unless a matrix is square."""
     if not is_square(matrix):
         rows, cols = matrix.shape
         raise DomainError(
@@ -136,12 +131,13 @@ def is_principal(
 
 
 def is_principal(linear: ArrayProtocol, return_reason: bool = False):
-    """
-    Whether a linear transformation is principal.
+    """Return whether a matrix has a real principal square root and logarithm.
 
-    The principal square root and logarithm of a real matrix exist, and
-    are real, exactly when it has no eigenvalue on the closed negative
-    real axis (Higham, Functions of Matrices, Thms 1.29 and 1.31).
+    A real matrix has both when it has no eigenvalue on the closed
+    negative real axis (Higham, *Functions of Matrices*, theorems 1.29 and
+    1.31). Matrices that are not finite or are numerically singular are
+    rejected too. With `return_reason=True`, the result is a boolean-like
+    object whose string gives the reason, for use in error messages.
     """
     nx = get_array_backend(linear)
     if not bool(nx.isfinite(linear).all()):
@@ -172,12 +168,9 @@ def require_principal(linear: np.ndarray, what: str = "This") -> None:
         )
 
 
-# --- backend utils ----------------------------------------------------
-
-
 def to_host(array: ArrayProtocol, **kwargs) -> np.ndarray:
-    # A small matrix or vector, as a float64 numpy array. The matrix
-    # functions run on the host, whatever backend the parameter lives on.
+    # Matrix functions run on the host, as small float64 NumPy arrays,
+    # whatever the backend of the input.
     backend = get_array_backend(array)
     if cp and backend is cp:
         array = array.get()
@@ -185,16 +178,12 @@ def to_host(array: ArrayProtocol, **kwargs) -> np.ndarray:
 
 
 def to(result: np.ndarray, like: ArrayProtocol, **kwargs) -> ArrayProtocol:
-    """
-    Return `result` with the same backend and dtype as `like`.
-    """
+    """Convert a NumPy result to the array backend of `like`."""
     return get_array_backend(like).asarray(result, **kwargs)
 
 
 def dtype_or_float64(like: ArrayProtocol) -> np.dtype:
-    """
-    The dtype of `like` if it is floating, else float64.
-    """
+    """Return the dtype of `like` if it is floating, and float64 otherwise."""
     nx = get_array_backend(like)
     dtype = nx.dtype(getattr(like, "dtype", nx.float64))
     if not nx.issubdtype(dtype, nx.floating):
@@ -203,9 +192,10 @@ def dtype_or_float64(like: ArrayProtocol) -> np.dtype:
 
 
 def ensure_real(result: ArrayProtocol) -> ArrayProtocol:
-    """
-    Ensure that the input is real (has zero imaginary part), and return
-    it as a real array.
+    """Return the real part of an array whose imaginary part is negligible.
+
+    The imaginary part is negligible below `_RTOL` times the larger of one
+    and the largest magnitude, and a [`DomainError`][] is raised otherwise.
     """
     nx = get_array_backend(result)
     if nx.iscomplexobj(result):

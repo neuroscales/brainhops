@@ -1,9 +1,7 @@
 """Loading and saving helpers shared by the commands.
 
-These wrap the `brainhops.io` entry points with the error handling the
-command line needs. A missing input file, or an output format that has no
-writer yet, becomes a `CliError` with a message a user can act on rather
-than a traceback.
+The helpers wrap [`brainhops.io`][brainhops.io] so that failures become a
+[`CliError`][] with an actionable message instead of a traceback.
 """
 
 from __future__ import annotations
@@ -19,7 +17,7 @@ from ._errors import CliError, WritingUnavailable
 
 
 def _image_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
-    """The image readers available under each registered hint."""
+    """Map each image format hint to the registered image formats."""
     from brainhops.io.images.base import FileBasedImage
 
     result: tx.Dict[str, tx.Set[type]] = {}
@@ -30,17 +28,17 @@ def _image_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
 
 
 def image_format_hints() -> tx.Set[str]:
-    """The format hints recognized after an image path in the CLI."""
+    """Return the format hints that may follow an image path."""
     return set(_image_formats_by_hint())
 
 
 def load_image(source: tx.Union[str, ImageSpec]) -> Image:
-    """Read an image from a file, or raise a `CliError`.
+    """Read an image from a path or a source specification.
 
-    Strings are parsed as image source specifications. The format is
-    detected unless the specification supplies hints, and any registered
-    image format is accepted. Invalid specifications, missing paths and
-    unreadable formats are reported as `CliError` instances.
+    The format is detected from the file unless the specification supplies
+    format hints. A [`CliError`][] is raised if the specification or one of
+    its hints is invalid, if the file does not exist, or if the image cannot
+    be read.
     """
     try:
         spec = (
@@ -69,7 +67,7 @@ def load_image(source: tx.Union[str, ImageSpec]) -> Image:
 
 
 def _transform_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
-    """The transformation readers available under each registered hint."""
+    """Map each transformation format hint to the registered formats."""
     from brainhops.io.transformations.base import FileBasedTransformation
 
     result: tx.Dict[str, tx.Set[type]] = {}
@@ -80,7 +78,7 @@ def _transform_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
 
 
 def transform_format_hints() -> tx.Set[str]:
-    """The format hints recognized after a transform path in the CLI."""
+    """Return the format hints that may follow a transformation path."""
     return set(_transform_formats_by_hint())
 
 
@@ -88,11 +86,12 @@ def load_transform(
     source: tx.Union[str, TransformationSpec],
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
 ) -> tx.Any:
-    """Read a transformation from a file, or raise a `CliError`.
+    """Read a transformation from a path or a source specification.
 
-    The format is detected from the file unless `hint` names a specific
-    reader. A path that does not exist, an unknown hint, or content that
-    the selected reader cannot parse is reported as a `CliError`.
+    The format is detected from the file unless format hints are supplied,
+    either in the specification or with `hint`, but not both. A
+    [`CliError`][] is raised if the hints are invalid, if the file does not
+    exist, or if the transformation cannot be read.
     """
     spec = (
         source
@@ -132,16 +131,10 @@ def load_transform(
 
 
 def save_image(image: Image, output: str) -> None:
-    """Write an image to a file, or raise `WritingUnavailable`.
+    """Write an image, with a format chosen from the file name.
 
-    The output format is chosen from the file name by `brainhops.io.save`.
-    When no image format is registered for the name, none of them stands
-    out, or the one chosen cannot write this image, the image is left
-    unwritten and
-    `WritingUnavailable` is raised. The computation that produced the
-    image has already succeeded at that point, so the error says that
-    the image could not be saved, and why, rather than reading as a
-    crash.
+    A [`WritingUnavailable`][] error is raised if no single format is able
+    to write the image to `output`.
     """
     try:
         io.save(image, output)
