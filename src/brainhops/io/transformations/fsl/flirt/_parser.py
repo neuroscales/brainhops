@@ -15,6 +15,8 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common._arrays import ArrayContainerError, read_text_rows
 from brainhops.io.common.nifti._header import _NiftiObject
 
+from .._keywords import pop_aliased
+
 # A nibabel image or header, or a brainhops image.
 _ImageLike = tx.Union[_NiftiObject, Image]
 
@@ -66,12 +68,8 @@ class FlirtMatrixReader(Magic, TextFileReader, repr=HIDE_IF_NONE):
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
-        moving = kwargs.pop("moving", None)
-        if moving is None:
-            moving = kwargs.pop("src", None)
-        reference = kwargs.pop("reference", None)
-        if reference is None:
-            reference = kwargs.pop("ref", None)
+        moving = pop_aliased(cls, kwargs, "moving")
+        reference = pop_aliased(cls, kwargs, "reference")
         rows = _read_matrix_rows(lines)
         if not rows:
             raise SnifferContentError("Empty FLIRT matrix file.")

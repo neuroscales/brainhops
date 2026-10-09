@@ -220,6 +220,31 @@ def test_flirt_from_lines_accepts_an_array_moving() -> None:
     assert other.moving is moving
 
 
+@pytest.mark.parametrize("keyword", ["moving", "mov", "src"])
+def test_flirt_mat_file_accepts_every_moving_alias(
+    tmp_path,  # noqa: ANN001
+    keyword,  # noqa: ANN001
+) -> None:
+    """A `.mat` file reader accepts each alias of `moving` (#372)."""
+    path = tmp_path / "src2ref.mat"
+    np.savetxt(str(path), FLIRT_MATRIX, fmt="%.8g")
+    moving = _image(MOV_SHAPE, MOV_AFFINE)
+    loaded = io.transformations.load(
+        path, ref=_image(REF_SHAPE, REF_AFFINE), **{keyword: moving}
+    )
+    assert loaded.moving is moving
+    assert np.allclose(
+        loaded.homogeneous_matrix, EXPECTED_FLIRT_REF2MOV, atol=1e-4
+    )
+
+
+def test_flirt_from_lines_rejects_two_moving_aliases() -> None:
+    """Giving the moving image twice is an error, as in the constructor."""
+    lines = ["1 0 0 0", "0 1 0 0", "0 0 1 0", "0 0 0 1"]
+    with pytest.raises(TypeError, match="multiple values"):
+        FlirtTransform.from_lines(lines, moving=np.eye(4), mov=np.eye(4))
+
+
 def test_flirt_is_dispatched_from_a_mat_file(tmp_path) -> None:  # noqa: ANN001
     path = tmp_path / "src2ref.mat"
     np.savetxt(str(path), FLIRT_MATRIX, fmt="%.8g")
@@ -420,6 +445,40 @@ def test_coefficient_field_needs_both_images() -> None:
     coef.moving = _real_src()
     with pytest.raises(ValueError, match="reference image is needed"):
         _ = coef.transformations
+
+
+@pytest.mark.parametrize("keyword", ["moving", "mov", "src"])
+def test_fnirt_reader_accepts_every_moving_alias(keyword) -> None:  # noqa: ANN001
+    """The FNIRT reader accepts each alias of `moving` (#372)."""
+    moving = _real_src()
+    coef = io.transformations.load(
+        fsl_dir / "coefficientfield.nii.gz",
+        ref=_real_ref(),
+        **{keyword: moving},
+    )
+    assert coef.moving is moving
+    assert len(coef) == 3
+
+
+def test_coefficient_field_ignores_an_invalid_deformation_type() -> None:
+    """An invalid `deformation_type` does not hide the chain (#373)."""
+    coef = io.transformations.load(
+        fsl_dir / "coefficientfield.nii.gz",
+        reference=_real_ref(),
+        moving=_real_src(),
+    )
+    coef.deformation_type = "bogus"
+    assert len(coef) == len(coef.transformations) == 3
+
+
+def test_deformation_field_with_an_invalid_deformation_type_is_empty() -> None:
+    """A deformation field with an invalid type has no chain to iterate."""
+    warp = io.transformations.load(
+        fsl_dir / "displacementfield.nii.gz", moving=_real_src()
+    )
+    assert len(warp) > 0
+    warp.deformation_type = "bogus"
+    assert len(warp) == 0
 
 
 def test_coefficient_field_chain_shape() -> None:
