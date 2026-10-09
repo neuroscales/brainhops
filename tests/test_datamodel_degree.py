@@ -1,4 +1,4 @@
-"""The spline degree of fields and reslices is `degree` (#283)."""
+"""Tests that the spline degree of fields and reslices is called `degree`."""
 
 import numpy as np
 import pytest

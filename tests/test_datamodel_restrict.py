@@ -1,10 +1,8 @@
-"""Tests for the dispatched `restrict` / `embed` operations.
+"""Tests of the dispatched `restrict` and `embed`.
 
-`restrict(t, rows, cols, ni, no)` cuts a transformation down to a decoupled
-block of its axes, keeping the cheaper type, keeping a lazy inverse lazy,
-and returning the same object when the block covers all of it. `embed` puts
-a transformation over some axes back into a wider space. Each registered
-rule is exercised once, plus the refusal of an unsupported type.
+`restrict` cuts a transformation down to a decoupled block of its axes,
+and `embed` puts it back into a wider space. Each registered rule is
+exercised once.
 """
 
 import numpy as np
@@ -37,14 +35,7 @@ from brainhops.errors import RestrictionError
 
 
 def _inverted(forward: object) -> bool:
-    """Whether `forward` has already derived its own inverse parameter.
-
-    Every concrete family derives it under `_inverse`, a `lazyproperty`
-    that caches on the forward under `_cache__inverse` and is cleared when
-    the forward's `data` or a flag is assigned. A lazy `Inverse` reports
-    that value rather than holding one, so an empty cache means nothing
-    was inverted.
-    """
+    """Return whether the forward has already derived its inverse parameter."""
     return "_cache__inverse" in forward.__dict__
 
 
@@ -139,8 +130,9 @@ def test_sequence_covering_the_block_is_the_same_object() -> None:
 
 
 def test_sequence_is_restricted_member_by_member() -> None:
-    # Regression: a partial block of a sequence with no affine reading used
-    # to be dropped as the identity.
+    # Regression: a partial block of a sequence without an affine reading was
+    #
+    # dropped as the identity.
     seq = Sequence(
         [
             Scaling(scale=np.asarray([2.0, 3.0])),
@@ -188,8 +180,7 @@ def test_partial_inverse_of_a_sequence_stays_lazy() -> None:
 def test_inverse_covering_the_block_is_the_same_lazy_object(
     forward: object,
 ) -> None:
-    # Every typed inverse (which is also an instance of the family it
-    # inverts) reaches the `Inverse` rule, not its family's.
+    # A typed inverse reaches the rule of `Inverse`, not that of its family.
     inverse = forward.inverse()
     assert isinstance(inverse, Inverse)
     assert restrict(inverse, [0, 1], [0, 1], 2, 2) is inverse
@@ -207,8 +198,9 @@ def test_partial_inverse_is_reinverted_lazily() -> None:
 
 
 def test_partial_affine_inverse_swaps_the_block() -> None:
-    # The forward maps 2 axes to 3 (its inverse maps 3 to 2): the forward
-    # is restricted over the swapped block.
+    # The forward maps 2 axes to 3, so it is restricted over the swapped
+    #
+    # block.
     matrix = np.asarray([[2.0, 0.0, 1.0], [0.0, 4.0, 0.0], [0.0, 1.0, 0.0]])
     forward = Affine(matrix=matrix)
     piece = restrict(forward.inverse(), [1], [1, 2], 3, 2)
@@ -255,20 +247,21 @@ def test_subspace_field_with_a_pass_through_axis_stays_wrapped() -> None:
 
 
 def test_inner_less_reindex_over_its_whole_group_is_a_local_swap() -> None:
-    # `in 0 -> out 1`, `in 1 -> out 0`, axis 2 passes through.
+    # Input 0 goes to output 1, input 1 to output 0, and axis 2 passes
+    #
+    # through.
     piece = restrict(_sub(None, [0, 1], [1, 0]), [0, 1], [0, 1], 3, 3)
     assert type(piece) is Affine
     assert np.array_equal(_matrix(piece), [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]])
 
 
 def test_inner_less_reindex_one_acted_axis_in_order_is_nothing() -> None:
-    # The block holds `in 0 -> out 1` only: an identity piece.
+    # The block holds only input 0 going to output 1, an identity piece.
     assert restrict(_sub(None, [0, 1], [1, 0]), [1], [0], 3, 3) is None
 
 
 def test_inner_less_reindex_partial_block_out_of_order() -> None:
-    # `in 2 -> out 0` with the pass-through `in 1 -> out 1`: in the block's
-    # local axes, output 0 reads input 1 and output 1 reads input 0.
+    # Input 2 goes to output 0 and input 1 passes through.
     piece = restrict(_sub(None, [0, 2], [2, 0]), [0, 1], [1, 2], 3, 3)
     assert type(piece) is Affine
     assert np.array_equal(_matrix(piece), [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]])
@@ -330,7 +323,7 @@ def test_embed_refuses_an_unsupported_type() -> None:
 
 
 def test_embed_refuses_a_transform_that_contradicts_its_axes() -> None:
-    # A 2-axis scaling cannot act on the single axis `[1]`.
+    # A 2-axis scaling cannot act on the single axis [1].
     with pytest.raises(RestrictionError, match="1 input axes were given"):
         embed(Scaling(scale=np.asarray([2.0, 3.0])), [1], [1], 3, 3)
 
@@ -399,15 +392,13 @@ def test_axis_counts_are_read_from_the_transformation(
         Affine(matrix=None),
         Scaling(scale=None),
         Inverse(forward=None),
-        # An endpoint-less subspace: its reconstructed system spans only up
-        # to its highest named axis, so it is not read.
+        # A subspace without endpoints spans only up to its highest named axis.
         SubspaceTransformation(
             transformation=Scaling(scale=np.ones(1), input=_system(1)),
             input_axes=np.asarray([0]),
             output_axes=np.asarray([0]),
         ),
-        # A sequence is not read across a member that may change the
-        # dimension without stating by how much.
+        # A member that may change the number of axes by an unknown amount.
         Sequence([Projection(dropped=[1]), Scaling(scale=np.ones(2))]),
     ],
     ids=lambda v: type(v).__name__,

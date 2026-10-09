@@ -1,11 +1,8 @@
-"""Tests for the readers of coordinate systems once systems may be open.
+"""Tests for axis readers on open coordinate systems.
 
-An open system (its axes hold `...`) states only some of its axes.
-Every reader of axes treats a plain `CoordinateSystem()` (whose axes
-default to `[...]`) and a missing endpoint alike -- neither states an
-axis -- counts axes only when a system is closed, and never guesses what
-`...` stands for. As an endpoint, though, a missing system (`None`) is
-deferred, and an explicit one is kept as given.
+An open system holds `...` among its axes. A missing endpoint and
+CoordinateSystem() both state no axis; axes are counted only in a closed system
+and are never guessed behind `...`.
 """
 
 import numpy as np
@@ -55,8 +52,7 @@ from brainhops.errors import (
 CS = CoordinateSystem
 X, Y, Z = Axis(name="x"), Axis(name="y"), Axis(name="z")
 
-# The ways of saying "no axis of this system is known", as read by the
-# readers of axes: a missing system, or one whose axes are `[...]`.
+# The ways to state that no axis is known.
 UNKNOWN = {
     "missing": None,
     "default": CS(),
@@ -66,14 +62,13 @@ UNKNOWN = {
 
 @pytest.fixture(params=list(UNKNOWN), ids=list(UNKNOWN))
 def unknown(request: pytest.FixtureRequest) -> tx.Optional[CS]:
-    """A system none of whose axes is known, or none at all."""
+    """A system with no known axes, or no system at all."""
     return UNKNOWN[request.param]
 
 
 @pytest.fixture(params=["[...]", "(...,)"])
 def unknown_axes(request: pytest.FixtureRequest) -> tx.Sequence:
-    """The axes of a system about which nothing is known, as a list or a
-    tuple."""
+    """The axes of a system with no known axes."""
     return [...] if request.param == "[...]" else (...,)
 
 
@@ -82,8 +77,7 @@ def _xyz() -> CS:
 
 
 def _scale_x(inner: tx.Optional[CS] = None) -> SubspaceTransformation:
-    # `Sub(Scaling([2], input=inner, output=inner), axes=[0])`: a subspace
-    # that names no full-space system.
+    # A subspace scaling of axis 0 that names no full-space system.
     return SubspaceTransformation(
         transformation=Scaling(
             scale=np.array([2.0]), input=inner, output=inner
@@ -99,9 +93,7 @@ def _scale_x(inner: tx.Optional[CS] = None) -> SubspaceTransformation:
 
 
 def test_a_subspace_reports_an_open_full_space_system() -> None:
-    # Regression. The full-space system a subspace derives from its inner
-    # system used to stop at the last acted-on axis, so this subspace
-    # reported a one-axis system inside a three-axis chain.
+    # Regression: the derived system used to stop at the last axis acted on.
     sub = _scale_x(CS(axes=[X]))
     assert sub.input == CS(axes=[X, ...])
     assert sub.input.ndim is None
@@ -109,17 +101,15 @@ def test_a_subspace_reports_an_open_full_space_system() -> None:
 
 
 def test_a_subspace_with_an_open_system_is_not_embedded_by_guess() -> None:
-    # Regression. `to(Affine)` used to build a 1x2 matrix from the
-    # one-axis system it reported.
+    # Regression: to(Affine) used to build a 1x2 matrix.
     with pytest.raises(ConversionError, match="axis count .* is unknown"):
         _scale_x(CS(axes=[X])).to(Affine)
 
 
 @pytest.mark.parametrize("where", ["before", "after", "between"])
 def test_a_subspace_composes_in_a_3d_chain(where: str) -> None:
-    # Regression. Composing the subspace with 3D affines used to raise a
-    # matmul `ValueError`. The affines state the number of axes of the
-    # space they share with the subspace, which closes it.
+    # Regression: this raised a matmul ValueError. The 3D affines close the
+    # system.
     sub = _scale_x(CS(axes=[X]))
     shift = Translation(translation=np.array([1.0, 2.0, 3.0]))
     chain = {
@@ -150,8 +140,7 @@ def test_a_subspace_closed_by_its_neighbour_keeps_its_axes() -> None:
 def test_a_neighbour_too_small_for_the_subspace_is_refused(
     inner: tx.Optional[CS],
 ) -> None:
-    # The subspace acts on axis 3, which a 3D neighbour does not have: the
-    # count is not stretched to fit, the composition is refused.
+    # The neighbour lacks axis 3, and the count is not stretched.
     sub = SubspaceTransformation(
         transformation=Scaling(
             scale=np.array([2.0]), input=inner, output=inner
@@ -181,10 +170,7 @@ def test_a_declared_full_space_system_is_still_used() -> None:
 def test_a_subspace_with_an_unknown_inner_system(
     unknown: tx.Optional[CS],
 ) -> None:
-    # An inner system that states no axis gives nothing to place: whatever
-    # its spelling, the subspace knows nothing of its full space, refuses
-    # to guess its size, and is closed by a neighbour that knows it. A
-    # missing inner system stays missing, and an explicit one is kept.
+    # The full-space size is not guessed until a neighbour closes it.
     sub = _scale_x(unknown)
     assert sub.input == unknown
     assert sub.input is None or sub.input.ndim is None
@@ -196,8 +182,6 @@ def test_a_subspace_with_an_unknown_inner_system(
 
 
 def test_a_missing_full_space_system_is_derived() -> None:
-    # A subspace with no declared system derives its full-space system from
-    # its inner system.
     sub = SubspaceTransformation(
         transformation=Scaling(scale=np.array([2.0]), input=CS(axes=[X])),
         input_axes=np.array([1]),
@@ -207,8 +191,7 @@ def test_a_missing_full_space_system_is_derived() -> None:
 
 
 def test_a_declared_unknown_system_is_kept(unknown_axes: tx.Sequence) -> None:
-    # A declared system is the subspace's full-space system, even one that
-    # says nothing about its axes: only a missing one is derived.
+    # Only a missing system is derived.
     sub = SubspaceTransformation(
         transformation=Scaling(scale=np.array([2.0]), input=CS(axes=[X])),
         input_axes=np.array([1]),
@@ -260,8 +243,6 @@ def test_get_ndim_reads_closed_systems_only(unknown: tx.Optional[CS]) -> None:
 
 
 def test_systems_disagree_on_open_systems(unknown: tx.Optional[CS]) -> None:
-    # Unknown or compatible: no disagreement. A conflict between the axes
-    # that are known: a disagreement.
     assert not systems_disagree(unknown, _xyz())
     assert not systems_disagree(_xyz(), unknown)
     assert not systems_disagree(CS(axes=[X, ...]), _xyz())
@@ -293,19 +274,15 @@ def test_a_family_dimension_is_contradicted_only_by_known_axes(
 # ----------------------------------------------------------------------
 #   ENDPOINTS: None DEFERS, AN EXPLICIT SYSTEM IS KEPT
 # ----------------------------------------------------------------------
-# An endpoint that is `None` is no system: the transformation defers to
-# its context for it -- a sequence to its children, an inverse to its
-# forward, a simplification to the other side. An endpoint that is a
-# system is kept as given, even `CoordinateSystem()`, which says nothing
-# about its axes.
+# None defers to the context, while a system, even CoordinateSystem(), is kept
+# as given.
 
-# A declared system that says nothing about its axes, in each spelling.
 EMPTY = {"default": CS(), "axes=[...]": CS(axes=[...])}
 
 
 @pytest.fixture(params=list(EMPTY), ids=list(EMPTY))
 def empty(request: pytest.FixtureRequest) -> CS:
-    """An explicit system about which nothing is known."""
+    """An explicit system that states no axis."""
     return EMPTY[request.param]
 
 
@@ -337,7 +314,6 @@ def test_an_inverse_keeps_an_explicit_endpoint(empty: CS) -> None:
     )
     inverse = Inverse(forward=forward, input=empty, output=empty)
     assert inverse.input is empty and inverse.output is empty
-    # ... and carries it back onto the forward.
     assert inverse.inverse().input is empty
 
 
@@ -361,23 +337,19 @@ def test_a_bijection_keeps_an_explicit_side(empty: CS) -> None:
 
 
 def test_a_missing_endpoint_is_not_propagated_over_a_known_one() -> None:
-    # An identity with no input does not overwrite the input of the
-    # transform it simplifies into.
+    # An identity without an input does not overwrite a known one.
     affine = Affine(matrix=np.eye(3, 4), input=_xyz(), output=_xyz())
     seq = Sequence(transformations=[Identity(), affine])
     assert seq.simplify().input == _xyz()
 
 
 def test_an_explicit_endpoint_is_propagated(empty: CS) -> None:
-    # An identity that declares its input, even one that says nothing about
-    # its axes, gives that input to the transform it simplifies into.
     affine = Affine(matrix=np.eye(3, 4), input=_xyz(), output=_xyz())
     seq = Sequence(transformations=[Identity(input=empty), affine])
     assert seq.simplify().input is empty
 
 
 def test_a_known_endpoint_is_propagated_onto_a_missing_one() -> None:
-    # A sequence's own endpoint reaches a first element with no input.
     first = Scaling(scale=np.array([2.0, 2.0, 2.0]))
     seq = Sequence(transformations=[first], input=_xyz())
     assert seq._flattened().transformations[0].input == _xyz()
@@ -419,12 +391,10 @@ def test_bridge_between_compatible_systems_is_the_identity(
 @pytest.mark.parametrize(
     "source, target",
     [
-        # x is known on one side at the start, and elsewhere on the other:
-        # reordering would move axes that `...` hides.
+        # Reordering would move axes hidden by `...`.
         (CS(axes=[X, ...]), CS(axes=[Y, X, Z])),
         (CS(axes=[Y, X, Z]), CS(axes=[..., Y])),
-        # RAS to LPS is a flip of the known axes, but the bridge would also
-        # have to carry the axes that `...` stands for.
+        # The flip would also carry the axes behind `...`.
         (CS(axes=[R(), A(), S(), ...]), LPSCoordinateSystem()),
     ],
 )
@@ -486,9 +456,8 @@ def test_grid_extents_close_an_open_grid_system_from_its_shape() -> None:
 
 
 def test_the_discrete_check_reads_an_open_derived_system() -> None:
-    # The subspace declares no full-space system, so it derives an open
-    # one from its inner field's system. The check still finds the
-    # discrete axis at the position the inner axis is placed at.
+    # The discrete axis is found at its inner position in the derived open
+    # system.
     discrete = Axis(name="c", discrete=True)
     inner_system = CS(axes=[discrete, SpaceAxis(name="y")])
     field = DisplacementField(

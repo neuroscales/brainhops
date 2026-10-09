@@ -1,22 +1,17 @@
-"""ITK binary MATLAB transforms (`.mat`), the files ANTs writes affines to.
+"""Tests for ITK binary MATLAB transforms (.mat), as written by ANTs.
 
-The fixtures are `<prefix>0GenericAffine.mat` files written by SimpleITK
-through `itk::MatlabTransformIO`, the writer `antsRegistration` uses, and
-`tests/data/generate_itk_fixtures.py` stores the affine SimpleITK reports
-for each beside it. Other variants -- big-endian, single precision,
-older class names, chains -- are encoded below, byte for byte.
+The <prefix>0GenericAffine.mat fixtures were written by SimpleITK, and
+tests/data/generate_itk_fixtures.py stores the affine that SimpleITK
+reports beside each one. Other variants are encoded byte for byte here.
 """
 
-# stdlib
 from pathlib import Path
 
-# dependencies
 import numpy as np
 import pytest
 import typing_extensions as tx
 from numpy.typing import ArrayLike
 
-# internals
 from brainhops import io
 from brainhops.datamodel import transformations as xforms
 from brainhops.io.base.parsers import (
@@ -52,11 +47,7 @@ def _variable(
     rowwise: bool = False,
     cols: int = 1,
 ) -> bytes:
-    """Encode one MATLAB v4 variable, as `vnl_matlab_write` does.
-
-    The header and the values are in byte order `order`, and the type
-    records it (`M`), VNL's row-wise flag (`O`) and the precision (`P`).
-    """
+    """Encode one MATLAB v4 variable as vnl_matlab_write does."""
     values = np.asarray(values, dtype=order + precision)
     mopt = (
         (0 if order == "<" else 1000)
@@ -70,7 +61,7 @@ def _variable(
 
 
 def _parameters(ndim: int) -> tx.Tuple[np.ndarray, np.ndarray]:
-    """The parameters and fixed parameters of a fixture."""
+    """Return the parameters and fixed parameters of a fixture."""
     block = MatTransform.from_file(_fixture(ndim))[0]
     return np.asarray(block.parameters), np.asarray(block.fixed_parameters)
 
@@ -104,7 +95,7 @@ def test_generic_affine_is_the_affine_itk_reads(ndim: int) -> None:
 
 
 def test_generic_affine_fixtures_still_match_simpleitk() -> None:
-    """The stored expectations are still what ITK itself reports."""
+    """The stored expectations are still what ITK reports."""
     sitk = pytest.importorskip("SimpleITK")
     for ndim in NDIMS:
         transform = sitk.ReadTransform(str(_fixture(ndim)))
@@ -120,10 +111,7 @@ def test_generic_affine_fixtures_still_match_simpleitk() -> None:
 
 @pytest.mark.parametrize("ndim", NDIMS)
 def test_big_endian_and_single_precision_read_the_same(ndim: int) -> None:
-    """`vnl_matlab_write` writes in the native byte order of the machine
-    that wrote the file, so a big-endian machine writes big-endian files.
-    A `float` transform has single precision parameters, but its fixed
-    parameters are `double`, as they are for every ITK transform."""
+    """Big-endian and float files, as other machines and types write them."""
     parameters, fixed = _parameters(ndim)
     name = f"AffineTransform_double_{ndim}_{ndim}"
     for order in "<>":
@@ -143,7 +131,7 @@ def test_big_endian_and_single_precision_read_the_same(ndim: int) -> None:
 
 
 def test_matrix_offset_transform_base_is_an_affine() -> None:
-    """Older ANTs releases name their affines after the base class."""
+    """Older ANTs releases name affines after the base class."""
     parameters, fixed = _parameters(3)
     content = _variable(
         "MatrixOffsetTransformBase_double_3_3", parameters
@@ -154,9 +142,7 @@ def test_matrix_offset_transform_base_is_an_affine() -> None:
 
 
 def test_a_composite_keeps_every_block_in_application_order() -> None:
-    """A chain repeats the `fixed` name, so it cannot be read as a
-    mapping of names to values. The composite's own pair is skipped,
-    and ITK applies the last block of a composite first."""
+    """The composite pair is skipped and the last block applies first."""
     parameters, fixed = _parameters(3)
     translation = [10.0, 20.0, 30.0]
     content = b"".join(
@@ -178,9 +164,7 @@ def test_a_composite_keeps_every_block_in_application_order() -> None:
 
 
 def test_a_plain_list_reads_the_transform_at_position() -> None:
-    """Without a composite pair, each pair is its own transform: the
-    first is read by default, with a warning, and `position=` picks
-    another one."""
+    """Without a composite pair, the transform at `position` is read."""
     from brainhops.io.base.parsers import ParserContentError
 
     parameters, fixed = _parameters(3)
@@ -203,9 +187,7 @@ def test_a_plain_list_reads_the_transform_at_position() -> None:
 
 
 def test_variables_are_read_in_pairs_as_itk_reads_them() -> None:
-    """`MatlabTransformIO::Read` takes the variable after the parameters
-    as the fixed parameters whatever its name, and accepts VNL's row-wise
-    flag, which changes nothing for a vector."""
+    """The variable after the parameters is fixed whatever its name."""
     parameters, fixed = _parameters(3)
     content = _variable(
         "AffineTransform_double_3_3", parameters, rowwise=True
@@ -215,8 +197,7 @@ def test_variables_are_read_in_pairs_as_itk_reads_them() -> None:
 
 
 def test_encoded_variants_read_as_itk_reads_them(tmp_path) -> None:  # noqa: ANN001
-    """The variants encoded above are files ITK itself reads, to the same
-    mapping, so the encoder is not just agreeing with the reader."""
+    """ITK reads every encoded variant to the same mapping."""
     sitk = pytest.importorskip("SimpleITK")
     parameters, fixed = _parameters(3)
     name = "AffineTransform_double_3_3"
@@ -250,9 +231,9 @@ def test_what_itk_refuses_is_refused() -> None:
     refused = [
         # Truncated values.
         content[:-8],
-        # No fixed parameters: ITK reads variables in pairs.
+        # No fixed parameters, while ITK reads variables in pairs.
         _variable(name, parameters),
-        # Not column vectors: ITK only reads those.
+        # Not column vectors, the only shape that ITK reads.
         _variable(name, parameters, cols=12) + _variable("fixed", fixed),
         _variable(name, parameters, cols=2) + _variable("fixed", fixed),
     ]
@@ -290,9 +271,9 @@ def test_mat_is_dispatched_from_an_open_file(filename: Path) -> None:
 def test_sniffer_claims_only_itk_matlab_files() -> None:
     content = _fixture(3).read_bytes()
     assert MatTransform.sniff_bytes(content) == 1.0
-    # A MATLAB v4 variable that is not named after an ITK class.
+    # A MATLAB v4 variable not named after an ITK class.
     assert MatTransform.sniff_bytes(_variable("data", [1.0, 2.0])) == 0.0
-    # A MATLAB v5 file starts with a text header.
+    # MATLAB v5 starts with a text header.
     v5 = b"MATLAB 5.0 MAT-file, Platform: GLNXA64".ljust(128, b" ")
     assert MatTransform.sniff_bytes(v5) == 0.0
     # A FLIRT matrix is text.
@@ -303,7 +284,7 @@ def test_sniffer_claims_only_itk_matlab_files() -> None:
 
 
 def test_flirt_and_itk_mat_files_go_to_their_own_readers(tmp_path) -> None:  # noqa: ANN001
-    """Both formats use `.mat`, so only their content tells them apart."""
+    """FLIRT and ITK files share .mat and differ only by content."""
     pytest.importorskip("nibabel")
     from brainhops.io.transformations.fsl.flirt import FlirtTransform
 
@@ -312,7 +293,7 @@ def test_flirt_and_itk_mat_files_go_to_their_own_readers(tmp_path) -> None:  # n
     ants = tmp_path / "out0GenericAffine.mat"
     ants.write_bytes(_fixture(3).read_bytes())
 
-    # Each sniffer scores the other format's file as a firm "no".
+    # Each sniffer gives the file of the other a firm no.
     assert FlirtTransform.sniff(ants) == 0.0
     assert FlirtTransform.sniff_bytes(ants.read_bytes()) == 0.0
     assert MatTransform.sniff(flirt) == 0.0
@@ -343,8 +324,7 @@ def _from_affine(matrix: np.ndarray) -> MatTransform:
 
 @pytest.mark.parametrize("ndim", NDIMS)
 def test_a_fixture_is_written_back_byte_for_byte(ndim: int) -> None:
-    """A block read from a file keeps its class and its center, so it is
-    written back as ITK wrote it."""
+    """A block read from a file keeps its class and center."""
     content = _fixture(ndim).read_bytes()
     assert MatTransform.from_bytes(content).to_bytes() == content
 
@@ -359,7 +339,7 @@ def test_an_affine_round_trips(ndim: int, tmp_path) -> None:  # noqa: ANN001
     (block,) = transform.transformations
     assert block.type == itk.ItkTransformClass.AffineTransform
     assert block.precision == itk.ItkPrecision.Double
-    # A brainhops affine has no center: ITK's is the origin.
+    # A brainhops affine has no center, so the ITK center is the origin.
     np.testing.assert_array_equal(np.asarray(block.fixed_parameters), 0)
     np.testing.assert_allclose(_affine(transform), matrix, atol=1e-12)
 
@@ -370,8 +350,7 @@ def test_an_affine_round_trips(ndim: int, tmp_path) -> None:  # noqa: ANN001
 def test_scipy_reads_what_is_written(
     ndim: int, precision: str, byteorder: str
 ) -> None:
-    """`scipy.io.loadmat` reads MATLAB v4 files, and sees the two
-    variables `MatlabTransformIO` writes, at their precision."""
+    """scipy.io.loadmat reads both variables at their precision."""
     from io import BytesIO
 
     scipy_io = pytest.importorskip("scipy.io")
@@ -402,7 +381,7 @@ def test_scipy_reads_what_is_written(
         parameters[ndim * ndim :, 0], matrix[:, -1], rtol=1e-6
     )
 
-    # And the reader reads it back the same.
+    # The reader reads the file back the same.
     (block,) = MatTransform.from_bytes(content).transformations
     assert block.precision == precision
     np.testing.assert_allclose(_affine(block), matrix, rtol=1e-6, atol=1e-6)
@@ -417,8 +396,7 @@ def test_the_default_encoding_is_little_endian_double() -> None:
 
 @pytest.mark.parametrize("precision", ["double", "float"])
 def test_a_centered_block_keeps_its_center(precision: str) -> None:
-    """A block that carries a center is written with it: the parameters
-    are not rewritten about the origin."""
+    """A centered block is written with its center as given."""
     parameters, fixed = _parameters(3)
     block = itk.ItkStruct(
         type="AffineTransform",
@@ -456,7 +434,7 @@ def test_what_itk_cannot_hold_is_refused(tmp_path) -> None:  # noqa: ANN001
 
     matrix = _random_affine(3)
     refused = [
-        # Not ITK's space.
+        # Not the space that ITK works in.
         MatTransform(
             [
                 xforms.Affine(
@@ -466,7 +444,7 @@ def test_what_itk_cannot_hold_is_refused(tmp_path) -> None:  # noqa: ANN001
         ),
         # Not square.
         MatTransform([xforms.Affine(np.ones((2, 4)))]),
-        # A chain: ITK applies the blocks of a composite last to first.
+        # A chain of blocks, or no block at all.
         MatTransform(
             transformations=[xforms.Affine(matrix), xforms.Affine(matrix)]
         ),
@@ -498,7 +476,7 @@ def test_written_files_are_read_by_itk(tmp_path) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("ndim", NDIMS)
 def test_ants_use_inverse_is_the_inverse(ndim: int) -> None:
-    """`[file.mat,1]` in an ANTs transform list is `~io.load(file.mat)`."""
+    """[file.mat,1] in an ANTs transform list is ~io.load(file.mat)."""
     inverse = ~io.load(_fixture(ndim))
     homogeneous = np.eye(ndim + 1)
     homogeneous[:ndim] = _expected(ndim)

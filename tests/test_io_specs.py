@@ -1,4 +1,4 @@
-"""Tests for structured I/O source specifications."""
+"""Tests of structured I/O source specifications."""
 
 import pytest
 import typing_extensions as tx
@@ -222,7 +222,7 @@ def test_qualification_distinguishes_ambiguous_leaf_hints() -> None:
 
 
 def test_builtin_formats_expose_semantic_hint_namespaces() -> None:
-    # The FSL and NIfTI formats are registered only with nibabel.
+    # The FSL and NIfTI formats are only registered with nibabel.
     pytest.importorskip("nibabel")
 
     from brainhops.io.transformations.fsl.flirt import FlirtTransform

@@ -1,14 +1,11 @@
-"""Tests for elastix / transformix transform parameter files."""
+"""Tests for elastix and transformix transform parameter files."""
 
-# stdlib
 import shutil
 from pathlib import Path
 
-# dependencies
 import numpy as np
 import pytest
 
-# internals
 from brainhops import io
 from brainhops.datamodel import systems
 from brainhops.datamodel import transformations as xforms
@@ -29,8 +26,7 @@ from brainhops.io.transformations.elastix._parser import (
 
 data_dir = Path(__file__).parent / "data" / "elastix"
 
-#: Every case for which transformix's own answer is stored, and the file
-#: that is read for it (the last link of a chain).
+# Cases with a stored transformix answer, keyed to the file read for each.
 CASES = {
     path.name[: -len("_expected.npz")]: path
     for path in sorted(data_dir.glob("*_expected.npz"))
@@ -84,18 +80,14 @@ TRANSLATION = """
 # ----------------------------------------------------------------------
 #   TRANSFORMIX GROUND TRUTH
 # ----------------------------------------------------------------------
-#
-# The fixtures were written by elastix itself, and their expectations
-# computed by transformix (see `data/elastix/generate_elastix_fixtures.py`).
+# Fixtures from data/elastix/generate_elastix_fixtures.py.
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_fixed_geometry_is_the_grid_transformix_resamples_onto(
     name: str,
 ) -> None:
-    """`Size`, `Spacing`, `Origin` and the column-major `Direction` are
-    read the way elastix reads them: the fixtures use a non-symmetric
-    direction, so reading it row-major would give another grid."""
+    """The fixed grid is read with a column-major Direction, as in elastix."""
     expected = np.load(CASES[name])
     geometry = io.load(FILES[name]).fixed_geometry
     np.testing.assert_allclose(
@@ -108,23 +100,19 @@ def test_fixed_geometry_is_the_grid_transformix_resamples_onto(
 
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_points_map_as_transformix_maps_them(name: str) -> None:
-    """Every fixed-grid point lands where transformix sends it."""
+    """Every point of the fixed grid lands where transformix sends it."""
     expected = np.load(CASES[name])
     shape = expected["disp"].shape[:-1]
     points = _grid_points(expected["vox2lps"], shape)
     xform = io.load(FILES[name])
-    # transformix computes its deformation field in single precision.
+    # Transformix computes the deformation field in single precision.
     np.testing.assert_allclose(
         _apply(xform, points), points + expected["disp"], atol=1e-5
     )
 
 
 def test_fixtures_still_match_transformix(tmp_path: Path) -> None:
-    """The stored expectations are still what transformix computes.
-
-    The tests above run from the committed arrays, so the suite does not
-    need ITK-Elastix. This re-derives them when it is installed.
-    """
+    """The stored expectations still equal the output of transformix."""
     itk_ = pytest.importorskip("itk")
     if not hasattr(itk_, "ParameterObject"):
         pytest.skip("ITK is installed without elastix")
@@ -180,8 +168,7 @@ def test_hints(hint: str, filename: str, cls: type) -> None:
 def test_a_registration_parameter_file_is_not_claimed(
     tmp_path: Path,
 ) -> None:
-    """elastix's registration parameter files share the syntax, and name
-    a `Transform` too, but carry no transform parameters."""
+    """A registration parameter file names a Transform but is not claimed."""
     path = _text(
         tmp_path,
         "Parameters.Rigid.txt",
@@ -226,10 +213,10 @@ def test_text_syntax() -> None:
 @pytest.mark.parametrize(
     "line",
     [
-        "Transform EulerTransform",  # not between brackets
-        '(Transform "EulerTransform)',  # odd quotes
-        '("Transform" 1)',  # no name
-        "(Bad-Name 1)",  # invalid character
+        "Transform EulerTransform",
+        '(Transform "EulerTransform)',
+        '("Transform" 1)',
+        "(Bad-Name 1)",
     ],
 )
 def test_text_syntax_errors(line: str) -> None:
@@ -314,9 +301,7 @@ def test_bspline_degree(degree: int) -> None:
 
 
 def test_bspline_grid_index_moves_the_first_coefficient() -> None:
-    """The coefficient images span the region that starts at
-    `GridIndex`, so their first voxel is `GridIndex` voxels away from
-    `GridOrigin`."""
+    """The first coefficient lies GridIndex voxels from GridOrigin."""
     xform = io.load(FILES["bspline3d"])
     pmap = xform.parameter_map
     spacing = np.asarray(pmap["GridSpacing"], float)
@@ -333,7 +318,7 @@ def test_bspline_grid_index_moves_the_first_coefficient() -> None:
 
 
 def test_itk_transform_parameters_are_accepted(tmp_path: Path) -> None:
-    """elastix also reads ITK's own parameters, under ITK names."""
+    """Parameters stored under their ITK names are also read, as in elastix."""
     path = _text(
         tmp_path,
         "itk.txt",
@@ -388,8 +373,7 @@ def test_cyclic_bsplines_are_refused(tmp_path: Path) -> None:
 
 
 def test_a_center_given_as_an_index_is_refused(tmp_path: Path) -> None:
-    """elastix < 3.402 wrote the center as a fixed-image index, which
-    current elastix no longer reads either."""
+    """A center given as a voxel index (elastix < 3.402) is refused."""
     text = EULER.replace("CenterOfRotationPoint", "CenterOfRotation")
     with pytest.raises(NotImplementedError, match="CenterOfRotation"):
         ElastixParameterTransform.from_file(_text(tmp_path, "old.txt", text))
@@ -409,8 +393,7 @@ def test_ignored_direction_cosines_warn(tmp_path: Path) -> None:
 
 
 def test_chain_is_initial_first() -> None:
-    """elastix composes `T1(T0(x))`: the initial transform applies
-    first, so its blocks come first."""
+    """The initial transform applies first, so its blocks come first."""
     xform = io.load(FILES["chain"])
     assert len(xform) == 2
     assert isinstance(xform.initial, ElastixParameterTransform)
@@ -420,7 +403,7 @@ def test_chain_is_initial_first() -> None:
 
 
 def test_chain_follows_the_deprecated_key() -> None:
-    """`InitialTransformParametersFileName`, with an "s", still works."""
+    """The deprecated key InitialTransformParametersFileName is followed."""
     xform = io.load(FILES["chain3"])
     assert "InitialTransformParametersFileName" in xform.parameter_map
     assert len(xform) == 3
@@ -441,21 +424,19 @@ def test_chain_initial_can_be_given(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="initial"):
         ElastixParameterTransform.from_file(path)
 
-    # By file name ...
+    # An initial transform given by file name.
     xform = ElastixParameterTransform.from_file(
         path, initial=data_dir / "euler3d.txt"
     )
     assert len(xform) == 2
-    # ... or as a transformation.
+    # An initial transform given as a transformation.
     shift = xforms.Translation([1.0, 0.0, 0.0])
     xform = ElastixParameterTransform.from_file(path, initial=shift)
     assert xform[0] is shift
 
 
 def test_chain_from_text_needs_a_location() -> None:
-    """Text read from memory has no directory to resolve a relative
-    initial transform against; it is looked for from the working
-    directory only."""
+    """Text from memory resolves an initial transform from the cwd only."""
     text = TRANSLATION + '(InitialTransformParameterFileName "nowhere.txt")'
     with pytest.raises(FileNotFoundError):
         ElastixParameterTransform.from_text(text)
@@ -463,8 +444,7 @@ def test_chain_from_text_needs_a_location() -> None:
 
 
 def test_chain_moved_absolute_path_is_found_by_name(tmp_path: Path) -> None:
-    """elastix writes absolute paths, which break once a folder is moved.
-    The base name is then looked for next to the file that names it."""
+    """A moved absolute path is found by base name beside the file."""
     shutil.copy(FILES["euler3d"], tmp_path / "TransformParameters.0.txt")
     text = TRANSLATION + (
         "(InitialTransformParameterFileName "
@@ -486,8 +466,7 @@ def test_chain_loops_are_refused(tmp_path: Path) -> None:
 
 
 def test_addition_is_refused(tmp_path: Path) -> None:
-    """`HowToCombineTransforms "Add"` gives `T1(x) + T0(x) - x`, which a
-    chain cannot express."""
+    """HowToCombineTransforms "Add" is not a chain and is refused."""
     shutil.copy(FILES["euler3d"], tmp_path / "TransformParameters.0.txt")
     text = TRANSLATION + (
         '(InitialTransformParameterFileName "TransformParameters.0.txt")\n'
@@ -559,8 +538,7 @@ def test_an_affine_is_written_centered_on_the_origin(
 def test_a_block_is_written_as_its_elastix_transform(
     tmp_path: Path, name: str
 ) -> None:
-    """A block that elastix has keeps its class, center and grid, and the
-    fixed image geometry of the map it replaces is kept."""
+    """A block keeps its class, center, grid and fixed geometry."""
     xform = io.load(FILES[name])
     block = xform[0]
     xform.transformations = [block]
@@ -577,7 +555,7 @@ def test_a_block_is_written_as_its_elastix_transform(
         np.asarray(again.fixed_geometry.transformation.matrix),
         np.asarray(xform.fixed_geometry.transformation.matrix),
     )
-    # And it still maps the fixed grid where transformix does.
+    # The fixed grid still maps where transformix maps it.
     expected = np.load(CASES[name])
     points = _grid_points(expected["vox2lps"], expected["disp"].shape[:-1])
     np.testing.assert_allclose(
@@ -616,7 +594,7 @@ def test_unrepresentable_chains_are_refused(tmp_path: Path) -> None:
 
 
 def test_the_base_is_not_registered() -> None:
-    """Only the two syntaxes take part in dispatch."""
+    """Only the text and TOML syntaxes take part in dispatch."""
     registry = io.transformations.FileBasedTransformation._REGISTRY
     assert ElastixParameterTransform in registry
     assert ElastixTomlTransform in registry

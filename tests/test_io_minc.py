@@ -1,12 +1,7 @@
-"""
-Tests for MINC images (MINC1 and MINC2).
+"""Tests for MINC1 and MINC2 images.
 
-`nibabel` cannot write MINC, so the fixtures are written here from the
-specifications: MINC1 with `scipy.io.netcdf_file`, MINC2 with `h5py`,
-following the MINC2 layout (`/minc-2.0/dimensions`, `/minc-2.0/image/0`).
-The reader must agree with `nibabel` on the (scaled) voxels and on the
-voxel-to-world matrix, present the voxels in F order, and recognise both
-versions from their content.
+nibabel cannot write MINC, so the fixtures are built from the specification:
+MINC1 with scipy's netcdf_file and MINC2 with h5py.
 """
 
 import gzip
@@ -53,7 +48,7 @@ def _raw(dims):  # noqa: ANN001, ANN202
 
 
 def _scales(dims):  # noqa: ANN001, ANN202
-    """Per-slice (along the slowest dimension) image-min / image-max."""
+    """Per-slice image-min and image-max along the slowest dimension."""
     n = LENGTHS[dims[0]]
     return np.linspace(-1.0, 0.0, n), np.linspace(1.0, 2.0, n)
 
@@ -77,7 +72,6 @@ def write_minc1(
     geometry: bool = True,
     scaled: bool = True,
 ) -> None:
-    """Write a MINC1 (NetCDF classic) file."""
     raw = _raw(dims)
     f = netcdf_file(fileobj, "w", version=1)
     for d in dims:
@@ -112,7 +106,6 @@ def write_minc2(
     scaled: bool = True,
     dtype: type = np.int16,
 ) -> None:
-    """Write a MINC2 (HDF5) file, with the layout of the MINC2 spec."""
     raw = _raw(dims).astype(dtype)
     with h5py.File(filename, "w") as f:
         root = f.create_group("minc-2.0")
@@ -139,7 +132,7 @@ def write_minc2(
 
 
 def expected_voxels(dims):  # noqa: ANN001, ANN201
-    """The real values of the fixtures' voxels, in file order."""
+    """Real voxel values of the fixture, in file order."""
     raw = _raw(dims).astype(np.float64)
     imin, imax = _scales(dims)
     shape = (-1,) + (1,) * (len(dims) - 1)
@@ -148,7 +141,7 @@ def expected_voxels(dims):  # noqa: ANN001, ANN201
 
 
 def expected_vox2world(dims):  # noqa: ANN001, ANN201
-    """The voxel-to-world matrix of the F-ordered array."""
+    """The vox2world matrix of the F-ordered array."""
     spatial = [d for d in reversed(dims) if d in COSINES]
     cos = np.array([COSINES[d] for d in spatial]).T
     matrix = np.eye(4)
@@ -210,7 +203,7 @@ def test_vox2world_matches_nibabel(anyminc) -> None:  # noqa: ANN001
     _, filename = anyminc
     image = io.images.load(filename)
     reference = nb.load(str(filename)).affine
-    # nibabel's affine indexes the C-ordered array; ours the F-ordered one.
+    # nibabel's affine indexes the C-ordered array; ours is F-ordered.
     flip = np.eye(4)[[2, 1, 0, 3]]
     np.testing.assert_allclose(image.vox2world, reference @ flip)
     np.testing.assert_allclose(
@@ -250,8 +243,7 @@ def test_dimensions_are_kept(anyminc) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("version", [1, 2])
 def test_permuted_dimensions(tmp_path, version) -> None:  # noqa: ANN001
-    """A sagittal file (xspace slowest) reads with its axes named after
-    the MINC dimensions, and the same world matrix as nibabel's."""
+    """Axes of a sagittal file are named after the MINC dimensions."""
     dims = ("xspace", "zspace", "yspace")
     filename = str(tmp_path / "sag.mnc")
     (write_minc1 if version == 1 else write_minc2)(filename, dims=dims)
@@ -267,8 +259,7 @@ def test_permuted_dimensions(tmp_path, version) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("version", [1, 2])
 def test_time_dimension(tmp_path, version) -> None:  # noqa: ANN001
-    """A 4D volume: time is an axis of the voxel and physical spaces, in
-    seconds, and does not move a point in the world."""
+    """Time is an axis of both spaces, in seconds, and does not move points."""
     dims = ("time", "zspace", "yspace", "xspace")
     filename = str(tmp_path / "4d.mnc")
     (write_minc1 if version == 1 else write_minc2)(filename, dims=dims)
@@ -287,8 +278,7 @@ def test_time_dimension(tmp_path, version) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("version", [1, 2])
 def test_default_geometry(tmp_path, version) -> None:  # noqa: ANN001
-    """Without step, start or direction cosines, MINC's defaults hold:
-    unit steps along each dimension's own world axis, from 0, in mm."""
+    """Without geometry, MINC defaults to unit steps in mm from the origin."""
     filename = str(tmp_path / "plain.mnc")
     (write_minc1 if version == 1 else write_minc2)(filename, geometry=False)
     image = io.images.load(filename)
@@ -299,7 +289,6 @@ def test_default_geometry(tmp_path, version) -> None:  # noqa: ANN001
 
 
 def test_minc1_float(tmp_path) -> None:  # noqa: ANN001
-    """Floating-point voxels are not scaled."""
     filename = str(tmp_path / "float.mnc")
     write_minc1(filename, dtype="f")
     data = np.asarray(io.images.load(filename).data)
@@ -308,7 +297,6 @@ def test_minc1_float(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_minc2_float(tmp_path) -> None:  # noqa: ANN001
-    """Floating-point voxels are not scaled."""
     filename = str(tmp_path / "float.mnc")
     write_minc2(filename, dtype=np.float32)
     data = np.asarray(io.images.load(filename).data)
@@ -318,8 +306,7 @@ def test_minc2_float(tmp_path) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("version", [1, 2])
 def test_unscaled_is_unsupported(tmp_path, version) -> None:  # noqa: ANN001
-    """nibabel needs image-min/image-max, which the MINC library always
-    writes; their absence is reported, without leaking the file."""
+    """nibabel needs image-min and image-max; their absence is reported."""
     filename = str(tmp_path / "unscaled.mnc")
     (write_minc1 if version == 1 else write_minc2)(filename, scaled=False)
     with warnings.catch_warnings():
@@ -360,7 +347,6 @@ def test_name_does_not_matter(tmp_path, anyminc) -> None:  # noqa: ANN001
 
 
 def test_header_only_until_data(anyminc) -> None:  # noqa: ANN001
-    """Loading reads the header; the voxels are read on first access."""
     _, filename = anyminc
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -476,8 +462,7 @@ def test_generic_load(anyminc) -> None:  # noqa: ANN001
 
 
 def test_unsupported_vector_dimension(tmp_path) -> None:  # noqa: ANN001
-    """A dimension with no describing variable (vector_dimension) is not
-    supported by nibabel, and says so."""
+    """A dimension without a variable, such as vector_dimension, fails."""
     filename = str(tmp_path / "rgb.mnc")
     f = netcdf_file(filename, "w", version=1)
     for d, n in (("zspace", 2), ("yspace", 2), ("xspace", 2)):

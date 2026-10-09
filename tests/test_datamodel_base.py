@@ -1,5 +1,4 @@
-"""Tests for the ``from_*`` constructors on ``DataModelBase``, and for the
-converter that uses them."""
+"""Tests of the `from_*` constructors of data models and of their converter."""
 
 import pytest
 import typing_extensions as tx
@@ -37,7 +36,7 @@ class _FixedKind(_Kinded):
 
 
 class _Refixed(_FixedKind):
-    # A subclass may fix the field its own way: it is still a _FixedKind.
+    # A subclass may fix the field its own way and remain a `_FixedKind`.
     kind: Const[str] = "refixed"
 
 
@@ -47,13 +46,12 @@ class _Holder(DataModelBase):
 
 
 class _StrictHolder(DataModelBase):
-    # Not optional: a union would report its own failure instead.
+    # Not optional, since a union would report its own failure instead.
     fixed: _FixedKind = _FixedKind()
 
 
 def test_from_dict_carries_plain_fields() -> None:
-    # Regression (#61): the incoming values were keyed on `field.alias`,
-    # which is unset for a plain field, so the value was silently dropped.
+    # Regression (#61): values were keyed on the unset alias and dropped.
     obj = _Plain.from_dict({"x": 5, "y": 7})
     assert obj.x == 5
     assert obj.y == 7
@@ -71,8 +69,7 @@ def test_from_dict_lets_keyword_arguments_take_precedence() -> None:
 
 
 def test_from_instance_carries_plain_fields() -> None:
-    # Regression (#61): the value was keyed on `field.alias`, so
-    # reconstruction raised `TypeError: keywords must be strings`.
+    # Regression (#61): values were keyed on the unset alias, which raised.
     obj = _Plain.from_instance(_Plain(x=5, y=7))
     assert obj.x == 5
     assert obj.y == 7
@@ -96,8 +93,9 @@ def test_from_instance_accepts_a_fixed_field_that_agrees_or_is_unset() -> None:
 
 
 def test_from_instance_refuses_a_fixed_field_that_disagrees() -> None:
-    # The parent may carry any `kind`, the child always has "fixed": the
-    # parent's value cannot be dropped silently.
+    # The value of the parent cannot be dropped silently, so a disagreement is
+    #
+    # refused.
     with pytest.raises(ValueError, match="always 'fixed'"):
         _FixedKind.from_instance(_Kinded(kind="other"))
 
@@ -109,9 +107,9 @@ def test_from_dict_refuses_a_fixed_field_that_disagrees() -> None:
 
 
 def test_from_other_does_not_read_a_plain_object_as_a_parent() -> None:
-    # `object` is a parent of every class, but an instance of it has
-    # nothing to read: it goes to the constructor, which refuses it,
-    # rather than yielding a default instance.
+    # Every class derives from `object`, but an `object` instance has nothing
+    #
+    # to read, so the constructor refuses it.
     with pytest.raises(ConversionError):
         _Plain.from_any(object())
 
@@ -129,8 +127,9 @@ def test_converter_reads_a_mapping_through_from_other() -> None:
 
 
 def test_converter_reads_a_parent_instance_through_from_other() -> None:
-    # Regression: the converter called the class itself, which took the
-    # parent instance as the value of the first field.
+    # Regression: the parent instance was taken as the value of the first
+    #
+    # field.
     obj = get_converter(_Child)(_Plain(x=5, y=7))
     assert type(obj) is _Child
     assert (obj.x, obj.y, obj.z) == (5, 7, None)
@@ -157,7 +156,7 @@ def test_from_instance_leaves_defaults_in_place_of_unset_attributes() -> None:
     class _Defaulted(_Plain):
         y: tx.Optional[int] = 3
 
-    # `y` is unset (None) on the parent: the child's default stays.
+    # `y` is unset on the parent, so the default of the child stays.
     assert _Defaulted.from_instance(_Plain(x=1)).y == 3
 
 
@@ -175,8 +174,7 @@ def test_from_instance_skips_the_fixed_check_for_an_instance() -> None:
 
 
 def test_a_fixed_field_is_checked_before_the_instance_is_built() -> None:
-    # `x` cannot be converted either, but the contradiction is what the
-    # source got wrong first.
+    # `x` cannot be converted either, but the fixed field is checked first.
     with pytest.raises(ValueError, match="always 'fixed'"):
         _FixedKind.from_dict({"kind": "other", "x": "not a number"})
 

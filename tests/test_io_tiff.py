@@ -1,11 +1,8 @@
-"""
-Tests for TIFF images (plain, BigTIFF, OME-TIFF, ImageJ, pyramidal) read
-and written with tifffile. Reading TIFF with Pillow when tifffile is
-missing is tested in `test_io_pillow.py`.
+"""Tests for TIFF images read via tifffile.
 
-Fixtures are generated with tifffile (and Pillow, for files tifffile
-always tags), so that each test states the exact layout and metadata of
-the file it reads.
+These cover plain TIFF, BigTIFF, OME-TIFF, ImageJ and pyramidal files. The
+fixtures are written with tifffile, or with Pillow for files that tifffile
+always tags, so that each test states the exact layout and metadata.
 """
 
 import gc
@@ -93,12 +90,12 @@ def test_read_plain_is_a_transposed_memory_map(tmp_path: Path) -> None:
     assert isinstance(image, TiffImage)
     assert image.dialect is None
     np.testing.assert_array_equal(image.data, GREY.T)
-    # A view of a memory map, F-ordered: nothing copied.
+    # An F-ordered view of the memory map; nothing is copied.
     assert isinstance(image.data.base, np.memmap)
     assert image.data.flags.f_contiguous
     assert _names(image) == ["x", "y"]
     assert image.transformation.input.name == "pixel"
-    # Copy-on-write: writing does not change the file.
+    # Copy-on-write: the file is unchanged.
     image.data[0, 0] = 1
     np.testing.assert_array_equal(tifffile.imread(tmp_path / "a.tif"), GREY)
 
@@ -114,8 +111,7 @@ def test_read_compressed_is_decoded(tmp_path: Path) -> None:
     path = _write(
         tmp_path, "a.tif", STACK, compression="zlib", metadata={"axes": "ZCYX"}
     )
-    # `lazy=False`: with dask as the array backend, the pixels would
-    # otherwise be read as a dask array, which has no `base`.
+    # With a dask backend, the pixels would be a dask array without `base`.
     image = load(path, lazy=False)
     assert not isinstance(image.data.base, np.memmap)
     np.testing.assert_array_equal(image.data, STACK.transpose(3, 2, 0, 1))
@@ -222,7 +218,7 @@ def test_resolution_tags(
 @pytest.mark.parametrize(
     "options",
     [
-        {},  # tifffile's default: 1/1, no unit
+        {},  # tifffile default: 1/1, no unit
         {"resolution": (2, 2), "resolutionunit": "NONE"},  # aspect only
         {"resolution": (72, 72), "resolutionunit": "INCH"},  # placeholder
         {"resolution": (96, 96), "resolutionunit": "INCH"},  # placeholder
@@ -236,8 +232,7 @@ def test_resolution_tags_unknown(tmp_path: Path, options: tx.Any) -> None:
 
 
 def test_resolution_tags_absent(tmp_path: Path) -> None:
-    # Pillow writes no resolution tags at all; tifffile then reports 1
-    # pixel per inch, which must not be taken for a size.
+    # Pillow writes no resolution tags, and tifffile reports 1 px/inch.
     from PIL import Image
 
     path = tmp_path / "a.tif"
@@ -404,10 +399,8 @@ def test_ome_plane_positions_are_the_origin(tmp_path: Path) -> None:
     )
     image = load(path)
     assert isinstance(image.transformation, Affine)
-    # x in millimetres, converted to the micrometres of the pixel size; y
-    # and z have no unit, and are taken in micrometres.
+    # x is in mm, while unit-less y and z are taken as micrometres.
     np.testing.assert_allclose(_shift(image), [10000.0, 20.0, 5.0, 0.0])
-    # The pixel centre at index 0 lands on the origin.
     assert load(path, origin=False).transformation.__class__ is Scaling
 
 
@@ -490,13 +483,13 @@ def test_pyramid_is_multiscale(tmp_path: Path) -> None:
     assert isinstance(image, MultiScaleImage)
     assert image.nscales == 3
     assert all(isinstance(level, TiffImage) for level in image.images)
-    # Opening the pyramid reads no level.
+    # Opening a pyramid reads no level.
     assert not any(hasattr(level, "_cache_data") for level in image.images)
     shapes = [level.data.shape for level in image.images]
     assert shapes == [(40, 32, 2), (20, 16, 2), (10, 8, 2)]
     full = tifffile.imread(path)
     np.testing.assert_array_equal(image.data, full.transpose(2, 1, 0))
-    # Sizes grow by the downsampling factor; centres move by (f - 1) / 2.
+    # Sizes grow by the downsampling factor f, and centres move by (f-1)/2.
     for level, factor in zip(image.images, (1, 2, 4)):
         np.testing.assert_allclose(
             _scale(level), [0.5 * factor, 0.5 * factor, 1]
@@ -508,7 +501,7 @@ def test_pyramid_is_multiscale(tmp_path: Path) -> None:
 
 
 def test_pyramid_level_edges_coincide(tmp_path: Path) -> None:
-    # A plain TIFF pyramid, of unknown pixel size.
+    # A plain TIFF pyramid with an unknown pixel size.
     data = RNG.integers(0, 2**16, (32, 40), dtype=np.uint16)
     path = tmp_path / "p.tif"
     with tifffile.TiffWriter(path) as writer:
@@ -518,7 +511,7 @@ def test_pyramid_level_edges_coincide(tmp_path: Path) -> None:
     image = load(path)
     assert isinstance(image, TiffMultiScaleImage)
     base, coarse = image.images[0], image.images[2]
-    # The left edge of the first pixel, and the right edge of the last.
+    # left edge of the first pixel, right edge of the last
     for level in (base, coarse):
         s, t = _scale(level)[0], _shift(level)[0]
         n = level.data.shape[0]
@@ -590,7 +583,7 @@ def test_write_ome_when_size_is_known(tmp_path: Path) -> None:
     np.testing.assert_array_equal(back.data, data)
     np.testing.assert_allclose(_scale(back), [0.5, 0.25, 2])
     assert _units(back) == ["millimeter", "millimeter", "micrometer"]
-    # The resolution tags are written too, for readers that know no OME.
+    # Resolution tags are also written for readers without OME support.
     with tifffile.TiffFile(path) as tif:
         assert backend.resolution_scales(tif.pages[0])["x"] == (
             pytest.approx(0.05),
@@ -626,7 +619,7 @@ def test_write_ome_round_trip(tmp_path: Path) -> None:
     np.testing.assert_allclose(_shift(back), _shift(image))
     assert 'Name="sample"' in back.ome_xml
     assert 'Name="gfp"' in back.ome_xml
-    # The position of every plane is written, not only of the first.
+    # The position of every plane is written, not only the first.
     assert 'PositionZ="7.0"' in back.ome_xml
 
 
@@ -782,12 +775,11 @@ def test_write_multiscale_from_datamodel(tmp_path: Path) -> None:
     assert math.isclose(_shift(back.images[1])[0], 0.5)
 
 
-# --- file handles (#266) ----------------------------------------------
+# File handles (#266)
 
 
 def _resource_warnings(read: tx.Callable[[], None]) -> tx.List[str]:
-    """The `ResourceWarning`s emitted by `read` and by collecting what it
-    dropped."""
+    """The ResourceWarnings emitted by `read` and by collecting its garbage."""
     gc.collect()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)

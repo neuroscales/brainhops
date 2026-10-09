@@ -30,8 +30,7 @@ def test_default_axes_carry_their_unit(cls: type, unit: object) -> None:
 
 @pytest.mark.parametrize("cls, unit", _SYSTEMS)
 def test_from_struct_gives_axes_their_unit(cls: type, unit: object) -> None:
-    # Regression: the scaled and physical systems passed `units="mm"`,
-    # which is no field of theirs, and raised a `TypeError`.
+    # Regression: the unit was passed under a wrong keyword (TypeError).
     struct = LtaStruct.SrcVolumeInfo(filename="a.nii")
     system = cls.from_struct(struct)
     assert type(system) is cls
@@ -49,11 +48,10 @@ def test_from_struct_gives_axes_their_unit(cls: type, unit: object) -> None:
 def test_from_struct_names_an_anonymous_volume(
     cls: type, unit: object
 ) -> None:
-    # A volume with no file name is named after its role in the transform.
+    # A volume without a file name is named after its role.
     assert cls.from_struct(LtaStruct.SrcVolumeInfo()).name == "src"
     assert cls.from_struct(LtaStruct.DstVolumeInfo()).name == "dst"
-    # Regression: a bare volume has no role either, and `struct.NAME`
-    # raised an `AttributeError`. The system keeps its class's name.
+    # A bare volume has no role, so the system keeps its default name.
     assert cls.from_struct(LtaStruct.VolumeInfo()).name == cls().name
 
 
