@@ -135,3 +135,91 @@ def test_removed_88b_helpers_are_gone() -> None:
 def test_nametoclass_is_lowercase_keyed() -> None:
     assert "affine" in kinds.NAMETOCLASS
     assert "Affine" not in kinds.NAMETOCLASS
+
+
+# ----------------------------------------------------------------------
+#   SYMBOLS AND THE LIST OF ALL SETS (#390)
+# ----------------------------------------------------------------------
+
+
+def _symbol_table() -> list:
+    # Read the rows of the "LIST OF ALL SETS" comment table in the
+    # source of the kinds module, as (name, symbol) pairs.
+    with open(kinds.__file__, encoding="utf-8") as f:
+        source = f.read()
+    rows = []
+    for line in source.splitlines():
+        if not line.startswith("# | ") or line.count("|") != 5:
+            continue
+        cells = [cell.strip() for cell in line.split("|")[1:-1]]
+        if cells[0] == "Name":
+            continue
+        rows.append((cells[0], cells[1]))
+    return rows
+
+
+def test_every_symbol_parses_to_its_kind() -> None:
+    kinds_with_symbol = [
+        cls for cls in kinds.all_sets() if "SYMBOL" in cls.__dict__
+    ]
+    assert kinds_with_symbol
+    for cls in kinds_with_symbol:
+        assert kinds.TransformationKind.parse(cls.SYMBOL) is cls, cls
+
+
+def test_symbol_table_matches_the_code() -> None:
+    rows = _symbol_table()
+    assert len(rows) > 40
+    for name, symbol in rows:
+        cls = getattr(kinds, name)
+        assert symbol == cls.__dict__.get("SYMBOL", ""), name
+        if symbol:
+            assert kinds.TransformationKind.parse(symbol) is cls, name
+    # Every kind that has a symbol has a row in the table.
+    names = {name for name, _ in rows}
+    for cls in kinds.all_sets():
+        if "SYMBOL" in cls.__dict__:
+            assert cls.__name__ in names, cls.__name__
+
+
+# ----------------------------------------------------------------------
+#   EXPLICIT DIMENSIONS IN TransformationFamily.parse (#391, #392)
+# ----------------------------------------------------------------------
+
+
+def test_parse_explicit_none_ndim_agrees_across_forms() -> None:
+    F = kinds.TransformationFamily
+    family = F.parse("SO(3)")
+    forms = [family, "SO(3)", ("SO", 3), ("SO",), "SO", "Rotation"]
+    for form in forms:
+        assert tuple(F.parse(form, ndim=None))[1:] == (None, None), form
+    for form in forms:
+        assert tuple(F.parse(form, ndim=4))[1:] == (4, 4), form
+
+
+def test_parse_family_keeps_dimensions_by_default() -> None:
+    F = kinds.TransformationFamily
+    family = F.parse("SO(3)")
+    assert F.parse(family) is family
+    assert tuple(F.parse(family, odim=None))[1:] == (3, None)
+
+
+def test_parse_family_keeps_a_distinct_output_dimension() -> None:
+    F = kinds.TransformationFamily
+    family = F.parse(("Map", 3, 4))
+    assert tuple(family)[1:] == (3, 4)
+    assert tuple(F.parse(family, ndim=None))[1:] == (None, 4)
+    assert tuple(F.parse(("Map", 3, 4), ndim=None))[1:] == (None, 4)
+    assert tuple(F.parse("Map(ℝ^3,ℝ^4)", ndim=None))[1:] == (None, 4)
+
+
+def test_family_tuples_have_one_to_three_elements() -> None:
+    F = kinds.TransformationFamily
+    assert kinds.is_family_tuple(("SO",))
+    assert kinds.is_family_tuple(("SO", 3))
+    assert kinds.is_family_tuple(("SO", 3, 4))
+    assert not kinds.is_family_tuple(())
+    assert not kinds.is_family_tuple(("SO", 3, 4, 5))
+    family = F.parse(("SO", 3, 4))
+    assert len(family) == 3
+    assert F.parse(family.to_tuple()) == family
