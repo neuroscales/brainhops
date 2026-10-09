@@ -561,7 +561,7 @@ def test_the_metadata_registry_is_isolated() -> None:
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
     def names(klass: type) -> tx.Set[str]:
-        return {field.name for field in fields(klass) if field.init}
+        return {field.public_name for field in fields(klass) if field.init}
 
     allowed = names(_model(cls)) | {"raw", "metadata"} | exemplar.options
     assert names(cls) <= allowed
@@ -574,6 +574,7 @@ def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
 def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # noqa: ANN001
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
     assert isinstance(loaded.raw, exemplar.proxies)
+    repr(loaded)
     assert "_cache_data" not in vars(loaded)
     assert isinstance(loaded.metadata, exemplar.metadata)
     data = loaded.data
@@ -618,6 +619,10 @@ def test_05_untouched_save_is_byte_identical(
     source = _saved(cls, exemplar, tmp_path)
     target = tmp_path / ("copy" + exemplar.suffix)
     cls.load(source).save(target)
+    assert _decompressed(target) == _decompressed(source)
+    # The generic writer copies the object with `from_instance` first.
+    target = tmp_path / ("generic" + exemplar.suffix)
+    io.save(cls.load(source), target)
     assert _decompressed(target) == _decompressed(source)
 
 
@@ -672,10 +677,17 @@ def test_09_copies_keep_raw_and_metadata(
     tmp_path,  # noqa: ANN001
 ) -> None:
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
-    stored = np.asarray(loaded.raw)
-    for copy in (replace(loaded), cls.from_instance(loaded)):
-        assert copy.metadata is loaded.metadata
-        assert np.array_equal(np.asarray(copy.raw), stored)
+    # Within the format, `from_instance` copies the lazy `raw` and does not
+    # read the data.
+    copy = cls.from_instance(loaded)
+    assert copy.raw is loaded.raw
+    assert copy.metadata is loaded.metadata
+    assert "_cache_data" not in vars(loaded)
+    # `replace` passes the data, which takes precedence over `raw`, so the
+    # copy holds a decoded array with the same content.
+    copy = replace(loaded)
+    assert copy.metadata is loaded.metadata
+    assert np.array_equal(np.asarray(copy.raw), np.asarray(loaded.raw))
     # The record and the stored array of another format mean nothing to
     # this format, so they are reset and the data is stored again.
     value = exemplar.sample()
