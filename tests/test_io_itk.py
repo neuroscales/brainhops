@@ -509,6 +509,67 @@ def test_warp_block_endpoints_do_not_decode_the_field() -> None:
     assert hasattr(block, "_cache_field")
 
 
+def _write_h5_warp_without_parameters(
+    path: Path, *, after_affine: bool
+) -> None:
+    """Write an ITK HDF5 file whose warp group has no parameters.
+
+    When `after_affine` is true, the warp group follows an affine group
+    that does have a parameters dataset.
+    """
+    import h5py
+
+    with h5py.File(path, "w") as f:
+        f["ITKVersion"] = np.bytes_("5.1.0")
+        index = 0
+        if after_affine:
+            group = f.create_group("TransformGroup/0")
+            group["TransformType"] = np.bytes_("AffineTransform_double_3_3")
+            group["TransformParameters"] = np.eye(4)[:3].T.ravel()
+            group["TransformFixedParameters"] = np.zeros(3)
+            index = 1
+        group = f.create_group(f"TransformGroup/{index}")
+        group["TransformType"] = np.bytes_(
+            "DisplacementFieldTransform_double_3_3"
+        )
+        group["TransformFixedParameters"] = np.zeros(18)
+
+
+@pytest.mark.parametrize("after_affine", [False, True])
+def test_h5_warp_without_parameters_reads_the_same_lazily(
+    tmp_path: Path, after_affine: bool
+) -> None:
+    """A warp group without parameters reads the same with `load=False`.
+
+    The lazy reader used to look up a parameters dataset that the group
+    does not have, which failed with an `UnboundLocalError` for a single
+    group and with a `KeyError` when an earlier group had parameters
+    (#371). Both settings of `load` now give empty parameters.
+    """
+    h5py = pytest.importorskip("h5py")
+    from brainhops.io.transformations.itk.h5._parser import (
+        H5TransformReader,
+    )
+
+    path = tmp_path / "warp_without_parameters.h5"
+    _write_h5_warp_without_parameters(path, after_affine=after_affine)
+    position = 1 if after_affine else None
+
+    blocks = {}
+    for load in (True, False):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            reader = H5TransformReader.from_h5(
+                h5py.File(path, "r"), load=load, position=position
+            )
+        (block,) = reader.transformations
+        assert block.type == "DisplacementFieldTransform"
+        blocks[load] = np.asarray(block.parameters)
+
+    assert blocks[False].size == 0
+    np.testing.assert_array_equal(blocks[False], blocks[True])
+
+
 # ----------------------------------------------------------------------
 #   SIMILARITY BLOCKS
 # ----------------------------------------------------------------------
