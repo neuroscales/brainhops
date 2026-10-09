@@ -14,6 +14,7 @@ import typing_extensions as tx
 from bagof.magic import Factory, fields
 
 from brainhops._core import path
+from brainhops._core.enum import enum_name
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
@@ -29,7 +30,11 @@ from brainhops.io.transformations.base import (
 
 from .._formats import FreesurferTransformationFormat
 from ._enums import LtaType, LtaValidity
-from ._matrix_utils import _get_phys2phys, _get_ras2ras, _get_vox2vox
+from ._matrix_utils import (
+    _get_phys2phys,
+    _get_ras2ras,
+    _get_vox2vox,
+)
 from ._struct import LtaStruct
 from ._systems import LtaCoordinateSystem, LtaPhysicalSystem, LtaVoxelSystem
 
@@ -110,7 +115,9 @@ class LtaTransformation(
             return _system(LtaVoxelSystem, self.struct.src)
         elif self.struct.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return _system(LtaPhysicalSystem, self.struct.src)
-        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
+        raise AssertionError(
+            f"unsupported LTA type: {enum_name(self.struct.type)}"
+        )
 
     @property
     def output(self) -> LtaCoordinateSystem:
@@ -129,7 +136,9 @@ class LtaTransformation(
             return _system(LtaVoxelSystem, self.struct.dst)
         elif self.struct.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return _system(LtaPhysicalSystem, self.struct.dst)
-        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
+        raise AssertionError(
+            f"unsupported LTA type: {enum_name(self.struct.type)}"
+        )
 
     @property
     def data(self) -> np.ndarray:
