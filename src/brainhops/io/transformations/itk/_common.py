@@ -742,11 +742,11 @@ def _application_order(
 
     Parameters
     ----------
-    blocks
+    blocks : list
         The blocks in file order, without composite headers.
-    composites
+    composites : list of int
         The file positions of the skipped composite headers.
-    position
+    position : int, optional
         The index of the top-level transform to return.
 
     Raises

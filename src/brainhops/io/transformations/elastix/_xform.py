@@ -162,7 +162,7 @@ class ElastixTransform(
         ----------
         lines : iterable of str
             The lines of the file.
-        initial : bool, file name or Transformation
+        initial : bool, file name or Transformation, default=True
             The initial transform named in `InitialTransformParameterFileName`.
             `True` reads it, and those it names in turn, as transformix does
             (see [`resolve_initial`][]). `False` reads the file's own transform

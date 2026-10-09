@@ -447,9 +447,9 @@ def _write_key(
         The key.
     value : int, float, str, Enum or sequence of these
         The value or values.
-    sep : int or str
+    sep : int or str, default=1
         The separator between values. An integer gives a number of spaces.
-    fmt : str, dict or None
+    fmt : str or dict, optional
         The format of the values. A string applies to all values, a dictionary
         maps value types to formats, and `None` uses a default for each type.
     """

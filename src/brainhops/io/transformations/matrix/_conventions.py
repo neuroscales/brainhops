@@ -250,8 +250,10 @@ def to_affine(
     matrix : np.ndarray
         The `(N, N + 1)` column-vector matrix from input to output, with
         0-based voxel indices.
-    input, output : CoordinateSystem
-        The spaces that the matrix maps between.
+    input : CoordinateSystem
+        The space that the matrix maps from.
+    output : CoordinateSystem
+        The space that the matrix maps to.
     index_base : tuple of int
         The index base applied to the input and to the output.
     """

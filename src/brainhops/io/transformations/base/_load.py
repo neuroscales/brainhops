@@ -18,9 +18,9 @@ def load(
     ----------
     filelike : FileOrContentLike
         The file, or its content.
-    brute : bool
+    brute : bool, default=False
         If no format recognises the input, try every registered reader.
-    **kwargs
+    **kwargs : Any
         Format-specific options.
 
     Returns
@@ -41,7 +41,7 @@ def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
     ----------
     filelike : FileOrContentLike
         The file, or its content.
-    **kwargs
+    **kwargs : Any
         Format-specific options, as in [`load`][].
 
     Returns

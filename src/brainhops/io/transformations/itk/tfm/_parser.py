@@ -81,9 +81,9 @@ class TfmTransformParser(
 
         Parameters
         ----------
-        lines
+        lines : iterable of str
             The lines of the file.
-        position
+        position : int, optional
             The top-level transformation to read. A file that starts with a
             `CompositeTransform` header holds a single composite
             transformation, while any other file holds one transformation per

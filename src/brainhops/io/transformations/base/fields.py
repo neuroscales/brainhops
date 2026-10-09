@@ -81,11 +81,13 @@ def ras_displacement_chain(
         per knot, and with `log` a stationary velocity whose flow is the map.
     vox2ras : np.ndarray
         Square affine of size `ndim + 1` that places the sampling grid.
-    degree, bound
-        Spline degree and boundary condition of the field.
-    store : {"values", "coefficients"}
+    degree : int, default=1
+        Spline degree of the field.
+    bound : str or float, default=BoundaryCondition.nearest
+        Boundary condition of the field.
+    store : {"values", "coefficients"}, default=StoreEnum.values
         Whether `vectors` are values or spline coefficients.
-    log : bool
+    log : bool, default=False
         Whether `vectors` are a stationary velocity.
     steps : int, optional
         Number of squaring steps, which only a velocity field accepts.
@@ -146,19 +148,24 @@ def split_ras_displacement_chain(
     ----------
     chain : sequence of Transformation
         RAS to voxel, a displacement field in voxel units, and voxel to RAS.
-    what : str
+    what : str, default="A displacement field"
         Name of the written object, used in error messages.
     ndim : int, optional
         Number of spatial dimensions that the format supports.
-    store : {"values", "coefficients"}
+    store : {"values", "coefficients"}, default=StoreEnum.values
         Whether the format stores spline coefficients. Values written to a
         coefficient format are encoded, and coefficients written to a value
         format are decoded.
-    degree, bound : optional
-        Spline degree and boundary condition of the stored coefficients,
-        used only with `store="coefficients"`. A coefficient field with other
-        settings is refitted, and `None` keeps those of the field.
-    log : bool
+    degree : int, optional
+        Spline degree of the stored coefficients, used only with
+        `store="coefficients"`. A coefficient field with another degree is
+        refitted, and `None` keeps the degree of the field.
+    bound : str or float, optional
+        Boundary condition of the stored coefficients, used only with
+        `store="coefficients"`. A coefficient field with another boundary
+        condition is refitted, and `None` keeps the boundary condition of the
+        field.
+    log : bool, default=False
         Whether the format stores a stationary velocity. A velocity written
         to a displacement format is integrated, while a displacement written
         to a velocity format is refused, since brainhops computes no field
@@ -277,7 +284,7 @@ def homogeneous_matrix(
     ----------
     xform : Transformation
         The voxel-to-world transformation of the grid.
-    what : str
+    what : str, default="A displacement field"
         Name of the written object, used in error messages, for example
         `"An X5 displacement field"`.
     ndim : int, optional

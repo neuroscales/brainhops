@@ -130,9 +130,9 @@ class MatTransformParser(
 
         Parameters
         ----------
-        content
+        content : bytes
             The content of the file.
-        position
+        position : int, optional
             The top-level transform to read: the composite when the file has
             one, otherwise one of its blocks. By default the first one is read,
             with a warning when there are several.
@@ -216,10 +216,10 @@ class MatTransformParser(
 
         Parameters
         ----------
-        byteorder
+        byteorder : str, default="<"
             The byte order, `"<"`, `">"` or `"="` for the native order. ITK
             writes the native order, which is little-endian on common machines.
-        precision
+        precision : ItkPrecision or str, optional
             The precision of the parameters, `"double"` or `"float"`, which
             also appears in the class name. By default it is the precision of
             the block, or double for an affine. The fixed parameters are always

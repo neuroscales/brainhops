@@ -80,14 +80,14 @@ class H5TransformParser(
 
         Parameters
         ----------
-        h5file
+        h5file : h5py.File
             The open HDF5 file.
-        keep_open
+        keep_open : bool, default=False
             Whether to keep the file open after parsing, instead of closing it.
-        load
+        load : bool, default=True
             Whether to load warp parameters into memory, instead of reading
             them lazily from disk.
-        position
+        position : int, optional
             The top-level transform to read: the composite when the file has
             one, otherwise one of its blocks. By default the first one is read,
             with a warning when there are several.

@@ -85,15 +85,15 @@ class X5TransformParser(
 
         Parameters
         ----------
-        h5file
+        h5file : h5py.File
             The open file.
-        keep_open
+        keep_open : bool, default=False
             Whether to keep the file open after reading.
-        load
+        load : bool, default=True
             Whether to load fields into memory, rather than lazily on use.
-        chain
+        chain : int, optional
             The index of the chain of `/TransformChain` to read.
-        position
+        position : int, optional
             The index of the single node of `/TransformGroup` to read.
 
         Raises
