@@ -1,26 +1,19 @@
-"""
-Decoding and encoding raster images with Pillow.
+"""Decoding and encoding raster images with Pillow.
 
-This is the Pillow *backend*: it turns a file into a C-ordered `numpy`
-array plus a description of its axes and its resolution, and back. It
-knows nothing of coordinate systems or transformations, which are the
-business of the shared raster conventions in
-`brainhops.io.images.base._utils_raster`. Keeping the two apart lets any
-raster reader -- the Pillow image reader, or a TIFF reader that falls back on
-Pillow when tifffile is not installed -- decode with Pillow and still
-follow the same conventions.
+This backend turns a file into a C-ordered NumPy array, an axes description and
+a resolution, and back. Coordinate systems and transformations belong to the
+shared raster conventions of `brainhops.io.images.base._utils_raster`, so that
+every raster reader that decodes with Pillow (the Pillow reader, and the TIFF
+reader without tifffile) follows the same conventions.
 
 !!! warning "Decompression bombs"
-    Pillow refuses to decode an image of more than twice
-    `PIL.Image.MAX_IMAGE_PIXELS` pixels (about 179 million pixels by
-    default), raising `PIL.Image.DecompressionBombError`, and warns above
-    `MAX_IMAGE_PIXELS`. This guards against small files that decode into
-    huge arrays. To read a larger image you trust, raise the limit
-    yourself: `PIL.Image.MAX_IMAGE_PIXELS = None`.
+    Pillow refuses images larger than twice `PIL.Image.MAX_IMAGE_PIXELS` (about
+    179 million pixels) with a `DecompressionBombError`, and warns above the
+    limit itself, to guard against small files that decode to huge images.
+    Setting `PIL.Image.MAX_IMAGE_PIXELS = None` allows a trusted larger image.
 
 !!! note "No lazy access"
-    Pillow decodes a whole frame at once, so the array is read in full when
-    the image is opened.
+    A whole frame is decoded, and read into memory, on open.
 """
 
 __all__ = [
@@ -38,17 +31,14 @@ __all__ = [
     "format_for_name",
 ]
 
-# stdlib
 import warnings
 from io import BytesIO
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
 from PIL import Image, UnidentifiedImageError
 
-# internals
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
 from brainhops.io.base.parsers import ParserContentError, WriterError
@@ -79,13 +69,11 @@ EXTENSIONS: tx.Tuple[str, ...] = (
     ".pcx",
     ".qoi",
 )
-"""
-The file extensions the Pillow reader claims.
+"""The file extensions that the Pillow reader claims.
 
-The list is curated rather than taken from Pillow's registry, which also
-lists formats Pillow only identifies (HDF5, GRIB, FITS) or that other
-readers handle better. TIFF is left out on purpose: TIFF files are claimed
-by the dedicated TIFF reader, and Pillow reads one only as a fallback.
+The list is curated rather than taken from Pillow, whose registry includes
+identify-only formats (HDF5, GRIB, FITS) and formats that other readers handle
+better. TIFF is left to the dedicated TIFF reader.
 """
 
 SNIFF_FORMATS: tx.Tuple[str, ...] = (
@@ -99,45 +87,40 @@ SNIFF_FORMATS: tx.Tuple[str, ...] = (
     "QOI",
     "TIFF",
 )
-"""
-The Pillow formats recognized from the content of a file.
+"""The formats recognised from their content, by a magic number.
 
-Each starts with a magic number. Formats that have none, or a weak one
-(TGA, PCX, DIB), are recognized from the file extension alone, so that
-arbitrary binary data is never mistaken for them.
+Formats with a weak magic number or none (TGA, PCX, DIB) are recognised only by
+extension, so that arbitrary binary data is not mistaken for them.
 """
 
 DPI_FORMATS: tx.FrozenSet[str] = frozenset({"PNG", "JPEG", "BMP", "TIFF"})
-"""The Pillow formats that can store a resolution in dots per inch."""
+"""The formats that can store a resolution in dots per inch."""
 
-# The modes that store an index per pixel into a colour table.
+# modes that store, per pixel, an index into a colour table
 _PALETTE_MODES = ("P", "PA")
 
 
 class PillowRaster(Magic, frozen=True, eq=False):
-    """
-    One decoded frame of a raster file.
+    """One decoded frame of a raster file.
 
-    Equality is identity: comparing two frames would compare their
-    arrays element-wise.
+    Equality is identity, since comparing frames would compare their arrays.
     """
 
     array: np.ndarray
-    """The pixels, C-ordered: `(rows, columns)` or `(rows, columns,
-    samples)`."""
+    """The pixels, C-ordered `(rows, columns)` or `(rows, columns, samples)`.
+    """
 
     axes: str
-    """The storage axes of `array`: `"YX"` or `"YXS"`."""
+    """The storage axes of `array`, `"YX"` or `"YXS"`."""
 
     format: tx.Optional[str]
-    """Pillow's name for the file format, such as `"PNG"`."""
+    """The Pillow name of the file format, such as `"PNG"`."""
 
     mode: str
-    """Pillow's mode of the frame as stored, before any conversion, such as
-    `"P"`, `"RGB"` or `"I;16"`."""
+    """The Pillow mode of the frame as stored, such as `"P"` or `"I;16"`."""
 
     info: tx.Dict[str, tx.Any]
-    """Pillow's `info` dictionary: the format-specific metadata."""
+    """The `info` dictionary of Pillow, with the format-specific metadata."""
 
     frame: int
     """The index of the decoded frame."""
@@ -146,8 +129,9 @@ class PillowRaster(Magic, frozen=True, eq=False):
     """The number of frames in the file."""
 
     dpi: tx.Optional[tx.Tuple[float, float]]
-    """The resolution the file records, `(x, y)` in dots per inch, or
-    `None`. It is reported as it is, placeholders included."""
+    """The resolution recorded by the file, in dots per inch along x and y,
+    placeholders included.
+    """
 
 
 # ----------------------------------------------------------------------
@@ -158,8 +142,9 @@ class PillowRaster(Magic, frozen=True, eq=False):
 def _open(
     file: tx.Any, formats: tx.Optional[tx.Sequence[str]] = None
 ) -> "Image.Image":
-    """Open an image with Pillow, reporting a file it cannot identify as
-    a parser error."""
+    """Open a file with Pillow, raising a `ParserContentError` if it cannot be
+    identified.
+    """
     if isinstance(file, (str, path.PathLike)):
         file = str(file)
     try:
@@ -175,24 +160,10 @@ def _open(
 def sniff_pillow(
     file: tx.Any, formats: tx.Optional[tx.Sequence[str]] = SNIFF_FORMATS
 ) -> tx.Optional[str]:
-    """
-    Pillow's name for the format of a file, if it recognizes one.
+    """Return the Pillow name of the format of a file, or `None`.
 
-    Only the header is read. A file object is left where it was.
-
-    Parameters
-    ----------
-    file : path or file object
-        The file to identify.
-    formats : Sequence[str], optional
-        The Pillow formats to consider. By default, those recognizable
-        from their content
-        (`SNIFF_FORMATS`).
-
-    Returns
-    -------
-    str | None
-        The format name, such as `"PNG"`, or `None`.
+    Only the header is read, and the position of a file object is preserved.
+    The formats considered default to [`SNIFF_FORMATS`][].
     """
 
     if formats is not None:
@@ -206,8 +177,8 @@ def sniff_pillow(
                 with Image.open(f, formats=formats) as im:
                     return im.format
             except Image.DecompressionBombError:
-                # It *is* an image, just a large one: say so, and let the
-                # reader report the limit.
+                # an image of bomb size is still an image; the reader reports
+                # the limit
                 return "unknown"
             except Exception:
                 return None
@@ -221,8 +192,7 @@ def sniff_pillow(
 def pillow_to_array(
     im: "Image.Image", palette: bool = True
 ) -> tx.Tuple[np.ndarray, str]:
-    """
-    The pixels of a decoded Pillow image, as a C-ordered array.
+    """Return the pixels of a decoded Pillow image as a C-ordered array.
 
     | Mode                     | Array                                    |
     | ------------------------ | ---------------------------------------- |
@@ -238,25 +208,23 @@ def pillow_to_array(
     | `F`                      | `float32`, `(rows, columns)`             |
     | `P`, `PA`                | see `palette`                            |
 
-    The premultiplied modes `La` and `RGBa` are converted to `LA` and
-    `RGBA`. The array is in native byte order, and is writable.
+    The premultiplied modes `La` and `RGBa` become `LA` and `RGBA`, and the
+    `BGR;*` modes become `RGB`. The array is native-endian and writable.
 
     Parameters
     ----------
     im : PIL.Image.Image
         The decoded image.
-    palette : bool
-        A palette image (`P` or `PA`) stores an index per pixel and a
-        colour table. When `True` (the default), the colours are looked up:
-        the image becomes `RGB`, or `RGBA` if it has transparency. When
-        `False`, the indices are returned, as `uint8`.
+    palette : bool, optional
+        Whether palette colours are looked up, giving RGB, or RGBA with
+        transparency (the default), rather than returned as `uint8` indices.
 
     Returns
     -------
-    array : np.ndarray
+    array : numpy.ndarray
         The pixels.
     axes : str
-        `"YX"`, or `"YXS"` when there are several samples per pixel.
+        `"YX"` or `"YXS"`.
     """
     mode = im.mode
     if mode in _PALETTE_MODES:
@@ -292,13 +260,11 @@ def pillow_to_array(
 def pillow_dpi(
     info: tx.Mapping[str, tx.Any],
 ) -> tx.Optional[tx.Tuple[float, float]]:
-    """
-    The resolution a file records, `(x, y)` in dots per inch, or `None`.
+    """Return the resolution recorded in `info["dpi"]`, along x and y, or
+    `None`.
 
-    Pillow reports it as `info["dpi"]` for PNG (`pHYs`), JPEG (JFIF
-    density, or EXIF), BMP and TIFF, converted from dots per centimetre or
-    per metre when that is what the file stores. A file that records only
-    an aspect ratio (a PNG `pHYs` or JFIF density with no unit) has none.
+    Pillow reports it for PNG, JPEG, BMP and TIFF. A file that records only an
+    aspect ratio has no resolution.
     """
     dpi = info.get("dpi")
     if dpi is None:
@@ -320,38 +286,33 @@ def read_pillow(
     palette: bool = True,
     formats: tx.Optional[tx.Sequence[str]] = None,
 ) -> PillowRaster:
-    """
-    Decode one frame of a raster file with Pillow.
+    """Decode one frame of a raster file with Pillow.
 
     Parameters
     ----------
-    file : path or file object
-        The file to read. A file object is not closed.
-    frame : int
-        The frame to read from a multi-frame file (an animated GIF, PNG or
-        WebP, a multi-page TIFF, ...). Negative values count from the end.
-        Pillow composites the frames of an animated GIF: frame `i` is what
-        is displayed at step `i`, and the frames after the first are
-        decoded as `RGB` or `RGBA`.
-    palette : bool
-        Look up the colours of a palette image (see
-        `pillow_to_array`).
+    file : str or PathLike or IO
+        A path or a file object, which is not closed.
+    frame : int, optional
+        The frame; a negative index counts from the end. Animated GIF frames
+        are composited, so frame `i` is the picture displayed at step `i`.
+    palette : bool, optional
+        See [`pillow_to_array`][].
     formats : Sequence[str], optional
-        The Pillow formats to try. By default, all of them.
+        The formats to consider, all by default.
 
     Returns
     -------
     PillowRaster
-        The pixels and what the file says about them.
+        The frame. The `info` of a PNG file also holds its `sCAL` chunk.
 
     Raises
     ------
     ParserContentError
-        If Pillow cannot read the file.
+        If Pillow cannot read or decode the file.
     IndexError
-        If the file has no frame `frame`.
+        If the file has no such frame.
     PIL.Image.DecompressionBombError
-        If the image is larger than Pillow's safety limit.
+        If the image exceeds the limit of `PIL.Image.MAX_IMAGE_PIXELS`.
     """
     start = None
     if hasattr(file, "tell"):
@@ -405,12 +366,9 @@ _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 def _png_scal(
     file: tx.Any, start: tx.Optional[int] = None
 ) -> tx.Optional[tx.Tuple[int, float, float]]:
-    """
-    The physical scale a PNG file records in its `sCAL` chunk, or `None`.
-
-    Pillow skips this chunk, so it is read here. It is returned as
-    `(unit, width, height)`: the size of a pixel along x and y, in metres
-    when `unit` is 1 and in radians when it is 2.
+    """Return the PNG `sCAL` chunk, which Pillow skips, as
+    `(unit, width, height)`, or `None`. The unit is 1 for metres and 2 for
+    radians.
     """
 
     def scan(f: tx.Any) -> tx.Optional[tx.Tuple[int, float, float]]:
@@ -423,9 +381,9 @@ def _png_scal(
             length = int.from_bytes(head[:4], "big")
             kind = head[4:]
             if kind in (b"IDAT", b"IEND"):
-                return None  # sCAL must come before the image data
+                return None  # sCAL precedes the image data
             if kind != b"sCAL":
-                f.seek(length + 4, 1)  # data and CRC
+                f.seek(length + 4, 1)  # skip the chunk data and its CRC
                 continue
             data = f.read(length)
             try:
@@ -453,17 +411,16 @@ def _png_scal(
 
 
 def _numpy(array: tx.Any) -> np.ndarray:
-    """Materialize any array (numpy, dask, cupy) as a numpy array."""
+    """Materialise a NumPy, dask or CuPy array as a NumPy array."""
     if hasattr(array, "get") and not isinstance(array, np.ndarray):
-        array = array.get()  # cupy
+        array = array.get()
     if hasattr(array, "compute") and not isinstance(array, np.ndarray):
-        array = array.compute()  # dask
+        array = array.compute()
     return np.asarray(array)
 
 
 def array_to_pillow(array: tx.Any) -> "Image.Image":
-    """
-    Build a Pillow image from a C-ordered array of pixels.
+    """Build a Pillow image from a C-ordered array of pixels.
 
     | Array                                      | Mode                   |
     | ------------------------------------------ | ---------------------- |
@@ -474,15 +431,14 @@ def array_to_pillow(array: tx.Any) -> "Image.Image":
     | `int32`, `(rows, columns)`                 | `I`                    |
     | `float32`, `(rows, columns)`               | `F`                    |
 
-    A trailing axis of one sample is dropped. Whether a file format can
-    store the mode is up to that format (JPEG cannot store `I;16`, say).
+    A trailing axis of one sample is dropped. Whether a format stores the
+    resulting mode is up to the format: JPEG cannot store `I;16`, for example.
 
     Raises
     ------
     WriterError
-        If no Pillow mode holds the array: another data type (convert the
-        data first, e.g. with `numpy.clip` and `astype`), more than four
-        samples per pixel, or several samples of anything but `uint8`.
+        If the array has another type, more than four samples, or several
+        samples that are not `uint8`.
     """
     array = _numpy(array)
     if array.ndim == 3 and array.shape[-1] == 1:
@@ -536,8 +492,9 @@ def array_to_pillow(array: tx.Any) -> "Image.Image":
 
 
 def format_for_name(name: tx.Any) -> tx.Optional[str]:
-    """Pillow's name for the format a file name's extension calls for,
-    or `None`."""
+    """Return the Pillow format for the extension of a file name, using the
+    longest matching registered extension, or `None`.
+    """
     if name is None:
         return None
     name = str(name).lower()
@@ -553,7 +510,7 @@ def format_for_name(name: tx.Any) -> tx.Optional[str]:
 
 
 def can_write(format: str) -> bool:
-    """Whether Pillow can write files in a format (by Pillow's name)."""
+    """Return whether Pillow can write a format, given by its Pillow name."""
     Image.init()
     return str(format).upper() in Image.SAVE
 
@@ -564,29 +521,25 @@ def encode_pillow(
     dpi: tx.Optional[tx.Tuple[float, float]] = None,
     **options,
 ) -> bytes:
-    """
-    Encode a Pillow image in a file format.
-
-    The image is encoded in memory, so a failure leaves no partial file.
+    """Encode a Pillow image in memory, so that a failure leaves no partial
+    file.
 
     Parameters
     ----------
     im : PIL.Image.Image
         The image.
     format : str
-        Pillow's name for the format, such as `"PNG"`.
-    dpi : (float, float), optional
-        The resolution to record, `(x, y)` in dots per inch. It is passed
-        on only to the formats that can store one
-        (`DPI_FORMATS`).
-    **options
-        Passed on to Pillow's `Image.save`, e.g. `quality=95` for JPEG.
+        The Pillow name of the format, such as `"PNG"`.
+    dpi : tuple of float, optional
+        The resolution along x and y, passed only to [`DPI_FORMATS`][].
+    **options : Any
+        Passed to `Image.save`, such as `quality=95` for JPEG.
 
     Raises
     ------
     WriterError
-        If Pillow does not know the format, or the format cannot store the
-        image (JPEG cannot store 16-bit pixels, say).
+        If Pillow cannot write the format, or the format cannot store the
+        image.
     """
     format = str(format).upper()
     if not can_write(format):

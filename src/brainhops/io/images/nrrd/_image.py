@@ -1,16 +1,13 @@
-# stdlib
 import math
 import re
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
-# internals
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -19,19 +16,23 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import Unit, is_indexunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._geometry import RAS_FROM_ORIENTATION, reduce_to_affine
-from brainhops.io.base.nrrd import (
-    _ENCODINGS,
-    _SPACE_NAMES,
-    SPACES,
-    NrrdHeader,
-    NrrdParser,
+from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common._geometry import (
+    RAS_FROM_ORIENTATION,
+    reduce_to_affine,
+)
+from brainhops.io.common.nrrd import NrrdHeader, NrrdParser
+from brainhops.io.common.nrrd._codecs import (
     _format_float,
     _format_strings,
     _format_vectors,
     dtype_to_nrrd,
 )
-from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common.nrrd._constants import (
+    _ENCODINGS,
+    _SPACE_NAMES,
+    SPACES,
+)
 from brainhops.io.images.base import WritableFileBasedImage
 
 _INDEX = "index"
@@ -64,9 +65,7 @@ _CHANNEL_KINDS = frozenset(
         "3d-masked-matrix",
     )
 )
-"""The kinds of an axis whose samples are the components of one value
-(a vector, a colour, a tensor, a list of measurements), read as a channel
-axis."""
+"""Kinds whose samples are the components of one value, read as channels."""
 
 _ROLES = ("space", "time", "channel", "other")
 
@@ -90,7 +89,7 @@ _FLIPS = {
     "left-anterior-superior": np.array([-1.0, 1.0, 1.0]),
     "left-posterior-superior": np.array([-1.0, -1.0, 1.0]),
 }
-"""The sign of each axis of an anatomical space, relative to RAS."""
+"""Sign of each axis of an anatomical space relative to RAS."""
 
 _PER_AXIS = (
     "spacings",
@@ -103,7 +102,7 @@ _PER_AXIS = (
 )
 
 _KEPT = ("content", "sample units", "old min", "old max")
-"""Fields of the source header that are written back as they are."""
+"""Fields of the source header that are written back unchanged."""
 
 
 # ----------------------------------------------------------------------
@@ -112,21 +111,17 @@ _KEPT = ("content", "sample units", "old min", "old max")
 
 
 def _space_name(space: str) -> str:
-    """The name of the world space: the abbreviation of `space`."""
+    """Return the name of the world space, the abbreviation of `space`."""
     return SPACES[space][0]
 
 
 def _roles(header: NrrdHeader) -> tx.List[str]:
-    """
-    The role of each axis of a NRRD file, fastest first: `"space"`,
-    `"time"`, `"channel"` or `"other"`.
+    """Return the role of each NRRD axis, fastest first.
 
-    With `space directions`, an axis is spatial when it has a direction.
-    Without them, an axis is spatial when its kind is `domain` or
-    `space`, or, when the header has no `kinds` at all, when it is one of
-    the first three. Otherwise, a `time` axis is temporal, an axis whose
-    kind is a vector, a list, a colour, a tensor, ... is a channel axis,
-    and any other (`scalar`, `stub`, `none`, ...) is an untyped one.
+    An axis with a space direction is spatial. In a header without
+    directions, an axis of kind `domain` or `space`, or one of the first
+    three if there are no `kinds`, is spatial too. Other axes are time,
+    channel or other according to their kind.
     """
     dirs = header.space_directions
     kinds = header.kinds
@@ -149,12 +144,11 @@ def _roles(header: NrrdHeader) -> tx.List[str]:
 
 
 def _layout(header: NrrdHeader) -> tx.Tuple[tx.List[int], tx.List[Axis]]:
-    """
-    The order of the axes of the image, and the axes themselves.
+    """Return the axis order of the image and its axes.
 
-    The image lists the spatial axes first, then the temporal, channel
-    and other ones, each group in the order of the file. Element `j` of
-    the permutation is the file axis that becomes image axis `j`.
+    The roles are sorted in the order space, time, channel and other, each
+    in file order. Element `j` of the permutation is the file axis that
+    becomes image axis `j`.
     """
     roles = _roles(header)
     perm = [i for role in _ROLES for i, r in enumerate(roles) if r == role]
@@ -162,8 +156,7 @@ def _layout(header: NrrdHeader) -> tx.Tuple[tx.List[int], tx.List[Axis]]:
 
 
 def _axes(roles: tx.Sequence[str], perm: tx.Sequence[int]) -> tx.List[Axis]:
-    """The axes of the index space, named `x, y, z`, `t`, `c` or `dim<i>`
-    (`i` the axis' position in the file)."""
+    """Name the index axes `x`, `y`, `z`, `t`, `c` or `dim<file index>`."""
     axes = []
     nspace = 0
     seen = set()
@@ -182,7 +175,7 @@ def _axes(roles: tx.Sequence[str], perm: tx.Sequence[int]) -> tx.List[Axis]:
 
 
 def _role(axis: tx.Any) -> str:
-    """The role of an axis of the datamodel."""
+    """Return the role of a data model axis."""
     type_ = getattr(axis, "type", None)
     if type_ in ("space", "time"):
         return type_
@@ -192,8 +185,7 @@ def _role(axis: tx.Any) -> str:
 
 
 def _with_unit(axis: Axis, unit: tx.Optional[str]) -> Axis:
-    """`axis` measured in `unit`, or with no unit when `unit` is unknown
-    to the datamodel or does not fit the axis."""
+    """Return `axis` in `unit`, or without a unit if the unit is unknown."""
     if unit:
         try:
             if type(Unit(unit)) is not Unit:
@@ -204,7 +196,7 @@ def _with_unit(axis: Axis, unit: tx.Optional[str]) -> Axis:
 
 
 def _unit_symbol(axis: tx.Any) -> str:
-    """The NRRD spelling of an axis' unit (`""` when it has none)."""
+    """Return the NRRD spelling of the unit of an axis, or `""`."""
     unit = getattr(axis, "unit", None)
     if unit is None or is_indexunit(unit):
         return ""
@@ -220,18 +212,12 @@ def _unit_symbol(axis: tx.Any) -> str:
 
 
 def _world(header: NrrdHeader, sdim: int) -> CoordinateSystem:
-    """
-    The world space of the `space` (or `space dimension`) of a header.
+    """Return the world space of the header.
 
-    An anatomical space (`right-anterior-superior`, ...) has three axes
-    `x, y, z` that carry its orientation; `scanner-xyz` and
-    `3D-*-handed` have three that carry none; a `*-time` space has a
-    fourth, time, axis `t`. A world given by its `space dimension` only
-    has `sdim` axes with no orientation, and is named `"world"`.
-
-    The units are the `space units`, or millimetres for the spatial axes
-    of every `space` but the `3D-*-handed` ones, as ITK and 3D Slicer
-    assume. A world given by its dimension only has no unit by default.
+    Only anatomical spaces have oriented axes, and a `-time` space adds an
+    axis `t`. A world given only by `space dimension` is named `"world"`.
+    Without `space units`, spatial axes are in millimeters, as ITK and
+    Slicer assume, except in the 3D handed spaces and the bare `"world"`.
     """
     space = header.space
     units = list(header.space_units) + [None] * sdim
@@ -258,11 +244,10 @@ def _world(header: NrrdHeader, sdim: int) -> CoordinateSystem:
 
 
 def _nrrd_to_transformations(header: NrrdHeader) -> tx.List[Transformation]:
-    """
-    Convert a NRRD header to a list of transformations.
+    """Convert a NRRD header to transformations.
 
-    With a world space (`space` or `space dimension`, and `space
-    directions`):
+    With a world space (`space` or `space dimension`, and
+    `space directions`), the transformations are:
 
     1. index -> `"physical"`: a `Scaling` by the length of each space
        direction (the `spacings` of the other axes, else 1);
@@ -270,10 +255,9 @@ def _nrrd_to_transformations(header: NrrdHeader) -> tx.List[Transformation]:
        and whose translation is the `space origin`, the position of the
        centre of the first sample.
 
-    Without one, a single index -> `"physical"` map built from the
-    `spacings`, `axis mins` and `axis maxs`, and the `centers`, of each
-    axis: it is a `Scaling`, or an `Affine` when the first sample is not
-    at zero.
+    Without a world space, a single `Scaling` or `Affine` to `"physical"`
+    is built from `spacings`, `axis mins`, `axis maxs` and `centers`. A
+    cell-centred axis, the default, spans `size` samples edge to edge.
     """
     perm, axes = _layout(header)
     voxel = CoordinateSystem(name="voxel", axes=axes, order="F")
@@ -348,41 +332,25 @@ def _nrrd_to_transformations(header: NrrdHeader) -> tx.List[Transformation]:
 
 
 class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
-    """
-    An image that is encoded by a NRRD file, attached (`.nrrd`) or
-    detached (`.nhdr` and its data files).
+    """An image stored in a NRRD file, attached or detached.
 
-    It is the shared base of [`AttachedNrrdImage`][] and
-    [`DetachedNrrdImage`][], which answer to its hint `"nrrd"`; it is not
-    registered itself, so that it does not compete with them. Either one
-    reads both kinds of file, and writes the kind the file name asks for.
-
-    The data are indexed `[x, y, z, t, c, ...]`, F order: the spatial axes
-    first, then the time, channel and other axes, each group in the order
-    of the file (whose first axis is the fastest). This is a view of the
-    stored values (`dataobj`, in the file's axis order), so the values of
-    a `raw` local file stay memory-mapped.
-
-    The transformations are an index -> `"physical"` `Scaling`, then,
-    when the header has a world space, the index -> world `Affine` built
-    from `space directions` and `space origin` (preferred). The world is
-    named after the `space` (`"RAS"`, `"LPS"`, `"LAS"`, `"scanner-xyz"`,
-    ...; `"world"` for a bare `space dimension`). Header fields and
-    key/value pairs that the data model has no slot for are kept in
-    `header` and written back.
+    This class is the unregistered base of [`AttachedNrrdImage`][] and
+    [`DetachedNrrdImage`][], which answer to its hint `"nrrd"`. The data
+    are a view of `dataobj` indexed `[x, y, z, t, c, ...]` in Fortran
+    order. The transformations are a [`Scaling`][] to `"physical"` and,
+    with a world space, the preferred [`Affine`][] to the world, named
+    after `space`. Other header fields are kept in `header` and written
+    back.
 
     !!! note "Why the bases are in this order"
-        As for `NiftiImage`: `SingleScaleImage` comes last so that its
-        `data` field follows the defaulted fields of the parser, and the
-        lazy properties of this class take precedence over the plain
-        fields.
+        As for `NiftiImage`, [`SingleScaleImage`][] comes last so that its
+        `data` field follows the defaulted fields of the parser, and so
+        that the lazy properties of this class take precedence.
     """
-
-    # --- data model ---------------------------------------------------
 
     @property
     def data(self) -> tx.Optional[tx.Any]:
-        """The image data, `[x, y, z, ...]`, unless set explicitly."""
+        """Image data, a transposed view of `dataobj` unless set."""
         if getattr(self, "_data", None) is not None:
             return self._data
         raw = getattr(self, "dataobj", None)
@@ -397,8 +365,7 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
-        """The index coordinate system, derived from the header, unless
-        set explicitly. `None` when there is no header."""
+        """Index coordinate system, derived from the header unless set."""
         if getattr(self, "_system", None) is not None:
             return self._system
         if self.header is None:
@@ -412,8 +379,7 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
 
     @property
     def transformations(self) -> tx.List[Transformation]:
-        """The index-to-world transformations recorded by the header,
-        decoded on access unless set explicitly."""
+        """Index-to-world transformations, decoded from the header."""
         if getattr(self, "_transformations", None):
             return self._transformations
         if self.header is None:
@@ -424,19 +390,13 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
     def transformations(self, value: tx.List[Transformation]) -> None:
         self._transformations = value
 
-    # --- writing ------------------------------------------------------
-
     def _storage(
         self,
     ) -> tx.Tuple[tx.List[int], tx.List[str], tx.List[str]]:
-        """
-        How the image axes are stored: the file axis of each image axis,
-        the role of each image axis, and the kind of each file axis.
+        """Return the storage order, the image roles and the file kinds.
 
-        An image read from NRRD is written in the order, and with the
-        kinds, of its file, as long as its shape has not changed. Any
-        other is written in its own order, with the kinds `domain`
-        (space), `time`, `vector` (channel) and `none`.
+        An image read from NRRD with an unchanged shape keeps the order and
+        kinds of the file; any other image keeps its own order.
         """
         data = self.data
         if data is None:
@@ -480,28 +440,34 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
         keyvalue: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
         **kwargs,
     ) -> NrrdHeader:
-        """
-        Build the header that encodes this image.
+        """Build a header that encodes this image.
 
         Parameters
         ----------
         encoding : {"raw", "gzip", "bzip2", "ascii", "hex"}, optional
-            Defaults to the encoding of the source header, else `gzip`.
+            Defaults to the source encoding, or gzip.
         endian : {"little", "big"}, optional
-            Defaults to the byte order of the source header, else
-            `little`.
-        datatype : str | dtype, optional
-            The NRRD type (`"short"`, `"float"`, ...) or a numpy one.
-            Defaults to the data's own type.
+            Defaults to the source byte order, or little-endian.
+        datatype : str or dtype, optional
+            NRRD or numpy type, by default that of the data.
         space : str, optional
-            The anatomical space to write the geometry in
-            (`"right-anterior-superior"`, `"LPS"`, ...). Defaults to the
-            source header's, else the one the preferred transformation
-            maps to (when it is RAS, LAS or LPS), else RAS. Only used when
-            the world space is anatomical.
+            Space of an anatomical geometry, such as `"LPS"`. Defaults to
+            the source space, then to the space the transformation maps
+            to, then to RAS.
         keyvalue : mapping, optional
-            Extra `key:=value` pairs, merged into those of the source
-            header; a value of `None` removes a key.
+            Pairs merged into those of the source. `None` removes a key.
+
+        Returns
+        -------
+        NrrdHeader
+            The header.
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
+        WriterError
+            If the data, an option or the geometry cannot be written.
         """
         if kwargs:
             raise TypeError(
@@ -516,7 +482,6 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
         source = self.header
         fields: tx.Dict[str, str] = {}
 
-        # --- storage --------------------------------------------------
         sizes = [0] * ndim
         for j, i in enumerate(perm):
             sizes[i] = shape[j]
@@ -539,7 +504,6 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
             raise WriterError(f"Unknown NRRD endian: {endian!r}")
         fields["endian"] = endian
 
-        # --- per-axis fields of the source ----------------------------
         matched = (
             source is not None
             and len(kinds) == ndim
@@ -564,7 +528,6 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
                 if name in source.fields:
                     fields[name] = source.fields[name]
 
-        # --- geometry -------------------------------------------------
         spatial = [perm[j] for j, r in enumerate(roles) if r == "space"]
         geometry = _geometry(self, roles, space, source)
         if geometry is not None:
@@ -575,7 +538,7 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
                 for i, v in zip(spatial, values["directions"]):
                     directions[i] = v
                 fields["space directions"] = _format_vectors(directions)
-                # Spatial axes are described by their direction alone.
+                # Spatial axes are described by their directions alone.
                 for name in ("spacings", "axis mins", "axis maxs", "units"):
                     if name in per_axis:
                         empty = '""' if name == "units" else "nan"
@@ -601,7 +564,6 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
         if "space directions" not in fields:
             fields.pop("measurement frame", None)
 
-        # --- key/value pairs ------------------------------------------
         merged = dict(source.keyvalue) if source is not None else {}
         for key, value in (keyvalue or {}).items():
             if value is None:
@@ -614,12 +576,12 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
 
 
 def _split_quoted(value: str) -> tx.List[str]:
-    """The quoted strings of a field, still escaped."""
+    """Return the quoted strings of a field, still escaped."""
     return re.findall(r'"((?:[^"\\]|\\.)*)"', value)
 
 
 def _kinds(roles: tx.Sequence[str], perm: tx.Sequence[int]) -> tx.List[str]:
-    """The kind of each file axis, from the role of each image axis."""
+    """Return the kind of each file axis from the role of each image axis."""
     names = {
         "space": "domain",
         "time": "time",
@@ -633,8 +595,7 @@ def _kinds(roles: tx.Sequence[str], perm: tx.Sequence[int]) -> tx.List[str]:
 
 
 def _orientation_matrix(axes: tx.Sequence[tx.Any]) -> tx.Optional[np.ndarray]:
-    """The `(3, 3)` matrix that maps coordinates along `axes` to RAS, or
-    `None` when they are not three anatomically oriented axes."""
+    """Return the matrix from three oriented `axes` to RAS, or `None`."""
     if len(axes) != 3:
         return None
     matrix = np.zeros((3, 3))
@@ -654,7 +615,16 @@ def _target_space(
     source: tx.Optional[NrrdHeader],
     to_ras: np.ndarray,
 ) -> str:
-    """The anatomical `space` to write the geometry in."""
+    """Return the anatomical `space` in which to write the geometry.
+
+    The requested space wins, then the source space, then the space
+    matching `to_ras`, and finally RAS.
+
+    Raises
+    ------
+    WriterError
+        If the requested space is not RAS, LAS or LPS.
+    """
     if requested is not None:
         key = str(requested).lower()
         key = _SPACE_NAMES.get(key, key)
@@ -683,16 +653,11 @@ def _geometry(
     space: tx.Optional[str],
     source: tx.Optional[NrrdHeader],
 ) -> tx.Optional[tx.Tuple[str, tx.Any]]:
-    """
-    The geometry fields of the preferred transformation, in the order of
-    the image's spatial axes.
+    """Return the geometry fields of the preferred transformation.
 
-    Returns `None` when there is nothing to write (no transformation, no
-    spatial axis, or an identity scaling with no unit), `("space", ...)`
-    for `space`, `space directions` and `space origin`, or
-    `("spacings", (spacings, positions, units))` for a scaling (plus
-    translation) onto unoriented axes, when the source header had no
-    space either.
+    The result is `None` when there is nothing to write, `("space", ...)`
+    for space fields, or `("spacings", (spacings, positions, units))` for
+    a scaling onto unoriented axes when the source had no space either.
     """
     nspace = list(roles).count("space")
     if not image.transformations or not nspace:
@@ -767,11 +732,10 @@ def _geometry(
 def _measurement_frame(
     source: tx.Optional[NrrdHeader], target: str
 ) -> tx.Optional[str]:
-    """
-    The measurement frame of the source header, in the `target` space.
+    """Return the source measurement frame expressed in the `target` space.
 
-    Its vectors are expressed in the world space, so they change sign
-    with it when the source was written in another anatomical space.
+    The vectors are in world coordinates, so their signs follow the
+    change of space.
     """
     if source is None or "measurement frame" not in source.fields:
         return None
@@ -795,9 +759,9 @@ def _measurement_frame(
 
 @register_format
 class AttachedNrrdImage(NrrdImage):
-    """
-    An image that is encoded by a NRRD file whose header and data are in
-    the same file (`.nrrd`). See [`NrrdImage`][].
+    """An image whose header and data share one `.nrrd` file.
+
+    See [`NrrdImage`][].
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nrrd",)
@@ -810,9 +774,9 @@ class AttachedNrrdImage(NrrdImage):
 
 @register_format
 class DetachedNrrdImage(NrrdImage):
-    """
-    An image that is encoded by a detached NRRD header (`.nhdr`) and the
-    data file(s) it names. See [`NrrdImage`][].
+    """An image whose `.nhdr` header names separate data files.
+
+    See [`NrrdImage`][].
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nhdr",)

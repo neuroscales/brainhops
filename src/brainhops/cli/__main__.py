@@ -1,4 +1,4 @@
-"""Entry point for ``python -m brainhops.cli``."""
+"""Entry point for `python -m brainhops.cli`."""
 
 from __future__ import annotations
 

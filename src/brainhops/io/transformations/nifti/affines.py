@@ -1,21 +1,18 @@
-"""Affine transformations between voxel and RAS space, derived from a NIfTI
-header."""
+"""Affines between voxel and RAS space, derived from a NIfTI header."""
 
-# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
-# io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import (
+from brainhops.io.base.parsers import Confidence
+from brainhops.io.common.nifti._geometry import _voxel_to_ras
+from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _new_nifti,
     _NiftiObject,
-    _voxel_to_ras,
 )
-from brainhops.io.base.parsers import Confidence
 from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.conversions import (
@@ -26,27 +23,28 @@ from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 
 class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
-    """Shared scoring and writing for affines derived from a NIfTI header."""
+    """Shared scoring and writing for the affines derived from a header."""
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
         """
-        float a NIfTI header as a bare affine.
+        Score a header as a bare affine, always `Confidence.WEAK`.
 
-        *Every* NIfTI carries an affine, so this always matches -- which
-        is exactly why it must score low. Asking to load a `.nii` almost
-        never means "give me its voxel-to-RAS matrix"; that is reached
-        through the image. Scoring `WEAK` keeps these reachable as a last
-        resort without letting them outrank an image or a field.
+        Every NIfTI file carries an affine, but loading a `.nii` file rarely
+        means loading its voxel-to-RAS matrix, which is reached through the
+        image instead. The weak score keeps these readers as a last resort that
+        never outranks an image or a field.
         """
         return Confidence.WEAK
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:
-        """The `(4, 4)` voxel-to-RAS matrix this affine encodes."""
+        """Return the (4, 4) voxel-to-RAS matrix that this affine encodes."""
         raise NotImplementedError
 
     def _xform_code(self) -> int:
-        """The xform code to store, taken from the source header."""
+        """
+        Return the xform code of the source header, the sform code first, or 2.
+        """
         header = self.header
         if header is not None:
             _, code = header.get_sform(coded=True)
@@ -64,13 +62,11 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         Build a `nibabel` image whose affine is this transformation.
 
         NIfTI stores an affine only as the geometry of a data array, so a
-        single-voxel placeholder volume carries it. The voxel-to-RAS
-        matrix becomes both the sform and the qform, under the code the
-        source header recorded.
-
-        When `like` is given, non-encoding header fields are copied from it.
-        Keyword arguments override header fields last. The geometry always
-        comes from this transformation.
+        single-voxel placeholder volume carries it. The voxel-to-RAS matrix
+        becomes both the sform and the qform, under the code recorded by the
+        source header. Non-encoding header fields are copied from `like`, and
+        `overrides` are applied last, but the geometry always comes from this
+        transformation.
         """
         matrix = self._voxel_to_ras_matrix()
         data = np.zeros((1, 1, 1), dtype="float32")
@@ -85,27 +81,25 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
 
 class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     """
-    Affine transformation from RAS space to voxel space, derived from a
-    NIfTI header.
+    Affine from RAS to voxel space, derived from a NIfTI header.
 
     !!! note "Not a registered format"
-        A NIfTI header encodes voxel-to-RAS; RAS-to-voxel is its
-        inverse, computed rather than stored. The two are
-        indistinguishable by content -- same container, same extension,
-        same confidence -- so registering both would make every `.nii`
-        an ambiguity. Reach this one through
-        `NiftiVoxelToRAS.inverse()`.
+        The header encodes the voxel-to-RAS affine, and the RAS-to-voxel affine
+        is its computed inverse. The two cannot be told apart by content, since
+        they share the container, the extension and the confidence, so
+        registering both would make every `.nii` file ambiguous. This affine is
+        reached through `NiftiVoxelToRAS.inverse()`.
     """
 
     @property
     def data(self) -> tx.Optional[np.ndarray]:
-        """The stored affine matrix, which the `matrix` view reads.
+        """
+        The stored affine matrix, which the `matrix` view reads.
 
-        It is derived from the header, unless it has been set explicitly.
-        It takes the name of the NIfTI parser's image `data` (the file
-        holds no voxels of interest, only the header's affine), but not
-        its storage: an explicit matrix has a slot of its own, so that
-        reading the image through the parser never stands in for it.
+        The matrix is derived from the header unless it is set explicitly. It
+        is named like the image `data` of the NIfTI parser, but it is stored
+        separately, so the image read by the parser never stands in for an
+        explicit matrix.
         """
         if getattr(self, "_explicit_matrix", None) is not None:
             return self._explicit_matrix
@@ -119,9 +113,8 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        # The constructor stores `data=` in `_data`, which is also the slot
-        # the NIfTI parser caches its image in: it is moved to the matrix's
-        # own.
+        # The constructor stores data= in _data, where the NIfTI parser also
+        # caches its image, so the value is moved to the slot of the matrix.
         data = arguments.get("data")
         if data is not None:
             self._data = None
@@ -132,10 +125,10 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     # anything else is read or copied as the bases do.
 
     @classmethod
-    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
-        return super().from_other(other, *args, **kwargs)
+        return super().from_any(other, *args, **kwargs)
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
@@ -144,35 +137,29 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
         return super().from_instance(other, *args, **kwargs)
 
     def inverse(self, compute: bool = False, **kwargs) -> VoxelToRAS:
-        """The inverse transformation, from RAS space to voxel space."""
+        """Return the inverse transformation, from voxel to RAS space."""
         if getattr(self, "_explicit_matrix", None) is None:
             return NiftiVoxelToRAS(image=self.image, header=self.header)
         return super().inverse(compute=compute, **kwargs).to(VoxelToRAS)
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:
-        # This transformation maps RAS to voxel, so its inverse maps
-        # voxel to RAS, which is what NIfTI stores.
+        # NIfTI stores the voxel-to-RAS map, which is the inverse of this one.
         return _voxel_to_ras(self.inverse())
 
 
 @register_format
 class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
-    """
-    Affine transformation from voxel space to RAS space, derived from a
-    NIfTI header.
-    """
+    """Affine from voxel to RAS space, derived from a NIfTI header."""
 
     HINTS = ("nifti",)
 
     @property
     def data(self) -> tx.Optional[np.ndarray]:
-        """The stored affine matrix, which the `matrix` view reads.
+        """
+        The stored affine matrix, which the `matrix` view reads.
 
-        It is derived from the header, unless it has been set explicitly.
-        It takes the name of the NIfTI parser's image `data` (the file
-        holds no voxels of interest, only the header's affine), but not
-        its storage: an explicit matrix has a slot of its own, so that
-        reading the image through the parser never stands in for it.
+        See
+        [`NiftiRASToVoxel.data`][brainhops.io.transformations.nifti.affines.NiftiRASToVoxel.data].
         """
         if getattr(self, "_explicit_matrix", None) is not None:
             return self._explicit_matrix
@@ -186,9 +173,6 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        # The constructor stores `data=` in `_data`, which is also the slot
-        # the NIfTI parser caches its image in: it is moved to the matrix's
-        # own.
         data = arguments.get("data")
         if data is not None:
             self._data = None
@@ -199,10 +183,10 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     # anything else is read or copied as the bases do.
 
     @classmethod
-    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
-        return super().from_other(other, *args, **kwargs)
+        return super().from_any(other, *args, **kwargs)
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
@@ -211,7 +195,7 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
         return super().from_instance(other, *args, **kwargs)
 
     def inverse(self, compute: bool = False, **kwargs) -> RASToVoxel:
-        """The inverse transformation, from RAS space to voxel space."""
+        """Return the inverse transformation, from RAS to voxel space."""
         if getattr(self, "_explicit_matrix", None) is None:
             return NiftiRASToVoxel(image=self.image, header=self.header)
         return super().inverse(compute=compute, **kwargs).to(RASToVoxel)

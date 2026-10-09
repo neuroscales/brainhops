@@ -13,14 +13,14 @@ be the format's.
 What remains is then read as the format reads its own content: one
 affine, or one field between two affines. When it is not that, or a
 bridge does not exist, nothing is approximated: the converter raises a
-[`ConversionError`][brainhops.datamodel.transformations.ConversionError],
+[`ConversionError`][brainhops.errors.ConversionError],
 built by [`unrepresentable`][], that says what cannot be held.
 
 These helpers only take apart and check. Each converter decides, in one
 place, whether what they return is held exactly by its format. A format
 that has converters builds itself from another transformation through
 them ([`converts_to`][] and [`convert_instance`][]), so that
-`Format.from_other(t)`, `Format.from_instance(t)` and `t.to(Format)` are
+`Format.from_any(t)`, `Format.from_instance(t)` and `t.to(Format)` are
 one conversion.
 """
 
@@ -45,16 +45,17 @@ from brainhops.backends import get_array_backend
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.adaptors import bridge
-from brainhops.datamodel._transformations.convert import convert
+from brainhops.datamodel._transformations.compute.adaptors import bridge
+from brainhops.datamodel._transformations.compute.convert import convert
 from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.errors import AdaptationError, ConversionError
 
 _Field = tx.Union[_xforms.DisplacementField, _xforms.CoordinatesField]
 
 
 def unrepresentable(
     t: _xforms.Transformation, cls: type, reason: str
-) -> _xforms.ConversionError:
+) -> ConversionError:
     """
     The error a converter raises when its format cannot hold `t` exactly.
 
@@ -67,7 +68,7 @@ def unrepresentable(
     reason : str
         What the format cannot hold, as the end of a sentence.
     """
-    return _xforms.ConversionError(
+    return ConversionError(
         f"This {type(t).__name__} cannot be held exactly by a "
         f"{cls.__name__}: {reason}"
     )
@@ -90,7 +91,7 @@ def convert_instance(cls: type, other: tx.Any, *args, **kwargs) -> tx.Any:
     """
     `other` converted to the format `cls`, exactly as `other.to(cls)`.
 
-    This is what `from_other` and `from_instance` of a format with
+    This is what `from_any` and `from_instance` of a format with
     converters return for another transformation (see [`converts_to`][]),
     so the three give the same result and raise the same errors.
     """
@@ -279,7 +280,7 @@ def _bridge(
     # `Sequence.compute` does), or the reason why there is none.
     try:
         return bridge(source, target, allow_type_grouped_positional=True)
-    except _xforms.AdaptationError as error:
+    except AdaptationError as error:
         raise unrepresentable(t, cls, str(error)) from error
 
 
@@ -312,7 +313,7 @@ def _matrix(
     # between unknown systems has no size of its own, and takes `ndim`.
     try:
         affine = _xforms.Sequence(transformations=chain).to(_xforms.Affine)
-    except _xforms.ConversionError as error:
+    except ConversionError as error:
         raise unrepresentable(
             t, cls, f"what it holds is not an affine there. {error}"
         ) from error

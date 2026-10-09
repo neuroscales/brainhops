@@ -1,20 +1,22 @@
-"""Tests for the NIfTI <-> brainhops unit converter, and its policies."""
+"""Tests of the unit conversion between NIfTI and brainhops."""
 
 import warnings
 
-import nibabel as nb
 import numpy as np
 import pytest
 
 import brainhops.io as io
 from brainhops.datamodel.units import IndexUnit, Unit
-from brainhops.io.base._nifti_units import (
+from brainhops.io.common.nifti import NiftiUnitWarning
+from brainhops.io.common.nifti._units import (
     NIFTI_SPACE_CODES,
     NIFTI_TIME_CODES,
-    NiftiUnitWarning,
     nifti_to_unit,
     unit_to_nifti,
 )
+
+# The converter only needs brainhops; nibabel provides real headers.
+nb = pytest.importorskip("nibabel")
 
 _REPRESENTABLE = [
     ("space", "meter", Unit("meter")),
@@ -42,8 +44,7 @@ def test_every_representable_code_round_trips(
 
 
 def test_an_unknown_spatial_unit_is_read_as_millimetres() -> None:
-    # The ecosystem's convention, and a lossy normalisation: it is written
-    # back as "mm", not as "unknown".
+    # By convention, and lossily, unknown spatial units are mm.
     for value in ("unknown", 0, None, ""):
         unit = nifti_to_unit(value, "space")
         assert unit is Unit("mm")
@@ -61,7 +62,7 @@ def test_a_temporal_code_that_is_not_a_unit_warns(label: str) -> None:
     for value in (label, NIFTI_TIME_CODES[label]):
         with pytest.warns(NiftiUnitWarning, match=label):
             assert nifti_to_unit(value, "time") is None
-    # ... and it does not come back: unspecified is written as unknown.
+    # An unspecified temporal unit is written back as unknown.
     assert unit_to_nifti(None, "time") == "unknown"
 
 

@@ -1,12 +1,8 @@
-"""
-Tests for AFNI datasets (`prefix+view.HEAD` + `prefix+view.BRIK[.gz]`).
+"""Tests for AFNI datasets, a prefix+view.HEAD header with a .BRIK file.
 
-The fixtures are hand-crafted from the format's specification
-(`README.attributes` and the AFNI sources quoted in
-`brainhops.io.base.afni`), with a reference encoder that is deliberately
-independent of the reader: the header is written attribute by attribute
-as AFNI's `thd_writeatr.c` does, and the BRIK is packed with `struct`,
-one voxel at a time, `x` fastest.
+The fixtures are built from the specification by an independent encoder:
+the header attribute by attribute, as thd_writeatr.c writes it, and the
+BRIK one voxel at a time with x fastest.
 """
 
 import bz2
@@ -25,15 +21,6 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling
 from brainhops.io.base import FileBasedObject, WritableFileBasedObject
-from brainhops.io.base.afni import (
-    DICOM_TO_RAS,
-    AfniHeader,
-    afni_cardinal_matrix,
-    afni_dataset_files,
-    afni_geometry_from_matrix,
-    afni_view,
-    brick_dtype,
-)
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -42,6 +29,14 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.base.specs import format_hints
+from brainhops.io.common.afni import AfniHeader
+from brainhops.io.common.afni._constants import DICOM_TO_RAS
+from brainhops.io.common.afni._data import afni_dataset_files, brick_dtype
+from brainhops.io.common.afni._geometry import (
+    afni_cardinal_matrix,
+    afni_geometry_from_matrix,
+    afni_view,
+)
 from brainhops.io.images import FileBasedImage, WritableFileBasedImage
 from brainhops.io.images.afni import AfniImage
 
@@ -53,7 +48,7 @@ SHAPE = (4, 3, 2)
 
 
 def _attribute(name, value):  # noqa: ANN001, ANN202
-    """One attribute, as AFNI writes it."""
+    """Encode one attribute as AFNI writes it."""
     if isinstance(value, str):
         chars = value.replace("~", "*").replace("\0", "~") + "~"
         return (
@@ -89,8 +84,7 @@ def _header(  # noqa: ANN202
     types: object = None,
     **extra: object,
 ):
-    """The text of a header with the mandatory attributes, then `extra`
-    (an attribute set to `None` is left out)."""
+    """Encode a header; an attribute whose value is None is left out."""
     attrs = {
         "TYPESTRING": "3DIM_HEAD_ANAT",
         "SCENE_DATA": (view, 0, 0, -999, -999, -999, -999, -999),
@@ -111,7 +105,7 @@ def _header(  # noqa: ANN202
 
 
 def _brik(bricks, fmts):  # noqa: ANN001, ANN202
-    """Pack each sub-brick, `x` fastest, one voxel at a time."""
+    """Pack each sub-brick voxel by voxel, x fastest."""
     out = b""
     for brick, fmt in zip(bricks, fmts):
         nx, ny, nz = brick.shape
@@ -175,7 +169,7 @@ def test_the_attributes_are_decoded() -> None:
     assert all(isinstance(v, float) for v in header["IJK_TO_DICOM_REAL"])
     assert header.labels == ["one", "two", "*hr"]
     assert "EMPTY" not in header
-    # A string is its `count` characters, newlines included.
+    # A string attribute counts its characters, newlines included.
     assert header["HISTORY_NOTE"] == "a\\nb\nc"
 
 
@@ -188,7 +182,7 @@ def test_the_header_writes_back_as_it_was_read() -> None:
     )
     header = AfniHeader.from_text(text)
     again = AfniHeader.from_text(header.to_text())
-    # A tilde of a string comes back as an asterisk, as in AFNI.
+    # A tilde in a string comes back as an asterisk, as in AFNI.
     expected = dict(header.attributes)
     expected["HISTORY_NOTE"] = "made by\\n hand * tilde"
     assert again.attributes == expected
@@ -204,7 +198,7 @@ def test_written_attributes_follow_afni() -> None:
         }
     )
     text = header.to_text()
-    # A float attribute stays one when given integers.
+    # A float attribute stays a float attribute when given integers.
     assert "type = float-attribute\nname = ORIGIN\ncount = 3\n 1 2 3\n" in text
     assert "count = 8\n 3 1 0 0 0\n 0 0 0\n" in text
     assert "count = 15\n'3DIM_HEAD_ANAT~\n" in text
@@ -258,42 +252,41 @@ def test_types_byteorder_and_facs_defaults() -> None:
     header = AfniHeader.from_text(
         _header(nvals=3, types=None, BRICK_TYPES=None, BYTEORDER_STRING=None)
     )
-    assert header.brick_types == (1, 1, 1)  # shorts, as in AFNI 1.0
+    assert header.brick_types == (1, 1, 1)
     assert header.byteorder == "="
     assert header.float_facs == (0.0, 0.0, 0.0)
     assert header.view == "orig"
     assert header.taxis is None
     short = AfniHeader.from_text(_header(nvals=3, types=(0, 3)))
-    assert short.brick_types == (0, 3, 3)  # the last code is repeated
+    assert short.brick_types == (0, 3, 3)  # The last code is repeated.
 
 
 # ----------------------------------------------------------------------
 #   GEOMETRY
 # ----------------------------------------------------------------------
 
-# Every axis assignment: three distinct DICOM axes, each either way.
+# Every assignment of three distinct DICOM axes, in either direction.
 ORIENTS = [
     tuple(2 * row + flip for row, flip in zip(rows, flips))
     for rows in itertools.permutations(range(3))
     for flips in itertools.product((0, 1), repeat=3)
 ]
 
-# The DICOM axis and the direction (+1 towards L, P or S) of each code,
-# straight from the names in `README.attributes`.
+# Code -> (DICOM axis, +1 toward L, P or S), as named in the README.
 _DIRECTION = {
-    0: (0, +1),  # R2L: towards the left
-    1: (0, -1),  # L2R
-    2: (1, -1),  # P2A: towards the front
-    3: (1, +1),  # A2P
-    4: (2, +1),  # I2S: up
-    5: (2, -1),  # S2I
+    0: (0, +1),
+    1: (0, -1),
+    2: (1, -1),
+    3: (1, +1),
+    4: (2, +1),
+    5: (2, -1),
 }
 
 
 @pytest.mark.parametrize("orient", ORIENTS)
 def test_the_cardinal_grid_follows_the_readme(orient) -> None:  # noqa: ANN001
     sizes = (2.0, 3.0, 4.0)
-    # DELTA is negative for an axis running towards R, A or I.
+    # DELTA is negative for an axis running toward R, A or I.
     delta = [s * _DIRECTION[o][1] for s, o in zip(sizes, orient)]
     origin = (5.0, -7.0, 11.0)
     matrix = afni_cardinal_matrix(orient, origin, delta)
@@ -301,8 +294,7 @@ def test_the_cardinal_grid_follows_the_readme(orient) -> None:  # noqa: ANN001
         expected = np.zeros(3)
         for i, o in enumerate(orient):
             axis, _ = _DIRECTION[o]
-            # README: the centre of voxel (i,j,k) is ORIGIN + n * DELTA,
-            # along the DICOM axis of each voxel axis.
+            # Voxel centre: ORIGIN + n * DELTA along the DICOM axis of axis n.
             expected[axis] = origin[i] + index[i] * delta[i]
         assert np.allclose(matrix @ (*index, 1), (*expected, 1))
     back = afni_geometry_from_matrix(matrix)
@@ -321,16 +313,14 @@ def test_an_oblique_matrix_is_decomposed_as_afni_does() -> None:
         ]
     )
     matrix = np.eye(4)
-    # x runs L2R (negative DICOM x), y runs I2S, z runs P2A.
+    # x runs L2R (negative DICOM x), y runs I2S and z runs P2A.
     matrix[:3, :3] = rotation @ np.array(
         [[-2.0, 0, 0], [0, 0, -4.0], [0, 3.0, 0]]
     )
     matrix[:3, 3] = (30.0, -40.0, 50.0)
     orient, origin, delta = afni_geometry_from_matrix(matrix)
     assert orient == (1, 4, 2)
-    # `THD_daxes_from_mat44`: the size is the length of the column, the
-    # origin the projection of the translation on the unit column, both
-    # signed by the orientation (L2R and P2A are DICOM-negative).
+    # Sizes and origins are signed by orientation, as THD_daxes_from_mat44.
     assert np.allclose(delta, (-2.0, 3.0, -4.0))
     columns = matrix[:3, :3] / np.linalg.norm(matrix[:3, :3], axis=0)
     projections = columns.T @ matrix[:3, 3]
@@ -426,7 +416,7 @@ def test_data_types_and_byte_orders(tmp_path, code, fmt, dtype, order) -> None: 
     head = _header(types=(code,), BYTEORDER_STRING=order)
     path = _dataset(tmp_path, head, _brik([data], [prefix + fmt]))
     image = AfniImage.load(path)
-    # The values are a view of the file, in its byte order.
+    # The values are a view of the file in its byte order.
     assert image.data.dtype == np.dtype(dtype).newbyteorder(prefix)
     assert image.data.shape == SHAPE
     assert np.array_equal(image.data, data)
@@ -450,7 +440,7 @@ def test_brick_scaling_factors(tmp_path) -> None:  # noqa: ANN001
     image = AfniImage.load(path)
     assert image.dataobj.dtype == np.int16
     assert image.data.dtype == np.float32
-    # A factor of zero means "not scaled".
+    # A factor of zero means that the sub-brick is not scaled.
     assert np.allclose(image.data[..., 0], 0.5 * a)
     assert np.allclose(image.data[..., 1], a)
     assert np.allclose(image.data[..., 2], 2.0 * a)
@@ -563,7 +553,7 @@ def test_sniffing(tmp_path) -> None:  # noqa: ANN001
     three = _dataset(
         tmp_path, _header(nvals=3), _brik([DATA] * 3, ["<f"] * 3), "w+tlrc"
     )
-    assert AfniImage.sniff(three) == Confidence.WEAK  # perhaps a warp
+    assert AfniImage.sniff(three) == Confidence.WEAK
     assert AfniImage.sniff(b"\x00" * 400) == Confidence.NO
     assert AfniImage.sniff(b"type = nonsense") == Confidence.NO
     assert AfniImage.sniff(tmp_path / "missing+orig.HEAD") == Confidence.NO
@@ -697,7 +687,7 @@ def test_the_view_written(tmp_path) -> None:  # noqa: ANN001
     assert AfniImage.load(tmp_path / "a+tlrc.HEAD").header.view == "tlrc"
     image.save(tmp_path / "b.HEAD", view="acpc")
     assert AfniImage.load(tmp_path / "b.HEAD").header.view == "acpc"
-    image.save(tmp_path / "c.HEAD")  # the view read
+    image.save(tmp_path / "c.HEAD")
     assert AfniImage.load(tmp_path / "c.HEAD").header.view == "orig"
     with pytest.raises(WriterError):
         image.save(tmp_path / "d.HEAD", view="mni")

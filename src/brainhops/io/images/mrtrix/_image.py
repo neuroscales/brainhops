@@ -1,15 +1,12 @@
-# stdlib
 import math
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
-# internals
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -18,20 +15,21 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._geometry import Arrangement, declared_axes
-from brainhops.io.base.mrtrix import (
-    MrtrixHeader,
-    MrtrixParser,
-    default_layout,
-    dtype_to_mrtrix,
-    parse_layout,
-    split_voxel_to_scanner,
-    voxel_to_ras,
-)
 from brainhops.io.base.parsers import (
     Confidence,
     UnrepresentableTransformationError,
     WriterError,
+)
+from brainhops.io.common._geometry import Arrangement, declared_axes
+from brainhops.io.common.mrtrix import MrtrixHeader, MrtrixParser
+from brainhops.io.common.mrtrix._codecs import (
+    default_layout,
+    dtype_to_mrtrix,
+    parse_layout,
+)
+from brainhops.io.common.mrtrix._geometry import (
+    split_voxel_to_scanner,
+    voxel_to_ras,
 )
 from brainhops.io.images.base import WritableFileBasedImage
 
@@ -44,17 +42,16 @@ _ORIENTATION = {
     "z": "inferior-to-superior",
 }
 _SCANNER = "scanner"
-"""The name of the world space MRtrix's transform maps into."""
+"""Name of the world space into which the MRtrix transform maps."""
 
 
 def _mrtrix_axes(ndim: int) -> tx.List[Axis]:
-    """
-    The axes of the voxel space of an MRtrix image.
+    """Return the voxel axes of an MRtrix image.
 
-    The first three are spatial (`x`, `y`, `z`). MRtrix gives the axes
-    beyond them no meaning of their own -- the fourth holds diffusion
-    volumes, time points, spherical-harmonic coefficients, ... -- so they
-    are named `dim3`, `dim4`, ... and given no type.
+    The first three axes are the spatial axes `x`, `y` and `z`. Further
+    axes, such as diffusion volumes, time or spherical harmonic
+    coefficients, have no meaning defined by MRtrix, so they are named
+    `dim3`, `dim4` and so on, without a type.
     """
     axes = []
     for i in range(ndim):
@@ -67,59 +64,40 @@ def _mrtrix_axes(ndim: int) -> tx.List[Axis]:
 
 @register_format
 class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
-    """
-    An image that is encoded by an MRtrix image file
-    (`.mif`, `.mif.gz`, or `.mih` with its data file).
+    """An image stored in an MRtrix file (`.mif`, `.mif.gz` or `.mih`).
 
-    The data are indexed in the order of the header's axes
-    (`[x, y, z, ...]`, F order), whatever the `layout` they are stored
-    in: a negative or permuted layout is undone by a view, so the data of
-    an uncompressed local file stay memory-mapped. Intensity scaling, when
-    the header has one, is applied on access; `dataobj` holds the stored
-    values.
+    The data are indexed `[x, y, z, ...]` in Fortran order, whatever
+    `layout` the file uses. The intensity scaling is applied to `data`,
+    while `dataobj` holds the stored values.
 
-    The voxel-to-world transformations are:
-
-    1. `voxel` -> `physical`: a `Scaling` by the voxel sizes (`vox`);
-    2. `voxel` -> `scanner`: the `Affine` to scanner RAS+ millimetres,
-       `transform @ diag(vox)`. The header's `transform` maps voxel
-       coordinates *multiplied by the voxel sizes*, not voxel indices.
-       Without a `transform`, MRtrix's default is used, which centres the
-       field of view on the origin; it is not the identity.
-
-    The last one is the preferred transformation. Header keys that the
-    data model has no slot for (`dw_scheme`, `command_history`, ...) are
-    kept in `header.keyval` and written back.
+    The transformations are a [`Scaling`][] to `"physical"` by the voxel
+    sizes and the preferred [`Affine`][] to scanner RAS+ in millimeters,
+    `transform @ diag(vox)`. Header keys without a place in the data
+    model, such as `dw_scheme`, are kept in `header.keyval` and written
+    back.
 
     !!! note "Why the bases are in this order"
-        As for `NiftiImage`: `SingleScaleImage` comes last so that its
-        `data` field follows the defaulted fields of the parser, and the
-        lazy properties of this class take precedence over the plain
-        fields.
+        As for `NiftiImage`, [`SingleScaleImage`][] comes last so that its
+        `data` field follows the defaulted fields of the parser, and so
+        that the lazy properties of this class override plain fields.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
 
-    # --- sniff --------------------------------------------------------
-
     @classmethod
     def _score_header(cls, header: MrtrixHeader) -> float:
-        """
-        Score an MRtrix header as a plain image.
+        """Score a header as a plain image.
 
-        Any MRtrix file can be read as an image. A 4D file whose last
-        axis has three volumes may be a warp, so it is only a weak match,
-        as a NIfTI file of that shape is.
+        A 4D image with three volumes may be a warp, as may a NIfTI file
+        of that shape, so it is only a weak match.
         """
         if header.ndim == 4 and header.dim[3] == 3:
             return Confidence.WEAK
         return Confidence.LIKELY
 
-    # --- data model ---------------------------------------------------
-
     @property
     def data(self) -> tx.Optional[tx.Any]:
-        """The image data, scaled, unless set explicitly."""
+        """Scaled image data, unless set explicitly."""
         if getattr(self, "_data", None) is not None:
             return self._data
         data = self._scaled_data()
@@ -133,8 +111,7 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
-        """The voxel coordinate system, derived from the header, unless
-        set explicitly. `None` when there is no header."""
+        """Voxel coordinate system, derived from the header unless set."""
         if getattr(self, "_system", None) is not None:
             return self._system
         if self.header is None:
@@ -148,11 +125,10 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
 
     @property
     def transformations(self) -> tx.List[Transformation]:
-        """The voxel-to-world transformations recorded by the header,
-        decoded on access unless set explicitly.
+        """Voxel-to-world transformations, decoded from the header.
 
-        An image built from data alone has no header, so it records no
-        transformation and the list is empty.
+        Transformations that were set explicitly are returned as they are.
+        An image built from data alone has none.
         """
         if getattr(self, "_transformations", None):
             return self._transformations
@@ -164,13 +140,10 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
     def transformations(self, value: tx.List[Transformation]) -> None:
         self._transformations = value
 
-    # --- writing ------------------------------------------------------
-
     def _mrtrix_geometry(self) -> tx.Tuple[tx.Any, Arrangement]:
-        """
-        The data, and its geometry with the axes placed where MRtrix
-        stores them (see [`voxel_to_ras`][brainhops.io.base.mrtrix.
-        voxel_to_ras]).
+        """Return the data and the geometry with axes placed for MRtrix.
+
+        See [`voxel_to_ras`][] for the placement of the axes.
         """
         data = self.data
         if data is None:
@@ -196,49 +169,41 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
         **kwargs,
     ) -> MrtrixHeader:
-        """
-        Build the header that encodes this image.
+        """Build a header that encodes this image.
 
-        The geometry always comes from the preferred transformation,
-        converted to voxel-to-scanner RAS+ and split into unit direction
-        cosines (`transform`) and voxel sizes (`vox`).
-
-        The axes are placed by the types and names the voxel space of the
-        preferred transformation declares: the spatial axes first (`x, y,
-        z` in that order when they are so named), then time, then the
-        channels, then the others, and the data is transposed to match
-        (lazily, for a lazy array). A slice with other axes is given a
-        `z` axis of size one, as MRtrix reads its first three axes as
-        spatial. A voxel space that declares nothing is written in the
-        order it has.
-
-        The voxel sizes of the non-spatial axes are their spacings in the
-        preferred transformation, when it maps them -- a time axis in
-        seconds, when its unit is a time unit, as MRtrix and BIDS state
-        times. MRtrix stores no origin for them, so a map that shifts one
-        raises `UnrepresentableTransformationError`. When the
-        transformation does not map them, they come from the header the
-        image was read from, else from a `Scaling` among the
-        transformations (such as the `physical` one a NIfTI reader
-        builds), else are 1.
+        The preferred transformation is split into unit direction cosines
+        (`transform`) and voxel sizes (`vox`). Spatial axes are stored
+        first, and a slice with further axes gets a `z` axis of size one,
+        because MRtrix reads the first three axes as spatial. Non-spatial
+        voxel sizes come from the transformation, with time in seconds, or
+        else from the source header, from a [`Scaling`][], or are one.
 
         Parameters
         ----------
-        layout : str | sequence of int, optional
-            The layout to store the data in, as MRtrix spells it
-            (`"-0,-1,+2"`) or as signed one-based strides. Defaults to the
-            layout the image was read with, if it has as many axes, else
-            to `+0,+1,+2,...`.
-        datatype : str | dtype, optional
-            The MRtrix data type (`"Float32LE"`, `"UInt16BE"`, `"Bit"`)
-            or a numpy one. Defaults to the data's own type.
+        layout : str or sequence of int, optional
+            Strides, in the MRtrix spelling (`"-0,-1,+2"`) or as signed
+            one-based integers. The default is the layout that was read,
+            if it has as many axes, and otherwise `+0,+1,+2,...`.
+        datatype : str or dtype, optional
+            MRtrix type (`"Float32LE"`, `"UInt16BE"`, `"Bit"`) or numpy
+            type. The default is the type of the data.
         scaling : (offset, scale), optional
-            Intensity scaling to store; the data are divided accordingly.
-            Defaults to none.
+            Intensity scaling to store. By default, none is stored.
         keyval : mapping, optional
-            Extra header keys, merged into those read from the source
-            header; a value of `None` removes a key. A value with several
-            lines is written as one line per entry.
+            Header keys merged into those of the source header. A value of
+            `None` removes a key.
+
+        Returns
+        -------
+        MrtrixHeader
+            The header.
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
+        WriterError
+            If there is no data, or the data are zero-dimensional.
         """
         if kwargs:
             raise TypeError(
@@ -253,7 +218,6 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
             raise WriterError("MRtrix cannot store a zero-dimensional array.")
         source = self.header
 
-        # --- geometry -------------------------------------------------
         transform, spatial_vox = split_voxel_to_scanner(arranged.matrix)
         vox = list(spatial_vox[: min(3, ndim)])
         extra = _mapped_vox(arranged, ndim)
@@ -261,7 +225,6 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
             extra = _extra_vox(self.transformations, source, ndim)
         vox += extra[len(vox) :]
 
-        # --- storage --------------------------------------------------
         if layout is None:
             if source is not None and len(source.layout) == ndim:
                 strides = source.layout
@@ -281,7 +244,6 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
             datatype = getattr(data, "dtype", np.float32)
         datatype = dtype_to_mrtrix(datatype)
 
-        # --- free-form keys -------------------------------------------
         merged = dict(source.keyval) if source is not None else {}
         for key, value in (keyval or {}).items():
             if value is None:
@@ -303,13 +265,16 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
 def _mapped_vox(
     arranged: Arrangement, ndim: int
 ) -> tx.Optional[tx.List[float]]:
-    """
-    The voxel sizes of the axes after the spatial ones, from their
-    spacings in the voxel-to-world map, or `None` when it does not map
-    them all.
+    """Return the voxel sizes that the transformation gives non-spatial axes.
 
-    A time axis whose world unit is a time unit is given in seconds. A
-    map that shifts one of these axes, or reverses it, has no MRtrix form.
+    The result is `None` unless every axis after the spatial ones is
+    mapped. A time axis with a time unit in the world is given in seconds.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the map shifts or reverses one of these axes, which MRtrix
+        cannot store.
     """
     others = list(arranged.others)
     if ndim <= 3 or len(others) != ndim - 3:
@@ -343,14 +308,11 @@ def _extra_vox(
     source: tx.Optional[MrtrixHeader],
     ndim: int,
 ) -> tx.List[float]:
-    """
-    The voxel size of every axis, used for the axes beyond the third.
+    """Return a voxel size for every axis, used beyond the third.
 
-    The header the image was read from wins when it has as many axes, so
-    a `nan` volume size is written back as it was read. Otherwise a
-    `Scaling` with one scale per axis among the transformations (such as
-    the `physical` one of a NIfTI image) provides them. Otherwise they
-    are 1.
+    The sizes come from the source header when it has as many axes, so
+    that a NaN volume size survives a round trip. Otherwise they come from
+    a [`Scaling`][] with one scale per axis, or default to one.
     """
     if source is not None and source.ndim == ndim:
         vox = list(source.vox[:ndim])
@@ -366,15 +328,14 @@ def _extra_vox(
 def _mrtrix_to_transformations(
     header: MrtrixHeader,
 ) -> tx.List[Transformation]:
-    """
-    Convert an MRtrix header to a list of transformations.
+    """Convert an MRtrix header to transformations, in this order.
 
     1. voxel -> "physical": a `Scaling` by the voxel sizes;
     2. voxel -> "scanner": the `Affine` to scanner RAS+ millimetres,
        `transform @ diag(vox)` (or MRtrix's centred default).
 
-    A voxel size that is not finite (`nan` is common on the volume axis)
-    is a scale of 1 on the physical axis.
+    A non-finite voxel size, which is common on the volume axis, gives a
+    scale of one.
     """
     ndim = header.ndim
     voxel_axes = _mrtrix_axes(ndim)
@@ -390,8 +351,8 @@ def _mrtrix_to_transformations(
     scale = [v if math.isfinite(v) and v > 0 else 1.0 for v in spacing]
     vox2phys = Scaling(input=voxel_space, output=phys_space, scale=scale)
 
-    # The scanner space is always three-dimensional RAS+ mm, whatever the
-    # number of axes: MRtrix's transform maps the first three.
+    # The scanner space is always 3D, because the MRtrix transform maps
+    # only the first three axes.
     ras_axes = [
         Axis(
             name,

@@ -1,5 +1,4 @@
-"""Tests for units: parsing names through pint, the dimension-restricted
-classes, the predicates, and the value semantics of a unit."""
+"""Tests for units and the classes restricted to one dimension."""
 
 import math
 import pickle
@@ -29,11 +28,11 @@ from brainhops.datamodel.units import (
 # ----------------------------------------------------------------------
 
 PARSED = [
-    # name, class, canonical name, scale in base units
+    # Name, class, canonical name and scale in base units.
     ("mm", SpaceUnit, "millimeter", 1e-3),
     ("um", SpaceUnit, "micrometer", 1e-6),
-    ("µm", SpaceUnit, "micrometer", 1e-6),  # micro sign
-    ("μm", SpaceUnit, "micrometer", 1e-6),  # greek mu
+    ("µm", SpaceUnit, "micrometer", 1e-6),
+    ("μm", SpaceUnit, "micrometer", 1e-6),
     ("mcm", SpaceUnit, "micrometer", 1e-6),
     ("micm", SpaceUnit, "micrometer", 1e-6),
     ("micron", SpaceUnit, "micrometer", 1e-6),
@@ -99,15 +98,14 @@ def test_names_are_parsed(
 
 
 def test_the_micron_is_the_micrometer() -> None:
-    # pint's `micron` is a unit of its own, unequal to the micrometer.
+    # pint defines the micron as a unit distinct from the micrometer.
     assert Unit("micron") is Unit("micrometer")
     assert Unit("microns/s") is Unit("um/s")
     assert Unit("s/micron**2") is Unit("s/um^2")
 
 
 def test_the_arbitrary_unit_is_not_parsed_by_pint() -> None:
-    # pint's tokenizer splits "a.u." on the dots, and reads it as
-    # `unified_atomic_mass_unit * year`; "au" is pint's astronomical unit.
+    # pint misreads 'a.u.' (amu * year) and 'au' (astronomical unit).
     for name in ("a.u.", "A.U.", "a.u", "A.U", "au", "arbitrary_units"):
         unit = Unit(name)
         assert unit is Unit("arbitrary_unit")
@@ -116,13 +114,12 @@ def test_the_arbitrary_unit_is_not_parsed_by_pint() -> None:
 
 
 def test_the_pint_free_names_are_what_pint_gives() -> None:
-    # A few names are resolved without pint, so that building them at
-    # import time does not import it. They must agree with the registry.
+    # Names resolved without pint must agree with what pint would give.
     for name, (canonical, dimension) in units._PINT_FREE.items():
         parsed = units._parse(units._ALIASES.get(name, name))
         assert units._canonical_name(parsed) == canonical, name
         assert str(parsed.dimensionality) == dimension, name
-    # Only the names brainhops builds at import time are here.
+    # Only the names that brainhops builds at import time.
     assert set(units._PINT_FREE) == {"index", "mm", "millimeter"}
 
 
@@ -147,8 +144,8 @@ def test_symbols(name: str, symbol: str) -> None:
 @pytest.mark.parametrize(
     "pint_symbol, symbol",
     [
-        ("\u00b5m", "\u03bcm"),  # micro sign, as pint < 0.26 writes it
-        ("\u03bcm", "\u03bcm"),  # greek mu, as pint >= 0.26 writes it
+        ("\u00b5m", "\u03bcm"),
+        ("\u03bcm", "\u03bcm"),
         ("s / \u00b5m ** 2", "s / \u03bcm ** 2"),
         ("mm", "mm"),
     ],
@@ -156,8 +153,7 @@ def test_symbols(name: str, symbol: str) -> None:
 def test_the_micro_prefix_is_one_character(
     pint_symbol: str, symbol: str
 ) -> None:
-    # Whatever pint writes, brainhops writes the micro prefix as the Greek
-    # mu, as it did before units were backed by pint.
+    # The micro prefix is always the Greek mu, whatever pint writes.
     assert units._normalize_symbol(pint_symbol) == symbol
 
 
@@ -194,8 +190,7 @@ def test_the_symbol_does_not_depend_on_pint(
 def test_a_power_of_ten_has_an_integer_log10_scale(
     name: str, log10_scale: int
 ) -> None:
-    # The adaptors compute the ratio of two such units exactly, as a
-    # power of ten.
+    # Adaptors rely on an exact power of ten for the ratio of two units.
     assert Unit(name).log10_scale == log10_scale
     assert isinstance(Unit(name).log10_scale, int)
 
@@ -237,7 +232,7 @@ def test_compatibility() -> None:
     assert Unit("voxel").is_compatible_with("pixel")
     assert not Unit("mm").is_compatible_with("s")
     assert not Unit("voxel").is_compatible_with("mm")
-    # Angles are dimensionless, as pint has them.
+    # Angles are dimensionless, as in pint.
     assert Unit("deg").is_compatible_with("%")
 
 
@@ -347,11 +342,11 @@ def test_a_parametrized_class() -> None:
     assert hash(unit) == hash(Unit("s/mm^2"))
     assert Diffusion(unit) is unit
     assert Diffusion(Unit("s/mm^2")) is unit
-    # Built once per dimension, however it is spaced.
+    # A class is built once per dimension, whatever the spacing.
     assert Unit["time/length**2"] is Diffusion
-    # pint's brackets are optional.
+    # The brackets of pint dimensions are optional.
     assert Unit["time / length ** 2"] is Diffusion
-    # A declared dimension gives its declared class.
+    # A declared dimension gives the declared class.
     assert Unit["length"] is SpaceUnit
     assert Unit["[length]"] is SpaceUnit
     assert Unit["index"] is IndexUnit
@@ -509,21 +504,18 @@ def test_the_pint_escape_hatch() -> None:
 @pytest.mark.parametrize(
     "unit, index, physical",
     [
-        # An instance.
         (Unit("mm"), False, True),
         (Unit("s"), False, True),
         (Unit("%"), False, True),
         (Unit("index"), True, False),
         (Unit("voxel"), True, False),
         (Unit("pixel"), True, False),
-        # A class is a kind of unit, and measures nothing.
+        # A class is a kind of unit but measures nothing.
         (IndexUnit, True, False),
         (Unit, False, False),
         (SpaceUnit, False, False),
         (TimeUnit, False, False),
-        # Unspecified.
         (None, False, False),
-        # Not a unit.
         ("mm", False, False),
     ],
 )
@@ -558,7 +550,7 @@ def test_predicates_are_exported() -> None:
 
 
 def test_sample_is_not_a_unit() -> None:
-    # The index units were called "sample" units; that name is gone.
+    # Index units were formerly called sample units.
     with pytest.raises(ValueError, match="is not a unit brainhops"):
         Unit("sample")
     assert not hasattr(units, "SampleUnit")

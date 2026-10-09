@@ -1,12 +1,13 @@
 # ruff: disable[E501]
-"""
-elastix / transformix transform parameter files.
+"""elastix transform parameter files.
 
-[elastix](https://github.com/SuperElastix/elastix) writes the result of
-a registration as a *transform parameter file*,
-`TransformParameters.<n>.txt`, which transformix (and SimpleElastix,
-ITK-Elastix, ...) reads to resample the moving image onto the fixed
-grid. It is a plain-text map from parameter names to values.
+A transform parameter file, such as `TransformParameters.0.txt`, is a
+plain-text map from parameter names to values. It is the result of an
+[elastix](https://github.com/SuperElastix/elastix) registration, and
+transformix, SimpleElastix and ITK-Elastix read it to resample the moving
+image onto the fixed grid.
+
+Two syntaxes are supported:
 
 | Syntax             | Class                         | Extension | Hints                           | Writes |
 | ------------------ | ----------------------------- | --------- | ------------------------------- | ------ |
@@ -34,33 +35,29 @@ grid. It is a plain-text map from parameter names to values.
 
 ## Syntax
 
-From `Common/ParameterFileParser/itkParameterFileParser.cxx`:
+The classic syntax (`itkParameterFileParser.cxx`) has one
+`(Name value ...)` entry per line, where a value is a number or a
+double-quoted string without escapes. `//` starts a comment, tabs count as
+blanks, names may not repeat, and booleans are quoted words such as
+`"true"`. The TOML syntax has one `Name = value` or `Name = [value, ...]`
+entry per line and `#` comments; only the one-line subset that elastix
+writes is parsed, since Python has no TOML parser before 3.11.
 
-- **text**: one `(Name value value ...)` per line. A value is a number
-  or a double-quoted string (no escapes); `//` starts a comment; tabs
-  are blanks; a name may not repeat. elastix writes booleans as quoted
-  words (`"true"`).
-- **TOML**: one `Name = value` or `Name = [value, ...]` per line, `#`
-  comments. Only the one-line subset that elastix writes is parsed here
-  (Python has no TOML parser before 3.11).
-
-The parsed map is kept, in file order, in
+The parsed map is kept in file order in
 [`parameter_map`][brainhops.io.transformations.elastix.ElastixTransform.parameter_map].
-A file is claimed only if it names a `Transform` *and* carries its
-parameters: elastix's registration parameter files share the syntax and
-are not transforms.
+Registration parameter files share the syntax, so a file is claimed only if it
+names a `Transform` and carries its parameters.
 
 ## Conventions
 
-- **Space.** elastix's transforms are ITK transforms acting on ITK's
-  physical space: LPS millimetres.
-- **Direction.** A transform maps *fixed*-image points to *moving*-image
-  points -- the pull direction in which transformix resamples. The
-  transformation read here maps the same way: its input is the fixed
-  image's LPS space, its output the moving image's.
-- **Blocks.** Each file's transform is decoded into the ITK block of
-  [`brainhops.io.transformations.itk`][] that carries the same
-  parameters (`y = M (x - c) + c + t` about the center `c`):
+Points live in ITK physical space, which is LPS in millimetres. The
+transform maps fixed-image points to moving-image points, the pull
+direction of transformix, so the transformation read has the fixed LPS
+space as input and the moving LPS space as output.
+
+Each transform is decoded into the block of
+[`brainhops.io.transformations.itk`][] that carries the same parameters,
+`y = M (x - c) + c + t` with center `c`:
 
 | elastix `Transform`          | Parameters                                     | Block                     |
 | ---------------------------- | ---------------------------------------------- | ------------------------- |
@@ -74,93 +71,81 @@ are not transforms.
 | `AffineDTITransform`         | angles, shears, scales, `t` (7 / 12)           | `AffineTransform`         |
 | `BSplineTransform`, `RecursiveBSplineTransform` | coefficients (D x grid)     | `BSplineTransform`, of degree `BSplineTransformSplineOrder` |
 
-  The center is `CenterOfRotationPoint` (world coordinates). Maps that
-  carry ITK's own `ITKTransformParameters` / `ITKTransformFixedParameters`
-  are read too.
-- **Fixed image.** `Size`, `Index`, `Spacing`, `Origin` and `Direction`
-  describe the grid transformix resamples onto. It is exposed as
-  [`fixed_geometry`][brainhops.io.transformations.elastix.ElastixTransform.fixed_geometry]
-  (a [`Geometry`][brainhops.datamodel.geometry.Geometry] whose
-  transformation maps voxels to LPS), since a transformation has no slot
-  for its output domain.
-- **Direction matrices are column-major.** elastix writes `Direction`
-  and `GridDirection` column by column (`Conversion::ToVectorOfStrings`
-  on an `itk::Matrix`), the transpose of ITK's row-major fixed
-  parameters.
-- **B-spline grid.** The coefficients are `D` images of world-space
-  displacements, back to back, x fastest, over the region that starts at
-  `GridIndex`: the first coefficient sits at
-  `GridOrigin + GridDirection @ diag(GridSpacing) @ GridIndex`.
+The center is `CenterOfRotationPoint`, in world coordinates. Maps that use
+ITK's own `ITKTransformParameters` and `ITKTransformFixedParameters` are read
+as well. The entries `Size`, `Index`, `Spacing`, `Origin` and `Direction`
+describe the fixed grid onto which transformix resamples. A transformation has
+no slot for an output domain, so this grid is exposed as
+[`fixed_geometry`][brainhops.io.transformations.elastix.ElastixTransform.fixed_geometry],
+a [`Geometry`][brainhops.datamodel.geometry.Geometry] whose transformation maps
+voxels to LPS.
+
+`Direction` and `GridDirection` are written column by column
+(`Conversion::ToVectorOfStrings` on an `itk::Matrix`), which is the
+transpose of ITK's row-major fixed parameters. B-spline coefficients are
+`D` images of world-space displacements, stored back to back with x
+fastest, over a region that starts at `GridIndex`; the first coefficient
+sits at
+`GridOrigin + GridDirection @ diag(GridSpacing) @ GridIndex`.
 
 ## Chains
 
-A file may name an *initial transform*, in
+A file may name an initial transform, applied before its own, in
 `InitialTransformParameterFileName` (or the deprecated
-`InitialTransformParametersFileName`), that applies before its own; that
-file may name another, and so on. Each is read, and the chain is a
-[`Sequence`][brainhops.datamodel.transformations.Sequence] of their
-blocks, initial transforms first (elastix computes `T1(T0(x))` --
-`AdvancedCombinationTransform::TransformPointUseComposition`). The
+`InitialTransformParametersFileName`), and that file may name another. The
+chain is read as a
+[`Sequence`][brainhops.datamodel.transformations.Sequence] of blocks with
+the initial transform first, since elastix computes `T1(T0(x))`
+(`AdvancedCombinationTransform::TransformPointUseComposition`). The
 initial transform is also kept, as an `ElastixTransform`, in `initial`.
 
-A relative name is looked for as elastix looks for it: from the working
-directory, then from the directory of the file that names it. elastix
-writes absolute paths, which break when an output folder is moved, so a
-name that is found nowhere is then looked for by its base name next to
-the file. `initial=False` reads a file's own transform alone;
-`initial=<file name>` or `initial=<transformation>` supplies the initial
-transform.
+A relative name is looked up as elastix does, in the working directory and
+then next to the naming file. elastix writes absolute paths, which break
+when the output folder moves, so a name that is not found is retried by
+its base name next to the file. `initial=False` reads the file's own
+transform only, and `initial=<file name>` or `initial=<transformation>`
+supplies the initial transform.
 
 ## Writing
 
-A file read and not modified is written back as read (the files of its
-initial transforms are not rewritten). Otherwise the chain must reduce to
-one transform: a block that elastix has (translation, Euler, similarity,
-affine, B-spline) keeps its class and center; anything else that reduces
-to an affine is written as an `AffineTransform` centered on the origin.
-The fixed-image geometry and the other parameters of the map are kept.
+An unmodified file is written back as it was read, without rewriting its
+initial files. Otherwise the chain must reduce to one transform. A block
+that elastix has (translation, Euler, similarity, affine or B-spline) keeps
+its class and center, and anything else that reduces to an affine is
+written as an `AffineTransform` centered on the origin. The fixed-image
+geometry and the other parameters are kept.
 
 ## Not supported
 
-- `HowToCombineTransforms "Add"`: elastix then computes
-  `T1(x) + T0(x) - x`, a sum that a chain of transformations cannot
-  express. Such a file is refused unless read with `initial=False`.
-- Other transforms: `DeformationFieldTransform` (a field stored in a
-  separate image), `SplineKernelTransform`, `WeightedCombinationTransform`,
-  `MultiBSplineTransformWithNormal`, `BSplineTransformWithDiffusion`,
-  the stack transforms (`*StackTransform`), `ExternalTransform`, and
-  cyclic B-splines (`UseCyclicTransform "true"`).
-- `CenterOfRotation`, the voxel-index center written by elastix < 3.402,
-  which current elastix no longer reads either.
-- `UseDirectionCosines "false"`: elastix then ignored both images'
-  directions, so the transform maps direction-less spaces that cannot be
-  recovered without the moving image. Such a file is read as if it
-  mapped LPS, with a warning.
+- `HowToCombineTransforms "Add"`, since `T1(x) + T0(x) - x` is not a
+  chain; such a file is refused unless `initial=False`.
+- `DeformationFieldTransform` (a separate image), `SplineKernelTransform`, `WeightedCombinationTransform`,
+  `MultiBSplineTransformWithNormal`, `BSplineTransformWithDiffusion`, the
+  `*StackTransform` family, `ExternalTransform`, and cyclic B-splines
+  (`UseCyclicTransform "true"`).
+- `CenterOfRotation`, the voxel-index center of elastix before 3.402,
+  which current elastix no longer reads.
+- `UseDirectionCosines "false"`, under which elastix ignores directions.
+  The true spaces cannot be recovered without the moving image, so such a
+  file is read as if it were LPS, with a warning.
 
 !!! note "B-splines outside their valid region"
-    elastix evaluates a B-spline only where the whole support of the
-    spline lies inside the control-point grid, and returns the input point
-    unchanged elsewhere (`InsideValidRegion`). Here, as for ITK's own
-    B-splines, coefficients outside the grid are zero, so the two agree
-    inside the valid region and differ in the outer band of the grid.
+    elastix evaluates a B-spline only where its whole support lies inside
+    the control-point grid, and returns the input point unchanged
+    elsewhere (`InsideValidRegion`). Here, as in ITK, coefficients outside
+    the grid are zero, so the two agree inside the valid region and differ
+    in the band around it.
 
 ## Verified and assumed
 
-Verified against transformix (ITK-Elastix 0.25.4): every
-transform above in 2-D and 3-D where elastix has it, both Euler angle
-orders, B-splines of degrees 1, 2 and 3 with a non-zero `GridIndex` and an
-oblique `GridDirection`, non-symmetric fixed-image directions, two- and
-three-link chains (including the deprecated key), and the TOML syntax --
-see `tests/data/elastix/generate_elastix_fixtures.py`. The source
-references are elastix's `elxTransformBase.hxx` (reading, initial
-transforms, combination), `itkAdvancedEuler3DTransform.hxx`,
-`itkAdvancedSimilarity{2,3}DTransform.hxx`,
-`itkAdvancedBSplineDeformableTransformBase.hxx`,
-`itkAffineLogTransform.hxx`, `itkAffineDTI{2,3}DTransform.hxx` and
-`elxAdvancedBSplineTransform.hxx`.
-
-Assumed: 4-D (and higher) affine and B-spline maps behave as their 2-D
-and 3-D counterparts (not tested against transformix).
+Results match transformix (ITK-Elastix 0.25.4) for every transform above,
+in 2-D and 3-D where elastix has it: both Euler orders, B-splines of
+degrees 1 to 3 with a non-zero `GridIndex` and an oblique `GridDirection`,
+non-symmetric fixed directions, chains of two and three links (including
+the deprecated key), and the TOML syntax. The fixtures are generated by
+`tests/data/elastix/generate_elastix_fixtures.py`. Affines and B-splines
+in four or more dimensions are assumed, without tests, to behave as in 2-D
+and 3-D.
 """
 
 # ruff: enable[E501]

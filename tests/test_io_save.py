@@ -1,6 +1,4 @@
-"""
-Tests for `brainhops.io.save`, which writes an object in the format its
-file name calls for.
+"""Tests for `brainhops.io.save`.
 
 The file name gives the candidates: the formats declaring the longest
 extension it ends with, and the prefix they require. The object gives
@@ -27,7 +25,6 @@ from brainhops.datamodel.transformations import (
     Affine,
     CoordinatesField,
     DisplacementField,
-    Scaling,
 )
 from brainhops.io.base._base import (
     WritableTextFileBasedObject,
@@ -60,19 +57,19 @@ def _image() -> SingleScaleImage:
 
 
 class Note(DataModelBase):
-    """A data model with one field, for formats written as plain text."""
+    """A data model with one field, for plain-text formats."""
 
     text: str = ""
 
 
 class OtherNote(DataModelBase):
-    """A data model unrelated to `Note`."""
+    """A data model unrelated to Note."""
 
     text: str = ""
 
 
 def _note_format(name: str, model: type = Note, **attrs: tx.Any) -> type:
-    """A text format for `model`, written as its text after a tag."""
+    """A text format for `model`, writing the text after a tag."""
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:  # noqa: ANN001
         yield f"{name}:{kwargs.get('suffix', '')}{self.text}"
@@ -84,12 +81,7 @@ def _note_format(name: str, model: type = Note, **attrs: tx.Any) -> type:
 
 @pytest.fixture
 def formats() -> tx.Iterator[tx.Callable[..., type]]:
-    """
-    Register fake writable formats, and unregister them afterwards.
-
-    `save` chooses among the real writable registry, so the fakes must go
-    in it, and must leave it as they found it.
-    """
+    """Register writable test formats and leave the real registry as found."""
     made: tx.List[type] = []
 
     def make(name: str, model: type = Note, **attrs: tx.Any) -> type:
@@ -133,9 +125,8 @@ def test_a_longer_extension_is_not_given_up_for_a_shorter_one(
     formats,  # noqa: ANN001
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # The name asks for the longer extension's format. When that format
-    # cannot hold the object, nothing is written, rather than falling
-    # back to the format of a shorter extension the name also ends with.
+    # The format of the longer extension cannot hold the object, so nothing
+    # is written, without falling back to the shorter extension.
     formats("Short", EXTENSIONS=(".gz",))
     formats("Long", model=OtherNote, EXTENSIONS=(".note.gz",))
     with pytest.raises(WriterError, match="Long"):
@@ -183,20 +174,19 @@ def test_an_ambiguity_tells_the_user_how_to_choose(formats, tmp_path) -> None:  
     message = str(raised.value)
     lines = message.splitlines()
 
-    # The file and the object, then one line per candidate, in order.
+    # The file and the object, then one line per candidate in order.
     assert "'x.n'" in lines[0] and "Note" in lines[0]
     assert "2 formats" in lines[0]
-    # Each candidate is described in the words of its own docstring, when
-    # it has one, and comes with the call that writes the object in it.
-    assert lines[1] == "  - Bare: `Bare.from_other(obj).save(path)`"
+    # Each candidate is described by its own docstring, with the call that
+    # writes the object in it.
+    assert lines[1] == "  - Bare: `Bare.from_any(obj).save(path)`"
     assert lines[2] == (
         "  - Plain (A note written as plain text): "
-        "`Plain.from_other(obj).save(path)`"
+        "`Plain.from_any(obj).save(path)`"
     )
-    assert "from_other(obj).save(path)" in lines[-1]
-    # Neither the docstring of the data model, nor the list of fields
-    # generated for a class with none, describes the format. How
-    # maintainers settle a tie is not the user's concern.
+    assert "from_any(obj).save(path)" in lines[-1]
+    # A data model docstring does not describe the format, and tie-breaking
+    # concerns maintainers.
     assert "data model with one field" not in message
     assert "Attributes" not in message
     assert "PRIORITY" not in message
@@ -239,8 +229,8 @@ def test_an_object_of_the_format_is_written_as_it_is(
     formats,  # noqa: ANN001
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # Rebuilding it would run its constructor again, and lose state a
-    # file-based object keeps outside its fields.
+    # Rebuilding would rerun the constructor and lose state kept outside the
+    # fields.
     fmt = formats("A", EXTENSIONS=(".a",))
     obj = fmt(text="hi")
     obj.text = "changed"
@@ -261,8 +251,7 @@ def test_the_object_own_format_is_not_an_ambiguity(
     formats,  # noqa: ANN001
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # Two formats of notes claim `.n` equally well. A plain note could go
-    # to either, but one that already is of one of them stays in it.
+    # Two formats claim .n equally, but an object already in one stays in it.
     one = formats("One", EXTENSIONS=(".n",))
     formats("Two", EXTENSIONS=(".n",))
     io.save(one(text="hi"), tmp_path / "x.n")
@@ -273,7 +262,7 @@ def test_a_subclass_of_the_data_model_is_not_squeezed_into_it(
     formats,  # noqa: ANN001
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # A format of `Note` would drop what a richer note says.
+    # The Note format would drop what the richer subclass holds.
     class RichNote(Note):
         colour: str = "red"
 
@@ -286,8 +275,7 @@ def test_a_format_missing_a_field_of_the_data_model_cannot_hold_it(
     formats,  # noqa: ANN001
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # This format serves `text` itself rather than taking it, so building
-    # it from a note would lose the note's text.
+    # The format serves `text` itself, so building it from a note loses text.
     formats(
         "Derived",
         EXTENSIONS=(".n",),
@@ -416,8 +404,7 @@ def test_an_image_read_from_nifti_is_written_as_zarr(tmp_path) -> None:  # noqa:
 
 @needs_zarr
 def test_a_single_image_is_not_written_as_ome_zarr(tmp_path) -> None:  # noqa: ANN001
-    # `.ome.zarr` asks for OME-Zarr, whose format holds a pyramid. A plain
-    # Zarr store is not written in its place.
+    # .ome.zarr asks for an OME-Zarr pyramid; plain Zarr is not substituted.
     with pytest.raises(WriterError, match="OmeZarrImage"):
         io.save(_image(), tmp_path / "image.ome.zarr")
     assert not (tmp_path / "image.ome.zarr").exists()
@@ -428,11 +415,10 @@ def test_a_single_image_is_not_written_as_ome_zarr(tmp_path) -> None:  # noqa: A
     "obj",
     [
         Affine(MATRIX, input=RASmm(), output=RASmm()),
-        Scaling([1.0, 2.0, 3.0]),
         CoordinatesField(field=np.zeros((2, 3, 4, 3)), degree=3),
         DisplacementField(field=np.zeros((2, 3, 4, 3)), degree=3),
     ],
-    ids=["world-affine", "scaling", "cubic-coordinates", "cubic-displacement"],
+    ids=["world-affine", "cubic-coordinates", "cubic-displacement"],
 )
 def test_a_transformation_no_nifti_format_holds_is_refused(
     tmp_path,  # noqa: ANN001
@@ -442,8 +428,8 @@ def test_a_transformation_no_nifti_format_holds_is_refused(
     # linearly interpolated field. One that does not -- a world-to-world
     # affine, a field interpolated with cubic splines -- would come back
     # meaning something it did not say, so it is refused, with each
-    # format's reason. A `Scaling` has no converter to a NIfTI format.
-    with pytest.raises(WriterError, match="from_other"):
+    # format's reason.
+    with pytest.raises(WriterError, match="from_any"):
         io.save(obj, tmp_path / "transform.nii")
     assert not (tmp_path / "transform.nii").exists()
 
@@ -452,7 +438,7 @@ def test_a_transformation_no_nifti_format_holds_is_refused(
 def test_the_explicit_route_writes_a_general_affine(tmp_path) -> None:  # noqa: ANN001
     from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
-    NiftiVoxelToRAS.from_other(Affine(MATRIX)).save(tmp_path / "affine.nii")
+    NiftiVoxelToRAS.from_any(Affine(MATRIX)).save(tmp_path / "affine.nii")
     back = NiftiVoxelToRAS.load(tmp_path / "affine.nii")
     np.testing.assert_allclose(back.matrix, MATRIX)
 

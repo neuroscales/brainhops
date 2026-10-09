@@ -1,16 +1,12 @@
-"""Single-resolution and multi-resolution images, and how they are resliced
-onto a new geometry."""
+"""Single-scale and multi-scale images, and reslicing them."""
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
 
-# core
 from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol
 
-# internals
 from ._transformations.multiscale import (
     _as_affine_ignoring_fields,
     _at_resolution,
@@ -26,50 +22,43 @@ from .transformations import (
 
 
 class Image(IdentityComparison, DataModelBase, eq=False):
-    """Base class for all images.
+    """The base class of all images.
 
-    !!! note "Images compare by identity"
-        `a == b` is `a is b`: two distinct images are never equal, even
-        when they hold the same data and transformations, and `==` never
-        raises. An image hashes by identity too, so it can be put in a
-        set or used as a dictionary key. Compare data and geometry
-        explicitly (e.g., `numpy.array_equal(a, b)`) to test whether two
-        images hold the same values.
+    !!! note
+        Images compare and hash by identity: `a == b` means `a is b`, even for
+        images with the same data and transformations, and `==` never raises.
+        Images can therefore be used in sets and as dictionary keys. Values are
+        compared explicitly, for example with `numpy.array_equal(a, b)` and a
+        comparison of the geometries.
     """
 
-    # --- array API ----------------------------------------------------
-
     def __array__(self, dtype: tx.Optional[DTypeLike] = None) -> np.ndarray:
-        """Return the image data as an array."""
+        """Convert the data to a NumPy array of an optional data type."""
         return np.asarray(self.data, dtype=dtype)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the image data."""
+        """The shape of the data."""
         return self.data.shape
 
     @property
     def ndim(self) -> int:
-        """The number of dimensions of the image data."""
+        """The number of dimensions of the data."""
         return len(self.shape)
 
     @property
     def dtype(self) -> np.dtype:
-        """The data type of the image data."""
+        """The data type of the data."""
         return self.data.dtype
 
     @property
     def grid(self) -> CartesianField:
-        """
-        The Cartesian field that defines the sampling grid of the image.
-
-        This is the grid of the image's geometry.
-        """
+        """The Cartesian field that defines the sampling grid."""
         return self.geometry.grid
 
 
 class SingleScaleImage(Image):
-    """Base class for all single-resolution images."""
+    """The base class of single-resolution images."""
 
     data: tx.Annotated[
         tx.Optional[ArrayProtocol],
@@ -98,21 +87,14 @@ class SingleScaleImage(Image):
 
     @property
     def transformation(self) -> Transformation:
-        """
-        The preferred transformation.
+        """The preferred transformation, which is always the last in the list.
 
-        It is always the last transformation in the list.
-
-        Assigning a transformation appends it as the new preferred
-        transformation. Assigning an integer or a string selects an
-        existing transformation by position or by output-space name and
-        moves it to the end. Assigning a transformation that is already
-        in the list moves it to the end instead of adding a copy.
-
-        A transformation is recognized as already present by identity
-        (transformations compare by identity): a distinct transformation
-        with the same parameters is appended as a new preferred
-        transformation.
+        The getter returns an [`Identity`][] when the list is empty. Assigning
+        a transformation makes it the preferred one: a new transformation is
+        appended, and one already in the list (compared by identity) is moved
+        to the end. An integer or a string selects an existing transformation
+        by position or by the name of its output space, and an unknown name
+        raises a KeyError.
         """
         if self.transformations:
             return self.transformations[-1]
@@ -144,13 +126,11 @@ class SingleScaleImage(Image):
 
     @property
     def geometry(self) -> Geometry:
-        """
-        A transformation that is the composition of the preferred
-        voxel-to-world transformation and the cartesian field corresponding
-        to the image's shape.
+        """The geometry of the image.
 
-        This transformation can be used to reslice any image onto the same
-        grid as this image.
+        The geometry pairs the Cartesian field matching the data shape with the
+        preferred voxel-to-world transformation. Any image can be resliced onto
+        it.
         """
         return Geometry(
             (
@@ -163,8 +143,6 @@ class SingleScaleImage(Image):
             )
         )
 
-    # --- methods ------------------------------------------------------
-
     def reslice(
         self,
         geometry: tx.Optional[
@@ -175,54 +153,41 @@ class SingleScaleImage(Image):
         coeff: bool = False,
         copy: bool = False,
     ) -> tx.Self:
-        """
-        Apply transformations to current data and return new image.
+        """Resample the data onto another geometry.
 
         Parameters
         ----------
-        geometry : Image | Geometry | Transformation, optional
-            Geometry of the output image.
+        geometry : Image or Geometry or Transformation, optional
+            The target voxel-to-world geometry. An image or a geometry also
+            fixes the output shape; a bare transformation keeps the current
+            shape. By default, the image is resampled onto its own grid.
+        degree : int, default=1
+            Spline degree, from 0 (nearest neighbour) and 1 (linear) up to 5.
+        bound : str or float, default="reflect"
+            Boundary condition. A float is a constant value beyond the edge.
+            The strings are:
 
-            The geometry is a voxel-to-world transformation that defines
-            the grid onto which the image will be resliced.
-
-            If it is a `Geometry`, then it also defines the shape of the
-            output image. Otherwise, the current shape of the image is used.
-
-            If it is `None`, the image is resampled onto its own grid.
-        degree : {0..5}
-            The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
-        bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
-            The boundary condition. If a string, one of:
-            - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-            - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-            - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-            - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-            - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-            If a float, the constant value to use beyond the edge.
-        coeff : bool
-            If True, the input image is assumed to already contain spline
-            coefficients. If False, the input image is prefiltered
-            before interpolation.
-        copy : bool
-            Whether the output data must be a fresh array. As with
-            `torch.Tensor.to`, when `False` the output data may share
-            memory with the input data: a reslice that only gathers (a
-            flip, a permutation, or a unit-step slice, such as a reslice
-            onto the image's own grid) can return a view of it. When
-            `True` the output data never shares memory with the input
-            data. A dask array is never copied: it is immutable, and
-            writing into the output rebinds the output's own graph, never
-            the input's, so the lazy output is returned as is.
+                - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
+                - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
+                - 'mirror': mirror at edge        (d c b | a b c d | c b a)
+                - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
+                - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+        coeff : bool, default=False
+            Whether the data already holds spline coefficients. Otherwise, the
+            data is prefiltered before interpolation.
+        copy : bool, default=False
+            If true, the output never shares memory with the input. If false,
+            pure gathers (flips, permutations and unit-step slices) may return
+            a view, as with `torch.Tensor.to`. Dask arrays are immutable and
+            are never copied.
 
         Returns
         -------
-        Image
+        SingleScaleImage
             The resliced image.
         """
         opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
 
-        # Guess geometry of output image
         if geometry is None:
             geometry = self.geometry
         if isinstance(geometry, Image):
@@ -230,21 +195,14 @@ class SingleScaleImage(Image):
         if not isinstance(geometry, Geometry):
             geometry = Geometry((self.geometry.grid, geometry))
 
-        # When the preferred transformation carries a multiscale field,
-        # select the level whose resolution matches the output grid. A
-        # transformation without such a field is returned unchanged, so
-        # its finest level is used.
+        # With a multiscale field, pick the level matching the output grid.
         preferred = _at_resolution(
             self.transformation, geometry.transformation
         )
 
-        # Compute voxel-to-voxel transformation and apply it to the data.
-        # The transformation is computed into its axis-group normal form
-        # (`compute(factor=True)`), and each group is applied on its own,
-        # so an axis that is only rescaled, flipped, or permuted is handled
-        # cheaply and only a coupled group keeps the N-dimensional pull.
-        # The executor is imported lazily to avoid an import cycle.
-        from ._transformations.separable import pull_separable
+        # Axis groups are applied separately, so that rescaled, flipped or
+        # permuted axes stay cheap. Imported here to avoid an import cycle.
+        from ._transformations.compute.separable import pull_separable
 
         transformation = (
             preferred.inverse() @ geometry.transformation @ geometry.grid
@@ -255,24 +213,12 @@ class SingleScaleImage(Image):
         )
 
     def __call__(self, transform: Transformation) -> "SingleScaleImage":
-        """
-        Apply a transformation to the image, but do not compute.
+        """Apply a transformation lazily, without reslicing.
 
-        Parameters
-        ----------
-        transform: Transformation
-            The transformation to apply.
-
-            The **output** space of this transformation should match
-            (or be compatible with) the **output** space of the preferred
-            transformation. That is, the new "voxel-to-world" transformation
-            is defined as `self.transformation @ transform.inverse()`.
-
-
-        Returns
-        -------
-        Image
-            The updated (not-yet-resliced) image.
+        The output space of `transform` should match the output space of the
+        preferred transformation. The new preferred transformation,
+        `transform.inverse() @ self.transformation`, is appended to the
+        existing ones.
         """
         transform = transform.inverse() @ self.transformation
         if self.transformations:
@@ -287,8 +233,9 @@ class SingleScaleImage(Image):
     def __getitem__(
         self, index: tx.Tuple[tx.Union[int, slice, None], ...]
     ) -> "SingleScaleImage":
-        """
-        Index into the image data while preserving the geometry of the image.
+        """Index the data, keeping every transformation consistent with it.
+
+        The index is made of integers, slices and `None`.
         """
         if not isinstance(index, tuple):
             index = (index,)
@@ -302,7 +249,7 @@ class SingleScaleImage(Image):
 
 
 class MultiScaleImage(Image):
-    """Base class for all multi-scale images."""
+    """The base class of multi-scale (pyramid) images."""
 
     images: tx.Annotated[
         tx.List[SingleScaleImage],
@@ -323,47 +270,34 @@ class MultiScaleImage(Image):
 
     @property
     def data(self) -> ArrayProtocol:
-        """The data of the highest-resolution level of the pyramid."""
+        """The data of the highest-resolution level."""
         return self.images[0].data
 
     def to_singlescale(self, index: int = 0) -> SingleScaleImage:
-        """
-        Return one of the levels as a single-resolution image.
-        """
+        """Return a level as a single-scale image in world space."""
         return self.images[index](self.transformation.inverse())
 
     @property
     def nscales(self) -> int:
-        """
-        Return the number of scales in the multi-resolution pyramid.
-        """
+        """The number of pyramid levels."""
         return len(self.images)
 
     @property
     def scales(self) -> tx.Iterator[SingleScaleImage]:
-        """
-        Yield all levels as single-resolution images.
-        """
+        """Every level, as a single-scale image."""
         for i in range(len(self.images)):
             yield self.to_singlescale(i)
 
     @property
     def transformation(self) -> Transformation:
-        """
-        The preferred transformation.
+        """The preferred transformation, which is always the last in the list.
 
-        It is always the last transformation in the list.
-
-        Assigning a transformation appends it as the new preferred
-        transformation. Assigning an integer or a string selects an
-        existing transformation by position or by output-space name and
-        moves it to the end. Assigning a transformation that is already
-        in the list moves it to the end instead of adding a copy.
-
-        A transformation is recognized as already present by identity
-        (transformations compare by identity): a distinct transformation
-        with the same parameters is appended as a new preferred
-        transformation.
+        The getter returns an [`Identity`][] when the list is empty. Assigning
+        a transformation makes it the preferred one: a new transformation is
+        appended, and one already in the list (compared by identity) is moved
+        to the end. An integer or a string selects an existing transformation
+        by position or by the name of its output space, and an unknown name
+        raises a KeyError.
         """
         if self.transformations:
             return self.transformations[-1]
@@ -395,15 +329,10 @@ class MultiScaleImage(Image):
 
     @property
     def geometry(self) -> Geometry:
-        """
-        The geometry of the highest-resolution image in the pyramid.
+        """The geometry of the highest-resolution level.
 
-        A transformation that is the composition of the preferred
-        voxel-to-world transformation and the cartesian field corresponding
-        to the image's shape.
-
-        This transformation can be used to reslice any image onto the same
-        grid as this image.
+        The geometry pairs the grid of that level with the pyramid
+        transformation composed with the level's own transformation.
         """
         return Geometry(
             (
@@ -422,51 +351,33 @@ class MultiScaleImage(Image):
         coeff: bool = False,
         copy: bool = False,
     ) -> tx.Self:
-        """
-        Apply transformations to current data and return new image
+        """Reslice the level whose voxel size best matches the target grid.
+
+        The method always returns a single-scale image.
 
         Parameters
         ----------
-        geometry : Image | Geometry | Transformation, optional
-            Geometry of the highest-resolution level of the output image.
+        geometry : Image or Geometry or Transformation, optional
+            The target geometry, read as in [`SingleScaleImage.reslice`][].
+        degree : int, default=1
+            Spline degree, from 0 (nearest neighbour) and 1 (linear) up to 5.
+        bound : str or float, default="reflect"
+            Boundary condition. A float is a constant value beyond the edge.
+            The strings are:
 
-            The geometry is a voxel-to-world transformation that defines
-            the grid onto which the image will be resliced.
-
-            If it is a `Geometry`, then it also defines the shape of the
-            output image. Otherwise, the current shape of the image is used.
-
-            If it is `None`, the image is resampled onto its own grid.
-        intrinsic : Geometry | Transformation | None
-            An optional transformation that defines the intrinsic geometry
-            of the highest-resolution image in the output pyramid.
-            If provided, it is used to compute the geometry of each
-            level in the output pyramid. If not provided, this function
-            returns a single-scale image instead.
-        degree : {0..5}
-            The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
-        bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
-            The boundary condition. If a string, one of:
-            - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-            - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-            - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-            - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-            - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-            If a float, the constant value to use beyond the edge.
-        coeff : bool
-            If True, the input image is assumed to already contain spline
-            coefficients. If False, the input image is prefiltered
-            before interpolation.
-        copy : bool
-            Whether the output data must be a fresh array. As with
-            `torch.Tensor.to`, when `False` the output data may share
-            memory with the input data: a reslice that only gathers (a
-            flip, a permutation, or a unit-step slice, such as a reslice
-            onto the image's own grid) can return a view of it. When
-            `True` the output data never shares memory with the input
-            data. A dask array is never copied: it is immutable, and
-            writing into the output rebinds the output's own graph, never
-            the input's, so the lazy output is returned as is.
+                - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
+                - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
+                - 'mirror': mirror at edge        (d c b | a b c d | c b a)
+                - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
+                - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+        coeff : bool, default=False
+            Whether the data already holds spline coefficients. Otherwise, the
+            data is prefiltered before interpolation.
+        copy : bool, default=False
+            If true, the output never shares memory with the input. If false,
+            pure gathers (flips, permutations and unit-step slices) may return
+            a view, as with `torch.Tensor.to`. Dask arrays are immutable and
+            are never copied.
 
         Returns
         -------
@@ -481,24 +392,9 @@ class MultiScaleImage(Image):
         return self.to_singlescale(level).reslice(geometry, **opt)
 
     def __call__(self, transform: Transformation) -> tx.Self:
-        """
-        Apply a transformation to the multi-scale image.
+        """Apply a transformation to the pyramid lazily, without reslicing.
 
-        Parameters
-        ----------
-        transform: Transformation
-            The transformation to apply.
-
-            The **output** space of this transformation should match
-            (or be compatible with) the **output** space of the preferred
-            transformation. That is, the new "intrinsic-to-world"
-            transformation is defined as
-            `self.transformation @ transform.inverse()`.
-
-        Returns
-        -------
-        MultiScaleImage
-            The transformed image.
+        The transformation is handled as in [`SingleScaleImage.__call__`][].
         """
         transform = transform.inverse() @ self.transformation
         if self.transformations:
@@ -515,14 +411,7 @@ def _reslice_voxel2world(
     image: "MultiScaleImage",
     geometry: tx.Optional[tx.Union[Image, Geometry, Transformation]] = None,
 ) -> Transformation:
-    """The voxel-to-world transformation of the grid `image` is resliced onto.
-
-    `geometry` is accepted in each of the forms
-    [reslice][brainhops.datamodel.images.MultiScaleImage.reslice] takes, and
-    read the same way
-    [SingleScaleImage.reslice][brainhops.datamodel.images.SingleScaleImage.reslice]
-    reads its own.
-    """
+    """Return the voxel-to-world transformation of the reslicing target."""
     if geometry is None:
         return image.geometry.transformation
     if isinstance(geometry, Image):
@@ -535,16 +424,11 @@ def _reslice_voxel2world(
 def _level_voxel_sizes(
     image: "MultiScaleImage",
 ) -> tx.List[tx.Optional[ArrayProtocol]]:
-    """The voxel size of every level of `image`, finest first.
+    """Return the voxel size of each level in world units, finest first.
 
-    Each is a per-axis vector in world units, so it can be compared with
-    the grid an image is resliced onto. A level whose placement does not
-    reduce to an affine, even with its fields discarded, has an unknown
-    voxel size and is reported as `None`.
-
-    The pyramid's own transformation is included, so a pyramid whose
-    placement rescales its levels -- a unit conversion, say -- is measured
-    in the same units as the target grid.
+    The pyramid transformation is included, so that sizes are measured in the
+    units of the target. A level whose placement is not affine, even ignoring
+    fields, gives `None`.
     """
     sizes = []  # type: tx.List[tx.Optional[ArrayProtocol]]
     for level in image.images or ():

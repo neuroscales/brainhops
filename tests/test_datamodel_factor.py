@@ -1,21 +1,16 @@
-"""Tests for the factoring pass (``compute(factor=True)``).
+"""Tests of the factoring pass, `compute(factor=True)`.
 
-The factor pass rewrites a dimension-preserving chain into its axis-group
-normal form ``[grid?, F_1..F_m, Pi_perm?]``: one axis-preserving subspace
-factor per group of coupled axes, plus a trailing reindex permutation. The
-tests cover the normal form's structure, its idempotence and
-identity-preservation, that it recomposes to the same coordinates as the
-monolithic compute, that a lazy inverse cancels inside a group without being
-materialized, mode/simplify interaction, termination, and the fallbacks that
-leave a chain unfactored.
+The pass rewrites a chain that preserves the number of dimensions into an
+optional grid, one subspace factor per group of coupled axes, and an
+optional trailing permutation.
 """
 
 import numpy as np
 import pytest
 
 import brainhops._ext.invfield as invfield
-from brainhops.datamodel._transformations import factor as fac
 from brainhops.datamodel._transformations import sequence as seqmod
+from brainhops.datamodel._transformations.compute import factor as fac
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -46,7 +41,7 @@ def _sub(inner: Transformation, axes: list) -> SubspaceTransformation:
 
 
 def _field(x: Transformation) -> np.ndarray:
-    """The coordinate field a transform computes, as a numpy array."""
+    """Return the coordinate field computed by a transform."""
     return np.asarray(x.compute().field)
 
 
@@ -107,8 +102,9 @@ def test_pure_permutation_reduces_to_grid_and_permutation() -> None:
 
 
 def test_single_group_returned_unchanged_same_objects() -> None:
-    # A fully coupled affine is one group covering everything -> nothing is
-    # separable, so the sequence is returned unchanged, same objects.
+    # A fully coupled affine forms a single group, so the sequence is returned
+    #
+    # unchanged, with the same objects.
     grid = CartesianField(shape=(4, 5, 6))
     dense = Affine(
         matrix=np.array(
@@ -162,10 +158,9 @@ def test_factor_unfactor_equivalence_block_and_diagonal() -> None:
 
 
 def test_pass_through_axis_inside_a_group() -> None:
-    # Axis 2 is passed through by the first subspace but coupled to axis 1
-    # by the second, so the group {0, 1, 2} holds a pass-through axis of the
-    # first subspace: its piece must stay a subspace over the group's local
-    # axes, not collapse to its 2-d inner.
+    # Axis 2 passes through the first subspace but is coupled to axis 1 by the
+    #
+    # second, so the first piece must stay a subspace.
     grid = CartesianField(shape=(3, 4, 5, 6))
     a = _sub(
         Linear(matrix=np.array([[1.0, 0.5], [0.2, 1.0]])),
@@ -183,10 +178,7 @@ def test_pass_through_axis_inside_a_group() -> None:
 
 
 def test_subspace_piece_meeting_an_affine_piece_in_a_group() -> None:
-    # The subspace passes axis 2 through, and the affine couples it to axis
-    # 1, so inside the group {0, 1, 2} the subspace's piece meets an affine
-    # piece: it is embedded as a local affine (an endpoint-less subspace
-    # cannot be widened to one). Checked against numpy ground truth.
+    # The subspace piece meets the affine piece within one group.
     grid = CartesianField(shape=(3, 4, 5, 2))
     lin = np.array([[1.0, 0.5], [0.1, 1.0]])
     couple = np.array(
@@ -209,8 +201,7 @@ def test_subspace_piece_meeting_an_affine_piece_in_a_group() -> None:
 
 
 def test_reordered_subspace_axes_recompose() -> None:
-    # A subspace that names its axes out of order acts on them in that
-    # order; the factor must keep the order.
+    # A subspace that names its axes out of order acts in that order.
     grid = CartesianField(shape=(3, 4, 5))
     swirl = SubspaceTransformation(
         transformation=Affine(
@@ -226,11 +217,11 @@ def test_reordered_subspace_axes_recompose() -> None:
 
 
 def test_trailing_permutation_scatters_work_axes() -> None:
-    # A reindex followed by a coupling block: the factors act on the work
-    # (grid) axes and the trailing permutation scatters them to the data
-    # axes. The permutation is applied by hand, since the default compute of
-    # an endpoint-less subspace next to a full-space permutation cannot
-    # embed the subspace.
+    # The trailing permutation scatters the grid axes to the data axes. It is
+    #
+    # applied by hand, since the default `compute()` cannot embed the subspace
+    #
+    # next to it.
     grid = CartesianField(shape=(3, 4, 5, 2))
     block = Affine(
         matrix=np.array(
@@ -254,10 +245,7 @@ def test_trailing_permutation_scatters_work_axes() -> None:
 
 
 def test_permutation_recomposes_to_correct_coordinates() -> None:
-    # The default `compute()` of a multi-permutation chain is unreliable (a
-    # pre-existing bug in the Permutation-o-Permutation composer indexes
-    # backwards), so the factored NF is checked against ground truth computed
-    # by applying each permutation to the grid coordinates directly.
+    # The ground truth applies each permutation to the grid directly.
     grid = CartesianField(shape=(3, 4, 5))
     p1 = Permutation(permutation=np.array([1, 0, 2]))
     p2 = Permutation(permutation=np.array([0, 2, 1]))
@@ -306,15 +294,16 @@ def test_reversed_order_gives_the_same_partition() -> None:
 
 
 def _pieces(els: list, ndim: int) -> list:
-    """The restricted pieces of every group, before they are composed."""
+    """Return the restricted pieces of every group, before composition."""
     stages = fac._build_stages(els, ndim, fac.PatternCache())
     groups = fac._partition(stages, ndim)
     return [fac._restrict_group(group, stages) for group in groups]
 
 
 def test_restrict_keeps_scaling_and_translation_types() -> None:
-    # A restricted scaling stays a scaling and a restricted translation stays
-    # a translation, rather than being widened to a general affine sub-block.
+    # A restricted scaling stays a scaling, and a restricted translation stays
+    #
+    # a translation.
     els = [
         Scaling(scale=np.asarray([2.0, 3.0])),
         Translation(translation=np.asarray([1.0, -2.0])),
@@ -334,8 +323,9 @@ def test_restrict_keeps_permutation_type() -> None:
 
 
 def test_restrict_drops_matrix_less_affine() -> None:
-    # An affine with no matrix is the identity. It is restricted without
-    # indexing into a missing matrix, and dropped from every group.
+    # An affine without a matrix is the identity and is dropped from every
+    #
+    # group.
     matrix = np.zeros((2, 3))
     matrix[0, 0], matrix[1, 1] = 2.0, 3.0
     els = [Affine(matrix=matrix), Affine(matrix=None)]
@@ -351,9 +341,9 @@ def test_restrict_drops_matrix_less_affine() -> None:
 
 
 def _widened_chain() -> Sequence:
-    # A 3-d chain (x, y, t) that embeds a constant z coordinate, warps
-    # (x, y, z) together, and projects z away again. The middle stages have
-    # four axes, the ends three.
+    # A 3-D chain (x, y, t) that embeds a constant z, warps (x, y, z) together
+    #
+    # and projects z away.
     embed = np.zeros((4, 4))
     embed[0, 0], embed[1, 1], embed[2, 2] = 1.3, 0.7, 1.0
     embed[2, 3], embed[3, 3] = 1.0, 0.5
@@ -378,8 +368,7 @@ def _widened_chain() -> Sequence:
 
 
 def test_widened_intermediate_stage_factors() -> None:
-    # The warp couples x and y through the embedded z, while t only passes
-    # through the wider stage: two groups, whose inners both go through it.
+    # The warp couples x and y through the embedded z, and t passes through.
     seq = _widened_chain()
     nf = seq.compute(factor=True)
     assert _factor_axes(nf) == [(0, 1), (2,)]
@@ -387,8 +376,9 @@ def test_widened_intermediate_stage_factors() -> None:
 
 
 def test_intermediate_axis_that_reaches_no_end_is_left_unfactored() -> None:
-    # An axis created from a constant and dropped again reaches neither the
-    # grid nor the data, so no per-axis step can apply it: unfactored.
+    # An axis created from a constant and then dropped reaches no end, so no
+    #
+    # per-axis step can apply it.
     embed = np.zeros((3, 3))
     embed[0, 0], embed[1, 1], embed[2, 2] = 2.0, 3.0, 1.0
     seq = Sequence(
@@ -427,8 +417,7 @@ def test_subspace_inverse_pair_cancels_zero_inversions(
         [CartesianField(shape=(4, 5, 6, 7)), sub_warp, scale, sub_warp_inv]
     )
     nf = seq.compute(factor=True)
-    # The warp group cancels to identity and drops; only the scale factor
-    # survives -- and the field was never inverted.
+    # The warp group cancels and is dropped, without inverting the field.
     assert _factor_axes(nf) == [(3,)]
     assert calls["n"] == 0
 
@@ -436,13 +425,11 @@ def test_subspace_inverse_pair_cancels_zero_inversions(
 def test_subspace_cancel_is_a_cost_free_pair_simplifier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The `(Subspace, Subspace)` cancellation that lets a factor group drop a
-    # `Sub(warp) . Sub(warp^-1)` pair is a pair simplifier: a cost-free,
-    # decline-able rewrite that `compose` consults first, before any
-    # parameter-reading composer. It collapses the pair to the identity
-    # without inverting the field.
-    from brainhops.datamodel._transformations.compose import compose
-    from brainhops.datamodel._transformations.simplify import (
+    # Cancelling a subspace with its inverse is a pair simplifier, consulted
+    #
+    # before any composer.
+    from brainhops.datamodel._transformations.compute.compose import compose
+    from brainhops.datamodel._transformations.compute.simplify import (
         get_simplifiers,
         simplify,
     )
@@ -460,13 +447,12 @@ def test_subspace_cancel_is_a_cost_free_pair_simplifier(
     sub = _sub(warp, [0, 1])
     inv = sub.inverse()
     assert get_simplifiers(SubspaceTransformation, SubspaceTransformation)
-    # Application order: `sub` first, then `inv`.
+    # In application order: `sub`, then `inv`.
     assert isinstance(simplify(sub, inv), Identity)
-    # Matrix order: `compose(inv, sub)` applies `sub` first -- and its
-    # cost-free tier is that same pair simplifier.
+    # In matrix order, `compose(inv, sub)` applies `sub` first.
     assert isinstance(compose(inv, sub), Identity)
     assert calls["n"] == 0
-    # A pair that does not collapse is declined, not an error.
+    # A pair that does not cancel is declined, without an error.
     other = _sub(Scaling(scale=np.array([2.0, 3.0])), [0, 1])
     assert simplify(sub, other) is None
 
@@ -489,7 +475,7 @@ def test_numeric_downcasts_diagonal_block_to_scaling() -> None:
     )
     nf = Sequence([grid, diag]).compute(simplify="numeric", factor=True)
     inners = {type(t.transformation).__name__ for t in _factors(nf)}
-    # Axes 1, 2 downcast to pure scalings; axis 0 keeps its translation.
+    # Axes 1 and 2 are downcast to scalings; axis 0 keeps its translation.
     assert "Scaling" in inners
     assert np.allclose(
         _field(Sequence(list(nf.transformations))),
@@ -511,8 +497,7 @@ def test_single_axis_chain_trivial_under_mode() -> None:
             Translation(translation=np.array([1.0])),
         ]
     )
-    # A single-axis chain is one group covering everything -> returned
-    # unchanged (trivial), regardless of mode.
+    # A single-axis chain is trivial and returned unchanged in any mode.
     nf = seq.compute(mode="translation", factor=True)
     assert list(nf.transformations) == list(seq.transformations)
 
@@ -552,9 +537,9 @@ def test_adversarial_shear_pairs_converge() -> None:
 def test_cap_raises_on_non_identity_preserving_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A factor pass that never reaches a fixpoint (returns fresh leaf objects
-    # every iteration) must trip the iteration cap and raise, rather than loop
-    # forever.
+    # A pass that never reaches a fixed point must hit the iteration cap and
+    #
+    # raise.
     from bagof.magic import replace
 
     def broken(
@@ -584,8 +569,7 @@ def test_cap_raises_on_non_identity_preserving_pass(
 
 
 def _sequence_inner_chain() -> Sequence:
-    # A subspace whose inner is a (non-field) sequence, split across two
-    # groups: each group holds one of its axes.
+    # A subspace with a sequence inner, split across two groups.
     inner = Sequence(
         [
             Scaling(scale=np.array([0.5, 0.75])),
@@ -596,7 +580,7 @@ def _sequence_inner_chain() -> Sequence:
 
 
 def test_sequence_inner_split_across_groups_is_kept() -> None:
-    # Its pieces used to be dropped, leaving only the grid.
+    # Regression: the pieces were dropped, leaving only the grid.
     seq = _sequence_inner_chain()
     result = seq.compute(factor=True)
     assert _factor_axes(result) == [(0,), (1,)]
@@ -606,7 +590,7 @@ def test_sequence_inner_split_across_groups_is_kept() -> None:
 def test_unrestrictable_element_leaves_the_chain_unfactored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from brainhops.datamodel._transformations.errors import RestrictionError
+    from brainhops.errors import RestrictionError
 
     def refuse(*args: object) -> None:
         raise RestrictionError("cannot")
@@ -619,7 +603,7 @@ def test_unrestrictable_element_leaves_the_chain_unfactored(
 
 
 def test_subspace_without_inner_is_read_as_the_identity() -> None:
-    # It used to crash the dependency reader.
+    # Regression: this used to crash the dependency reader.
     grid = CartesianField(shape=(4, 5, 6))
     scale = Scaling(scale=np.array([0.5, 0.75, 0.9]))
     seq = Sequence([grid, _sub(None, [1]), scale])
@@ -628,11 +612,11 @@ def test_subspace_without_inner_is_read_as_the_identity() -> None:
     assert np.allclose(_field(result), _field(Sequence([grid, scale])))
 
 
-# An inner-less subspace over different input and output axes is a reindex
-# (#110): `input_axes[k]` feeds `output_axes[k]`, and the other axes pass
-# through in order. These chains carry systems on every element so the
-# monolithic `compute()` can embed their subspaces; the normal form's
-# trailing permutation is applied by hand (see above).
+# A subspace without an inner transform over different axes is a reindex
+#
+# (#110). Every element carries systems, so that the default `compute()`
+#
+# can embed the subspaces.
 _XYZ = CoordinateSystem(
     name="voxel", axes=[SpaceAxis(name=n, unit="index") for n in "xyz"]
 )
@@ -666,8 +650,9 @@ def _normal_form_field(nf: Sequence) -> np.ndarray:
 
 
 def test_subspace_without_inner_over_different_axes_is_a_reindex() -> None:
-    # It used to be left unfactored, when the subspace-on-field composer
-    # still read it as the identity.
+    # Regression: the chain was left unfactored when the reindex was read as
+    #
+    # the identity.
     scale = SubspaceTransformation(
         transformation=Scaling(scale=np.array([1.5])),
         input_axes=np.array([2]),
@@ -687,8 +672,8 @@ def test_subspace_without_inner_over_different_axes_is_a_reindex() -> None:
 
 @pytest.mark.parametrize("swap_first", [True, False])
 def test_reindex_swap_next_to_a_scaling(swap_first: bool) -> None:
-    # A pure swap of axes 0 and 1: three singleton groups, each scaled by
-    # the factor its data axis carries, and the swap as the trailing
+    # A swap of axes 0 and 1 gives three single-axis groups and a trailing
+    #
     # permutation.
     s = np.array([2.0, 3.0, 4.0])
     scaling = Scaling(scale=s, input=_XYZ, output=_XYZ)
@@ -706,9 +691,7 @@ def test_reindex_swap_next_to_a_scaling(swap_first: bool) -> None:
 
 
 def test_reindex_split_across_groups() -> None:
-    # The reindex sends axis 2 to axis 0 and axis 0 to axis 2; the affine
-    # after it couples axes 0 and 1. Each group holds only one of the
-    # reindex's acted axes, and the {1, 2} group reads them out of order.
+    # The reindex swaps axes 0 and 2, and the affine couples axes 0 and 1.
     matrix = np.array(
         [[1.0, 0.5, 0.0, 0.0], [0.3, 1.0, 0.0, 0.0], [0.0, 0.0, 2.0, 1.0]]
     )
@@ -722,9 +705,7 @@ def test_reindex_split_across_groups() -> None:
 
 
 def _systemless_subspace_then_linear() -> list:
-    # A group's pieces are a system-less subspace (the restricted sequence
-    # inner) followed by an affine (the restricted `Linear`). The subspace
-    # states no axis count of its own; the affine next to it does.
+    # A subspace without systems, which states no axis count, then an affine.
     linear = np.array(
         [
             [0.8, 0.4, 0.0, 0.3],
@@ -753,13 +734,9 @@ def _systemless_subspace_then_linear() -> list:
 def test_group_of_systemless_subspace_and_affine_pieces_is_factored(
     form: str,
 ) -> None:
-    # `compute(factor=True)` used to raise a `ConversionError` here, where
-    # `compute()` succeeds, and then left the chain unfactored: the
-    # restricted subspace piece states no axis count, so it could not be
-    # embedded next to the affine piece. The affine states the count of the
-    # space the two share, which closes the subspace, so the group now
-    # composes. The reindex `in [1, 2, 3] -> out [2, 3, 1]` is the
-    # permutation `[0, 3, 1, 2]`; both forms hit it.
+    # Regression: factoring raised here although the default `compute()`
+    #
+    # succeeds. Both forms of the head are the permutation [0, 3, 1, 2].
     if form == "reindex":
         head = SubspaceTransformation(
             transformation=None,
@@ -780,8 +757,7 @@ def test_group_of_systemless_subspace_and_affine_pieces_is_factored(
 
 
 def test_uncomposable_affine_then_subspace_is_left_unfactored() -> None:
-    # The mirror: an affine piece (the local reindex) followed by a
-    # system-less subspace piece (a nested subspace's inner).
+    # The mirrored order cannot be composed and is left unfactored.
     forward = Affine(
         matrix=np.array(
             [
@@ -822,7 +798,7 @@ def test_uncomposable_affine_then_subspace_is_left_unfactored() -> None:
 
 
 def test_rectangular_chain_left_unfactored() -> None:
-    # A tall (2 -> 3) affine creates an axis; it is left unfactored.
+    # A tall affine creates an axis, so the chain is left unfactored.
     grid = CartesianField(shape=(4, 5))
     tall = Affine(
         matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 5.0]])
@@ -833,8 +809,7 @@ def test_rectangular_chain_left_unfactored() -> None:
 
 
 def test_projection_chain_left_unfactored() -> None:
-    # A projection has no affine reading: the chain must be left unfactored,
-    # never read as the identity and dropped.
+    # A projection has no affine reading, so it is kept rather than dropped.
     grid = CartesianField(shape=(4, 5, 6))
     seq = Sequence(
         [

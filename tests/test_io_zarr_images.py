@@ -1,9 +1,8 @@
 """Tests for the Zarr and OME-Zarr image readers and writers.
 
-The tests favour write-then-read round-trips, since a round-trip exercises
-the reader, the writer, and the axis-order seam between them at once. The
-seam maps the brainhops F-order ``(x, y, z, t, c)`` to the OME-Zarr C-order
-``(t, c, z, y, x)`` at the boundary.
+Most tests write and read back, exercising the reader, the writer and the
+axis-order seam together. The seam maps the F-ordered (x, y, z, t, c) axes
+of brainhops to the C-ordered (t, c, z, y, x) axes of OME-Zarr.
 """
 
 import sys
@@ -22,23 +21,19 @@ from brainhops.datamodel.axes import (
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Affine
 from brainhops.io.base.parsers import WriterError
-from brainhops.io.images.zarr import (
+
+# The module imports abczarr itself, so the skip must come first.
+abczarr = pytest.importorskip("abczarr")
+
+from brainhops.io.images.zarr import (  # noqa: E402
     OmeImageError,
     OmeZarrImage,
     ZarrImage,
     _axisorder,
 )
 
-abczarr = pytest.importorskip("abczarr")
-
-# Reading an OME-Zarr displacement/coordinate field identifies the vector
-# component axis from the field array's OME metadata or its zarr v3
-# `dimension_names`. Only zarr-python 3 persists those, and it requires
-# Python 3.11 or newer; the older stacks available below 3.11 (zarr-python 2
-# with no `dimension_names`, or the tensorstore driver, which drops it) can
-# store a bare field array but not the axis metadata the reader needs, so
-# the field readers cannot round-trip there. The module is gated on the
-# interpreter version, matching how the OME-Zarr feature is scoped.
+# Field readers find the component axis in OME metadata or in zarr v3
+# dimension_names, which only zarr-python 3 persists, on Python 3.11+.
 pytestmark = pytest.mark.skipif(
     sys.version_info < (3, 11),
     reason="OME-Zarr field metadata needs zarr-python 3, which needs "
@@ -49,7 +44,7 @@ pytestmark = pytest.mark.skipif(
 def _diag_affine(
     scale: tx.Sequence[float], translation: tx.Sequence[float]
 ) -> Affine:
-    """A voxel-to-world affine with a per-axis scale and translation."""
+    """A vox-to-world affine with a scale and translation per axis."""
     scale = np.asarray(scale, dtype=float)
     translation = np.asarray(translation, dtype=float)
     ndim = scale.shape[0]
@@ -60,7 +55,6 @@ def _diag_affine(
 
 
 def _world_matrix(transformation: tx.Any) -> np.ndarray:
-    """The affine matrix a transformation reduces to, for verification."""
     return np.asarray(transformation.compute().to(Affine).matrix)
 
 
@@ -72,7 +66,7 @@ def _spatial_axes() -> tx.List[SpaceAxis]:
     ]
 
 
-# ---- the axis-order seam ---------------------------------------------
+# Axis-order seam
 
 
 def test_seam_maps_storage_order_to_canonical_and_back() -> None:
@@ -104,7 +98,7 @@ def test_seam_round_trips_any_permutation() -> None:
     assert [a.name for a in back] == [a.name for a in stored]
 
 
-# ---- pure Zarr array -------------------------------------------------
+# Pure Zarr array
 
 
 def test_pure_array_round_trip(tmp_path: Path) -> None:
@@ -150,7 +144,7 @@ def test_pure_array_preserves_chunks(tmp_path: Path) -> None:
     assert tuple(stored.chunks) == (4, 4)
 
 
-# ---- dispatch --------------------------------------------------------
+# Dispatch
 
 
 def test_dispatch_selects_array_reader_for_a_plain_array(
@@ -173,7 +167,7 @@ def test_dispatch_selects_ome_reader_for_a_multiscale_group(
     assert isinstance(images.load(path), OmeZarrImage)
 
 
-# ---- OME-Zarr multiscale ---------------------------------------------
+# OME-Zarr multiscale
 
 
 def _small_pyramid() -> OmeZarrImage:
@@ -213,12 +207,10 @@ def test_multiscale_round_trip_preserves_data_and_geometry(
 
 
 def _stored_axis_names(path: str) -> tx.List[str]:
-    """The axis names a written pyramid stores, in the stored order.
+    """The axis names a written pyramid stores, in stored order.
 
-    Where the axes live depends on the OME-NGFF version: 0.5 and earlier put
-    them on the multiscale as `axes`, while 0.6 puts them on each named
-    coordinate system. Both layouts are read here, so a test asserting the
-    stored *order* does not also pin the version that was written.
+    OME-NGFF up to 0.5 keeps them on the multiscale and 0.6 on each coordinate
+    system. Both are read, so that order tests do not pin the version.
     """
     attrs = dict(abczarr.open(path, mode="r").attrs)
     block = attrs.get("ome", attrs)["multiscales"][0]
@@ -246,8 +238,7 @@ def test_multiscale_stores_axes_in_ome_order(tmp_path: Path) -> None:
     OmeZarrImage(images=[image], axes=axes).save(path)
 
     assert _stored_axis_names(path) == ["t", "c", "z", "y", "x"]
-    # The stored array is transposed to the OME order, so the shape is the
-    # F-order shape read back to front.
+    # The stored shape is the F-order shape reversed.
     stored = abczarr.open(path, mode="r")
     assert tuple(stored["0"].shape) == (2, 3, 6, 5, 4)
 
@@ -304,8 +295,7 @@ def test_reader_builds_geometry_from_coordinate_transformations(
     )
 
     back = images.load(path)
-    # The scale and translation are read as their own brainhops
-    # transformations, kept in a sequence rather than collapsed to an affine.
+    # Scale and translation are kept as a sequence, not collapsed.
     from brainhops.datamodel.transformations import (
         Scaling,
         Sequence,
@@ -316,8 +306,7 @@ def test_reader_builds_geometry_from_coordinate_transformations(
     assert isinstance(geometry, Sequence)
     assert isinstance(geometry.transformations[0], Scaling)
     assert isinstance(geometry.transformations[1], Translation)
-    # The stored (z, y, x) scale (3, 2, 1) becomes the canonical (x, y, z)
-    # scale (1, 2, 3), and likewise the translation.
+    # The stored (z, y, x) scale (3, 2, 1) is (1, 2, 3) in (x, y, z).
     np.testing.assert_allclose(
         geometry.transformations[0].scale, [1.0, 2.0, 3.0]
     )
@@ -327,9 +316,7 @@ def test_reader_builds_geometry_from_coordinate_transformations(
 
 
 def test_reader_refuses_missing_transformations(tmp_path: Path) -> None:
-    # A level with no coordinate transformations is malformed metadata.
-    # abczarr rejects it while parsing, so the reader reports the fault
-    # rather than reading the level with a silent identity geometry.
+    # A level without transformations is malformed and is reported.
     path = str(tmp_path / "bare.zarr")
     group = abczarr.open_group(path, mode="w")
     group.create_array("0", data=np.ones((3, 3, 2), "float32"))
@@ -354,9 +341,7 @@ def test_reader_refuses_missing_transformations(tmp_path: Path) -> None:
 
 
 def test_reader_refuses_misspelled_transform_type(tmp_path: Path) -> None:
-    # A transformation whose type is misspelled is malformed metadata.
-    # abczarr rejects it rather than skipping it, so a wrong geometry is
-    # never produced silently.
+    # A misspelled transformation type is rejected.
     path = str(tmp_path / "typo.zarr")
     group = abczarr.open_group(path, mode="w")
     group.create_array("0", data=np.ones((3, 3), "float32"))
@@ -389,9 +374,7 @@ def test_reader_refuses_misspelled_transform_type(tmp_path: Path) -> None:
 def test_writer_writes_a_non_axis_aligned_geometry_as_an_affine(
     tmp_path: Path,
 ) -> None:
-    # A sheared placement is not a per-axis scale and translation. OME-Zarr
-    # carries it as a full affine, so the writer keeps it rather than
-    # refusing it. The geometry survives the write-then-read round-trip.
+    # OME carries a sheared placement as a full affine.
     matrix = np.eye(3, 4)
     matrix[0, 1] = 0.5
     image = SingleScaleImage(
@@ -412,9 +395,7 @@ def test_writer_writes_a_non_axis_aligned_geometry_as_an_affine(
 def test_writer_refuses_a_rich_geometry_in_a_scale_only_version(
     tmp_path: Path,
 ) -> None:
-    # OME-NGFF 0.4 carries only a per-axis scale and translation. A sheared
-    # placement cannot be written in it, so an explicit request for 0.4 is
-    # refused rather than silently dropping the off-diagonal terms.
+    # OME-NGFF 0.4 has no shear, so 0.4 is refused rather than dropping it.
     matrix = np.eye(3, 4)
     matrix[0, 1] = 0.5
     image = SingleScaleImage(
@@ -428,9 +409,7 @@ def test_writer_refuses_a_rich_geometry_in_a_scale_only_version(
 
 
 def test_writer_round_trips_a_rotation_placement(tmp_path: Path) -> None:
-    # A rotation is not a per-axis scale and translation. It is written as an
-    # OME rotation and read back as a rotation, so a rotated placement
-    # survives the round-trip rather than being collapsed or refused.
+    # A rotation round-trips as an OME rotation.
     from brainhops.datamodel.transformations import Rotation
 
     theta = 0.4
@@ -459,9 +438,7 @@ def test_writer_round_trips_a_rotation_placement(tmp_path: Path) -> None:
 
 
 def test_writer_round_trips_a_sequence_placement(tmp_path: Path) -> None:
-    # A sequence of a rotation and a translation is written as an OME
-    # sequence and read back as a sequence of the same kinds, so a composed
-    # placement is kept rather than collapsed into a single affine.
+    # A sequence round-trips with the same kinds, not collapsed.
     from brainhops.datamodel.transformations import (
         Rotation,
         Sequence,
@@ -525,14 +502,13 @@ def test_reader_refuses_unsupported_coordinate_transformation(
         }
     )
 
-    # The reader raises the specific error. Through the dispatcher, that
-    # error is reported as a general parse failure instead, so the reader
-    # is exercised directly here.
+    # Dispatch reports a general parse failure, so the reader is tested
+    # directly.
     with pytest.raises(OmeImageError):
         OmeZarrImage.load(path)
 
 
-# ---- public read/write API -------------------------------------------
+# Public read and write API
 
 
 def test_from_store_and_to_store_round_trip(tmp_path: Path) -> None:
@@ -567,8 +543,7 @@ def test_from_node_reads_an_opened_abczarr_node(tmp_path: Path) -> None:
 
 
 def test_from_node_wraps_a_driver_native_array(tmp_path: Path) -> None:
-    # A raw driver object, here a zarr-python array, is wrapped in an
-    # abczarr node before it is read.
+    # A driver-native array is wrapped in an abczarr node before reading.
     zarrpy = pytest.importorskip("zarr")
     data = np.arange(6, dtype="float32").reshape(2, 3)
     path = str(tmp_path / "native.zarr")
@@ -617,7 +592,7 @@ def test_multiscale_to_node_writes_into_a_group(tmp_path: Path) -> None:
     assert back.nscales == 2
 
 
-# ---- laziness --------------------------------------------------------
+# Laziness
 
 
 def test_opening_a_pyramid_does_not_read_its_levels(tmp_path: Path) -> None:
@@ -626,25 +601,21 @@ def test_opening_a_pyramid_does_not_read_its_levels(tmp_path: Path) -> None:
 
     back = OmeZarrImage.from_store(path)
 
-    # No level's data has been materialized yet: each level holds its array
-    # handle and reads it only on access. A read is cached under the name
-    # `smartproperty` derives, `_cache_data`.
+    # No level is read yet: each holds an array handle.
     for level in back.images:
         assert getattr(level, "_cache_data", None) is None
-    # Accessing one level reads that level, and leaves the others untouched.
+    # Accessing one level reads only that level.
     _ = np.asarray(back.images[0].data)
     assert getattr(back.images[0], "_cache_data", None) is not None
     assert getattr(back.images[1], "_cache_data", None) is None
 
 
-# ---- chunking --------------------------------------------------------
+# Chunking
 
 
 def test_one_chunking_is_applied_to_every_level(tmp_path: Path) -> None:
     path = str(tmp_path / "chunked.zarr")
-    # A single chunk shape is given in the brainhops axis order and used for
-    # every level, stored in the OME order after transposition. A chunk
-    # larger than a coarse level is clamped to that level's shape.
+    # One chunk shape, in brainhops order, applies to every level.
     _small_pyramid().save(path, chunks=(2, 2, 2))
 
     group = abczarr.open(path, mode="r")
@@ -652,7 +623,7 @@ def test_one_chunking_is_applied_to_every_level(tmp_path: Path) -> None:
     assert tuple(group["1"].chunks) == (2, 2, 2)
 
 
-# ---- the vector component axis ---------------------------------------
+# Vector component axis
 
 
 def _displacement_field() -> OmeZarrImage:
@@ -665,7 +636,7 @@ def _displacement_field() -> OmeZarrImage:
         DisplacementAxis(name="v"),
     ]
     data = np.zeros((2, 3, 4, 3), dtype="float32")
-    # Each component encodes the spatial axis it belongs to.
+    # Each component encodes its spatial axis.
     data[..., 0] = 10.0
     data[..., 1] = 20.0
     data[..., 2] = 30.0
@@ -685,8 +656,7 @@ def test_vector_axis_is_grouped_with_the_channel_position() -> None:
         DisplacementAxis(name="v"),
     ]
     stored = _axisorder.permute(axes, _axisorder.to_storage(axes))
-    # The component axis leads, in the position a channel axis would take,
-    # then the spatial axes in z, y, x.
+    # The component axis leads, where a channel would be.
     assert [a.name for a in stored] == ["v", "z", "y", "x"]
 
 
@@ -697,32 +667,26 @@ def test_field_components_are_not_reordered_by_the_axis_permutation(
     _displacement_field().save(path, version="0.6")
 
     stored = np.asarray(abczarr.open(path, mode="r")["0"][...])
-    # The array axes are transposed to (v, z, y, x), but the component
-    # values are not reordered: a field's components are expressed in its
-    # output coordinate system, which the seam keeps fixed. So the leading
-    # component still holds the x value.
+    # The axes are transposed but the component values are not reordered.
     np.testing.assert_allclose(stored[:, 0, 0, 0], [10.0, 20.0, 30.0])
 
     back = OmeZarrImage.from_store(path)
     read = np.asarray(back.images[0].data)
-    # The round-trip returns the field unchanged.
+    # The field round-trips unchanged.
     np.testing.assert_allclose(read[0, 0, 0, :], [10.0, 20.0, 30.0])
     assert np.array_equal(
         read, np.asarray(_displacement_field().images[0].data)
     )
 
 
-# ---- the OME version option ------------------------------------------
+# OME version option
 
 
 def test_write_version_defaults_to_the_newest_stable(tmp_path: Path) -> None:
     path = str(tmp_path / "default.zarr")
     _small_pyramid().save(path)
 
-    # With no source version to fall back to, the newest released version is
-    # written, whatever the placement is: it is the only one that carries
-    # every placement brainhops can hold, so the writer never has to raise
-    # the version to express one.
+    # Only the newest version carries every placement, so it is the default.
     node = abczarr.open(path, mode="r")
     assert node.ome.version == "0.6"
 
@@ -739,15 +703,13 @@ def test_write_version_falls_back_to_the_source_version(
     tmp_path: Path,
 ) -> None:
     source = str(tmp_path / "source.zarr")
-    # Deliberately not the default version, so that writing it back proves
-    # the source version was carried over rather than the default reapplied.
+    # A non-default version proves that the source version is carried.
     from brainhops.io.images.zarr._ome import DEFAULT_WRITE_VERSION
 
     assert DEFAULT_WRITE_VERSION != "0.5"
     _small_pyramid().save(source, version="0.5")
 
-    # A pyramid read from a 0.5 store is written back in 0.5 without the
-    # version being restated.
+    # A 0.5 store is written back as 0.5 without restating the version.
     back = OmeZarrImage.from_store(source)
     target = str(tmp_path / "target.zarr")
     back.save(target)
@@ -755,7 +717,7 @@ def test_write_version_falls_back_to_the_source_version(
     assert abczarr.open(target, mode="r").ome.version == "0.5"
 
 
-# ---- axes are derived from the OME metadata --------------------------
+# Axes derived from OME metadata
 
 
 def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
@@ -774,17 +736,17 @@ def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
     OmeZarrImage(images=[image], axes=axes).save(source)
 
     back = OmeZarrImage.from_store(source)
-    # A read pyramid stores no separate axis list; its axes come from `ome`.
+    # A read pyramid takes its axes from `ome`.
     assert back.axes is None
     assert back.ome is not None
 
-    # Re-saving derives the axes from `ome`, so their stored order is kept.
+    # Saving again keeps the stored order.
     target = str(tmp_path / "resaved.zarr")
     back.save(target)
     assert _stored_axis_names(target) == ["t", "c", "z", "y", "x"]
 
 
-# ---- native transformation mapping -----------------------------------
+# Native transformation mapping
 
 
 def _authored_pyramid(
@@ -796,8 +758,7 @@ def _authored_pyramid(
 ) -> str:
     """Write a 0.6 group whose one level carries `transform`.
 
-    `arrays` names extra arrays to write into the group, such as the field
-    array a displacement transformation references.
+    `arrays` names extra arrays, such as the field of a displacement transform.
     """
     from abczarr.ome import v0_6 as v6
 
@@ -805,8 +766,7 @@ def _authored_pyramid(
     group = abczarr.open_group(path, mode="w")
     group.create_array("0", data=np.ones(shape, "float32"))
     for name, array in (arrays or {}).items():
-        # A value may be a plain array, or an (array, dimension_names) pair
-        # when the array needs to name its axes (a field array does).
+        # An array, or an (array, dimension_names) pair for a field array.
         if isinstance(array, tuple):
             data, names = array
             group.create_array(name, data=data, dimension_names=names)
@@ -856,7 +816,7 @@ def test_reader_maps_a_rotation_to_a_rotation(tmp_path: Path) -> None:
     )
     geometry = OmeZarrImage.from_store(path).images[0].transformation
     assert isinstance(geometry, Rotation)
-    # Stored (y, x) rotation reordered to canonical (x, y).
+    # The stored (y, x) rotation is reordered to (x, y).
     np.testing.assert_allclose(
         np.asarray(geometry.matrix), [[0.0, 1.0], [-1.0, 0.0]]
     )
@@ -913,9 +873,8 @@ def test_reader_maps_a_map_axis_to_a_permutation(tmp_path: Path) -> None:
 
 
 def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
-    # A mapAxis that names a subset of the input axes drops the rest; it maps
-    # to a Projection. This is exercised on the mapping directly, since a
-    # dimensionality-changing level is not otherwise wired through the reader.
+    # A mapAxis over a subset of the input axes is a Projection; tested on
+    # the mapping, since such a level is not wired through the reader.
     from abczarr.ome.v0_6.transformations import CoordinateTransformation
 
     from brainhops.datamodel.transformations import Projection
@@ -930,12 +889,11 @@ def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
     np.testing.assert_array_equal(np.asarray(projection.created), [])
 
 
-# ---- displacement and coordinate fields ------------------------------
+# Displacement and coordinate fields
 
 
 def _field_array() -> np.ndarray:
-    # A field stored as (component, z, y, x); each component is a constant so
-    # the component order is visible after reading.
+    # Stored as (component, z, y, x), each component constant.
     field = np.zeros((3, 6, 5, 4), dtype="float32")
     field[0] = 100.0
     field[1] = 200.0
@@ -952,11 +910,8 @@ def _authored_field_pyramid(
     field: np.ndarray,
     field_axes: tx.Sequence[tx.Tuple[str, str]],
 ) -> str:
-    """Write a pyramid whose level is placed by a displacement field node.
-
-    The field node is a full OME-Zarr node carrying its own typed axes, the
-    way a real 0.6 field is stored. It names no dimension_names, so the
-    reader must find the component axis from the field node's own `ome`.
+    """Write a pyramid placed by a displacement field node with typed axes
+    and no dimension_names, as real 0.6 files are.
     """
     from abczarr.ome import v0_6 as v6
 
@@ -1017,9 +972,7 @@ def _authored_field_pyramid(
 def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
     from brainhops.datamodel.transformations import DisplacementField
 
-    # A real 0.6 field node carries its own typed axes. Here the component
-    # axis is stored LAST and the node has no dimension_names, so the reader
-    # must find the component axis by its type through the node's `ome`.
+    # The component axis is stored last and found by its type.
     field = np.moveaxis(_field_array(), 0, -1)  # (z, y, x, d)
     path = _authored_field_pyramid(
         tmp_path,
@@ -1034,7 +987,7 @@ def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
     geometry = OmeZarrImage.from_store(path).images[0].transformation
     assert isinstance(geometry, DisplacementField)
     result = np.asarray(geometry.field)
-    # Read into (x, y, z, component); component values are not reordered.
+    # Read as (x, y, z, component), without reordering the values.
     assert result.shape == (4, 5, 6, 3)
     np.testing.assert_allclose(result[0, 0, 0, :], [100.0, 200.0, 300.0])
 
@@ -1042,8 +995,7 @@ def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
 def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
     from brainhops.datamodel.transformations import DisplacementField
 
-    # Fallback path: the field node is a bare array that names its axes with
-    # dimension_names but carries no typed OME metadata.
+    # Fallback: a bare array whose dimension_names name the axes.
     path = _authored_pyramid(
         tmp_path,
         {"type": "displacements", "path": "disp"},
@@ -1054,8 +1006,7 @@ def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
     geometry = OmeZarrImage.from_store(path).images[0].transformation
     assert isinstance(geometry, DisplacementField)
     field = np.asarray(geometry.field)
-    # The spatial axes are read into (x, y, z) and the component axis moved
-    # to the end, giving (*spatial, component).
+    # The component axis moves to the end.
     assert field.shape == (4, 5, 6, 3)
     # The component values are not reordered.
     np.testing.assert_allclose(field[0, 0, 0, :], [100.0, 200.0, 300.0])
@@ -1066,10 +1017,7 @@ def test_reader_reads_a_field_by_its_axis_names_not_position(
 ) -> None:
     from brainhops.datamodel.transformations import DisplacementField
 
-    # The same field, stored with the component axis LAST instead of first,
-    # and the spatial axes in a different order. The reader identifies the
-    # component axis from the node's dimension_names, so the result is the
-    # same (*spatial, component) layout regardless of the stored order.
+    # The component axis is stored last and found by dimension_names.
     field = np.moveaxis(_field_array(), 0, -1)  # (z, y, x, d)
     path = _authored_pyramid(
         tmp_path,
@@ -1088,8 +1036,7 @@ def test_reader_reads_a_field_by_its_axis_names_not_position(
 def test_reader_refuses_a_field_that_does_not_name_its_axes(
     tmp_path: Path,
 ) -> None:
-    # Without dimension_names on the field node, the component axis cannot be
-    # identified, so the reader refuses rather than guessing.
+    # Without dimension_names, the reader refuses to guess.
     path = _authored_pyramid(
         tmp_path,
         {"type": "displacements", "path": "disp"},
@@ -1145,10 +1092,8 @@ def test_reader_reads_an_affine_surrounded_field(tmp_path: Path) -> None:
 def test_reader_maps_a_multi_field_sequence_without_banning(
     tmp_path: Path,
 ) -> None:
-    # The image reader maps any OME composition faithfully. It does not ban
-    # a level that composes more than one field, or a field beside a
-    # non-affine transformation. The affine constraint belongs to a field's
-    # own intrinsic-to-world placement, which the field object enforces.
+    # The image reader maps any OME composition faithfully; the affine
+    # constraint on a field's placement is enforced by the field object.
     from brainhops.datamodel.transformations import (
         DisplacementField,
         Sequence,

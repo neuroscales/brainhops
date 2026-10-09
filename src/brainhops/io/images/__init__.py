@@ -1,4 +1,4 @@
-"""Readers and writers for image formats."""
+"""Readers and writers for image file formats."""
 
 __all__ = [
     "FileBasedImage",
@@ -11,7 +11,6 @@ __all__ = [
     "sniff",
 ]
 
-# internals
 from brainhops._core.dependencies import (
     HAS_H5PY,
     HAS_NIBABEL,
@@ -25,14 +24,14 @@ from brainhops.io.base._dispatch import register_missing_format
 from . import afni, base, mrtrix, nrrd
 from .base import FileBasedImage, WritableFileBasedImage, load, sniff
 
-# Formats must be imported for them to register themselves: the registry
-# only ever holds classes that have actually been imported, so a lazily
-# imported format would silently be invisible to `load`.
+# Formats register themselves when their module is imported, and the
+# registry only knows imported classes, so every available format is
+# imported eagerly to make it visible to `load`.
 if HAS_NIBABEL:
     from . import freesurfer, minc, nifti
 
     __all__ += ["freesurfer", "minc", "nifti"]
-    # MINC2 is an HDF5 file, read only with h5py.
+    # MINC2 files are HDF5 files and need h5py to be read.
     if not HAS_H5PY:
         register_missing_format(
             ["minc2", "minc.2", "minc.minc2"], "h5py", "minc"
@@ -42,7 +41,7 @@ else:
         ["minc", "minc1", "minc2", "minc.1", "minc.2"], "nibabel", "minc"
     )
 
-# Raster images (PNG, JPEG, ...) are read and written with Pillow.
+# Raster formats (PNG, JPEG, ...) are read and written through Pillow.
 if HAS_PILLOW:
     from . import pillow
 
@@ -50,8 +49,8 @@ if HAS_PILLOW:
 else:
     register_missing_format(["pillow"], "Pillow", "pillow")
 
-# TIFF images are read and written with tifffile. Without it, Pillow
-# (whose TIFF sniff is weaker) reads them as raster images.
+# Without tifffile, Pillow still reads TIFF files as raster images, but
+# with weaker sniffing.
 if HAS_TIFFFILE:
     from . import tiff
 
@@ -59,9 +58,8 @@ if HAS_TIFFFILE:
 else:
     register_missing_format(["tiff", "tifffile"], "tifffile", "tiff")
 
-# Whole-slide images are read with OpenSlide (openslide-python and the
-# OpenSlide library). Without it, the TIFF-based slides are read by the
-# TIFF reader.
+# OpenSlide needs both the Python package and the C library. Without it,
+# TIFF-based slides fall back to the TIFF reader.
 if HAS_OPENSLIDE:
     from . import openslide
 
@@ -96,9 +94,8 @@ else:
         "openslide",
     )
 
-# The Zarr reader needs abczarr and at least one of its backend drivers.
-# abczarr alone cannot open a store, so the reader is registered only when a
-# driver is present.
+# abczarr cannot open stores without at least one backend driver, so the
+# Zarr format is registered only when a driver is available.
 if has_abczarr_driver():
     from . import zarr
 

@@ -1,10 +1,8 @@
-"""
-Tests for writing images and transformations back to NIfTI.
+"""Tests for writing images and transformations to NIfTI.
 
-A NIfTI file that this package reads should be writable again without
-drifting: the data array, the sform and qform matrices, and their codes
-should all survive a save-and-reload round trip. A transformation that
-NIfTI cannot represent should be refused rather than silently resampled.
+A file that was read can be written again without drift in the data, the
+forms or their codes. A transformation that NIfTI cannot represent is
+refused instead of being resampled silently.
 """
 
 import warnings
@@ -41,8 +39,8 @@ from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiVoxelToRAS,
 )
 
-# A rigid rotation, an anisotropic zoom and a translation, with no shear,
-# so the qform can hold it exactly.
+# A rotation, anisotropic zoom and translation without shear, so that the
+# qform is exact.
 AFFINE = np.array(
     [
         [0.0, -1.0, 0.0, 10.0],
@@ -54,7 +52,6 @@ AFFINE = np.array(
 
 
 def _write_image(tmp_path, name, data, scode=2, qcode=1):  # noqa: ANN001, ANN202
-    """Write a NIfTI image fixture with both an sform and a qform set."""
     img = nb.Nifti1Image(data, AFFINE)
     img.header.set_sform(AFFINE, code=scode)
     img.header.set_qform(AFFINE, code=qcode)
@@ -70,7 +67,6 @@ def _write_image(tmp_path, name, data, scode=2, qcode=1):  # noqa: ANN001, ANN20
 
 @pytest.mark.parametrize("suffix", [".nii", ".nii.gz"])
 def test_an_image_round_trips_through_save(tmp_path, suffix) -> None:  # noqa: ANN001
-    """The data and the geometry survive a save and a reload unchanged."""
     data = np.arange(4 * 5 * 6, dtype="float32").reshape(4, 5, 6)
     source = _write_image(tmp_path, "source.nii", data)
 
@@ -95,7 +91,7 @@ def test_an_image_round_trips_through_save(tmp_path, suffix) -> None:  # noqa: A
 
 
 def test_the_sform_code_follows_the_world_space(tmp_path) -> None:  # noqa: ANN001
-    """A scanner-coded sform is written back as a scanner-coded sform."""
+    """A scanner-coded sform is written back with the scanner code."""
     data = np.zeros((3, 4, 5), dtype="float32")
     source = _write_image(tmp_path, "scanner.nii", data, scode=1, qcode=1)
 
@@ -106,10 +102,7 @@ def test_the_sform_code_follows_the_world_space(tmp_path) -> None:  # noqa: ANN0
 
 
 def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa: ANN001
-    """
-    When the source sets only an sform, the writer stores the rigid part
-    of the sform as the qform rather than leaving the qform unset.
-    """
+    """With only an sform, the rigid part is still written as the qform."""
     data = np.zeros((3, 4, 5), dtype="float32")
     img = nb.Nifti1Image(data, AFFINE)
     img.header.set_sform(AFFINE, code=2)
@@ -138,10 +131,6 @@ def test_a_scaling_geometry_is_representable(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_sequence_of_affines_writes_the_composed_sform(tmp_path) -> None:  # noqa: ANN001
-    """
-    The preferred transform may be a sequence of affines, which composes
-    to a single affine. That composition is written as the sform.
-    """
     first = Affine(
         matrix=np.array([[2.0, 0, 0, 1], [0, 2, 0, 2], [0, 0, 2, 3]])
     )
@@ -161,11 +150,7 @@ def test_a_sequence_of_affines_writes_the_composed_sform(tmp_path) -> None:  # n
 
 
 def test_the_qform_matrix_and_code_come_from_one_edge(tmp_path) -> None:  # noqa: ANN001
-    """
-    The qform matrix and its code must describe the same world space. With
-    a scanner edge and an mni edge, the mni becomes the preferred sform,
-    and the scanner supplies both the qform matrix and its code.
-    """
+    """The preferred mni edge gives the sform, the scanner edge the qform."""
     ras, voxel = RASCoordinateSystem(), VoxelCoordinateSystem()
     scanner = Affine(
         matrix=np.eye(3, 4),
@@ -191,10 +176,7 @@ def test_the_qform_matrix_and_code_come_from_one_edge(tmp_path) -> None:  # noqa
 
 
 def test_a_2d_nifti_round_trips(tmp_path) -> None:  # noqa: ANN001
-    """
-    A 2D image yields a `(3, 3)` matrix, which is embedded in the `(4, 4)`
-    matrix NIfTI stores.
-    """
+    """A 2-D image has a (3, 3) affine, embedded in the NIfTI (4, 4) one."""
     data = np.arange(4 * 5, dtype="float32").reshape(4, 5)
     img = nb.Nifti1Image(data, np.diag([2.0, 3.0, 1.0, 1.0]))
     source = tmp_path / "plane.nii"
@@ -211,7 +193,6 @@ def test_a_2d_nifti_round_trips(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_the_units_survive_the_round_trip(tmp_path) -> None:  # noqa: ANN001
-    """The spatial and temporal units are read off the axes and written."""
     img = nb.Nifti1Image(np.zeros((4, 5, 6, 2), dtype="float32"), np.eye(4))
     img.header.set_xyzt_units("mm", "sec")
     source = tmp_path / "units.nii"
@@ -231,7 +212,7 @@ def test_the_units_survive_the_round_trip(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_int64_data_is_reported_as_a_writer_error(tmp_path) -> None:  # noqa: ANN001
-    """NIfTI-1 cannot store 64-bit integers, and the writer says so."""
+    """NIfTI-1 cannot store int64."""
     image = NiftiImage(
         data=np.zeros((3, 4, 5), dtype="int64"),
         transformations=[Affine(matrix=np.eye(3, 4))],
@@ -246,11 +227,7 @@ def test_an_image_without_data_cannot_be_written(tmp_path) -> None:  # noqa: ANN
 
 
 def test_an_image_built_from_data_alone_is_written(tmp_path) -> None:  # noqa: ANN001
-    """
-    An image with no header and no transformation records no geometry,
-    rather than failing to decode a header it does not have, and is
-    written with the identity as its voxel-to-world map.
-    """
+    """An image built from data alone is written with an identity geometry."""
     data = np.arange(24, dtype="float32").reshape(2, 3, 4)
     image = NiftiImage(data=data)
     assert image.transformations == []
@@ -269,7 +246,6 @@ def test_an_image_built_from_data_alone_is_written(tmp_path) -> None:  # noqa: A
 
 
 def test_an_affine_round_trips_through_save(tmp_path) -> None:  # noqa: ANN001
-    """The voxel-to-RAS matrix is preserved across a save and a reload."""
     data = np.zeros((4, 5, 6), dtype="float32")
     source = _write_image(tmp_path, "source.nii", data)
 
@@ -279,17 +255,12 @@ def test_an_affine_round_trips_through_save(tmp_path) -> None:  # noqa: ANN001
 
     reloaded = NiftiVoxelToRAS.from_file(target)
     assert np.allclose(affine.matrix, reloaded.matrix)
-    # The affine is written over a minimal placeholder volume, not the
-    # full source data.
+    # The affine is written over a minimal placeholder volume.
     assert nb.load(str(target)).shape == (1, 1, 1)
 
 
 def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: ANN001
-    """
-    A field of coordinates is written with the `VECTOR` intent code, so
-    it is read back as a field of coordinates rather than as a plain
-    image -- or as displacements, which `DISPVECT` would claim.
-    """
+    """A coordinates field is written as VECTOR and reads back as such."""
     field = np.zeros((4, 5, 6, 1, 3), dtype="float32")
     field[..., 0] = 1.0
     img = nb.Nifti1Image(field, np.eye(4))
@@ -312,10 +283,7 @@ def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: AN
 
 
 def test_a_4d_field_is_written_5d(tmp_path) -> None:  # noqa: ANN001
-    """
-    A field shaped `(X, Y, Z, C)` is written as `(X, Y, Z, 1, C)`, so the
-    component axis is not mistaken for a time axis on reload.
-    """
+    """(X, Y, Z, C) is written as (X, Y, Z, 1, C), so C is not time."""
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 1.0
     source = NiftiRASCoordinatesField(field=field)
@@ -335,10 +303,7 @@ def test_a_4d_field_is_written_5d(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_nonaffine_geometry_cannot_be_written(tmp_path) -> None:  # noqa: ANN001
-    """
-    A displacement field is not affine geometry, so writing an image whose
-    preferred transformation is one is refused rather than resampled.
-    """
+    """An image whose preferred transformation is a field is refused."""
     image = NiftiImage(
         data=np.zeros((4, 5, 6), dtype="float32"),
         transformations=[
@@ -351,7 +316,6 @@ def test_a_nonaffine_geometry_cannot_be_written(tmp_path) -> None:  # noqa: ANN0
 
 
 def test_the_writer_is_registered_for_the_image_kind() -> None:
-    """`NiftiImage` opts into the writable image registry."""
     from brainhops.io.images.base import WritableFileBasedImage
 
     assert NiftiImage in WritableFileBasedImage._REGISTRY
@@ -364,13 +328,7 @@ def test_the_writer_is_registered_for_the_image_kind() -> None:
 
 
 def test_a_dask_field_is_not_coerced_to_numpy() -> None:
-    """
-    A field on a non-numpy backend keeps that backend through the writer.
-
-    The field writer must resolve the array package from the data rather
-    than force a numpy array, so a lazy dask array is passed through
-    untouched.
-    """
+    """A dask field stays lazy instead of being converted to numpy."""
     da = pytest.importorskip("dask.array")
     field = da.zeros((4, 5, 6, 3), dtype="float32")
 
@@ -382,13 +340,7 @@ def test_a_dask_field_is_not_coerced_to_numpy() -> None:
 
 
 def test_a_non_nifti_unit_is_scaled_to_a_valid_one(tmp_path) -> None:  # noqa: ANN001
-    """
-    A spatial unit NIfTI cannot store is converted to one it can.
-
-    A centimeter is not a NIfTI unit, so the affine is scaled into
-    millimeters and the file records millimeters. The physical size is
-    preserved: a one-centimeter voxel becomes a ten-millimeter voxel.
-    """
+    """A cm affine is scaled to mm, preserving the physical size."""
     ras_cm = replace(
         RASCoordinateSystem(),
         axes=[
@@ -414,13 +366,7 @@ def test_a_non_nifti_unit_is_scaled_to_a_valid_one(tmp_path) -> None:  # noqa: A
 
 
 def test_the_sform_code_is_derived_from_orientation_not_name(tmp_path) -> None:  # noqa: ANN001
-    """
-    An anonymous RAS space still writes a valid, non-zero sform code.
-
-    The world space carries no name, so the code cannot come from one. It
-    is derived from the axes and defaults to a non-zero code, because a
-    zero sform code makes NIfTI ignore the sform.
-    """
+    """An anonymous RAS space still gets a non-zero sform code."""
     ras = CoordinateSystem(name=None, axes=list(RASCoordinateSystem().axes))
     affine = Affine(
         matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3],
@@ -440,13 +386,7 @@ def test_the_sform_code_is_derived_from_orientation_not_name(tmp_path) -> None: 
 
 
 def test_the_ras_flip_follows_orientation_not_the_name(tmp_path) -> None:  # noqa: ANN001
-    """
-    An anonymous LPS space is flipped to RAS from its axes' orientation.
-
-    The world space carries no name, so the flip cannot come from one. The
-    axes point left, posterior and superior, so the first two are flipped
-    to become RAS.
-    """
+    """An anonymous LPS space is flipped to RAS from its orientations."""
     lps = CoordinateSystem(name=None, axes=list(LPSCoordinateSystem().axes))
     affine = Affine(
         matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3],
@@ -465,13 +405,7 @@ def test_the_ras_flip_follows_orientation_not_the_name(tmp_path) -> None:  # noq
 
 
 def test_a_space_and_time_coupled_geometry_is_rejected(tmp_path) -> None:  # noqa: ANN001
-    """
-    NIfTI stores a spatial affine and a time axis apart, so a 4D map that
-    mixes space and time is refused.
-
-    Such a map has no NIfTI geometry to be written into, and raises a clear
-    error rather than being truncated to three dimensions.
-    """
+    """NIfTI stores space and time apart, so coupling them is refused."""
     for row, column in ((0, 3), (3, 0)):
         matrix = np.eye(4, 5)
         matrix[row, column] = 0.5
@@ -485,7 +419,7 @@ def test_a_space_and_time_coupled_geometry_is_rejected(tmp_path) -> None:  # noq
 
 
 def test_a_time_axis_that_is_not_a_spacing_is_rejected(tmp_path) -> None:  # noqa: ANN001
-    # A reversed time axis has no positive spacing to store.
+    # A reversed time axis has no positive spacing.
     image = NiftiImage(
         data=np.zeros((2, 2, 2, 2), dtype="float32"),
         transformations=[Affine(matrix=np.diag([1.0, 1, 1, -2, 1])[:4])],
@@ -495,10 +429,7 @@ def test_a_time_axis_that_is_not_a_spacing_is_rejected(tmp_path) -> None:  # noq
 
 
 def test_a_space_and_time_geometry_survives_the_round_trip(tmp_path) -> None:  # noqa: ANN001
-    """
-    The sform, the qform, their codes, the spacings (the repetition time
-    included), the time offset and the units are written back as read.
-    """
+    """Forms, codes, spacings, TR, time offset and units survive."""
     sform = np.array(
         [[0, -2.0, 0, 10], [1.5, 0, 0, -3], [0, 0, 2.5, 4], [0, 0, 0, 1]]
     )
@@ -541,7 +472,6 @@ def test_a_space_and_time_geometry_is_written_to_mrtrix(tmp_path) -> None:  # no
 
 
 def _xyzt_system(order, unit_space, unit_time):  # noqa: ANN001, ANN202
-    """A system of the axes `x, y, z, t`, listed in `order`."""
     from brainhops.datamodel.axes import SpaceAxis, TimeAxis
 
     axes = {n: SpaceAxis(name=n, unit=unit_space) for n in "xyz"}
@@ -549,8 +479,7 @@ def _xyzt_system(order, unit_space, unit_time):  # noqa: ANN001, ANN202
     return CoordinateSystem(axes=[axes[n] for n in order])
 
 
-# A voxel-to-world map in `x, y, z, t` order: a spatial affine, and a
-# repetition time of 2 s with an offset of 0.5 s.
+# x, y, z, t vox-to-world: a spatial affine, TR 2 s and offset 0.5 s.
 XYZT = np.array(
     [
         [0.0, -2.0, 0.0, 0.0, 10.0],
@@ -562,8 +491,7 @@ XYZT = np.array(
 
 
 def _reordered(voxel_order, world_order):  # noqa: ANN001, ANN202
-    # `XYZT`, with its columns (voxel axes) and rows (world axes) listed in
-    # the given orders.
+    # XYZT with voxel columns and world rows in the given orders.
     columns = ["xyzt".index(n) for n in voxel_order] + [4]
     rows = ["xyzt".index(n) for n in world_order]
     return XYZT[rows][:, columns]
@@ -580,8 +508,7 @@ def test_the_axes_are_written_in_nifti_order(  # noqa: D103
     voxel_order: str,
     world_order: str,
 ) -> None:
-    # The axes are placed by the types the spaces declare: the data is
-    # transposed to `x, y, z, t`, and the geometry with it.
+    # Axes are placed by their declared types, and the data is transposed.
     shape = dict(zip("xyzt", (4, 5, 6, 3)))
     values = np.random.rand(*(shape[n] for n in "xyzt")).astype("f4")
     data = values.transpose(["xyzt".index(n) for n in voxel_order])
@@ -612,9 +539,7 @@ def test_the_axes_are_written_in_nifti_order(  # noqa: D103
 def test_a_world_that_declares_no_axes_follows_the_voxel_axes(  # noqa: D103
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # A world space that says nothing about its axes lists them as the
-    # voxel space does: a scaling of `(t, x, y, z)` scales `t` by its first
-    # factor.
+    # A world space without axes follows the voxel axes.
     data = np.random.rand(3, 4, 5, 6).astype("f4")
     voxel = _xyzt_system("txyz", "index", "index")
     image = NiftiImage(
@@ -632,8 +557,7 @@ def test_a_world_that_declares_no_axes_follows_the_voxel_axes(  # noqa: D103
 def test_a_coupled_space_and_time_is_rejected_by_declared_axes(  # noqa: D103
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # The voxel space lists time first, so the coupling of time with the
-    # first spatial axis is found by the declared axes, not by position.
+    # The coupling is found by declared axis type, not by position.
     matrix = _reordered("txyz", "xyzt")
     matrix[0, 0] = 0.5  # world x reads voxel t
     image = NiftiImage(
@@ -652,8 +576,7 @@ def test_a_coupled_space_and_time_is_rejected_by_declared_axes(  # noqa: D103
 
 
 def test_axes_of_no_type_fill_the_spatial_slots(tmp_path) -> None:  # noqa: ANN001, D103
-    # Only time is typed: the axes of no type are read as spatial, and the
-    # data is transposed to put time fourth.
+    # Untyped axes fill the spatial slots, and time is moved fourth.
     from brainhops.datamodel.axes import Axis, TimeAxis
 
     data = np.random.rand(3, 4, 5, 6).astype("f4")
@@ -707,8 +630,7 @@ def test_axes_that_nifti_cannot_place_are_rejected(  # noqa: D103
 
 
 def _typed(spec, space="index", time="index"):  # noqa: ANN001, ANN202
-    """A system of named axes: `x, y, z` (or any letter in `ijkab`) are
-    spatial, `t` is time and `c` a channel."""
+    """Typed axes: x, y, z or ijkab are spatial, t is time, c is a channel."""
     from brainhops.datamodel.axes import Axis, SpaceAxis, TimeAxis
 
     axes = []
@@ -734,8 +656,7 @@ def test_a_slice_time_series_is_given_a_z_axis(  # noqa: D103
     tmp_path,  # noqa: ANN001
     backend: str,
 ) -> None:
-    # (x, y, t) is written (X, Y, 1, T): time stays in `dim[4]`, and the
-    # inserted `z` maps by the identity.
+    # (x, y, t) is written as (X, Y, 1, T) with an inserted identity z.
     values = np.random.rand(4, 5, 3).astype("f4")
     matrix = np.array([[2.0, 0, 0, 1.0], [0, 3.0, 0, 2.0], [0, 0, 1.5, 0.5]])
     xform = Affine(
@@ -787,9 +708,7 @@ def test_channels_are_stored_after_a_singleton_time_axis(  # noqa: D103
     shape: tuple,
     stored: tuple,
 ) -> None:
-    # The channels go to `dim[5]`, as in NIfTI's vector layout, so they are
-    # read back as channels, not as time. The time axis inserted before
-    # them has no repetition time.
+    # Channels go to dim[5] and read back as channels; time has no TR.
     values = np.random.rand(*shape).astype("f4")
     scale = [{"x": 2.0, "y": 3.0, "z": 4.0, "c": 1.0}[n] for n in spec]
     image = NiftiImage(
@@ -825,14 +744,11 @@ def test_channels_are_stored_after_a_singleton_time_axis(  # noqa: D103
 
 
 def test_a_slice_placed_in_space_completes_its_normal(tmp_path) -> None:  # noqa: ANN001
-    # A map from a slice's two voxel axes into a three-dimensional world
-    # states the world position of the slice (the third row's offset), and
-    # its plane: the inserted `z` points along the plane's normal (the
-    # cross product of the in-plane directions), with a unit spacing.
+    # The inserted z axis runs along the plane normal, with unit spacing.
     matrix = np.array(
         [
             [0.0, 2.0, 0.0, 10.0],  # world x <- voxel y
-            [0.0, 0.0, 0.0, 20.0],  # world y: the slice's position
+            [0.0, 0.0, 0.0, 20.0],  # world y: slice position
             [3.0, 0.0, 0.0, 30.0],  # world z <- voxel x
             [0.0, 0.0, 1.5, 0.0],  # world t <- voxel t
         ]
@@ -847,7 +763,7 @@ def test_a_slice_placed_in_space_completes_its_normal(tmp_path) -> None:  # noqa
 
     nii = nb.load(str(tmp_path / "coronal.nii"))
     assert nii.shape == (4, 5, 1, 3)
-    # (0, 0, 3) x (2, 0, 0) = (0, 6, 0): the normal is +y.
+    # (0, 0, 3) x (2, 0, 0) = (0, 6, 0), so the normal is +y.
     expected = np.array(
         [
             [0.0, 2.0, 0.0, 10.0],
@@ -859,7 +775,7 @@ def test_a_slice_placed_in_space_completes_its_normal(tmp_path) -> None:  # noqa
     assert np.allclose(nii.affine, expected)
     assert np.allclose(nii.header.get_zooms(), (3.0, 2.0, 1.0, 1.5))
 
-    # A slice alone is completed the same way.
+    # A slice alone is completed in the same way.
     flat = Affine(matrix=matrix[:3][:, [0, 1, 3]])
     NiftiImage(data=np.zeros((4, 5), dtype="f4"), transformations=[flat]).save(
         tmp_path / "flat.nii"
@@ -868,10 +784,9 @@ def test_a_slice_placed_in_space_completes_its_normal(tmp_path) -> None:  # noqa
 
 
 def test_an_lps_slice_is_turned_into_ras(tmp_path) -> None:  # noqa: ANN001
-    # The `z` axis inserted next to an LPS plane runs along the third RAS
-    # axis, so the plane still turns into RAS.
+    # The z axis inserted next to an LPS plane is the third RAS axis.
     from brainhops.datamodel.axes import Axis, TimeAxis
-    from brainhops.datamodel.orientation import Orientation
+    from brainhops.datamodel.orientations import Orientation
 
     def oriented(name: str, value: str) -> Axis:
         orientation = Orientation(type="anatomical", value=value)
@@ -902,8 +817,8 @@ def test_an_lps_slice_is_turned_into_ras(tmp_path) -> None:  # noqa: ANN001
         ("zyx", "xyz"),
         ("yxz", "xyz"),
         ("zx", "xz"),
-        ("kij", "kij"),  # not named x, y, z: kept in declared order
-        ("jxz", "jxz"),  # not all named x, y, z: kept in declared order
+        ("kij", "kij"),  # not named x, y, z: the declared order is kept
+        ("jxz", "jxz"),  # not all named x, y, z: the declared order is kept
     ],
 )
 def test_spatial_axes_are_ordered_by_name_when_named_xyz(  # noqa: D103
@@ -911,9 +826,7 @@ def test_spatial_axes_are_ordered_by_name_when_named_xyz(  # noqa: D103
     spec: str,
     stored: str,
 ) -> None:
-    # Each spatial axis is scaled by its own factor, so the zooms say in
-    # which order they are stored. A time axis is added, so the axes are
-    # placed by their declared types.
+    # The per-axis zooms reveal the storage order.
     sizes = {"x": 2, "y": 3, "z": 4, "i": 5, "j": 6, "k": 7}
     factor = {"x": 1.5, "y": 2.5, "z": 3.5, "i": 4.5, "j": 5.5, "k": 6.5}
     values = np.random.rand(*(sizes[n] for n in spec), 2).astype("f4")
@@ -939,12 +852,7 @@ def test_spatial_axes_are_ordered_by_name_when_named_xyz(  # noqa: D103
 
 
 def test_a_large_image_is_written_as_nifti2() -> None:
-    """
-    An array too large for NIfTI-1's dimension fields becomes NIfTI-2.
-
-    NIfTI-1 records each dimension in a signed 16-bit field. An extent
-    beyond that limit selects NIfTI-2. A smaller array stays NIfTI-1.
-    """
+    """Sizes beyond the 16-bit dim fields of NIfTI-1 are written as NIfTI-2."""
     small = NiftiImage(
         data=np.zeros((3, 4, 5), dtype="float32"),
         transformations=[Affine(matrix=np.eye(3, 4))],
@@ -963,14 +871,7 @@ def test_a_large_image_is_written_as_nifti2() -> None:
 
 
 def test_like_copies_non_geometry_but_not_geometry(tmp_path) -> None:  # noqa: ANN001
-    """
-    A `like` template supplies non-geometry fields, never the geometry.
-
-    The description, the intent and the data scaling come from the
-    template. The sform matrix and its code come from the object being
-    written, so the geometry is unaffected by the template's own geometry.
-    """
-    # The template's own geometry (diag 9, 9, 9) must not reach the output.
+    """`like` supplies the description and intent, never the geometry."""
     template = nb.Nifti1Header()
     template.set_sform(np.diag([9.0, 9.0, 9.0, 1.0]), code=2)
     template["descrip"] = b"from the template"
@@ -981,12 +882,11 @@ def test_like_copies_non_geometry_but_not_geometry(tmp_path) -> None:  # noqa: A
         transformations=[Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])],
     )
 
-    # The produced header carries the template's non-encoding fields.
     built = image.to_nibabel(like=template)
     assert built.header["descrip"].tobytes().startswith(b"from the template")
     assert int(built.header["intent_code"]) == 1011
 
-    # The geometry is the object's, not the template's diag(9, 9, 9).
+    # The geometry is the object's, not diag(9, 9, 9) of the template.
     target = tmp_path / "out.nii"
     image.save(target, like=template)
     assert np.allclose(np.diag(nb.load(str(target)).affine), [2, 3, 4, 1])
@@ -996,14 +896,7 @@ def test_like_copies_non_geometry_but_not_geometry(tmp_path) -> None:  # noqa: A
 
 
 def test_like_does_not_rescale_the_data(tmp_path) -> None:  # noqa: ANN001
-    """
-    A template's data scaling must not rescale the written values.
-
-    A `like` header can carry `scl_slope` and `scl_inter`, which reinterpret
-    every stored value. Copying them would corrupt the data, so they are not
-    taken from the template. An array of ones is read back as ones, not as
-    `slope * 1 + inter`.
-    """
+    """The scl_slope and scl_inter of the template are not copied."""
     template = nb.Nifti1Header()
     template["scl_slope"] = 2.0
     template["scl_inter"] = 1.0
@@ -1019,14 +912,7 @@ def test_like_does_not_rescale_the_data(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_the_unit_scale_comes_from_the_preferred_transform(tmp_path) -> None:  # noqa: ANN001
-    """
-    The written unit is the preferred transformation's, not another edge's.
-
-    An image can carry several voxel-to-world edges in different units. The
-    stored unit and its scale come from the preferred transformation. A
-    centimeter preferred sform is written as ten-scaled millimeters even
-    when a separate millimeter edge is present.
-    """
+    """The unit scale comes from the preferred transformation only."""
     ras_cm = replace(
         RASCoordinateSystem(),
         axes=[
@@ -1057,13 +943,7 @@ def test_the_unit_scale_comes_from_the_preferred_transform(tmp_path) -> None:  #
 
 
 def test_the_flip_handles_an_arbitrary_orientation(tmp_path) -> None:  # noqa: ANN001
-    """
-    Any anatomical orientation triple is reoriented to RAS from the axes.
-
-    The axes here point anterior, right and superior, which is neither RAS,
-    LPS nor RSA. The written affine permutes the first two axes so the
-    result maps voxels to RAS.
-    """
+    """Any orientation triple, here ARS, is reoriented to RAS."""
     from brainhops.datamodel import axes as _axes
 
     ars = CoordinateSystem(name=None, axes=[_axes.A(), _axes.R(), _axes.S()])
@@ -1091,14 +971,7 @@ def test_the_flip_handles_an_arbitrary_orientation(tmp_path) -> None:  # noqa: A
 
 
 def test_a_keyword_override_wins_over_the_object_and_like(tmp_path) -> None:  # noqa: ANN001
-    """
-    An explicit header override wins over both the object and a template.
-
-    The stored data type and the intent are set from keyword arguments,
-    which are applied after the derived values and after `like`, so they
-    override both. The array's own data type is kept when no override is
-    given.
-    """
+    """A keyword override is applied after both the object and `like`."""
     template = nb.Nifti1Header()
     template.set_intent(1011)  # NIFTI_INTENT_ESTIMATE
 
@@ -1116,7 +989,8 @@ def test_a_keyword_override_wins_over_the_object_and_like(tmp_path) -> None:  # 
 
 def test_nifti_axes_are_copies_of_the_module_templates() -> None:
     """A system read from a header never holds the shared axis templates."""
-    from brainhops.io.base.nifti import _NIFTI_AXES, _nifti_to_axes
+    from brainhops.io.common.nifti._constants import _NIFTI_AXES
+    from brainhops.io.common.nifti._header import _nifti_to_axes
 
     header = nb.Nifti1Image(np.zeros((2, 3, 4, 5)), np.eye(4)).header
     for axis, template in zip(_nifti_to_axes(header), _NIFTI_AXES):
@@ -1129,9 +1003,8 @@ def test_nifti_axes_are_copies_of_the_module_templates() -> None:
     [((2, 3, 4), None), ((2, 3, 4, 5), None), ((2, 3, 4, 1, 3), 1006)],
 )
 def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
-    """The axes read from a header are voxel axes: they count samples."""
     from brainhops.datamodel.units import IndexUnit
-    from brainhops.io.base.nifti import _nifti_to_axes
+    from brainhops.io.common.nifti._header import _nifti_to_axes
 
     image = nb.Nifti1Image(np.zeros(shape, dtype="float32"), np.eye(4))
     if intent:

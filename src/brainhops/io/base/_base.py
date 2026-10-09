@@ -10,11 +10,9 @@ __all__ = [
     "WritableBinaryFileBasedObject",
 ]
 
-# dependencies
 import typing_extensions as tx
 from bagof.magic import Field, fields
 
-# internals
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._dispatch import Source, parse, sniff
@@ -38,73 +36,49 @@ _T = tx.TypeVar("_T")
 
 
 def format_registry(cls: tx.Type[_T]) -> tx.Type[_T]:
+    """Give a class its own format registry, which makes it a dispatcher.
+
+    On a dispatcher, the `sniff*` methods return the best-scoring registered
+    format, and `load` and the `from_*` methods choose that format and delegate
+    to it. The decorator is applied to the root [`FileBasedObject`][] and to
+    the base class of each kind, such as `FileBasedImage` and
+    `FileBasedTransformation`. Dispatchers are never registered into the
+    registries of their ancestors; only classes decorated with
+    [`register_format`][] are.
     """
-    Give a class its own registry of file formats.
+    # A decorator rather than a metaclass: data models already use the
+    # bagof.magic metaclass, which also runs on throwaway classes built for MRO
+    # computation and does not forward class keywords to __init_subclass__.
 
-    A class decorated with `@format_registry` becomes a *dispatcher*:
-    `sniff*` reports the best score among its registered formats, and
-    `load`/`from_*` pick the best one and delegate to it. Use it on the
-    base class of a kind of object -- `FileBasedImage`,
-    `FileBasedTransformation` -- and on the root, `FileBasedObject`.
-
-    A dispatcher is not itself a format, so it is never registered into
-    its ancestors' registries; only `@register_format` classes are.
-    """
-    # NOTE *Why a decorator rather than a metaclass*
-    #   The objects being parsed are also data models, whose metaclass
-    #   comes from `bagof.magic`. A registry metaclass would have to
-    #   derive from it to avoid a metaclass conflict, which in turn makes
-    #   it run for the throwaway classes `bagof` builds while computing
-    #   MROs. Class *keywords* are no better: `bagof`'s metaclass does not
-    #   forward them to `__init_subclass__`, so `register=False` would be
-    #   silently ignored. Decorators are independent of the metaclass, so
-    #   they compose with any data model, and they make registration
-    #   visible at the class that opts into it.
-
-    # Assign to `cls.__dict__`, so that `_is_dispatcher` can tell a class
-    # that *owns* a registry from one that merely inherits one.
+    # Set in cls.__dict__ so that owning a registry can be told apart from
+    # inheriting one.
     cls._REGISTRY = set()
     return cls
 
 
 def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
-    """
-    Register a format into the registries of all its ancestors.
+    """Register a concrete format into the registry of every ancestor.
 
-    A concrete reader is registered into *every* registry above it, so a
-    `NiftiImage` is found both by `images.load` and by the generic
-    `load`. Registering twice is a no-op, so re-importing is harmless.
+    A format such as `NiftiImage` is thereby found both by `images.load` and by
+    the generic [`load`][brainhops.io.base.load]. Registration is idempotent,
+    so re-importing a module is harmless.
 
     !!! note "Dispatchers are not formats"
-        Registries are *flat*. A concrete format is registered into every
-        registry above it, and dispatchers are registered into none, so
-        each format is tried exactly once per `load`. Registering a
-        dispatcher as a format would break that: every format below it
-        would be tried twice -- once directly, once through the
-        dispatcher -- and `FileBasedObject.load` would recurse into
-        itself, since the dispatcher's registry would contain a class
-        whose `load` re-enters dispatch.
+        Registries are flat: a format is in the registry of every ancestor and
+        a dispatcher in none, so each format is tried once per load.
+        Registering a dispatcher would make its formats be tried twice, and
+        would make `FileBasedObject.load` recurse.
 
     !!! note "Order does not matter"
-        The registry is an unordered `set`, deliberately: registration
-        order is import order, which is neither stable nor meaningful.
-        Dispatch never falls back on it -- candidates that cannot be
-        separated on merit raise `AmbiguousFormatError` instead.
-
-    Parameters
-    ----------
-    cls : type
-        The format to register.
-
-    Returns
-    -------
-    cls : type
-        The same class, unchanged.
+        A registry is an unordered set, because registration follows import
+        order, which is not stable. Dispatch never relies on it: candidates
+        that cannot be told apart raise
+        [`AmbiguousFormatError`][brainhops.errors.AmbiguousFormatError].
 
     Raises
     ------
     TypeError
-        If `cls` owns a registry of its own.
+        If `cls` owns a registry.
     """
     if "_REGISTRY" in cls.__dict__:
         raise TypeError(
@@ -112,10 +86,9 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
             f"dispatches to formats rather than being one; it must not "
             f"also be decorated with @register_format."
         )
-    for base in cls.__mro__[1:]:  # skip `cls` itself
-        # `__dict__`, not `hasattr`: `hasattr` would also match registries
-        # merely inherited by `base`, and we would be mutating whichever
-        # ancestor's registry happened to be inherited.
+    for base in cls.__mro__[1:]:
+        # __dict__ rather than hasattr, which would also see inherited
+        # registries.
         if "_REGISTRY" in base.__dict__:
             base._REGISTRY.add(cls)
     return cls
@@ -127,40 +100,28 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
 
 
 class FormatDispatcher(FileParser):
-    """
-    The dispatching behaviour of a class that owns a registry of formats.
+    """Dispatch between the formats registered under a dispatcher.
 
-    A class decorated with `@format_registry` dispatches: its `sniff*`
-    methods identify the registered format that would read a file, and
-    its `load` and `from_*` methods pick that format and delegate to it.
-    On a class that owns no registry, a concrete format, every method
-    behaves as the parser method it overrides.
+    On a class decorated with [`format_registry`][], the `sniff*` methods
+    identify the registered format that matches the input, and `load` and the
+    `from_*` methods choose a format and delegate to it. On a class without a
+    registry, which is a concrete format, every method behaves as the
+    [`FileParser`][] method it overrides.
 
-    This mixin owns no registry itself, so that a kind of object that
-    the generic `load` must not return, such as the metadata of a file
-    (`FileBasedMetadata`), can dispatch among its own formats without being
-    registered into the registry of [`FileBasedObject`][].
+    The mixin owns no registry itself. A kind that the generic `load` must
+    never return, such as `FileBasedMetadata`, can therefore dispatch between
+    its own formats without joining the registry of [`FileBasedObject`][].
 
     !!! note "`sniff*` means something different on a dispatcher"
-        A concrete format's `sniff*` answers "how confident am I that
-        this is mine", a number in `[0, 1]`. A dispatcher has already
-        compared those numbers, so it answers the question they were
-        being compared to settle: *which* format is it, returning the
-        class (or `None`). Ask that class to score itself if the number
-        is what you wanted.
-
-    On a dispatcher, `load`/`from_*` pick that same best parser and
-    delegate to it. On a concrete parser, everything behaves as usual.
+        A concrete format returns its confidence, between 0 and 1, that the
+        input is in its format. A dispatcher has already compared those
+        confidences, so it returns which format matched, or `None`. That format
+        can be asked to score the input itself.
     """
-
-    # ---- helpers -----------------------------------------------------
 
     @classmethod
     def _is_dispatcher(cls) -> bool:
-        """Whether this class dispatches to a registry of its own."""
         return "_REGISTRY" in cls.__dict__
-
-    # ---- sniff -------------------------------------------------------
 
     @classmethod
     def sniff(
@@ -169,9 +130,11 @@ class FormatDispatcher(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
-        """On a dispatcher, identify which registered format would read
-        `file`. On a concrete format, score how confident it is that
-        `file`, in any supported form, is its own."""
+        """Identify the format of a file or its content.
+
+        A dispatcher returns the registered format that would read the input,
+        and a concrete format scores the input.
+        """
         if not cls._is_dispatcher():
             return super().sniff(file, error=error, **kwargs)
         return sniff(
@@ -185,9 +148,7 @@ class FormatDispatcher(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
-        """On a dispatcher, identify which registered format would read
-        the file (path or file-like object). On a concrete format, score
-        how confident it is that the file is its own."""
+        """Same as [`sniff`][], for a path or an open file."""
         if not cls._is_dispatcher():
             return super().sniff_file(file, error=error, **kwargs)
         return sniff(
@@ -206,9 +167,7 @@ class FormatDispatcher(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
-        """On a dispatcher, identify which registered format would read
-        the open file object. On a concrete format, score how confident
-        it is that the file object is its own."""
+        """Same as [`sniff`][], for an open file object."""
         if not cls._is_dispatcher():
             return super().sniff_fileobj(file, error=error, **kwargs)
         return sniff(
@@ -227,9 +186,7 @@ class FormatDispatcher(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
-        """On a dispatcher, identify which registered format would read
-        the content (text or bytes). On a concrete format, score how
-        confident it is that the content is its own."""
+        """Same as [`sniff`][], for text or binary content."""
         if not cls._is_dispatcher():
             return super().sniff_content(content, error=error, **kwargs)
         return sniff(
@@ -248,9 +205,7 @@ class FormatDispatcher(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
-        """On a dispatcher, identify which registered format would read
-        the bytes. On a concrete format, score how confident it is that
-        the bytes are its own."""
+        """Same as [`sniff`][], for binary content."""
         if not cls._is_dispatcher():
             return super().sniff_bytes(content, error=error, **kwargs)
         return sniff(
@@ -269,9 +224,7 @@ class FormatDispatcher(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
-        """On a dispatcher, identify which registered format would read
-        the text. On a concrete format, score how confident it is that
-        the text is its own."""
+        """Same as [`sniff`][], for text."""
         if not cls._is_dispatcher():
             return super().sniff_text(text, error=error, **kwargs)
         return sniff(
@@ -290,9 +243,7 @@ class FormatDispatcher(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
-        """On a dispatcher, identify which registered format would read
-        the lines. On a concrete format, score how confident it is that
-        the lines are its own."""
+        """Same as [`sniff`][], for lines of text."""
         if not cls._is_dispatcher():
             return super().sniff_lines(lines, error=error, **kwargs)
         return sniff(
@@ -311,9 +262,7 @@ class FormatDispatcher(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
-        """On a dispatcher, identify which registered format would read
-        the line. On a concrete format, score how confident it is that
-        the line is its own."""
+        """Same as [`sniff`][], for a single line."""
         if not cls._is_dispatcher():
             return super().sniff_line(line, error=error, **kwargs)
         return sniff(
@@ -325,14 +274,14 @@ class FormatDispatcher(FileParser):
             **kwargs,
         )
 
-    # ---- from --------------------------------------------------------
-
     @classmethod
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
-        """On a dispatcher, pick the best-matching registered format and
-        build an instance of it from `other`. On a concrete format,
-        build an instance of this class from `other`, in any supported
-        form."""
+        """Read an object from a file or its content.
+
+        A dispatcher reads the input with the best-matching registered format,
+        and a concrete format reads it as an instance of its own class. A
+        [`SourceSpec`][] is read with [`from_spec`][].
+        """
         if isinstance(other, SourceSpec):
             return cls.from_spec(other, **kwargs)
         if not cls._is_dispatcher():
@@ -341,7 +290,10 @@ class FormatDispatcher(FileParser):
 
     @classmethod
     def from_spec(cls, spec: SourceSpec, **kwargs) -> tx.Self:
-        """Load a structured source specification through this dispatcher."""
+        """Read a structured source specification.
+
+        The specification's path is read with its hints and options.
+        """
         if not cls._is_dispatcher():
             return super().from_spec(spec, **kwargs)
         return parse(
@@ -356,10 +308,10 @@ class FormatDispatcher(FileParser):
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
-        """On a dispatcher, pick the best-matching registered format and
-        build an instance of it from the file (path or file-like
-        object). On a concrete format, build an instance of this class
-        from the file."""
+        """Read an object from a path or an open file.
+
+        A dispatcher reads it through the best-matching format.
+        """
         if not cls._is_dispatcher():
             return super().from_file(file, **kwargs)
         return parse(
@@ -373,9 +325,7 @@ class FormatDispatcher(FileParser):
     @classmethod
     @_passthrough_from_fileobj
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """On a dispatcher, pick the best-matching registered format and
-        build an instance of it from the open file object. On a concrete
-        format, build an instance of this class from the file object."""
+        """Same as [`from_file`][], for an open file object."""
         if not cls._is_dispatcher():
             return super().from_fileobj(file, **kwargs)
         return parse(
@@ -388,10 +338,7 @@ class FormatDispatcher(FileParser):
 
     @classmethod
     def from_content(cls, content: path.ContentLike, **kwargs) -> tx.Self:
-        """On a dispatcher, pick the best-matching registered format and
-        build an instance of it from the content (text or bytes). On a
-        concrete format, build an instance of this class from the
-        content."""
+        """Same as [`from_file`][], for text or binary content."""
         if not cls._is_dispatcher():
             return super().from_content(content, **kwargs)
         return parse(
@@ -404,9 +351,7 @@ class FormatDispatcher(FileParser):
 
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
-        """On a dispatcher, pick the best-matching registered format and
-        build an instance of it from the bytes. On a concrete format,
-        build an instance of this class from the bytes."""
+        """Same as [`from_file`][], for binary content."""
         if not cls._is_dispatcher():
             return super().from_bytes(content, **kwargs)
         return parse(
@@ -419,9 +364,7 @@ class FormatDispatcher(FileParser):
 
     @classmethod
     def from_text(cls, text: str, **kwargs) -> tx.Self:
-        """On a dispatcher, pick the best-matching registered format and
-        build an instance of it from the text. On a concrete format,
-        build an instance of this class from the text."""
+        """Same as [`from_file`][], for text."""
         if not cls._is_dispatcher():
             return super().from_text(text, **kwargs)
         return parse(
@@ -434,9 +377,7 @@ class FormatDispatcher(FileParser):
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
-        """On a dispatcher, pick the best-matching registered format and
-        build an instance of it from the lines. On a concrete format,
-        build an instance of this class from the lines."""
+        """Same as [`from_file`][], for lines of text."""
         if not cls._is_dispatcher():
             return super().from_lines(lines, **kwargs)
         return parse(
@@ -449,9 +390,7 @@ class FormatDispatcher(FileParser):
 
     @classmethod
     def from_line(cls, line: str, **kwargs) -> tx.Self:
-        """On a dispatcher, pick the best-matching registered format and
-        build an instance of it from the line. On a concrete format,
-        build an instance of this class from the line."""
+        """Same as [`from_file`][], for a single line."""
         if not cls._is_dispatcher():
             return super().from_line(line, **kwargs)
         return parse(
@@ -465,44 +404,47 @@ class FormatDispatcher(FileParser):
 
 @format_registry
 class FileBasedObject(FormatDispatcher):
-    """
-    An object that is stored in a file.
+    """Root of all objects stored in files.
 
-    Subclasses decorated with `@format_registry` become dispatchers for
-    their own kind of object (images, transformations, ...). Concrete
-    parsers decorated with `@register_format` land in *every* ancestor
-    registry, so both the scoped and the generic entry points see them.
-    The dispatching itself is described in `FormatDispatcher`.
+    Subclasses decorated with [`format_registry`][] dispatch between the
+    formats of their kind, such as images or transformations. Formats decorated
+    with [`register_format`][] are added to every ancestor registry, so both
+    the scoped and the generic entry points find them. [`FormatDispatcher`][]
+    describes the dispatch.
     """
+
+    # TODO: FileBasedObject reaches FileParser only through FormatDispatcher,
+    # while WritableFileBasedObject inherits FileParserWriter directly; this
+    # asymmetry is confusing.
 
 
 @format_registry
 class WritableFileBasedObject(FileParserWriter, FileBasedObject):
-    """An object that is stored in a file and can be written back."""
+    """Object stored in a writable file."""
 
 
 @format_registry
 class TextFileBasedObject(TextFileParser, FileBasedObject):
-    """An object that is stored in a text file."""
+    """Object stored in a text file."""
 
 
 @format_registry
 class BinaryFileBasedObject(BinaryFileParser, FileBasedObject):
-    """An object that is stored in a binary file."""
+    """Object stored in a binary file."""
 
 
 @format_registry
 class WritableTextFileBasedObject(
     TextFileParserWriter, WritableFileBasedObject
 ):
-    """An object that is stored in a text file and can be written back."""
+    """Object stored in a writable text file."""
 
 
 @format_registry
 class WritableBinaryFileBasedObject(
     BinaryFileParserWriter, WritableFileBasedObject
 ):
-    """An object that is stored in a binary file and can be written back."""
+    """Object stored in a writable binary file."""
 
 
 # ----------------------------------------------------------------------
@@ -511,101 +453,61 @@ class WritableBinaryFileBasedObject(
 
 
 class _FileBasedModelMixin:
-    """
-    Gives a file-based data model a `from_other` that reads files.
+    """Give file-based data models a `from_any` that reads files first.
 
-    A data model's `from_other` builds an instance from a mapping, from
-    an instance of a similar class, or from constructor arguments. A
-    file-based one can also be built from the file that stores it, so
-    this mixin tries that first: a path, an open file, bytes or a
-    structured source are read with `load`, and everything else is left
-    to the data model.
-
-    It sits where the data models meet the file formats, ahead of the
-    data model in the bases (`FileBasedImage`, `FileBasedTransformation`),
-    so that the data models themselves never deal with files.
+    A path, an open file, binary content or a [`SourceSpec`][] is read with
+    `load`, and any other value is passed to the data model. The mixin is
+    listed before the data model in the bases of `FileBasedImage` and
+    `FileBasedTransformation`, so that data models never deal with files.
 
     !!! note "Why this is not part of `FileBasedObject`"
-        To win, this `from_other` must come before
-        `DataModelBase.from_other` in the MRO, and `FileBasedObject`
-        comes after `DataModelBase` in the MRO of every file-based class.
-        Nor can it be moved ahead. A format's parser base declares
-        itself a data model first, as in
-        `NiftiParser(DataModelBase, BinaryFileParserWriter)` and
-        `ZarrParser(DataModelBase, FileParser)`. Its parser chain then
-        leads, through `FileParserWriter`, to `FileBasedObject`. Listing
-        `FileBasedObject` first in `FileBasedImage`'s bases therefore
-        makes the MRO of `NiftiImage` inconsistent: "Cannot create a
-        consistent method resolution order (MRO) for bases
-        DataModelBase, FileParserWriter, Image".
-
-        Listing the data models last everywhere does give a consistent
-        MRO, with `FileBasedObject` ahead of `DataModelBase`. That means
-        reordering the parser bases (`NiftiParser`, `ZarrParser`, the
-        ITK and FLIRT parsers), the dispatchers and the formats. But the
-        file machinery is itself a generic data model
-        (`FileBasedTransformation` is a `Transformation`). Moved ahead of
-        the specific data model a format refines, its declarations of a
-        field shadow the specific ones:
-
-        - `NiftiVoxelToRAS`, `NiftiRASToVoxel` and
-          `NiftiRASCoordinatesField` lose their voxel and RAS endpoint
-          defaults.
-        - The ITK formats no longer take their chain as their first
-          positional argument.
-
-        A mixin that is not a parser has none of these constraints, and
-        goes ahead of the data model.
+        To take effect, this `from_any` must precede `DataModelBase.from_any`
+        in the MRO, but `FileBasedObject` comes after the data model in every
+        file-based class. Parser bases declare the data model first, as in
+        `NiftiParser(DataModelBase, BinaryFileParserWriter)`, and their chain
+        leads to `FileBasedObject`, so listing `FileBasedObject` first makes
+        the MRO of `NiftiImage` inconsistent. Listing data models last would
+        require reordering every parser, dispatcher and format, and the file
+        machinery's own field declarations would then shadow the specific ones:
+        for example, `NiftiVoxelToRAS` would lose its voxel and RAS endpoint
+        defaults. A mixin that is not a parser has no such constraints.
 
     !!! note "Every string is a file"
-        No file-based class takes a string as its first constructor
-        argument, so a string always names a file, or a store, and is
-        read with `load`. A file that cannot be read fails there, rather
-        than being handed to the constructor as if it were data.
+        No file-based class takes a string as the first constructor argument,
+        so a string always names a file or a store. A file that cannot be read
+        fails in `load`, rather than being passed to the constructor as data.
     """
 
     @classmethod
-    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """
-        Create an instance from a file, or from anything the data model
-        reads.
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build an object from a file or any value the data model takes.
 
-        A path (`str` or `os.PathLike`), an open file, `bytes` or a
-        structured source ([`SourceSpec`][brainhops.io.base.SourceSpec])
-        is read with `load`: on a dispatcher such as `FileBasedImage`,
-        the best-matching registered format reads it, and on a concrete
-        format, that format does. Any other value is handed to the data
-        model's own `from_other`, which reads a mapping field by field,
-        copies an instance of a similar class, and passes anything else
-        to the constructor.
+        A path, an open file (any object with a `read` method), `bytes`,
+        `bytearray` or a [`SourceSpec`][] is read with `load`: a dispatcher
+        chooses the best format, and a concrete format reads it as its own. Any
+        other value is passed to the `from_any` of the data model, which maps a
+        mapping field by field, copies an instance of a similar class, or calls
+        the constructor.
 
         Parameters
         ----------
-        other : Any
-            A file, its content, a mapping, or an instance of a similar
-            class.
-        *args
-            Constructor arguments. A file is read with keyword options
-            only.
-        **kwargs
-            Format-specific options when reading a file, and field
-            values otherwise.
-
-        Returns
-        -------
-        obj
-            The object that was built.
+        other : object
+            A file, its content, a mapping, or an instance of a similar class.
+        *args : Any
+            Constructor arguments. A file is read with keyword options only.
+        **kwargs : Any
+            Format options when reading a file, and field values otherwise.
 
         Raises
         ------
         TypeError
-            If positional arguments come with a file to read.
+            If positional arguments accompany a file.
         """
         if not _is_file_or_content(other):
-            return super().from_other(other, *args, **kwargs)
+            return super().from_any(other, *args, **kwargs)
         if args:
             raise TypeError(
-                f"{cls.__name__}.from_other() reads a file with keyword "
+                f"{cls.__name__}.from_any() reads a file with keyword "
                 f"options only, but was given {len(args)} positional "
                 f"argument(s)."
             )
@@ -613,18 +515,14 @@ class _FileBasedModelMixin:
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """
-        Create an instance from an instance of a similar class.
+        """Copy an instance, resetting fields that belong to another format.
 
-        The data model copies the fields both classes share, by name.
-        A field that a file format declares for its own use -- such as
-        the `nibabel` `image` and `header` of the NIfTI and MGH formats
-        -- is only copied from an object of that same format: from any
-        other object, a field of the same name holds something else
-        (a NIfTI image is no MGH image), so this class's default is
-        kept instead. Saving a NIfTI image to MGH, or the converse,
-        therefore converts the data model only, and the format-specific
-        state is rebuilt by the writer.
+        The data model copies the fields of `other` by name. Fields declared by
+        a file format, such as the nibabel image and header of NIfTI and MGH,
+        are copied only from an object of the same format; otherwise the class
+        default is kept, because the same field name holds something different.
+        Converting NIfTI to MGH on save therefore converts the data model only,
+        and the writer rebuilds the format state.
         """
         for field in _foreign_format_fields(cls, other):
             if field.factory is True:
@@ -636,13 +534,11 @@ class _FileBasedModelMixin:
 
 
 def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
-    """
-    The fields of `cls` that only file formats declare, and that `other`
-    does not inherit from any of the formats that declare them.
+    """Return the fields of `cls` that belong to other file formats.
 
-    A field is format-specific when every data model of the MRO that
-    declares it is a file parser; one that a plain data model declares
-    too (`data`, `transformations`, ...) is shared by every format.
+    These are the fields that only file formats declare, excluding those that
+    `other` holds as an instance of a declaring format. A field that a plain
+    data model also declares is shared by all formats.
     """
     if isinstance(other, cls):
         return []
@@ -670,7 +566,6 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
 
 
 def _is_file_or_content(other: tx.Any) -> bool:
-    """Whether `load` reads `other` as a file or as file content."""
     return isinstance(
         other, (str, path.PathLike, bytes, bytearray, SourceSpec)
     ) or hasattr(other, "read")

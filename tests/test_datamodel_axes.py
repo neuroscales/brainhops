@@ -1,14 +1,15 @@
-"""Tests for axes: the vector-axis classification of a field's axes, and
-the compatibility and merging of two descriptions of one axis."""
+"""Tests of axes: the vector axis of a field, and the compatibility and
+merging of two descriptions of the same axis.
+"""
 
 import re
 
 import pytest
 from bagof.converters import ConversionError
 
+from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel.axes import (
     Axis,
-    AxisError,
     ChannelAxis,
     CoordinateAxis,
     DisplacementAxis,
@@ -16,9 +17,8 @@ from brainhops.datamodel.axes import (
     RightToLeftAxis,
     SpaceAxis,
     TimeAxis,
-    vector_axis,
 )
-from brainhops.datamodel.orientation import (
+from brainhops.datamodel.orientations import (
     LeftToRight,
     Orientation,
     RightToLeft,
@@ -27,11 +27,13 @@ from brainhops.datamodel.systems import (
     CoordinateSystem3D,
     SpatialCoordinateSystem3D,
 )
+from brainhops.errors import AxisError
 
 
 def _messages(error: BaseException) -> list:
-    # Every message in the chain of causes of `error`, including the
-    # failed branches that a union keeps in `causes`.
+    # Every message in the chain of causes, including the failed union
+    #
+    # branches kept in `causes`.
     seen, todo, out = set(), [error], []
     while todo:
         e = todo.pop()
@@ -105,47 +107,41 @@ def test_ellipsis_is_not_an_axis() -> None:
 
 
 def test_a_fixed_dimension_system_refuses_ellipsis_as_an_axis() -> None:
-    # Regression: the `...` was taken as the name of a third axis, and
-    # refused with a message about strings.
+    # `...` used to be read as the name of a third axis.
     with pytest.raises(ConversionError) as info:
         CoordinateSystem3D(axes=[Axis(), Axis(), ...])
     assert any("`...` is not an axis" in m for m in _messages(info.value))
 
 
 def test_generic_axes_are_read_as_spatial_axes() -> None:
-    # Regression: each generic `Axis` was taken as the name of a
-    # `SpaceAxis`, so the system could not be built.
+    # Each generic axis used to be read as the name of a spatial axis.
     system = SpatialCoordinateSystem3D(
         axes=[Axis(name="x"), Axis(name="y"), {"name": "z"}]
     )
     assert all(type(axis) is SpaceAxis for axis in system.axes)
     assert [axis.name for axis in system.axes] == ["x", "y", "z"]
-    # A generic axis leaves its unit unset, so the spatial default holds:
-    # a spatial axis claims no unit unless it is given one.
+    # A spatial axis states no unit unless one is given.
     assert all(axis.unit is None for axis in system.axes)
 
 
 def test_an_axis_with_the_same_orientation_is_read_as_oriented() -> None:
-    # The generic axis has no name: the oriented axis keeps its own.
-    axis = LeftToRightAxis.from_other(Axis(orientation=LeftToRight()))
+    # The generic axis has no name, so the oriented axis keeps its own.
+    axis = LeftToRightAxis.from_any(Axis(orientation=LeftToRight()))
     assert axis == LeftToRightAxis()
 
 
 def test_an_axis_with_another_orientation_is_not_read_as_oriented() -> None:
     with pytest.raises(ValueError, match="always LeftToRight"):
-        LeftToRightAxis.from_other(Axis(name="x", orientation=RightToLeft()))
+        LeftToRightAxis.from_any(Axis(name="x", orientation=RightToLeft()))
 
 
 def test_an_axis_of_another_type_is_not_read_as_spatial() -> None:
     with pytest.raises(ValueError, match="always 'space'"):
-        SpaceAxis.from_other(Axis(name="t", type="time"))
+        SpaceAxis.from_any(Axis(name="t", type="time"))
 
 
 def test_an_axis_of_another_unit_kind_is_not_read_as_spatial() -> None:
-    # A spatial axis measured in seconds is a contradiction. It is refused
-    # wherever it is written -- not quietly built as a generic `Axis`, and
-    # not quietly read as the sample either (a second instance used to
-    # fall through the `Union[SpaceUnit, IndexUnit]` to `IndexUnit`).
+    # A spatial axis measured in seconds is refused however it is written.
     from brainhops.datamodel.units import Unit
 
     for build in (
@@ -164,14 +160,13 @@ def test_an_axis_of_another_unit_kind_is_not_read_as_spatial() -> None:
 
 
 def test_a_sibling_axis_is_read_field_by_field() -> None:
-    # Calling `Axis` builds the subclass its arguments select, so an axis
-    # that only carries an orientation is an `OrientedAxis` -- a sibling of
-    # `SpaceAxis`, not a parent. It is still read field by field, rather
-    # than taken as the name of the new axis.
+    # An axis with an arbitrary orientation is a sibling of `SpaceAxis`, and
+    #
+    # is still read field by field rather than as the name of the new axis.
     orientation = Orientation(value="toward-the-light")
     axis = Axis(name="x", orientation=orientation, unit="mm")
     assert not isinstance(axis, SpaceAxis)
-    read = SpaceAxis.from_other(axis)
+    read = SpaceAxis.from_any(axis)
     assert isinstance(read, SpaceAxis)
     assert (read.name, read.unit) == ("x", axis.unit)
     assert read.orientation == orientation
@@ -233,10 +228,9 @@ def test_compatible_refuses_a_non_axis(other: object) -> None:
 
 
 def test_an_axis_with_defaults_is_not_unknown() -> None:
-    # Only a plain `Axis()` is unknown. A `SpaceAxis` states its type, so
-    # it is neither equal to `Axis()` nor compatible with an axis of another
-    # type. Its unit is unspecified (`None`) unless it is given one, so it
-    # is compatible with an axis of any unit until it states its own.
+    # Only `Axis()` is unknown. A `SpaceAxis` states its type, but its unit
+    #
+    # stays None, and thus compatible with any unit, until one is given.
     assert SpaceAxis() != Axis()
     assert SpaceAxis(unit=None) != Axis()
     assert not SpaceAxis().compatible_with(Axis(type="time"))
@@ -296,10 +290,10 @@ def test_merge_refuses_a_conflict(
 
 def test_merge_refuses_unrelated_classes() -> None:
     class FirstAxis(Axis):
-        """An axis class of its own."""
+        """A test-local axis class."""
 
     class SecondAxis(Axis):
-        """Another one, unrelated to the first."""
+        """An unrelated test-local axis class."""
 
     with pytest.raises(ValueError, match="neither class derives"):
         FirstAxis(name="x").merge_with(SecondAxis(name="x"))

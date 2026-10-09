@@ -1,12 +1,9 @@
-"""
-Tests for method resolution where a format reader meets a dispatcher.
+"""Tests of the method resolution where a format reader meets a dispatcher.
 
-A concrete format like `NiftiImage` inherits its reading methods from two
-directions at once: a format-specific mixin (`NiftiParser`) and the
-registry machinery (`FileBasedObject`, via `FileBasedImage`). If the
-machinery ever won *and* stopped delegating, the format-specific reader
-would be silently skipped -- a NIfTI would still "load", just through the
-generic byte path, losing the lazy nibabel handle.
+A concrete format such as NiftiImage inherits from its format mixin and
+from the registry machinery. If the machinery won without delegating, the
+format reader would be skipped silently and NIfTI files would lose their
+lazy nibabel handle.
 """
 
 import inspect
@@ -26,7 +23,7 @@ from brainhops.io.base.parsers import (
 
 nb = pytest.importorskip("nibabel")
 
-from brainhops.io.base.nifti import NiftiParser  # noqa: E402
+from brainhops.io.common.nifti import NiftiParser  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,
@@ -43,8 +40,8 @@ NIFTI_FORMATS = [
     SpmCoordinatesField,
 ]
 
-# The methods NiftiParser specializes. Anything else may legitimately
-# come from the generic ladder, which re-dispatches back into these.
+# Methods that NiftiParser specializes; the generic ladder re-dispatches
+# into them.
 SPECIALIZED = [
     "from_file",
     "from_fileobj",
@@ -66,29 +63,18 @@ def test_the_format_specific_reader_wins(cls: type, method: str) -> None:
 
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
 def test_binary_read_mode_survives_the_diamond(cls: type) -> None:
-    """
-    `FileSniffer._READ_MODE` is `"r"`. If it won, every NIfTI would be
-    opened as text and every sniffer would fail on the first byte.
-    """
+    """With the text read mode of FileSniffer, NIfTI sniffing would fail."""
     assert cls._READ_MODE == "rb"
 
 
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
 def test_concrete_formats_are_not_dispatchers(cls: type) -> None:
-    """
-    Only a dispatcher consults a registry. A concrete format that owned
-    one would try every parser -- including itself -- on every read.
-    """
+    """A concrete format with a registry would try every parser, itself too."""
     assert not cls._is_dispatcher()
 
 
 def test_dispatcher_overrides_are_pass_throughs_for_concrete_formats() -> None:
-    """
-    Every reading method `FormatDispatcher` overrides must hand straight
-    back to `super()` when the class is not a dispatcher. That is what
-    makes resolution independent of base order: whichever of the two
-    directions wins, the other is still reached.
-    """
+    """For non-dispatchers, FormatDispatcher overrides defer to super()."""
     overridden = [
         name
         for name, value in vars(FormatDispatcher).items()
@@ -103,12 +89,6 @@ def test_dispatcher_overrides_are_pass_throughs_for_concrete_formats() -> None:
 
 
 def test_resolution_does_not_depend_on_base_order() -> None:
-    """
-    The format mixin is reached whether it is listed before or after the
-    registry machinery, because the machinery delegates rather than
-    terminating the chain.
-    """
-
     @format_registry
     class Root(FileBasedObject):
         pass
@@ -126,17 +106,12 @@ def test_resolution_does_not_depend_on_base_order() -> None:
 
     assert _owner(SpecialFirst, "from_file") is Special
     assert _owner(RootFirst, "from_file") is FormatDispatcher
-    # ...and yet both reach the specialized reader
     assert SpecialFirst.from_file("x") == "special-reader"
     assert RootFirst.from_file("x") == "special-reader"
 
 
 def test_the_generic_ladder_redispatches_through_cls() -> None:
-    """
-    Each rung of the generic ladder must call `cls.<next>`, never
-    `super().<next>`: `super()` would walk past a subclass's override and
-    read the file with the wrong implementation.
-    """
+    """Ladder rungs call cls.<next>, so subclass overrides are honoured."""
     rungs = {
         (FileSniffer, "sniff_file"): "sniff_fileobj",
         (FileSniffer, "sniff_fileobj"): "sniff_content",
@@ -154,11 +129,7 @@ def test_the_generic_ladder_redispatches_through_cls() -> None:
 
 
 def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noqa: ANN001
-    """
-    The behavioural counterpart: `NiftiParser.from_file` hands the path
-    to nibabel so it keeps the file handle and can read voxels lazily.
-    Falling through to the generic reader would close the file first.
-    """
+    """NiftiParser.from_file keeps the nibabel handle and lazy voxels."""
     import numpy as np
 
     img = nb.Nifti1Image(np.zeros((3, 4, 5), "float32"), np.eye(4))
@@ -173,13 +144,8 @@ def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noq
 # ----------------------------------------------------------------------
 #   THE DATA MODEL A FORMAT REFINES COMES FIRST
 # ----------------------------------------------------------------------
-#
-# A format lists the specific data model it refines (`VoxelToRAS`,
-# `RASCoordinatesField`, `Sequence`) ahead of the file machinery. That
-# machinery is itself a generic data model (`FileBasedTransformation` is
-# a `Transformation`), so listing it first lets the generic declarations
-# of a field shadow the specific ones. These pin what such a reordering
-# would silently change.
+# The machinery is itself a generic data model, so a format lists its
+# specific model first to keep the generic declarations from shadowing it.
 
 
 def test_a_nifti_affine_defaults_to_voxel_to_ras() -> None:

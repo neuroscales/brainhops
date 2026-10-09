@@ -1,40 +1,30 @@
-# stdlib
 from numbers import Integral
 
-# dependencies
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import NotKwOnly, replace
 
-# core
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import npvector
-
-# datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import (
-    CoordinateSystem,
-    _axes_or_unknown,
-)
+from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.errors import CompositionError
 
-# internals
-from . import registries
+from . import nocycles
 from .base import Transformation
-from .errors import CompositionError
+from .compute.simplify import SimplifyLike
+from .compute.simplify import simplify as _simplify
+from .compute.utils import axis_list, require_endomorphism
 from .modes import ModeLike
-from .simplify import SimplifyLike
-from .simplify import simplify as _simplify
-from .utils import axis_list, require_endomorphism
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 
 
 class MetaTransformation(Transformation):
-    """
-    A transformation that is defined in terms of another transformation.
+    """Base class of the transformations defined in terms of others.
 
-    This is a base class for transformations that are defined in terms of
-    other transformations, such as `SubspaceTransformation` and
-    `Bijection`. It is not meant to be instantiated directly.
+    The subclasses are [`SubspaceTransformation`][], [`Projection`][] and
+    [`Bijection`][]. The class is not meant to be instantiated directly.
     """
 
     def compute(
@@ -45,39 +35,29 @@ class MetaTransformation(Transformation):
         factor: bool = False,
     ) -> tx.Self:
         if factor:
-            # A wrapper asked to factor is handed to the sequence engine as a
-            # one-element sequence, which runs the factor pass. The engine
-            # never passes `factor` back to a leaf's `compute`, so there is
-            # no recursion.
-            return registries.SEQUENCE([self]).compute(
+            # The sequence engine runs the factor pass and never passes
+            # `factor` back to the `compute` of a leaf, so there is no
+            # recursion.
+            return nocycles.SEQUENCE([self]).compute(
                 mode, simplify=simplify, factor=True
             )
-        # A meta transformation holds no parameter of its own to fuse, so
-        # computing it is simplifying it: the registered simplifier for its
-        # type recurses into what it wraps, gated by `simplify`. `mode`
-        # gates which kinds *compose*, and there is nothing here to compose.
+        # A meta transformation has no parameter of its own to fuse, so
+        # computing it is simplifying it: the registered simplifier recurses
+        # into what it wraps. `mode` gates composition, and there is nothing
+        # here to compose.
         return _simplify(self, policy=simplify)
 
 
 class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
+    """Transformation applied to a subset of the axes.
+
+    The wrapped transformation acts on `input_axes` and `output_axes`, and the
+    other axes pass through unchanged, so the dimensionality is preserved. A
+    spatial transformation of `(x, y, z)`, for example, can be embedded into
+    `(x, y, z, t)` and leave time untouched. The class is generic:
+    `SubspaceTransformation[T]` embeds a `T`. Its kind is decided by a checker
+    that recurses into the wrapped transformation.
     """
-    A transformation that is applied to a subset of the input and output axes.
-
-    The transformation acts on the axes named by `input_axes` and
-    `output_axes`, and leaves every other axis unchanged. The
-    dimensionality of the space is preserved. An axis that is not named
-    passes through as the identity. This embeds a transformation defined
-    over a few axes, such as a spatial transformation over `(x, y, z)`,
-    into a larger space, such as `(x, y, z, t)`, where it acts on the
-    spatial axes and leaves time untouched.
-
-    Generic in the wrapped transformation type:
-    `SubspaceTransformation[TRANSFORMATION]` embeds a `TRANSFORMATION`. Its
-    membership is decided by a checker registered in `checkers` that recurses
-    into the wrapped transform.
-    """
-
-    # --- class attributes ---------------------------------------------
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = (
         "transformation",
@@ -85,23 +65,14 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
         "output_axes",
     )
 
-    # --- attributes ---------------------------------------------------
+    transformation: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
+    """Transformation to apply."""
 
-    transformation: tx.Annotated[
-        tx.Optional[TRANSFORMATION], tx.Doc("The transformation to apply.")
-    ] = None
+    input_axes: NotKwOnly[tx.Optional[npvector[Integral]]] = None
+    """Axes of the input coordinate system to transform."""
 
-    input_axes: tx.Annotated[
-        tx.Optional[npvector[Integral]],
-        tx.Doc("The axes of the input coordinate system to transform."),
-    ] = None
-
-    output_axes: tx.Annotated[
-        tx.Optional[npvector[Integral]],
-        tx.Doc("The axes of the output coordinate system to transform."),
-    ] = None
-
-    # --- properties ---------------------------------------------------
+    output_axes: NotKwOnly[tx.Optional[npvector[Integral]]] = None
+    """Axes of the output coordinate system to transform."""
 
     @smartproperty
     def input(self) -> tx.Optional[CoordinateSystem]:
@@ -112,8 +83,6 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     def output(self) -> tx.Optional[CoordinateSystem]:
         system = getattr(self.transformation, "output", None)
         return _subsystem(system, self.output_axes, full=self._output)
-
-    # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         if self.transformation is None:
@@ -133,10 +102,9 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
         )
 
     def sqrt(self, compute: bool = False, **kwargs) -> tx.Self:
-        # A subspace transformation that reads and writes the same axes is
-        # `blockdiag(inner, I)`. Its principal square root is
-        # `blockdiag(sqrt(inner), I)`, so the square root acts on the inner
-        # transformation alone and the subspace keeps its axes.
+        # A subspace with the same axes on both sides is blockdiag(inner, I),
+        # whose principal root is blockdiag(sqrt(inner), I), so the root acts
+        # on the inner transformation alone and keeps its axes.
         require_endomorphism(self, "square root")
         if not _same_axes(self):
             raise NotImplementedError(
@@ -150,29 +118,20 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
 
 class Projection(MetaTransformation):
-    """
-    A transformation that acts as a projection from a higher dimensional
-    space to a lower-dimensional space by removing one or more axes.
+    """Projection that removes axes, or the embedding that adds them.
 
-    Or its inverse (i.e., an embedding) that adds one or more axes to a
-    lower-dimensional space.
+    Removing axes maps a space to one of lower dimension; the inverse, an
+    embedding, adds them back.
     """
-
-    # --- class attributes ---------------------------------------------
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = "dropped", "created"
 
-    # --- attributes ---------------------------------------------------
-
-    dropped: npvector[Integral] = ()
-    created: npvector[Integral] = ()
-
-    # --- methods ------------------------------------------------------
+    dropped: NotKwOnly[npvector[Integral]] = ()
+    created: NotKwOnly[npvector[Integral]] = ()
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
-        # Swapping what is dropped and what is created is already the
-        # exact inverse, so there is nothing to defer and `compute`
-        # changes nothing.
+        # Swapping the dropped and created axes is the exact inverse, so there
+        # is nothing to defer.
         return self.to(
             dropped=self.created,
             created=self.dropped,
@@ -181,31 +140,22 @@ class Projection(MetaTransformation):
         )
 
 
-@kinds.Bijection.register
+@kinds.Bijection
 class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
-    """
-    A transformation whose inverse is explicitly defined.
+    """Transformation whose inverse is defined explicitly.
 
-    Generic in the forward transformation type: `Bijection[TRANSFORMATION]`
-    wraps a `TRANSFORMATION`. Declared bijective; a checker registered in
-    `checkers` refines its membership from the forward map.
+    The class is generic: `Bijection[T]` holds two transformations of type `T`.
+    It is declared bijective, and a checker refines its kind from the forward
+    map.
     """
-
-    # --- class attributes ---------------------------------------------
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = "forward", "backward"
 
-    # --- attributes ---------------------------------------------------
+    forward: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
+    """Forward transformation."""
 
-    forward: tx.Annotated[
-        tx.Optional[TRANSFORMATION], tx.Doc("The forward transformation.")
-    ] = None
-
-    backward: tx.Annotated[
-        tx.Optional[TRANSFORMATION], tx.Doc("The backward transformation.")
-    ] = None
-
-    # --- properties ---------------------------------------------------
+    backward: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
+    """Backward transformation."""
 
     @smartproperty
     def input(self) -> tx.Optional[CoordinateSystem]:
@@ -223,8 +173,6 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
             return self.backward.input
         return None
 
-    # --- methods ------------------------------------------------------
-
     def compute(
         self,
         mode: ModeLike = True,
@@ -234,16 +182,16 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
     ) -> tx.Self:
         if not factor:
             return super().compute(mode, simplify=simplify)
-        # A `Bijection` is a container over its two sides; it forwards
-        # `factor` to both, each of which factors independently.
+        # A bijection is a container of two sides, so factoring is forwarded to
+        # both, which factor independently.
         forward, backward = self.forward, self.backward
         if forward is not None:
             forward = forward.compute(mode, simplify=simplify, factor=True)
         if backward is not None:
             backward = backward.compute(mode, simplify=simplify, factor=True)
         if forward is self.forward and backward is self.backward:
-            # Unchanged: keep object identity so an adjacent `Inverse` of
-            # this bijection still cancels.
+            # Keep the object unchanged, so that an adjacent inverse of this
+            # bijection still cancels.
             return self
         return self.to(forward=forward, backward=backward)
 
@@ -259,8 +207,8 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         return obj
 
     def sqrt(self, compute: bool = False, **kwargs) -> tx.Self:
-        # The principal square root of an inverse is the inverse of the
-        # principal square root, so both directions are kept.
+        # The principal root of an inverse is the inverse of the principal
+        # root, so both directions are kept.
         require_endomorphism(self, "square root")
         forward, backward = self.forward, self.backward
         obj = self.to(
@@ -271,9 +219,8 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
 
 def _same_axes(t: SubspaceTransformation) -> bool:
-    # Whether a subspace reads and writes the same axes, in the same
-    # order -- i.e. whether it embeds its inner transform without also
-    # reindexing the coordinates.
+    # Whether the subspace reads and writes the same axes in the same order,
+    # that is, embeds the inner transformation without reindexing.
     if t.input_axes is None and t.output_axes is None:
         return True
     if t.input_axes is None or t.output_axes is None:
@@ -286,21 +233,17 @@ def _subsystem(
     index: tx.Optional[tx.Sequence[Integral]] = None,
     full: tx.Optional[CoordinateSystem] = None,
 ) -> tx.Optional[CoordinateSystem]:
-    """Build the full-space system a subspace transform presents.
+    """Build the full-space system that a subspace transformation presents.
 
-    `system` is the inner transform's own (subspace) coordinate system,
-    which names one axis per acted-on dimension. `index` gives the
-    positions those axes occupy in the full space.
-
-    When a declared endpoint (`full`) is available, it is returned as is.
-    Otherwise the full-space system is derived by
+    `system` is the system of the inner transformation, with one axis per
+    dimension it acts on, and `index` holds the positions of those axes in the
+    full space. A declared endpoint `full` is returned when there is one.
+    Otherwise, the system is derived with
     [`CoordinateSystem.embed`][brainhops.datamodel.systems.CoordinateSystem.embed]:
-    the inner system's axis `j` sits at position `index[j]`, every other
-    position before the last one holds an unknown [`Axis`][], and the
-    system ends with `...`. The positions are known, but the number of
-    axes of the full space is not, so the derived system is open. An
-    inner system that states no axis has nothing to embed, and is
-    returned as is.
+    inner axis `j` sits at `index[j]`, the other positions hold unknown axes,
+    and the system ends with `...`, because the positions are known but the
+    total count is not. The result is named `subspace(<name>)`. An inner system
+    that states no axis is returned as it is.
     """
     if full is not None:
         return full
@@ -318,32 +261,29 @@ def _close_subspace(
     n_in: tx.Optional[int] = None,
     n_out: tx.Optional[int] = None,
 ) -> SubspaceTransformation:
-    """Give a subspace transform closed full-space systems, when known.
+    """Give a subspace transformation closed full-space systems, when possible.
 
-    A subspace transform whose systems are missing or open does not know
-    how many axes its full space has. A neighbour in a composition may
-    know it: the space between two transforms is one space, so the
-    number of axes a neighbour states for it is the number of axes on
-    that side of `t`. `n_in` and `n_out` are such counts, for the input
-    and the output side of `t`.
-
-    The count on one side gives the count on the other, because a
-    subspace transform passes every axis it does not act on through:
-    both sides have as many pass-through axes. A count `t` states itself
-    is never overridden.
-
-    The open systems are closed by
+    An unset or open system does not know how many axes the full space has, but
+    a neighbour in a composition may know, since the space between two
+    transformations is one space. `n_in` and `n_out` are the counts for the
+    input and output sides of `t`, and one side gives the other, because the
+    pass-through axes are the same on both sides. A count that `t` states
+    itself is never overridden. The open systems are closed with
     [`CoordinateSystem.expand`][brainhops.datamodel.systems.CoordinateSystem.expand]
-    and declared on the returned transform. `t` is returned unchanged when
-    its systems are already closed, or when no count is known. A count
-    that cannot hold the axes `t` acts on, or the axes its systems state,
-    is refused with a [`CompositionError`][].
+    and declared on the returned transformation; `t` is returned unchanged if
+    no count is known.
+
+    Raises
+    ------
+    CompositionError
+        If a count cannot hold the axes that `t` acts on, or the axes that its
+        systems state.
     """
     in_axes = axis_list(t.input_axes)
     out_axes = axis_list(t.output_axes)
     own_in, own_out = (
-        _axes_or_unknown(t.input).ndim,
-        _axes_or_unknown(t.output).ndim,
+        get_axes(t.input).ndim,
+        get_axes(t.output).ndim,
     )
     n_in = own_in if own_in is not None else n_in
     n_out = own_out if own_out is not None else n_out
@@ -359,7 +299,8 @@ def _close_subspace(
                 f"A subspace transform that acts on the axes {axes} cannot "
                 f"act in the space of {count} axes its neighbour states."
             )
-    # A missing system expands as `CoordinateSystem()`, which says nothing.
+    # A missing system expands from a `CoordinateSystem()`, which states
+    # nothing.
     changes = {}
     try:
         if own_in is None:

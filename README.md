@@ -1,7 +1,8 @@
 <img src="docs/images/logo.png" alt="brainhops logo" width="50%" />
 
-A python library for applying spatial transformations to neuroimaging
-data at scale.
+brainhops is a Python library for applying spatial transformations to
+neuroimaging and microscopy data at scale.
 
 > [!WARNING]
-> Under very early development -- **do not use yet**
+> brainhops is in a very early stage of development, and its interfaces
+> may change at any time. It is not ready for use yet.

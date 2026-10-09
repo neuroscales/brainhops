@@ -4,28 +4,30 @@ from scipy.ndimage import gaussian_filter
 
 
 def inverse2d(disp: np.ndarray) -> np.ndarray:
-    """
-    Compute the inverse of a displacement field by interpreting it as a
-    triangular mesh, where each triangle defines an affine transform.
+    """Invert a two-dimensional displacement field.
 
-    This is the method described in:
-        "High-Dimensional Image Registration Using Symmetric Priors"
-        Ashburner, Andersson & Friston. NeuroImage (1999).
-        https://www.fil.ion.ucl.ac.uk/spm/doc/papers/john_high_dim.pdf
+    The field is treated as a triangular mesh in which each triangle defines
+    an affine transform, following Ashburner, Andersson and Friston,
+    "High-Dimensional Image Registration Using Symmetric Priors", NeuroImage,
+    1999 (https://www.fil.ion.ucl.ac.uk/spm/doc/papers/john_high_dim.pdf).
+    Points of the output that no triangle covers are filled by smoothing
+    in the values of their neighbours.
 
     Parameters
     ----------
     disp : np.ndarray
-        The displacement field to invert (displacements are in voxels).
-        Should be of shape (Nx, Ny, 2) .
-        The last dimension should contain the displacements along each
-         axis, in the same order (i.e. [x, y]).
+        Displacements in voxels, with shape `(Nx, Ny, 2)` and the last axis
+        ordered `[x, y]`.
 
     Returns
     -------
     np.ndarray
-        The inverse displacement field, of the same shape as the input.
+        The inverse field, with the same shape as `disp`.
 
+    Raises
+    ------
+    ValueError
+        If the last axis of `disp` does not have length 2.
     """
     disp = np.asanyarray(disp)
     out = np.full_like(disp, np.nan)
@@ -37,27 +39,23 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
             f"but got shape {disp.shape}"
         )
 
-    # generate meshgrid
     src = np.meshgrid(*(np.arange(s) for s in (Nx, Ny)), indexing="ij")
     src = np.stack(src, axis=-1)
 
-    # Convert displacements to coordinates
     dst = src + disp
 
-    # Extract the (batches of) thetraheda
     for src1, dst1 in zip(_yield_triangles(src), _yield_triangles(dst)):
-        # Batch process similar thetrahedra
         _process_triangle(src1, dst1, out)
 
-    # Convert coordinates to displacements
     out -= src
 
-    # Fill in missing values via smoothing
+    # Fill the points that no triangle covers by iterative Gaussian
+    # smoothing, normalised by the smoothed mask.
     msk = msk0 = np.isfinite(out)
     while not msk.all():
         out[~msk] = 0
         wgt = msk.astype(np.float64)
-        sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM = 1 voxel
+        sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM of one voxel
         sigma = (sigma, sigma, 0)
         smo = gaussian_filter(out, sigma=sigma, mode="nearest")
         wgt = gaussian_filter(wgt, sigma=sigma, mode="nearest")
@@ -68,7 +66,6 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
     return out
 
 
-# Constants to make reading the rest of the code easier
 X, Y = 0, 1
 BATCH_AXIS, VERTEX_AXIS, SPACE_AXIS = 0, 1, 2
 
@@ -76,24 +73,16 @@ BATCH_AXIS, VERTEX_AXIS, SPACE_AXIS = 0, 1, 2
 def _process_triangle(
     src: np.ndarray, dst: np.ndarray, out: np.ndarray
 ) -> None:
-    """
-    Process a batch of triangles.
+    """Rasterise a batch of triangles into `out`, in place.
 
-    Parameters
-    ----------
-    src, dst : np.ndarray
-        Triangles vertices in the source and target domains,
-        with shape (N, 3, 2), where N is the batch size.
-    out : np.ndarray
-        The output array to write the results to, of shape (Nx, Ny, 2).
-
+    The vertices `src` and `dst`, in the source and target domains, have
+    shape `(N, 3, 2)`, and `out` has shape `(Nx, Ny, 2)`.
     """
-    # sort triangle vertices along y axis
     idx = np.argsort(dst[:, :, Y : Y + 1], axis=VERTEX_AXIS)
     tri = np.take_along_axis(dst, idx, axis=VERTEX_AXIS)
 
-    # For each horizontal line, find its intersection with the triangle.
-    # We start from the minimum integral y in the triangle.
+    # Scan the horizontal lines that cross each triangle, from the smallest
+    # integer y inside it.
     y = np.ceil(tri[:, 0, Y]).astype(np.int64)
     while True:
         mask0 = (0 <= y) & (y < out.shape[Y]) & (y <= tri[:, 2, Y])
@@ -129,24 +118,14 @@ def _process_segment(
     seg: np.ndarray,
     out: np.ndarray,
 ) -> None:
-    """
-    Process a batch of segments in a given z plane and y coordinate.
+    """Rasterise a batch of segments that lie on horizontal lines.
 
-    Parameters
-    ----------
-    src, dst : np.ndarray
-        Thetrahedra vertices in the source and target domains,
-        with shape (N, 4, 3), where N is the batch size.
-    y : np.ndarray
-        The y coordinate of the line being processed, with shape (N,).
-    seg : np.ndarray
-        The segment vertices in the target domain, with shape (N, 2, 1).
-    out : np.ndarray
-        The output array to write the results to, of shape (Nz, Ny, Nx, 3).
-
+    The triangles `src` and `dst` have shape `(N, 3, 2)`, `y` holds the
+    line of each segment, with shape `(N,)`, and `seg` holds the end points
+    of the segments in the target domain, with shape `(N, 2, 1)`. The
+    output `out` has shape `(Nx, Ny, 2)` and is written in place.
     """
 
-    # sort segment vertices along x axis
     idx = np.argsort(seg[:, :, X : X + 1], axis=VERTEX_AXIS)
     seg = np.take_along_axis(seg, idx, axis=VERTEX_AXIS)
 
@@ -156,31 +135,21 @@ def _process_segment(
         if not mask.any():
             break
 
-        # Compute the barycentric coordinate of the point being processed.
         xm, ym = x[mask], y[mask]
-        vdst = np.stack((xm, ym), axis=-1)  # (N, 2)
-        bary = _barycoord(vdst, dst[mask])  # (N, 3)
+        vdst = np.stack((xm, ym), axis=-1)
+        bary = _barycoord(vdst, dst[mask])
 
-        # Compute the corresponding point in the source domain as the
-        # barycentric mean of the tetrahedron vertices in the source domain.
-        vsrc = np.einsum("ijk,ij->ik", src[mask], bary)  # (N, 2)
+        # The source point is the barycentric mean of the source vertices.
+        vsrc = np.einsum("ijk,ij->ik", src[mask], bary)
 
-        # Assign the computed point to the output array
         out[xm, ym] = vsrc
 
         x += 1
 
 
 def _barycoord(x: np.ndarray, tri: np.ndarray) -> np.ndarray:
-    # Compute the barycentric coordinates of x with respect to the
-    # triangle defined by its vertices.
-    # * x is of shape (N, 2), where N is the number of voxels in the
-    #   batch. The last dimension contains the (x,y).
-    # * The triangle is defined by its vertices, with shape (N, 3, 2),
-    #   where N is the number of triangles in the batch.
-    # * The output is of shape (N, 3), where the last dimension contains
-    #   the barycentric coordinates of x with respect to each vertex of
-    #   the triangle.
+    # Barycentric coordinates, of shape (N, 3), of the points x, of shape
+    # (N, 2), in the triangles tri, of shape (N, 3, 2).
 
     v0 = tri[:, 0]
     v1 = tri[:, 1]
@@ -221,20 +190,10 @@ def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
 def _truncate_and_stack2d(
     a: np.ndarray, b: np.ndarray, c: np.ndarray
 ) -> np.ndarray:
-    """
-    Truncate arrays so that they have the same shape, then stack them.
+    """Crop three vertex arrays to a common shape and stack them as triangles.
 
-    Parameters
-    ----------
-    a, b, c : np.ndarray
-        The coordinates of the vertices of the triangles,
-        with shape (Nx, Ny, 2).
-
-    Returns
-    -------
-    np.ndarray
-        With shape (N, 3, 2), where N=Nx*Ny is the number of
-        triangles in the batch.
+    The result has shape `(N, 3, 2)`, with one triangle per point of the
+    common `(Nx, Ny)` grid.
     """
     vertices = (a, b, c)
     nx, ny = (min(x.shape[i] for x in vertices) for i in range(2))
@@ -243,32 +202,18 @@ def _truncate_and_stack2d(
 
 
 def _yield_triangles(field: np.ndarray) -> _tx.Iterator[np.ndarray]:
-    """
-    Yield the vertices of the triangles defined by the displacement field,
-    in batches of similar triangles (i.e. with the same pattern of vertices).
+    """Yield the vertices of the triangles of a coordinate field.
 
-    Parameters
-    ----------
-    field : np.ndarray
-        Coordinate field to process
-
-    Yields
-    ------
-    np.ndarray
-        The coordinates of the vertices of the triangles, with shape
-        (N, 3, 2).
+    The triangles are yielded in batches that share the same pattern of
+    vertices, as arrays of shape `(N, 3, 2)`.
     """
-    # We need to split the grid into a red-black checkerboard pattern.
-    # We also want to extract triangles via slicing, which means we can
-    # only batch triangles whose vertices are aligned on a cartesian grid.
-    # We therefore split the input grid into 4 subgrids, and designate 2 of
-    # them as "red" and the other 2 as "black".
+    # The grid is split into a red-black checkerboard of four subgrids, two
+    # red and two black, so that triangles aligned on a Cartesian grid can be
+    # extracted in batches by slicing.
 
     # =========== #
     #    R E D    #
     # =========== #
-
-    # --- no shift
 
     x00 = field[0::2, 0::2]
     x01 = field[0::2, 1::2]
@@ -276,8 +221,6 @@ def _yield_triangles(field: np.ndarray) -> _tx.Iterator[np.ndarray]:
     x11 = field[1::2, 1::2]
 
     yield from yield_red(x00, x01, x10, x11)
-
-    # --- xy shift
 
     x00 = field[1::2, 1::2]
     x01 = field[1::2, 2::2]
@@ -290,16 +233,12 @@ def _yield_triangles(field: np.ndarray) -> _tx.Iterator[np.ndarray]:
     #  B L A C K  #
     # =========== #
 
-    # --- x shift
-
     x00 = field[1::2, 0::2]
     x01 = field[1::2, 1::2]
     x10 = field[2::2, 0::2]
     x11 = field[2::2, 1::2]
 
     yield from yield_black(x00, x01, x10, x11)
-
-    # --- y shift
 
     x00 = field[0::2, 1::2]
     x01 = field[0::2, 2::2]
@@ -312,42 +251,39 @@ def _yield_triangles(field: np.ndarray) -> _tx.Iterator[np.ndarray]:
 def yield_red(
     x00: np.ndarray, x01: np.ndarray, x10: np.ndarray, x11: np.ndarray
 ) -> _tx.Iterator[np.ndarray]:
-    # Yield the two triangles that make up a red block.
-    #
+    # The two triangles of a red block:
     # #1  _____
     #    |     /    #2
     #    |   /    / |
     #    | /    /   |
     #         /_____|
 
-    # tip = 00
+    # Tip at x00.
     yield _truncate_and_stack2d(x00, x01, x10)
 
-    # tip = 11
+    # Tip at x11.
     yield _truncate_and_stack2d(x11, x01, x10)
 
 
 def yield_black(
     x00: np.ndarray, x01: np.ndarray, x10: np.ndarray, x11: np.ndarray
 ) -> _tx.Iterator[np.ndarray]:
-    # Yield the two triangles that make up a black block.
-    #
+    # The two triangles of a black block:
     #  #1      _____  #2
     #  | \    \     |
     #  |   \    \   |
     #  |_____\    \ |
 
-    # tip = 01
+    # Tip at x01.
     yield _truncate_and_stack2d(x01, x00, x11)
 
-    # tip = 10
+    # Tip at x10.
     yield _truncate_and_stack2d(x10, x00, x11)
 
 
 def _generate_disp_field(
     shape: tuple, magnitude: float = 1, fwhm: float = 5
 ) -> np.ndarray:
-    # Generate a random displacement field of the given shape, for testing.
     from scipy.ndimage import gaussian_filter
 
     shape = tuple(shape) + (len(shape),)
@@ -359,7 +295,6 @@ def _generate_disp_field(
 
 
 def _identity_field(shape: tuple) -> np.ndarray:
-    # Generate an identity coordinate field.
     grid = np.meshgrid(*(np.arange(s) for s in shape), indexing="ij")
     return np.stack(grid, axis=-1)
 
@@ -369,7 +304,7 @@ def _compose_fields(field1: np.ndarray, field2: np.ndarray) -> np.ndarray:
 
     grid = _identity_field(field1.shape[:-1])
     coords = grid + field1
-    coords = np.transpose(coords, (2, 0, 1))  # (2, Nx, Ny)
+    coords = np.transpose(coords, (2, 0, 1))
 
     out = np.empty_like(field1)
     for i in range(field1.shape[-1]):

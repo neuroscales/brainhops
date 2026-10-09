@@ -1,18 +1,10 @@
-"""Regression tests for folding an affine into a stored field.
+"""Tests of the composition of fields with affines and subspace transforms.
 
-Composing an affine-like transformation with a ``CoordinatesField`` or a
-``DisplacementField`` folds the affine into the stored field. The folded
-field must keep the interpolation settings of the input field (``degree``,
-``bound`` and ``coeff``); otherwise it is later re-interpolated at the wrong
-settings. A field of spline coefficients must be converted to sampled values
-before the affine arithmetic and converted back afterwards; otherwise the
-arithmetic runs on coefficients and yields garbage.
-
-Both faults were present in the affine-into-field composers. This file locks
-the fix in two ways: it checks that the folded field reports the same
-``degree``, ``bound`` and ``coeff`` as its input, and it checks that
-evaluating the folded field at interior points reproduces the in-order
-reference ``A(interp(f))``.
+An affine folded into a coordinate or displacement field must keep the
+degree, bound and store of the field, and a coefficient field must be
+converted to values before the affine arithmetic and back afterwards. The
+folded field, evaluated at interior points, must equal the affine applied
+to the interpolated field.
 """
 
 import numpy as np
@@ -23,7 +15,7 @@ from brainhops.backends import (
     backend,
     get_array_backend,
 )
-from brainhops.datamodel._transformations.compose import compose
+from brainhops.datamodel._transformations.compute.compose import compose
 from brainhops.datamodel._transformations.sequence import (
     normalize_modes,
 )
@@ -37,8 +29,6 @@ from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
-    CompositionError,
-    ConversionError,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -49,24 +39,30 @@ from brainhops.datamodel.transformations import (
     Transformation,
     is_identity,
 )
+from brainhops.errors import (
+    CompositionError,
+    ConversionError,
+)
 
-# An anisotropic affine with shear and a shift, so a dropped setting or
-# coefficient arithmetic shows up as a large discrepancy rather than a small
-# one. The linear part is invertible and far from the identity.
+# Anisotropic, sheared and shifted, far from the identity, so that a dropped
+#
+# setting or arithmetic on coefficients gives a large error.
 AFFINE_MATRIX = np.array([[1.7, 0.4, 2.0], [-0.3, 0.9, -1.5]])
 
-# A grid large enough to hold query points several nodes from every edge.
+# Large enough to keep the query points several nodes from every edge.
 GRID_SHAPE = (14, 15)
 
-# Query points in the interior of the grid, offset from the nodes so that a
-# wrong spline degree changes the result.
+# Offset from the nodes, so that a wrong spline degree changes the result.
 QUERY_POINTS = np.array(
     [[5.5, 6.5], [7.2, 8.1], [6.3, 5.7], [8.0, 9.0], [5.8, 7.4]]
 )
 
-# Coefficients require a spline degree of at least two, so `coeff=True` is
-# paired only with the cubic degree.
-DEGREE_COEFF = [(1, False), (3, False), (3, True)]
+# Coefficients require a degree of at least 2.
+DEGREE_STORE = [
+    (1, "values"),
+    (3, "values"),
+    (3, "coefficients"),
+]
 
 ARRAY_BACKENDS = [
     "numpy",
@@ -78,15 +74,11 @@ ARRAY_BACKENDS = [
         ),
     ),
 ]
-"""The array backends a fold is checked on: both now prefilter exactly."""
+"""Array backends on which a fold is checked."""
 
 
 def _evaluate(field, points):  # noqa: ANN001, ANN202
-    """The coordinate map of ``field`` sampled at ``points``.
-
-    Leading with the query points as a sampling domain evaluates the field on
-    those points and returns the resulting coordinates.
-    """
+    """Return the coordinates of a field evaluated at the given points."""
     computed = Sequence(
         transformations=[CoordinatesField(field=points), field]
     ).compute()
@@ -94,47 +86,46 @@ def _evaluate(field, points):  # noqa: ANN001, ANN202
 
 
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
-@pytest.mark.parametrize("degree, coeff", DEGREE_COEFF)
+@pytest.mark.parametrize("degree, store", DEGREE_STORE)
 def test_fold_affine_into_field_keeps_interpolation_settings(
     field_type: type,
     degree: int,
-    coeff: bool,
+    store: str,
 ) -> None:
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
     field = field_type(
         field=values, degree=degree, bound=BoundaryCondition.mirror
-    ).to(coeff=coeff)
+    ).to(store=store)
 
     folded = (Affine(matrix=AFFINE_MATRIX) @ field).compute()
 
     assert folded.degree == field.degree
     assert folded.bound == field.bound
-    assert folded.coeff == field.coeff
+    assert folded.store == field.store
 
 
 @pytest.mark.parametrize("array_backend", ARRAY_BACKENDS)
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
-@pytest.mark.parametrize("degree, coeff", DEGREE_COEFF)
+@pytest.mark.parametrize("degree, store", DEGREE_STORE)
 def test_fold_affine_into_field_matches_inorder_reference(
     field_type: type,
     degree: int,
-    coeff: bool,
+    store: str,
     array_backend: str,
 ) -> None:
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
 
-    # Folding builds its node grid with `CartesianField`, so under the dask
-    # backend the folded field is a dask array, prefiltered chunk by chunk.
-    # That prefilter reads a halo around each chunk wide enough to match
-    # the whole-axis one, so the fold is exact on either backend.
+    # Under dask, the folded field is a dask array prefiltered chunk by chunk,
+    #
+    # with a halo wide enough to match the prefilter over a whole axis.
     with backend(array_backend):
         field = field_type(
             field=values, degree=degree, bound=BoundaryCondition.mirror
-        ).to(coeff=coeff)
+        ).to(store=store)
 
         matrix = AFFINE_MATRIX
         sampled = _evaluate(field, QUERY_POINTS)
@@ -143,12 +134,13 @@ def test_fold_affine_into_field_matches_inorder_reference(
         folded = (Affine(matrix=matrix) @ field).compute()
         result = _evaluate(folded, QUERY_POINTS)
 
-    # Folding a coordinate field is exact within the field of view, because
-    # interpolation is linear and the affine is affine. Folding a
-    # displacement field carries an additional interior term under a spline
-    # degree above one: the representation subtracts the node grid, whose
-    # cubic interpolation departs from the identity by an amount that decays
-    # away from the edges but does not vanish on a finite grid.
+    # The fold of a coordinate field is exact. The fold of a displacement field
+    #
+    # of degree above 1 has an extra term, because the node grid that the
+    #
+    # representation subtracts is not exactly reproduced by cubic interpolation
+    #
+    # of a finite grid.
     interior_term = field_type is DisplacementField and degree > 1
     atol = 1e-3 if interior_term else 1e-10
     np.testing.assert_allclose(result, reference, atol=atol, rtol=0)
@@ -169,8 +161,7 @@ def _sub3(name: str) -> CoordinateSystem:
     return CoordinateSystem(name=name, axes=[R(), A(), S()])
 
 
-# A non-trivial 3D affine with shear and a shift, so a dropped or misplaced
-# component shows up plainly.
+# Sheared and shifted, so that a dropped or misplaced component is visible.
 SUB_AFFINE = np.array(
     [[1.3, 0.2, -0.1, 4.0], [0.0, 0.9, 0.3, -2.0], [0.1, 0.0, 1.1, 1.0]]
 )
@@ -200,8 +191,7 @@ def _coords_4d(seed: int = 0) -> CoordinatesField:
 
 
 def test_subspace_coords_matches_affine_reduction() -> None:
-    # C1. Applying a subspace transform whose inner is an affine equals
-    # reducing the whole thing to an affine and folding that into the field.
+    # Folding a subspace affine equals folding its reduction to an affine.
     To = _subspace_affine([0, 1, 2])
     Ti = _coords_4d()
     got = compose(To, Ti)
@@ -212,8 +202,7 @@ def test_subspace_coords_matches_affine_reduction() -> None:
 
 
 def test_subspace_coords_passthrough_is_bit_exact() -> None:
-    # C1/I1. The time component is copied straight through, not recomputed,
-    # so it is bit-for-bit identical.
+    # The time component is copied through bit for bit.
     To = _subspace_affine([0, 1, 2])
     Ti = _coords_4d()
     got = np.asarray(compose(To, Ti).field)
@@ -221,9 +210,7 @@ def test_subspace_coords_passthrough_is_bit_exact() -> None:
 
 
 def test_subspace_coords_permuted_positions_align() -> None:
-    # C1/I2. Non-monotonic positions place each component where the axis
-    # vector says, matching the affine reduction, and the pass-through
-    # component stays bit-exact.
+    # Non-monotonic positions place the components where the axis vectors say.
     To = _subspace_affine([2, 0, 1])
     Ti = _coords_4d()
     got = compose(To, Ti)
@@ -237,18 +224,16 @@ def test_subspace_coords_permuted_positions_align() -> None:
 
 
 def test_subspace_coords_preserves_interpolation_settings() -> None:
-    # C1. The degree, bound and coeff of the input field are preserved.
     To = _subspace_affine([0, 1, 2])
     Ti = _coords_4d()
     got = compose(To, Ti)
     assert got.degree == Ti.degree
     assert got.bound == Ti.bound
-    assert got.coeff == Ti.coeff
+    assert got.store == Ti.store
 
 
 def test_subspace_coords_promotes_an_integer_domain() -> None:
-    # C1. An integer coordinate field promotes to floating point when an
-    # affine inner is folded in.
+    # An integer coordinate field is promoted to float.
     ab = get_array_backend()
     field = ab.asarray(np.arange(5 * 6 * 4).reshape(5, 6, 4), dtype="int64")
     Ti = CoordinatesField(field=field, output=_full4("in"))
@@ -258,8 +243,6 @@ def test_subspace_coords_promotes_an_integer_domain() -> None:
 
 
 def test_subspace_disp_matches_affine_reduction() -> None:
-    # C2. A subspace transform applied to a displacement field equals the
-    # affine reduction folded into the same displacement field.
     rng = np.random.default_rng(2)
     disp = rng.standard_normal((3, 4, 5, 2, 4)) * 0.1
     Ti = DisplacementField(field=disp, output=_full4("in"))
@@ -273,7 +256,7 @@ def test_subspace_disp_matches_affine_reduction() -> None:
 
 
 def _empty_subspace_3d(input_axes, output_axes) -> SubspaceTransformation:  # noqa: ANN001
-    # A subspace transform with no inner (the identity) over a 3D space.
+    # A subspace transform without an inner transform, over 3-D space.
     return SubspaceTransformation(
         transformation=None,
         input_axes=np.asarray(input_axes, dtype=int),
@@ -284,8 +267,7 @@ def _empty_subspace_3d(input_axes, output_axes) -> SubspaceTransformation:  # no
 
 
 def _coords_3d() -> CoordinatesField:
-    # A small grid whose three components hold distinct values, so any
-    # swapped or dropped component shows up plainly.
+    # Each component has distinct values, so that a swap or drop is visible.
     field = np.stack(
         [
             np.full((2, 3, 4), 1.0) + np.arange(4),
@@ -298,9 +280,9 @@ def _coords_3d() -> CoordinatesField:
 
 
 def test_empty_subspace_coords_reindexes_like_the_affine_reduction() -> None:
-    # C1. An inner-less subspace with swapped axis vectors is a pure axis
-    # reindex: applied to a field it must match its affine reduction, not
-    # just relabel the field.
+    # Swapped axis vectors reindex the components, as the affine reduction
+    #
+    # does; relabelling alone would not pass.
     To = _empty_subspace_3d([0, 1], [1, 0])
     Ti = _coords_3d()
     got = compose(To, Ti)
@@ -313,8 +295,6 @@ def test_empty_subspace_coords_reindexes_like_the_affine_reduction() -> None:
 
 
 def test_empty_subspace_disp_reindexes_like_the_affine_reduction() -> None:
-    # C2. The same reindex applied to a displacement field matches the
-    # affine reduction folded into that displacement field.
     rng = np.random.default_rng(3)
     Ti = DisplacementField(
         field=rng.standard_normal((2, 3, 4, 3)) * 0.1, output=_sub3("in")
@@ -329,8 +309,7 @@ def test_empty_subspace_disp_reindexes_like_the_affine_reduction() -> None:
 
 
 def test_empty_subspace_coords_matching_axes_is_unchanged() -> None:
-    # C1. With matching axis vectors an inner-less subspace is the identity,
-    # so the field comes back unchanged, only relabelled.
+    # Matching axis vectors leave the field unchanged, except for its labels.
     To = _empty_subspace_3d([0, 1], [0, 1])
     Ti = _coords_3d()
     got = compose(To, Ti)
@@ -342,8 +321,6 @@ def test_empty_subspace_coords_matching_axes_is_unchanged() -> None:
 
 
 def test_subspace_compose_subspace_matches_into_one_wrapper() -> None:
-    # C3. Two subspace transforms over the same axes compose into a single
-    # subspace transform.
     first = _subspace_affine([0, 1, 2])
     second = _subspace_affine([0, 1, 2])
     composed = compose(second, first)
@@ -355,8 +332,7 @@ def test_subspace_compose_subspace_matches_into_one_wrapper() -> None:
 def test_subspace_compose_its_inverse_is_identity_without_inverting(
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    # C3. A subspace-wrapped field composed with its own inverse cancels to
-    # the identity, and the numeric field inversion is never reached.
+    # The pair cancels without inverting the field numerically.
     import brainhops._ext.invfield as invfield
 
     def _boom(*args, **kwargs) -> None:
@@ -381,7 +357,6 @@ def test_subspace_compose_its_inverse_is_identity_without_inverting(
 
 
 def test_subspace_compose_subspace_mismatch_raises() -> None:
-    # C3. Two subspace transforms whose axes do not line up cannot compose.
     first = _subspace_affine([0, 1, 2])
     second = _subspace_affine([1, 2, 3])
     with pytest.raises(CompositionError):
@@ -392,10 +367,6 @@ _DEFAULT_MODE = normalize_modes(None)
 
 
 def test_merge_adjacent_subspaces_folds_a_matching_pair() -> None:
-    # C4. Composing two adjacent subspace transforms over the same axes
-    # folds them into one. (This used to be a dedicated pre-pass,
-    # `_merge_adjacent_subspaces`; it is now the subspace/subspace composer,
-    # reached by `compose`/`Sequence.compute`.)
     first = _subspace_affine([0, 1, 2])
     second = _subspace_affine([0, 1, 2])
     folded = compose(second, first)
@@ -421,10 +392,9 @@ def _field_wrapper(seed: int) -> SubspaceTransformation:
 
 
 def test_merge_adjacent_subspaces_drops_an_inverse_pair() -> None:
-    # C4. A subspace transform next to its own inverse cancels to the
-    # identity, so computing the sequence leaves the identity behind rather
-    # than an empty sequence. The single stack sweep in `_compute_sequence`
-    # annihilates the pair symbolically, before any field is materialized.
+    # The pair cancels symbolically, leaving an identity rather than an empty
+    #
+    # sequence.
     wrapper = _field_wrapper(4)
     computed = Sequence([wrapper.inverse(), wrapper]).compute(
         mode=_DEFAULT_MODE
@@ -437,10 +407,8 @@ def test_merge_adjacent_subspaces_drops_an_inverse_pair() -> None:
 def test_field_subspaces_are_not_composed_under_affine_mode(
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    # C4. Two subspace-wrapped fields kept separate by an affine-only mode
-    # are never resampled, so the numeric field composition is never reached.
-    # The same pair merges under the default mode.
-    from brainhops.datamodel._transformations import composers
+    # No field is resampled through another under the affine-only mode.
+    from brainhops.datamodel._transformations.compute import composers
 
     def _boom(*args, **kwargs) -> None:
         raise AssertionError("a field was composed numerically")
@@ -454,8 +422,6 @@ def test_field_subspaces_are_not_composed_under_affine_mode(
 
 
 def test_full_subspace_cancellation_computes_to_the_identity() -> None:
-    # F3. A subspace-wrapped field next to its own inverse cancels to the
-    # identity under compute, rather than leaving an empty sequence behind.
     wrapper = _field_wrapper(6)
     result = Sequence([wrapper.inverse(), wrapper]).compute()
     assert isinstance(result, Identity)
@@ -464,8 +430,9 @@ def test_full_subspace_cancellation_computes_to_the_identity() -> None:
 
 
 def _subspace_reindex(input_axes, output_axes) -> SubspaceTransformation:  # noqa: ANN001
-    # A subspace transform whose inner is the identity but whose axis vectors
-    # move components from `input_axes` positions to `output_axes` positions.
+    # A subspace transform whose axis vectors move components from
+    #
+    # `input_axes` to `output_axes`.
     return SubspaceTransformation(
         transformation=None,
         input_axes=np.asarray(input_axes, dtype=int),
@@ -476,27 +443,23 @@ def _subspace_reindex(input_axes, output_axes) -> SubspaceTransformation:  # noq
 
 
 def test_subspace_compose_identity_inner_keeps_axis_reindex() -> None:
-    # C3. Two subspace transforms whose inners cancel to the identity but
-    # whose axis vectors describe a genuine permutation must NOT collapse to
-    # a bare Identity: the composition is a pure axis reindex and has to be
-    # preserved. Ti sends input axes [0, 1, 2] to [1, 2, 0]; To reads those
-    # same [1, 2, 0] (so the pair composes) and writes them back to [1, 2, 0].
-    # The net map is input [0, 1, 2] -> output [1, 2, 0], a real reindex.
+    # The inner transforms cancel, but the axis vectors form a real
+    #
+    # permutation, so the result is a reindex and not a bare identity.
     Ti = _subspace_reindex([0, 1, 2], [1, 2, 0])
     To = _subspace_reindex([1, 2, 0], [1, 2, 0])
 
-    composed = compose(To, Ti)  # same path _merge_adjacent_subspaces uses
+    composed = compose(To, Ti)
 
-    # Not a bare Identity -- the reindex survives.
     assert not isinstance(composed, Identity)
     assert isinstance(composed, SubspaceTransformation)
     assert not is_identity(composed, compute=True)
     np.testing.assert_array_equal(composed.input_axes, [0, 1, 2])
     np.testing.assert_array_equal(composed.output_axes, [1, 2, 0])
 
-    # The embedded affine maps input axis i -> output axis o for each
-    # (o, i) in zip(output_axes, input_axes) == (1,0), (2,1), (0,2), with the
-    # unnamed time axis (3) passing through. So y = [x2, x0, x1, x3].
+    # Input axis i goes to output axis o for each (o, i) pair, and the time
+    #
+    # axis passes through: y = [x2, x0, x1, x3].
     matrix = np.asarray(composed.to(Affine).matrix)
     expected = np.zeros((4, 5))
     expected[1, 0] = 1.0
@@ -507,9 +470,7 @@ def test_subspace_compose_identity_inner_keeps_axis_reindex() -> None:
 
 
 def test_subspace_compose_identity_inner_matching_axes_is_identity() -> None:
-    # C3. When the axis vectors also match (input [0, 1, 2] -> output
-    # [0, 1, 2]), the same identity-inner composition really is the identity
-    # and collapses to a bare Identity, carrying the composed endpoints.
+    # With matching axis vectors, the result is a bare identity.
     Ti = _subspace_reindex([0, 1, 2], [0, 1, 2])
     To = _subspace_reindex([0, 1, 2], [0, 1, 2])
 
@@ -521,8 +482,7 @@ def test_subspace_compose_identity_inner_matching_axes_is_identity() -> None:
 
 
 def test_subspace_to_affine_on_a_field_inner_raises() -> None:
-    # C5. A subspace transform whose inner is a field cannot be reduced to
-    # an affine, because a field is applied by composing it with a domain.
+    # A field inner cannot be reduced to an affine.
     voxel = _sub3("voxel")
     warp = DisplacementField(
         field=np.zeros((4, 4, 4, 3)), input=voxel, output=voxel
@@ -544,11 +504,7 @@ def test_subspace_to_affine_on_a_field_inner_raises() -> None:
 
 
 def test_subspace_affine_embed_folds_a_non_interpolating_subspace() -> None:
-    # A subspace transform that merely embeds an affine in a larger space is
-    # non-interpolating, so composing it with an affine folds the two into a
-    # single affine rather than keeping the wrapper. The folded matrix equals
-    # reducing the subspace to an affine and composing.
-    # ``sub`` has input=_full4("in") and output=_full4("out").
+    # Embedding an affine does not interpolate, so it folds into one affine.
     sub = _subspace_affine([0, 1, 2])
     aff = Affine(
         matrix=np.eye(4, 5), input=_full4("out"), output=_full4("world")
@@ -561,7 +517,7 @@ def test_subspace_affine_embed_folds_a_non_interpolating_subspace() -> None:
         np.asarray(folded.matrix), np.asarray(ref.matrix)
     )
 
-    # The mirror direction (subspace applied after the affine) folds too.
+    # The mirrored order folds as well.
     aff2 = Affine(
         matrix=np.eye(4, 5), input=_full4("world"), output=_full4("in")
     )
@@ -571,10 +527,10 @@ def test_subspace_affine_embed_folds_a_non_interpolating_subspace() -> None:
 
 
 def test_interpolating_subspace_does_not_embed_into_an_affine() -> None:
-    # A subspace transform that wraps a field is interpolating, so it is NOT
-    # reduced to an affine: composing it with an affine declines, and in a
-    # sequence the wrapper survives rather than folding away.
-    wrapper = _field_wrapper(7)  # input=output=_full4("s")
+    # A subspace wrapping a field interpolates, so it does not fold into an
+    #
+    # affine and survives in a sequence.
+    wrapper = _field_wrapper(7)
     aff = Affine(matrix=np.eye(4, 5), input=_full4("s"), output=_full4("s"))
     with pytest.raises(CompositionError):
         compose(aff, wrapper)
@@ -586,11 +542,9 @@ def test_interpolating_subspace_does_not_embed_into_an_affine() -> None:
 def test_compose_cancels_inverse_by_identity_without_materializing(
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    # Cancellation is an ANALYTIC-priority composer, so `compose` tries it
-    # ahead of any numeric composer (higher priority beats hierarchy
-    # distance). A transform composed with its own inverse collapses to the
-    # identity without the numeric inversion the (Affine, Affine) composer
-    # would otherwise run had it been reached by distance dispatch.
+    # Cancellation runs before the numeric composers, so an affine composed
+    #
+    # with its inverse never computes a matrix inverse.
     real_inv = np.linalg.inv
     calls = {"n": 0}
 
@@ -604,8 +558,7 @@ def test_compose_cancels_inverse_by_identity_without_materializing(
     assert isinstance(result, Identity)
     assert calls["n"] == 0
 
-    # The same holds for a field, whose inverse would be materialized by a
-    # numeric mesh inversion if the pair did not cancel symbolically first.
+    # A field composed with its inverse is never inverted numerically.
     import brainhops._ext.invfield as invfield
 
     def _boom(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
@@ -618,10 +571,8 @@ def test_compose_cancels_inverse_by_identity_without_materializing(
 
 
 def test_an_equal_but_distinct_transform_never_cancels() -> None:
-    # Cancellation is decided from object identity alone: the inverse of an
-    # equal-valued, distinct transform is not recognized, and recognizing
-    # it never compares the two (which would raise).
-    from brainhops.datamodel._transformations import simplifiers
+    # Cancellation compares identity only, never values, which might raise.
+    from brainhops.datamodel._transformations.compute import simplifiers
 
     affine = Affine(matrix=SUB_AFFINE)
     twin = Affine(matrix=SUB_AFFINE.copy())
@@ -634,9 +585,7 @@ def test_an_equal_but_distinct_transform_never_cancels() -> None:
 
 
 def test_a_3d_affine_refuses_a_4d_field() -> None:
-    # A matrix acts on as many coordinates as it has columns. A 3D affine
-    # composed with a field of 4D coordinates is a mismatch, and is
-    # refused rather than applied to some of them.
+    # A 3-D affine applied to a 4-D field is refused, not partially applied.
     points = np.random.default_rng(0).standard_normal((5, 4))
     system = _full4("world")
     for transform in (
@@ -648,10 +597,9 @@ def test_a_3d_affine_refuses_a_4d_field() -> None:
 
 
 def test_restrictive_mode_prevents_field_through_field_composition() -> None:
-    # A restrictive mode composes only the inner types it admits. Two
-    # subspace-wrapped fields are left separate under an affine-only mode,
-    # so neither field is resampled through the other; under the default mode
-    # the same pair folds into a single wrapper.
+    # The affine-only mode keeps two field wrappers apart; the default merges
+    #
+    # them.
     first = _field_wrapper(4)
     second = _field_wrapper(5)
     unmerged = Sequence([first, second]).compute(mode="Affine")
@@ -667,10 +615,7 @@ def test_restrictive_mode_prevents_field_through_field_composition() -> None:
 
 
 def test_compose_distinct_inverse_falls_through_to_affine() -> None:
-    # For distinct A, B the pair `A @ B^-1` does not cancel: the analytic
-    # cancel composer declines (its `_cancels` sees no identity link), so
-    # dispatch falls through past the cancel tier to the numeric affine
-    # composer, which returns a plain Affine.
+    # Distinct affines do not cancel and go to the numeric affine composer.
     A = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]))
     B = Affine(matrix=np.array([[1.5, 0.0, -1.0], [0.0, 0.5, 4.0]]))
     result = compose(A, B.inverse())
@@ -681,10 +626,7 @@ def test_compose_distinct_inverse_falls_through_to_affine() -> None:
 def test_compose_identity_with_lazy_inverse_stays_unmaterialized(
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    # `compose(Identity(), df.inverse())` returns the lazy inverse itself,
-    # unmaterialized. The cancel composer declines (the inverse's forward is
-    # `df`, not the identity), and the identity composer returns the operand
-    # untouched -- without the `.compute()` that would materialize the field.
+    # Composing with the identity returns the lazy inverse untouched.
     import brainhops._ext.invfield as invfield
 
     def _boom(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
@@ -699,12 +641,9 @@ def test_compose_identity_with_lazy_inverse_stays_unmaterialized(
 
 
 def test_compose_tries_the_pair_simplifiers_before_any_composer() -> None:
-    # Tier 1 of `compose` is the cost-free pair rewrite (see the `compose`
-    # module docstring). `~field @ field` has no numeric composer that could
-    # ever succeed -- a coordinate field's inverse cannot be materialized --
-    # so the only way it composes at all is through the pair simplifier that
-    # cancels the two. `compose` takes its operands in matrix order, so the
-    # field is written on the right.
+    # No composer can materialize the inverse of a coordinate field, so only
+    #
+    # the pair simplifiers can cancel the pair.
     cf = CoordinatesField(field=np.zeros((5, 6, 2)))
     assert isinstance(compose(cf.inverse(), cf), Identity)
 
@@ -712,17 +651,14 @@ def test_compose_tries_the_pair_simplifiers_before_any_composer() -> None:
 def test_dispatch_order_and_terminal_composition_error(
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    # Dispatch (see the `compose` module docstring): the composers are a
-    # `bagof.dispatchers` function, and a call runs the single *most specific*
-    # one. A composer declared on `(Affine, Affine)` is more specific than one
-    # on the `(Transformation, Transformation)` root, so the root is never
-    # reached for a pair of affines. Unlike the bespoke registry this
-    # replaced, there is no `NotImplemented`-decline hand-off to a less
-    # specific composer: a composer returning `NotImplemented` is treated as
-    # "no composer applies", and a `CompositionError` it raises is terminal.
+    # Only the most specific composer runs, and a `CompositionError` that it
+    #
+    # raises is final: there is no fallback to a less specific composer.
     from bagof.dispatchers import Function
 
-    from brainhops.datamodel._transformations import compose as compose_mod
+    from brainhops.datamodel._transformations.compute import (
+        compose as compose_mod,
+    )
 
     a = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]))
     b = Affine(matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))
@@ -739,8 +675,6 @@ def test_dispatch_order_and_terminal_composition_error(
         fn.register(family)
         return fn
 
-    # The most specific composer -- `(Affine, Affine)` -- is the only one run;
-    # the `(Transformation, Transformation)` root never fires for two affines.
     def specific_identity(x1: Affine, x2: Affine) -> Transformation:
         calls.append("specific")
         return Identity()
@@ -752,8 +686,6 @@ def test_dispatch_order_and_terminal_composition_error(
     assert isinstance(result, Identity)
     assert calls == ["specific"]
 
-    # A composer that raises `CompositionError` is terminal -- it stops
-    # composition, and the less specific root composer is never reached.
     calls.clear()
 
     def specific_raises(x1: Affine, x2: Affine) -> Transformation:
@@ -773,10 +705,9 @@ def test_dispatch_order_and_terminal_composition_error(
 def test_matrix_that_changes_axes_is_not_folded_into_a_displacement(
     rows: int, affine: bool
 ) -> None:
-    # A displacement field maps a space onto itself, so a matrix that
-    # changes the number of axes cannot be folded into it. The composer
-    # refuses the pair, and a sequence keeps the two side by side rather
-    # than failing to broadcast or returning a field of the wrong width.
+    # A displacement field maps a space onto itself, so a matrix that changes
+    #
+    # the number of axes cannot be folded into it and stays in the sequence.
     rng = np.random.default_rng(0)
     field = DisplacementField(field=rng.normal(size=(4, 5, 3, 3)) * 0.3)
     if affine:

@@ -1,39 +1,33 @@
 """
 Readers and writers for transformations stored in NIfTI files.
 
-Fields of RAS displacements and of RAS coordinates
---------------------------------------------------
-The NIfTI-1 standard (`nifti1.h`) gives a field of vectors two intent
-codes, and they do not mean the same map:
+## Fields of RAS displacements and of RAS coordinates
 
-- `DISPVECT` (1006), "specifically for displacements", is read and
-  written by [`NiftiRASDisplacementField`][].
-- `VECTOR` (1007), "for any other type of vector", is read and written
-  by [`NiftiRASCoordinatesField`][].
+The NIfTI-1 standard (`nifti1.h`) gives vector fields two intent codes with
+different meanings. `DISPVECT` (1006) is "specifically for displacements" and
+is read and written by [`NiftiRASDisplacementField`][]. `VECTOR` (1007) is "for
+any other type of vector" and is read and written by
+[`NiftiRASCoordinatesField`][].
 
-A displacement field maps `x -> x + u(x)`; a coordinates field maps a
-voxel to the position its vector holds. Reading one as the other moves
-every point by the whole world position of its voxel, so the intent code
-decides between them.
+A displacement field maps `x` to `x + u(x)`, while a coordinates field maps
+each voxel to the position that its vector holds. Reading one kind as the other
+shifts every point by the world position of its voxel, so the intent code
+decides. `DISPVECT` fields are read as RAS displacements in millimetres, as ITK
+5.4 and later read them. Coordinates are written under `VECTOR` with the intent
+name `"Mapping"`, which is what SPM writes for its `y_` deformations, a field
+of the same kind.
 
-`DISPVECT` is read as RAS displacements in millimetres, as ITK 5.4 and
-later reads it. A field of coordinates is written as `VECTOR`, with the
-intent name `"Mapping"`, which is what SPM writes for its `y_`
-deformations -- the same kind of field. `POINTSET` (1008) would name the
-content better ("the vector value at each voxel is really a spatial
-coordinate"), but the standard ties it to a flat list of points
-(`dim[2] = dim[3] = dim[4] = 1`), and readers -- brainhops included --
-lay out its axes as one, so a grid written with it would be misread.
+`POINTSET` (1008) would describe coordinates better, but the standard ties it
+to a flat list of points (`dim[2] = dim[3] = dim[4] = 1`), so readers,
+brainhops included, would misread a grid written with it.
 
-!!! warning "Coordinates fields written by brainhops before this change"
-    Older versions of brainhops wrote fields of RAS *coordinates* with
-    the `DISPVECT` intent and nothing else to mark them. Such a file is
-    byte-for-byte a standard displacement field, so it is now read as
-    one. Nothing in the file tells the two apart, and guessing from the
-    values would be just that, so read them explicitly:
-    `load(path, hint="nifti.coordinates")`, or
-    `NiftiRASCoordinatesField.from_file(path)`. Saving the result
-    rewrites it with the `VECTOR` intent.
+!!! warning "Coordinates fields written by older versions of brainhops"
+    Older versions of brainhops wrote RAS coordinates under `DISPVECT`, with no
+    marker. Such a file is byte for byte a standard displacement field, so it
+    is read as one, and guessing from the values is refused. The file is read
+    correctly with `load(path, hint="nifti.coordinates")` or
+    `NiftiRASCoordinatesField.from_file(path)`, and saving it rewrites it under
+    the `VECTOR` intent.
 """
 
 __all__ = [

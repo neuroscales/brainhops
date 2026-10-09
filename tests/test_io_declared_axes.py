@@ -1,11 +1,9 @@
-"""
-Tests for placing the axes of an image by their declared types, when it
-is written to MGH and to MRtrix.
+"""Tests for placing image axes by their declared type in MGH and MRtrix.
 
-Like the NIfTI writer, each places the spatial axes first (in `x, y, z`
-order when they are so named), then time, then the other axes, transposes
-the data to match, stores the repetition time where the format has a
-place for it, and refuses what it cannot represent.
+As in the NIfTI writer, spatial axes come first (in x, y, z order when so
+named), then time, then any other axis. The data are transposed to match,
+the repetition time is stored where the format allows it, and a
+transformation that the format cannot represent is refused.
 """
 
 import numpy as np
@@ -23,8 +21,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
 from brainhops.io.images.freesurfer import MghImage  # noqa: E402
 from brainhops.io.images.mrtrix import MrtrixImage  # noqa: E402
 
-# A voxel-to-world map in `x, y, z, t` order: a spatial affine, and a
-# repetition time of 2 s.
+# Voxel-to-world in x, y, z, t order: a spatial affine and a TR of 2 s.
 XYZT = np.array(
     [
         [0.0, -2.0, 0.0, 0.0, 10.0],
@@ -49,8 +46,7 @@ def _system(spec, space="index", time="index"):  # noqa: ANN001, ANN202
 
 
 def _image(cls, voxel_order, backend, time="s", matrix=XYZT):  # noqa: ANN001, ANN202
-    """An image of `x, y, z, t`, its axes listed in `voxel_order`, and
-    its values in `x, y, z, t` order."""
+    """Build an x, y, z, t image whose voxel axes follow `voxel_order`."""
     values = np.random.rand(*(SHAPE[n] for n in "xyzt")).astype("f4")
     data = values.transpose(["xyzt".index(n) for n in voxel_order])
     if backend == "dask":
@@ -90,7 +86,7 @@ def test_mgh_places_the_frames_by_type(  # noqa: D103
     mgh = nb.load(str(target))
     assert np.array_equal(np.asarray(mgh.dataobj), values)
     assert np.allclose(mgh.affine, _vox2ras(), atol=1e-5)
-    # The repetition time is stored in milliseconds.
+    # MGH stores the TR in milliseconds.
     assert float(mgh.header["tr"]) == pytest.approx(2000.0)
 
     reloaded = io.images.load(target)
@@ -98,7 +94,7 @@ def test_mgh_places_the_frames_by_type(  # noqa: D103
     assert np.allclose(reloaded.transformations[0].scale[-1], 2000.0)
     assert np.allclose(reloaded.vox2ras, _vox2ras(), atol=1e-5)
 
-    # Read back and written again, it is the same file.
+    # Reading back and rewriting gives the same file.
     again = tmp_path / "again.mgz"
     reloaded.save(again)
     assert float(nb.load(str(again)).header["tr"]) == pytest.approx(2000.0)
@@ -121,7 +117,7 @@ def test_mgh_gives_a_slice_with_frames_a_z_axis(tmp_path) -> None:  # noqa: ANN0
     assert mgh.shape == (4, 5, 1, 3)
     assert np.array_equal(np.asarray(mgh.dataobj)[:, :, 0], values)
     assert np.allclose(mgh.header.get_zooms()[:3], (2.0, 3.0, 1.0))
-    # Frames that still count frames state no repetition time.
+    # Frames that only count frames state no TR.
     assert float(mgh.header["tr"]) == 0.0
 
 
@@ -184,14 +180,14 @@ def test_mrtrix_places_the_volumes_by_type(  # noqa: D103
 
     reloaded = MrtrixImage.load(target)
     assert np.array_equal(np.asarray(reloaded.data), values)
-    # The time axis is spaced by the repetition time, in seconds.
+    # The MRtrix time axis is spaced by the TR in seconds.
     assert reloaded.header.vox == pytest.approx((1.5, 2.0, 2.5, 2.0))
     assert np.allclose(
         reloaded.transformation.homogeneous_matrix[:, [0, 1, 2, -1]],
         _vox2ras(),
     )
 
-    # Read back and written again, it is the same file.
+    # Reading back and rewriting gives the same file.
     again = tmp_path / "again.mif"
     reloaded.save(again)
     assert again.read_bytes() == target.read_bytes()
@@ -204,9 +200,8 @@ def test_mrtrix_states_times_in_seconds(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_mrtrix_orders_the_axes_after_the_spatial_ones(tmp_path) -> None:  # noqa: ANN001
-    # Time first, then the channels, whatever their declared order; a
-    # slice is given a `z` axis, so they are not read as spatial.
-    values = np.random.rand(4, 5, 3, 2).astype("f4")  # x, y, t, c
+    # Time, then channels, after the spatial axes; the slice gains a z axis.
+    values = np.random.rand(4, 5, 3, 2).astype("f4")
     xform = Scaling(scale=[1.0, 2.0, 3.0, 4.0], input=_system("cxty"))
     image = MrtrixImage(
         data=values.transpose(3, 0, 2, 1), transformations=[xform]
@@ -231,8 +226,7 @@ def test_mrtrix_refuses_an_origin_on_the_volumes() -> None:  # noqa: D103
 def test_a_volume_series_from_mrtrix_stays_four_dimensional_in_nifti(  # noqa: D103
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # The MRtrix reader gives the volume axis no type, and maps the spatial
-    # axes only: the data is written as it is, its volumes in `dim[4]`.
+    # The volume axis read from MRtrix has no type but is kept as dim[4].
     from brainhops.datamodel.images import SingleScaleImage
 
     values = np.random.rand(4, 5, 6, 7).astype("f4")
@@ -250,13 +244,12 @@ def test_a_volume_series_from_mrtrix_stays_four_dimensional_in_nifti(  # noqa: D
 
 
 def test_complete_basis() -> None:  # noqa: D103
-    from brainhops.io.base._geometry import complete_basis
+    from brainhops.io.common._geometry import complete_basis
 
-    # Two in-plane directions: the unit normal, right-handed.
+    # Two in-plane directions give the right-handed unit normal.
     columns = np.array([[0.0, 2.0], [0.0, 0.0], [3.0, 0.0]])
     assert np.allclose(complete_basis(columns), [[0.0], [1.0], [0.0]])
-    # One direction, or two that do not span a plane: the world axes, less
-    # what the columns span.
+    # Otherwise, the world axes that the columns do not span are added.
     assert np.allclose(
         complete_basis(np.array([[2.0], [0.0], [0.0]])),
         [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],

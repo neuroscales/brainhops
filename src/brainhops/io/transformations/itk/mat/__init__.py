@@ -1,13 +1,10 @@
-"""
-ITK can save linear transformations in a binary MATLAB file
-(`itk::MatlabTransformIO`). This is the format ANTs uses for every linear
-transform it writes: `antsRegistration` saves `<prefix>0GenericAffine.mat`,
-and also `Rigid.mat`, `Affine.mat`, `Similarity.mat`, `Translation.mat`
-and `DerivedInitialMovingTranslation.mat`.
+"""ITK linear transforms stored in binary MATLAB (`.mat`) files.
 
-The file holds the same transform blocks as the text-based TFM format --
-a transform class, its parameters and its fixed parameters -- in a
-MATLAB v4 container instead of text.
+This is the format of `itk::MatlabTransformIO`, which ANTs uses for all of
+its linear transforms (`<prefix>0GenericAffine.mat`, and likewise the
+Rigid, Affine, Similarity, Translation and DerivedInitialMovingTranslation
+`.mat` files). A file holds the same blocks as an ITK text file, each made
+of a class, parameters and fixed parameters, in a MATLAB v4 container.
 
 !!! example "A 3-D affine, as `scipy.io.loadmat` sees it"
     ```python
@@ -18,36 +15,26 @@ MATLAB v4 container instead of text.
     ```
 
 !!! note "Not to be confused with FSL FLIRT"
-    FSL FLIRT also saves its affines as `.mat` files, but as plain text.
-    The two are told apart by content, not by name: this reader claims
-    only files that start with a MATLAB v4 header naming an ITK transform.
+    FLIRT also saves `.mat` files, but as plain text. The two are told
+    apart by their content: this reader only claims files that start with
+    a MATLAB v4 header naming an ITK transform.
 
 ## Approximate specification
 
-### 1. Variables
+### Variables
 
-A MATLAB v4 file is a flat sequence of variables, each a header, a name
-and the values. ITK writes every block of the transform as two variables,
-in this order:
+A file is a flat sequence of variables, each made of a header, a name and
+values. Every block is a pair of column vectors: the parameters, named
+`{ClassName}_{Precision}_{InputDim}_{OutputDim}` (for example
+`AffineTransform_double_3_3`, or `MatrixOffsetTransformBase_double_3_3` in
+older ANTs releases), followed by the fixed parameters, named `fixed`. ITK
+reads the variables in pairs and takes the second one of each pair as the
+fixed parameters, whatever its name. A file with several blocks repeats
+the pair, so names may repeat.
 
-1. The parameters, a column vector named after the transform class,
-   `{ClassName}_{Precision}_{InputDim}_{OutputDim}` -- for example
-   `AffineTransform_double_3_3`. Older ANTs releases name affines
-   `MatrixOffsetTransformBase_double_3_3`, which has the same parameters.
-2. The fixed parameters, a column vector named `fixed` -- typically the
-   center of rotation.
+### Variable header
 
-ITK's reader takes the variables in pairs, and the second of each pair is
-the fixed parameters whatever its name; both must be column vectors. A
-file with several blocks repeats the pair, so the same name may appear
-more than once. A chain written from a `CompositeTransform` starts with a
-pair for the composite itself, which only points to the blocks after it.
-ITK applies the blocks of a composite last to first, so the reader lists
-them in reverse file order (see "Composite files" below).
-
-### 2. Variable header
-
-Each variable starts with five 32-bit integers:
+The header consists of five 32-bit integers:
 
 | Field    | Meaning                                                   |
 | -------- | --------------------------------------------------------- |
@@ -57,61 +44,46 @@ Each variable starts with five 32-bit integers:
 | `imagf`  | `1` if the values are complex (`0`)                       |
 | `namlen` | length of the name, including its terminating `NUL`       |
 
-followed by the `NUL`-terminated name and the `mrows * ncols` values in
-column-major order. The digits of `type` are:
+The NUL-terminated name and `mrows * ncols` values follow. The digits of
+`type` are:
 
-* `M`: byte order, `0` for little-endian and `1` for big-endian. ITK
-  (through `vnl_matlab_write`) writes in the native order of the machine,
-  and the header integers are in that same order.
-* `O`: `0`. MATLAB reserves this digit; VNL sets it to `1` for a matrix
-  it writes row by row, which reads the same for a vector.
-* `P`: precision, `0` for `double` and `1` for `float`. The parameters of
-  a `float` transform are `float`, but fixed parameters are always
-  `double`.
-* `T`: matrix type, `0` for a full numeric matrix.
+- M, the byte order: 0 for little-endian and 1 for big-endian. ITK writes
+  the native order of the machine, for the header and the values alike.
+- O, which MATLAB reserves as 0. VNL sets it to 1 for row-by-row
+  matrices, which for a vector is the same thing.
+- P, the precision: 0 for double and 1 for float. The fixed parameters
+  are always double.
+- T, the matrix type: 0 for a full numeric matrix.
 
-The layout is that of `itk::MatlabTransformIOTemplate::Read` and `Write`
-(`Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx`), which go
-through VNL's `vnl_matlab_write` and `vnl_matlab_readhdr`
-(`vnl/vnl_matlab_write.cxx`, `vnl/vnl_matlab_read.cxx`).
+The layout follows `itk::MatlabTransformIOTemplate::Read` and `Write`,
+which rely on VNL's `vnl_matlab_write` and `vnl_matlab_readhdr`.
 
-### Implicit Geometrical Specifications
+### Geometry
 
 As in every ITK format, the parameters map points of the fixed space to
-points of the moving space, in LPS world coordinates, and a matrix is
-stored row-major. For an `AffineTransform` with matrix `A`, translation
-`t` (the last `D` parameters) and center `c` (the fixed parameters), a
-point `x` of the fixed space maps to the point
+points of the moving space, in LPS world coordinates, and matrices are
+stored row-major. An `AffineTransform` with matrix A, translation t (the
+last D parameters) and center c (the fixed parameters) maps a fixed-space
+point x to
 
 ```text
 y = A (x - c) + c + t
 ```
 
-of the moving space: the transform *pulls* the moving image onto the
-fixed grid. That is the chain an
-[`ItkAffineBase`][brainhops.io.transformations.itk.ItkAffineBase] block
-holds -- `recenter`, `linear`, `uncenter`, `translation` -- as an
-immutable sequence: to change a block, build a new one rather than edit
-its chain in place.
+in moving space, so the transform pulls the moving image onto the fixed
+grid. This is the chain held by
+[`ItkAffineBase`][brainhops.io.transformations.itk.ItkAffineBase].
 
 ## Writing
 
-[`MatTransform`][brainhops.io.transformations.itk.mat.MatTransform]
-writes a file as `itk::MatlabTransformIO` does: the parameters, then
-the fixed parameters, as two column vectors, little-endian and `double`
-by default (`save(..., byteorder=">", precision="float")` changes
-either). `scipy.io.loadmat` reads what it writes.
-
-- A block read from an ITK file is written back unchanged -- its
-  class, its parameters and its center -- so a file read and saved again
-  is the same file, byte for byte.
-- Any other affine (or a transformation that converts to one, such as a
-  `Translation`) is written as an `AffineTransform` whose center is the
-  origin: `fixed` is zero, and the translation is the last column of the
-  matrix. A brainhops affine has no center, and with `c = 0` ITK reads
-  back exactly `y = A x + t`. Its endpoints must be ITK's space (LPS
-  millimetres) or unspecified; an affine between RAS spaces is refused
-  rather than silently reinterpreted.
+[`MatTransform`][brainhops.io.transformations.itk.mat.MatTransform] writes
+a single block, as ANTs does, in little-endian double precision by
+default. A block read from an ITK file is written back unchanged, center
+included. Any other affine is written as an `AffineTransform` centered on
+the origin, which gives exactly `y = A x + t`; its endpoints must be the
+ITK space or unspecified, and an affine between RAS spaces is refused
+rather than reinterpreted. A chain must be composed first, with
+`.compute()`.
 
 ```python
 from brainhops.datamodel.transformations import Affine
@@ -120,58 +92,34 @@ from brainhops.io.transformations.itk.mat import MatTransform
 MatTransform([Affine(matrix)]).save("out0GenericAffine.mat")
 ```
 
-Only one block is written, as ANTs writes one transform per `.mat` file.
-A chain is refused: compose it first (`.compute()`).
+## ANTs transform lists
 
-## ANTs conventions
+`antsApplyTransforms -t T1 -t T2 ... -t Tn` applies the last transform
+first to the moving image, which means that points of the fixed space go
+through the list in order, starting with T1. A brainhops
+[`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
+transformations in point-application order, so it matches the ANTs list:
 
-ANTs reads and writes its transforms through ITK, so the conventions
-above are those of ANTs: LPS millimetres, and fixed to moving.
+- `-t out1Warp.nii.gz -t out0GenericAffine.mat` is
+  `Sequence([warp, affine])`, which maps fixed to moving space;
+- `-t [out0GenericAffine.mat,1] -t out1InverseWarp.nii.gz` is
+  `Sequence([~affine, inverse_warp])`, which maps moving back to fixed
+  space.
 
-- **Warps.** `<prefix><n>Warp.nii.gz` and `<prefix><n>InverseWarp.nii.gz`
-  are ITK NIfTI displacement fields, read by
-  [`brainhops.io.transformations.itk.nifti`][].
-- **Transform lists.** `antsApplyTransforms -t T1 -t T2 ... -t Tn`
-  describes the image transform as a stack, "the last one listed is
-  applied first" -- to the *moving image*. To the *points* of the fixed
-  space, which is how the transforms are evaluated, they apply in the
-  order listed: `T1` first. A brainhops
-  [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
-  transformations in the order they are applied to points, so it is the
-  ANTs list in the same order:
+Here `affine = io.load("out0GenericAffine.mat")` and
+`warp = io.load("out1Warp.nii.gz", hint="ants")`. The warps need the hint
+because their header does not say that they hold LPS vectors; they are
+read by [`brainhops.io.transformations.itk.nifti`][]. The `[file.mat,1]`
+syntax inverts a linear transform, which is `io.load("file.mat").inverse()`
+or `~`; ANTs writes inverse warps to their own files instead.
 
-    - `-t out1Warp.nii.gz -t out0GenericAffine.mat` is
-      `Sequence([warp, affine])`;
-    - `-t [out0GenericAffine.mat,1] -t out1InverseWarp.nii.gz` is
-      `Sequence([~affine, inverse_warp])`,
-
-    with `warp = io.load("out1Warp.nii.gz", hint="ants")`,
-    `inverse_warp = io.load("out1InverseWarp.nii.gz", hint="ants")` and
-    `affine = io.load("out0GenericAffine.mat")` (a warp needs the hint:
-    its header alone does not say it holds LPS vectors). The first maps
-    the fixed space to the moving space (it resamples the moving image
-    onto the fixed grid), the second maps the moving space back to the
-    fixed one.
-- **Inversion.** `[file.mat,1]` (`useInverse`) inverts a linear
-  transform: it is `io.load("file.mat").inverse()` (or `~`). ANTs does not
-  invert a warp this way; it writes the inverse warp to its own file.
-- **Composite files.** Inside one ITK file holding a `CompositeTransform`
-  (`<prefix>Composite.h5`), ITK lists the blocks the other way round from
-  `-t`: the file holds the header, then the transform queue front to
-  back, and `CompositeTransform::TransformPoint` applies the queue back
-  to front -- a file `[Composite, T0, T1]` maps `x` to `T0(T1(x))`. Every
-  ITK reader here (`.h5`, `.tfm` and `.mat`) therefore lists the blocks
-  of a composite in reverse file order, which is the order they apply
-  in: that file reads as `Sequence([T1, T0])`, and
-  `antsApplyTransforms -t <prefix>Composite.h5` is the same as
-  `-t T1 -t T0`. A file that holds several blocks but no
-  `CompositeTransform` header is a list of separate transforms, which
-  ITK does not compose. The reader loads one of them: the first, as
-  SimpleITK's `ReadTransform` does, with a warning that the file holds
-  several, or the one at `position=`
-  (`MatTransform.from_file(path, position=1)`). A composite file holds a
-  single transform, the composite, at position 0. The `.mat` writer writes a
-  single block, as ANTs does, and refuses chains.
+A composite file (`<prefix>Composite.h5`) stores its blocks in the
+opposite order: the file `[Composite, T0, T1]` maps `x` to `T0(T1(x))`.
+Every ITK reader here lists composite blocks in application order, so the
+file reads as `Sequence([T1, T0])`, and `-t <prefix>Composite.h5` equals
+`-t T1 -t T0`. Blocks without a composite header are separate transforms,
+of which the first is read by default, with a warning, or another one with
+`position=`, as in `MatTransform.from_file(path, position=1)`.
 """
 
 __all__ = ["MatTransform", "MatTransformParser"]

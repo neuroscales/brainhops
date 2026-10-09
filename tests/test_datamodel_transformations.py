@@ -1,10 +1,4 @@
-"""Tests for transformation rebuilds routed through ``replace``.
-
-These cover the same-class construction paths in the transformation data
-model: flattening a sequence, same-type conversions with field
-overrides, and the non-idempotent coefficient conversion that must not
-run twice.
-"""
+"""Tests for rebuilding, converting, composing and computing transforms."""
 
 import inspect
 
@@ -14,14 +8,13 @@ from bagof.magic import fields_dict, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel._transformations import concrete as xconcrete
-from brainhops.datamodel._transformations import converters as xc
+from brainhops.datamodel._transformations.compute import converters as xc
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
-    ConversionError,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -36,6 +29,7 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_identity,
 )
+from brainhops.errors import ConversionError
 
 
 def test_flatten_removes_nesting_and_keeps_endpoints() -> None:
@@ -67,10 +61,7 @@ def test_flatten_propagates_endpoints_to_first_and_last() -> None:
 
 
 def test_same_type_conversion_applies_field_override() -> None:
-    # Regression: the ``(Transformation, Transformation)`` converter was
-    # registered twice and the terminal pass-through overwrote the
-    # override-aware one, so ``to(SameType, input=...)`` silently dropped
-    # the override.
+    # Regression: a second same-type converter dropped the field overrides.
     matrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
     affine = Affine(matrix=matrix)
     target = CoordinateSystem(name="target")
@@ -86,12 +77,10 @@ def test_same_type_conversion_without_overrides_is_passthrough() -> None:
 
 
 def test_same_type_rebuild_of_an_unlisted_type_applies_overrides() -> None:
-    # Only a handful of types are named on the same-type converter. Every
-    # other type, a user subclass included, reaches the one catch-all
-    # `Transformation -> Transformation` converter, which must apply the
-    # overrides the same way rather than hand the original back.
+    # An unlisted subclass reaches the catch-all converter, which must apply
+    # the overrides rather than return the original.
     class MyAffine(Affine):
-        """A subclass no converter names."""
+        """Affine subclass that no converter names."""
 
     target = CoordinateSystem(name="target")
     original = MyAffine(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
@@ -104,9 +93,7 @@ def test_same_type_rebuild_of_an_unlisted_type_applies_overrides() -> None:
 
 
 def test_same_type_rebuild_of_a_sequence_replaces_its_chain() -> None:
-    # `Sequence._flattened` rebuilds itself through the same-type
-    # converter, so an override of the chain must be honoured, and the
-    # endpoints the sequence was given must be carried over.
+    # Flattening honours the new chain and carries the given endpoints over.
     inp = CoordinateSystem(name="in")
     seq = Sequence(
         transformations=[Translation(translation=[1.0, 2.0])], input=inp
@@ -119,11 +106,7 @@ def test_same_type_rebuild_of_a_sequence_replaces_its_chain() -> None:
 
 
 def test_cartesian_field_same_type_rebuild_keeps_shape() -> None:
-    # A CartesianField serves `field` through a property backed by
-    # `shape`, and its setter rejects a non-None `field`. The rebuild
-    # must route to the CartesianField converter (which drops `field`),
-    # not the generic CoordinatesField one that feeds the generated
-    # field back into the constructor and raises.
+    # The rebuild must not feed the derived `field` back to the constructor.
     system = CoordinateSystem(name="grid")
     rebuilt = CartesianField(shape=(4, 5)).to(input=system)
     assert isinstance(rebuilt, CartesianField)
@@ -139,35 +122,25 @@ def test_cartesian_field_flattens_and_computes_in_a_sequence() -> None:
         transformations=[affine, CartesianField(shape=(4, 5))],
         output=output,
     )
-    # `compute` flattens the sequence first, which rebuilds the
-    # CartesianField through the same-type converter.
+    # compute flattens the sequence, rebuilding the CartesianField first.
     result = seq.compute()
     assert result is not None
 
 
 def test_gridded_cartesian_field_is_the_identity_only_under_compute() -> None:
-    # A `CartesianField` is the identity map over its grid by
-    # construction. Under `compute=True` it is recognized as the identity,
-    # which is the predicate the sequence simplifier uses to factor away an
-    # interior grid. Under `compute=False` the check stays conservative,
-    # because the grid's `field` parameter is set.
+    # A grid is the identity over itself, but only compute=True checks that.
     grid = CartesianField(shape=(4, 5))
     assert is_identity(grid) is False
     assert is_identity(grid, compute=True) is True
 
 
 def test_empty_cartesian_field_is_the_identity() -> None:
-    # With no grid, the `field` parameter is unset, so an empty
-    # `CartesianField` is recognized as the identity by the parameter
-    # check.
+    # Without a grid, the field parameter is unset.
     assert is_identity(CartesianField()) is True
 
 
 def test_compute_preserves_a_leading_cartesian_field() -> None:
-    # A leading grid is a domain restriction, not an identity. Computing a
-    # sequence that starts from a grid must keep the grid as a coordinate
-    # field rather than fold it away, so the resulting field carries the
-    # grid's shape.
+    # A leading grid restricts the domain, so the result keeps its shape.
     grid = CartesianField(shape=(4, 5))
     affine = Affine(matrix=[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
     result = Sequence(transformations=[grid, affine]).compute()
@@ -178,17 +151,13 @@ def test_compute_preserves_a_leading_cartesian_field() -> None:
 
 
 def test_computing_an_identity_only_sequence_still_simplifies() -> None:
-    # Removing the `CartesianField` branch from `is_identity` must not
-    # affect a genuine identity, which still simplifies to `Identity`.
+    # A genuine identity still simplifies to Identity.
     seq = Sequence(transformations=[Affine(matrix=np.eye(3)[:-1])])
     assert isinstance(seq.compute().to(Identity), Identity)
 
 
 def test_cartesian_field_is_not_an_init_field_but_base_is() -> None:
-    # `data` and `field` are computed from `shape` on a CartesianField, so
-    # neither is taken by its constructor. The base CoordinatesField
-    # stores `data` as a normal init field, and takes `field=` as the
-    # convenience keyword for it.
+    # CartesianField derives data and field from its shape.
     assert "data" not in fields_dict(CartesianField)
     assert "data" in fields_dict(CoordinatesField)
     assert "field" not in inspect.signature(CartesianField).parameters
@@ -222,16 +191,14 @@ def test_replace_cartesian_field_changes_degree_and_bound() -> None:
     assert isinstance(replaced, CartesianField)
     assert replaced.degree == InterpolationOrder.cubic
     assert replaced.bound == BoundaryCondition.reflect
-    # Everything not named is carried over unchanged.
+    # Attributes that are not named are carried over.
     assert replaced.shape == (3, 4)
-    assert replaced.coeff is False
+    assert replaced.store == "values"
     assert replaced.field.shape == (3, 4, 2)
 
 
 def test_to_same_type_cartesian_field_changes_output() -> None:
-    # The converter path (`.to`) rebuilds a CartesianField with the
-    # endpoint changed, without its explicit `field=None` workaround, and
-    # the field is still absent from the constructor and lazily computable.
+    # `to` rebuilds a CartesianField without an explicit field=None.
     output = CoordinateSystem(name="out")
     rebuilt = CartesianField(shape=(4, 5)).to(output=output)
     assert isinstance(rebuilt, CartesianField)
@@ -242,21 +209,19 @@ def test_to_same_type_cartesian_field_changes_output() -> None:
 
 
 def test_replace_coordinates_field_round_trips_explicit_field() -> None:
-    # Guard against regressing the base: CoordinatesField takes `data` as
-    # a normal init field, so replace carries the stored array over as is.
+    # The base CoordinatesField carries its array over as is.
     values = np.zeros((5, 6, 2))
-    cf = CoordinatesField(data=values.copy(), degree=3, coeff=True)
+    cf = CoordinatesField(data=values.copy(), degree=3, store="coefficients")
     replaced = replace(cf, degree=1)
     assert isinstance(replaced, CoordinatesField)
     assert not isinstance(replaced, CartesianField)
     assert replaced.degree == 1
-    assert replaced.coeff is True
+    assert replaced.store == "coefficients"
     np.testing.assert_array_equal(np.asarray(replaced.data), values)
 
 
 def _contains_cartesian_field(result) -> bool:  # noqa: ANN001
-    # Walk a computed result and report whether any `CartesianField`
-    # survives, descending into a `Sequence` result.
+    # Whether a CartesianField survives anywhere in a computed result.
     if isinstance(result, CartesianField):
         return True
     if isinstance(result, Sequence):
@@ -265,10 +230,7 @@ def _contains_cartesian_field(result) -> bool:  # noqa: ANN001
 
 
 def test_interior_grid_is_factored_away() -> None:
-    # A grid that sits strictly between two transformations is the
-    # identity map over its grid, and its neighbours overwrite those
-    # coordinates. Computing the sequence must drop the grid and yield the
-    # same transformation as the sequence without it.
+    # An interior grid is overwritten by its neighbours, so compute drops it.
     a = Affine(matrix=[[2.0, 0.0, 1.0], [0.0, 3.0, -2.0]])
     b = Affine(matrix=[[1.0, 0.0, 4.0], [0.0, 1.0, 5.0]])
     grid = CartesianField(shape=(4, 5))
@@ -279,7 +241,7 @@ def test_interior_grid_is_factored_away() -> None:
 
 
 def test_multiple_interior_grids_are_all_factored_away() -> None:
-    # Every strictly interior grid is factored away, not just the first.
+    # Every interior grid is removed, not only the first.
     a = Affine(matrix=[[2.0, 0.0, 1.0], [0.0, 3.0, -2.0]])
     b = Affine(matrix=[[1.0, 0.0, 4.0], [0.0, 1.0, 5.0]])
     grid1 = CartesianField(shape=(4, 5))
@@ -291,9 +253,7 @@ def test_multiple_interior_grids_are_all_factored_away() -> None:
 
 
 def test_interior_grid_preserves_endpoint_systems() -> None:
-    # Factoring an interior grid away must keep the endpoints of the
-    # chain: the result spans the input of the first transformation and
-    # the output of the last one.
+    # Removing an interior grid keeps the endpoints of the chain.
     inp = CoordinateSystem(name="in")
     mid = CoordinateSystem(name="mid")
     out = CoordinateSystem(name="out")
@@ -310,8 +270,7 @@ def test_interior_grid_preserves_endpoint_systems() -> None:
 
 
 def test_trailing_grid_is_preserved() -> None:
-    # A grid in the last position defines the sampling domain and is not
-    # interior, so computing the sequence must keep it.
+    # A trailing grid defines the sampling domain and is kept.
     affine = Affine(matrix=[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
     grid = CartesianField(shape=(4, 5))
     result = Sequence(transformations=[affine, grid]).compute()
@@ -319,9 +278,7 @@ def test_trailing_grid_is_preserved() -> None:
 
 
 def test_standalone_grid_is_preserved() -> None:
-    # A grid computed on its own is neither interior nor part of a
-    # sequence, so it keeps its grid rather than collapsing to an
-    # `Identity`.
+    # A standalone grid does not collapse to Identity.
     grid = CartesianField(shape=(4, 5))
     result = grid.compute()
     assert isinstance(result, CartesianField)
@@ -330,9 +287,7 @@ def test_standalone_grid_is_preserved() -> None:
 
 
 def test_interior_non_identity_field_is_preserved() -> None:
-    # Only a grid is the identity map by construction. A displacement
-    # field carries its own values that the neighbours do not reproduce,
-    # so an interior displacement field must survive computation.
+    # Only grids are identities by construction; other fields survive.
     a = Affine(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     b = Affine(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     disp = DisplacementField(field=np.ones((4, 5, 2)))
@@ -349,10 +304,9 @@ def test_interior_non_identity_field_is_preserved() -> None:
     assert _has_displacement(result)
 
 
-def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
-    # The value-to-coefficient conversion is deliberately non-idempotent.
-    # Rebuilding through ``replace`` must reuse the already-converted
-    # field rather than converting it a second time.
+def test_store_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
+    # Converting values to coefficients is not idempotent, so `replace`
+    # must reuse the converted field rather than convert again.
     calls = {"count": 0}
 
     def spy(field, degree, bound, inplace=False):  # noqa: ANN001, ANN202
@@ -361,42 +315,37 @@ def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
 
     monkeypatch.setattr(xconcrete, "value2coeff_field", spy)
     values = np.zeros((5, 6, 2))
-    field = DisplacementField(field=values.copy(), degree=3, coeff=False)
-    coeffs = field.to(coeff=True)
-    assert coeffs.coeff is True
+    field = DisplacementField(field=values.copy(), degree=3, store="values")
+    coeffs = field.to(store="coefficients")
+    assert coeffs.store == "coefficients"
     assert calls["count"] == 1
     np.testing.assert_allclose(coeffs.data, values + 1.0)
 
-    # Passing `data=` explicitly supplies the already-converted array,
-    # so the conversion is suppressed rather than run a second time.
+    # An explicit data= supplies the converted array and skips conversion.
     calls["count"] = 0
     supplied = np.full((5, 6, 2), 7.0)
-    result = field.to(coeff=True, data=supplied)
+    result = field.to(store="coefficients", data=supplied)
     assert calls["count"] == 0
     np.testing.assert_allclose(result.data, supplied)
 
 
 def test_identity_composes_with_affine_in_both_orders() -> None:
-    # Regression (#60): composing an `Identity` reconstructed the other
-    # transform positionally, which fed one instance in as the first
-    # constructor argument and failed. Composition now rebuilds through
-    # `replace`, reconciling only the endpoints.
+    # Regression #60: composing with Identity passed the other transform
+    # positionally; composition now rebuilds it with `replace`.
     a = CoordinateSystem(name="A")
     b = CoordinateSystem(name="B")
     affine = Affine(
         matrix=[[1.0, 0.0, 2.0], [0.0, 1.0, 3.0]], input=a, output=a
     )
 
-    # Identity first: `Identity @ Affine` keeps the affine's input and
-    # takes the identity's output.
+    # An identity applied first leaves the affine and its endpoints.
     first = Sequence([Identity(input=a, output=a), affine]).compute()
     assert isinstance(first, Affine)
     assert first.input is a
     assert first.output is a
     np.testing.assert_allclose(first.matrix, affine.matrix)
 
-    # Identity last: `Affine @ Identity` keeps the affine's output and
-    # takes the identity's input.
+    # An identity applied last gives the result its output.
     last = Sequence([affine, Identity(input=a, output=b)]).compute()
     assert isinstance(last, Affine)
     assert last.input is a
@@ -405,10 +354,8 @@ def test_identity_composes_with_affine_in_both_orders() -> None:
 
 
 def test_permutation_composes_in_application_order() -> None:
-    # Regression: `Permutation @ Permutation` indexed the outer permutation
-    # by the inner one. With `y[i] = x[perm[i]]`, `To(Ti(x))[i]` is
-    # `x[Ti.perm[To.perm[i]]]`, so the composed vector is
-    # `Ti.perm[To.perm]`. The two permutations below do not commute.
+    # Regression: composing permutations indexed the outer one by the inner
+    # one. These two permutations do not commute.
     a = CoordinateSystem(name="A")
     b = CoordinateSystem(name="B")
     c = CoordinateSystem(name="C")
@@ -421,13 +368,13 @@ def test_permutation_composes_in_application_order() -> None:
     assert result.output is c
     np.testing.assert_array_equal(result.permutation, [0, 2, 1])
 
-    # Sequential application to a point.
+    # Check by applying both to a point in turn.
     x = np.array([10.0, 20.0, 30.0])
     np.testing.assert_array_equal(
         x[result.permutation], x[inner.permutation][outer.permutation]
     )
 
-    # Dense matrix product.
+    # Check by a dense matrix product.
     dense = xc.convert(result, Linear).matrix
     expected = (
         xc.convert(outer, Linear).matrix @ xc.convert(inner, Linear).matrix
@@ -436,9 +383,7 @@ def test_permutation_composes_in_application_order() -> None:
 
 
 def test_subspace_inverse_without_transform_swaps_axes() -> None:
-    # With no inner transformation, `inverse` only swaps the input/output
-    # spaces and their axes; it must not touch a `transformations`
-    # attribute that does not exist.
+    # Without an inner transform, the inverse only swaps spaces and axes.
     inp = CoordinateSystem(name="in")
     out = CoordinateSystem(name="out")
     subspace = SubspaceTransformation(
@@ -456,8 +401,7 @@ def test_subspace_inverse_without_transform_swaps_axes() -> None:
 
 
 def test_subspace_inverse_wraps_inner_transform() -> None:
-    # With an inner transformation, `inverse` inverts it and swaps the
-    # input/output spaces and their axes.
+    # With an inner transform, the inverse also inverts it.
     inner = Translation(translation=np.array([1.0, 2.0]))
     subspace = SubspaceTransformation(
         transformation=inner,
@@ -474,9 +418,7 @@ def test_subspace_inverse_wraps_inner_transform() -> None:
 
 
 def test_interpolates_truth_table() -> None:
-    # `_interpolates` reports whether applying a transform samples data
-    # through a spline. It looks past a sequence, a subspace wrapper and an
-    # inverse to find a displacement field or a non-grid coordinate field.
+    # Whether applying a transformation interpolates data with splines.
     from brainhops.datamodel._transformations.sequence import _interpolates
 
     affine = Affine(matrix=np.eye(3, 4))
@@ -485,22 +427,22 @@ def test_interpolates_truth_table() -> None:
     disp = DisplacementField(field=np.zeros((4, 5, 6, 3)))
     coords = CoordinatesField(field=np.zeros((4, 5, 6, 3)))
 
-    # A plain non-field transform, and a grid, do not interpolate.
+    # Neither non-fields nor grids interpolate.
     assert _interpolates(None) is False
     assert _interpolates(Identity()) is False
     assert _interpolates(affine) is False
     assert _interpolates(translation) is False
     assert _interpolates(grid) is False
 
-    # A displacement field and a non-grid coordinate field do.
+    # Displacement fields and non-grid coordinate fields do.
     assert _interpolates(disp) is True
     assert _interpolates(coords) is True
 
-    # A sequence interpolates when any element does.
+    # A sequence does when any element does.
     assert _interpolates(Sequence([affine, translation])) is False
     assert _interpolates(Sequence([affine, disp])) is True
 
-    # A subspace wrapper is transparent to its inner transform.
+    # A subspace is transparent.
     axes = np.asarray([0, 1, 2])
     assert (
         _interpolates(
@@ -519,7 +461,7 @@ def test_interpolates_truth_table() -> None:
         is True
     )
 
-    # An inverse interpolates exactly when the transform it inverts does.
+    # An inverse does when the inverted transformation does.
     assert _interpolates(affine.inverse()) is False
     assert _interpolates(disp.inverse()) is True
 
@@ -527,19 +469,13 @@ def test_interpolates_truth_table() -> None:
 # ----------------------------------------------------------------------
 #   UNIFIED compute() SIGNATURE: mode-gating and simplify
 # ----------------------------------------------------------------------
-#
-# Every transformation now exposes the same
-# ``compute(mode=None, *, simplify=False)`` signature. ``mode`` gates
-# which kinds get materialized (a leaf not admitted by the mode is
-# returned untouched, and a delayed ``Inverse`` is not materialized), and
-# ``simplify`` runs the numeric kind-checks that downcast to the cheapest
-# compatible type.
+# Every transformation has compute(mode=None, *, simplify=False). The mode
+# selects which kinds are materialized, and simplify downcasts the result to
+# the cheapest type.
 
 
 def test_inverse_of_field_is_not_materialized_under_restrictive_mode() -> None:
-    # An ``Inverse`` wrapping a displacement field must NOT compute the
-    # (expensive) field inverse when the mode does not admit the field.
-    # The delayed inverse is returned unchanged instead.
+    # The costly inverse of a field is not computed when mode excludes it.
     field = DisplacementField(field=np.random.default_rng(0).random((4, 4, 2)))
     inv = Inverse(forward=field)
     result = inv.compute(mode="Affine")
@@ -547,8 +483,7 @@ def test_inverse_of_field_is_not_materialized_under_restrictive_mode() -> None:
 
 
 def test_inverse_of_field_is_materialized_when_mode_admits_it() -> None:
-    # With the default (``mode=None``) mode, every kind is admitted, so
-    # the inverse is materialized into a concrete field.
+    # The default mode admits every kind.
     field = DisplacementField(field=np.random.default_rng(1).random((4, 4, 2)))
     inv = Inverse(forward=field)
     result = inv.compute(mode=None)
@@ -557,8 +492,7 @@ def test_inverse_of_field_is_materialized_when_mode_admits_it() -> None:
 
 
 def test_inverse_materializes_when_mode_admits_the_wrapped_kind() -> None:
-    # A restrictive mode that DOES admit the wrapped transformation lets
-    # the inverse be materialized.
+    # A mode that admits the wrapped kind lets the inverse materialize.
     lin = Linear(matrix=np.diag([2.0, 3.0]))
     inv = Inverse(forward=lin)
     result = inv.compute(mode="Linear")
@@ -567,49 +501,46 @@ def test_inverse_materializes_when_mode_admits_the_wrapped_kind() -> None:
 
 
 def test_leaf_not_admitted_by_mode_is_returned_unchanged() -> None:
-    # A leaf transformation that the mode does not admit is returned
-    # untouched (same object), with no downcast attempted.
+    # A leaf that the mode excludes is returned as the same object.
     affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
     result = affine.compute(mode="Translation")
     assert result is affine
 
 
 def test_leaf_admitted_by_mode_is_computed() -> None:
-    # A leaf that the mode admits goes through ``compute`` normally.
+    # A leaf that the mode admits is computed normally.
     affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
     result = affine.compute(mode="Affine")
     assert isinstance(result, Affine)
 
 
 def test_simplify_downcasts_a_leaf_to_the_cheapest_type() -> None:
-    # ``simplify=True`` runs the numeric kind-checks and downcasts the
-    # transformation to the cheapest compatible type.
+    # simplify=True downcasts to the cheapest compatible type.
     identity_like = Linear(matrix=np.eye(2))
     assert isinstance(identity_like.compute(simplify=True), Identity)
 
     scaling_like = Linear(matrix=np.diag([2.0, 3.0]))
     assert isinstance(scaling_like.compute(simplify=True), Scaling)
-    # Without ``simplify`` the numeric downcast is not performed.
+    # Without simplify, nothing is downcast.
     assert isinstance(scaling_like.compute(), Linear)
 
 
 def test_sequence_compute_applies_simplify_to_the_result() -> None:
-    # ``Sequence.compute(simplify=True)`` applies the numeric downcast to
-    # its final composed result.
+    # Sequence.compute(simplify=True) downcasts the composed result.
     scaling_like = Linear(matrix=np.diag([2.0, 3.0]))
     seq = Sequence(transformations=[scaling_like])
     assert isinstance(seq.compute(simplify=True), Scaling)
-    # Without ``simplify`` the result keeps its original (linear) type.
+    # Without simplify, the result stays linear.
     assert isinstance(seq.compute(), Linear)
 
 
 def test_simplify_is_keyword_only() -> None:
-    # ``simplify`` must be keyword-only; ``mode`` stays positional.
+    # mode may be positional, simplify may not.
     import pytest
 
     affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
     with pytest.raises(TypeError):
-        affine.compute("Affine", True)  # simplify passed positionally
+        affine.compute("Affine", True)
 
 
 # ----------------------------------------------------------------------
@@ -618,18 +549,14 @@ def test_simplify_is_keyword_only() -> None:
 
 
 def test_simplify_downcasts_a_swap_to_a_permutation() -> None:
-    # A pure axis swap is a permutation. ``is_permutation`` used to compare
-    # whole row/column sum arrays with ``and``, which raises on an array's
-    # ambiguous truth value; the reduced check now downcasts it cleanly.
+    # Regression: the permutation check compared whole arrays with `and`.
     swap = Linear(matrix=[[0.0, 1.0], [1.0, 0.0]])
     result = swap.compute(simplify=True)
     assert isinstance(result, Permutation)
 
 
 def test_simplify_does_not_raise_on_a_shear() -> None:
-    # A shear is not a permutation/scale/rotation. The kind-checks must
-    # detect that without raising (the array-truth-value bug), and leave a
-    # linear transform.
+    # A shear is neither permutation, scaling nor rotation, and stays linear.
     shear = Affine(matrix=[[1.0, 0.5, 0.0], [0.0, 1.0, 0.0]])
     result = shear.compute(simplify=True)
     assert isinstance(result, Linear)
@@ -637,18 +564,14 @@ def test_simplify_does_not_raise_on_a_shear() -> None:
 
 
 def test_simplify_does_not_raise_on_a_non_square_matrix() -> None:
-    # A non-square matrix maps between spaces of different dimension. The
-    # square-only kind-checks (scale/permutation/rotation) must return
-    # False rather than broadcast-erroring or taking a determinant.
+    # The square-only checks return False for a non-square matrix.
     rectangular = Linear(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     result = rectangular.compute(simplify=True)
     assert isinstance(result, Linear)
 
 
 def test_simplify_does_not_raise_on_a_rotation() -> None:
-    # A 90-degree rotation is orthogonal with determinant 1. Running the
-    # numeric checks over it must not raise (whatever the converter chooses
-    # to downcast it to).
+    # A quarter turn passes the numeric checks without raising.
     rotation = Linear(matrix=[[0.0, -1.0], [1.0, 0.0]])
     result = rotation.compute(simplify=True)
     assert result is not None
@@ -660,10 +583,7 @@ def test_simplify_does_not_raise_on_a_rotation() -> None:
 
 
 def test_simplify_keeps_a_leading_grid() -> None:
-    # ``is_identity(grid, compute=True)`` is True, but a leading grid is the
-    # sampling domain, not an identity to drop. Computing with
-    # ``simplify=True`` must keep the domain: the result carries the grid's
-    # spatial shape and is not collapsed to an ``Identity``.
+    # A leading grid is the sampling domain and survives simplification.
     grid = CartesianField(shape=(4, 5))
     shear = Affine(matrix=[[1.0, 0.5, 0.0], [0.0, 1.0, 0.0]])
     result = Sequence([grid, shear]).compute(simplify=True)
@@ -673,10 +593,7 @@ def test_simplify_keeps_a_leading_grid() -> None:
 
 
 def test_simplify_keeps_a_trailing_grid_as_a_cartesian_field() -> None:
-    # A trailing grid survives computation as a ``CartesianField`` leaf.
-    # ``simplify`` runs the numeric downcast over each leaf, which would
-    # turn that grid into an ``Identity`` and drop the sampling domain --
-    # the guard must leave the grid untouched.
+    # A trailing grid is not downcast to Identity by simplification.
     affine = Affine(matrix=[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
     grid = CartesianField(shape=(4, 5))
     result = Sequence([affine, grid]).compute(simplify=True)
@@ -689,12 +606,8 @@ def test_simplify_keeps_a_trailing_grid_as_a_cartesian_field() -> None:
 
 
 def test_subspace_input_reconstructs_full_space_for_high_axes() -> None:
-    # An endpoint-less subspace whose axes exceed the inner system's length
-    # used to index the inner (k-axis) system with full-space positions and
-    # raise IndexError. It must instead reconstruct a full-space system,
-    # placing each inner axis at its declared position and filling the gaps
-    # with placeholder axes. The number of axes of the full space is not
-    # known, so the system is open: it ends with `...`.
+    # Regression: high subspace axes indexed the inner system (IndexError).
+    # The input is now an open system with the inner axes at their positions.
     inner = Identity(
         input=CoordinateSystem(
             axes=[Axis(name="x"), Axis(name="y"), Axis(name="z")]
@@ -703,7 +616,7 @@ def test_subspace_input_reconstructs_full_space_for_high_axes() -> None:
     subspace = SubspaceTransformation(
         transformation=inner, input_axes=[1, 2, 3], output_axes=[1, 2, 3]
     )
-    system = subspace.input  # previously raised IndexError
+    system = subspace.input
     assert system is not None
     assert system.ndim is None
     assert system.axes == [
@@ -716,9 +629,7 @@ def test_subspace_input_reconstructs_full_space_for_high_axes() -> None:
 
 
 def test_subspace_endpoint_reconstruction_is_backward_compatible() -> None:
-    # For axes that start at 0 the reconstruction reproduces the inner
-    # system's own axes in order, as before, followed by `...`, since the
-    # full space may hold more axes.
+    # Axes from 0 give the inner axes in order, then `...`.
     inner = Identity(
         input=CoordinateSystem(axes=[Axis(name="x"), Axis(name="y")])
     )
@@ -731,8 +642,7 @@ def test_subspace_endpoint_reconstruction_is_backward_compatible() -> None:
 
 
 def test_subspace_declared_endpoint_is_returned_as_is() -> None:
-    # When the subspace carries a declared endpoint, it is returned
-    # verbatim rather than reconstructed from the inner system.
+    # A declared endpoint is returned as is.
     declared = CoordinateSystem(name="full", axes=[Axis(), Axis(), Axis()])
     inner = Identity(
         input=CoordinateSystem(axes=[Axis(name="x"), Axis(name="y")])
@@ -749,9 +659,7 @@ def test_subspace_declared_endpoint_is_returned_as_is() -> None:
 
 
 def test_base_transformation_compute_raises() -> None:
-    # A bare ``Transformation`` has no meaningful ``compute``. Rather than
-    # returning itself, the base raises, so a subclass that forgets to
-    # implement ``compute`` fails loudly (mirroring ``inverse``).
+    # A subclass that forgets to implement compute fails loudly.
     import pytest
 
     with pytest.raises(NotImplementedError):
@@ -759,10 +667,7 @@ def test_base_transformation_compute_raises() -> None:
 
 
 def test_subspace_compute_returns_self_unchanged() -> None:
-    # ``MetaTransformation`` (here ``SubspaceTransformation``) keeps the
-    # old base-default behaviour: it has no numeric downcast of its own, so
-    # ``compute`` returns the same object, both with the default mode and
-    # under a mode that does not admit it.
+    # A subspace returns itself, in the default and in an excluding mode.
     inner = Translation(translation=np.array([1.0, 2.0]))
     subspace = SubspaceTransformation(
         transformation=inner, input_axes=[0, 1], output_axes=[0, 1]
@@ -777,7 +682,7 @@ def test_subspace_compute_returns_self_unchanged() -> None:
 
 
 class _DerivedSequence(Sequence):
-    """A sequence whose chain is derived from a parameter it declares."""
+    """Sequence whose chain derives from a declared parameter."""
 
     shift: float = 0.0
 
@@ -787,9 +692,7 @@ class _DerivedSequence(Sequence):
 
 
 def test_sequence_stores_its_chain_under_a_private_name() -> None:
-    # `transformations` is the constructor argument and the property; the
-    # value a sequence was *given* is stored under `_transformations`, so
-    # a subclass can derive the chain without `replace` freezing it.
+    # The given chain is stored privately so that a subclass can derive it.
     field = fields_dict(Sequence)["transformations"]
     assert field.name == "_transformations"
     assert field.public_name == "transformations"
@@ -798,9 +701,7 @@ def test_sequence_stores_its_chain_under_a_private_name() -> None:
 
 
 def test_replace_does_not_freeze_a_derived_chain() -> None:
-    # `replace` reads the stored chain, not the derived one, so the copy
-    # rebuilds its chain from the new parameter instead of carrying over
-    # the chain the original had already worked out.
+    # The copy rebuilds its chain from the new parameter.
     seq = _DerivedSequence(shift=1.0)
     np.testing.assert_allclose(
         np.asarray(seq.transformations[0].translation), [1.0, 1.0]
@@ -809,20 +710,20 @@ def test_replace_does_not_freeze_a_derived_chain() -> None:
     np.testing.assert_allclose(
         np.asarray(copy.transformations[0].translation), [5.0, 5.0]
     )
-    # ... and the two do not share the cached list object.
+    # Copies do not share the cached list.
     assert copy.transformations is not seq.transformations
 
 
 def test_replace_with_no_changes_leaves_a_derived_chain_derived() -> None:
     seq = _DerivedSequence(shift=2.0)
-    _ = seq.transformations  # build and cache the derived chain
+    _ = seq.transformations
     copy = replace(seq)
     assert copy._transformations is None
     assert copy.transformations is not seq.transformations
 
 
 def test_replace_carries_over_an_assigned_chain() -> None:
-    # An explicitly assigned chain is a declared value and is carried over.
+    # An assigned chain is a declared value and is carried over.
     seq = _DerivedSequence(shift=1.0)
     seq.transformations = [Identity()]
     copy = replace(seq, shift=5.0)
@@ -836,49 +737,50 @@ def test_replace_carries_over_an_assigned_chain() -> None:
 
 
 def test_to_never_returns_a_type_that_was_not_asked_for() -> None:
-    # `convert` scores its target by `distance(cls, T2)`, which is finite
-    # whenever a converter produces a *supertype* of what was asked for --
-    # so the catch-all same-type converter matches every request. A
-    # conversion to a type nothing can produce must say so rather than
-    # quietly hand back the original type.
+    # The catch-all converter matches every target, so a type that no
+    # converter produces must raise rather than return the original type.
     import pytest
 
-    from brainhops.datamodel.transformations import ConversionError
+    from brainhops.datamodel.transformations import Transformation
+    from brainhops.errors import ConversionError
 
-    class Unreachable(Affine):
-        """A type no converter produces."""
+    class Unreachable(Transformation):
+        """Transformation of no family, which no converter produces."""
 
     with pytest.raises(ConversionError):
         Affine(matrix=np.eye(3)[:2]).to(Unreachable)
+
+    # A refinement of a family is rebuilt as the requested class.
+    class Refinement(Affine):
+        """Affine of its own class, as an io format is."""
+
+    built = Affine(matrix=np.eye(3)[:2]).to(Refinement)
+    assert type(built) is Refinement
+    np.testing.assert_array_equal(built.matrix, np.eye(3)[:2])
 
 
 def test_to_reports_a_lossy_conversion_rather_than_performing_it() -> None:
     import pytest
 
-    from brainhops.datamodel.transformations import (
-        LossyConversionError,
-        Rotation,
-    )
+    from brainhops.datamodel.transformations import Rotation
+    from brainhops.errors import LossyConversionError
 
     lin = Linear(matrix=np.diag([2.0, 3.0]))
-    # By default the loss is refused, and reported as an exception.
+    # A lossy conversion is refused by default.
     with pytest.raises(LossyConversionError):
         lin.to(Rotation)
-    # `lossy=True` asks for it anyway, and returns the transform the
-    # conversion would have produced -- not the exception carrying it.
+    # lossy=True returns the lossy result rather than the exception.
     lossy = lin.to(Rotation, lossy=True)
     assert type(lossy) is Rotation
-    # `error=<value>` stands in for the result instead of raising.
+    # error=<value> stands in for the result.
     assert lin.to(Rotation, error=False) is False
-    # `error=<exception>` raises that one instead.
+    # error=<exception> raises that exception.
     with pytest.raises(TypeError):
         lin.to(Rotation, error=TypeError)
 
 
 def test_transformations_compare_by_identity() -> None:
-    # `==` is `is`: a transformation equals itself only, never a distinct
-    # one with the same parameters, and `==` never raises -- whatever the
-    # other operand, and on either side.
+    # == is `is`, and it never raises, whatever the other operand.
     system = CoordinateSystem(name="world", axes=[Axis(name="x")] * 2)
     matrix = np.array([[2.0, 0.5, 1.0], [0.0, 3.0, -1.0]])
     affine = Affine(matrix=matrix, input=system, output=system)
@@ -901,17 +803,14 @@ def test_transformations_compare_by_identity() -> None:
             assert not (other == this)
         assert hash(this) == object.__hash__(this)
     assert Identity() != Identity()
-    # Hashable by identity: usable in a set and as a dictionary key.
+    # Hashing is by identity too.
     assert len({affine, twin, affine}) == 2
     names = {affine: "affine", twin: "twin"}
     assert names[affine] == "affine" and names[twin] == "twin"
 
 
 def test_every_transformation_type_compares_by_identity() -> None:
-    # A transformation that also derives from another struct -- a format
-    # reader's block, a geometry's fields -- takes its options from the
-    # base that comes first, which may generate a field-by-field equality.
-    # Every one of them compares and hashes by identity all the same.
+    # Identity comparison holds for every type, whatever its other bases.
     import brainhops.io  # noqa: F401  (registers every format)
 
     def subclasses(cls: type) -> tx.Iterator[type]:
@@ -926,7 +825,7 @@ def test_every_transformation_type_compares_by_identity() -> None:
 
 
 def test_a_sequence_finds_its_members_by_identity() -> None:
-    # Membership and lookup in a sequence go by identity, as `==` does.
+    # Membership and lookup in a sequence are by identity.
     import pytest
 
     first = Affine(matrix=np.eye(2, 3))
@@ -957,9 +856,7 @@ def _subspace(inner: Transformation, axes: list, inp, out) -> object:  # noqa: A
 
 
 def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
-    # A spatial and a temporal step act on disjoint axes, so they do not
-    # compose into one transform; as one affine, the sequence is the
-    # block-diagonal product of their full-space affines.
+    # Steps on disjoint axes give the block-diagonal product of their affines.
     import pytest
 
     from brainhops.datamodel.axes import SpaceAxis, TimeAxis
@@ -1006,7 +903,7 @@ def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
     assert np.allclose(affine.matrix, expected)
     assert affine.input is voxel and affine.output is world
 
-    # The pieces must be affine: a subspace that wraps a field is not.
+    # Every piece must be affine.
     field = _subspace(
         DisplacementField(field=np.zeros((2, 2, 2, 3))), [0, 1, 2], None, None
     )
@@ -1019,9 +916,7 @@ def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
         .matrix,
         np.eye(4, 5),
     )
-    # Pieces that declare no system take the full space from the endpoints
-    # of the sequence, which `compute` declares on its first and last
-    # pieces.
+    # Pieces without systems take the full space from the endpoints.
     bare = Sequence(
         transformations=[
             SubspaceTransformation(
@@ -1037,8 +932,7 @@ def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
         output=world,
     )
     assert np.allclose(bare.to(Affine).matrix, expected)
-    # A sequence that leaves something other than subspace transforms has
-    # no affine form.
+    # A sequence of non-subspace elements has no affine form.
     with pytest.raises(ConversionError):
         Sequence(
             transformations=[

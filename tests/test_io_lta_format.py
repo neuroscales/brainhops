@@ -1,29 +1,19 @@
-"""
-Tests for reading and writing FreeSurfer LTA files.
+"""Tests for reading and writing FreeSurfer LTA files.
 
-LTA is a registered text format: `io.load`, `io.transformations.load`
-and `from_other` read a `.lta` file, found by its extension or by its
-content, and `io.save` writes one. `LtaStruct` and `LtaTransformation`
-follow the shared parser contract (`load`, `save`, `to_bytes`,
-`to_fileobj`, ...).
-
-Every LTA type the reader supports is round-tripped: the file types
-(`LINEAR_VOX_TO_VOX`, `LINEAR_RAS_TO_RAS`, `LINEAR_PHYSVOX_TO_PHYSVOX`,
-`LINEAR_RSA_TO_RSA`), and the views that read any of them as a
-voxel-to-voxel, physical-to-physical or RAS-to-RAS affine.
+LTA is a registered text format, found by extension or by content and
+written by `io.save`. Every supported file type is round-tripped, as are
+the views that read any file as a voxel-to-voxel, physical-to-physical or
+RAS-to-RAS affine.
 """
 
-# stdlib
 import io as _io
 import warnings
 from pathlib import Path
 
-# dependencies
 import numpy as np
 import pytest
 import typing_extensions as tx
 
-# brainhops
 import brainhops.io as io
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel.transformations import Affine
@@ -50,8 +40,7 @@ from brainhops.io.transformations.freesurfer.lta import (
 #   FIXTURES
 # ----------------------------------------------------------------------
 
-# A homogeneous affine whose entries are not round in decimal, so that a
-# round trip that loses precision shows.
+# Entries with many decimals, so that a lossy round trip shows.
 MATRIX = (
     (0.9876543210123456, 0.1, -0.05, 1.25),
     (-0.1, 0.99, 0.2, -2.5),
@@ -77,8 +66,7 @@ DST = LtaStruct.DstVolumeInfo(
     cras=(-4.0, 5.0, 6.0),
 )
 
-# What FreeSurfer writes: a comment header, a commented type, and lines
-# after the destination volume that are not part of the struct.
+# What FreeSurfer writes, including the lines after the volumes.
 FREESURFER = """\
 # transform file /subjects/bert/mri/transforms/reg.lta
 # created by bert on Mon Jan  1 00:00:00 2024
@@ -114,7 +102,7 @@ subject bert
 fscale 0.100000
 """
 
-# Every LTA type the reader supports, with the systems it reads.
+# Every supported LTA type, with the systems it reads.
 TYPES = [
     (LtaType.LINEAR_VOX_TO_VOX, LtaVoxelSystem),
     (LtaType.LINEAR_RAS_TO_RAS, _systems.RASmm),
@@ -123,8 +111,7 @@ TYPES = [
 ]
 TYPE_IDS = ["vox", "ras", "physvox", "rsa"]
 
-# The views, each with the type it is written as once its matrix and
-# systems are set explicitly.
+# Each view, with the type written once matrix and systems are set.
 VIEWS = [
     (LtaTransformationVoxToVox, LtaType.LINEAR_VOX_TO_VOX),
     (LtaTransformationPhysToPhys, LtaType.LINEAR_PHYSVOX_TO_PHYSVOX),
@@ -155,8 +142,7 @@ def _write(tmp_path: Path, struct: LtaStruct, name: str = "x.lta") -> Path:
 
 @pytest.mark.parametrize("lta_type", [t for t, _ in TYPES], ids=TYPE_IDS)
 def test_a_struct_round_trips_through_text(lta_type: LtaType) -> None:
-    # Regression: `to_text` raised an `AttributeError` about
-    # `__struct_fields__`, and `from_text` did too.
+    # Regression: to_text and from_text raised AttributeError.
     struct = _struct(lta_type)
     text = struct.to_text()
     assert text.startswith("type")
@@ -181,26 +167,21 @@ def test_the_matrix_is_written_at_full_precision() -> None:
 
 def test_a_struct_follows_the_parser_contract(tmp_path) -> None:  # noqa: ANN001
     struct = _struct()
-    # bytes, with or without an encoding
     assert LtaStruct.from_bytes(struct.to_bytes()) == struct
     data = struct.to_bytes(encoding="latin-1")
     assert LtaStruct.from_bytes(data, encoding="latin-1") == struct
-    # an open file object
     buffer = _io.StringIO()
     struct.to_fileobj(buffer)
     buffer.seek(0)
     assert LtaStruct.load(buffer) == struct
-    # a path, through `save` and `load`
     struct.save(tmp_path / "x.lta")
     assert LtaStruct.load(tmp_path / "x.lta") == struct
     assert LtaStruct.load(str(tmp_path / "x.lta")) == struct
-    # lines
     assert LtaStruct.from_lines(struct.to_lines()) == struct
 
 
 def test_a_freesurfer_file_is_read() -> None:
-    # Comments, a commented type, `valid = 1  # ...` and the trailing
-    # `subject` and `fscale` lines are all things FreeSurfer writes.
+    # Comments, a commented type, a commented valid and trailing lines.
     struct = LtaStruct.from_text(FREESURFER)
     assert struct.type is LtaType.LINEAR_RAS_TO_RAS
     assert struct.sigma == 1.0
@@ -235,8 +216,7 @@ def test_other_content_is_not_sniffed(cls: type) -> None:
 
 @pytest.mark.parametrize("cls", [LtaStruct, LtaTransformation])
 def test_binary_content_is_not_sniffed(cls: type, tmp_path) -> None:  # noqa: ANN001
-    # A binary file sharing the `.lta` extension does not decode as text,
-    # which is a "no" from the text sniffer rather than an error.
+    # A binary file named .lta is not sniffed, rather than failing to decode.
     binary = b"\x00\x01type = 1\x9a\xff"
     file = tmp_path / "binary.lta"
     file.write_bytes(binary)
@@ -256,9 +236,7 @@ def test_a_file_is_sniffed_by_its_content_alone(tmp_path) -> None:  # noqa: ANN0
 
 
 def test_content_given_as_a_str_is_a_path(tmp_path) -> None:  # noqa: ANN001
-    # Regression: sniffing multi-line text given where a path is expected
-    # failed with `OSError: File name too long`. A `str` names a path, so
-    # content is a file that does not exist.
+    # Regression: text in place of a path raised "File name too long".
     text = _struct().to_text()
     assert LtaStruct.sniff(text) == Confidence.NO
     assert LtaTransformation.sniff(text) == Confidence.NO
@@ -283,8 +261,7 @@ def test_lta_is_a_registered_writable_format() -> None:
     assert LtaTransformation in WritableFileBasedObject._REGISTRY
     assert LtaTransformation in WritableFileBasedTransformation._REGISTRY
     assert LtaTransformation.EXTENSIONS == (".lta",)
-    # The views read the same files exactly as well, so registering them
-    # too would make every `.lta` an ambiguity.
+    # The views read the same files, so registering them would be ambiguous.
     for view, _ in VIEWS:
         assert view not in FileBasedObject._REGISTRY
 
@@ -294,11 +271,11 @@ def test_lta_is_a_registered_writable_format() -> None:
     [
         io.load,
         io.transformations.load,
-        FileBasedTransformation.from_other,
-        LtaTransformation.from_other,
+        FileBasedTransformation.from_any,
+        LtaTransformation.from_any,
         LtaTransformation.load,
     ],
-    ids=["io.load", "transformations.load", "from_other", "own", "own.load"],
+    ids=["io.load", "transformations.load", "from_any", "own", "own.load"],
 )
 @pytest.mark.parametrize("lta_type, system", TYPES, ids=TYPE_IDS)
 def test_every_type_is_read_through_dispatch(
@@ -314,7 +291,7 @@ def test_every_type_is_read_through_dispatch(
     assert isinstance(xform.input, system)
     assert isinstance(xform.output, system)
     np.testing.assert_array_equal(xform.matrix, np.asarray(MATRIX)[:-1])
-    # A path given as a `str` is read just the same.
+    # A path given as a str is read the same way.
     assert load(str(file)).struct == xform.struct
 
 
@@ -331,8 +308,7 @@ HINTS = [
 def test_lta_declares_its_hints() -> None:
     from brainhops.io.base.specs import format_hints
 
-    # The FreeSurfer family carries "freesurfer", the format "lta", and
-    # the affine family "affine"; they compose into dotted hints.
+    # The family, format and affine hints compose into dotted hints.
     assert format_hints(LtaTransformation) >= set(HINTS)
 
 
@@ -378,8 +354,7 @@ def test_every_type_round_trips_through_save(
     first = _write(tmp_path, _struct(lta_type), "first.lta")
     xform = io.load(first)
     io.save(xform, tmp_path / "second.lta")
-    # Left untouched, a transformation is written as the struct it was
-    # read from.
+    # An untouched transformation is written as the struct it was read from.
     assert (tmp_path / "second.lta").read_text() == first.read_text()
     back = io.load(tmp_path / "second.lta")
     assert back.struct == xform.struct
@@ -393,8 +368,7 @@ def test_every_type_round_trips_once_rebuilt(
     lta_type: LtaType,
     system: type,
 ) -> None:
-    # Setting the matrix and the systems explicitly makes the writer build
-    # the struct from them, rather than write the one it was read from.
+    # Setting matrix and systems makes the writer build a new struct.
     xform = io.load(_write(tmp_path, _struct(lta_type)))
     rebuilt = LtaTransformation(
         matrix=xform.matrix, input=xform.input, output=xform.output
@@ -424,16 +398,13 @@ def test_a_view_round_trips(
     file = _write(tmp_path, _struct(lta_type))
     xform = view.load(file)
     assert type(xform) is view
-    # Left untouched, it is written as it was read, so it reads back as
-    # the same view.
+    # An untouched view is written as read.
     io.save(xform, tmp_path / "same.lta")
     assert (tmp_path / "same.lta").read_text() == file.read_text()
     np.testing.assert_allclose(
         view.load(tmp_path / "same.lta").matrix, xform.matrix
     )
-    # Rebuilt from its matrix and systems, it is written in its own type,
-    # and still means the same transformation: its RAS-to-RAS view is the
-    # same as that of the original file.
+    # A rebuilt view is written in its own type with the same meaning.
     rebuilt = view(
         struct=xform.struct,
         matrix=xform.matrix,
@@ -452,17 +423,14 @@ def test_a_view_round_trips(
 
 
 def test_the_ras_view_of_a_ras_file_is_its_matrix(tmp_path) -> None:  # noqa: ANN001
-    # Regression: the RAS-to-RAS view computed a physical-to-physical
-    # matrix.
+    # Regression: the RAS-to-RAS view computed a physical-to-physical matrix.
     file = _write(tmp_path, _struct(LtaType.LINEAR_RAS_TO_RAS))
     xform = LtaTransformationRASToRAS.load(file)
     np.testing.assert_allclose(xform.matrix, np.asarray(MATRIX)[:-1])
 
 
 def test_the_ras_view_of_an_rsa_file_reorders_its_axes(tmp_path) -> None:  # noqa: ANN001
-    # Regression: RSA was read as if it swapped R and A. Its axes are R,
-    # S, A, so a translation by (1, 2, 3) in RSA is one by (1, 3, 2) in
-    # RAS.
+    # Regression: the axes are R, S, A, so RSA (1, 2, 3) is RAS (1, 3, 2).
     matrix = np.eye(4)
     matrix[:3, 3] = [1.0, 2.0, 3.0]
     struct = LtaStruct(
@@ -529,7 +497,7 @@ def test_an_anatomical_affine_is_saved_as_lta(
     assert back.struct.type is lta_type
     np.testing.assert_array_equal(back.matrix, matrix)
     assert isinstance(back.input, system)
-    # FreeSurfer writes a geometry block even when it knows none.
+    # FreeSurfer writes the geometry blocks even when they are unknown.
     assert back.struct.src.valid == 0
     assert back.struct.dst.valid == 0
 
@@ -565,10 +533,7 @@ def test_an_affine_lta_cannot_encode_is_refused(
     tmp_path,  # noqa: ANN001
     affine: Affine,
 ) -> None:
-    # An LTA type says which systems the affine maps between; an affine
-    # that does not say, or maps systems LTA has no type for, is refused
-    # rather than written with a meaning it did not have. The file is not
-    # created.
+    # An affine without LTA systems is refused, and no file is created.
     with pytest.raises(UnrepresentableTransformationError):
         io.save(affine, tmp_path / "x.lta")
     assert not (tmp_path / "x.lta").exists()
@@ -593,8 +558,7 @@ def test_from_is_deprecated_but_still_reads(tmp_path) -> None:  # noqa: ANN001
     text = struct.to_text()
     file = _write(tmp_path, struct)
     with pytest.deprecated_call():
-        # Regression: multi-line text failed with `OSError: File name too
-        # long`, from looking it up as a path.
+        # Regression: text in place of a path raised "File name too long".
         assert LtaStruct.from_(text) == struct
     with pytest.deprecated_call():
         assert LtaStruct.from_(str(file)) == struct

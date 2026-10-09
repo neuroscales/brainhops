@@ -8,7 +8,7 @@ format's: an affine or a field in LPS is flipped into RAS. These tests
 check the maps -- matrices exactly, fields at points on and off their
 nodes, and outside their grid -- before and after a round trip through
 `save` and `load`, and that `t.to(Format)`, `Format.from_instance(t)`,
-`Format.from_other(t)` and `io.save` are one conversion.
+`Format.from_any(t)` and `io.save` are one conversion.
 """
 
 import numpy as np
@@ -24,6 +24,7 @@ from brainhops.datamodel.systems import (  # noqa: E402
     RASmm,
     VoxelCoordinateSystem,
 )
+from brainhops.errors import ConversionError  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     WriterError,
     WriterNotImplementedError,
@@ -49,8 +50,6 @@ from brainhops.io.transformations.nifti import (  # noqa: E402
 from brainhops.io.transformations.spm.y import (  # noqa: E402
     SpmCoordinatesField,
 )
-
-ConversionError = xforms.ConversionError
 
 SHAPE = (4, 5, 6)
 """Grid shape: small, and no two axes of the same length."""
@@ -166,7 +165,7 @@ def _conversions(
     t: xforms.Transformation, cls: type
 ) -> tx.List[xforms.Transformation]:
     """`t` converted to `cls` in every way there is to ask for it."""
-    return [t.to(cls), cls.from_instance(t), cls.from_other(t)]
+    return [t.to(cls), cls.from_instance(t), cls.from_any(t)]
 
 
 # ----------------------------------------------------------------------
@@ -240,7 +239,7 @@ def test_an_affine_between_other_spaces_is_refused(
     with pytest.raises(ConversionError, match="cannot be held exactly"):
         affine.to(NiftiVoxelToRAS)
     with pytest.raises(ConversionError, match="cannot be held exactly"):
-        NiftiVoxelToRAS.from_other(affine)
+        NiftiVoxelToRAS.from_any(affine)
     assert affine.to(NiftiVoxelToRAS, error=False) is False
 
 
@@ -285,7 +284,7 @@ def test_a_ras_displacement_chain_is_held(tmp_path) -> None:  # noqa: ANN001
 def test_an_lps_displacement_chain_is_bridged_into_ras(tmp_path) -> None:  # noqa: ANN001
     # An ITK-like field: displacements of LPS points, in LPS.
     chain = _lps_displacement_chain()
-    nifti = NiftiRASDisplacementField.from_other(chain)
+    nifti = NiftiRASDisplacementField.from_any(chain)
     lps = _flip(_world())
     expected = _flip(_apply(chain, lps))
     np.testing.assert_allclose(_apply(nifti, _flip(lps)), expected, atol=1e-12)
@@ -503,7 +502,7 @@ def test_a_fnirt_warp_is_not_written(tmp_path) -> None:  # noqa: ANN001
         warp.save(tmp_path / "warp.nii.gz")
     # It is written as a NIfTI displacement field instead.
     warp.moving = image
-    NiftiRASDisplacementField.from_other(warp).save(tmp_path / "warp.nii.gz")
+    NiftiRASDisplacementField.from_any(warp).save(tmp_path / "warp.nii.gz")
     back = io.transformations.load(tmp_path / "warp.nii.gz")
     assert isinstance(back, NiftiRASDisplacementField)
     points = _world()
@@ -521,7 +520,7 @@ def test_a_conversion_does_not_relabel_the_endpoints() -> None:
     # `input=LPSmm()` would label the unflipped matrix as LPS.
     affine = xforms.Affine(VOX2WORLD[:-1])
     with pytest.raises(ConversionError, match="input= cannot be overridden"):
-        NiftiVoxelToRAS.from_other(affine, input=LPSmm())
+        NiftiVoxelToRAS.from_any(affine, input=LPSmm())
     with pytest.raises(ConversionError, match="input= cannot be overridden"):
         affine.to(NiftiVoxelToRAS, input=LPSmm())
 
@@ -529,7 +528,7 @@ def test_a_conversion_does_not_relabel_the_endpoints() -> None:
 def test_a_conversion_does_not_replace_the_map() -> None:
     affine = xforms.Affine(VOX2WORLD[:-1])
     with pytest.raises(ConversionError, match="matrix= cannot be overridden"):
-        NiftiVoxelToRAS.from_other(affine, matrix=np.eye(4)[:-1])
+        NiftiVoxelToRAS.from_any(affine, matrix=np.eye(4)[:-1])
     chain = _ras_displacement_chain()
     with pytest.raises(ConversionError, match="transformations= cannot"):
         chain.to(NiftiRASDisplacementField, transformations=())
@@ -539,7 +538,7 @@ def test_the_format_options_are_passed_on() -> None:
     header = nb.Nifti1Header()
     header.set_sform(np.eye(4), code=4)
     affine = xforms.Affine(VOX2WORLD[:-1])
-    nifti = NiftiVoxelToRAS.from_other(affine, header=header)
+    nifti = NiftiVoxelToRAS.from_any(affine, header=header)
     np.testing.assert_array_equal(nifti.matrix, VOX2WORLD[:-1])
     assert nifti.to_nibabel().header.get_sform(coded=True)[1] == 4
 
@@ -547,14 +546,14 @@ def test_the_format_options_are_passed_on() -> None:
 def test_log_is_refused_for_a_field_that_holds_a_displacement() -> None:
     field = xforms.DisplacementField(field=_displacements())
     with pytest.raises(ConversionError, match="log=True writes the velocity"):
-        NiftiRASDisplacementField.from_other(field, log=True)
+        NiftiRASDisplacementField.from_any(field, log=True)
     with pytest.raises(ConversionError, match="steps= is the number"):
-        NiftiRASDisplacementField.from_other(field, steps=4)
+        NiftiRASDisplacementField.from_any(field, steps=4)
 
 
 def test_log_writes_a_velocity_as_it_is(tmp_path) -> None:  # noqa: ANN001
     velocity = xforms.DisplacementField(data=0.1 * _displacements(), log=True)
-    nifti = NiftiRASDisplacementField.from_other(velocity, log=True)
+    nifti = NiftiRASDisplacementField.from_any(velocity, log=True)
     assert nifti.log
     nifti.save(tmp_path / "velocity.nii.gz")
     written = nb.load(tmp_path / "velocity.nii.gz").get_fdata()[:, :, :, 0]
@@ -616,4 +615,4 @@ def test_the_converted_formats_still_read_files(tmp_path, cls: type) -> None:  #
     image = nb.Nifti1Image(_coordinates()[:, :, :, None, :], VOX2WORLD)
     image.header.set_intent(1007, name="Mapping")
     nb.save(image, str(path))
-    assert type(cls.from_other(path)) is cls
+    assert type(cls.from_any(path)) is cls

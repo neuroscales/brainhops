@@ -1,12 +1,8 @@
-"""
-BIDS X5 (`.x5`) transformation files.
+"""Tests for BIDS X5 (.x5) transformation files.
 
-The fixtures are written with `h5py`, in the layouts that nitransforms
-(`nitransforms/io/x5.py`, `Version = 1`) and fslpy
-(`fsl/transform/x5.py`, `Version = "0.1.0"`) write. When either library
-is installed, it is also used to check that the files it writes are read
-as it reads them, and that the files brainhops writes are read back by
-it.
+The fixtures are written with h5py in the layouts of nitransforms (version 1)
+and fslpy (version '0.1.0'). When either library is installed, the tests
+also check that both sides read each other's files alike.
 """
 
 import io as _io
@@ -37,10 +33,9 @@ from brainhops.io.transformations.x5 import (  # noqa: E402
 data_dir = Path(__file__).parent / "data"
 
 SHAPE = (4, 5, 6)
-"""Grid shape: small, and no two axes of the same length."""
+"""A small grid whose axis lengths all differ."""
 
-# A voxel-to-RAS affine with a permutation, a flip, anisotropic spacing
-# and an offset, so that a grid read the wrong way cannot pass.
+# A permutation, flip, anisotropy and offset, so a misread grid fails.
 VOX2RAS = np.array(
     [
         [0.0, -3.0, 0.0, 10.0],
@@ -50,7 +45,7 @@ VOX2RAS = np.array(
     ]
 )
 
-# A rotation about the superior axis plus a translation.
+# A rotation about the superior axis, plus a translation.
 AFFINE = np.array(
     [
         [0.0, -1.0, 0.0, 5.0],
@@ -62,11 +57,11 @@ AFFINE = np.array(
 
 KINDS = ("space", "space", "space", "vector")
 IJK = np.array([[1, 2, 3], [0, 4, 5], [3, 1, 0], [2, 0, 4]])
-"""Voxels at which fields are probed, so that no interpolation happens."""
+"""Voxels where the fields are probed, avoiding interpolation."""
 
 
 def _ramp() -> np.ndarray:
-    """An `(X, Y, Z, 3)` field whose entries name their voxel."""
+    """A field whose entries name their voxel."""
     i, j, k = np.meshgrid(*map(np.arange, SHAPE), indexing="ij")
     return np.stack(
         [1.0 + 0.1 * i, 2.0 + 0.2 * j, 3.0 + 0.3 * k], axis=-1
@@ -74,12 +69,10 @@ def _ramp() -> np.ndarray:
 
 
 def _ras(ijk: np.ndarray) -> np.ndarray:
-    """The RAS coordinates of voxels of the grid."""
     return ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
 
 
 def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
-    """Map RAS points through a RAS-to-RAS transformation."""
     points = xforms.CoordinatesField(field=np.asarray(points, float))
     chain = list(xform) if isinstance(xform, xforms.Sequence) else [xform]
     out = xforms.Sequence(transformations=[points, *chain]).compute()
@@ -96,7 +89,7 @@ def _affine_apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
 
 
 def _write_node(group, node: dict) -> None:  # noqa: ANN001
-    """Write a node as `nitransforms.io.x5._write_x5_group` does."""
+    """Write a node as nitransforms.io.x5._write_x5_group does."""
     group.attrs["Type"] = node["type"]
     group.attrs["ArrayLength"] = node.get("array_length", 1)
     for key, attr in (
@@ -127,8 +120,7 @@ def _write_node(group, node: dict) -> None:  # noqa: ANN001
 
 
 def _write_x5(path: Path, nodes: list, chains: tuple = ()) -> Path:
-    """Write an X5 file as `nitransforms.io.x5.to_filename` and
-    `TransformChain.to_filename` do."""
+    """Write an X5 file as nitransforms writes transforms and chains."""
     with h5py.File(path, "w") as f:
         f.attrs["Format"] = "X5"
         f.attrs["Version"] = np.uint16(1)
@@ -268,7 +260,7 @@ def test_bytes_and_file_objects_round_trip(linear_x5: Path) -> None:
 def test_displacements_move_each_voxel_centre_by_its_vector(
     field_x5: Path,
 ) -> None:
-    """A field of displacements maps `x -> x + u(x)`, in RAS mm."""
+    """Displacements map x -> x + u(x) in RAS mm."""
     xform = io.load(field_x5)
     assert len(xform) == 1
     field = xform[0]
@@ -331,8 +323,7 @@ def test_malformed_fields_are_refused(
 #   B-SPLINES
 # ----------------------------------------------------------------------
 
-# The knots of the B-spline fixtures: an oblique grid, so that a
-# coefficient read in the wrong frame cannot pass.
+# Knots on an oblique grid, so coefficients in the wrong frame fail.
 KNOTS = np.array(
     [
         [3.5, -1.0, 0.5, -12.0],
@@ -344,7 +335,7 @@ KNOTS = np.array(
 
 
 def _cubic(d: np.ndarray) -> np.ndarray:
-    """The centred cubic B-spline (nitransforms' `_cubic_bspline`)."""
+    """The centred cubic B-spline of nitransforms (_cubic_bspline)."""
     d = np.abs(d)
     near = (4.0 - 6.0 * d**2 + 3.0 * d**3) / 6.0
     far = np.clip(2.0 - d, 0.0, None) ** 3 / 6.0
@@ -354,10 +345,7 @@ def _cubic(d: np.ndarray) -> np.ndarray:
 def _bspline_map(
     coeffs: np.ndarray, knots: np.ndarray, points: np.ndarray
 ) -> np.ndarray:
-    """
-    `x + sum_k c_k B3(i(x) - k)` over the knots that exist, as
-    nitransforms' `BSplineFieldTransform.map` (`_map_xyz`) computes it.
-    """
+    """x + sum_k c_k B3(i(x) - k), as BSplineFieldTransform.map computes it."""
     ijk = _affine_apply(np.linalg.inv(knots), points)
     grid = np.stack(
         np.meshgrid(*map(np.arange, coeffs.shape[:-1]), indexing="ij"),
@@ -368,7 +356,7 @@ def _bspline_map(
 
 
 def _bspline(**kwargs) -> dict:
-    """A node as `BSplineFieldTransform.to_x5` writes it."""
+    """A node as BSplineFieldTransform.to_x5 writes it."""
     node = dict(
         type="nonlinear",
         subtype="bspline",
@@ -383,7 +371,7 @@ def _bspline(**kwargs) -> dict:
 
 
 def _knot_probes() -> np.ndarray:
-    """RAS points: on knots, between them, near the edges and outside."""
+    """RAS points on the knots, between them, near the edges and outside."""
     rng = np.random.default_rng(0)
     ijk = np.concatenate(
         [IJK, rng.uniform(-3.0, np.add(SHAPE, 2.0), size=(64, 3))]
@@ -394,10 +382,8 @@ def _knot_probes() -> np.ndarray:
 def test_bspline_is_a_cubic_spline_of_ras_displacements(
     tmp_path: Path,
 ) -> None:
-    """
-    The coefficients are RAS displacements on the knot grid placed by
-    `AdditionalParameters`; the `Domain` (the reference grid) is not used,
-    and coefficients beyond the grid are zero.
+    """The coefficients are RAS displacements on the knot grid placed by
+    AdditionalParameters; the Domain is unused.
     """
     path = _write_x5(tmp_path / "bspline.x5", [_bspline()])
     xform = io.load(path)
@@ -405,7 +391,7 @@ def test_bspline_is_a_cubic_spline_of_ras_displacements(
     assert isinstance(field, X5BSplineField)
     assert isinstance(field.input, systems.RASmm)
     assert isinstance(field.output, systems.RASmm)
-    assert field.displacement.coeff
+    assert field.displacement.store == "coefficients"
     assert int(field.displacement.degree) == 3
     points = _knot_probes()
     expected = _bspline_map(_ramp() - 2.0, KNOTS, points)
@@ -416,11 +402,7 @@ def test_bspline_is_a_cubic_spline_of_ras_displacements(
 
 
 def test_bspline_agrees_with_the_itk_reader(tmp_path: Path) -> None:
-    """
-    An ITK `BSplineTransform` and the same spline in X5 -- its coefficient
-    grid and coefficients moved from LPS to RAS -- map points alike: knot
-    `k` sits at voxel `k` of the grid in both.
-    """
+    """An ITK B-spline and the same spline in X5 map points alike."""
     block = io.load(data_dir / "itk_bspline3d.h5")[-1]
     vox2lps = block.voxel2lps.to(xforms.Affine).homogeneous_matrix
     flip = np.diag([-1.0, -1.0, 1.0, 1.0])
@@ -451,7 +433,7 @@ def test_bspline_is_written_from_scratch(tmp_path: Path) -> None:
         assert node.attrs["Representation"] == "coefficients"
         np.testing.assert_allclose(node["Transform"], _ramp(), atol=1e-5)
         np.testing.assert_allclose(node["AdditionalParameters"], KNOTS)
-        # nitransforms requires a Domain: the knot grid stands in for it.
+        # nitransforms requires a Domain, so the knot grid stands in.
         np.testing.assert_allclose(node["Domain/Mapping"], KNOTS)
         np.testing.assert_array_equal(node["Domain/Size"], SHAPE)
     points = _knot_probes()
@@ -483,16 +465,14 @@ def test_bspline_read_is_written_back_with_its_domain(
 def test_splines_x5_cannot_hold_are_refitted(
     tmp_path: Path, kwargs: dict
 ) -> None:
-    # X5 stores cubic coefficients with a zero boundary: coefficients of
-    # another degree or boundary are refitted to those, and the field
-    # reads back with the same values on its knots.
+    # X5 stores cubic zero-boundary coefficients, so others are refitted.
     out = tmp_path / "refit.x5"
     ras2vox, field, vox2ras = X5BSplineField.from_ras(_ramp(), KNOTS)
     spline = xforms.DisplacementField(
         data=field.data,
         input=field.input,
         output=field.output,
-        coeff=True,
+        store="coefficients",
         **{"degree": 3, "bound": "constant", **kwargs},
     )
     chain = xforms.Sequence(
@@ -504,7 +484,7 @@ def test_splines_x5_cannot_hold_are_refitted(
     again = io.load(out)[0]
     assert isinstance(again, X5BSplineField)
     back = again[1]
-    assert (back.coeff, int(back.degree)) == (True, 3)
+    assert (back.store, int(back.degree)) == ("coefficients", 3)
     np.testing.assert_allclose(
         np.asarray(back.field), np.asarray(spline.field), atol=1e-4
     )
@@ -513,8 +493,7 @@ def test_splines_x5_cannot_hold_are_refitted(
 def test_stored_spline_coefficients_are_not_refitted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A cubic, zero-boundary spline is already what X5 stores: its
-    # coefficients are written as they are, without a refit.
+    # A cubic zero-boundary spline is written as is, without refitting.
     from brainhops.datamodel._transformations import concrete
 
     def refuse(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
@@ -533,8 +512,7 @@ def test_stored_spline_coefficients_are_not_refitted(
 
 
 def test_sampled_displacements_stay_sampled(tmp_path: Path) -> None:
-    # X5 stores either encoding, and the field's `coeff` flag selects
-    # which: a field of values is written as displacements.
+    # The `store` flag selects the encoding; values are written as such.
     out = tmp_path / "dense.x5"
     X5Transform(
         transformations=[X5DisplacementField.from_ras(_ramp(), VOX2RAS)]
@@ -584,10 +562,7 @@ def test_malformed_bsplines_are_refused(
 
 
 def test_chain_is_a_sequence_in_application_order(chain_x5: Path) -> None:
-    """
-    nitransforms' `TransformChain.map` applies "0/1" as `f1(f0(x))`,
-    which is how a brainhops `Sequence([t0, t1])` applies.
-    """
+    """The chain '0/1' applies f1(f0(x)), as Sequence([t0, t1]) does."""
     xform = io.load(chain_x5)
     assert xform.selection == (0, 1)
     assert isinstance(xform[0], xforms.Affine)
@@ -624,10 +599,7 @@ def test_unchained_nodes_read_the_first_with_a_warning(
 
 
 def test_chain_is_written_from_scratch(tmp_path: Path) -> None:
-    """
-    A chain built in brainhops is written as one node per element, and
-    one `/TransformChain` that applies them in order.
-    """
+    """A chain is written as one node per element plus a /TransformChain."""
     nifti = pytest.importorskip("nibabel")
     from brainhops.io.transformations.nifti import NiftiRASDisplacementField
 
@@ -697,10 +669,10 @@ def test_a_coordinates_field_is_written_as_deformations(
 def test_coordinate_coefficients_are_written_as_deformations(
     tmp_path: Path,
 ) -> None:
-    # X5 stores sampled coordinates, so a field of coefficients is written
-    # as its values, and reads back as them.
+    # X5 stores sampled coordinates, so a coefficient field is written as
+    # values.
     ras2vox, field = X5CoordinatesField.from_ras(_ramp(), VOX2RAS)
-    spline = field.to(degree=3).to(coeff=True)
+    spline = field.to(degree=3).to(store="coefficients")
     chain = xforms.Sequence(
         transformations=[ras2vox, spline],
         input=systems.RASmm(),
@@ -782,7 +754,7 @@ def _write_fslpy_space(group, shape, vox2ras) -> None:  # noqa: ANN001
 
 
 def _write_fslpy(path: Path, kind: str) -> Path:
-    """Write a file as `fsl.transform.x5.write(Non)LinearX5` does."""
+    """Write a file as fsl.transform.x5.write(Non)LinearX5 does."""
     with h5py.File(path, "w") as f:
         f.attrs["Format"] = "X5"
         f.attrs["Version"] = "0.1.0"
@@ -816,7 +788,7 @@ def test_fslpy_nonlinear_is_read(tmp_path: Path, kind: str) -> None:
     points = _ras(IJK)
     expected = _ramp()[tuple(IJK.T)] + (points if kind == "relative" else 0)
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
-    # ... and written back in the current layout.
+    # It is written back in the current layout.
     out = tmp_path / "out.x5"
     xform.save(out)
     with h5py.File(out, "r") as f:
@@ -881,7 +853,7 @@ def test_nitransforms_files_are_read_as_it_reads_them(
         _apply(xform, points), chain.map(points), atol=1e-5
     )
 
-    # ... and the files brainhops writes are read back by nitransforms.
+    # brainhops files are read back by nitransforms.
     out = tmp_path / "rev.x5"
     X5Transform(transformations=list(xform)[::-1]).save(out)
     back = TransformChain.from_filename(out)
@@ -966,7 +938,7 @@ def test_nitransforms_bsplines_match(tmp_path: Path) -> None:
     # nitransforms weighs the knots in single precision.
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
 
-    # ... and the files brainhops writes are read back by nitransforms.
+    # brainhops files are read back by nitransforms.
     out = tmp_path / "out.x5"
     X5Transform(transformations=[X5BSplineField.from_ras(coeffs, KNOTS)]).save(
         out

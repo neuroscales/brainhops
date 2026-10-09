@@ -1,10 +1,7 @@
 __all__ = [
-    # base
     "Transformation",
-    # multiscale
     "Multiscale",
     "MultiscaleField",
-    # concrete
     "CoordinatesField",
     "CartesianField",
     "DisplacementField",
@@ -20,7 +17,6 @@ __all__ = [
     "ScalingExponential",
     "Translation",
     "Identity",
-    # inverse
     "Inverse",
     "InverseTranslation",
     "InverseScaling",
@@ -35,64 +31,52 @@ __all__ = [
     "InverseRotationExponential",
     "InverseScalingExponential",
     "InverseStationaryVelocityField",
-    # operators
     "Sqrt",
     "UNARY_OPERATORS",
-    # meta
     "Bijection",
     "SubspaceTransformation",
     "Projection",
-    # sequence
     "Sequence",
     "MutableSequence",
     "ImmutableSequence",
-    # modes / simplify
     "ModeLike",
     "SimplifyLike",
     "SimplifyTable",
     "SimplifyPolicy",
     "is_kind",
-    # checks
     "is_identity",
     "is_translation",
     "is_scaling",
     "is_permutation",
     "is_rotation",
     "is_linear",
-    # errors
-    "ConversionError",
-    "LossyConversionError",
-    "CompositionError",
-    "AdaptationError",
-    "DomainError",
 ]
 
-# Registration into registries
-from . import adaptors as _adaptors  # noqa: F401, F403
-from . import checkers as _checkers  # noqa: F401, F403
-from . import composers as _composers  # noqa: F401, F403
-from . import converters as _converters  # noqa: F401, F403
-from . import restrictors as _restrictors  # noqa: F401, F403
-from . import simplifiers as _simplifiers  # noqa: F401, F403
+# The transformation errors are defined in `brainhops.errors` rather than here,
+# because the io layer raises them as well.
 
-# Import public symbols into the package namespace
 from .base import Transformation
-from .check import is_kind
+
+# Imported for their side effect: each of these modules registers its
+# implementations with the corresponding dispatcher.
+from .compute import adaptors as _adaptors  # noqa: F401, F403
+from .compute import checkers as _checkers  # noqa: F401, F403
+from .compute import composers as _composers  # noqa: F401, F403
+from .compute import converters as _converters  # noqa: F401, F403
+from .compute import restrictors as _restrictors  # noqa: F401, F403
+from .compute import simplifiers as _simplifiers  # noqa: F401, F403
+from .compute.check import is_kind
+from .compute.simplify import SimplifyLike, SimplifyPolicy, SimplifyTable
 from .concrete import (
     Affine,
-    AffineExponential,
     CartesianField,
     CoordinatesField,
     DisplacementField,
     Identity,
     Linear,
-    LinearExponential,
     Permutation,
     Rotation,
-    RotationExponential,
     Scaling,
-    ScalingExponential,
-    StationaryVelocityField,
     Translation,
     is_identity,
     is_linear,
@@ -100,13 +84,6 @@ from .concrete import (
     is_rotation,
     is_scaling,
     is_translation,
-)
-from .errors import (
-    AdaptationError,
-    CompositionError,
-    ConversionError,
-    DomainError,
-    LossyConversionError,
 )
 from .inverse import (
     Inverse,
@@ -129,4 +106,10 @@ from .modes import ModeLike
 from .multiscale import Multiscale, MultiscaleField
 from .operators import UNARY_OPERATORS, Sqrt
 from .sequence import ImmutableSequence, MutableSequence, Sequence
-from .simplify import SimplifyLike, SimplifyPolicy, SimplifyTable
+from .tangents import (
+    AffineExponential,
+    LinearExponential,
+    RotationExponential,
+    ScalingExponential,
+    StationaryVelocityField,
+)

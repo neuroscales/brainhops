@@ -1,14 +1,11 @@
-# stdlib
 import math
 from io import BytesIO
 from numbers import Number
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
 
-# internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
@@ -42,17 +39,15 @@ from brainhops.io.images.tiff import _utils as backend
 
 _DIALECTS = ("ome", "imagej", "plain")
 
-# The storage order every TIFF dialect accepts: ImageJ requires it, and
-# OME-TIFF and plain TIFF take it.
+# Required by ImageJ, and accepted by OME-TIFF and plain TIFF.
 _STORAGE_ORDER = "TZCYXS"
 
-# Letters for axes that are neither spatial, temporal nor channels, in the
-# order they are handed out. OME-TIFF stores `Q` (and the others listed
-# by tifffile) as modulo dimensions; plain TIFF stores any of them.
+# Letters for the other axes, in the order they are handed out. OME-TIFF stores
+# Q (and the others that tifffile lists) as modulo dimensions, and plain TIFF
+# stores any letter.
 _OTHER_CODES = "QIEHAPRLVMBFGJKNOUW"
 
-# ImageJ metadata the writer computes, and does not copy from the file
-# the image was read from.
+# ImageJ metadata that the writer computes itself instead of copying.
 _IMAGEJ_COMPUTED = frozenset(
     {
         "ImageJ",
@@ -70,11 +65,11 @@ _IMAGEJ_COMPUTED = frozenset(
         "tunit",
     }
 )
-# How ImageJ spells the units it knows.
+# ImageJ spellings of the units it knows.
 _IMAGEJ_UNITS = {"um": "micron", "angstrom": "Å"}
 _IMAGEJ_DTYPES = (np.dtype("uint8"), np.dtype("uint16"), np.dtype("float32"))
 
-# Tags written back as they were read: (code, name, type).
+# Tags written back as they were read: (code, name).
 _ROUND_TRIP_TAGS = (
     (269, "DocumentName"),
     (271, "Make"),
@@ -84,14 +79,14 @@ _ROUND_TRIP_TAGS = (
     (33432, "Copyright"),
 )
 
-# BigTIFF is used when the data would not fit in a classic TIFF, as
-# tifffile itself decides: 4 GiB, less a margin for the metadata.
+# Data that does not fit in a classic TIFF, as tifffile decides: 4 GiB minus a
+# margin for the metadata.
 _BIGTIFF_THRESHOLD = 2**32 - 2**25
 
 _OME_SUFFIXES = (".ome.tif", ".ome.tiff", ".ome.btf", ".ome.tf2", ".ome.tf8")
 
-# The OME symbols of the units of length (normalized by `length_unit`) and
-# of time (by `time_unit`) that both brainhops and OME know.
+# OME symbols of the length units (as `length_unit` normalises them) and time
+# units (as `time_unit` does) that both brainhops and OME know.
 _OME_LENGTHS = {
     "km": "km",
     "m": "m",
@@ -120,7 +115,7 @@ _OME_TIMES = {
 
 
 def _overridden(pixel_size: tx.Any, axes: tx.Sequence[Axis]) -> tx.Set[str]:
-    """The names of the spatial axes whose size the caller sets."""
+    """Return the names of the spatial axes whose size `pixel_size` sets."""
     if pixel_size is None:
         return set()
     if isinstance(pixel_size, tx.Mapping):
@@ -134,16 +129,14 @@ def _origin(
     metadata: backend.TiffMetadata,
     origin: tx.Any,
 ) -> tx.Dict[str, float]:
-    """
-    The position of the first sample along each spatial axis, in the unit
-    of that axis, by name.
+    """Return the position of the first sample along each spatial axis, by
+    name, in the unit of the axis.
 
-    `origin` is the caller's: `False` ignores the file's, and a sequence
-    (`x, y[, z]`) or a mapping by name gives positions in the unit of the
-    pixel size. Otherwise, the file's positions (OME planes) are used for
-    the axes whose size, and so whose unit, is known. A position recorded
-    with no unit, or in OME's `"reference frame"`, is taken to be in the
-    unit of the file's pixel size along that axis.
+    `origin` gives positions in the unit of the pixel size, or ignores those of
+    the file if it is `False`. Otherwise, the OME plane positions of the file
+    are used for the axes whose size and unit are known. A position without a
+    unit, or in the OME "reference frame", is taken in the unit of the pixel
+    size of the file.
     """
     names = [axis.name for axis in raster.spatial_axes(axes)]
     if origin is False:
@@ -196,8 +189,9 @@ def _geometry(
     unit: tx.Any = None,
     origin: tx.Any = None,
 ) -> Transformation:
-    """The transformation of one level of a series, from the metadata of
-    the series and the caller's overrides."""
+    """Return the transformation of one level of a series, from the metadata of
+    the series and the overrides of the caller.
+    """
     axes = raster.storage_axes(codes)
     perm = raster.canonical_permutation(axes)
     axes = [axes[p] for p in perm]
@@ -231,8 +225,9 @@ def _geometry(
 def _affine_parts(
     xform: tx.Optional[Transformation], ndim: int
 ) -> tx.Optional[tx.Tuple[np.ndarray, np.ndarray]]:
-    """The diagonal and the translation of a transformation that is a
-    per-axis scaling and translation, or `None`."""
+    """Return the diagonal and translation of a transformation that scales and
+    translates each axis separately, or `None` for any other.
+    """
     if xform is None or isinstance(xform, Identity):
         return np.ones(ndim), np.zeros(ndim)
     if isinstance(xform, Sequence):
@@ -267,29 +262,28 @@ def _affine_parts(
 
 
 class _Geometry(Magic, frozen=True):
-    """What a writer can store of an image's geometry."""
+    """What a TIFF writer can store of the geometry of an image."""
 
-    sizes: tx.Dict[str, float]  # spatial, positive, in `units`
-    units: tx.Dict[str, str]  # spatial, normalized (`length_unit`)
-    signs: tx.Dict[str, float]  # spatial, -1 for a flipped axis
-    origin: tx.Dict[str, float]  # spatial, in `units`
-    time: tx.Optional[tx.Tuple[float, str]]  # interval, unit
+    sizes: tx.Dict[str, float]  # positive, in `units`
+    units: tx.Dict[str, str]  # normalised by `length_unit`
+    signs: tx.Dict[str, float]  # -1 for a flipped axis
+    origin: tx.Dict[str, float]  # in `units`
+    time: tx.Optional[tx.Tuple[float, str]]  # interval and unit
 
     def size(self, name: str, unit: str) -> float:
-        """The size along an axis, in another unit."""
+        """Return the size along an axis, converted to another unit."""
         return raster.convert_length(self.sizes[name], self.units[name], unit)
 
 
 def _write_geometry(
     xform: tx.Optional[Transformation], axes: tx.Sequence[Axis]
 ) -> _Geometry:
-    """
-    The pixel size, origin and time interval of an image, from its
-    preferred transformation, as far as a TIFF file can store them.
+    """Return the pixel size, origin and time interval of the preferred
+    transformation, as far as TIFF can store them.
 
-    A spatial axis has a size when the transformation scales it onto an
-    axis measured in a unit of length; the sizes are given only when every
-    spatial axis has one. A rotation or a shear has no size to give.
+    A spatial axis has a size when the transformation scales it onto an axis
+    with a unit of length, and sizes are given only if every spatial axis has
+    one. A rotation or a shear gives no size.
     """
     empty = _Geometry(sizes={}, units={}, signs={}, origin={}, time=None)
     parts = _affine_parts(xform, len(axes))
@@ -314,7 +308,7 @@ def _write_geometry(
         if group == "space":
             name = backend.length_unit(None if unit is None else str(unit))
             if name is None:
-                # Not a unit of length: no axis gets a size.
+                # a unit that is not a length gives no axis a size
                 return _Geometry(
                     sizes={}, units={}, signs={}, origin={}, time=time
                 )
@@ -339,15 +333,13 @@ def _write_codes(
     dtype: np.dtype,
     original: tx.Optional[str],
 ) -> str:
-    """
-    The storage codes to write an image's axes under, slowest first.
+    """Return the storage codes under which to write the axes, slowest first.
 
-    The order the image was read in is kept when it still describes the
-    axes. Otherwise, the axes are stored in the order `TZCYXS`, which
-    every dialect accepts, after any other axis: `x`, `y` and `z` as `X`,
-    `Y` and `Z`, time as `T`, a channel axis as `C` -- or as `S`, the
-    samples of an RGB(A) pixel, when it has three or four 8-bit samples
-    -- and other axes under a letter of their own.
+    The order read from the file is kept if it still describes the axes.
+    Otherwise, x, y and z become `X`, `Y` and `Z`, time `T`, and a channel axis
+    `C`, or `S` for the 3 or 4 samples of an 8-bit RGB(A) image. Other axes get
+    letters of their own and come first, followed by the standard axes in the
+    order `TZCYXS`.
     """
     names = [axis.name for axis in axes]
     if original:
@@ -424,11 +416,11 @@ def _write_codes(
 
 
 def _materialize(array: tx.Any) -> np.ndarray:
-    """Any array (numpy, dask, cupy) as a C-contiguous numpy array."""
+    """Convert any array (NumPy, dask, CuPy) to a C-contiguous NumPy array."""
     if hasattr(array, "get") and not isinstance(array, np.ndarray):
-        array = array.get()  # cupy
+        array = array.get()
     if hasattr(array, "compute") and not isinstance(array, np.ndarray):
-        array = array.compute()  # dask
+        array = array.compute()
     return np.ascontiguousarray(np.asarray(array))
 
 
@@ -450,8 +442,9 @@ def _imagej_compatible(codes: str, dtype: np.dtype) -> bool:
 def _plane_positions(
     codes: str, shape: tx.Sequence[int], geometry: _Geometry
 ) -> tx.Dict[str, tx.List[float]]:
-    """The OME position of every plane, in the order tifffile writes the
-    planes (every axis but `Y`, `X` and `S`, C-ordered)."""
+    """Return the OME position of every plane, in the order in which tifffile
+    writes them: over every axis but Y, X and S, C-ordered.
+    """
     names = {"X": "x", "Y": "y", "Z": "z"}
     plane_axes = [i for i, c in enumerate(codes) if c not in "YXS"]
     plane_shape = [shape[i] for i in plane_axes]
@@ -484,8 +477,9 @@ def _plane_positions(
 
 
 class _TiffMixin:
-    """Sniffing and the metadata kept from the file, shared by the
-    single-scale and multiscale TIFF images."""
+    """Sniffing and file handling shared by single-scale and multiscale TIFF
+    images.
+    """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = backend.EXTENSIONS
     HINTS = ("tiff", "tifffile")
@@ -513,18 +507,16 @@ class _TiffMixin:
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold a TIFF
-        file."""
+        """Return the confidence that bytes hold a TIFF file."""
         return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
 
     @classmethod
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
-        """
-        Read the image from a file.
+        """Read an image from a file.
 
-        A local file is reopened by name when the pixels are read, so they
-        can be memory-mapped. A remote file is read into memory. See
-        `from_source` for the options.
+        A local file is opened again by name when the pixels are read, which
+        allows memory-mapping, while a remote file is read into memory. The
+        options are those of `from_source`.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -536,39 +528,34 @@ class _TiffMixin:
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """Read the image from an open binary file, which is read into
-        memory and left where it was. See `from_source` for the
-        options."""
+        """Read an image from an open binary file, which is read into memory
+        with its position restored. The options are those of `from_source`.
+        """
         with preserve_position(file):
             content = file.read()
         return cls.from_source(backend.TiffSource(content=content), **kwargs)
 
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
-        """Read the image from the bytes of a file. See `from_source` for
-        the options."""
+        """Read an image from bytes. The options are those of `from_source`."""
         return cls.from_source(
             backend.TiffSource(content=bytes(content)), **kwargs
         )
 
-    # --- writing ------------------------------------------------------
-
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """
-        Write the image to an open binary file. Its name, if it has one,
+        """Write the image to an open binary file, whose name, if it has one,
         chooses the dialect as in `to_bytes`.
         """
         kwargs.setdefault("name", _to_filename(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """
-        Write the image to a file. A name ending in `.ome.tif` or
-        `.ome.tiff` asks for OME-TIFF. See `to_bytes` for the options.
+        """Write the image to a file.
 
-        What will be written is worked out before the file is opened, so
-        an image that cannot be written leaves no file behind. A local
-        file is written by tifffile directly.
+        A name ending with `.ome.tif`, `.ome.tiff`, `.ome.btf`, `.ome.tf2` or
+        `.ome.tf8` asks for OME-TIFF. The writing plan is computed before the
+        file is opened, so that an image that cannot be written leaves no file
+        behind. A local file is written by tifffile directly.
         """
         kwargs.setdefault("name", _to_filename(filename))
         writer = self._writer(**kwargs)
@@ -583,24 +570,29 @@ class _TiffMixin:
             f.write(buffer.getvalue())
 
     def to_bytes(self, **kwargs) -> bytes:
-        """
-        Encode the image as a TIFF file.
+        """Encode the image as TIFF.
 
         Parameters
         ----------
         dialect : {"ome", "imagej", "plain"}, optional
-            The metadata to write. By default: OME-TIFF if `name` ends in
-            `.ome.tif(f)`; else ImageJ if the image was read from an ImageJ
-            file and ImageJ can store it; else OME-TIFF if it was read from
-            one, or its pixel size is known; else plain TIFF.
+            The metadata dialect. By default, OME-TIFF if `name` has an OME
+            suffix; else ImageJ if the image was read from ImageJ and ImageJ
+            can store it; else OME-TIFF if the image was read from OME-TIFF or
+            its pixel size or time interval is known, and its axes need no
+            letter outside `TZCYXS`; and plain TIFF otherwise.
         name : str, optional
-            The name of the file, which may ask for OME-TIFF.
+            The file name, which may ask for OME-TIFF.
         bigtiff : bool, optional
-            Write a BigTIFF file. By default, only when the data is too
-            large for a classic TIFF file (4 GiB).
-        **options
-            Passed on to tifffile's `TiffWriter.write`, such as
+            Whether to write BigTIFF. By default, only when the data is too
+            large for a classic TIFF (4 GiB).
+        **options : Any
+            Passed to `TiffWriter.write` of tifffile, such as
             `compression="zlib"` or `tile=(256, 256)`.
+
+        Returns
+        -------
+        bytes
+            The encoded image.
         """
         buffer = BytesIO()
         self._writer(**kwargs)(buffer)
@@ -608,8 +600,6 @@ class _TiffMixin:
 
     def _writer(self, **kwargs) -> tx.Callable[[tx.Any], None]:
         raise NotImplementedError  # pragma: no cover
-
-    # --- writing helpers ----------------------------------------------
 
     def _level_storage(
         self,
@@ -645,8 +635,9 @@ class _TiffMixin:
         dialect: tx.Optional[str],
         allow_imagej: bool = True,
     ) -> tx.Tuple[str, tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
-        """The dialect, and the options for `TiffWriter` and for
-        `TiffWriter.write` that write the base level."""
+        """Return the dialect, together with the options of `TiffWriter` and
+        `TiffWriter.write` for the base level.
+        """
         read = getattr(self, "dialect", None)
         modulo = any(c not in _STORAGE_ORDER for c in codes)
         if dialect is not None:
@@ -728,8 +719,8 @@ class _TiffMixin:
         elif dialect == "imagej":
             metadata = self._imagej_extras(codes, storage.shape)
             metadata["axes"] = codes
-            # ImageJ has one unit of length for every axis: the unit of
-            # `x`, or micrometres if the axes disagree.
+            # ImageJ has one length unit for all axes: their common unit, or
+            # micrometres if they disagree.
             units = set(geometry.units.values())
             unit = units.pop() if len(units) == 1 else "um"
             if xy:
@@ -767,8 +758,9 @@ class _TiffMixin:
     def _ome_extras(
         self, codes: str, shape: tx.Sequence[int]
     ) -> tx.Dict[str, tx.Any]:
-        """The image name and channel names of the OME-XML the image was
-        read from, when they still apply."""
+        """Return the image name and channel names of the source OME-XML, when
+        they still apply.
+        """
         xml = getattr(self, "ome_xml", None)
         if not xml:
             return {}
@@ -789,8 +781,10 @@ class _TiffMixin:
     def _imagej_extras(
         self, codes: str, shape: tx.Sequence[int]
     ) -> tx.Dict[str, tx.Any]:
-        """The ImageJ metadata the image was read with that does not
-        describe the geometry, when it still applies."""
+        """Return the ImageJ metadata read with the image that does not
+        describe its geometry, when it still applies (display ranges and LUTs
+        per channel, labels per plane).
+        """
         source = getattr(self, "imagej_metadata", None) or {}
         channels = shape[codes.index("C")] if "C" in codes else 1
         planes = int(
@@ -814,7 +808,7 @@ class _TiffMixin:
 
 
 def _resolution_cm(geometry: _Geometry) -> tx.Dict[str, tx.Any]:
-    """The resolution tags, in pixels per centimetre."""
+    """Return the resolution tags, in pixels per centimetre."""
     return {
         "resolution": (
             1 / geometry.size("x", "cm"),
@@ -831,7 +825,7 @@ def _bigtiff(nbytes: int, bigtiff: tx.Optional[bool]) -> bool:
 
 
 def _wrap_write(function: tx.Callable[[], None]) -> None:
-    """Report tifffile's refusals as writer errors."""
+    """Run a write, reporting the refusals of tifffile as `WriterError`."""
     try:
         function()
     except WriterError:
@@ -856,29 +850,16 @@ class TiffImage(
     WritableFileBasedImage,
     SingleScaleImage,
 ):
+    """One image of a TIFF file, read and written with tifffile.
+
+    The file is a plain TIFF, BigTIFF, OME-TIFF or ImageJ hyperstack. The data
+    is one level (the full resolution by default) of one series (the first by
+    default), F-ordered as x, y and z, then time, channels and other axes. The
+    only transformation scales pixels to `"physical"`, with a translation if
+    the file records an origin, or is the identity, with no unit, when the
+    pixel size is unknown. The pixels are read on first access, and the
+    metadata attributes are written back on save as far as they still apply.
     """
-    One image of a TIFF file -- plain TIFF, BigTIFF, OME-TIFF or an ImageJ
-    hyperstack -- read and written with tifffile.
-
-    The data is one level (by default, the full resolution) of one series
-    (by default, the first) of the file, F-ordered: the spatial axes
-    `x, y[, z]` first, then time, then channels, then anything else.
-    The only transformation is a scaling
-    (with a translation when the file records an origin) from the pixel
-    system to a `"physical"` system; it is the identity, in no unit, when
-    the pixel size is unknown.
-
-    The pixels are read when `data` is first accessed: memory-mapped when
-    the file is local and uncompressed, as a dask array when dask is the
-    array backend, and in full otherwise.
-
-    What the file records beyond the pixels is kept on the object --
-    `dialect`, `ome_xml`, `imagej_metadata`, `tags`, `series`, `level`,
-    `n_series`, `n_levels` and `storage_axes` -- and is written back, as
-    far as it still applies, when the image is saved.
-    """
-
-    # --- format-specific metadata -------------------------------------
 
     dialect: tx.Annotated[
         tx.Optional[str],
@@ -947,8 +928,6 @@ class TiffImage(
         data, _ = raster.to_canonical(raw, self.storage_axes)
         return data
 
-    # --- sniff --------------------------------------------------------
-
     @classmethod
     def sniff_fileobj(
         cls,
@@ -956,18 +935,15 @@ class TiffImage(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """
-        Score how confident the class is that an open file holds a TIFF
-        image: `LIKELY` for any TIFF or BigTIFF header. A pyramidal series
-        is claimed more confidently by
-        [`TiffMultiScaleImage`][brainhops.io.images.tiff.TiffMultiScaleImage],
-        unless a `level` is asked for.
+        """Return `LIKELY` for any TIFF or BigTIFF header.
+
+        [`TiffMultiScaleImage`][brainhops.io.images.tiff.TiffMultiScaleImage]
+        claims pyramidal series with more confidence, unless a level is
+        requested.
         """
         if cls._sniff_head(file, error):
             return Confidence.LIKELY
         return Confidence.NO
-
-    # --- load ---------------------------------------------------------
 
     @classmethod
     def from_source(
@@ -982,44 +958,41 @@ class TiffImage(
         lazy: tx.Optional[bool] = None,
         **kwargs,
     ) -> tx.Self:
-        """
-        Read one level of one series of a TIFF file.
+        """Read one level of one series.
 
         Parameters
         ----------
         source : TiffSource
             Where the file is.
-        series : int
-            The series to read (default: the first). Negative values count
-            from the end.
+        series : int, optional
+            The series, the first by default. A negative index counts from the
+            end.
         level : int, optional
-            The pyramid level to read: 0 (the default) is the full
-            resolution. A level is placed so that it covers the same extent
-            as the full-resolution one (see `TiffMultiScaleImage`).
-        pixel_size : float | Sequence[float] | Mapping[str, float], optional
-            The pixel size, which overrides the file's: one size, one per
-            spatial axis (`x, y[, z]`), or a mapping by axis name.
-        unit : str | Unit, optional
-            The unit of `pixel_size`, or the unit to convert the file's
-            sizes to.
-        origin : bool | float | Sequence[float] | Mapping[str, float]
+            The pyramid level, 0 (the full resolution) by default.
+        pixel_size : float or Sequence[float] or Mapping[str, float], optional
+            The pixel size, overriding the one of the file.
+        unit : str or Unit, optional
+            The unit of `pixel_size`, or the unit to which the sizes of the
+            file are converted.
+        origin : bool, float, Sequence[float] or Mapping[str, float], optional
             The position of the first pixel, in the unit of the pixel size,
-            which overrides the file's (OME plane positions). `False`
-            ignores the file's.
-        mmap : bool
-            Memory-map the pixels when the file is local and uncompressed
-            (the default).
+            overriding the OME plane positions. `False` ignores those
+            positions.
+        mmap : bool, optional
+            Whether to memory-map a local uncompressed series (the default).
         lazy : bool, optional
-            Read the pixels as a dask array over tifffile's Zarr store (this
-            needs dask and zarr). By default, only when dask is the array
+            Whether the data is a dask array over the Zarr store of tifffile,
+            which needs dask and zarr. By default, only when dask is the array
             backend.
 
         Raises
         ------
         ParserContentError
-            If the file cannot be read as a TIFF file.
+            If the file cannot be read as TIFF.
         IndexError
-            If it has no such series or level.
+            If there is no such series or level.
+        TypeError
+            If an unknown option is given.
         """
         if kwargs:
             raise TypeError(
@@ -1059,8 +1032,6 @@ class TiffImage(
         image._read_options = (mmap, lazy)
         image._ome_index = metadata.ome_index
         return image
-
-    # --- save ---------------------------------------------------------
 
     def _writer(
         self,

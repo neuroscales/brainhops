@@ -1,27 +1,22 @@
-"""The base class shared by every data model, and its converter."""
+"""Base class of the data models and its converter."""
 
 __all__ = ["DataModelBase", "DataModelConverter", "IdentityComparison"]
 
-# externals
 import re
 from collections.abc import Mapping
 
 import typing_extensions as tx
 from bagof.converters import ConversionError, Converter, register_converter
-from bagof.magic import HIDE_IF_NONE, Field, Magic, fields
+from bagof.magic import Field, HideIfNone, Magic, fields
 
 
 class IdentityComparison:
-    """Mixin that makes a class, and every subclass, compare by identity.
+    """Mixin that makes a class and all its subclasses compare by identity.
 
-    `==` and `!=` are those of `object` (`a == b` is `a is b`) and never
-    raise, and `__hash__` is that of `object`, so instances are hashable
-    and can be put in a set or used as dictionary keys.
-
-    A subclass that also derives from another struct takes its options
-    from whichever base comes first, and may be given a generated
-    `__eq__` (and `__hash__`) that compares its fields. Identity is put
-    back on every subclass, so none compares by value.
+    Equality never raises, and instances are hashable. Identity comparison
+    is restored on every subclass, because a subclass that also derives
+    from another data model may otherwise receive a value-based `__eq__`
+    and `__hash__`.
     """
 
     __eq__ = object.__eq__
@@ -38,44 +33,37 @@ class DataModelBase(
     Magic,
     convert=True,
     mapping=False,
-    repr=HIDE_IF_NONE,
+    repr=HideIfNone,
     doc=True,
     pin_discriminant="pin+narrow",
 ):
-    """Base class for all data models.
+    """Base class of all data models.
 
-    A polymorphic data model class is built from the arguments its `on=`
-    constraint matches, and refuses the ones it does not
-    (`pin_discriminant="pin+narrow"`): `OrientedAxis(orientation=None)`
-    and `AnatomicalAxis(orientation=<not anatomical>)` raise rather than
-    build an axis that contradicts its own class. A field a class writes
-    out itself keeps its own type (bagof leaves it as written), which is
-    why the discriminants that subclasses declare are typed narrowly
-    (`Literal["space"]`, `Narrow[str]`) where they are declared.
+    A polymorphic class is built only from arguments that match its `on=`
+    condition and refuses the others, so `OrientedAxis(orientation=None)`
+    raises instead of building a contradictory axis. A field that a class
+    writes out keeps the type written there, so the discriminants of
+    subclasses are typed narrowly, as in `Literal["space"]`.
     """
 
-    # We use this base class to set options that we want to propagate to
-    # all classes in the hierarchy.
+    # Options set here apply to the whole hierarchy.
 
     @classmethod
     def from_dict(cls, other: tx.Mapping, *args, **kwargs) -> tx.Self:
-        """
-        Create an instance of the class from a dictionary-like object.
+        """Build an instance from a mapping.
 
-        Only keys in the dictionary that match keyword-like fields of
-        this class, or the keywords its constructor takes without
-        storing them (its `InitVar`s, such as the `matrix=` of an
-        `Affine`), will be used. Other keys are ignored, but see
-        [`from_other`][brainhops.datamodel.base.DataModelBase.from_other],
-        which refuses them.
+        Only keys that name keyword fields or constructor-only keywords, such
+        as `matrix=` of an affine, are used; other keys are ignored, unlike in
+        [`from_any`][brainhops.datamodel.base.DataModelBase.from_any]. A key
+        that names a fixed field is checked rather than passed on. The extra
+        arguments are passed to the constructor and take precedence over the
+        mapping.
 
-        Additional positional and/or keyword arguments can be provided,
-        and will take precedence over the values in the dictionary.
-
-        A key naming a field that this class fixes (a field that cannot
-        be passed to its constructor) is checked instead of used: a
-        dictionary that sets it to anything other than `None` or the
-        value of this class is refused with a [`ValueError`][].
+        Raises
+        ------
+        ValueError
+            If a fixed field is given a value other than `None` and the value
+            that the class fixes.
         """
 
         def read(field: tx.Any) -> tx.Any:
@@ -85,31 +73,26 @@ class DataModelBase(
 
     @classmethod
     def from_instance(cls, other: tx.Self, *args, **kwargs) -> tx.Self:
-        """
-        Create an instance of the class from an instance of a similar
-        class.
+        """Build an instance from an instance of a similar class.
 
-        Only attributes of the other instance that match keyword-like
-        fields of this class will be used. An attribute that is `None`
-        is unset, and leaves the default of this class in place.
-
-        Additional positional and/or keyword arguments can be provided,
-        and will take precedence over the attributes in the instance.
-
-        Unless the other instance is already an instance of this class,
-        an attribute naming a field that this class fixes (a field that
-        cannot be passed to its constructor) is checked instead of used:
-        an instance that sets it to anything other than `None` or the
-        value of this class is refused with a [`ValueError`][]. A
-        generic `Axis` whose orientation is right-to-left, for example,
+        Only attributes that name keyword fields are used, and an attribute
+        that is `None` leaves the default of the class in place. The extra
+        arguments are passed to the constructor and take precedence. Unless
+        `other` is already an instance of this class, attributes that name
+        fixed fields are checked, so a generic axis oriented right to left
         cannot be read as a `LeftToRightAxis`.
+
+        Raises
+        ------
+        ValueError
+            If a fixed field of `other` is set to a value other than the value
+            that the class fixes.
         """
-        # An instance of this class (or of a subclass) is one already:
-        # whatever it fixes, it fixes the way this class allows.
+        # An instance of this class already satisfies its fixed fields.
         check_fixed = not isinstance(other, cls)
-        # A polymorphic class fixes the fields it is selected on too, even
-        # though they are passed to its constructor -- `on=` is what a
-        # `LeftToRightAxis` says about its orientation.
+        # A polymorphic class also fixes the fields it is selected on, such as
+        # the orientation of `LeftToRightAxis`, although they go to the
+        # constructor.
         selected_on = _selected_on(cls) if check_fixed else {}
 
         def read(field: tx.Any) -> tx.Any:
@@ -126,25 +109,21 @@ class DataModelBase(
         return _build(cls, read, args, kwargs)
 
     @classmethod
-    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """
-        Create an instance of the class from any object that can be
-        interpreted as a dictionary, or an instance of a similar class,
-        or an arguments to be passed to the constructor.
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build an instance from a mapping, a similar instance or an argument.
 
-        A similar class is this class or one of its parents within the
-        data model, or another member of a polymorphic family this class
-        belongs to: calling a polymorphic class such as `Axis` builds the
-        subclass its arguments select, so a "generic" axis is usually an
-        instance of a sibling (a `RightToLeftAxis`, a `TimeAxis`) rather
-        than of a parent. Any other object, including an instance of a
-        parent that is not a data model (such as a plain `object`), is
-        passed to the constructor.
+        A similar instance belongs to this class, to a parent within the data
+        model, or to the same polymorphic family. The family matters because
+        calling `Axis` builds the selected subclass, so a generic axis is often
+        a sibling such as `TimeAxis`. Any other object, including an instance
+        of a parent outside the data model, is passed to the constructor.
 
-        Unlike [`from_dict`][brainhops.datamodel.base.DataModelBase.from_dict],
-        a dictionary with a key that matches no field of this class is
-        refused with a [`TypeError`][] naming the keys, so that a
-        misspelt key is not silently dropped.
+        Raises
+        ------
+        TypeError
+            If a mapping has a key that names no field. Unlike
+            [`from_dict`][brainhops.datamodel.base.DataModelBase.from_dict],
+            this method catches misspelled keys.
         """
         if isinstance(other, Mapping):
             _refuse_unknown_keys(cls, other)
@@ -159,10 +138,10 @@ class DataModelBase(
             return cls(other, *args, **kwargs)
 
 
-# A value read from nowhere: the source carries nothing for the field.
+# The source has no value for the field.
 _ABSENT = object()
 
-# What `Field.default` holds when a field has no default.
+# Default of a field that has no default.
 _NO_DEFAULT = Field().default
 
 
@@ -173,17 +152,13 @@ def _build(
     kwargs: tx.Dict[str, tx.Any],
     init_vars: bool = False,
 ) -> tx.Any:
-    """The body shared by `from_dict` and `from_instance`.
+    """Build an instance of `cls` from the values returned by `read`.
 
-    `read(field)` returns the value that the source carries for `field`,
-    or `_ABSENT`. A keyword-like field takes it, unless `kwargs` already
-    sets that field. A field that the class fixes checks it instead:
-    before the instance is built when the fixed value can be read off
-    the field, and after otherwise.
-
-    With `init_vars`, the keywords the constructor takes without storing
-    them (its `InitVar`s) are read too. A dictionary can name them; an
-    instance has nothing stored under them to read.
+    `read(field)` returns the value of the source, or `_ABSENT`. Keyword
+    fields take that value unless `kwargs` already sets them. Fixed fields
+    are checked before construction when their value can be read from the
+    field, and after construction otherwise. With `init_vars`, the
+    constructor-only keywords are read too, since a mapping can name them.
     """
     later = {}
     for field in _fields(cls, init_vars):
@@ -205,11 +180,10 @@ def _build(
 
 
 def _fields(cls: type, init_vars: bool = False) -> tx.Tuple[tx.Any, ...]:
-    """The fields of `cls`, and with `init_vars` its `InitVar`s as well.
+    """Return the fields of `cls`, and its constructor-only keywords if asked.
 
-    `fields(cls)` leaves out both kinds of pseudo-field, `ClassVar` and
-    `InitVar`. An `InitVar` is the one a constructor takes (`init`), so it
-    is told apart from a `ClassVar` by that.
+    `fields` omits the `ClassVar` and `InitVar` pseudo-fields; an `InitVar`
+    is told apart from a `ClassVar` by being an init field.
     """
     if not init_vars:
         return fields(cls)
@@ -218,7 +192,7 @@ def _fields(cls: type, init_vars: bool = False) -> tx.Tuple[tx.Any, ...]:
 
 
 def _fixed_value(field: tx.Any) -> tx.Any:
-    """The value a fixed field takes, or `_NO_DEFAULT` if unknown."""
+    """Return the value of a fixed field, or `_NO_DEFAULT`."""
     if callable(field.factory):
         return field.factory()
     return field.default
@@ -227,10 +201,10 @@ def _fixed_value(field: tx.Any) -> tx.Any:
 def _check_fixed(
     cls: type, field: tx.Any, value: tx.Any, expected: tx.Any
 ) -> None:
-    """Refuse `value` unless it is the value `cls` fixes for `field`.
+    """Refuse a value that differs from the one `cls` fixes for a field.
 
-    `value` is converted the way the field converts before it is
-    compared, so that a dictionary can describe a fixed data model.
+    The value is converted with the converter of the field before the
+    comparison, so that a mapping can describe a fixed data model.
     """
     if value is expected:
         return
@@ -252,21 +226,22 @@ def _check_fixed(
         )
 
 
-# Where bagof records the `on=` constraints a polymorphic subclass was
-# registered with: `(owner(s), specs, priority, ...)`. bagof has no public
-# accessor for them yet; without it, nothing is read and only the fields
-# that cannot be passed to the constructor are checked.
+# Private bagof attributes, read for lack of a public accessor. The
+# registration holds `(owners, specs, priority, ...)`; without it, only the
+# fields that are not passed to the constructor are checked.
 _REGISTRATION = "__magic_registration__"
+
+_OPTIONS = "__magic_options__"
 
 
 def _is_polymorphic(cls: type) -> bool:
-    """Whether calling `cls` builds the subclass its arguments select."""
-    options = cls.__dict__.get("__magic_options__")
+    """Return whether calling `cls` builds the subclass selected."""
+    options = getattr(cls, _OPTIONS, None)
     return bool(getattr(options, "polymorphic", False))
 
 
 def _same_family(cls: type, other: tx.Any) -> bool:
-    """Whether `other` belongs to a polymorphic family that `cls` is in."""
+    """Return whether `other` is in a polymorphic family of `cls`."""
     return any(
         isinstance(other, base)
         for base in cls.__mro__
@@ -277,10 +252,10 @@ def _same_family(cls: type, other: tx.Any) -> bool:
 
 
 def _selected_on(cls: type) -> tx.Dict[str, tx.List[tx.Any]]:
-    """The `on=` constraints of `cls` and its parents, by field name."""
+    """Return the `on=` conditions of `cls` and its parents by field."""
     out: tx.Dict[str, tx.List[tx.Any]] = {}
     for base in cls.__mro__:
-        registration = base.__dict__.get(_REGISTRATION)
+        registration = getattr(base, _REGISTRATION, None)
         try:
             specs = registration[1]
         except (TypeError, IndexError, KeyError):
@@ -302,11 +277,11 @@ def _matches(spec: tx.Any, value: tx.Any) -> bool:
 def _check_selected_on(
     cls: type, field: tx.Any, value: tx.Any, specs: tx.Sequence[tx.Any]
 ) -> None:
-    """Refuse `value` unless `cls` is what it would be selected for.
+    """Refuse a value for which `cls` would not be selected.
 
-    This is the counterpart of [`_check_fixed`][] for a field that a
-    polymorphic class is selected on: such a field must be passed to the
-    constructor, so it cannot be a fixed one, but it is just as fixed.
+    This is the counterpart of `_check_fixed` for the fields that a
+    polymorphic class is selected on: they are passed to the constructor,
+    yet they are just as fixed.
     """
     failed = next((s for s in specs if not _matches(s, value)), None)
     if failed is None:
@@ -323,7 +298,7 @@ def _check_selected_on(
             f"{field.public_name} is {value!r} cannot be read as a "
             f"{cls.__name__}."
         )
-    # A predicate is written `<function name at 0x...>`: keep its name.
+    # Keep the name of a predicate and drop its address.
     text = re.sub(r"<function (\S+) at 0x[0-9a-f]+>", r"\1", failed.text)
     raise ValueError(
         f"{where} cannot be {value!r}: a {cls.__name__} is what "
@@ -333,7 +308,7 @@ def _check_selected_on(
 
 
 def _refuse_unknown_keys(cls: type, other: tx.Mapping) -> None:
-    """Refuse a mapping with keys that match no field of `cls`."""
+    """Refuse a mapping with keys that name no field of `cls`."""
     known = {
         field.public_name
         for field in _fields(cls, init_vars=True)
@@ -348,40 +323,32 @@ def _refuse_unknown_keys(cls: type, other: tx.Mapping) -> None:
         )
 
 
+# The converter lets fields that are data models be set from mappings or
+# compatible instances.
+
+
 @register_converter(DataModelBase)
 class DataModelConverter(Converter[DataModelBase, tx.Any]):
-    """Converts a value to a [`DataModelBase`][] instance.
+    """Converter to a [`DataModelBase`][], applied to fields of that type.
 
-    This converter is registered for [`DataModelBase`][], and is used
-    automatically wherever a field is typed with [`DataModelBase`][] or
-    one of its subclasses and conversion is enabled. A value that is
-    already an instance of the target type is returned unchanged. Any
-    other value is converted through [`DataModelBase.from_other`][] of
-    the target type, so that a mapping or an instance of a parent class
-    is read field by field instead of being passed to the constructor
-    as its first argument.
-
-    As with the default converter, a [`TypeError`][] or
-    [`ValueError`][] raised while converting surfaces as a
-    [`ConversionError`][bagof.converters.ConversionError] (a
-    `ValueConversionError`), with the original as its cause. Unlike the
-    default converter, it keeps the original message.
+    An instance of the target class is returned unchanged. Any other value
+    goes through [`DataModelBase.from_any`][], so a mapping or a parent
+    instance is read field by field rather than passed to the constructor.
+    A `TypeError` or `ValueError` raised during conversion becomes a
+    [`ConversionError`][bagof.converters.ConversionError] that keeps the
+    original message.
     """
 
     DEFAULT = DataModelBase
 
     def __call__(self, value: tx.Any) -> DataModelBase:
-        """Convert `value` to an instance of the target type."""
-        # `Converter.__call__` would call the target class itself. Route
-        # through `from_other` instead, with the same wrapping: a
-        # `ConversionError` passes through untouched, and a plain
-        # `TypeError` or `ValueError` becomes a `ValueConversionError`.
-        # Its message is kept, so that the field error built from it says
-        # why the value was refused rather than "Invalid value.".
+        """Convert a value to an instance of the target class."""
+        # Unlike `Converter.__call__`, go through `from_any`, and keep the
+        # message so that a field error says why the value was refused.
         if isinstance(value, self.origin):
             return value
         try:
-            return self.origin.from_other(value)
+            return self.origin.from_any(value)
         except ConversionError:
             raise
         except (TypeError, ValueError) as e:

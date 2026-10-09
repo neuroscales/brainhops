@@ -1,6 +1,4 @@
-"""Tests for coordinate systems: open systems (`...`), positional and
-named access to their axes, and the operations that close, restrict and
-embed them."""
+"""Tests for coordinate systems, open systems and their axis sequences."""
 
 import collections.abc
 
@@ -10,6 +8,7 @@ from bagof.converters import ConversionError
 from bagof.magic import replace
 
 from brainhops.datamodel import systems as _systems
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import (
     A,
     Axis,
@@ -47,14 +46,13 @@ from brainhops.datamodel.transformations import Identity
 
 CS = CoordinateSystem
 X, Y, Z = Axis(name="x"), Axis(name="y"), Axis(name="z")
-# A time axis leaves its unit unspecified unless it is given one.
+# A time axis has no unit unless one is given.
 T = TimeAxis(name="t", unit="second")
 
-# "Nothing is known about the axes", given as a list or as a tuple. Both
-# are stored as `[...]`, the default, as `axes=None` is.
+# Unknown axes, as a list or a tuple; both are stored as the default [...].
 UNKNOWN_SPELLINGS = {"[...]": [...], "(...,)": (...,)}
 
-# Where `...` sits among two explicit axes, `X` and `T`.
+# Where `...` sits among the explicit axes X and T.
 OPEN_LAYOUTS = {
     "start": [..., X, T],
     "middle": [X, ..., T],
@@ -64,7 +62,7 @@ OPEN_LAYOUTS = {
 # The same two axes, closed or with `...` anywhere.
 ANY_LAYOUTS = {"closed": [X, T], **OPEN_LAYOUTS}
 
-# Every coordinate system class the module exports.
+# Every exported coordinate system class.
 SYSTEM_CLASSES = [
     getattr(_systems, name)
     for name in _systems.__all__
@@ -72,7 +70,7 @@ SYSTEM_CLASSES = [
     and issubclass(getattr(_systems, name), CoordinateSystem)
 ]
 
-# Every fixed-dimension class, with the number of axes it holds.
+# Fixed-dimension classes with their axis count.
 FIXED_CLASSES = [
     (CoordinateSystem2D, 2),
     (PixelCoordinateSystem, 2),
@@ -86,7 +84,7 @@ FIXED_CLASSES = [
 
 @pytest.fixture(params=list(UNKNOWN_SPELLINGS), ids=list(UNKNOWN_SPELLINGS))
 def unknown_axes(request: pytest.FixtureRequest) -> tx.Sequence:
-    """The axes of a system about which nothing is known."""
+    """Axes of a system about which nothing is known."""
     return UNKNOWN_SPELLINGS[request.param]
 
 
@@ -98,7 +96,7 @@ def layout(request: pytest.FixtureRequest) -> str:
 
 @pytest.fixture(params=list(ANY_LAYOUTS), ids=list(ANY_LAYOUTS))
 def any_layout(request: pytest.FixtureRequest) -> str:
-    """A closed list of `X` and `T`, or `...` somewhere among them."""
+    """A closed list of X and T, or `...` somewhere among them."""
     return request.param
 
 
@@ -125,13 +123,12 @@ OPEN_CLASSES = [
 
 @pytest.mark.parametrize("cls", OPEN_CLASSES, ids=lambda c: c.__name__)
 def test_axes_none_reads_as_the_default(cls: type) -> None:
-    # `None` is normalised on the way in: what is stored is `[...]`, so a
-    # system's axes are always an axis sequence.
+    # None is stored as [...], so the axes are always an axis sequence.
     system = cls(axes=None)
     assert type(system) is cls
     assert type(system.axes) is AxisList and system.axes == [...]
     assert system == cls() == cls(axes=[...])
-    # Each system gets a list of its own.
+    # Each system gets its own list.
     assert cls(axes=None).axes is not cls(axes=None).axes
 
 
@@ -145,9 +142,7 @@ def test_axes_none_reads_as_ellipsis_in_any_spelling() -> None:
 def test_axes_none_is_the_default_of_a_fixed_dimension_class(
     cls: type, ndim: int
 ) -> None:
-    # `[...]` cannot be stored in a class that fixes its number of axes,
-    # so `None` -- as not giving the axes at all -- is the class's own
-    # default axes there.
+    # A fixed-dimension class cannot store [...], so None gives its defaults.
     system = cls(axes=None)
     assert type(system) is cls and type(system.axes) is AxisTuple
     assert system == cls() and system.ndim == ndim
@@ -157,7 +152,7 @@ def test_axes_default_to_ellipsis() -> None:
     assert CS().axes == [...] and type(CS().axes) is AxisList
     assert SpatialCoordinateSystem().axes == [...]
     assert ArrayCoordinateSystem().axes == [...]
-    # Each system has a list of its own.
+    # Each system has its own list.
     first, second = CS(), CS()
     first.axes.append(X)
     assert second.axes == [...] and CS().axes == [...]
@@ -177,8 +172,7 @@ def test_at_most_one_ellipsis(axes: list) -> None:
 @pytest.mark.parametrize(
     "where, error, match",
     [
-        # The type of the field, a tuple of `ndim` axes, refuses them: it
-        # is not optional, it has a fixed length, and `...` is no axis.
+        # A fixed-length tuple of axes refuses `...`, which is not an axis.
         ("start", ValueError, "Expected iterable of length"),
         ("middle", ValueError, "Expected iterable of length"),
         ("end", ValueError, "Expected iterable of length"),
@@ -201,8 +195,7 @@ def test_fixed_dimension_classes_refuse_an_open_system(
 
 @pytest.mark.parametrize("cls, ndim", FIXED_CLASSES)
 def test_fixed_dimension_classes_store_a_tuple(cls: type, ndim: int) -> None:
-    # Their axes are an `AxisTuple` of `ndim` axes, which is a tuple, with
-    # the API of every axis sequence.
+    # The axes are an AxisTuple of ndim axes.
     for given in (list, tuple, AxisList, AxisTuple):
         axes = cls(axes=given(cls().axes)).axes
         assert type(axes) is AxisTuple and len(axes) == ndim
@@ -215,7 +208,7 @@ def test_fixed_dimension_classes_are_closed(cls: type, ndim: int) -> None:
 
 
 def test_open_spatial_system() -> None:
-    # A system whose number of axes is not fixed by its class may be open.
+    # A system whose class does not fix the axis count may be open.
     system = SpatialCoordinateSystem(axes=[SpaceAxis(name="x"), ...])
     assert system.ndim is None
 
@@ -239,7 +232,7 @@ def test_ndim_of_an_unknown_system(unknown_axes: tx.Sequence) -> None:
 
 
 def test_ndim_of_a_missing_system() -> None:
-    assert _systems._axes_or_unknown(None).ndim is None
+    assert get_axes(None).ndim is None
 
 
 # ----------------------------------------------------------------------
@@ -261,7 +254,7 @@ def test_equality_stays_structural(layout: str) -> None:
     assert CS(axes=axes) != CS(name="s", axes=axes)
     spatial = [SpaceAxis(), ...]
     assert CS(axes=spatial) != SpatialCoordinateSystem(axes=spatial)
-    # Compatible, but not equal: equality does not expand `...`.
+    # Compatible but not equal: equality does not expand `...`.
     assert CS(axes=[X, ...]) != CS(axes=[X, Axis()])
 
 
@@ -274,14 +267,12 @@ def test_equality_of_closed_systems_is_unchanged() -> None:
 
 
 def test_no_system_equals_a_missing_system(unknown_axes: tx.Sequence) -> None:
-    # Equality is ordinary: a plain system that says nothing is still a
-    # system, and `None` is not one.
+    # An empty system is a system, while None is not.
     system = CS(axes=unknown_axes)
     assert system != None  # noqa: E711
     assert None != system  # noqa: E711
     assert not (system == None)  # noqa: E711
-    # So two transformations that spell a missing endpoint differently are
-    # told apart by their endpoints.
+    # A missing endpoint differs from an explicit system with unknown axes.
     assert Identity(input=system).input != Identity().input
     assert Identity(input=system).input == Identity(input=CS()).input
 
@@ -296,9 +287,7 @@ def test_a_system_that_says_something_differs_from_a_missing_system(
 
 
 def test_an_explicit_endpoint_is_kept_and_a_missing_one_defers() -> None:
-    # An endpoint is `None` (no system: the transformation defers to its
-    # context) or a system, kept as given -- even one that says nothing
-    # about its axes. There is no third kind.
+    # An endpoint is either None, which defers to the context, or a system.
     for system in (CS(), CS(axes=[...]), CS(name="s"), RASCoordinateSystem()):
         assert Identity(input=system).input is system
     assert Identity().input is None
@@ -323,11 +312,7 @@ def test_equality_is_field_wise_in_a_new_subclass() -> None:
 
 @pytest.mark.parametrize("cls", SYSTEM_CLASSES, ids=lambda c: c.__name__)
 def test_every_system_class_compares_field_by_field(cls: type) -> None:
-    # No class writes an equality of its own: bagof's field-wise one,
-    # which every class gets -- whether it is registered with a decorator
-    # (the C- and F-ordered ones), selected on a narrowed constraint
-    # (`RASmm`), or both -- is the right one, now that the axes have one
-    # spelling of "unknown".
+    # The field-wise equality of bagof suits every class, however registered.
     if cls is PhysicalCoordinateSystem:
         system = cls(axes=[R(unit="mm")])
         other = cls(axes=[R(unit="cm")])
@@ -360,10 +345,9 @@ def test_the_axes_are_converted_to_the_type_of_the_field() -> None:
         with pytest.raises(TypeError):
             SpatialCoordinateSystem(axes=sequence([TimeAxis(), ...]))
     assert CS(axes=["x", ...]).axes == [Axis(name="x"), ...]
-    # An axis of the right type is kept as it is.
+    # An axis of the right type is kept as is.
     assert CS(axes=[X, ...]).axes[0] is X
-    # So is an `AxisList`: the field is not optional, so no union takes
-    # one as it is without looking at its items.
+    # An AxisList is converted too, since the field is not optional.
     given = AxisList([Axis(name="x"), ...])
     assert type(SpatialCoordinateSystem(axes=given).axes[0]) is SpaceAxis
     with pytest.raises(TypeError):
@@ -380,26 +364,23 @@ def test_an_axis_list_is_a_plain_list(any_layout: str) -> None:
 
 
 def test_the_axes_of_a_system(any_layout: str) -> None:
-    # A closed system of two axes is a `CoordinateSystem2D`, which stores
-    # them as an `AxisTuple`; an open one stores an `AxisList`.
+    # A closed system stores an AxisTuple and an open one an AxisList.
     system = CS(axes=ANY_LAYOUTS[any_layout])
     closed = any_layout == "closed"
     assert type(system.axes) is (AxisTuple if closed else AxisList)
     assert list(system.axes) == ANY_LAYOUTS[any_layout]
-    # A copy, which a standard constructor makes, leaves the system as it
-    # is.
+    # A copy made with the standard constructor leaves the system unchanged.
     axes = AxisList(system.axes)
     axes.append(Z)
     assert list(system.axes) == ANY_LAYOUTS[any_layout]
 
 
 def test_the_axes_of_a_missing_system_are_unknown() -> None:
-    # Only a missing endpoint (`None`) has no `axes` to read, and reads as
-    # `[...]`; any system reads as its own axes.
-    assert _systems._axes_or_unknown(None) == [...]
-    assert type(_systems._axes_or_unknown(None)) is AxisList
+    # Only a missing endpoint reads [...]; a system reads its own axes.
+    assert get_axes(None) == [...]
+    assert type(get_axes(None)) is AxisList
     for system in (CS(), CS(axes=[X, ...]), RASCoordinateSystem()):
-        assert _systems._axes_or_unknown(system) is system.axes
+        assert get_axes(system) is system.axes
 
 
 def test_the_axes_of_a_fixed_dimension_system() -> None:
@@ -447,7 +428,7 @@ def test_an_axis_by_its_name(any_layout: str) -> None:
 
 
 def test_a_missing_name(any_layout: str) -> None:
-    # A name never matches one of the axes that `...` stands for.
+    # A name never matches the axes that `...` stands for.
     with pytest.raises(KeyError, match="'y'"):
         AxisList(ANY_LAYOUTS[any_layout])["y"]
     with pytest.raises(KeyError):
@@ -458,7 +439,7 @@ def test_a_shared_name_is_ambiguous(any_layout: str) -> None:
     axes = AxisList([*ANY_LAYOUTS[any_layout], Axis(name="x")])
     with pytest.raises(ValueError, match="2 axes"):
         axes["x"]
-    # `index` and `in` find the first one, as for any list.
+    # index and `in` find the first match, as lists do.
     assert axes.index("x") == ANY_LAYOUTS[any_layout].index(X)
     assert "x" in axes
 
@@ -486,14 +467,13 @@ def test_an_integer_indexes_the_entries(any_layout: str) -> None:
 
 
 def test_entries_and_axes_differ_in_an_open_list() -> None:
-    # In `[x, ..., t]`, entry 2 is `t`, which is the last axis, and the
-    # axis at position 2 is one of the axes that `...` stands for.
+    # Entry 2 is T, but the axis at position 2 is one that `...` stands for.
     axes = AxisList([X, ..., T])
     assert len(axes) == 3 and axes.ndim is None
     assert axes[2] is T and axes.index("t") == 2
     assert axes.restrict([2]) == [Axis()]
     assert axes.restrict([-1]) == [T]
-    # Walking the entries walks `...`, not the axes it stands for.
+    # Iterating over the entries yields `...` itself.
     assert [axes[i] for i in range(len(axes))] == [X, ..., T]
 
 
@@ -507,12 +487,12 @@ def test_index_of_a_name(any_layout: str) -> None:
 def test_index_of_an_axis(any_layout: str) -> None:
     entries = ANY_LAYOUTS[any_layout]
     axes = AxisList(entries)
-    # An axis matches itself, and a query that sets fewer fields.
+    # An axis matches itself and any query that sets fewer fields.
     assert axes.index(T) == entries.index(T)
     assert axes.index(TimeAxis()) == entries.index(T)
     assert axes.index(Axis(unit="second")) == entries.index(T)
     assert axes.index(Axis(name="x")) == entries.index(X)
-    # The empty query matches the first axis.
+    # An empty query matches the first axis.
     assert axes.index(Axis()) == (1 if any_layout == "start" else 0)
 
 
@@ -520,19 +500,17 @@ def test_index_compares_only_the_fields_the_query_sets() -> None:
     axes = AxisList([Axis(), Axis(name="x"), Axis(name="x", unit="mm")])
     assert axes.index("x") == 1
     assert axes.index(Axis(name="x", unit="mm")) == 2
-    # An unset field of the entry does not match a field the query sets.
+    # An unset field of an entry does not match a field that the query sets.
     assert axes.index(Axis(unit="mm")) == 2
 
 
 def test_index_asks_for_the_class_of_the_query() -> None:
-    # (`Axis(type="space")` builds a `SpaceAxis`, so the plain axis is one
-    # that names no type.)
+    # Axis(type='space') builds a SpaceAxis, so a plain axis has no type.
     plain = Axis(name="x", unit="mm")
     assert type(plain) is Axis
     spatial = SpaceAxis(name="x")
     axes = AxisList([plain, spatial])
-    # A plain `Axis` query matches any axis; a `SpaceAxis` query only a
-    # `SpaceAxis` (or a subclass), whatever the fields of the others.
+    # A plain Axis query matches any axis; a SpaceAxis query only spatial ones.
     assert axes.index(Axis(name="x")) == 0
     assert axes.index(SpaceAxis(name="x")) == 1
     assert AxisList([R()]).index(SpaceAxis()) == 0
@@ -542,7 +520,7 @@ def test_index_asks_for_the_class_of_the_query() -> None:
 
 def test_index_never_matches_ellipsis(unknown_axes: tx.Sequence) -> None:
     for system in (CS(axes=unknown_axes), None):
-        axes = _systems._axes_or_unknown(system)
+        axes = get_axes(system)
         for query in (Axis(), "x", TimeAxis()):
             with pytest.raises(ValueError, match="is not in list"):
                 axes.index(query)
@@ -589,8 +567,7 @@ def test_index_refuses_other_queries(query: object) -> None:
     ],
 )
 def test_the_position_of_an_entry(layout: str, expected: list) -> None:
-    # An entry after `...` is counted from the end; any other entry is its
-    # own position. `...` is no axis, and has no position.
+    # Entries after `...` count from the end, and `...` has no position.
     axes = AxisList(ANY_LAYOUTS[layout])
     for entry, position in enumerate(expected):
         if position is None:
@@ -614,8 +591,7 @@ def test_a_position_in_a_closed_list() -> None:
 
 
 def test_a_position_in_an_open_list(layout: str) -> None:
-    # `...` stands for any number of axes, so every position is valid, and
-    # is returned as given: never clamped, never normalized.
+    # `...` stands for any count, so every position is returned as given.
     axes = AxisList(OPEN_LAYOUTS[layout])
     for i in (0, 1, 2, 5, 100, -1, -2, -3, -100):
         assert axes._position(i) == i
@@ -626,7 +602,7 @@ def test_a_position_in_an_unknown_system(
 ) -> None:
     for system in (CS(axes=unknown_axes), None):
         for i in (0, 3, -1):
-            assert _systems._axes_or_unknown(system)._position(i) == i
+            assert get_axes(system)._position(i) == i
 
 
 def test_a_position_may_be_a_numpy_integer() -> None:
@@ -643,7 +619,7 @@ def test_a_position_is_an_integer(ref: object) -> None:
 @pytest.mark.parametrize(
     "layout, known",
     [
-        # position -> axis, for the positions that an explicit axis holds
+        # The axis at each explicit position.
         ("start", {-2: X, -1: T}),
         ("middle", {0: X, -1: T}),
         ("end", {0: X, 1: T}),
@@ -652,8 +628,7 @@ def test_a_position_is_an_integer(ref: object) -> None:
 def test_the_axis_at_a_position_of_an_open_list(
     layout: str, known: dict
 ) -> None:
-    # A non-negative position reads the part before `...`, a negative one
-    # the part after it; any other position is unknown.
+    # Non-negative positions read before `...` and negative ones after it.
     axes = AxisList(OPEN_LAYOUTS[layout])
     for position in range(-5, 5):
         expected = known.get(position, Axis())
@@ -666,7 +641,7 @@ def test_the_axis_at_a_position_of_an_unknown_system(
 ) -> None:
     for system in (CS(axes=unknown_axes), None):
         for position in (0, 2, -1):
-            assert _systems._axes_or_unknown(system).at(position) == Axis()
+            assert get_axes(system).at(position) == Axis()
 
 
 # ----------------------------------------------------------------------
@@ -695,15 +670,14 @@ def test_expand_an_unknown_system(unknown_axes: tx.Sequence) -> None:
 
 
 def test_expand_keeps_the_class_and_the_name() -> None:
-    # The class is called again on the closed axes, so it keeps the name,
-    # and builds the subclass that two axes select from it.
+    # The class is called again on the closed axes and keeps the name.
     system = ArrayCoordinateSystem(axes=[Axis(name="i"), ...])
     expanded = system.expand(2)
     assert type(expanded) is ArrayCoordinateSystem2D
     assert isinstance(expanded, ArrayCoordinateSystem)
     assert expanded.name == "array"
     assert list(expanded.axes) == [Axis(name="i"), Axis()]
-    # A number of axes no subclass is selected on keeps the class itself.
+    # An axis count with no subclass keeps the class itself.
     expanded = system.expand(4)
     assert type(expanded) is ArrayCoordinateSystem
     assert expanded.name == "array"
@@ -824,8 +798,7 @@ def test_embed_is_the_inverse_of_restrict() -> None:
 
 
 def test_embed_keeps_the_positions_restrict_reads() -> None:
-    # The embedded system reads back, at each known position, the axis that
-    # was embedded there: the composers check discrete axes this way.
+    # Each known position reads back the axis embedded there.
     embedded = CS(axes=[X, Axis(name="c", discrete=True)]).embed([0, 3])
     axes = embedded.axes
     assert axes.at(3).discrete is True
@@ -834,8 +807,7 @@ def test_embed_keeps_the_positions_restrict_reads() -> None:
 
 
 def test_embed_an_open_system(layout: str) -> None:
-    # An open system is first closed to one axis per position: wherever
-    # `...` sits, two positions close it to `[X, T]`.
+    # An open system is closed to one axis per position first.
     system = CS(axes=OPEN_LAYOUTS[layout])
     assert system.embed([2, 0], ndim=3) == CS(axes=[T, Axis(), X])
     assert system.embed([2, 0]) == CS(axes=[T, Axis(), X, ...])
@@ -949,8 +921,7 @@ def test_an_unknown_system_is_compatible_with_every_system(
 
 
 def test_compatible_ras_with_time() -> None:
-    # The example of the design: `[RAS axes, ...]` is compatible with a
-    # closed RAS and time system.
+    # [RAS axes, ...] is compatible with a closed RAS and time system.
     ras = list(RASCoordinateSystem().axes)
     assert CS(axes=[*ras, ...]).compatible_with(CS(axes=[*ras, TimeAxis()]))
     assert CS(axes=[*ras, ...]).compatible_with(RASCoordinateSystem())
@@ -968,10 +939,9 @@ def test_compatible_refuses_a_non_system() -> None:
 # ----------------------------------------------------------------------
 #   DISPATCH OF OPEN SYSTEMS
 # ----------------------------------------------------------------------
-# Every dispatch predicate says something about all the axes of a system
-# (how many there are, or what each one is), which an open system does
-# not know. So no predicate holds of one, and calling a class with open
-# axes builds that class itself.
+# Every dispatch predicate speaks about all axes, which an open system does
+# not know, so no predicate holds and a class called with open axes builds
+# that class itself.
 
 MM = "mm"
 SAMPLE = "index"
@@ -984,15 +954,15 @@ def _ras(unit: tx.Optional[str] = None) -> list:
 @pytest.mark.parametrize(
     "axes",
     [
-        # two entries, but an unknown number of axes
+        # Two entries and an unknown axis count.
         [X, ...],
         [..., X],
-        # three spatial entries
+        # Three spatial entries.
         [SpaceAxis(), SpaceAxis(), ...],
-        # RAS, in millimetres, then anything
+        # RAS in mm, then anything.
         [*_ras(MM), ...],
         [..., *_ras(MM)],
-        # sampled axes, then anything
+        # Sampled axes, then anything.
         [Axis(unit=SAMPLE), Axis(unit=SAMPLE), ...],
         [...],
     ],
@@ -1048,7 +1018,7 @@ def test_an_open_system_keeps_the_class_it_was_called_as(
 def test_no_dispatch_predicate_holds_of_an_open_list(
     predicate: tx.Callable, axes: tx.Optional[list]
 ) -> None:
-    # Not an error, and not a match, wherever `...` sits.
+    # Neither an error nor a match, wherever `...` sits.
     assert predicate(axes) is False
     if axes is not None:
         assert predicate(AxisList(axes)) is False
@@ -1073,7 +1043,7 @@ def test_a_closed_list_still_selects_its_class() -> None:
         (CS, [X, ...], 4, CS),
         (CS, [*_ras(MM), ...], 3, RASmm),
         (CS, [..., *_ras()], 3, RASCoordinateSystem),
-        # The unknown axes are read as the spatial axes the class declares.
+        # The unknown axes read as the declared spatial axes of the class.
         (
             SpatialCoordinateSystem,
             [SpaceAxis(), ...],
@@ -1092,8 +1062,7 @@ def test_a_closed_list_still_selects_its_class() -> None:
 def test_expand_selects_the_class_of_the_closed_system(
     cls: type, axes: list, ndim: int, closed: type
 ) -> None:
-    # Closing a system builds the class that listing the closed axes
-    # does: the one its axes select. The name is the system's own.
+    # Closing builds the class that the closed axes select, with the name.
     system = cls(axes=axes)
     expanded = system.expand(ndim)
     assert type(expanded) is closed
@@ -1102,17 +1071,13 @@ def test_expand_selects_the_class_of_the_closed_system(
 
 
 def test_an_axis_list_given_to_expand_is_converted_item_by_item() -> None:
-    # Regression: `expand` handed the class an `AxisList`, which the
-    # optional field takes as it is, so the unknown `Axis()` were not read
-    # as spatial axes, and the closed system was not dispatched.
+    # Regression: unknown axes were not read as spatial, so no dispatch.
     expanded = SpatialCoordinateSystem(axes=[SpaceAxis(), ...]).expand(3)
     assert all(type(axis) is SpaceAxis for axis in expanded.axes)
 
 
 def test_restrict_and_embed_build_what_their_axes_select() -> None:
-    # The result describes another space, so neither the class nor the
-    # name of the system is carried over: it is what `CoordinateSystem`
-    # builds from the axes.
+    # The result describes another space, so neither class nor name is kept.
     ras = RASmm()
     assert ras.restrict([0, 1, 2]) == CS(axes=list(ras.axes))
     assert type(ras.restrict([0, 2])) is SpatialCoordinateSystem2D
@@ -1126,9 +1091,8 @@ def test_restrict_and_embed_build_what_their_axes_select() -> None:
 # ----------------------------------------------------------------------
 #   PHYSICAL SYSTEMS
 # ----------------------------------------------------------------------
-# A generic physical system takes, on every axis, a physical unit of the
-# axis's kind or no unit yet (`None`), and may be open; it never takes the
-# sample. The millimetre systems are in millimetres, and nothing else.
+# A generic physical system gives each axis the physical unit of its kind,
+# or none, and may be open. A millimetre system takes millimetres only.
 
 
 @pytest.mark.parametrize(
@@ -1184,8 +1148,7 @@ def test_a_physical_system_refuses_the_sample(axes: list) -> None:
 
 
 def test_a_physical_system_takes_a_unit_of_the_axis_kind_only() -> None:
-    # The type of the axis refuses a unit of another kind before the
-    # system sees it.
+    # The axis type refuses a unit of the wrong kind first.
     with pytest.raises(ConversionError, match="SpaceAxis.unit"):
         PhysicalCoordinateSystem(axes=[SpaceAxis(unit="s")])
     with pytest.raises(ConversionError, match="TimeAxis.unit"):
@@ -1216,7 +1179,7 @@ def test_a_millimetre_system_refuses_any_other_unit(
     axes = [type(axis)(unit=unit) for axis in cls().axes]
     with pytest.raises(ValueError, match="in millimetres|counts samples"):
         cls(axes=axes)
-    # A single axis in another unit is enough.
+    # A single axis in another unit is refused.
     mixed = list(cls().axes)
     mixed[1] = type(mixed[1])(unit=unit)
     with pytest.raises(ValueError, match="in millimetres|counts samples"):
@@ -1229,8 +1192,7 @@ def test_a_millimetre_system_refuses_any_other_unit(
 def test_a_millimetre_system_defaults_to_millimetres(cls: type) -> None:
     for system in (cls(), cls(axes=None)):
         assert all(str(axis.unit) == "millimeter" for axis in system.axes)
-    # ... and is fixed to three axes: `...` is refused there, as in every
-    # fixed-dimension system.
+    # A millimetre system has three axes, so `...` is refused.
     with pytest.raises(ConversionError):
         cls(axes=[*cls().axes[:2], ...])
 
@@ -1249,11 +1211,10 @@ def test_a_millimetre_system_defaults_to_millimetres(cls: type) -> None:
 def test_only_millimetres_select_a_millimetre_system(
     unit: tx.Optional[str], expected: type
 ) -> None:
-    # There is no physical RAS system for another unit, so RAS axes in
-    # metres are an `RASCoordinateSystem`, as unit-less ones are.
+    # RAS axes in another unit give a RASCoordinateSystem.
     assert type(CS(axes=_ras(unit))) is expected
     assert type(RASCoordinateSystem(axes=_ras(unit))) is expected
-    # Mixed units select no millimetre system either.
+    # Mixed units select no millimetre system.
     mixed = [R(unit=MM), A(unit=MM), S(unit=unit)]
     assert type(CS(axes=mixed)) is expected
 
@@ -1265,21 +1226,18 @@ def test_a_physical_system_in_another_unit_stays_physical() -> None:
 
 
 def test_an_open_system_in_millimetres_closes_to_a_physical_one() -> None:
-    # An open system is not physical, whatever its explicit axes say; it
-    # becomes physical once closed, if every axis then carries a unit.
+    # An open system is not physical, but it can close to a physical one.
     system = CS(axes=[..., L(unit=MM), P(unit=MM), S(unit=MM)])
     assert type(system) is CS
     assert type(system.expand(3)) is LPSmm
-    # The axes `...` closes to carry no unit, so no physical system holds
-    # them.
+    # The axes that `...` closes to have no unit.
     assert type(CS(axes=[R(unit=MM), ...]).expand(3)) is CoordinateSystem3D
 
 
 # ----------------------------------------------------------------------
 #   AXIS CONTAINERS
 # ----------------------------------------------------------------------
-# `AxisSequence` is the read-only base; `AxisTuple` (a tuple) and
-# `AxisList` (a list) share all of its API.
+# AxisSequence is a read-only base whose API AxisTuple and AxisList share.
 
 CONTAINERS = [AxisList, AxisTuple]
 
@@ -1292,20 +1250,17 @@ def test_the_hierarchy_of_the_axis_containers() -> None:
     assert issubclass(AxisTuple, tuple)
     assert not issubclass(AxisList, tuple)
     assert not issubclass(AxisTuple, list)
-    # `AxisSequence` is abstract: it says what a sequence of axes reads,
-    # not how it stores them.
+    # AxisSequence is abstract and says nothing about storage.
     with pytest.raises(TypeError):
         AxisSequence()  # type: ignore[abstract]
 
 
 @pytest.mark.parametrize("cls", CONTAINERS, ids=lambda c: c.__name__)
 def test_the_axis_sequence_reads_win_over_the_builtins(cls: type) -> None:
-    # An item, a name and a query are read as `AxisSequence` reads them,
-    # whichever of it and the builtin comes first in the bases.
+    # The item, name and query reads come from AxisSequence.
     for name in ("__getitem__", "__contains__", "index"):
         assert getattr(cls, name) is getattr(AxisSequence, name)
-    # Everything else is the builtin's, not the generic mixins of
-    # `collections.abc.Sequence`.
+    # Everything else comes from the builtin type.
     builtin = list if cls is AxisList else tuple
     for name in ("__len__", "__iter__", "count", "__eq__", "__repr__"):
         assert getattr(cls, name) is getattr(builtin, name)
@@ -1360,7 +1315,7 @@ def test_an_axis_tuple_is_immutable() -> None:
     with pytest.raises(TypeError):
         axes[0] = Z  # type: ignore[index]
     assert not hasattr(axes, "append")
-    # A fixed-dimension system's axes are one.
+    # The axes of a fixed-dimension system are an immutable tuple.
     with pytest.raises(TypeError):
         RASCoordinateSystem().axes[0] = R()  # type: ignore[index]
 
@@ -1387,7 +1342,7 @@ def test_every_system_stores_an_axis_sequence() -> None:
         assert isinstance(axes, AxisSequence)
         fixed = issubclass(cls, (CoordinateSystem2D, CoordinateSystem3D))
         assert type(axes) is (AxisTuple if fixed else AxisList)
-    # An open-capable class stores a tuple it is given as an `AxisList`.
+    # A class that may be open stores a given tuple as an AxisList.
     assert type(CS(axes=AxisTuple([X, ...])).axes) is AxisList
 
 
@@ -1423,6 +1378,6 @@ def test_a_fixed_axis_tuple_field_converts_each_position() -> None:
     assert type(system.axes) is AxisTuple
     assert [type(axis) for axis in system.axes] == [SpaceAxis] * 3
     assert system.axes.names == ("x", "y", "z")
-    # Each position to its own type.
+    # Each position converts to its own axis type.
     ras = RASCoordinateSystem(axes=[Axis(name="r"), Axis(), Axis()])
     assert [type(axis) for axis in ras.axes] == [R, A, S]

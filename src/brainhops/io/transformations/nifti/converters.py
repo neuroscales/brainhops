@@ -1,7 +1,7 @@
 """
 Converters into the NIfTI transformation formats.
 
-`t.to(NiftiVoxelToRAS)`, `NiftiVoxelToRAS.from_other(t)` and
+`t.to(NiftiVoxelToRAS)`, `NiftiVoxelToRAS.from_any(t)` and
 `io.save(t, "affine.nii.gz")` all run these converters. Each one either
 returns an instance of its format that is exactly the map `t` is, or
 raises a `ConversionError` that says what the format cannot hold.
@@ -41,7 +41,7 @@ from bagof.magic import replace
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.convert import convert, converter
+from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel.enums import BoundaryCondition
 
 # io
@@ -83,7 +83,11 @@ whose affine places the grid without changing the map."""
 
 @converter(_xforms.Sequence, NiftiVoxelToRAS)
 @converter
-def _(t: _xforms.Affine, **kwargs) -> NiftiVoxelToRAS:
+def _(
+    t: _xforms.Affine,
+    cls: tx.Type[NiftiVoxelToRAS],
+    **kwargs,
+) -> NiftiVoxelToRAS:
     # Exactly, or raise: the bridges, and the reduction to one affine.
     cls = NiftiVoxelToRAS
     options = format_options(t, cls, kwargs, AFFINE_OPTIONS)
@@ -93,7 +97,11 @@ def _(t: _xforms.Affine, **kwargs) -> NiftiVoxelToRAS:
 
 @converter(_xforms.Sequence, NiftiRASToVoxel)
 @converter
-def _(t: _xforms.Affine, **kwargs) -> NiftiRASToVoxel:
+def _(
+    t: _xforms.Affine,
+    cls: tx.Type[NiftiRASToVoxel],
+    **kwargs,
+) -> NiftiRASToVoxel:
     # Exactly, or raise: the bridges, and the reduction to one affine.
     cls = NiftiRASToVoxel
     options = format_options(t, cls, kwargs, AFFINE_OPTIONS)
@@ -103,10 +111,14 @@ def _(t: _xforms.Affine, **kwargs) -> NiftiRASToVoxel:
 
 @converter(NiftiRASToVoxel, NiftiRASToVoxel)
 @converter
-def _(t: NiftiVoxelToRAS, **kwargs) -> NiftiVoxelToRAS:
+def _(
+    t: NiftiVoxelToRAS,
+    cls: tx.Type[NiftiVoxelToRAS],
+    **kwargs,
+) -> NiftiVoxelToRAS:
     # Within its own format, an affine is changed by the rules of any
     # affine (a new `matrix=`, say), which keep its type.
-    return convert(t, _xforms.Affine, **kwargs)
+    return replace(t, **kwargs) if kwargs else t
 
 
 # ----------------------------------------------------------------------
@@ -117,7 +129,11 @@ def _(t: NiftiVoxelToRAS, **kwargs) -> NiftiVoxelToRAS:
 @converter(_xforms.CoordinatesField, NiftiRASDisplacementField)
 @converter(_xforms.Sequence, NiftiRASDisplacementField)
 @converter
-def _(t: _xforms.DisplacementField, **kwargs) -> NiftiRASDisplacementField:
+def _(
+    t: _xforms.DisplacementField,
+    cls: tx.Type[NiftiRASDisplacementField],
+    **kwargs,
+) -> NiftiRASDisplacementField:
     # Exactly, or raise: one field of displacements, between a world-to-grid
     # affine and its inverse, sampled as NIfTI stores it, and written in the
     # encoding it holds. A field of coordinates is refused there, with the
@@ -137,7 +153,11 @@ def _(t: _xforms.DisplacementField, **kwargs) -> NiftiRASDisplacementField:
 @converter(_xforms.DisplacementField, NiftiRASCoordinatesField)
 @converter(_xforms.Sequence, NiftiRASCoordinatesField)
 @converter
-def _(t: _xforms.CoordinatesField, **kwargs) -> NiftiRASCoordinatesField:
+def _(
+    t: _xforms.CoordinatesField,
+    cls: tx.Type[NiftiRASCoordinatesField],
+    **kwargs,
+) -> NiftiRASCoordinatesField:
     # Exactly, or raise: one field of coordinates on the file's voxels,
     # sampled as NIfTI stores it, followed by an affine into RAS. A field
     # of displacements is refused there, with the reason.
@@ -149,16 +169,24 @@ def _(t: _xforms.CoordinatesField, **kwargs) -> NiftiRASCoordinatesField:
 
 
 @converter
-def _(t: NiftiRASDisplacementField, **kwargs) -> NiftiRASDisplacementField:
+def _(
+    t: NiftiRASDisplacementField,
+    cls: tx.Type[NiftiRASDisplacementField],
+    **kwargs,
+) -> NiftiRASDisplacementField:
     # Within its own format, a field is copied with the changes asked for.
     return replace(t, **kwargs) if kwargs else t
 
 
 @converter
-def _(t: NiftiRASCoordinatesField, **kwargs) -> NiftiRASCoordinatesField:
+def _(
+    t: NiftiRASCoordinatesField,
+    cls: tx.Type[NiftiRASCoordinatesField],
+    **kwargs,
+) -> NiftiRASCoordinatesField:
     # Within its own format, a field is changed by the rules of any field
     # of coordinates (a new `field=`, say), which keep its type.
-    return convert(t, _xforms.CoordinatesField, **kwargs)
+    return replace(t, **kwargs) if kwargs else t
 
 
 # ----------------------------------------------------------------------

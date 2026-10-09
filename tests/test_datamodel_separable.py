@@ -1,11 +1,10 @@
-"""Tests for the separable reslice (issue #11).
+"""Tests for the separable reslice (#11).
 
-The axis groups of a reslice are read from the normal form that
-`compute(factor=True)` returns, and the `separable` module executes it.
-These cover the groups as the executor reads them, the step ordering, the
-per-step strategy (gather, weight matrix, or pull), and the end-to-end
-reslice, which must match the monolithic pull within the interpolation
-tolerance and be bit-identical when nothing is separable.
+The axis groups are read from the factored normal form of
+`compute(factor=True)` and executed by `separable`. The tests cover the
+groups, the order of the steps, the strategy of each step (gather, weight
+matrix or pull) and equality with the monolithic pull, which is exact when
+nothing is separable.
 """
 
 import numpy as np
@@ -15,8 +14,8 @@ import brainhops.backends as backends
 from brainhops._core.bsplines import pull, spline_matrix
 from brainhops.backends import backend
 from brainhops.datamodel import kinds
-from brainhops.datamodel._transformations import factor as fac
-from brainhops.datamodel._transformations import separable as sep
+from brainhops.datamodel._transformations.compute import factor as fac
+from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.axes import A, Axis, R, S, SpaceAxis, TimeAxis
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import SingleScaleImage
@@ -24,7 +23,6 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
-    CompositionError,
     DisplacementField,
     Permutation,
     Scaling,
@@ -32,6 +30,7 @@ from brainhops.datamodel.transformations import (
     SubspaceTransformation,
     Translation,
 )
+from brainhops.errors import CompositionError
 
 # ----------------------------------------------------------------------
 #   FIXTURES AND HELPERS
@@ -47,12 +46,7 @@ def _time(name: str = "t", discrete: object = None) -> Axis:
 
 
 def _components(els: list, shape: tuple) -> object:
-    """The (grid axes, data axes) of every group of a chain of elements.
-
-    The groups are read from the normal form of the chain behind a grid of
-    the given shape, the way the reslice executor reads them. A chain that
-    is left unfactored (a single coupled group) gives `None`.
-    """
+    """Return (grid axes, data axes) per group, or None if unfactored."""
     seq = Sequence(transformations=[CartesianField(shape=shape), *els])
     read = sep._groups(seq.compute(mode=kinds.Affine, factor=True), len(shape))
     if read is None:
@@ -80,9 +74,7 @@ def test_diagonal_affine_splits_into_singletons() -> None:
 
 
 def test_rotation_block_and_identity_axis_form_two_groups() -> None:
-    # A rotation about a non-cardinal axis, so every spatial axis couples
-    # to every other. A rotation about a single axis would leave one axis
-    # free and split the block.
+    # A non-cardinal rotation couples all spatial axes.
     def _rot(axis: int, angle: float) -> np.ndarray:
         c, s = np.cos(angle), np.sin(angle)
         rots = {
@@ -97,8 +89,7 @@ def test_rotation_block_and_identity_axis_form_two_groups() -> None:
     matrix[:3, :3] = rotation
     matrix[3, 3] = 1.0
     els = [Affine(matrix=matrix)]
-    # The rotation couples x and y, z stands alone, and the last axis is
-    # its own group.
+    # The spatial block is coupled and the last axis is its own group.
     assert _components(els, (4, 5, 6, 3)) == [
         ((0, 1, 2), (0, 1, 2)),
         ((3,), (3,)),
@@ -109,7 +100,7 @@ def test_a_single_shear_entry_merges_two_axes() -> None:
     matrix = np.eye(4, 5)
     matrix[0, 1] = 0.5
     els = [Affine(matrix=matrix)]
-    # Output axis 0 now reads input axes 0 and 1, so the two merge.
+    # The shear makes output axis 0 read inputs 0 and 1, so they merge.
     assert _components(els, (4, 5, 6, 3)) == [
         ((0, 1), (0, 1)),
         ((2,), (2,)),
@@ -118,9 +109,7 @@ def test_a_single_shear_entry_merges_two_axes() -> None:
 
 
 def test_permutation_swaps_axes_and_relabels_groups() -> None:
-    # Output i takes input permutation[i]. Swapping axis 0 and axis 3
-    # keeps every axis in its own group, but pairs a grid axis with a
-    # different data axis.
+    # Swapping 0 and 3 pairs a grid axis with a different data axis.
     els = [Permutation(permutation=np.asarray([3, 1, 2, 0]))]
     assert _components(els, (4, 5, 6, 3)) == [
         ((0,), (3,)),
@@ -146,8 +135,7 @@ def test_subspace_field_couples_its_axes_and_passes_the_rest() -> None:
 
 
 def test_raw_field_is_a_single_group() -> None:
-    # A raw field couples every axis to every axis, so the chain is one
-    # group, left unfactored, and the reslice is the monolithic pull.
+    # A raw field couples everything into one unfactored group.
     warp = np.zeros((4, 4, 4, 4, 4))
     field = DisplacementField(field=warp, degree=1, bound="reflect")
     assert _components([field], (4, 4, 4, 4)) is None
@@ -162,10 +150,7 @@ def test_closure_through_permutation_after_subspace() -> None:
         output_axes=np.asarray([0, 1, 2]),
         input=CoordinateSystem(axes=[_sp("x"), _sp("y"), _sp("z"), _time()]),
     )
-    # A permutation that moves the coupled spatial block to axes 1, 2, 3
-    # and the time axis to axis 0. The closure carries the coupling
-    # through the permutation, so the group's grid axes are the spatial
-    # axes and its data axes are 1, 2, 3.
+    # The permutation moves the spatial block to data axes 1 to 3.
     perm = Permutation(permutation=np.asarray([3, 0, 1, 2]))
     comps = _components([sub, perm], (5, 5, 5, 3))
     assert comps == [((0, 1, 2), (1, 2, 3)), ((3,), (0,))]
@@ -228,9 +213,7 @@ def test_discrete_axis_with_integer_shift_is_a_gather() -> None:
 
 
 def test_discrete_axis_degree_zero_is_a_gather() -> None:
-    # An degree-0 integer shift along a discrete axis is exact and allowed:
-    # it moves whole samples without reading any value between them. The
-    # maintainer chose to allow this case.
+    # A degree-0 integer shift on a discrete axis takes whole samples.
     system = CoordinateSystem(axes=[_sp("x"), _time(discrete=True)])
     data = np.arange(12.0).reshape(4, 3)
     seq = _diagonal_seq([1.0, 1.0], [0.0, 1.0], system, system, (4, 3))
@@ -251,9 +234,7 @@ def test_discrete_axis_degree_zero_is_a_gather() -> None:
 def test_discrete_channel_untouched_at_degree_zero_matches_monolithic() -> (
     None
 ):
-    # A label map with a discrete channel axis, resliced by a diagonal scale
-    # on the spatial axes at degree 0. The channel axis is untouched, so the
-    # reslice succeeds and matches the monolithic pull.
+    # At degree 0, a diagonal spatial scale leaves the channel untouched.
     system = CoordinateSystem(
         axes=[_sp("x"), _sp("y"), _time("c", discrete=True)]
     )
@@ -276,8 +257,7 @@ def test_discrete_channel_untouched_at_degree_zero_matches_monolithic() -> (
 
 
 def test_interpolating_across_discrete_channel_still_raises() -> None:
-    # A non-integer scale along the discrete channel axis would resample
-    # across it, which is refused.
+    # A non-integer scale would resample across the discrete channel.
     system = CoordinateSystem(
         axes=[_sp("x"), _sp("y"), _time("c", discrete=True)]
     )
@@ -300,13 +280,8 @@ def test_interpolating_across_discrete_channel_still_raises() -> None:
 def test_discrete_channel_whole_sample_map_gathers_at_high_degree(
     degree: int, coeff: bool
 ) -> None:
-    # A discrete channel axis moved by a whole-sample shift is an exact
-    # gather at any degree, even with reflect boundaries or spline
-    # coefficients where a continuous axis would take the weight-matrix
-    # path. The step must succeed and must not blend samples across the
-    # discrete axis. This restores the behaviour before the class-(b)
-    # routing change and is the correct no-interpolation-across-discrete
-    # semantics: the monolithic pull would wrongly mix the channels here.
+    # A whole-sample shift of a discrete channel is an exact gather at any
+    # degree, where the monolithic pull would blend the channels.
     system = CoordinateSystem(
         axes=[_sp("x"), _sp("y"), _sp("z"), _time("c", discrete=True)]
     )
@@ -336,10 +311,7 @@ def test_discrete_channel_whole_sample_map_gathers_at_high_degree(
             bound="reflect",
             coeff=coeff,
         )
-    # The channel shift only reindexes whole channels, so every output
-    # channel of the shifted reslice equals one channel of the unshifted
-    # reslice exactly. A blend across the discrete axis would leave no
-    # output channel equal to any single input channel.
+    # Each shifted channel equals exactly one input channel; a blend would not.
     assert shifted.shape == shape
     for c in range(shape[-1]):
         assert any(
@@ -349,9 +321,7 @@ def test_discrete_channel_whole_sample_map_gathers_at_high_degree(
 
 
 def test_discrete_channel_genuine_scale_raises_at_high_degree() -> None:
-    # A genuine resampling of the discrete channel axis is refused at every
-    # degree, so the whole-sample gather is not mistaken for permission to
-    # interpolate across the axis.
+    # Resampling a discrete channel is refused at every degree.
     system = CoordinateSystem(
         axes=[_sp("x"), _sp("y"), _sp("z"), _time("c", discrete=True)]
     )
@@ -420,7 +390,7 @@ def test_spline_matrix_reproduces_pull_1d(
 ) -> None:
     with backend("numpy"):
         arr = np.linspace(-1.0, 1.0, 12)
-        # A scale and shift that sends some samples outside the grid.
+        # Scale and shift send some samples outside the grid.
         coords = np.arange(9) * 1.3 - 1.5
         weights = np.asarray(spline_matrix(12, coords, degree, bound, coeff))
         got = weights @ arr
@@ -473,10 +443,7 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
     system = _voxel_system(1)
     with backend("numpy"):
         data = np.arange(10.0)
-        # A unit scale with an integer shift is a gather, exact for any
-        # degree. A scale a hair away from one is a genuine resampling and
-        # falls to the weight-matrix path, still matching the monolithic
-        # pull.
+        # A gather, then a genuine resampling through the weight matrix.
         for scale, shift in ((1.0, 2.0), (0.9999999, 0.0)):
             matrix = np.asarray([[scale, shift]])
             grid = CartesianField(shape=(10,), input=system, output=system)
@@ -503,9 +470,7 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
 def test_separable_matches_monolithic_through_an_inner_less_reindex(
     degree: int,
 ) -> None:
-    # An inner-less subspace over different axes is a reindex (#110). It is
-    # now factored, so the reslice runs per group, and still matches the
-    # monolithic pull.
+    # An inner-less subspace over other axes is a reindex (#110).
     system = _voxel_system(3)
     with backend("numpy"):
         rng = np.random.default_rng(0)
@@ -538,12 +503,7 @@ def _pull_pair_cast(
     degree: int,
     bound: object,
 ) -> tuple:
-    # The separable and monolithic reslice of a two-axis image, for
-    # comparing the integer and boolean cast. The first axis carries the
-    # column and is scaled and shifted, so it takes the interpolating
-    # separable path and the assembled result is cast at the end. The second
-    # axis is a plain gather, which keeps the image separable into two
-    # groups so the monolithic fallback is not taken.
+    # Axis 0 interpolates while axis 1 is a gather, so two groups remain.
     system = _voxel_system(2)
     data = np.repeat(column[:, None], 3, axis=1)
     shape = data.shape
@@ -571,10 +531,7 @@ def _pull_pair_cast(
 def test_integer_output_clips_overshoot_and_rounds_half_away(
     dtype: object,
 ) -> None:
-    # A cubic reslice of a sharp step overshoots the dtype range. The
-    # monolithic pull clips the overshoot to the range and rounds half away
-    # from zero, so the separable reslice must produce the same integers
-    # rather than wrap the overshoot or round a tie to even.
+    # A cubic step overshoots; both paths clip and round half away from zero.
     info = np.iinfo(dtype)
     column = (np.array([0, 0, 0, 1, 1, 1, 0, 0, 0, 0]) * info.max).astype(
         dtype
@@ -585,9 +542,7 @@ def test_integer_output_clips_overshoot_and_rounds_half_away(
 
 
 def test_integer_downscale_rounds_ties_half_away_from_zero() -> None:
-    # A half-integer sample position lands a linear interpolation exactly on
-    # a tie. The monolithic pull rounds the tie away from zero, so a ramp
-    # must match it rather than round to even.
+    # A half-integer position makes the linear interpolation a tie.
     column = np.arange(6, dtype=np.uint8)
     got, ref = _pull_pair_cast(column, 0.5, 0.0, 1, "reflect")
     assert got.dtype == np.uint8
@@ -595,9 +550,7 @@ def test_integer_downscale_rounds_ties_half_away_from_zero() -> None:
 
 
 def test_boolean_output_truncates_toward_zero() -> None:
-    # A boolean reslice truncates toward zero, so a fractional value below
-    # one becomes False. The monolithic pull does the same, and the
-    # separable reslice must not round such a value up to True.
+    # Boolean output truncates toward zero.
     column = np.array([False, True, False, True, False, True])
     got, ref = _pull_pair_cast(column, 0.3, 0.0, 1, "reflect")
     assert got.dtype == np.bool_
@@ -605,7 +558,7 @@ def test_boolean_output_truncates_toward_zero() -> None:
 
 
 def _plan(seq: Sequence, data_shape: tuple, **opt: object) -> dict:
-    """The planned strategy of every group, keyed by its grid axes."""
+    """Return the planned strategy of each group, keyed by its grid axes."""
     steps = sep._plan(data_shape, seq, **opt)
     return {tuple(step["G"]): step["kind"] for step in steps}
 
@@ -617,8 +570,7 @@ def _classify_single(
     bound: object = "mirror",
     coeff: bool = False,
 ) -> str:
-    # The strategy of axis 0, rescaled and shifted, in a reslice whose axis
-    # 1 is untouched, so that the reslice factors into two groups.
+    # Axis 0 is rescaled and shifted, axis 1 is untouched.
     matrix = np.asarray([[scale, 0.0, shift], [0.0, 1.0, 0.0]])
     grid = CartesianField(shape=(10, 3))
     seq = Sequence(transformations=[grid, Affine(matrix=matrix)])
@@ -627,9 +579,7 @@ def _classify_single(
 
 
 def test_exact_unit_scale_is_a_gather_and_near_unit_is_a_matrix() -> None:
-    # A scale of exactly one, or a flip, with an integer shift is a gather,
-    # applied without interpolation. A scale a hair away from one, or a
-    # genuine resampling, falls to the weight-matrix path.
+    # A unit scale or flip with an integer shift is a gather.
     assert _classify_single(1.0, 2.0) == "gather"
     assert _classify_single(-1.0, 3.0) == "gather"
     assert _classify_single(0.9999999, 0.0) == "matrix"
@@ -637,30 +587,21 @@ def test_exact_unit_scale_is_a_gather_and_near_unit_is_a_matrix() -> None:
 
 
 def test_unit_scale_with_coeff_at_high_degree_is_a_matrix() -> None:
-    # With spline coefficients at degree two or above, the monolithic pull
-    # returns the reconstruction of the coefficients, not the raw
-    # coefficient a gather would return. Such a step takes the weight
-    # matrix instead, at degree one or below it stays a gather.
+    # Above degree 1, coefficients need a reconstruction, so a matrix.
     assert _classify_single(1.0, 2.0, degree=3, coeff=True) == "matrix"
     assert _classify_single(1.0, 2.0, degree=1, coeff=True) == "gather"
     assert _classify_single(1.0, 2.0, degree=0, coeff=True) == "gather"
 
 
 def test_unit_scale_with_reflect_above_degree_one_is_a_matrix() -> None:
-    # Scipy's reflect prefilter is not exactly interpolating above degree
-    # one, so a reflect gather would diverge from the monolithic pull. Such
-    # a step takes the weight matrix, at degree one or below it stays a
-    # gather.
+    # The reflect prefilter is inexact above degree 1, so a matrix.
     assert _classify_single(1.0, 2.0, degree=3, bound="reflect") == "matrix"
     assert _classify_single(1.0, 2.0, degree=5, bound="reflect") == "matrix"
     assert _classify_single(1.0, 2.0, degree=1, bound="reflect") == "gather"
 
 
 def test_coupled_and_interpolating_groups_are_pulled() -> None:
-    # A shear couples axes 0 and 1 into one two-dimensional group, which is
-    # pulled over those axes only, and the untouched axis 2 is a gather. A
-    # one-axis warp interpolates, so its group is pulled even though it is
-    # one-dimensional.
+    # The shear couples axes 0 and 1; a one-axis warp is pulled too.
     shear = np.eye(3, 4)
     shear[0, 1] = 0.5
     grid = CartesianField(shape=(4, 5, 6))
@@ -681,9 +622,7 @@ def test_coupled_and_interpolating_groups_are_pulled() -> None:
 
 
 def test_matrix_less_affine_is_the_identity_in_a_group() -> None:
-    # An affine with no matrix is the identity. It must be read and
-    # restricted without indexing into a missing matrix, and contributes
-    # nothing: each axis keeps the weight matrix of the diagonal affine.
+    # A matrix-less affine is the identity and contributes nothing.
     matrix = np.zeros((2, 3))
     matrix[0, 0], matrix[1, 1] = 2.0, 3.0
     els = [Affine(matrix=matrix), Affine(matrix=None)]
@@ -694,11 +633,8 @@ def test_matrix_less_affine_is_the_identity_in_a_group() -> None:
 
 
 def test_constant_boundary_near_all_corners_of_a_warp() -> None:
-    # A coupled three-dimensional warp inside a four-dimensional image,
-    # with a large displacement that samples outside the grid near every
-    # corner, a non-zero constant fill, and an degree above one. The spatial
-    # warp is a class-(c) batched pull, and the constant fill near the
-    # padded corners must match the monolithic pull.
+    # A coupled warp that samples outside near every corner, with a
+    # nonzero constant fill above degree 1, must match the monolithic pull.
     xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
     vox4 = CoordinateSystem(name="voxel4", axes=[xax, yax, zax, _time()])
     world4 = CoordinateSystem(
@@ -753,16 +689,12 @@ def test_constant_boundary_near_all_corners_of_a_warp() -> None:
 
 
 def test_class_a_gather_with_coeff_matches_monolithic() -> None:
-    # A flip is class-(a) eligible, but with spline coefficients at degree
-    # three the monolithic pull returns the reconstruction of the
-    # coefficients, not the raw coefficient a gather would return. The step
-    # must route to the weight matrix so the result still matches.
+    # A flip with coefficients at degree 3 needs the weight matrix.
     system = _voxel_system(2)
     with backend("numpy"):
         rng = np.random.default_rng(7)
         data = rng.normal(size=(6, 7))
-        # Axis 0 is a flip; axis 1 is a genuine rescale, so the reslice
-        # factors into two groups.
+        # Axis 0 is flipped and axis 1 genuinely rescaled.
         seq = _diagonal_seq([-1.0, 1.3], [5.0, 0.0], system, system, (6, 7))
         got = sep.pull_separable(
             data,
@@ -779,9 +711,7 @@ def test_class_a_gather_with_coeff_matches_monolithic() -> None:
 
 @pytest.mark.parametrize("degree", [3, 5])
 def test_class_a_reflect_gather_matches_monolithic(degree: int) -> None:
-    # A flip is class-(a) eligible, but scipy's reflect prefilter is not
-    # exactly interpolating above degree one, so the gather would diverge
-    # from the monolithic pull. The step routes to the weight matrix.
+    # A flip with the reflect prefilter above degree 1 needs a matrix.
     system = _voxel_system(2)
     with backend("numpy"):
         rng = np.random.default_rng(11)
@@ -805,8 +735,7 @@ def test_class_a_reflect_gather_matches_monolithic(degree: int) -> None:
 
 
 def test_output_dtype_float32_is_preserved() -> None:
-    # The separable pipeline runs in a floating working dtype, then casts
-    # back to the input dtype once at the end, matching the monolithic pull.
+    # The pipeline works in float and casts back once at the end.
     system = _voxel_system(2)
     with backend("numpy"):
         rng = np.random.default_rng(3)
@@ -828,8 +757,7 @@ def test_output_dtype_float32_is_preserved() -> None:
 
 
 def test_output_dtype_uint8_degree_zero_matches_monolithic() -> None:
-    # An integer input is lifted to float for the pipeline and rounded back
-    # once at the end, the way the monolithic pull rounds an integer output.
+    # Integer input is rounded back once at the end.
     system = _voxel_system(2)
     with backend("numpy"):
         rng = np.random.default_rng(5)
@@ -851,13 +779,12 @@ def test_output_dtype_uint8_degree_zero_matches_monolithic() -> None:
 
 
 def test_class_a_only_pipeline_preserves_dtype() -> None:
-    # A pipeline of only gather steps keeps the input dtype, the same dtype
-    # the monolithic pull returns.
+    # A gather-only pipeline keeps the input dtype.
     system = _voxel_system(2)
     with backend("numpy"):
         rng = np.random.default_rng(9)
         data = rng.normal(size=(6, 7)).astype(np.float32)
-        # Two flips, each a class-(a) gather.
+        # Two flips, each a gather.
         seq = _diagonal_seq([-1.0, -1.0], [5.0, 6.0], system, system, (6, 7))
         got = sep.pull_separable(
             data,
@@ -875,9 +802,7 @@ def test_class_a_only_pipeline_preserves_dtype() -> None:
 
 
 def test_subspace_warp_without_axes_does_not_silently_pass_through() -> None:
-    # An interpolating subspace transform that names no axes is malformed.
-    # It must not be read as pass-through and return the data unwarped. The
-    # separable path falls back to the monolithic pull, which raises.
+    # A malformed interpolating subspace falls back to the monolithic pull.
     system = _voxel_system(3)
     with backend("numpy"):
         rng = np.random.default_rng(6)
@@ -912,10 +837,7 @@ def test_subspace_warp_without_axes_does_not_silently_pass_through() -> None:
 
 
 def test_cras_to_fras_bridge_factors_into_singletons() -> None:
-    # A source grid in cRAS order and a target grid in fRAS order meet
-    # through a permutation and flip bridge. The detector must track each
-    # axis through the relabelling permutation, so the chain factors into
-    # per-axis groups rather than one coupled group.
+    # The bridge relabels the axes but must still factor per axis.
     from brainhops.datamodel.systems import (
         CRASCoordinateSystem,
         FRASCoordinateSystem,
@@ -952,8 +874,7 @@ def test_cras_to_fras_bridge_factors_into_singletons() -> None:
         )
         nf = transformation.compute(mode=kinds.Affine, factor=True)
         _, groups = sep._groups(nf, 3)
-        # Every group is a single grid axis and a single data axis, and
-        # every axis is covered.
+        # One grid axis and one data axis per group, covering every axis.
         assert len(groups) == 3
         for group in groups:
             assert len(group["G"]) == 1 and len(group["D"]) == 1
@@ -1049,8 +970,7 @@ def test_three_d_image_through_raw_warp_is_the_fallback() -> None:
         ref = pull(
             data, seq.compute().field, degree=3, bound="reflect", coeff=False
         )
-    # A single coupled group falls back to the monolithic pull, which is
-    # bit-identical.
+    # A single coupled group falls back to the monolithic pull exactly.
     assert np.array_equal(got, ref)
 
 
@@ -1088,7 +1008,7 @@ def _demonstration_image() -> tuple:
 def test_issue_11_spatial_warp_and_time_affine() -> None:
     img, vox4, world4 = _demonstration_image()
     data = np.asarray(img.data)
-    # Reslice onto fewer time points, with the time axis rescaled.
+    # Reslice onto fewer time points, rescaling the time axis.
     target = Affine(
         matrix=np.diag([2.0, 2.0, 2.0, 3.0, 1.0])[:-1],
         input=vox4,
@@ -1131,8 +1051,7 @@ def test_issue_11_spatial_warp_and_time_affine() -> None:
         backends.npndi.map_coordinates = original
 
     assert np.allclose(got, ref)
-    # The coupled spatial warp runs as a three-dimensional pull, and the
-    # four-dimensional pull never happens.
+    # The coupled warp runs as a 3-D pull, never a 4-D one.
     ndims = {shape[0] for shape in shapes}
     assert 4 not in ndims
     assert 3 in ndims
@@ -1140,8 +1059,7 @@ def test_issue_11_spatial_warp_and_time_affine() -> None:
 
 def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
     img, vox4, world4 = _demonstration_image()
-    # Drop the warp so the whole transformation is a diagonal affine: a
-    # y-flip and a time rescale onto fewer time points.
+    # No warp: a diagonal affine with a y flip and fewer time points.
     src = Affine(
         matrix=np.diag([2.0, 2.0, 2.0, 1.0, 1.0])[:-1],
         input=vox4,
@@ -1189,11 +1107,7 @@ def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
         backends.npndi.map_coordinates = original
 
     assert np.allclose(got, ref)
-    # No call interpolates the data itself. Every call builds a weight
-    # matrix by resampling the rows of a small identity, which are
-    # one-dimensional, so the flip and the scale move samples without
-    # sampling between them. A pull of the data would be three- or
-    # four-dimensional.
+    # Only 1-D identity rows are resampled, to build the weight matrices.
     for shape in inputs:
         assert len(shape) == 1
 
@@ -1204,19 +1118,15 @@ def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
 
 
 def test_large_one_dimensional_axis_routes_to_batched_pull() -> None:
-    # A one-dimensional interpolating step builds a weight matrix of
-    # `n_out * n_in` elements, which is enormous for a long axis. Above the
-    # threshold the step falls back to the batched pull the coupled class
-    # uses, and below it the weight matrix is used. Both paths match the
-    # monolithic pull.
+    # The weight matrix of a long axis is huge, so above a threshold the
+    # step falls back to a batched pull.
     system = _voxel_system(2)
     threshold = sep._MAX_WEIGHT_MATRIX_ELEMENTS
 
     def _build(n: int) -> tuple:
         data = np.arange(n * 3, dtype=float).reshape(n, 3)
         matrix = np.zeros((2, 3))
-        # Axis 0 is a genuine rescale, so it takes the interpolating class-(b)
-        # path. Axis 1 is a flip, a class-(a) gather, which never pulls.
+        # Axis 0 is genuinely rescaled and axis 1 flipped.
         matrix[0, 0], matrix[1, 1] = 1.3, -1.0
         matrix[1, 2] = 2.0
         grid = CartesianField(shape=(n, 3), input=system, output=system)
@@ -1248,7 +1158,7 @@ def test_large_one_dimensional_axis_routes_to_batched_pull() -> None:
             )
     finally:
         sep.pull_axes = original
-    # The small axis uses the weight matrix, so no batched pull runs.
+    # A small axis uses the weight matrix.
     assert calls["pull_axes"] == 0
     assert np.allclose(small, small_ref)
 
@@ -1271,8 +1181,7 @@ def test_large_one_dimensional_axis_routes_to_batched_pull() -> None:
             )
     finally:
         sep.pull_axes = original
-    # The large axis exceeds the threshold, so the class-(b) step routes to
-    # the batched pull.
+    # A large axis uses the batched pull.
     assert calls["pull_axes"] >= 1
     assert np.allclose(large, large_ref)
 
@@ -1307,9 +1216,7 @@ def _subspace(
 def _warp(
     shape_axes: tuple, seed: int, scale: float = 0.5
 ) -> DisplacementField:
-    # A displacement field with a nonzero, random displacement on each axis it
-    # names. A reslice through a nonzero field moves the data, so the reslice
-    # tests detect a wrong axis mapping rather than passing on a zero field.
+    # Nonzero displacements on every axis expose a wrong axis mapping.
     k = len(shape_axes)
     rng = np.random.default_rng(seed)
     field = rng.normal(size=(*shape_axes, k)) * scale
@@ -1324,11 +1231,7 @@ def _reslice_equal(
     degree: int = 3,
     bound: object = "reflect",
 ) -> None:
-    # Reslice random data of the given shape through a grid-and-subspace
-    # sequence with the separable path, and assert the result equals the
-    # monolithic pull of the same transform. A wrong axis mapping in the
-    # separable path corrupts the result, so this equality is what the
-    # component assertions on their own do not check.
+    # Compare with the monolithic pull on random data.
     with backend("numpy"):
         rng = np.random.default_rng(seed + 1000)
         data = rng.normal(size=shape)
@@ -1348,14 +1251,11 @@ def _reslice_equal(
     assert np.allclose(got, ref)
 
 
-# --- Non-interpolating inner: the finer partition is kept and reslices. ---
+# A non-interpolating inner transform gives a finer partition.
 
 
 def test_subspace_wrapping_diagonal_scaling_splits_into_singletons() -> None:
-    # A subspace wrapping a diagonal scaling mixes no axes. Its dependency is
-    # read from the inner scaling, so each axis is its own group rather than
-    # one coupled block. The finer partition must reslice to the monolithic
-    # result.
+    # A diagonal scaling mixes nothing, so every axis is its own group.
     inner = Scaling(
         scale=np.asarray([1.3, 0.7, 0.5]),
         input=_SUB_SYSTEM3,
@@ -1388,9 +1288,7 @@ def test_subspace_wrapping_diagonal_affine_splits_into_singletons() -> None:
 
 
 def test_nested_non_interpolating_subspace_splits_into_singletons() -> None:
-    # A subspace whose inner is itself a non-interpolating subspace, over a
-    # sub-subset. A diagonal affine mixes nothing, so each axis is its own
-    # group. The nested finer partition must reslice to the monolithic result.
+    # A nested diagonal affine also gives singletons.
     innermost = Affine(
         matrix=np.diag([1.4, 0.6, 1.0])[:-1],
         input=_SUB_SYSTEM2,
@@ -1410,9 +1308,7 @@ def test_nested_non_interpolating_subspace_splits_into_singletons() -> None:
 
 
 def test_subspace_shear_on_a_subblock_couples_only_the_sheared_axes() -> None:
-    # A shear inside a subspace over axes 0, 1, 2. The shear couples axes 0
-    # and 1 through its off-diagonal entry, and axis 2 passes through. The
-    # sub-block partition must reslice to the monolithic result.
+    # The shear couples axes 0 and 1, and axis 2 passes through.
     matrix = np.eye(3, 4)
     matrix[0, 1] = 0.5
     inner = Affine(matrix=matrix, input=_SUB_SYSTEM3, output=_SUB_SYSTEM3)
@@ -1428,9 +1324,7 @@ def test_subspace_shear_on_a_subblock_couples_only_the_sheared_axes() -> None:
 def test_subspace_rotation_on_a_subblock_couples_only_the_rotated_axes() -> (
     None
 ):
-    # A rotation about the z axis inside a subspace over axes 0, 1, 2. The
-    # rotation couples axes 0 and 1, axis 2 passes through, and the sub-block
-    # partition must reslice to the monolithic result.
+    # The z rotation couples axes 0 and 1, and axis 2 passes through.
     c, s = np.cos(0.4), np.sin(0.4)
     matrix = np.zeros((3, 4))
     matrix[:3, :3] = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
@@ -1447,10 +1341,7 @@ def test_subspace_rotation_on_a_subblock_couples_only_the_rotated_axes() -> (
 def test_reverting_subspace_recursion_to_all_ones_over_couples(
     monkeypatch: object,
 ) -> None:
-    # A non-interpolating inner is read by recursing, which produces the finer
-    # partition. This confirms the recursion is what produces the split, and
-    # that the fallback it replaces is an over-approximation, never a false
-    # split.
+    # Treating every subspace as one block over-couples but never splits.
     inner = Scaling(scale=np.asarray([2.0, 3.0, 0.5]))
     sub = _subspace(inner, [0, 1, 2])
     fine = _components([sub], (5, 6, 7, 4))
@@ -1468,13 +1359,11 @@ def test_reverting_subspace_recursion_to_all_ones_over_couples(
     assert fine != coarse
 
 
-# --- Interpolating inner: the acted-on axes stay one coupled block. ---
+# An interpolating inner transform keeps its axes in one block.
 
 
 def test_subspace_wrapping_raw_field_couples_all_its_axes() -> None:
-    # A raw field inner mixes every axis it names, so the acted-on axes stay
-    # one coupled block. This is the safe over-approximation, and it must
-    # reslice to the monolithic result.
+    # A raw field mixes all its axes.
     warp = _warp((5, 6, 7), 6)
     sub = _subspace(warp, [0, 1, 2])
     assert _components([sub], (5, 6, 7, 4)) == [
@@ -1487,13 +1376,8 @@ def test_subspace_wrapping_raw_field_couples_all_its_axes() -> None:
 def test_nested_subspace_over_interpolating_inner_couples_all_its_axes() -> (
     None
 ):
-    # The reviewer's primary reproducer. A subspace over axes 0, 1, 2 whose
-    # inner is itself an interpolating subspace, a one-axis warp on axis 0.
-    # Recursing into the interpolating inner to split the group would make the
-    # inner's axis indices point at the wrong axes and silently corrupt the
-    # data, so the acted-on axes stay one coupled block instead. This reslice
-    # equality is the mutation guard: recursing into an interpolating inner
-    # again makes it fail.
+    # Recursing into the interpolating inner would misindex the axes;
+    # the equality check fails if it does.
     warp = _warp((5,), 7)
     inner = SubspaceTransformation(
         transformation=warp,
@@ -1515,9 +1399,7 @@ def test_nested_subspace_over_interpolating_inner_couples_all_its_axes() -> (
 def test_subspace_over_interpolating_subset_warp_reslices(
     warp_axes: tuple, seed: int
 ) -> None:
-    # An interpolating warp on a two-axis subset, inside a subspace over axes
-    # 0, 1, 2. The acted-on axes stay one coupled block, and the reslice must
-    # equal the monolithic result whichever subset the warp touches.
+    # A warp on any two-axis subset stays one coupled block.
     shape = (5, 6, 7, 4)
     field_shape = tuple(shape[a] for a in warp_axes)
     warp = _warp(field_shape, seed)
@@ -1535,10 +1417,7 @@ def test_subspace_over_interpolating_subset_warp_reslices(
 
 
 def test_permuting_subspace_over_interpolating_inner_reslices() -> None:
-    # A subspace that permutes its acted-on axes, input 0, 1, 2 mapping to
-    # output 2, 0, 1, over an interpolating warp on all three. The acted-on
-    # axes stay one coupled block, and the reslice must equal the monolithic
-    # result.
+    # A subspace that permutes its axes stays one block.
     warp = _warp((5, 6, 7), 14)
     sub = _subspace(warp, [0, 1, 2], out_axes=[2, 0, 1])
     assert _components([sub], (5, 6, 7, 4)) == [
@@ -1549,10 +1428,7 @@ def test_permuting_subspace_over_interpolating_inner_reslices() -> None:
 
 
 def test_subspace_over_sequence_with_interpolating_member_reslices() -> None:
-    # A subspace over axes 0, 1, 2 whose inner is a sequence of a shear on
-    # axes 0, 1 and an interpolating warp on axis 2. The sequence interpolates
-    # because one of its members does, so the acted-on axes stay one coupled
-    # block, and the reslice must equal the monolithic result.
+    # A sequence interpolates when a member does.
     matrix = np.eye(3, 4)
     matrix[0, 1] = 0.4
     shear = Affine(matrix=matrix)
@@ -1572,8 +1448,7 @@ def test_subspace_over_sequence_with_interpolating_member_reslices() -> None:
 
 
 def test_subspace_wrapping_diagonal_reslice_matches_monolithic() -> None:
-    # The finer partition from a subspace wrapping a diagonal must still equal
-    # the monolithic reslice, so the split is never a false one.
+    # The finer partition reslices as the monolithic pull does.
     xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
     vox4 = CoordinateSystem(name="voxel4", axes=[xax, yax, zax, _time()])
     vox3 = CoordinateSystem(name="vox3", axes=[xax, yax, zax])
@@ -1609,9 +1484,7 @@ def test_subspace_wrapping_diagonal_reslice_matches_monolithic() -> None:
 
 
 def test_scaling_translation_reslice_matches_monolithic() -> None:
-    # A scale-and-translation chain, whose restricted pieces keep their
-    # cheaper types (see the factor tests), reslices through one weight
-    # matrix per axis and reproduces the monolithic reslice.
+    # Restricted pieces keep their cheaper types.
     with backend("numpy"):
         rng = np.random.default_rng(33)
         data = rng.normal(size=(6, 7))
@@ -1631,9 +1504,7 @@ def test_scaling_translation_reslice_matches_monolithic() -> None:
 
 
 def test_permutation_reslice_matches_monolithic() -> None:
-    # A permutation survives the affine reduction as its own element, so the
-    # type-preserving restriction runs end to end and matches the monolithic
-    # reslice.
+    # A permutation survives the affine reduction as its own element.
     xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
     system = CoordinateSystem(name="vox", axes=[xax, yax, zax])
     with backend("numpy"):
@@ -1661,10 +1532,7 @@ def test_permutation_reslice_matches_monolithic() -> None:
 def test_widened_intermediate_stage_reslices_with_a_two_dimensional_pull() -> (
     None
 ):
-    # A chain over (x, y, t) that embeds a constant z coordinate, warps
-    # (x, y, z) together, and projects z away again. Its middle stages have
-    # four axes, but x and y still form one group and t another: the warp
-    # is a two-dimensional pull and the time shift a gather.
+    # The middle stages have four axes, but x, y and t form two groups.
     embed = np.zeros((4, 4))
     embed[0, 0], embed[1, 1], embed[2, 2] = 1.3, 0.7, 1.0
     embed[2, 3], embed[3, 3] = 1.0, 0.5
@@ -1696,11 +1564,7 @@ def test_widened_intermediate_stage_reslices_with_a_two_dimensional_pull() -> (
 
 
 def test_endpointless_subspace_beside_a_permutation_reslices() -> None:
-    # A subspace without coordinate systems next to a full-space
-    # permutation cannot be embedded into an affine, so the monolithic
-    # compute cannot build its coordinates. The normal form restricts both
-    # to their groups instead, and the reslice matches the coordinates
-    # computed by hand.
+    # The monolithic pull cannot build these coordinates, so compare by hand.
     grid = CartesianField(shape=(4, 5, 6))
     scale = SubspaceTransformation(
         transformation=Scaling(scale=np.asarray([0.7])),
@@ -1736,9 +1600,7 @@ def _own_grid_image(dtype: object = float) -> SingleScaleImage:
 
 
 def _cras_to_fras() -> tuple:
-    # A cRAS image resliced onto an fRAS grid that flips its first axis
-    # and swaps it with the second: a permutation and flip bridge, which
-    # only gathers.
+    # A cRAS image onto an fRAS grid, by flip and swap: gathers only.
     from brainhops.datamodel.systems import (
         CRASCoordinateSystem,
         FRASCoordinateSystem,
@@ -1780,8 +1642,7 @@ def _assert_fresh_copy(resliced: np.ndarray, source: np.ndarray) -> None:
 
 
 def test_own_grid_reslice_without_copy_is_a_view() -> None:
-    # Documents the view: a reslice onto the image's own grid only
-    # gathers, and by default hands back a view of the input.
+    # A reslice onto its own grid only gathers and returns a view.
     with backend("numpy"):
         img = _own_grid_image()
         resliced = img.reslice(copy=False)
@@ -1810,7 +1671,7 @@ def test_gather_only_reslice_with_copy_is_fresh() -> None:
     with backend("numpy"):
         img, geometry = _cras_to_fras()
         resliced = img.reslice(geometry, copy=True)
-    # The flip and the swap are real.
+    # The flip and the swap change the result.
     expected = img.data[::-1].transpose(1, 0, 2)
     assert np.array_equal(resliced.data, expected)
     _assert_fresh_copy(resliced.data, img.data)
@@ -1819,8 +1680,7 @@ def test_gather_only_reslice_with_copy_is_fresh() -> None:
 def test_interpolating_reslice_with_copy_is_correct_and_not_recopied(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A half-voxel shift interpolates every axis, so the pipeline already
-    # allocates its result and `copy=True` must not copy it again.
+    # The pipeline already allocates, so copy=True must not copy again.
     def _no_copy(arr: object) -> object:
         raise AssertionError("an already fresh result was copied")
 
@@ -1841,8 +1701,7 @@ def test_interpolating_reslice_with_copy_is_correct_and_not_recopied(
 
 
 def test_reslice_through_a_split_sequence_inner_is_correct() -> None:
-    # Regression: a subspace whose inner is a sequence, split across axis
-    # groups, used to lose that inner, and the reslice sampled the grid.
+    # Regression: an inner sequence split across groups was lost.
     inner = Sequence(
         [
             Scaling(scale=np.array([0.5, 0.75])),
@@ -1869,11 +1728,11 @@ def test_backend_reports_memory_sharing() -> None:
     assert backends.may_share_memory(data, data.copy()) is False
     copied = backends.copy_array(data[::-1])
     assert not np.shares_memory(copied, data)
-    # An array-like of no known backend cannot be inspected.
+    # An array-like of unknown backend cannot be inspected.
     assert backends.may_share_memory(data, [0.0, 1.0]) is None
     da = pytest.importorskip("dask.array")
     lazy = da.from_array(data, chunks=2)
-    # A dask array is immutable: distinct dask arrays never alias.
+    # Dask arrays are immutable, so distinct ones never alias.
     assert backends.may_share_memory(lazy[::-1], lazy) is False
     assert backends.may_share_memory(lazy[::-1], data) is False
     assert backends.may_share_memory(lazy, lazy) is True
@@ -1882,8 +1741,7 @@ def test_backend_reports_memory_sharing() -> None:
 def test_copy_on_the_dask_backend_is_lazy_and_not_copied(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A dask array is immutable, so a gather-only reslice under `copy=True`
-    # returns its lazy result as is, with no copy step, and still right.
+    # A lazy dask result is returned as is under copy=True.
     da = pytest.importorskip("dask.array")
 
     def _no_copy(arr: object) -> object:
@@ -1907,8 +1765,7 @@ def test_copy_on_the_dask_backend_is_lazy_and_not_copied(
 
 
 def _space_and_time(angle: float, dz: float, dt: float) -> Sequence:
-    # The shape of the voxel-to-world transformation of a 4D image: an
-    # affine over (x, y, z), then a scaling and a translation over (t).
+    # An affine over x, y, z, then a scaling and translation over t.
     full = CoordinateSystem().expand(4)
     c, s = np.cos(angle), np.sin(angle)
     spatial = Affine(
@@ -1938,8 +1795,7 @@ def _space_and_time(angle: float, dz: float, dt: float) -> Sequence:
 
 
 def test_a_subspace_product_factors_into_space_and_time() -> None:
-    # Two space-and-time geometries: the rotation couples x and y, z is
-    # rescaled, and time is mapped onto itself with a whole-frame shift.
+    # The rotation couples x and y, z is rescaled and t shifted by frames.
     shape = (6, 7, 5, 4)
     source = _space_and_time(0.3, 2.0, 2.0)
     target = _space_and_time(0.0, 1.0, 2.0)
@@ -1953,7 +1809,7 @@ def test_a_subspace_product_factors_into_space_and_time() -> None:
 
 
 def test_a_subspace_product_against_its_inverse_is_the_grid() -> None:
-    # The same geometry on both sides cancels by identity, leaving the grid.
+    # The same geometry on both sides cancels, leaving the grid.
     shape = (6, 7, 5, 4)
     product = _space_and_time(0.3, 2.0, 2.0)
     grid = CartesianField(shape=shape)

@@ -1,16 +1,10 @@
-"""Tests for the multiscale field.
+"""Tests of `MultiscaleField`, a pyramid of resolution levels.
 
-A `MultiscaleField` carries a pyramid of resolution levels. Each level is
-a sequence that maps the multiscale's input space to its output space,
-sampled on that level's grid. A coordinate level is a two-element
-sequence, and a displacement level a three-element sequence.
-
-The placement used throughout is anisotropic and rotated on purpose. The
-voxel-to-voxel normalization that a displacement level applies rescales
-the stored vectors by the inverse of the linear part of the placement. On
-a one-millimetre isotropic grid that rescaling is the identity, so an
-isotropic test would pass even if the normalization were wrong. An
-anisotropic and rotated placement makes the rescaling visible.
+Each level is a sequence from the multiscale input space to the output
+space, sampled on the grid of that level. The placements are rotated and
+anisotropic on purpose: a displacement level rescales the stored vectors
+by the inverse linear part of its placement, which is the identity on an
+isotropic 1 mm grid and would hide a wrong normalization.
 """
 
 import numpy as np
@@ -29,9 +23,9 @@ from brainhops.datamodel.transformations import (
 
 
 def _rotated_anisotropic_affine(sx: float, sy: float) -> tuple:
-    # A 2D placement that scales the axes by (sx, sy), rotates them, and
-    # shifts the origin. Its linear part is not a scalar multiple of the
-    # identity, so the inverse-linear normalization is not invisible.
+    # Scale, rotate and shift, so that the linear part is not a multiple of the
+    #
+    # identity.
     theta = 0.37
     rot = np.array(
         [
@@ -47,7 +41,7 @@ def _rotated_anisotropic_affine(sx: float, sy: float) -> tuple:
 def _world_grid(
     shape: tuple, linear: np.ndarray, affine: Affine
 ) -> np.ndarray:
-    # The world coordinates of every voxel of a grid of the given shape.
+    # World coordinates of every voxel of a grid.
     grid = np.stack(
         np.meshgrid(*[np.arange(s) for s in shape], indexing="ij"), axis=-1
     ).astype(float)
@@ -57,8 +51,9 @@ def _world_grid(
 def _displacement_level(
     raw_world: np.ndarray, affine: Affine, linear: np.ndarray
 ) -> Sequence:
-    # A displacement level: the world-to-voxel affine, the displacement in
-    # voxel units, and the voxel-to-world affine.
+    # A world-to-voxel affine, a displacement in voxel units, and a
+    #
+    # voxel-to-world affine.
     voxel = raw_world @ np.linalg.inv(linear).T
     return Sequence(
         transformations=[
@@ -70,8 +65,7 @@ def _displacement_level(
 
 
 def _coordinate_level(raw_world: np.ndarray, affine: Affine) -> Sequence:
-    # A coordinate level: the world-to-voxel affine and the coordinate
-    # field, which stores the world coordinates without a copy.
+    # A world-to-voxel affine and a field of world coordinates.
     return Sequence(
         transformations=[affine.inverse(), CoordinatesField(field=raw_world)]
     )
@@ -88,7 +82,7 @@ def _two_level_displacement(rng: np.random.Generator) -> tuple:
     return field, (l0, l1), (xf0, lin0, raw0), (xf1, lin1, raw1)
 
 
-# --- structure ---------------------------------------------------------
+# Structure
 
 
 def test_a_level_is_a_sequence() -> None:
@@ -132,11 +126,11 @@ def test_the_container_is_not_mutable() -> None:
         field[0] = l1
     with pytest.raises(TypeError):
         del field[0]
-    with pytest.raises(TypeError):
+    with pytest.raises(AttributeError):
         field.insert(0, l1)
 
 
-# --- transparency in composition ---------------------------------------
+# Transparency in composition
 
 
 def test_composes_like_its_finest_level() -> None:
@@ -156,7 +150,7 @@ def test_flattened_splices_the_finest_level() -> None:
     field, (l0, _), *_ = _two_level_displacement(np.random.default_rng(7))
     outer = Scaling(scale=[2.0, 2.0])
     flattened = Sequence([field, outer])._flattened()
-    # The finest level's three elements, followed by the outer scaling.
+    # The three elements of the finest level, then the outer scaling.
     assert len(flattened.transformations) == len(l0) + 1
 
 
@@ -166,15 +160,15 @@ def test_compute_returns_a_plain_transformation() -> None:
     assert not isinstance(computed, MultiscaleField)
 
 
-# --- level selection ---------------------------------------------------
+# Level selection
 
 
 def test_nearest_level_matches_the_target_resolution() -> None:
     field, *_ = _two_level_displacement(np.random.default_rng(9))
-    # Level 0 has voxel size (2, 0.5); level 1 has voxel size (4, 1).
+    # The voxel sizes are (2, 0.5) at level 0 and (4, 1) at level 1.
     assert field._nearest_level(_rotated_anisotropic_affine(2.0, 0.5)[0]) == 0
     assert field._nearest_level(_rotated_anisotropic_affine(4.0, 1.0)[0]) == 1
-    # In log scale, (3.2, 0.8) is nearer to (4, 1) than to (2, 0.5).
+    # On a log scale, (3.2, 0.8) is nearer to (4, 1) than to (2, 0.5).
     assert field._nearest_level(_rotated_anisotropic_affine(3.2, 0.8)[0]) == 1
 
 
@@ -208,13 +202,11 @@ def test_an_identity_led_level_has_no_resolution() -> None:
     assert field._nearest_level(_rotated_anisotropic_affine(4.0, 1.0)[0]) == 0
 
 
-# --- ground truth ------------------------------------------------------
+# Ground truth
 
 
 def test_displacement_level_moves_world_points_by_the_world_field() -> None:
-    # Applying a displacement level to the world coordinates of its own
-    # voxels shifts each point by exactly the world-unit displacement
-    # stored for that voxel.
+    # Each voxel moves by exactly the stored displacement, in world units.
     xf0, lin0 = _rotated_anisotropic_affine(2.0, 0.5)
     rng = np.random.default_rng(11)
     raw = rng.normal(size=(6, 5, 2))
@@ -225,8 +217,7 @@ def test_displacement_level_moves_world_points_by_the_world_field() -> None:
 
 
 def test_coordinate_level_recovers_the_stored_coordinates() -> None:
-    # Applying a coordinate level to the world coordinates of its own
-    # voxels recovers the world coordinate stored for each voxel.
+    # Each voxel maps to the stored world coordinate.
     xf0, lin0 = _rotated_anisotropic_affine(2.0, 0.5)
     rng = np.random.default_rng(12)
     raw = rng.normal(size=(6, 5, 2))
@@ -236,7 +227,7 @@ def test_coordinate_level_recovers_the_stored_coordinates() -> None:
     np.testing.assert_allclose(np.asarray(resolved.field), raw, atol=1e-6)
 
 
-# --- reslice wiring ----------------------------------------------------
+# Reslice wiring
 
 
 def test_at_resolution_selects_the_matching_level() -> None:

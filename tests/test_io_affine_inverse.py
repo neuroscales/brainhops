@@ -1,10 +1,7 @@
-"""
-Regression tests: io affines accept the `inverse()` signature of
-`Transformation`.
+"""Regression tests: io affines accept the arguments of `inverse`.
 
-`Sequence.inverse` forwards `compute` and the options of `compute()` to
-every child, so an io affine whose override took no argument broke the
-inverse of any sequence that held it -- an SPM `y_` field among them.
+`Sequence.inverse` forwards its options to every child, so an override
+without arguments broke the inverse of any sequence holding an io affine.
 """
 
 import numpy as np
@@ -42,12 +39,11 @@ def _image():  # noqa: ANN202
 
 
 def _spm(tmp_path):  # noqa: ANN001, ANN202
-    # An SPM `y_` map is a field of absolute RAS coordinates; the
-    # identity map is enough to exercise the inverse.
+    # An SPM y_ map holds absolute RAS coordinates; an identity map suffices.
     ijk = np.stack(np.meshgrid(*map(np.arange, SHAPE), indexing="ij"), -1)
     ras = ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
     img = nb.Nifti1Image(ras[:, :, :, None, :].astype("float32"), VOX2RAS)
-    img.header["intent_code"] = 1007  # NIFTI_INTENT_VECTOR
+    img.header["intent_code"] = 1007
     img.header["intent_name"] = "Mapping"
     path = tmp_path / "y_sub01.nii.gz"
     nb.save(img, str(path))
@@ -72,8 +68,7 @@ def test_a_nifti_affine_inverse_takes_compute(cls, back, compute) -> None:  # no
 @pytest.mark.parametrize("compute", [False, True])
 @pytest.mark.parametrize("cls", [NiftiRASToVoxel, NiftiVoxelToRAS])
 def test_a_nifti_affine_with_a_set_matrix_inverts(cls, compute) -> None:  # noqa: ANN001
-    # A set matrix takes the `super().inverse()` path, which must
-    # receive `compute` too.
+    # A set matrix takes the parent inverse, which must also receive compute.
     forward = cls(matrix=VOX2RAS[:-1])
     inverse = forward.inverse(compute=compute)
     np.testing.assert_allclose(
@@ -101,9 +96,8 @@ def test_an_spm_field_inverts(tmp_path) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("cls", [NiftiRASToVoxel, NiftiVoxelToRAS])
 def test_reading_the_image_does_not_replace_the_matrix(cls) -> None:  # noqa: ANN001
-    # The parser's image `data` and the affine's matrix share a name, not
-    # a slot: loading the voxels must not turn them into the matrix.
-    from brainhops.io.base.nifti import NiftiParser
+    # Reading the voxels must not replace the matrix computed from the header.
+    from brainhops.io.common.nifti import NiftiParser
 
     img = _image()
     t = cls(image=img, header=img.header)

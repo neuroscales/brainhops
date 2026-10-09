@@ -1,13 +1,4 @@
-"""Tests for the pure set/group-theory hierarchy (post-#88b revert).
-
-C1 restores the hierarchy to plain `.register` membership with a
-case-insensitive `NAMETOCLASS`, and adds `InjectiveTransformation` /
-`SurjectiveTransformation` as bases of `BijectiveTransformation`. The
-`@member` / `MEMBERS` / `node_of_class` / `type_from_name` / `NAMETOCLASS_CI`
-machinery and the `Meta`/`Subspace`/`Inverse` nodes of #88b are gone;
-wrapper and value-dependent keys are handled in the policy layer instead
-(see `test_kind_membership.py`).
-"""
+"""Tests for the set-theoretic hierarchy of transformation kinds."""
 
 import pytest
 
@@ -33,7 +24,7 @@ def test_parse_name_is_case_insensitive() -> None:
 
 
 def test_parse_symbols_stay_case_sensitive() -> None:
-    # SYMBOL / FSYMBOL are mathematical symbols, matched case-sensitively.
+    # Mathematical symbols are matched case-sensitively.
     family = kinds.TransformationFamily.parse("SO(3)")
     assert family.kind is kinds.SpecialOrthogonal
     assert family.ndim == 3
@@ -55,7 +46,7 @@ def test_parse_raises_on_unknown() -> None:
 def test_injective_surjective_are_bases_of_bijective() -> None:
     assert issubclass(kinds.Bijection, kinds.Injection)
     assert issubclass(kinds.Bijection, kinds.Surjection)
-    # Every invertible node is therefore injective and surjective.
+    # Every invertible kind is both injective and surjective.
     assert issubclass(
         kinds.InvertibleAffine,
         kinds.Injection,
@@ -67,9 +58,7 @@ def test_injective_surjective_are_bases_of_bijective() -> None:
 
 
 def test_euclidean_lattice_edges() -> None:
-    # The approved lattice fix: a special-euclidean map is euclidean, and a
-    # translation is special-euclidean (hence euclidean), while a translation
-    # is still not orthogonal.
+    # Translations are special Euclidean, hence Euclidean, but not orthogonal.
     assert issubclass(
         kinds.SpecialEuclidean,
         kinds.Euclidean,
@@ -77,7 +66,7 @@ def test_euclidean_lattice_edges() -> None:
     assert issubclass(kinds.Translation, kinds.SpecialEuclidean)
     assert issubclass(kinds.Translation, kinds.Euclidean)
     assert not issubclass(kinds.Translation, kinds.Orthogonal)
-    # And a concrete translation is a member of the euclidean set.
+    # A concrete translation belongs to the Euclidean kind.
     from brainhops.datamodel.transformations import Translation, is_kind
 
     assert is_kind(Translation(translation=[1.0, 2.0]), "euclidean")
@@ -101,10 +90,9 @@ def test_injective_surjective_names_resolve() -> None:
 
 
 def test_concrete_membership_is_transitive() -> None:
-    # `Linear` registers to `LinearTransformation`, a subclass of
-    # `AffineTransformation`, so a linear instance is an affine.
+    # Linear is registered under kinds.Linear, a subclass of kinds.Affine.
     assert isinstance(Linear(matrix=[[2.0, 0.0], [0.0, 3.0]]), kinds.Affine)
-    # The converse does not hold: a general affine is not linear.
+    # The converse fails: a general affine is not linear.
     assert not isinstance(
         Affine(matrix=[[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]),
         kinds.Linear,

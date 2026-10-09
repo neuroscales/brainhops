@@ -1,16 +1,13 @@
-# stdlib
 import warnings
 from pathlib import Path
 
-# dependencies
 import numpy as np
 import pytest
-
-# internals
 from bagof.magic import replace
 
 from brainhops import io
 from brainhops._core import affines
+from brainhops._core.dependencies import HAS_H5PY
 from brainhops.datamodel import transformations as xforms
 from brainhops.io.transformations import itk
 
@@ -18,6 +15,12 @@ data_dir = Path(__file__).parent / "data"
 
 FILES_H5 = list(data_dir.glob("*.h5"))
 FILES_TFM = list(data_dir.glob("*.tfm"))
+
+needs_h5py = pytest.mark.skipif(not HAS_H5PY, reason="needs h5py")
+
+# Without h5py, the HDF5 reader is unregistered and dispatch fails
+# differently, so these cases are skipped rather than the whole run.
+PARAMS_H5 = [pytest.param(f, marks=needs_h5py) for f in FILES_H5]
 
 TfmTransform = io.transformations.itk.tfm.TfmTransform
 
@@ -29,24 +32,19 @@ def test_read_h5(filename: str, load: bool, keep_open: bool) -> None:
     pytest.importorskip("h5py")
     H5Transform = io.transformations.itk.h5.H5Transform
     transform = H5Transform.from_file(filename, load=load, keep_open=keep_open)
-    # trigger conversion
     transforms = transform.transformations  # noqa: F841
 
 
 @pytest.mark.parametrize("filename", FILES_TFM)
 def test_read_tfm(filename: str) -> None:
     transform = TfmTransform.from_file(filename)
-    # trigger conversion
     transforms = transform.transformations  # noqa: F841
 
 
 # ----------------------------------------------------------------------
 #   REGISTRY / DISPATCH
 # ----------------------------------------------------------------------
-#
-# The ITK readers register themselves with the shared parser registry, so
-# the generic `io.load` and the scoped `io.transformations.load` both
-# resolve an ITK file to its reader without being told the format.
+# The ITK readers register themselves, so the generic loaders find them.
 
 
 @pytest.mark.parametrize("filename", FILES_TFM)
@@ -68,19 +66,13 @@ def test_h5_is_dispatched(filename: str) -> None:
 
 
 def test_tfm_header_only_is_read_as_empty(tmp_path) -> None:  # noqa: ANN001
-    """
-    A `.tfm` file that carries only the version header has no transform
-    block. `peekable_lines` drops the header comment and then yields its
-    end sentinel, which is not a string, so `sniff_line` must return a
-    numeric confidence rather than raise or claim the file.
-    """
+    """A .tfm file with only the version header is read as empty."""
     header_only = tmp_path / "header_only.tfm"
     header_only.write_text("# Insight Transform File V1.0\n")
 
     assert TfmTransform.sniff_line("") == 0.0
     assert list(TfmTransform.from_file(header_only).transformations) == []
-    # The `.tfm` extension still routes it to the ITK reader, which reads
-    # it as an empty transform.
+    # The .tfm extension still routes to the ITK reader.
     assert io.transformations.sniff(header_only) is TfmTransform
     assert type(io.transformations.load(header_only)) is TfmTransform
 
@@ -88,21 +80,17 @@ def test_tfm_header_only_is_read_as_empty(tmp_path) -> None:  # noqa: ANN001
 # ----------------------------------------------------------------------
 #   BLOCKS AS TRANSFORMATIONS
 # ----------------------------------------------------------------------
-#
-# An ITK file is a chain of transform blocks, and each block is itself a
-# brainhops transformation: a structured `Sequence` whose children are
-# named, lazily evaluated slots. Nothing is converted after parsing.
+# Each block of an ITK file is a structured sequence with named lazy slots.
 
 
-@pytest.mark.parametrize("filename", FILES_TFM + FILES_H5)
+@pytest.mark.parametrize("filename", FILES_TFM + PARAMS_H5)
 def test_blocks_are_transformations(filename: str) -> None:
     transform = io.transformations.load(filename)
     assert isinstance(transform, xforms.Sequence)
     for block in transform.transformations:
         assert isinstance(block, itk.ItkStruct)
         assert isinstance(block, xforms.Sequence)
-        # A block is a non-empty chain, and every child is a
-        # transformation in its own right.
+        # A block is a non-empty chain of transformations.
         assert len(block) >= 1
         assert all(isinstance(t, xforms.Transformation) for t in block)
 
@@ -125,8 +113,7 @@ def test_affine_block_exposes_named_cached_slots() -> None:
     assert block.linear is block.linear
     assert block.transformations is block.transformations
 
-    # Assigning a chain overrides the derived one; clearing it restores
-    # the derived one.
+    # An assigned chain overrides the derived one until cleared.
     block.transformations = [xforms.Identity()]
     assert len(block) == 1
     block.transformations = None
@@ -155,13 +142,7 @@ def test_versor_rigid_3d_applies_its_translation() -> None:
 
 
 def test_versor_rigid_3d_folds_a_real_rotation_about_its_center() -> None:
-    """The block collapses to `[R | c + t - R.c]`.
-
-    The zero versor only exercises `R = I`, which hides every mistake in
-    how the center of rotation is folded in. This uses a quarter turn
-    about z -- versor `(0, 0, sin(pi/4))` -- and a center away from the
-    origin, so the linear part and the offset are both non-trivial.
-    """
+    """A quarter turn about an off-origin center gives [R | c + t - Rc]."""
     angle = np.pi / 2
     versor = (0.0, 0.0, np.sin(angle / 2))
     translation = np.array([1.0, 2.0, 3.0])
@@ -181,13 +162,7 @@ def test_versor_rigid_3d_folds_a_real_rotation_about_its_center() -> None:
 
 
 def test_versor_tolerates_a_rounded_unit_versor() -> None:
-    """A versor rounded just past the unit sphere still loads.
-
-    ITK renormalizes a versor whose vector part overshoots by a rounding
-    error, so a file that writes a half-turn as `1.0000000002` opens
-    there. It must open here too, and give the same half-turn. A versor
-    that is genuinely too long is still refused.
-    """
+    """A versor that rounding puts just past the unit sphere still loads."""
     block = _versor_rigid_3d(
         (1.0000000002, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
     )
@@ -203,9 +178,9 @@ def test_versor_tolerates_a_rounded_unit_versor() -> None:
 
 def test_displacement_blocks_are_lps_to_lps_chains() -> None:
     pytest.importorskip("h5py")
-    for name, degree, coeff in [
-        ("itk_displacement3d.h5", 1, False),
-        ("itk_bspline3d.h5", 3, True),
+    for name, degree, store in [
+        ("itk_displacement3d.h5", 1, "values"),
+        ("itk_bspline3d.h5", 3, "coefficients"),
     ]:
         block = io.transformations.load(data_dir / name)[-1]
         assert isinstance(block, itk.ItkDisplacementBase)
@@ -215,9 +190,8 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
             block.voxel2lps,
         ]
         assert block.degree == degree
-        assert block.coeff == coeff
-        # The block's array is what its displacement field stores: the
-        # values, or the spline coefficients of a B-spline.
+        assert block.store == store
+        # The array is what the field stores: values or B-spline coefficients.
         assert block.displacement.data is block.field
         assert block.field.shape[-1] == 3
 
@@ -225,21 +199,10 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
 # ----------------------------------------------------------------------
 #   WARP MEMORY LAYOUT
 # ----------------------------------------------------------------------
-#
-# ITK flattens its two kinds of warp differently, and the difference is
-# invisible in random data: either layout reshapes without complaint and
-# gives a plausible field. The fixtures below therefore carry a ramp
-# whose every entry names its own voxel and component --
-# `1000 * component + 100 * x + 10 * y + z` -- so a transposed axis or a
-# mistaken component stride cannot hide. Their grids have unit spacing
-# and an identity direction, so the world-space values SimpleITK reports
-# are already in the grid's own voxel units and the expected arrays can
-# be compared to `block.field` directly.
-#
-# The expected arrays are stored beside the fixtures, taken from
-# SimpleITK's own view of the images -- never from our decoder, which is
-# the thing under test. `tests/data/generate_itk_fixtures.py` regenerates
-# both, and is the only place SimpleITK is needed.
+# ITK flattens the two warp kinds differently. The fixtures hold a ramp
+# whose entries name their voxel and component, so that a transposed stride
+# cannot hide, and tests/data/generate_itk_fixtures.py stores the arrays
+# that SimpleITK reports beside them.
 
 
 @pytest.mark.parametrize(
@@ -252,14 +215,7 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
 def test_warp_field_is_decoded_in_itks_own_layout(
     name: str, interleaved: bool
 ) -> None:
-    """Each kind of warp is read in the layout ITK writes it in.
-
-    A `DisplacementFieldTransform`'s parameters are the raw buffer of an
-    image of vectors, so the component index varies fastest. A
-    `BSplineTransform`'s are one scalar coefficient image per axis,
-    written back to back, so it varies slowest. Reading either as the
-    other transposes the warp silently.
-    """
+    """Displacement fields interleave components; B-splines stack them."""
     block = io.transformations.load(data_dir / f"{name}.tfm")[-1]
     assert isinstance(block, itk.ItkDisplacementBase)
 
@@ -269,8 +225,7 @@ def test_warp_field_is_decoded_in_itks_own_layout(
     np.testing.assert_allclose(field, expected)
     assert block.interleaved is interleaved
 
-    # ... and the other layout really would have given something else,
-    # so the assertion above is not satisfied by both.
+    # The other layout gives a different result.
     parameters = np.asarray(block.parameters)
     shape = expected.shape[:-1]
     ndim = len(shape)
@@ -283,12 +238,7 @@ def test_warp_field_is_decoded_in_itks_own_layout(
 
 
 def test_warp_fixtures_still_match_simpleitk() -> None:
-    """The stored expectations are still what ITK itself reports.
-
-    The tests above run from the committed arrays so the suite does not
-    need SimpleITK. This re-derives them when it happens to be installed,
-    so a stale fixture cannot quietly outlive the ITK behavior it pins.
-    """
+    """The stored warp expectations still equal what SimpleITK reports."""
     sitk = pytest.importorskip("SimpleITK")
 
     transform = sitk.ReadTransform(
@@ -318,18 +268,7 @@ def test_warp_fixtures_still_match_simpleitk() -> None:
 
 @pytest.mark.parametrize("name", ["itk_euler3d", "itk_euler3d_zyx"])
 def test_euler_3d_composes_its_angles_the_way_itk_does(name: str) -> None:
-    """Both of ITK's angle orders give the matrix ITK gives.
-
-    `Euler3DTransform` composes its three axis rotations as `Rz @ Rx @ Ry`
-    unless its `ComputeZYX` flag is set, in which case it composes
-    `Rz @ Ry @ Rx`. The angles alone do not say which, so a reader that
-    assumes one order silently returns a valid but wrong rotation for
-    every file written with the other.
-
-    The expected matrix is ITK's own: its rotation from `GetMatrix`, and
-    its offset -- which is where the center of rotation folds in -- read
-    off `TransformPoint` at the origin.
-    """
+    """The angles compose as ZXY, or as ZYX when ComputeZYX is set."""
     block = TfmTransform.from_file(data_dir / f"{name}.tfm")[0]
     assert block.type == itk.ItkTransformClass.Euler3DTransform
 
@@ -340,13 +279,7 @@ def test_euler_3d_composes_its_angles_the_way_itk_does(name: str) -> None:
 
 
 def test_euler_3d_reads_the_modern_four_fixed_parameters() -> None:
-    """ITK >= 5 writes the `ComputeZYX` flag as a fourth fixed parameter.
-
-    A reader that insists on exactly three refuses every Euler 3-D file
-    current ITK writes. The fourth entry is a flag, not a coordinate, so
-    it must also stay out of the center of rotation -- a four-long center
-    would make the block claim a fourth axis.
-    """
+    """The fourth fixed parameter of ITK 5 is a flag, not a coordinate."""
     plain = TfmTransform.from_file(data_dir / "itk_euler3d.tfm")[0]
     zyx = TfmTransform.from_file(data_dir / "itk_euler3d_zyx.tfm")[0]
 
@@ -359,8 +292,7 @@ def test_euler_3d_reads_the_modern_four_fixed_parameters() -> None:
         assert center.shape == (3,)
         np.testing.assert_allclose(center, [4.0, 5.0, 6.0])
 
-    # A pre-5 file writes the center alone, and is read as ZXY -- the
-    # only order that existed before the flag did.
+    # Files older than ITK 5 hold the center alone and compose as ZXY.
     legacy = itk.ItkStruct(
         type=itk.ItkTransformClass.Euler3DTransform,
         precision="double",
@@ -378,7 +310,7 @@ def test_euler_3d_reads_the_modern_four_fixed_parameters() -> None:
 
 
 def test_euler_3d_matches_simpleitk() -> None:
-    """The stored Euler expectations are still what ITK itself reports."""
+    """The stored Euler expectations are still what ITK reports."""
     sitk = pytest.importorskip("SimpleITK")
 
     for name in ("itk_euler3d", "itk_euler3d_zyx"):
@@ -395,7 +327,7 @@ def test_euler_3d_matches_simpleitk() -> None:
 
 
 def test_transform_group_is_gone() -> None:
-    """Blocks live in `transformations`, so there is no second list."""
+    """Blocks live in `transformations`, with no second list."""
     transform = TfmTransform.from_file(data_dir / "itk_affine3d.tfm")
     assert not hasattr(transform, "transform_group")
 
@@ -403,13 +335,7 @@ def test_transform_group_is_gone() -> None:
 # ----------------------------------------------------------------------
 #   WARP BLOCKS COMPOSE AND INVERT
 # ----------------------------------------------------------------------
-#
-# A warp block's two affines are built from the grid geometry its fixed
-# parameters carry. They must be compact `(ndim, ndim + 1)` matrices: a
-# homogeneous one is read as a transformation of `ndim + 1` coordinates
-# and the chain no longer composes. Nothing below asserts on shapes
-# alone -- each case computes or inverts the chain, which is what the
-# mis-shaped matrices broke.
+# Both affines of a warp block are compact, so that the chain composes.
 
 
 @pytest.mark.parametrize("name", ["itk_displacement3d.h5", "itk_bspline3d.h5"])
@@ -422,8 +348,7 @@ def test_warp_block_affines_are_compact(name: str) -> None:
     assert vox2lps.shape == (ndim, ndim + 1)
     assert lps2vox.shape == (ndim, ndim + 1)
 
-    # The voxel-to-LPS affine is the grid geometry the fixed parameters
-    # describe: `direction @ diag(spacing)` beside the origin.
+    # Voxel-to-LPS is direction @ diag(spacing), with the origin as offset.
     origin = np.asarray(block.fixed_parameters)[ndim : 2 * ndim]
     spacing = np.asarray(block.fixed_parameters)[2 * ndim : 3 * ndim]
     direction = np.asarray(block.fixed_parameters)[
@@ -432,7 +357,7 @@ def test_warp_block_affines_are_compact(name: str) -> None:
     np.testing.assert_allclose(vox2lps[:, :ndim], direction @ np.diag(spacing))
     np.testing.assert_allclose(vox2lps[:, ndim], origin)
 
-    # ... and the two affines undo one another.
+    # The two affines are mutual inverses.
     round_trip = xforms.Sequence(
         transformations=[block.lps2voxel, block.voxel2lps]
     ).compute()
@@ -451,8 +376,7 @@ def test_warp_block_computes(name: str) -> None:
 
     result = block.compute()
 
-    # The leading affine is the world-to-voxel map of the warp grid, and
-    # the field follows it in the grid's own units.
+    # World-to-voxel comes first, then the field in grid units.
     assert isinstance(result, xforms.Sequence)
     assert isinstance(result[0], xforms.Affine)
     np.testing.assert_allclose(
@@ -461,20 +385,18 @@ def test_warp_block_computes(name: str) -> None:
     assert isinstance(result[-1], xforms.DisplacementField)
     assert np.asarray(result[-1].field).shape == np.asarray(block.field).shape
     assert result[-1].degree == block.degree
-    assert result[-1].coeff == block.coeff
+    assert result[-1].store == block.store
     assert result.input == block.input
     assert result.output == block.output
 
 
 def test_composite_warp_computes() -> None:
-    """A warp block composes with the affine blocks around it."""
+    """A warp block composes with the surrounding affine blocks."""
     pytest.importorskip("h5py")
     transform = io.load(data_dir / "itk_composite_displacement3d.h5")
     result = transform.compute()
     assert isinstance(result, xforms.Sequence)
-    # The warp block applies first (ITK applies the last block of a
-    # composite first): the computed chain starts with its LPS-to-voxel
-    # affine and ends with the field.
+    # The warp block applies first, starting with its LPS-to-voxel affine.
     assert isinstance(result[0], xforms.Affine)
     ndim = transform[-1].ndim_input
     assert np.asarray(result[0].matrix).shape == (ndim, ndim + 1)
@@ -483,7 +405,7 @@ def test_composite_warp_computes() -> None:
 
 @pytest.mark.parametrize("name", ["itk_displacement3d.h5", "itk_bspline3d.h5"])
 def test_warp_block_inverts(name: str) -> None:
-    """Every child of a warp block has an inverse, so the block does."""
+    """Every child has an inverse, so the block has one."""
     pytest.importorskip("h5py")
     block = io.transformations.load(data_dir / name)[-1]
     inverse = block.inverse()
@@ -491,16 +413,15 @@ def test_warp_block_inverts(name: str) -> None:
     assert len(inverse) == len(block)
     assert inverse.input == block.output
     assert inverse.output == block.input
-    # The chain reads back the other way round.
+    # The inverse chain is reversed.
     assert isinstance(inverse[0], xforms.Inverse)
     assert inverse[0].forward is block.voxel2lps
     assert inverse[-1].forward is block.lps2voxel
 
 
 def test_warp_block_grid_is_read_at_its_own_dimensionality() -> None:
-    """The grid geometry is read off `ndim_input`, not off a 3-D layout."""
-    # A 2-D grid writes 2 + 2 + 2 + 4 fixed parameters: shape, origin,
-    # spacing, then the 2x2 direction matrix.
+    """The grid geometry follows ndim_input rather than a 3-D layout."""
+    # Shape, origin, spacing and a 2x2 direction: 2 + 2 + 2 + 4 parameters.
     block = itk.ItkStruct(
         type=itk.ItkTransformClass.DisplacementFieldTransform,
         precision="double",
@@ -539,7 +460,7 @@ def test_block_chain_is_an_immutable_tuple(name: str) -> None:
 
 
 def test_assigning_an_empty_chain_takes_effect() -> None:
-    """An empty chain is a chain, not 'no chain given'."""
+    """An empty chain is a chain, not the absence of one."""
     block = TfmTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
     assert len(block) == 4
     block.transformations = []
@@ -549,9 +470,9 @@ def test_assigning_an_empty_chain_takes_effect() -> None:
 
 
 def test_replace_rebuilds_the_chain_from_the_new_parameters() -> None:
-    """`replace` must not freeze the chain derived from the old ones."""
+    """`replace` does not freeze a chain derived from the old parameters."""
     block = TfmTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
-    assert len(block) == 4  # build and cache the derived chain
+    assert len(block) == 4
 
     parameters = np.asarray(block.parameters).copy()
     parameters[-3:] = [100.0, 200.0, 300.0]
@@ -564,7 +485,7 @@ def test_replace_rebuilds_the_chain_from_the_new_parameters() -> None:
         np.asarray(copy.transformations[-1].translation),
         [100.0, 200.0, 300.0],
     )
-    # The original is untouched, and the two do not share a chain object.
+    # The original is untouched and shares no chain object.
     np.testing.assert_allclose(
         np.asarray(block.transformations[-1].translation), [10.0, 5.0, 2.0]
     )
@@ -572,13 +493,7 @@ def test_replace_rebuilds_the_chain_from_the_new_parameters() -> None:
 
 
 def test_warp_block_endpoints_do_not_decode_the_field() -> None:
-    """Reading a block's endpoints must not touch the warp data.
-
-    A warp block declares its endpoints from the dimensions its file
-    states. Deriving them the way a plain `Sequence` does would build the
-    chain, and building the chain decodes the field -- a full read of a
-    delayed array for a question the header already answers.
-    """
+    """The endpoints of a warp block come from its header, not its field."""
     pytest.importorskip("h5py")
     block = io.transformations.load(data_dir / "itk_displacement3d.h5")[-1]
     assert isinstance(block, itk.ItkDisplacementBase)
@@ -586,7 +501,7 @@ def test_warp_block_endpoints_do_not_decode_the_field() -> None:
     assert block.input == block.output
     assert not hasattr(block, "_cache_field")
 
-    # And asking for the chain does decode it.
+    # Asking for the chain decodes the field.
     assert len(block) == 3
     assert hasattr(block, "_cache_field")
 
@@ -594,12 +509,8 @@ def test_warp_block_endpoints_do_not_decode_the_field() -> None:
 # ----------------------------------------------------------------------
 #   SIMILARITY BLOCKS
 # ----------------------------------------------------------------------
-#
-# ITK parameterizes a similarity by a single scale factor, which the
-# block exposes as a `Scaling`. A scaling is parameterized by a vector,
-# so the ITK scalar is exposed as a vector of length one -- not repeated
-# per axis -- and the slot carries the block's endpoints so that the one
-# element broadcasts over the right number of axes.
+# ITK parameterizes a similarity by one scale factor, exposed as a
+# length-one `Scaling` whose endpoints state the number of axes.
 
 
 def _similarity_2d(
@@ -629,7 +540,7 @@ def _similarity_3d(
 
 
 def _versor_matrix(versor: tuple) -> np.ndarray:
-    """A rotation matrix from the vector part of a unit quaternion."""
+    """Return the rotation matrix of the vector part of a unit quaternion."""
     x, y, z = versor
     w = np.sqrt(1.0 - (x * x + y * y + z * z))
     return np.array(
@@ -655,13 +566,7 @@ def _versor_matrix(versor: tuple) -> np.ndarray:
 
 @pytest.mark.parametrize("ndim", [2, 3])
 def test_similarity_scale_is_a_one_element_vector(ndim: int) -> None:
-    """The ITK scalar is exposed as a vector of length one.
-
-    A `Scaling` is parameterized by a vector of factors, and ITK stores
-    the isotropic case as one number. Writing that number out once per
-    axis would state a dimensionality the ITK parameter does not carry,
-    so it is exposed as it is: a single factor that broadcasts.
-    """
+    """The scale factor is a one-element vector, not repeated per axis."""
     if ndim == 2:
         block = _similarity_2d(1.5, 0.3, (4.0, -2.0), (10.0, 20.0))
     else:
@@ -673,20 +578,13 @@ def test_similarity_scale_is_a_one_element_vector(ndim: int) -> None:
     assert isinstance(scaling, xforms.Scaling)
     np.testing.assert_allclose(np.asarray(scaling.scale), [1.5])
 
-    # One element only broadcasts to the right number of axes when
-    # something says how many there are, so the slot is given the
-    # block's own space at both ends.
+    # The endpoints let a single element broadcast over every axis.
     assert scaling.input == block.input
     assert scaling.output == block.output
 
 
 def test_similarity_2d_composes_the_expected_affine() -> None:
-    """The block collapses to `[sR | c + t - sR.c]`.
-
-    This is the composition the one-element scale has to survive: the
-    factor multiplies every axis of the rotation, and the center of
-    rotation is folded in with the scaled linear part.
-    """
+    """A 2-D block collapses to [sR | c + t - sRc]."""
     scale, angle = 1.5, 0.3
     translation = np.array([4.0, -2.0])
     center = np.array([10.0, 20.0])
@@ -707,7 +605,7 @@ def test_similarity_2d_composes_the_expected_affine() -> None:
 
 
 def test_similarity_3d_composes_the_expected_affine() -> None:
-    """The 3-D block collapses to `[sR | c + t - sR.c]` as well."""
+    """A 3-D block also collapses to [sR | c + t - sRc]."""
     scale = 1.5
     versor = (0.1, 0.2, 0.3)
     translation = np.array([4.0, -2.0, 7.0])
@@ -725,8 +623,7 @@ def test_similarity_3d_composes_the_expected_affine() -> None:
 
 @pytest.mark.parametrize("ndim", [1, 2, 3, 4])
 def test_itk_systems_are_lps_millimetres_in_every_dimension(ndim: int) -> None:
-    # ITK places everything in LPS millimetres. The oriented axes leave
-    # their unit unspecified, so every dimension states it.
+    # Oriented axes leave the unit open, so every dimension states it.
     from brainhops.datamodel.units import Unit
     from brainhops.io.transformations.itk._systems import _make_system
 
@@ -745,15 +642,10 @@ def test_itk_systems_are_lps_millimetres_in_every_dimension(ndim: int) -> None:
 # ----------------------------------------------------------------------
 #   COMPOSITE ORDER
 # ----------------------------------------------------------------------
-#
-# ITK writes a `CompositeTransform` as a header block followed by its
-# queue, front to back, and `CompositeTransform::TransformPoint` applies
-# the queue back to front: a file `[Composite, T0, T1]` maps `x` to
-# `T0(T1(x))`. A brainhops `Sequence` lists its blocks in the order they
-# apply, so it reads `[T1, T0]`.
+# A file [Composite, T0, T1] maps x to T0(T1(x)), since ITK applies the
+# queue back to front, while a brainhops sequence lists [T1, T0].
 
-#: Translate by `SHIFT`, then scale by `SCALE`: two blocks that do not
-#: commute, as `(class, parameters, fixed parameters)`.
+# Two blocks that do not commute: scale, then translate by SHIFT.
 SHIFT = [10.0, -20.0, 30.0]
 SCALE = [2.0, 3.0, 4.0]
 COMPOSITE = [
@@ -765,7 +657,7 @@ POINTS = np.array([[1.0, 2.0, 3.0], [-4.0, 5.0, -6.0], [0.0, 0.0, 0.0]])
 
 
 def _itk_order(points: np.ndarray) -> np.ndarray:
-    """`T0(T1(x))`, worked by hand: scale first, then translate."""
+    """Compute T0(T1(x)) by hand: scale first, translate second."""
     return points * SCALE + SHIFT
 
 
@@ -789,8 +681,7 @@ def _write_tfm(path: Path, blocks: list) -> Path:
 
 
 def _write_h5(path: Path, blocks: list) -> Path:
-    """Write the layout of `itk::HDF5TransformIO`: one group per block,
-    named after its position."""
+    """Write blocks in the itk::HDF5TransformIO layout, one group per block."""
     h5py = pytest.importorskip("h5py")
     string = h5py.string_dtype("ascii")
     with h5py.File(path, "w") as f:
@@ -835,9 +726,7 @@ def test_single_block_files_are_unchanged(tmp_path, ext: str) -> None:  # noqa: 
 
 @pytest.mark.parametrize("ext", sorted(WRITERS))
 def test_a_plain_list_reads_its_first_transform(tmp_path, ext: str) -> None:  # noqa: ANN001
-    """Without a `CompositeTransform` header, each block is its own
-    transform, and only the first one is read, as SimpleITK's
-    `ReadTransform` does, with a warning."""
+    """Without a composite header, the first block is read with a warning."""
     path = WRITERS[ext](tmp_path / f"list.{ext}", COMPOSITE[1:])
     with pytest.warns(UserWarning, match="holds 2 transforms"):
         (block,) = io.transformations.load(path)
@@ -897,8 +786,7 @@ def test_a_composite_header_must_come_first(tmp_path, ext: str) -> None:  # noqa
 
 
 def test_h5_blocks_are_read_by_number(tmp_path) -> None:  # noqa: ANN001
-    """h5py lists `/TransformGroup/10` before `/TransformGroup/2`; ITK
-    reads them by number."""
+    """HDF5 groups are read by number, so 10 comes after 2."""
     shifts = [[float(i), 0.0, 0.0] for i in range(12)]
     blocks = [COMPOSITE[0]] + [
         ("TranslationTransform", shift, []) for shift in shifts
@@ -910,8 +798,7 @@ def test_h5_blocks_are_read_by_number(tmp_path) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("ext", ["tfm", "h5"])
 def test_composite_fixture_matches_hand_computed_itk_order(ext: str) -> None:
-    """`itk_composite_affine3d` holds `[Composite, Affine, Scale]`:
-    ITK scales first, then applies the affine about its center."""
+    """ITK scales first, then applies the affine about its center."""
     if ext == "h5":
         pytest.importorskip("h5py")
     transform = io.transformations.load(
@@ -923,7 +810,7 @@ def test_composite_fixture_matches_hand_computed_itk_order(ext: str) -> None:
     scaled = POINTS * [1.2, 0.8, 1.0]
     expected = (scaled - center) @ linear.T + center + translation
     np.testing.assert_allclose(_apply(transform, POINTS), expected)
-    # One point, worked out on paper.
+    # A single point computed by hand.
     np.testing.assert_allclose(
         _apply(transform, np.array([[1.0, 2.0, 3.0]])),
         [[11.24, 16.32, 5.0]],
@@ -947,8 +834,7 @@ def test_composite_order_matches_simpleitk(tmp_path, ext: str) -> None:  # noqa:
 
 
 def test_composite_order_matches_nitransforms(tmp_path) -> None:  # noqa: ANN001
-    """nitransforms reverses an ITK `.h5` composite into its own
-    first-applied-first chain, in RAS."""
+    """nitransforms reverses an ITK .h5 composite into the same chain."""
     pytest.importorskip("h5py")
     manip = pytest.importorskip("nitransforms.manip")
     # nitransforms reads only affine and displacement blocks.
@@ -973,9 +859,7 @@ def test_composite_order_matches_nitransforms(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_block_compares_by_identity() -> None:
-    # A block is a transformation, which compares by identity, even though
-    # the struct it also derives from comes first. The struct alone
-    # compares by identity too, never by its array parameters.
+    # Identity comparison holds although the struct base comes first.
     block = _versor_rigid_3d((0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (0, 0, 0))
     assert isinstance(block, xforms.Transformation)
     assert block == block

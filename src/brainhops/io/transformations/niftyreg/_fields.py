@@ -1,31 +1,30 @@
 """
-NiftyReg fields and control-point grids, stored in NIfTI files.
+NiftyReg fields and control-point grids stored in NIfTI files.
 
-The encoding, the NiftyReg sources it is taken from, and what is and is
-not supported, are described in the package docstring,
-[`brainhops.io.transformations.niftyreg`][].
+The encoding, the NiftyReg sources and the limits of the support are described
+in [`brainhops.io.transformations.niftyreg`][].
 """
 
-# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
-# core
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
-
-# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.enums import BoundaryCondition
-
-# io
+from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import (
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserContentError,
+)
+from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
+)
+from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _new_nifti,
@@ -34,10 +33,6 @@ from brainhops.io.base.nifti import (
     _nifti_shape,
     _nifti_vector_field,
     _NiftiObject,
-)
-from brainhops.io.base.parsers import (
-    Confidence,
-    ParserContentError,
 )
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
@@ -54,40 +49,41 @@ from ._formats import NiftyRegTransformationFormat
 #   NIFTYREG CONSTANTS
 # ----------------------------------------------------------------------
 
-# `NREG_TRANS_TYPE`, `reg-lib/cpu/Maths.hpp`. NiftyReg stores it in
-# `intent_p1` of every transformation it writes, next to the `VECTOR`
-# intent code and the intent name `"NREG_TRANS"`.
+# NREG_TRANS_TYPE (reg-lib/cpu/Maths.hpp), which NiftyReg stores in
+# intent_p1 beside the VECTOR intent and the intent name NREG_TRANS.
 DEF_FIELD = 0
-"""A dense field of world positions (`reg_transform -def`)."""
+"""Dense field of world positions (`reg_transform -def`)."""
 DISP_FIELD = 1
-"""A dense field of world displacements (`reg_transform -disp`)."""
+"""Dense field of world displacements (`reg_transform -disp`)."""
 CUB_SPLINE_GRID = 2
-"""A cubic B-spline grid of control-point positions (`reg_f3d -cpp`)."""
+"""Cubic B-spline grid of control-point positions (`reg_f3d -cpp`)."""
 DEF_VEL_FIELD = 3
-"""A dense stationary velocity field, stored as positions."""
+"""Dense stationary velocity field, stored as positions."""
 DISP_VEL_FIELD = 4
-"""A dense stationary velocity field, stored as displacements."""
+"""Dense stationary velocity field, stored as displacements."""
 SPLINE_VEL_GRID = 5
-"""A cubic B-spline grid of a stationary velocity (`reg_f3d -vel`)."""
+"""Cubic B-spline grid of a stationary velocity (`reg_f3d -vel`)."""
 LIN_SPLINE_GRID = 6
-"""A linear B-spline grid of control-point positions."""
+"""Linear B-spline grid of control-point positions."""
 
 _NIFTI_ECODE_IGNORE = 0
-"""The extension code NiftyReg stores its affine extensions with."""
+"""
+Extension code under which NiftyReg stores affines (`NIFTI_ECODE_IGNORE`).
+"""
 
 _NDIM = 3
-"""The number of spatial dimensions the readers decode."""
+"""Spatial dimension that the readers decode."""
 
 _MAT44_BYTES = 64
-"""The size of a `mat44`: sixteen single-precision floats, row-major."""
+"""Size of a `mat44`, made of 16 row-major `float32` values."""
 
 
 def _niftyreg_type(header: _NiftiObject) -> tx.Optional[int]:
     """
-    The NiftyReg transformation type of a header, from its `intent_p1`.
+    Return the NiftyReg transformation type stored in `intent_p1`.
 
-    `None` unless the header is a NiftyReg transformation: a `VECTOR`
-    image named `"NREG_TRANS"` whose `intent_p1` is a whole number.
+    `None` is returned unless the header is a `VECTOR` image named
+    `"NREG_TRANS"` with a whole-number `intent_p1`.
     """
     if isinstance(header, nb.Nifti1Image):
         header = header.header
@@ -106,14 +102,11 @@ def _niftyreg_type(header: _NiftiObject) -> tx.Optional[int]:
 
 def _vox2world(header: _NiftiObject) -> np.ndarray:
     """
-    The `(4, 4)` voxel-to-world affine NiftyReg uses for a header.
+    Return the (4, 4) voxel-to-world affine that NiftyReg uses.
 
-    NiftyReg takes the sform when `sform_code > 0`, and the qform
-    otherwise (`sto_xyz` / `qto_xyz` throughout `reg-lib`). When the
-    qform code is zero too, `nifti1_io` fills the qform with the pixel
-    sizes on the diagonal and no offset -- unlike `nibabel`, whose
-    fallback affine centres the grid and flips x -- so that is what is
-    used here.
+    The sform is used when `sform_code > 0`, and the qform otherwise. When both
+    codes are zero, the diagonal of pixel sizes that `nifti1_io` builds is
+    returned, rather than the centred fallback of `nibabel`.
     """
     if int(header["sform_code"]) > 0:
         return np.asarray(header.get_sform(), dtype=np.float64)
@@ -126,15 +119,11 @@ def _vox2world(header: _NiftiObject) -> np.ndarray:
 
 def _extension_affines(header: _NiftiObject) -> tx.List[np.ndarray]:
     """
-    The affines NiftyReg keeps in a header's extensions.
+    Return the affines that NiftyReg keeps in the header extensions.
 
-    `reg_createSymmetricControlPointGrids` stores the half affines of a
-    symmetric registration as raw `mat44` (sixteen row-major floats,
-    in the byte order of the machine that wrote them) in extensions of
-    code `NIFTI_ECODE_IGNORE`, and `reg_spline_getDeformationField` and
-    `reg_defField_getDeformationFieldFromFlowField` read them back from
-    the first (and second) extension. Extensions of any other code, or
-    too short to hold a matrix, are not NiftyReg's and are left out.
+    A symmetric registration stores its half affines as raw `mat44` matrices in
+    extensions of code `NIFTI_ECODE_IGNORE`. Reading stops at the first
+    extension that has another code or is too short.
     """
     affines = []
     for extension in getattr(header, "extensions", None) or ():
@@ -152,8 +141,9 @@ def _extension_affines(header: _NiftiObject) -> tx.List[np.ndarray]:
 
 
 def _extension(matrix: np.ndarray) -> nb.nifti1.Nifti1Extension:
-    """A `NIFTI_ECODE_IGNORE` extension holding a `mat44`, as NiftyReg
-    writes it (`esize = 16 * sizeof(float) + 16`, zero padded)."""
+    """
+    Build an extension that holds a `mat44`, padded as NiftyReg writes it.
+    """
     content = np.asarray(matrix, dtype="<f4").reshape(16).tobytes()
     return nb.nifti1.Nifti1Extension(_NIFTI_ECODE_IGNORE, content + bytes(8))
 
@@ -165,39 +155,38 @@ def _extension(matrix: np.ndarray) -> nb.nifti1.Nifti1Extension:
 
 class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
     """
-    A NiftyReg transformation stored in a NIfTI file.
+    NiftyReg transformation stored in a NIfTI file.
 
-    NiftyReg writes every non-linear transformation as a `VECTOR`
-    (1007) image named `"NREG_TRANS"`, and says which kind it is in
-    `intent_p1` (`NREG_TRANS_TYPE`). Each concrete reader claims the
-    kinds listed in its `TYPES`, with certainty.
-
-    Abstract: it is not decorated with `@register_format`, so it never
-    takes part in dispatch.
+    NiftyReg writes every nonlinear transformation as a `VECTOR` image (1007)
+    named `"NREG_TRANS"`, with its type in `intent_p1`. Each concrete reader
+    claims, with certainty, the types listed in its `TYPES`. This class is
+    abstract and is not registered as a format.
     """
 
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset()
-    """The `intent_p1` values this reader decodes."""
+    """The `intent_p1` values that the reader decodes."""
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
-        """`CERTAIN` for a NiftyReg file of one of `TYPES`, else `NO`."""
+        """
+        Score `Confidence.CERTAIN` for a NiftyReg file of one of the `TYPES`.
+        """
         if _niftyreg_type(header) in cls.TYPES:
             return Confidence.CERTAIN
         return Confidence.NO
 
     @property
     def niftyreg_type(self) -> tx.Optional[int]:
-        """The NiftyReg transformation type (`intent_p1`) of the file."""
+        """The NiftyReg transformation type of the file."""
         return None if self.header is None else _niftyreg_type(self.header)
 
     @property
     def extension_affines(self) -> tx.List[np.ndarray]:
-        """The `(4, 4)` affines NiftyReg stored in the header extensions."""
+        """The (4, 4) affines stored in the header extensions."""
         return [] if self.header is None else _extension_affines(self.header)
 
     def _vox2world(self) -> np.ndarray:
-        """The `(4, 4)` voxel-to-world affine of the file's grid."""
+        """Return the (4, 4) voxel-to-world affine of the grid of the file."""
         if self.header is None:
             raise ParserContentError(
                 "This field has no NIfTI header to read its grid from."
@@ -207,14 +196,13 @@ class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
 
 class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     """
-    A NiftyReg field that the data model represents: a chain of
-    transformations from reference RAS to floating RAS.
+    NiftyReg field, mapping the reference RAS space to the floating RAS space.
 
-    The stored vectors are world positions or displacements, in NIfTI
-    world (RAS) millimetres, sampled on the file's own grid. A
+    The stored vectors are world positions or displacements in RAS millimetres.
+    A
     [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField]
-    adds its values in the units of its own grid, so each field is read
-    as the chain of [`ras_displacement_chain`][]:
+    adds its values in the units of its own grid, so each field is read as the
+    chain of [`ras_displacement_chain`][]:
 
     | Slot           | Transformation                              |
     | -------------- | ------------------------------------------- |
@@ -222,50 +210,39 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     | `displacement` | the displacements, in voxel units           |
     | `voxel2ras`    | the field's voxels back to RAS world        |
 
-    Positions are read as displacements, by subtracting the world
-    coordinate of their voxel -- exactly what NiftyReg does
-    (`reg_getDisplacementFromDeformation`) -- because NiftyReg extends a
-    field beyond its grid by sliding: it keeps the *displacement* of the
-    nearest edge voxel (`get_SlidedValues`), which a displacement field
-    with the `nearest` boundary condition reproduces, and a field of
-    positions would not.
-
-    Only three-dimensional fields are decoded: a 2-D NiftyReg field
-    (two components) is refused when read.
-
-    Abstract: it is not decorated with `@register_format`.
+    Positions are read as displacements by subtracting the world coordinate of
+    each voxel, as NiftyReg does. NiftyReg extends a field beyond its grid with
+    the displacement of the nearest edge voxel, which the `nearest` boundary
+    reproduces on displacements but not on positions. Only 3-D fields are
+    decoded, and this class is not registered as a format.
     """
 
     degree: tx.ClassVar[int] = 1
-    """The spline degree used to interpolate the field."""
+    """Spline degree of the interpolation."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
-    """The boundary condition used outside of the field of view."""
+    """Boundary condition outside the field of view."""
 
-    coeff: tx.ClassVar[bool] = False
+    store: tx.ClassVar[StoreEnum] = StoreEnum.values
     """Whether the field holds spline coefficients rather than values."""
 
     log: tx.ClassVar[bool] = False
-    """Whether the field holds a stationary velocity rather than the
-    displacement of the map."""
+    """
+    Whether the field holds a stationary velocity rather than displacements.
+    """
 
     @property
     def steps(self) -> tx.Optional[int]:
-        """The number of squaring steps of a velocity: none here."""
+        """The squaring steps of a velocity, which this field does not have."""
         return None
-
-    # --- reading ------------------------------------------------------
 
     @classmethod
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         """
-        Build the field from a `nibabel` header or image.
+        Build a field from a `nibabel` image or header.
 
-        A NiftyReg field is `(X, Y, Z, 1, 3)`, with its components in the
-        fifth axis (`reg_createDeformationField`,
-        `reg_createControlPointGrid`). Anything else -- a 2-D field
-        `(X, Y, 1, 1, 2)` in particular -- is refused here, from the
-        header alone.
+        Any shape other than (X, Y, Z, 1, 3), in particular a 2-D field, is
+        refused from the header alone.
         """
         header = nifti.header if isinstance(nifti, nb.Nifti1Image) else nifti
         shape = _nifti_shape(header)
@@ -282,41 +259,37 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             )
         return super().from_nibabel(nifti, **kwargs)
 
-    # --- copies -------------------------------------------------------
-
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """
-        Create an instance from an instance of a similar class.
+        Create a field from an instance of a similar class.
 
-        The chain of another transformation is carried over, rather than
-        re-read from a NIfTI header that comes with it: that header is
-        another format's, and this one would read its vectors as its own
-        (a displacement as a velocity, say).
+        The chain of the other transformation is carried over rather than
+        re-read from its header, which this reader would misread.
         """
         if isinstance(other, _xforms.Sequence) and not isinstance(other, cls):
             kwargs.setdefault("transformations", tuple(other))
         return super().from_instance(other, *args, **kwargs)
 
-    # --- endpoints ----------------------------------------------------
-    #
-    # Declared rather than read off the chain: reading them off the
-    # chain would build it, and building it decodes the field data.
+    # The endpoints are declared rather than read off the chain, which would
+    # decode the field data.
 
     @smartproperty(cache=True)
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The reference world space the field maps from."""
+        """
+        The reference world space that the field maps from, in RAS millimetres.
+        """
         return _systems.RASmm()
 
     @smartproperty(cache=True)
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The floating world space the field maps to."""
+        """
+        The floating world space that the field maps to, in RAS millimetres.
+        """
         return _systems.RASmm()
 
-    # --- decoding -----------------------------------------------------
-
     def _stored_vectors(self) -> ArrayProtocol:
-        """The stored vectors, as an `(X, Y, Z, 3)` array."""
+        """Return the stored vectors as an (X, Y, Z, 3) array."""
         data = self.data
         if data is None:
             raise ParserContentError("This field has no data to read.")
@@ -332,18 +305,18 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         return data
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
-        """The stored vectors, as RAS displacements."""
+        """Return the stored vectors as RAS displacements."""
         return self._stored_vectors()
 
     def _field_chain(self) -> tx.Tuple[_xforms.Transformation, ...]:
-        """The three slots of the field itself."""
+        """Return the three slots of the field itself."""
         vox2world = self._vox2world()
         return ras_displacement_chain(
             self._displacements(vox2world),
             vox2world,
             degree=self.degree,
             bound=self.bound,
-            coeff=self.coeff,
+            store=self.store,
             log=self.log,
             steps=self.steps,
         )
@@ -353,23 +326,21 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         """
         The chain of transformations that the field encodes.
 
-        It is built from the NIfTI header and data on first access, and
-        cached. Assigning to it overrides the derived chain, which is how
-        a field that was not read from a file is built.
+        The chain is built lazily from the header and the data, and then
+        cached. Assigning a chain overrides the derived one, which is how
+        fields that do not come from a file are built.
         """
         return self._field_chain()
 
-    # --- slots --------------------------------------------------------
-
     def _slot(self, index: int) -> tx.Optional[_xforms.Transformation]:
         chain = self.transformations
-        # A chain that starts with an affine (see the control-point grid)
-        # has its field slots one further.
+        # A chain that starts with an affine has its field slots shifted by
+        # one.
         return chain[index + len(chain) - 3]
 
     @property
     def ras2voxel(self) -> tx.Optional[_xforms.Transformation]:
-        """The affine from RAS world coordinates to the field's voxels."""
+        """The affine from RAS world coordinates to the voxels of the field."""
         return self._slot(0)
 
     @property
@@ -379,22 +350,24 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
 
     @property
     def voxel2ras(self) -> tx.Optional[_xforms.Transformation]:
-        """The affine from the field's voxels back to RAS world."""
+        """
+        The affine from the voxels of the field back to RAS world coordinates.
+        """
         return self._slot(2)
-
-    # --- writing ------------------------------------------------------
 
     _WHAT: tx.ClassVar[str] = "A NiftyReg field"
 
     def _split(
         self, chain: tx.Sequence[_xforms.Transformation]
     ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
-        """The grid and the RAS displacements of a three-slot chain."""
+        """
+        Return the grid affine and the RAS displacements of a three-slot chain.
+        """
         return split_ras_displacement_chain(
             chain,
             self._WHAT,
             ndim=_NDIM,
-            coeff=self.coeff,
+            store=self.store,
             degree=self.degree,
             bound=self.bound,
             log=self.log,
@@ -410,13 +383,11 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         **overrides,
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the NiftyReg NIfTI image of an `(X, Y, Z, 3)` array.
+        Build a NiftyReg NIfTI image from an (X, Y, Z, 3) array.
 
-        The vectors are written as NiftyReg writes them: a `VECTOR`
-        (1007) image of shape `(X, Y, Z, 1, 3)`, named `"NREG_TRANS"`,
-        with the transformation type in `intent_p1`. The grid is stored
-        in the sform (with a non-zero code, so NiftyReg reads it) and the
-        qform.
+        The image is a `VECTOR` image of shape (X, Y, Z, 1, 3) named
+        `"NREG_TRANS"`, with its type in `intent_p1` and the given affines in
+        its extensions.
         """
         backend = get_array_backend(vectors)
         vectors = backend.expand_dims(backend.asarray(vectors), axis=3)
@@ -441,18 +412,11 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
 @register_format
 class NiftyRegDisplacementField(NiftyRegSequence):
     """
-    A NiftyReg displacement field (`DISP_FIELD`, `intent_p1 = 1`).
+    Displacement field written by `reg_transform -disp` (`intent_p1` 1).
 
-    `reg_transform -disp` writes one: on the reference grid, each voxel
-    holds the displacement, in world (RAS) millimetres, from its own
-    world position to the floating position it maps to. The sign is
-    `displacement = deformation - position`
-    (`reg_getDisplacementFromDeformation`), so the field maps reference
-    RAS to floating RAS as `x -> x + u(x)`.
-
-    It is interpolated linearly, and extended beyond its grid with the
-    displacement of the nearest edge voxel, as NiftyReg composes it
-    (`reg_defField_compose`). See [`NiftyRegSequence`][] for the chain.
+    Each voxel of the reference grid holds the displacement, in RAS
+    millimetres, from its own world position to the floating position, so the
+    field maps `x` to `x + u(x)`. See [`NiftyRegSequence`][].
     """
 
     HINTS = ("displacement", "disp")
@@ -462,12 +426,7 @@ class NiftyRegDisplacementField(NiftyRegSequence):
     def to_nibabel(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """
-        Build the NIfTI image NiftyReg would write for this field.
-
-        When `like` is given, non-encoding header fields are copied from
-        it. Keyword arguments override header fields last.
-        """
+        """Build the NIfTI image that NiftyReg would write for this field."""
         vox2world, vectors = self._split(self.transformations)
         return self._write(vectors, vox2world, DISP_FIELD, like, **overrides)
 
@@ -475,19 +434,12 @@ class NiftyRegDisplacementField(NiftyRegSequence):
 @register_format
 class NiftyRegDeformationField(NiftyRegSequence):
     """
-    A NiftyReg deformation field (`DEF_FIELD`, `intent_p1 = 0`).
+    Deformation field written by `reg_transform -def` (`intent_p1` 0).
 
-    `reg_transform -def` (and `reg_resample -def`) write one: on the
-    reference grid, each voxel holds the floating world (RAS) position,
-    in millimetres, that it maps to (`reg_createDeformationField`,
-    `reg_spline_getDeformationField`).
-
-    The positions are read as displacements, by subtracting the world
-    position of their voxel, and written back by adding it: the field is
-    the same chain as a [`NiftyRegDisplacementField`][], interpolated
-    linearly and extended with the displacement of the nearest edge
-    voxel, which is how NiftyReg composes a deformation field
-    (`reg_defField_compose`, `get_SlidedValues`).
+    Each voxel of the reference grid holds the floating world position, in RAS
+    millimetres. The positions are read as displacements by subtracting the
+    world position of each voxel, so the field has the same chain as
+    [`NiftyRegDisplacementField`][].
     """
 
     HINTS = ("deformation", "def")
@@ -506,11 +458,7 @@ class NiftyRegDeformationField(NiftyRegSequence):
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the NIfTI image NiftyReg would write for this field: the
-        displacements are turned back into positions.
-
-        When `like` is given, non-encoding header fields are copied from
-        it. Keyword arguments override header fields last.
+        Build the NIfTI image of this field, with displacements as positions.
         """
         vox2world, vectors = self._split(self.transformations)
         backend = get_array_backend(vectors)
@@ -527,49 +475,31 @@ class NiftyRegDeformationField(NiftyRegSequence):
 
 
 _GRID_DEGREE = {CUB_SPLINE_GRID: 3, LIN_SPLINE_GRID: 1}
-"""The B-spline degree of each kind of control-point grid."""
+"""B-spline degree of each type of grid."""
 
 
 @register_format
 class NiftyRegControlPointGrid(NiftyRegSequence):
     """
-    A NiftyReg control-point grid (`CUB_SPLINE_GRID`, `intent_p1 = 2`),
-    as written by `reg_f3d -cpp`; also a linear one (`LIN_SPLINE_GRID`,
-    `intent_p1 = 6`).
+    Control-point grid written by `reg_f3d -cpp`.
 
-    The grid holds, at each control point, the floating world (RAS)
-    *position* of that control point, in millimetres -- not a
-    displacement: `reg_createControlPointGrid` initialises it with the
-    identity positions and `reg_f3d` optimises them. The deformation at
-    a reference world point `x` is the cubic B-spline of those
-    positions, evaluated at `x` mapped into the grid's voxels by the
-    grid's own header (`reg_cubic_spline_getDeformationField3D`):
-    the basis is the centred cubic B-spline in grid units
-    (`get_BSplineBasisValues`), so the control points that act on `x`
-    are `floor(g) - 1` to `floor(g) + 2`, where `g` is its grid
-    coordinate.
+    The grid is cubic (`intent_p1` 2) or linear (6). Each control point holds a
+    floating world position in RAS millimetres. The deformation at a reference
+    point is the centred cubic B-spline of these positions, evaluated where the
+    point falls on the grid. The grid header places the grid on its own, so no
+    reference image is needed.
 
-    The grid's header places it: `reg_createControlPointGrid` copies the
-    reference orientation, scales it to the control-point spacing (the
-    pixdims, in mm) and moves its origin one control point before the
-    reference origin. So no reference image is needed to read it.
+    The positions are read as the spline coefficients of displacements by
+    subtracting the world position of each control point. A cubic B-spline
+    reproduces linear functions, so the map is unchanged wherever all the
+    acting control points lie in the grid, which covers the whole reference
+    image. Beyond the grid, the `nearest` boundary on the coefficients
+    reproduces how NiftyReg slides the nearest displacement. A linear grid is
+    read the same way at degree 1.
 
-    The positions are read as spline coefficients of displacements, by
-    subtracting the world position of each control point. A cubic
-    B-spline reproduces linear functions, so the two are the same map
-    wherever every control point that acts is inside the grid, which is
-    everywhere on the reference image. Beyond the grid, NiftyReg slides
-    the displacement of the nearest control point (`get_GridValues`),
-    which the `nearest` boundary condition on the coefficients
-    reproduces. A linear grid is a field of linearly interpolated
-    positions on the control points, read the same way at degree 1.
-
-    The chain is that of [`NiftyRegSequence`][], with degree 3 and
-    coefficients. When the header carries an affine in its extensions
-    (as the grids of a symmetric registration do), NiftyReg applies it
-    to the reference position before the spline
-    (`reg_spline_getDeformationField`), so the chain starts with that
-    affine, as a [`RASToRAS`][] (`affine` slot), and has four slots.
+    When the header carries an affine in its extensions, as after a symmetric
+    registration, NiftyReg applies that affine before the spline. The chain
+    then starts with a [`RASToRAS`][] in the `affine` slot and has four slots.
     """
 
     HINTS = ("cpp", "f3d")
@@ -582,7 +512,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
 
     @property
     def degree(self) -> int:
-        """The B-spline degree of the grid: 3, or 1 for a linear grid."""
+        """The B-spline degree of the grid: 3 if cubic, 1 if linear."""
         if self.header is not None:
             kind = _niftyreg_type(self.header)
             if kind in _GRID_DEGREE:
@@ -593,10 +523,9 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         return 3
 
     @property
-    def coeff(self) -> bool:
-        """Whether the grid holds spline coefficients: so it does, at any
-        degree above one (at degree one, coefficients are values)."""
-        return self.degree > 1
+    def store(self) -> StoreEnum:
+        """Whether the grid holds spline coefficients, as above degree 1."""
+        return StoreEnum.from_coefficients(self.degree > 1)
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
@@ -623,13 +552,10 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the NIfTI image NiftyReg would write for this grid: the
-        coefficients are turned back into control-point positions.
+        Build the NIfTI image of this grid, with coefficients as positions.
 
-        A chain of four slots, whose first is an affine, has that affine
-        written to the header extension NiftyReg reads it from. When
-        `like` is given, non-encoding header fields are copied from it.
-        Keyword arguments override header fields last.
+        A leading affine is written to the header extension that NiftyReg
+        reads.
         """
         chain = tuple(self.transformations or ())
         extensions = []
@@ -637,8 +563,9 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
             affine = homogeneous_matrix(chain[0], self._WHAT, _NDIM)
             extensions.append(affine)
             chain = chain[1:]
-        # NiftyReg stores cubic and linear grids: a field of either degree
-        # is written at its own, and any other is refitted to a cubic one.
+        # NiftyReg stores cubic and linear grids, so a field of either degree
+        # is
+        # written at its own degree, and any other is refitted to cubic.
         degree = int(getattr(chain[1], "degree", 3)) if len(chain) == 3 else 3
         kinds = {degree: kind for kind, degree in _GRID_DEGREE.items()}
         if degree not in kinds:
@@ -647,7 +574,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
             chain,
             self._WHAT,
             ndim=_NDIM,
-            coeff=degree > 1,
+            store=StoreEnum.from_coefficients(degree > 1),
             degree=degree,
             bound=self.bound,
         )
@@ -668,62 +595,46 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
 
 class NiftyRegVelocity(NiftyRegSequence):
     """
-    A NiftyReg stationary velocity field or grid.
+    Stationary velocity field or grid.
 
-    `reg_f3d -vel` parametrises the deformation by a stationary velocity
-    field, and its output is the deformation's *exponential*: the velocity
-    is scaled down by `2 ** n` (`n = |intent_p2|`) and composed with itself
-    `n` times (`reg_defField_getDeformationFieldFromFlowField`); a negative
-    `intent_p2` marks a backward field, whose velocity is negated first.
+    `reg_f3d -vel` parametrises the deformation by a stationary velocity, whose
+    exponential is computed by scaling and squaring with `|intent_p2|` steps. A
+    negative `intent_p2` marks a backward field, whose velocity is negated. The
+    file is read as the chain of [`NiftyRegSequence`][], with a
+    [`StationaryVelocityField`][brainhops.datamodel.transformations.StationaryVelocityField]
+    in the `displacement` slot. A velocity grid is squared on its own grid,
+    whereas NiftyReg squares on the dense reference grid, so the flow matches
+    `reg_transform -def` closely but not exactly.
 
-    The file is read as the chain of [`NiftyRegSequence`][], whose
-    `displacement` slot is a
-    [`StationaryVelocityField`][brainhops.datamodel.transformations.\
-StationaryVelocityField]: the velocity, in voxel units, negated for a
-    backward field, integrated with `steps = |intent_p2|` squaring steps
-    (the default rule when it is zero). Its flow commutes with the change
-    of coordinates the chain makes, so the chain maps reference RAS to
-    floating RAS as NiftyReg's deformation does.
-
-    A velocity grid is read as the coefficients of the velocity, and is
-    squared on its own grid, of control points. NiftyReg evaluates the
-    grid onto the dense reference grid first, and squares there, so the
-    flow matches `reg_transform -def` closely but not exactly.
-
-    NiftyReg removes the affine it keeps in the extensions of a symmetric
-    registration's velocity before the squaring, and composes it back
-    after; that is not decoded here, so a velocity whose header carries
-    an affine raises `NotImplementedError` when its chain is built.
-
-    A velocity read from a file is written back as it was read, header
-    and extensions included. One built from a chain is written as a
-    velocity, with its squaring steps in `intent_p2`: a displacement
-    field is refused, since it has no logarithm that brainhops computes.
-
-    Abstract: it is not decorated with `@register_format`.
+    The affine that a symmetric registration keeps in the extensions of its
+    velocity is not decoded, so building the chain of such a velocity raises
+    `NotImplementedError`. A velocity read from a file is written back as read.
+    A velocity built from a chain is written with its steps in `intent_p2`, and
+    a displacement field is refused, since no logarithm is computed. This class
+    is not registered as a format.
     """
 
     log: tx.ClassVar[bool] = True
 
     @property
     def squaring_steps(self) -> tx.Optional[int]:
-        """The number of squaring steps of the exponentiation, as stored
-        (`intent_p2`; negative for a backward field)."""
+        """The stored squaring steps, negative for a backward field."""
         if self.header is None:
             return None
         return int(round(float(self.header["intent_p2"])))
 
     @property
     def steps(self) -> tx.Optional[int]:
-        """The number of squaring steps that integrate the velocity:
-        `|intent_p2|`, or `None` (the default rule) when it is zero."""
+        """
+        The squaring steps of the velocity, or `None` for the default rule.
+        """
         steps = self.squaring_steps
         if not steps:
             return None
         return abs(steps)
 
     def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
-        """The stored vectors, as the RAS velocity they encode."""
+        """Return the stored vectors as the RAS velocity that they encode."""
         raise NotImplementedError
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
@@ -745,10 +656,12 @@ StationaryVelocityField]: the velocity, in voxel units, negated for a
     def _read_back(
         self, like: tx.Any = None, **overrides
     ) -> tx.Optional[tx.Union[nb.Nifti1Image, nb.Nifti2Image]]:
-        """The NIfTI image as it was read, or `None` if this velocity was
-        not read from a NiftyReg velocity file of its type, or its chain
-        was assigned. A header copied from another format is never written
-        back: it says something else."""
+        """
+        Return the NIfTI image as it was read, or `None`.
+
+        `None` is returned when the velocity was not read from a NiftyReg file
+        of its own type, or when its chain was assigned.
+        """
         if self.niftyreg_type not in type(self).TYPES:
             return None
         if getattr(self, "_transformations", None) is not None:
@@ -768,22 +681,20 @@ StationaryVelocityField]: the velocity, in voxel units, negated for a
 
 
 def _written_steps(chain: tx.Sequence[_xforms.Transformation]) -> int:
-    """The squaring steps NiftyReg is told to integrate a velocity with:
-    those of the velocity, or else the number its default rule picks."""
-    return int(chain[1].squarings)
+    """
+    Return the squaring steps, those of the velocity or of the default rule.
+    """
+    return int(chain[1]._compute_steps)
 
 
 @register_format
 class NiftyRegVelocityGrid(NiftyRegVelocity):
     """
-    A cubic B-spline grid of a stationary velocity (`SPLINE_VEL_GRID`,
-    `intent_p1 = 5`), as written by `reg_f3d -vel -cpp`.
+    Cubic B-spline grid of a stationary velocity (`reg_f3d -vel -cpp`).
 
-    Like a [`NiftyRegControlPointGrid`][], it holds the floating world
-    position of each control point, and is read as the spline
-    coefficients of their displacement -- here, of the velocity -- by
-    subtracting the world position of each control point. See
-    [`NiftyRegVelocity`][] for how it is integrated.
+    As in [`NiftyRegControlPointGrid`][], the control points hold positions,
+    which are read as velocity coefficients. See [`NiftyRegVelocity`][] for the
+    integration.
     """
 
     HINTS = ("velocity", "vel", "cpp")
@@ -791,7 +702,7 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
     _WHAT: tx.ClassVar[str] = "A NiftyReg velocity grid"
 
     degree: tx.ClassVar[int] = 3
-    coeff: tx.ClassVar[bool] = True
+    store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
 
     def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
@@ -805,13 +716,11 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the NIfTI image NiftyReg would write for this velocity grid:
-        the velocity's cubic coefficients, turned back into control-point
-        positions, with its squaring steps in `intent_p2`.
+        Build the NIfTI image of this velocity grid.
 
-        A grid read from a file is written back as it was read. When
-        `like` is given, non-encoding header fields are copied from it.
-        Keyword arguments override header fields last.
+        A grid read from a file is written back as read. Otherwise, the
+        coefficients are turned into positions, and the squaring steps are
+        stored in `intent_p2`.
         """
         image = self._read_back(like, **overrides)
         if image is not None:
@@ -832,13 +741,10 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
 @register_format
 class NiftyRegVelocityField(NiftyRegVelocity):
     """
-    A dense stationary velocity field, stored as positions
-    (`DEF_VEL_FIELD`, `intent_p1 = 3`) or as displacements
-    (`DISP_VEL_FIELD`, `intent_p1 = 4`).
+    Dense stationary velocity field, stored as positions or displacements.
 
-    The positions are read as the velocity by subtracting the world
-    position of their voxel, as NiftyReg does before integrating them.
-    See [`NiftyRegVelocity`][] for how it is integrated.
+    Positions are read as a velocity by subtracting the world position of each
+    voxel, as NiftyReg does before integrating. See [`NiftyRegVelocity`][].
     """
 
     HINTS = ("velocity", "vel")
@@ -861,13 +767,11 @@ class NiftyRegVelocityField(NiftyRegVelocity):
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the NIfTI image NiftyReg would write for this velocity: the
-        positions of a `DEF_VEL_FIELD` (the type NiftyReg integrates),
-        with its squaring steps in `intent_p2`.
+        Build the NIfTI image of this velocity field.
 
-        A velocity read from a file is written back as it was read. When
-        `like` is given, non-encoding header fields are copied from it.
-        Keyword arguments override header fields last.
+        A field read from a file is written back as read. Otherwise, it is
+        written as positions, the type that NiftyReg integrates, with the
+        squaring steps in `intent_p2`.
         """
         image = self._read_back(like, **overrides)
         if image is not None:

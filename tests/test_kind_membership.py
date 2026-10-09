@@ -1,10 +1,9 @@
-"""Tests for kind membership (`is_kind`) and the checker registry.
+"""Tests of kind membership (`is_kind`) and of the checker registry.
 
-Membership is a predicate `is_kind(t, kind, compute)` on two levels:
-`compute=False` (analytic, structure only) and `compute=True` (numeric,
-values + rank). Resolution (mode / simplify) only ever asks at analytic;
-numeric is reachable via explicit calls and may retract an analytic shape
-assumption. See the spec and the `SimplifyPolicy` docstring.
+Membership has two levels: with compute=False it is analytic and reads only
+the structure, and with compute=True it is numeric and also reads values
+and ranks. Resolution only asks analytic questions, and a numeric check may
+retract an analytic assumption.
 """
 
 from unittest import mock
@@ -12,9 +11,9 @@ from unittest import mock
 import numpy as np
 
 from brainhops.datamodel import kinds as H
-from brainhops.datamodel._transformations import checkers as _checkers
-from brainhops.datamodel._transformations import inverse as _inv
-from brainhops.datamodel._transformations.checkers import (
+from brainhops.datamodel._transformations import concrete as _concrete
+from brainhops.datamodel._transformations.compute import checkers as _checkers
+from brainhops.datamodel._transformations.compute.checkers import (
     _bijective_targets,
     _embed_targets,
     _permute_targets,
@@ -41,8 +40,8 @@ from brainhops.datamodel.transformations import (
 
 
 def _M(t: object, node: str, policy: object = "analytic") -> bool:
-    # `policy` accepts the old ladder words for readability; membership is now
-    # a two-level predicate, so only `numeric`/`True` reads values.
+    # The policy accepts the old ladder words; only 'numeric' or True reads
+    # values.
     compute = policy == "numeric" or policy is True
     return is_kind(t, getattr(H, node), compute=compute)
 
@@ -54,9 +53,8 @@ def _M(t: object, node: str, policy: object = "analytic") -> bool:
 
 def test_embed_targets() -> None:
     assert _embed_targets(H.Translation) == (H.Translation,)
-    # ConformalEuclidean is not embeddable; its single maximal embeddable
-    # subnode is Euclidean. Now that the lattice places Translation/SE under
-    # Euclidean, this collapses to just `(Euclidean,)`.
+    # ConformalEuclidean is not embeddable; Euclidean is its only maximal
+    # embeddable subnode.
     assert _embed_targets(H.ConformalEuclidean) == (H.Euclidean,)
 
 
@@ -95,7 +93,7 @@ def test_none_parameter_is_identity() -> None:
 
 
 def test_square_affine_is_optimistically_invertible() -> None:
-    a = Affine(matrix=np.eye(4)[:3])  # 3x4 -> 3-D -> 3-D, square
+    a = Affine(matrix=np.eye(4)[:3])  # 3-D -> 3-D, square
     assert _M(a, "AffineTransformation")
     assert _M(a, "InvertibleAffineTransformation")
     assert _M(a, "BijectiveTransformation")
@@ -174,7 +172,7 @@ def test_cartesian_field_membership_never_builds_field() -> None:
 def test_numeric_retracts_singular_square() -> None:
     sing = Affine(
         matrix=np.array([[1.0, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0]])
-    )  # 3x4 square, rank 2
+    )  # square, rank 2
     assert _M(sing, "InvertibleAffineTransformation", "analytic")
     assert not _M(sing, "InvertibleAffineTransformation", "numeric")
     assert not _M(sing, "BijectiveTransformation", "numeric")
@@ -182,11 +180,11 @@ def test_numeric_retracts_singular_square() -> None:
 
 
 def test_numeric_retracts_rank_deficient_wide_and_tall() -> None:
-    # 3-D -> 2-D, linear block rank 1.
+    # 3-D -> 2-D, linear block of rank 1
     wide = Affine(matrix=np.array([[1.0, 1, 1, 0], [2, 2, 2, 0]]))
     assert _M(wide, "SurjectiveTransformation", "analytic")
     assert not _M(wide, "SurjectiveTransformation", "numeric")
-    # 2-D -> 4-D, linear block rank 1.
+    # 2-D -> 4-D, linear block of rank 1
     tall = Affine(
         matrix=np.array([[1.0, 2, 0], [2, 4, 0], [0, 0, 0], [0, 0, 0]])
     )
@@ -231,16 +229,13 @@ def test_subspace_embedding() -> None:
 
 
 def test_subspace_reindex_permutes() -> None:
-    # A reindexing subspace composes the embedding with a coordinate
-    # permutation.
+    # Reindexing composes the embedding with a coordinate permutation.
     subT = SubspaceTransformation(
         transformation=Translation(translation=[1.0, 2.0]),
         input_axes=[0, 1],
         output_axes=[1, 0],
     )
-    # It is Euclidean and bijective (and affine) but no longer a pure
-    # translation. `Euclidean` holds now that the lattice places
-    # `Translation` under `SpecialEuclidean` ⊆ `Euclidean`.
+    # No longer a pure translation, but still Euclidean.
     assert _M(subT, "EuclideanTransformation")
     assert _M(subT, "BijectiveTransformation")
     assert _M(subT, "AffineTransformation")
@@ -259,10 +254,10 @@ def test_subspace_reindex_rotation_parity() -> None:
     r = Rotation(matrix=[[0.0, -1.0], [1.0, 0.0]])
     odd = SubspaceTransformation(
         transformation=r, input_axes=[0, 1, 2], output_axes=[1, 0, 2]
-    )  # single swap = odd
+    )  # a single swap is odd
     even = SubspaceTransformation(
         transformation=r, input_axes=[0, 1, 2], output_axes=[2, 0, 1]
-    )  # 3-cycle = even
+    )  # a 3-cycle is even
     assert not _M(odd, "SpecialOrthogonalTransformation")
     assert _M(odd, "OrthogonalTransformation")
     assert _M(even, "SpecialOrthogonalTransformation")
@@ -300,16 +295,16 @@ def test_inverse_delegates_without_reading_its_parameter() -> None:
 def test_field_inverse_never_inverts_and_never_raises() -> None:
     df = DisplacementField(field=np.random.RandomState(0).randn(6, 7, 2))
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(f: object) -> object:
         calls["n"] += 1
         return real(f)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         for policy in ("analytic", "numeric"):
             assert not _M(df.inverse(), "AffineTransformation", policy)
-            # A coordinate-field inverse must never raise from membership.
+            # Membership of a coordinates-field inverse must never raise.
             _M(
                 CoordinatesField(field=df.field).inverse(),
                 "AffineTransformation",
@@ -359,8 +354,7 @@ def test_class_kinds() -> None:
     assert is_kind(inv, Inverse)
     assert not is_kind(Affine(matrix=np.eye(4)[:3]), Inverse)
     df = DisplacementField(field=np.zeros((4, 4, 2)))
-    # One kind is one class: the two field types are asked about through the
-    # base they share, never as a tuple of the two.
+    # One kind is one class, so both field types share a base.
     assert is_kind(df, TransformationField)
     assert is_kind(
         CoordinatesField(field=np.zeros((4, 4, 2))), TransformationField
@@ -375,9 +369,7 @@ def test_class_kinds() -> None:
 
 
 def test_analytic_membership_calls_no_numeric_routines() -> None:
-    # Analytic membership reads only structure, so the numeric routines
-    # (rank via `_matrix_rank`, matrix inverse, field inversion) are never
-    # called.
+    # Analytic membership never calls the numeric routines.
     import contextlib
 
     counts = {"n": 0}
@@ -413,7 +405,11 @@ def test_analytic_membership_calls_no_numeric_routines() -> None:
             mock.patch.object(np.linalg, "inv", bump(np.linalg.inv))
         )
         stack.enter_context(
-            mock.patch.object(_inv, "inverse_disp", bump(_inv.inverse_disp))
+            mock.patch.object(
+                _concrete,
+                "inverse_disp",
+                bump(_concrete.inverse_disp),
+            )
         )
         for t in cases:
             for node in (
@@ -433,8 +429,7 @@ def test_analytic_membership_calls_no_numeric_routines() -> None:
 
 
 def test_mode_composes_affine_run_of_mixed_kinds() -> None:
-    # A run of established affines (of different concrete types) composes to
-    # one affine under `mode="affine"`.
+    # Affines of different types compose to one under mode='affine'.
     trans = Translation(translation=[1.0, 2.0])
     aff = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]))
     rot = Rotation(matrix=[[0.0, -1.0], [1.0, 0.0]])
@@ -444,8 +439,7 @@ def test_mode_composes_affine_run_of_mixed_kinds() -> None:
 
 
 def test_mode_name_means_the_set() -> None:
-    # A set NAME means the affine SET: a run of affine-set members (of
-    # different concrete types) composes to one leaf under `mode="affine"`.
+    # The name 'affine' means the set, whatever the concrete types.
     lin = Linear(matrix=np.diag([2.0, 3.0]))
     sca = Scaling(scale=[2.0, 3.0])
     aff = Affine(matrix=np.array([[2.0, 0, 1], [0, 3, 2]]))
@@ -455,9 +449,7 @@ def test_mode_name_means_the_set() -> None:
 
 
 def test_mode_concrete_class_means_isinstance() -> None:
-    # `mode=Affine` (a concrete class) means `isinstance`, NOT the set: only
-    # the `Affine` instance is admitted, so the `Linear`/`Scaling` neighbours
-    # are not folded into it.
+    # The class Affine means isinstance, so neighbours are not folded.
     lin = Linear(matrix=np.diag([2.0, 3.0]))
     aff = Affine(matrix=np.array([[2.0, 0, 1], [0, 3, 2]]))
     result = Sequence(transformations=[aff, lin]).compute(mode=Affine)
@@ -465,20 +457,18 @@ def test_mode_concrete_class_means_isinstance() -> None:
 
 
 def test_mode_Aff_admits_only_invertible_affines() -> None:
-    # Membership drives mode admission: a wide (surjective, non-invertible)
-    # affine is admitted by `mode="affine"` but not by `mode="Aff"`.
+    # A wide affine is affine but not invertible, so mode='Aff' rejects it.
     wide = Affine(matrix=np.zeros((2, 4)))  # 3-D -> 2-D
     assert is_kind(wide, H.Affine)
     assert not is_kind(wide, H.InvertibleAffine)
 
 
 def test_selection_memo_follows_registry_and_values() -> None:
-    # The per-(type, kind) selection memo must stay exact: the checkers still
-    # read each instance's values, a new checker changes the selection, and
-    # so does a new virtual subclass (the ABC cache token moves).
+    # The (type, kind) selection memo must stay exact: checkers still read
+    # values, and new checkers or virtual subclasses change the selection.
     import abc
 
-    from brainhops.datamodel._transformations.check import IsKind
+    from brainhops.datamodel._transformations.compute.check import IsKind
 
     class Source(abc.ABC):  # noqa: B024 (registered into, not implemented)
         def __init__(self, flag: bool = False) -> None:
@@ -490,15 +480,15 @@ def test_selection_memo_follows_registry_and_values() -> None:
     ik = IsKind()
     ik.register(Source, H.Affine)(lambda x, kind, compute: x.flag)
 
-    # Same type, different values: the selection is shared, the answer is not.
+    # Same type, different values: the selection is shared, the answer not.
     assert ik(Source(flag=True), H.Matrix)
     assert not ik(Source(flag=False), H.Matrix)
 
-    # A new checker invalidates the memo for an already-seen (type, kind).
+    # A new checker invalidates the memo.
     ik.register(Source, H.InvertibleAffine)(lambda x, kind, compute: True)
     assert ik(Source(flag=False), H.Matrix)
 
-    # A new virtual subclass invalidates it too.
+    # So does a new virtual subclass.
     assert not ik(Virtual(), H.Matrix)
     Source.register(Virtual)
     assert ik(Virtual(), H.Matrix)

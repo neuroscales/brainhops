@@ -1,8 +1,7 @@
-# externals
 import numpy as np
 
 # internals
-from brainhops.io.base.freesurfer import (
+from brainhops.io.common.freesurfer._geometry import (
     code2orient,
     fs_phys2ras,
     fs_vox2phys,
@@ -10,41 +9,36 @@ from brainhops.io.base.freesurfer import (
     mat2orient,
 )
 
-# local
 from ._enums import LtaType
 from ._struct import LtaStruct
 
 
 def _get_vox2phys(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
-    """Compute the vox2phys matrix from the volume geometry."""
     return fs_vox2phys(vol_info.volume, vol_info.voxelsize)
 
 
 def _get_phys2ras(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
-    """Compute the phys2ras matrix from the volume geometry."""
     return fs_phys2ras(
         vol_info.xras, vol_info.yras, vol_info.zras, vol_info.cras
     )
 
 
 def _get_vox2ras(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
-    """Compute the vox2ras matrix from the volume geometry."""
     return _get_phys2ras(vol_info) @ _get_vox2phys(vol_info)
 
 
-# RSA lists the axes of RAS in the order R, S, A (see `RSAmm`), so
-# swapping the last two spatial axes maps either one to the other. The
-# permutation is its own inverse.
+# RSA lists the RAS axes in the order R, S, A (see `RSAmm`), so swapping
+# the last two spatial axes converts either way: the permutation is its own
+# inverse.
 _RAS_RSA = [0, 2, 1, 3]
 
 
 def _rsa2ras(matrix: np.ndarray) -> np.ndarray:
-    """Express an RSA-to-RSA matrix as a RAS-to-RAS one."""
+    """Express an RSA-to-RSA matrix as a RAS-to-RAS matrix."""
     return matrix[_RAS_RSA, :][:, _RAS_RSA]
 
 
 def _get_ras2ras(lta: LtaStruct) -> np.ndarray:
-    """Compute the ras2ras matrix from the LTA struct."""
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_RAS_TO_RAS:
         return matrix
@@ -65,7 +59,6 @@ def _get_ras2ras(lta: LtaStruct) -> np.ndarray:
 
 
 def _get_phys2phys(lta: LtaStruct) -> np.ndarray:
-    """Compute the phys2phys matrix from the LTA struct."""
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
         return matrix
@@ -87,7 +80,6 @@ def _get_phys2phys(lta: LtaStruct) -> np.ndarray:
 
 
 def _get_vox2vox(lta: LtaStruct) -> np.ndarray:
-    """Compute the vox2vox matrix from the LTA struct."""
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_VOX_TO_VOX:
         return matrix
@@ -107,13 +99,12 @@ def _get_vox2vox(lta: LtaStruct) -> np.ndarray:
     raise AssertionError(f"unsupported LTA type: {lta.type}")
 
 
-# The orientation helpers are shared with the other FreeSurfer formats.
+# Orientation helpers shared with the other FreeSurfer formats.
 _mat2code = mat2code
 _code2orient = code2orient
 _mat2orient = mat2orient
 
 
 def _get_orient(vol_info: LtaStruct.VolumeInfo) -> str:
-    """Get the orientation string from the volume info."""
     vox2ras = _get_vox2ras(vol_info)
     return _mat2orient(vox2ras)

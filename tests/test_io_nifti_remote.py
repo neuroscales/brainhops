@@ -1,15 +1,8 @@
-"""
-Tests for reading and writing NIfTI files at remote paths, without
-touching a network.
+"""Tests of NIfTI reading and writing at remote paths, without a network.
 
-`nibabel` opens a file it is handed by name as a local file, so a remote
-path must be opened through its own backend and `nibabel` handed the
-open file. A local path must still go to `nibabel` by name, so that it
-memory-maps the voxels.
-
-Two kinds of remote path stand in for cloud storage: a minimal in-memory
-path object, which needs no optional dependency, and fsspec's `memory://`
-file system, which needs universal-pathlib.
+nibabel treats every name as local, so a remote path is opened through its
+own backend and nibabel receives the open file. A local path is still
+passed by name so that it can be memory-mapped.
 """
 
 import gzip
@@ -25,7 +18,8 @@ nb = pytest.importorskip("nibabel")
 from bagof.paths import Path  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
-from brainhops.io.base import nifti as nifti_base  # noqa: E402
+from brainhops.io.common.nifti import _files as nifti_base  # noqa: E402
+from brainhops.io.common.nifti import _parsers as nifti_parsers  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS  # noqa: E402
 
@@ -42,7 +36,7 @@ EXTENSIONS = [".nii", ".nii.gz"]
 
 
 def _encode(ext: str, data: np.ndarray = DATA) -> bytes:
-    """The bytes of a NIfTI-1 file, gzipped for a `.gz` name."""
+    """NIfTI-1 bytes, compressed for a .gz name."""
     image = nb.Nifti1Image(data, AFFINE)
     image.header.set_sform(AFFINE, code=2)
     image.header.set_qform(AFFINE, code=1)
@@ -51,7 +45,6 @@ def _encode(ext: str, data: np.ndarray = DATA) -> bytes:
 
 
 def _decode(raw: bytes) -> nb.Nifti1Image:
-    """A NIfTI-1 image from its bytes, gzipped or not."""
     if raw[:2] == b"\x1f\x8b":
         raw = gzip.decompress(raw)
     return nb.Nifti1Image.from_bytes(raw)
@@ -63,12 +56,7 @@ def _decode(raw: bytes) -> nb.Nifti1Image:
 
 
 class RemotePath(os.PathLike):
-    """
-    A path to remote storage, held in memory.
-
-    Like a cloud path, it gives its URL as `str()` and cannot be turned
-    into a local path: `os.fspath` raises.
-    """
+    """An in-memory remote path whose os.fspath raises."""
 
     store: tx.ClassVar[tx.Dict[str, bytes]] = {}
 
@@ -99,7 +87,6 @@ class RemotePath(os.PathLike):
 
 @pytest.fixture
 def remote() -> tx.Iterator[tx.Callable[[str], RemotePath]]:
-    """Make an in-memory remote path, its store emptied after the test."""
     RemotePath.store = {}
     yield RemotePath
     RemotePath.store = {}
@@ -129,7 +116,7 @@ def test_an_image_is_written_to_a_remote_path(
     ext: str,
     query: str,
 ) -> None:
-    # Only the path of the URL says whether to compress, not its query.
+    # Only the URL path, not the query, decides compression.
     source = f"https://host/in{ext}"
     target = f"https://host/out{ext}{query}"
     remote.store[source] = _encode(ext)
@@ -165,8 +152,7 @@ def test_streams_are_read_and_written_without_the_stream_api(
     monkeypatch,  # noqa: ANN001
     ext: str,
 ) -> None:
-    # `to_stream`/`from_stream` arrived in nibabel 5.0. Without them, a
-    # stream goes through a file map instead.
+    # Without nibabel 5.0 to_stream and from_stream, a file map is used.
     source, target = f"s3://bucket/in{ext}", f"s3://bucket/out{ext}"
     remote.store[source] = _encode(ext)
     for name in ("from_stream", "to_stream"):
@@ -192,14 +178,14 @@ def test_reader_options_reach_only_the_calls_that_take_them(
 ) -> None:
     raw = _encode(".nii")
     options = {"mmap": False, "keep_file_open": False}
-    # A stream cannot be memory-mapped: the options are not its own.
+    # A stream cannot be memory-mapped, so these options do not apply.
     url = "s3://bucket/image.nii"
     remote.store[url] = raw
     image = NiftiImage.load(remote(url), **options)
     assert np.array_equal(np.asarray(image.data), DATA)
     image = NiftiImage.from_bytes(raw, **options)
     assert np.array_equal(np.asarray(image.data), DATA)
-    # A local file takes them.
+    # A local file honours them.
     target = tmp_path / "image.nii"
     target.write_bytes(raw)
     image = NiftiImage.load(target, **options)
@@ -244,6 +230,7 @@ def test_a_local_path_is_loaded_by_name(
 
     monkeypatch.setattr(nb.Nifti1Image, "from_filename", classmethod(spy))
     monkeypatch.setattr(nifti_base, "_nifti_from_stream", no_stream)
+    monkeypatch.setattr(nifti_parsers, "_nifti_from_stream", no_stream)
 
     for file in (str(target), target, Path(target), f"file://{target}"):
         calls.clear()
@@ -277,8 +264,7 @@ def test_a_local_uncompressed_image_is_memory_mapped(tmp_path) -> None:  # noqa:
 
 @pytest.fixture
 def memory() -> tx.Iterator[str]:
-    """A fresh directory in fsspec's in-memory file system, for paths
-    that universal-pathlib opens."""
+    """A fresh fsspec in-memory directory for universal-pathlib paths."""
     pytest.importorskip("upath")
     fsspec = pytest.importorskip("fsspec")
     fs = fsspec.filesystem("memory")

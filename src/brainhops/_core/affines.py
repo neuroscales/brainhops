@@ -1,19 +1,62 @@
-"""
-This module contains utilities for working with "compact" affine matrices,
-i.e., M x (N+1) matrices that do not contain the homogeneous row.
+"""Operations on compact affine matrices.
+
+A compact affine is an `M x (N+1)` matrix that maps `N` input axes to `M`
+output axes. It is the homogeneous matrix without its bottom row,
+`[0, ..., 0, 1]`. All functions accept batches of matrices, stacked
+along the leading dimensions, and return compact matrices.
 """
 
-# stdlib
+__all__ = [
+    "to_homogeneous",
+    "to_compact",
+    "inv",
+    "axis_scales",
+    "matmul",
+    "matvec",
+    "lmdiv",
+    "rmdiv",
+    "expm",
+    "logm",
+    "sqrtm",
+]
+
 from math import prod
 from types import ModuleType
 
-# dependencies
 import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 from numpy import broadcast_shapes
 
-# locals
-from ..backends import get_array_backend
+from brainhops.backends import get_array_backend
+
+from .linalg import expm as _expm
+from .linalg import logm as _logm
+from .linalg import sqrtm as _sqrtm
+
+
+def to_homogeneous(
+    matrix: ArrayProtocol, tangent: bool = False
+) -> ArrayProtocol:
+    """Convert a compact affine to a square homogeneous matrix.
+
+    The row `[0, ..., 0, 1]` is appended, or the row `[0, ..., 0, 0]` when
+    `tangent` is true, which is the bottom row of the generator of an
+    affine transform.
+    """
+    nx = get_array_backend(matrix)
+    nd = matrix.shape[-1] - 1
+    corner = 0 if tangent else 1
+    pad = nx.asarray([[0] * nd + [corner]])
+    full = nx.concatenate([matrix, pad], axis=-2)
+    return full
+
+
+def to_compact(matrix: ArrayProtocol) -> ArrayProtocol:
+    """Convert a homogeneous matrix to a compact affine.
+
+    The bottom row, `[0, ..., 0, 1]`, is dropped.
+    """
+    return matrix[..., :-1, :]
 
 
 def inv(
@@ -21,26 +64,22 @@ def inv(
     *,
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
-    """
-    Invert a M x (N+1) affine matrix (i.e., that does not contain the
-    homogeneous row), eventually batched.
+    """Invert compact affines.
 
-    This function also returns an affine without the homogeneous row.
+    When the linear part is not square, its pseudo-inverse is used.
 
     Parameters
     ----------
-    A : (..., M, N+1) array-like
-        An M x (N+1) affine matrix, without the homogeneous row,
-        eventually batched.
-    backend : {"numpy", "cupy", "dask"}, optional
-        The array backend to use. If `None`, the backend is inferred
-        from the input array `A`.
+    A : ArrayProtocol
+        Affines, with shape `(..., M, N+1)`.
+    backend : str or module, optional
+        Array backend, given by name or as a module. By default, the backend
+        is inferred from `A`.
 
     Returns
     -------
-    C : (..., N, M+1) array-like
-        The inverse of the input affine matrix `A`, without the
-        homogeneous row.
+    ArrayProtocol
+        The compact inverses, with shape `(..., N, M+1)`.
     """
     backend = get_array_backend(backend or A)
     M, N = A.shape[-2:]
@@ -61,28 +100,24 @@ def axis_scales(
     *,
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
-    """
-    The per-axis scale of a compact affine matrix.
+    """Return the scale of a compact affine along each input axis.
 
-    The scale of an input axis is the Euclidean norm of the corresponding
-    column of the linear part of the matrix. For a voxel-to-world affine,
-    this is the physical size of a voxel along each axis. The measure is
-    invariant to rotation, so a rotated affine reports the same per-axis
-    scale as the axis-aligned affine with the same voxel sizes.
+    The scale of an axis is the Euclidean norm of the corresponding column of
+    the linear part. For a voxel-to-world affine, the scales are the voxel
+    sizes, and a rotation leaves them unchanged.
 
     Parameters
     ----------
-    A : (..., M, N+1) array-like
-        An M x (N+1) affine matrix, without the homogeneous row,
-        eventually batched.
-    backend : {"numpy", "cupy", "dask"}, optional
-        The array backend to use. If `None`, the backend is inferred
-        from the input array `A`.
+    A : ArrayProtocol
+        Affines, with shape `(..., M, N+1)`.
+    backend : str or module, optional
+        Array backend, given by name or as a module. By default, the backend
+        is inferred from `A`.
 
     Returns
     -------
-    s : (..., N) array-like
-        The Euclidean norm of each column of the linear part of `A`.
+    ArrayProtocol
+        The scales, with shape `(..., N)`.
     """
     backend = get_array_backend(backend or A)
     A = backend.asarray(A)
@@ -96,31 +131,28 @@ def matmul(
     *Cs: ArrayProtocol,
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
-    """
-    Multiply two M x (N+1) affine matrices (i.e., that do not contain
-    the homogeneous row), eventually batched.
+    """Multiply two or more compact affines.
 
-    This function also returns an affine without the homogeneous row.
+    In a chain of more than two affines, the order of the products is chosen
+    to keep the cost low, so that matrices without batch dimensions are
+    multiplied first.
 
     Parameters
     ----------
-    A : (..., M, N+1) array-like
-        An M x (N+1) affine matrix, without the homogeneous row,
-        eventually batched.
-    B : (..., N, P+1) array-like
-        An N x (P+1) affine matrix, without the homogeneous row,
-        eventually batched.
-    *Cs : (..., P, Q+1) array-like
-        Additional affine matrices to multiply, eventually batched.
-    backend : {"numpy", "cupy", "dask"}, optional
-        The array backend to use. If `None`, the backend is inferred
-        from the input array `A`.
+    A : ArrayProtocol
+        Affines, with shape `(..., M, N+1)`.
+    B : ArrayProtocol
+        Affines, with shape `(..., N, P+1)`.
+    *Cs : ArrayProtocol
+        Further affines, the first of which has shape `(..., P, Q+1)`.
+    backend : str or module, optional
+        Array backend, given by name or as a module. By default, the backend
+        is inferred from `A`.
 
     Returns
     -------
-    C : (..., M, P+1) array-like
-        The product of the input affine matrices `A` and `B`, without
-        the homogeneous row.
+    ArrayProtocol
+        The compact products, with shape `(..., M, P+1)` for two affines.
     """
     if Cs:
         return _chain_matmul(A, B, *Cs, backend=backend)
@@ -153,11 +185,8 @@ def _matmul(
 
 
 def _matmul_cost(A: ArrayProtocol, B: ArrayProtocol) -> int:
-    # Cost of multiplying two batched matrices, ignoring the size of
-    # the output matrix.
-    # This is used to determine the best order of multiplication for a
-    # chain of matrices. This is a very naive implementation, but it should
-    # at least ensure that we multiply non-batched matrices first.
+    # The cost ignores the size of the output; it only serves to multiply
+    # the matrices without batch dimensions first.
     batch = broadcast_shapes(A.shape[:-2], B.shape[:-2])
     return prod(batch) * B.shape[-2]
 
@@ -186,26 +215,25 @@ def matvec(
     *,
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
-    """
-    Multiply an M x (N+1) affine matrix (i.e., that does not contain the
-    homogeneous row) with an N-dimensional vector, eventually batched.
+    """Apply compact affines to vectors.
+
+    The result is the product of the linear part and the vector, plus the
+    translation.
 
     Parameters
     ----------
-    A : (..., M, N+1) array-like
-        An M x (N+1) affine matrix, without the homogeneous row,
-        eventually batched.
-    b : (..., N) array-like
-        An N-dimensional vector, eventually batched.
-    backend : {"numpy", "cupy", "dask"}, optional
-        The array backend to use. If `None`, the backend is inferred
-        from the input array `A`.
+    A : ArrayProtocol
+        Affines, with shape `(..., M, N+1)`.
+    b : ArrayProtocol
+        Vectors, with shape `(..., N)`.
+    backend : str or module, optional
+        Array backend, given by name or as a module. By default, the backend
+        is inferred from `A`.
 
     Returns
     -------
-    c : (..., M) array-like
-        The product of the input affine matrix `A` and vector `b`,
-        without the homogeneous row.
+    ArrayProtocol
+        The transformed vectors, with shape `(..., M)`.
     """
     backend = get_array_backend(backend or A)
     A = backend.asarray(A, dtype=A.dtype)
@@ -224,38 +252,34 @@ def lmdiv(
     vector: bool = False,
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
-    """
-    Solve the linear system AX = B for X, where A is an M x (N+1) affine
-    matrix (i.e., that does not contain the homogeneous row), and B is
-    a M x (P+1) matrix, eventually batched.
+    """Solve `A X = B` for compact affines, the left division of `B` by `A`.
 
-    This is equivalent to `inv(A) @ B` in the homogeneous case.
-
-    If `vector=True`, B is treated as a M-dimensional vector and the
-    result will be a N-dimensional vector.
+    In homogeneous coordinates, the result equals `inv(A) @ B`. When the
+    linear part of `A` is not square, the result is computed with the
+    pseudo-inverse of `A`.
 
     Parameters
     ----------
-    A : (..., M, N+1) array-like
-        An M x (N+1) affine matrix, without the homogeneous row,
-        eventually batched.
-    B : (..., M, P+1) array-like | (..., M) array-like
-        An M x (P+1) affine matrix, without the homogeneous row,
-        eventually batched.
-    vector : bool, optional
-        If `True`, B is treated as a M-dimensional vector instead of a
-        M x (P+1) matrix.
-    backend : {"numpy", "cupy", "dask"}, optional
-        The array backend to use. If `None`, the backend is inferred
-        from the input array `A`.
+    A : ArrayProtocol
+        Affines, with shape `(..., M, N+1)`.
+    B : ArrayProtocol
+        Affines, with shape `(..., M, P+1)`, or vectors, with shape
+        `(..., M)`.
+    vector : bool, default=False
+        Whether `B` holds vectors. A one-dimensional `B` is always treated
+        as a vector.
+    backend : str or module, optional
+        Array backend, given by name or as a module. By default, the backend
+        is inferred from `A`.
 
     Returns
     -------
-    C : (..., N, P+1) array-like | (..., N) array-like
-        The product `inv(A) @ B`, without the homogeneous row.
+    ArrayProtocol
+        The compact solutions, with shape `(..., N, P+1)`, or vectors with
+        shape `(..., N)`.
     """
     if A.shape[-2] != A.shape[-1] - 1:
-        # Non-square matrix -> fallback to inv (and therefore pinv)
+        # A system with a non-square linear part cannot be solved directly.
         return matmul(inv(A, backend=backend), B, backend=backend)
 
     backend = get_array_backend(backend or A)
@@ -282,32 +306,29 @@ def rmdiv(
     *,
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
-    """
-    Solve the linear system XB = A for X, where A is an M x (N+1) affine
-    matrix (i.e., that does not contain the homogeneous row), and B is
-    a P x (N+1) affine matrix, eventually batched.
+    """Solve `X B = A` for compact affines, the right division of `A` by `B`.
 
-    This is equivalent to `A @ inv(B)` in the homogeneous case.
+    In homogeneous coordinates, the result equals `A @ inv(B)`. When the
+    linear part of `B` is not square, the result is computed with the
+    pseudo-inverse of `B`.
 
     Parameters
     ----------
-    A : (..., M, N+1) array-like
-        An M x (N+1) affine matrix, without the homogeneous row,
-        eventually batched.
-    B : (..., P, N+1) array-like
-        A P x (N+1) affine matrix, without the homogeneous row,
-        eventually batched.
-    backend : {"numpy", "cupy", "dask"}, optional
-        The array backend to use. If `None`, the backend is inferred
-        from the input array `A`.
+    A : ArrayProtocol
+        Affines, with shape `(..., M, N+1)`.
+    B : ArrayProtocol
+        Affines, with shape `(..., P, N+1)`.
+    backend : str or module, optional
+        Array backend, given by name or as a module. By default, the backend
+        is inferred from `A`.
 
     Returns
     -------
-    C : (..., M, P+1) array-like
-        The product `B @ inv(A)`, without the homogeneous row.
+    ArrayProtocol
+        The compact solutions, with shape `(..., M, P+1)`.
     """
     if B.shape[-2] != B.shape[-1] - 1:
-        # Non-square matrix -> fallback to inv (and therefore pinv)
+        # A system with a non-square linear part cannot be solved directly.
         return matmul(A, inv(B, backend=backend), backend=backend)
 
     backend = get_array_backend(backend or A)
@@ -330,3 +351,45 @@ def rmdiv(
     C[..., -1:] -= backend.matmul(C[..., :-1], B[..., -1:])
 
     return C
+
+
+def expm(
+    matrix: ArrayProtocol,
+    what: str = "The exponential of this affine tangent",
+) -> ArrayProtocol:
+    """Return the exponential of a compact affine tangent.
+
+    A tangent `[L, l]`, with shape `(N, N+1)`, is the top of the generator
+    `[[L, l], [0, ..., 0]]`, and the result is the top of the homogeneous
+    affine that the generator exponentiates to. The linear part `L` may be
+    singular, as in the pure translation `[0, t]`. The `what` argument names
+    the operation in error messages.
+    """
+    return to_compact(_expm(to_homogeneous(matrix, tangent=True), what))
+
+
+def logm(
+    matrix: ArrayProtocol,
+    what: str = "The logarithm of this affine",
+) -> ArrayProtocol:
+    """Return the principal logarithm of a compact affine.
+
+    The input is a map, so it is completed with the affine row
+    `[0, ..., 0, 1]`. The result is a tangent `[L, l]`, the top of the
+    logarithm, whose last row is zero. The `what` argument names the
+    operation in error messages.
+    """
+    return to_compact(_logm(to_homogeneous(matrix), what))
+
+
+def sqrtm(
+    matrix: ArrayProtocol,
+    what: str = "The square root of this affine",
+) -> ArrayProtocol:
+    """Return the principal square root of a compact affine.
+
+    Both the input and the root are maps, completed with the affine row
+    `[0, ..., 0, 1]`. The `what` argument names the operation in error
+    messages.
+    """
+    return to_compact(_sqrtm(to_homogeneous(matrix), what))

@@ -1,4 +1,4 @@
-"""Readers and writers for FreeSurfer transformation formats."""
+"""Readers and writers of FreeSurfer transformation formats."""
 
 __all__ = ["lta", "m3z"]
 

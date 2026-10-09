@@ -1,8 +1,8 @@
 """Coordinate systems, from unitless arrays to anatomical spaces.
 
-Calling [`CoordinateSystem`][] builds the most specific system its axes
-describe -- the dispatch is bagof's polymorphism, driven by the `on=`
-constraint of each class:
+Calling [`CoordinateSystem`][] builds the most specific system that its axes
+describe. Each class declares the axes it stands for through its `on=`
+constraint:
 
 | The axes are...                               | ...so the system is        |
 | --------------------------------------------- | -------------------------- |
@@ -13,14 +13,13 @@ constraint of each class:
 | oriented right, anterior, superior (in order) | `RASCoordinateSystem`      |
 | ... and in millimetres                        | `RASmm`                    |
 
-and likewise for LPS and RSA. A class that inherits from two dispatch
-targets -- `SpatialCoordinateSystem3D` from `CoordinateSystem3D` and
-`SpatialCoordinateSystem` -- is selected on what both stand for, with no
-constraint of its own.
+The same holds for LPS and RSA. A class that inherits from two dispatch
+targets, such as `SpatialCoordinateSystem3D`, is selected on what both of them
+stand for, without a constraint of its own.
 
-The memory order of an array is not written on its axes, so the C- and
-F-ordered variants are selected on `order` (`"C"`, `"F"`, or `None` when
-it is not specified), together with the axes:
+The memory order of an array is not visible on its axes, so the C- and
+F-ordered variants are selected on the `order` field (`"C"`, `"F"`, or `None`
+when unspecified) together with the axes:
 
 | `order=`, and the axes are...           | ...so the system is            |
 | --------------------------------------- | ------------------------------ |
@@ -32,20 +31,15 @@ it is not specified), together with the axes:
 | `"C"`, oriented S, A, R (a C-ordered    | `CRASCoordinateSystem`         |
 | grid lists its axes z, y, x)            |                                |
 
-`order` is a field of every system, so every class can be called with it
-and pass it on: `CoordinateSystem(axes=<RAS axes>, order="F")` builds an
-`FRASCoordinateSystem`, and so do `ArrayCoordinateSystem`,
-`FArrayCoordinateSystem` and `FVoxelCoordinateSystem` called the same
-way. Only an array system has an order, so a system the axes and the
-order do not make one of (`RASmm(order="F")`) refuses it.
+Every class accepts `order` and passes it on, so `CoordinateSystem(axes=<RAS
+axes>, order="F")` builds an `FRASCoordinateSystem`. Only array systems have an
+order, so `RASmm(order="F")` is refused.
 
-Every row of the table says something about *all* the axes, so only a
-closed system is dispatched. An open system -- one whose axes hold `...`
-([`AxisList`][]) -- does not know all its axes, so it is built as the
-class it was called as: `CoordinateSystem(axes=[x, ...])` is
-not two-dimensional, and `CoordinateSystem(axes=[R(), A(), S(), ...])` is
-not an `RASCoordinateSystem`. [`CoordinateSystem.expand`][] closes it,
-and the closed system is dispatched like any other.
+Every row of these tables is a statement about all the axes, so only closed
+systems are dispatched. An open system, whose [`AxisList`][] holds `...`, does
+not know all its axes and is built as the class it was called as:
+`CoordinateSystem(axes=[x, ...])` is not two-dimensional. Closing it with
+[`CoordinateSystem.expand`][] dispatches it normally.
 """
 
 __all__ = [
@@ -55,6 +49,7 @@ __all__ = [
     "CoordinateSystem",
     "CoordinateSystem2D",
     "CoordinateSystem3D",
+    "PhysicalCoordinateSystem",
     "ArrayCoordinateSystem",
     "CArrayCoordinateSystem",
     "FArrayCoordinateSystem",
@@ -82,889 +77,54 @@ __all__ = [
     "CRASCoordinateSystem",
     "CLPSCoordinateSystem",
     "CRSACoordinateSystem",
-    "PhysicalCoordinateSystem",
     "RASmm",
     "LPSmm",
     "RSAmm",
 ]
-# stdlib
-import abc
-import sys
-from numbers import Integral
-
-# externals
 import typing_extensions as tx
-from bagof.converters import Converter
-from bagof.magic import ConvertTo, fields, replace
+from bagof.magic import Factory, replace
 
-# internals
 from . import axes as _axes
+from ._axes_list import (
+    Axes,
+    AxisList,
+    AxisSequence,
+    AxisTuple,
+    bind_axes_default,
+)
 from .axes import Axis, SpaceAxis
 from .base import DataModelBase
 from .units import Unit, is_indexunit, is_physicalunit
 
-_Ellipsis = type(Ellipsis)
-# The type of `...`. Python 3.10 names it `types.EllipsisType`.
+if tx.TYPE_CHECKING:
+    from types import EllipsisType as _Ellipsis
+
+else:
+    _Ellipsis: tx.TypeAlias = type(Ellipsis)
+    # Python 3.10 names this type types.EllipsisType.
 
 AXIS = tx.TypeVar("AXIS")
-# The type of the items of an `AxisSequence`, and of an `AxisList`.
 
-AXES = tx.TypeVarTuple("AXES")
-# The type of each item of an `AxisTuple`, in order.
+_INDEX = Unit("index")
 
-_INDEX = "index"
-
-
-class AxisSequence(tx.Sequence[AXIS]):
-    """The axes of a coordinate system, which may leave some unknown.
-
-    An `AxisSequence` is a sequence of
-    [`Axis`][brainhops.datamodel.axes.Axis] that may hold one `...`
-    (`Ellipsis`), anywhere in it. `...` stands for *zero or more axes
-    about which nothing is known*.
-
-    * A sequence that holds `...` is *open*: its number of axes is
-      unknown.
-    * A sequence without it is *closed*: it lists every axis.
-    * `...` is an entry of the sequence, but never counts as an axis.
-    * A sequence that holds `...` more than once describes no axes:
-      every method that reads the axes raises a `ValueError` on it. A
-      coordinate system refuses such a sequence when it is built.
-
-    `[..., TimeAxis()]` says that the last axis is time, and nothing
-    about the others. `[Axis(name="x"), ...]` says that the first axis
-    is `x`. `[...]` says nothing at all.
-
-    This is the read-only base of two containers, which share all of its
-    API, and whose methods that build a new sequence (a slice,
-    [`expand`][], [`restrict`][], [`embed`][]) build one of their own
-    type:
-
-    * [`AxisList`][brainhops.datamodel.systems.AxisList], a `list`, is
-      mutable. A coordinate system whose number of axes is not fixed by
-      its class stores its axes as one.
-    * [`AxisTuple`][brainhops.datamodel.systems.AxisTuple], a `tuple`,
-      is immutable. A coordinate system with a fixed number of axes,
-      such as an `RASCoordinateSystem`, stores its axes as one.
-
-    !!! note "Entries and axes"
-        `len()`, iteration, equality, `repr`, `[i]` (an integer or a
-        slice) and [`index`][] are about the *entries* of the sequence,
-        `...` included, as in the `list` or `tuple` it is.
-
-        [`ndim`][] counts the *axes* the sequence describes, and
-        [`at`][], [`expand`][], [`restrict`][], [`embed`][] and
-        [`compatible_with`][] place them in the space, where `...` stands
-        for as many axes as needed. A position in the space is counted
-        from the first axis when it is non-negative, and from the last
-        one when it is negative.
-
-        In a closed sequence, the entries are the axes, in order. In an
-        open one, they are not: in `[x, ..., t]`, entry 2 (`axes[2]`) is
-        `t`, which is the last axis, and the axis at position 2
-        (`axes.at(2)`) is one of the axes that `...` stands for, which
-        has no entry. So `for i in range(len(axes)): axes[i]` walks the
-        entries, not the axes.
-
-    !!! note "Finding an axis"
-        [`index`][] finds the first entry that matches a query, as
-        `list.index` finds the first entry equal to a value. The query is
-        an [`Axis`][brainhops.datamodel.axes.Axis], or a name, which
-        stands for `Axis(name=...)`. An entry matches when it is an
-        instance of the class of the query, and has every field that the
-        query sets (not `None`), with the same value. The fields that the
-        query leaves unset are not compared. So:
-
-        * `axes.index("t")` finds the first axis named `"t"`;
-        * `axes.index(TimeAxis())` finds the first time axis, whatever
-          its unit: a `TimeAxis()` sets its type, and leaves its unit
-          unspecified;
-        * `axes.index(Axis())` finds the first axis;
-        * `...` matches nothing. An unknown `Axis()` matches no query
-          that sets a field, so neither does any of the axes that `...`
-          stands for.
-
-    !!! note "Names"
-        An axis can also be read by its name, as in a `dict`:
-        `axes["t"]` is the explicit axis named `"t"`, `"t" in axes` says
-        whether there is one, and [`names`][] lists the names. A name
-        only ever matches an explicit axis, never one of the axes that
-        `...` stands for. `axes["t"]` is `axes[axes.index("t")]`, but it
-        also refuses a name that more than one axis has.
-
-        There is no `keys()`, `values()`, `items()`, `update()` or
-        `pop()` by name: an axis may be unnamed, a name may be shared,
-        and `...` has no name, so a mapping view would misrepresent the
-        sequence, and changing an axis by its name would be a trap.
-
-    !!! example
-        ```pycon
-        >>> x, t = Axis(name="x"), TimeAxis(name="t")
-        >>> axes = AxisList([x, ..., t])
-        >>> axes.ndim is None, axes.is_open
-        (True, True)
-        >>> axes.index("t"), axes.index(TimeAxis()), axes["t"] is t
-        (2, 2, True)
-        >>> "x" in axes, axes.names
-        (True, ('x', Ellipsis, 't'))
-        >>> axes[2] is t, axes.at(2), axes.at(-1) is t
-        (True, Axis(), True)
-        >>> axes.expand(4)[1:]
-        [Axis(), Axis(), TimeAxis(name='t')]
-        >>> axes.restrict([-1, 0, 1])[1:]
-        [Axis(name='x'), Axis()]
-        ```
-
-    The type parameter is the type of the items:
-    `AxisSequence[Union[Axis, EllipsisType]]` may be open, and
-    `AxisSequence[Axis]` is closed.
-    """
-
-    __slots__ = ()
-
-    @abc.abstractmethod
-    def _entry(self, key: tx.Any) -> tx.Any:
-        # The builtin storage, read: `list.__getitem__` in an `AxisList`,
-        # `tuple.__getitem__` in an `AxisTuple`.
-        ...
-
-    @tx.overload
-    def __getitem__(self, key: tx.SupportsIndex) -> AXIS: ...
-
-    @tx.overload
-    def __getitem__(self, key: slice) -> tx.Self: ...
-
-    @tx.overload
-    def __getitem__(self, key: str) -> Axis: ...
-
-    def __getitem__(self, key: tx.Any) -> tx.Any:
-        """An entry (`int`), some entries (`slice`), or the axis with a
-        name (`str`).
-
-        An integer or a slice indexes the *entries* of the sequence, as
-        in any `list` or `tuple`, and a slice gives a sequence of the same
-        type. A name gives the one explicit axis that has it. The axis at
-        a *position* in the space is [`at`][] that position.
-
-        !!! example
-            ```pycon
-            >>> x, t = Axis(name="x"), TimeAxis(name="t")
-            >>> AxisList([x, ..., t])["t"] is t
-            True
-            >>> AxisList([x, ..., t])[2] is t
-            True
-            ```
-
-        Raises
-        ------
-        KeyError
-            If no explicit axis has the name.
-        ValueError
-            If more than one explicit axis has the name.
-        IndexError, TypeError
-            As `list` indexing does.
-        """
-        if isinstance(key, str):
-            return self._entry(self._entry_named(key))
-        if isinstance(key, slice):
-            return type(self)(self._entry(key))
-        return self._entry(key)
-
-    def __contains__(self, item: object) -> bool:
-        """Whether an explicit axis has a name (`str`), or whether an
-        entry equals `item` (anything else, as in any `list`)."""
-        if isinstance(item, str):
-            return bool(self._entries_named(item))
-        return any(entry is item or entry == item for entry in self)
-
-    def index(
-        self,
-        query: tx.Union[Axis, str],
-        start: tx.SupportsIndex = 0,
-        stop: tx.SupportsIndex = sys.maxsize,
-    ) -> int:
-        """The first entry that matches an axis, or a name.
-
-        This is `list.index`, with a looser test than equality: an entry
-        *matches* the query when it is an instance of the class of the
-        query, and has every field that the query sets (not `None`), with
-        the same value. The fields that the query leaves unset are not
-        compared. A name stands for `Axis(name=...)`, so it matches the
-        axes with that name, whatever their class. `...` matches nothing.
-
-        !!! example
-            ```pycon
-            >>> x, t = SpaceAxis(name="x"), TimeAxis(name="t", unit="s")
-            >>> axes = AxisList([x, ..., t])
-            >>> axes.index("t"), axes.index(SpaceAxis())
-            (2, 0)
-            >>> axes.index(Axis(unit="second")), axes.index(Axis())
-            (2, 0)
-            >>> axes.index("y")
-            Traceback (most recent call last):
-              ...
-            ValueError: Axis(name='y') is not in list
-            ```
-
-        Parameters
-        ----------
-        query : Axis or str
-            The axis to find, or its name.
-        start, stop : int, optional
-            Only the entries `start` to `stop` are searched, as in
-            `list.index`.
-
-        Returns
-        -------
-        int
-            The index of the first entry that matches. It is an entry
-            index, which is a position in the space only in a closed list
-            (see the class notes).
-
-        Raises
-        ------
-        ValueError
-            If no entry matches.
-        TypeError
-            If `query` is neither an `Axis` nor a string.
-        """
-        if isinstance(query, str):
-            query = Axis(name=query)
-        elif not isinstance(query, Axis):
-            raise TypeError(
-                f"An axis is found by an Axis or by its name (str), not by "
-                f"a {type(query).__name__}."
-            )
-        entries = list(self)
-        for i in range(*slice(start, stop).indices(len(entries))):
-            if entries[i] is not ... and _matches(entries[i], query):
-                return i
-        raise ValueError(f"{query!r} is not in list")
-
-    @property
-    def names(self) -> tx.Tuple[tx.Union[str, None, _Ellipsis], ...]:
-        """The name of each entry: `None` for an unnamed axis, and `...`
-        in the place of `...`.
-
-        !!! example
-            ```pycon
-            >>> AxisList([Axis(name="x"), Axis(), ...]).names
-            ('x', None, Ellipsis)
-            ```
-        """
-        return tuple(... if axis is ... else _name(axis) for axis in self)
-
-    # --- axes ---------------------------------------------------------
-
-    @property
-    def ndim(self) -> tx.Optional[int]:
-        """The number of axes, or `None` when the list is open.
-
-        A closed list has one axis per entry. An open list has an
-        unknown number of axes.
-
-        !!! example
-            ```pycon
-            >>> AxisList([Axis(), Axis()]).ndim
-            2
-            >>> AxisList([Axis(), ...]).ndim is None
-            True
-            ```
-        """
-        prefix, suffix = self._split()
-        return len(prefix) if suffix is None else None
-
-    @property
-    def is_open(self) -> bool:
-        """Whether the list holds `...`, so that its number of axes is
-        unknown.
-
-        `AxisList([...])`, which says nothing at all, is open. The empty
-        list is closed: it has no axis.
-        """
-        return self._split()[1] is not None
-
-    def expand(self, ndim: int) -> tx.Self:
-        """The closed list of `ndim` axes that this list describes.
-
-        In an open list, `...` is replaced with as many unknown `Axis()`
-        as needed to reach `ndim` axes. Use it once the number of axes is
-        known, for instance from the shape of the data.
-
-        !!! example
-            ```pycon
-            >>> AxisList([Axis(name="x"), ...]).expand(3)
-            [Axis(name='x'), Axis(), Axis()]
-            >>> AxisList([...]).expand(2)
-            [Axis(), Axis()]
-            ```
-
-        Parameters
-        ----------
-        ndim : int
-            The number of axes.
-
-        Returns
-        -------
-        AxisList
-            A new, closed list of `ndim` axes. A closed list is returned
-            as a copy of itself.
-
-        Raises
-        ------
-        ValueError
-            If `ndim` is less than the number of explicit axes of an open
-            list, or differs from the number of axes of a closed one.
-        TypeError
-            If `ndim` is not an integer.
-        """
-        ndim = _as_int(ndim, "ndim")
-        prefix, suffix = self._split()
-        if suffix is None:
-            if ndim != len(prefix):
-                raise ValueError(
-                    f"Cannot expand a closed list of {len(prefix)} axes to "
-                    f"{ndim} axes."
-                )
-            return type(self)(prefix)
-        explicit = len(prefix) + len(suffix)
-        if ndim < explicit:
-            raise ValueError(
-                f"Cannot expand an open list with {explicit} explicit axes "
-                f"to {ndim} axes."
-            )
-        fill = [Axis() for _ in range(ndim - explicit)]
-        return type(self)(prefix + fill + suffix)
-
-    def restrict(self, refs: tx.Iterable[tx.Union[int, str]]) -> tx.Self:
-        """The axes at some positions, or with some names, of this list.
-
-        A reference is the position of an axis in the space (`int`), or
-        the name of an explicit axis (`str`), as `axes[name]` reads it.
-
-        * In a closed list of `n` axes, a position lies in `[-n, n)`.
-        * In an open list, every position is valid, because `...` stands
-          for any number of axes. A non-negative position reads the
-          explicit axes before `...`, and a negative one the explicit
-          axes after it. Any other position falls among the axes that
-          `...` stands for, and gives an unknown `Axis()`.
-
-        The axes are listed in the order of `refs`.
-
-        !!! example
-            ```pycon
-            >>> x, y, z = Axis(name="x"), Axis(name="y"), Axis(name="z")
-            >>> AxisList([x, y, z]).restrict(["z", 0])
-            [Axis(name='z'), Axis(name='x')]
-            >>> AxisList([x, ...]).restrict([0, 1])
-            [Axis(name='x'), Axis()]
-            ```
-
-        Parameters
-        ----------
-        refs : iterable of int or str
-            The positions or names of the axes to keep.
-
-        Returns
-        -------
-        AxisList
-            A new, closed list of `len(refs)` axes.
-
-        Raises
-        ------
-        IndexError
-            If a position lies outside a closed list.
-        KeyError
-            If no explicit axis has a name.
-        ValueError
-            If more than one explicit axis has a name, or if two
-            references name the same axis.
-        TypeError
-            If a reference is neither an integer nor a string, or if
-            `refs` is a string rather than a list of references.
-        """
-        positions = []
-        for ref in _as_list(refs, "refs"):
-            if isinstance(ref, str):
-                entry = self._entry_named(ref)
-                positions.append(self._position_of_entry(entry))
-            else:
-                positions.append(self._position(ref))
-        _check_unique(positions, "refs")
-        return type(self)([self.at(p) for p in positions])
-
-    def embed(
-        self,
-        positions: tx.Iterable[int],
-        ndim: tx.Optional[int] = None,
-    ) -> tx.Self:
-        """The axes of a larger space in which this list's axes sit.
-
-        This is the inverse of [`restrict`][]: axis `j` of this list sits
-        at `positions[j]` of the result, and every other position holds
-        an unknown `Axis()`. An open list is first closed to
-        `len(positions)` axes, as by [`expand`][].
-
-        The positions are absolute positions in the larger space, which
-        does not exist yet, so they cannot be names.
-
-        !!! example
-            ```pycon
-            >>> x = Axis(name="x")
-            >>> AxisList([x]).embed([1])
-            [Axis(), Axis(name='x'), Ellipsis]
-            >>> AxisList([x]).embed([1], ndim=3)
-            [Axis(), Axis(name='x'), Axis()]
-            ```
-
-        Parameters
-        ----------
-        positions : iterable of int
-            The non-negative position of each axis in the larger space.
-        ndim : int, optional
-            The number of axes of the larger space. When it is not given,
-            the number is unknown, and the result ends with `...` after
-            the last embedded axis.
-
-        Returns
-        -------
-        AxisList
-            A new list, closed when `ndim` is given and open otherwise.
-
-        Raises
-        ------
-        ValueError
-            If a position is negative or repeated, if `ndim` does not
-            exceed every position, or if this list cannot be closed to
-            `len(positions)` axes.
-        TypeError
-            If a position or `ndim` is not an integer.
-        """
-        positions = [
-            _as_int(p, "positions") for p in _as_list(positions, "positions")
-        ]
-        if any(p < 0 for p in positions):
-            raise ValueError(
-                f"Positions in the larger space count from its first "
-                f"axis, so they cannot be negative: {positions}."
-            )
-        _check_unique(positions, "positions")
-        prefix, suffix = self._split()
-        count = len(prefix) + len(suffix or [])
-        if (suffix is None and count != len(positions)) or (
-            count > len(positions)
-        ):
-            raise ValueError(
-                f"Cannot embed a list of {count}"
-                f"{'' if suffix is None else ' explicit'} axes at "
-                f"{len(positions)} positions."
-            )
-        axes = self.expand(len(positions))
-        size = max(positions) + 1 if positions else 0
-        if ndim is not None:
-            ndim = _as_int(ndim, "ndim")
-            if ndim < size:
-                raise ValueError(
-                    f"Cannot embed an axis at position {size - 1} of a "
-                    f"space of {ndim} axes."
-                )
-            size = ndim
-        full: tx.List[tx.Any] = [Axis() for _ in range(size)]
-        for axis, p in zip(axes, positions):
-            full[p] = axis
-        if ndim is None:
-            full.append(...)
-        return type(self)(full)
-
-    def compatible_with(self, other: tx.Sequence[tx.Any]) -> bool:
-        """Whether `self` and `other` could describe the same axes.
-
-        Two lists are compatible when some choice of the axes that each
-        `...` stands for makes them match axis by axis, each pair being
-        [`compatible`][brainhops.datamodel.axes.Axis.compatible_with].
-
-        For two closed lists, this asks for the same number of axes,
-        pairwise compatible. Unlike `==`, an unknown `Axis()` matches
-        any axis, and `[...]` matches every list. The relation is
-        symmetric, but not transitive.
-
-        !!! example
-            ```pycon
-            >>> x, t = SpaceAxis(name="x"), TimeAxis()
-            >>> AxisList([x, ...]).compatible_with([x, Axis(), t])
-            True
-            >>> AxisList([..., t]).compatible_with([x])
-            False
-            ```
-
-        Parameters
-        ----------
-        other : AxisSequence, or list or tuple of Axis
-            The axes to compare with. A plain list or tuple is read as
-            an axis sequence.
-
-        Returns
-        -------
-        bool
-            Whether the two lists could describe the same axes.
-
-        Raises
-        ------
-        TypeError
-            If `other` is not a list or a tuple.
-        """
-        if not isinstance(other, (list, tuple)):
-            raise TypeError(
-                f"A list of axes is compatible only with another list of "
-                f"axes, not with {type(other).__name__}."
-            )
-        p1, s1 = self._split()
-        p2, s2 = _split(other)
-        if s1 is None and s2 is None:
-            return len(p1) == len(p2) and _pairwise(p1, p2)
-        if s1 is None:
-            # Let the first list be the open one.
-            (p1, s1), (p2, s2) = (p2, s2), (p1, s1)
-        assert s1 is not None
-        if s2 is None:
-            # Open against closed: the explicit axes of the open list must
-            # fit, and match the axes at the start and at the end.
-            n = len(p2)
-            if len(p1) + len(s1) > n:
-                return False
-            return _pairwise(p1, p2[: len(p1)]) and _pairwise(
-                s1, p2[n - len(s1) :]
-            )
-        # Open against open: with enough axes in each `...`, only the axes
-        # that both lists state at the start, or both at the end, meet.
-        k = min(len(p1), len(p2))
-        m = min(len(s1), len(s2))
-        return _pairwise(p1[:k], p2[:k]) and _pairwise(
-            s1[len(s1) - m :], s2[len(s2) - m :]
-        )
-
-    # --- private helpers ----------------------------------------------
-    # Positions in the space, as opposed to entries of the list, are only
-    # handled here. A position is counted from the first axis when it is
-    # non-negative, and from the last one when it is negative.
-
-    def _split(self) -> tx.Tuple[tx.List[Axis], tx.Optional[tx.List[Axis]]]:
-        return _split(self)
-
-    def _position(self, position: int) -> int:
-        # Check a position against the list, and normalize it. In a closed
-        # list of `n` axes, it must lie in `[-n, n)`, and a negative one is
-        # returned as its non-negative equivalent. In an open list, every
-        # position is valid, and is returned as given: never clamped.
-        if isinstance(position, bool) or not isinstance(position, Integral):
-            raise TypeError(
-                f"An axis is referred to by its position (int) or its name "
-                f"(str), not by a {type(position).__name__}."
-            )
-        position = int(position)
-        prefix, suffix = self._split()
-        if suffix is not None:
-            return position
-        n = len(prefix)
-        if not -n <= position < n:
-            raise IndexError(
-                f"Axis position {position} is out of range for a list of "
-                f"{n} axes."
-            )
-        return position + n if position < 0 else position
-
-    def _position_of_entry(self, entry: int) -> int:
-        # The position of the axis that an entry holds. An entry after
-        # `...` is counted from the end, because its distance from the
-        # start is unknown. Any other entry is its own position.
-        entries = list(self)
-        entry = range(len(entries))[entry]
-        if entries[entry] is ...:
-            raise ValueError("`...` stands for axes, and is not one.")
-        after = ... in entries[:entry]
-        return entry - len(entries) if after else entry
-
-    def at(self, position: int) -> Axis:
-        """The axis at a position in the space.
-
-        Where `axes[i]` reads *entry* `i` of the sequence, `axes.at(i)`
-        reads the axis at *position* `i` of the space it describes:
-        counted from the first axis when `i` is non-negative, and from
-        the last one when it is negative.
-
-        * In a closed sequence, the two are the same, and a position lies
-          in `[-ndim, ndim)`.
-        * In an open sequence, every position is valid, because `...`
-          stands for any number of axes. A non-negative position reads
-          the explicit axes before `...`, and a negative one the explicit
-          axes after it. Any other position falls among the axes that
-          `...` stands for, and gives a new, unknown `Axis()`.
-
-        !!! example
-            ```pycon
-            >>> x, t = Axis(name="x"), TimeAxis(name="t")
-            >>> axes = AxisList([x, ..., t])
-            >>> axes.at(0) is x, axes.at(-1) is t, axes.at(1)
-            (True, True, Axis())
-            >>> axes[2] is t, axes.at(2)
-            (True, Axis())
-            ```
-
-        Parameters
-        ----------
-        position : int
-            The position of the axis in the space.
-
-        Returns
-        -------
-        Axis
-            The explicit axis at that position, or a new `Axis()`.
-
-        Raises
-        ------
-        IndexError
-            If the sequence is closed, and the position lies outside it.
-        TypeError
-            If the position is not an integer.
-        """
-        position = self._position(position)
-        prefix, suffix = self._split()
-        if suffix is None or 0 <= position < len(prefix):
-            return prefix[position]
-        if -len(suffix) <= position < 0:
-            return suffix[position]
-        return Axis()
-
-    def _entries_named(self, name: str) -> tx.List[int]:
-        # The entries of the explicit axes that have exactly this name.
-        return [i for i, axis in enumerate(self) if _name(axis) == name]
-
-    def _entry_named(self, name: str) -> int:
-        # The entry of the one explicit axis that has exactly this name.
-        entries = self._entries_named(name)
-        if not entries:
-            raise KeyError(f"No axis of the list is named {name!r}.")
-        if len(entries) > 1:
-            raise ValueError(
-                f"Cannot read the axis named {name!r}: {len(entries)} axes "
-                f"of the list have that name."
-            )
-        return entries[0]
-
-
-class AxisTuple(tuple, AxisSequence, tx.Generic[tx.Unpack[AXES]]):
-    """An immutable [`AxisSequence`][brainhops.datamodel.systems.AxisSequence].
-
-    It is a `tuple`, with all the API of an `AxisSequence`: indexing by
-    name, [`at`][], [`expand`][] and so on. A slice, and every method that
-    builds a new sequence, gives an `AxisTuple`.
-
-    A coordinate system with a fixed number of axes, such as an
-    `RASCoordinateSystem`, stores its axes as one, so they are closed.
-    The type parameters are the type of each item, in order, and fix the
-    number of items: `AxisTuple[SpaceAxis, SpaceAxis]` is two spatial
-    axes. A field of that type converts what it is given item by item,
-    each to the type of its position, and refuses a wrong number of
-    items, `None`, or `...` (which is not an axis). A bare `AxisTuple`
-    holds any number of items, `...` included.
-
-    !!! example
-        ```pycon
-        >>> axes = RASCoordinateSystem().axes
-        >>> type(axes).__name__, axes.ndim, axes.names[0]
-        ('AxisTuple', 3, 'left-to-right')
-        >>> axes["left-to-right"] is axes[0] is axes.at(-3)
-        True
-        ```
-    """
-
-    # The `tuple` comes first, for its storage, but its own reading of an
-    # item or of a name is not the one this class means.
-    __getitem__ = AxisSequence.__getitem__
-    __contains__ = AxisSequence.__contains__
-    index = AxisSequence.index
-    _entry = tuple.__getitem__
-
-
-class AxisList(AxisSequence[AXIS], list):
-    """A mutable [`AxisSequence`][brainhops.datamodel.systems.AxisSequence].
-
-    It is a `list`, with all the API of an `AxisSequence`: indexing by
-    name, [`at`][], [`expand`][] and so on. A slice, and every method that
-    builds a new sequence, gives an `AxisList`.
-
-    A coordinate system whose number of axes is not fixed by its class
-    stores its axes as one: a list or a tuple given to the system is
-    converted to one, item by item, to the type of axis the class
-    declares. Its default, `[...]`, says nothing about the axes, and
-    `axes=None` reads as that default.
-
-    The type parameter is the type of the items:
-    `AxisList[Union[Axis, EllipsisType]]` may be open, and
-    `AxisList[Axis]` is closed.
-
-    !!! example
-        ```pycon
-        >>> axes = CoordinateSystem(axes=[Axis(name="x"), ...]).axes
-        >>> type(axes).__name__, axes.is_open, axes["x"]
-        ('AxisList', True, Axis(name='x'))
-        >>> axes.append(TimeAxis(name="t"))
-        >>> axes.at(-1)
-        TimeAxis(name='t')
-        ```
-    """
-
-    # `AxisSequence` comes first, for its reading of an item or of a name.
-    # The rest is the `list`'s: `collections.abc.Sequence`, between the
-    # two in the method resolution order, would otherwise answer with its
-    # generic mixins (and its abstract `__len__`).
-    __len__ = list.__len__
-    __iter__ = list.__iter__
-    __reversed__ = list.__reversed__
-    count = list.count
-    _entry = list.__getitem__
-
-
-_2Axes = AxisTuple[Axis, Axis]
-_3Axes = AxisTuple[Axis, Axis, Axis]
-_2SpatialAxes = AxisTuple[SpaceAxis, SpaceAxis]
-_3SpatialAxes = AxisTuple[SpaceAxis, SpaceAxis, SpaceAxis]
-
-
-def _split(
-    entries: tx.Iterable[tx.Any],
-) -> tx.Tuple[tx.List[Axis], tx.Optional[tx.List[Axis]]]:
-    # The explicit axes before and after `...`. The second list is `None`
-    # for a closed sequence, whose axes are then all in the first.
-    entries = list(entries)
-    ellipses = [i for i, axis in enumerate(entries) if axis is ...]
-    if not ellipses:
-        return entries, None
-    if len(ellipses) > 1:
-        raise ValueError(
-            "A list of axes holds at most one `...`, which stands for "
-            "all the axes about which nothing is known."
-        )
-    i = ellipses[0]
-    return entries[:i], entries[i + 1 :]
-
-
-def _matches(candidate: tx.Any, query: Axis) -> bool:
-    # Whether an entry matches a query of `AxisList.index`: it is an
-    # instance of the class of the query, and has every field that the
-    # query sets, with the same value.
-    if not isinstance(candidate, type(query)):
-        return False
-    for field in fields(type(query)):
-        wanted = getattr(query, field.name, None)
-        if wanted is not None and getattr(candidate, field.name) != wanted:
-            return False
-    return True
-
-
-def _pairwise(first: tx.List[Axis], second: tx.List[Axis]) -> bool:
-    return all(a.compatible_with(b) for a, b in zip(first, second))
-
-
-def _name(axis: tx.Any) -> tx.Optional[str]:
-    return getattr(axis, "name", None)
-
-
-def _as_int(value: tx.Any, what: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(
-            f"Expected an integer for {what}, not a {type(value).__name__}."
-        )
-    return int(value)
-
-
-def _as_list(values: tx.Any, what: str) -> tx.List[tx.Any]:
-    if isinstance(values, (str, bytes)):
-        raise TypeError(
-            f"{what} must be a list of axis references, not a single string."
-        )
-    try:
-        return list(values)
-    except TypeError:
-        raise TypeError(
-            f"{what} must be a list, not a {type(values).__name__}."
-        ) from None
-
-
-def _check_unique(positions: tx.List[int], what: str) -> None:
-    if len(set(positions)) != len(positions):
-        raise ValueError(
-            f"{what} names the same axis more than once: {positions}."
-        )
-
-
-# ----------------------------------------------------------------------
-#   THE AXES FIELD
-# ----------------------------------------------------------------------
-
-
-class _NoneReadsAsDefault:
-    """The converter of the `axes` field of a coordinate system.
-
-    `axes=None` reads as not giving the axes at all: the class's default
-    takes its place, which is `[...]` for a system whose number of axes
-    is not fixed, and the class's own axes for one whose number is. Any
-    other value is converted to the type of the field, as bagof would.
-
-    Each `axes` field gets its own converter, which `_bind_axes_default`
-    points at the field once the class is built, to read its default.
-    """
-
-    def __init__(self, hint: tx.Any) -> None:
-        self.hint = hint
-        self.field: tx.Any = None
-        self._convert: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
-
-    def __call__(self, value: tx.Any) -> tx.Any:
-        if value is None and self.field is not None:
-            factory = self.field.factory
-            value = factory() if callable(factory) else self.field.default
-        if self._convert is None:
-            self._convert = Converter.get(self.hint)
-        return self._convert(value)
-
-
-class _Axes:
-    """`_Axes[hint]` types an `axes` field as `hint`, where `None` reads as
-    the field's default (see `_NoneReadsAsDefault`)."""
-
-    def __class_getitem__(cls, hint: tx.Any) -> tx.Any:
-        return tx.Annotated[hint, ConvertTo(_NoneReadsAsDefault(hint))]
-
-
-def _bind_axes_default(cls: type) -> None:
-    """Point the converter of the `axes` field of `cls` at that field."""
-    for field in fields(cls):
-        if field.name == "axes" and isinstance(
-            field.converter, _NoneReadsAsDefault
-        ):
-            field.converter.field = field
+_2Axes: tx.TypeAlias = AxisTuple[Axis, Axis]
+_3Axes: tx.TypeAlias = AxisTuple[Axis, Axis, Axis]
+_2SpatialAxes: tx.TypeAlias = AxisTuple[SpaceAxis, SpaceAxis]
+_3SpatialAxes: tx.TypeAlias = AxisTuple[SpaceAxis, SpaceAxis, SpaceAxis]
+_EllipsisOr: tx.TypeAlias = tx.Union[AXIS, _Ellipsis]
 
 
 # ----------------------------------------------------------------------
 #   DISPATCH PREDICATES
 # ----------------------------------------------------------------------
-# Every predicate below says something about *all* the axes of a system:
-# how many there are, or what each one is. An open system (one whose
-# axes hold `...`) does not know all its axes -- `...`
-# may stand for none, or for axes of any kind -- so no predicate holds
-# of it, and calling a class with open axes builds that class itself:
-# `CoordinateSystem(axes=[SpaceAxis(), ...])` is a `CoordinateSystem`,
-# not a `SpatialCoordinateSystem`, and `CoordinateSystem(axes=[x, ...])`
-# is not two-dimensional although its list has two entries. Only once
-# it is closed (see `CoordinateSystem.expand`) does a system reach the
-# class its axes describe.
+# Each predicate states something about all the axes, so none holds for an
+# open system.
 
 
 def _closed(
     axes: tx.Optional[tx.Sequence[tx.Any]],
 ) -> tx.Optional[tx.List[Axis]]:
-    """The axes, when they list every axis of the system; else `None`."""
+    """Return the axes as a list if they list every axis, else `None`."""
     if axes is None:
         return None
     axes = list(axes)
@@ -973,23 +133,23 @@ def _closed(
     return axes
 
 
-def _ndim(n: int) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
-    def check(axes: tx.Optional[tx.Sequence[Axis]]) -> bool:
+def _isnd(n: int) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
+    def isnd(axes: tx.Optional[tx.Sequence[Axis]]) -> bool:
         closed = _closed(axes)
         return closed is not None and len(closed) == n
 
-    check.__name__ = check.__qualname__ = f"_is{n}d"
-    return check
+    isnd.__name__ = isnd.__qualname__ = f"_is{n}d"
+    return isnd
 
 
-_is2d = _ndim(2)
-_is3d = _ndim(3)
+_is2d = _isnd(2)
+_is3d = _isnd(3)
 
 
 def _all(
     test: tx.Callable[[Axis], bool], name: str
 ) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
-    """Whether the axes are closed, not empty, and all pass `test`."""
+    """Build a predicate: the axes are closed, non-empty and pass `test`."""
 
     def check(axes: tx.Optional[tx.Sequence[Axis]]) -> bool:
         closed = _closed(axes)
@@ -1001,8 +161,8 @@ def _all(
 
 _is_spatial = _all(lambda axis: axis.type == "space", "_is_spatial")
 _is_array = _all(lambda axis: is_indexunit(axis.unit), "_is_array")
-_MILLIMETRE = Unit("mm")
-_is_mm = _all(lambda axis: axis.unit == _MILLIMETRE, "_is_mm")
+_MM = Unit("mm")
+_is_mm = _all(lambda axis: axis.unit == _MM, "_is_mm")
 
 
 def _both(
@@ -1019,12 +179,11 @@ def _both(
 
 
 def _is_anat(code: str) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
-    """Whether the axes point, in order, the way the letters of `code` say.
+    """Build a predicate: the axes point as the letters of `code` say.
 
-    `code` is spelled with the letters of [`brainhops.datamodel.axes`][]:
-    `"RAS"` is a left-to-right, a posterior-to-anterior and an
-    inferior-to-superior axis, in that order. Only the orientations are
-    compared; the names and units of the axes are free.
+    The letters are those of [`brainhops.datamodel.axes`][], so `"RAS"` means
+    left-to-right, posterior-to-anterior and inferior-to-superior axes, in that
+    order. Only orientations are compared, not names or units.
     """
     expected = tuple(
         getattr(_axes, letter)().orientation.value for letter in code
@@ -1049,80 +208,62 @@ def _is_anat(code: str) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
 
 
 class CoordinateSystem(DataModelBase, polymorphic=True):
-    """A coordinate system defines the meaning of coordinates in a space.
+    """A coordinate system, which gives coordinates in a space their meaning.
 
-    It describes each axis in the system (name, unit and/or other properties),
-    and can be named.
+    A coordinate system describes each of its axes (name, unit and other
+    properties) and can be named.
 
     !!! note "Open systems"
-        The axes of a system are an [`AxisList`][], which may hold at
-        most one `...` (`Ellipsis`), anywhere in the list, that stands
-        for *zero or more axes about which nothing is known*. A system
-        with `...` is *open*: its number of axes is unknown. A system
-        without it is *closed*.
+        The axes are an [`AxisList`][] that holds at most one `...`, standing
+        for zero or more axes about which nothing is known. A system with `...`
+        is open, since its number of axes is unknown, and a system without it
+        is closed:
 
-        * `[..., TimeAxis()]` says that the last axis is time, and nothing
-          about the others.
-        * `[Axis(name="x"), ...]` says that the first axis is `x`.
-        * `[...]`, the default, says nothing at all. `axes=None` reads
-          as not giving the axes, so it is `[...]` too, and is stored as
-          `[...]`: `CoordinateSystem(axes=None) == CoordinateSystem()`.
+        * `[..., TimeAxis()]`: the last axis is time, and nothing is known
+          of the others.
+        * `[Axis(name="x"), ...]`: the first axis is x.
+        * `[...]`, the default, says nothing. `axes=None` reads as not given,
+          so `CoordinateSystem(axes=None) == CoordinateSystem()`.
 
-        A list or a tuple given as `axes` is stored as an [`AxisList`][].
-        An axis is read by its name as `system.axes["x"]`, at a position
-        as `system.axes.at(i)`, and found by
-        [`index`][brainhops.datamodel.systems.AxisSequence.index].
+        Fixed-arity classes such as [`CoordinateSystem3D`][] are always closed.
+        They store their axes as an immutable [`AxisTuple`][], whose type fixes
+        the number and class of the axes.
 
-        Classes with a fixed number of axes, such as
-        [`CoordinateSystem3D`][], are always closed. They store their
-        axes as an [`AxisTuple`][], whose type fixes the number of axes
-        and the class of each one, so they reject `...`. It has the API
-        of an [`AxisList`][], but is immutable. `axes=None` reads as not
-        giving the axes there too, so it builds the class's default axes:
-        `CoordinateSystem3D(axes=None) == CoordinateSystem3D()`.
-
-        Calling a class builds the most specific system its axes
-        describe (see the module), and only a closed system is
-        dispatched: `CoordinateSystem(axes=[x, y])` is a
-        [`CoordinateSystem2D`][], whose axes are an `AxisTuple`, but
-        `CoordinateSystem(axes=[x, ...])` -- whose `...` may stand for
-        no axis, or for many -- stays a `CoordinateSystem`. Closing an
-        open system with [`expand`][] dispatches it again.
+        Only closed systems are dispatched: `CoordinateSystem(axes=[x, y])` is
+        a [`CoordinateSystem2D`][], whereas `CoordinateSystem(axes=[x, ...])`
+        stays a `CoordinateSystem` until [`expand`][] closes it.
 
     !!! note "Equality"
-        Equality is field by field: two systems are equal when they are
-        of the same class, have the same name, and have equal axes. A
-        system is never equal to `None`, not even a plain
-        `CoordinateSystem()` that says nothing at all: as the endpoint of a
-        transformation, `None` is no system (the transformation defers to
-        its context for it), and a `CoordinateSystem()` is one, kept as
-        given.
-        [`compatible_with`][] is the looser question of whether two
-        systems could describe the same space.
+        Two systems are equal when they have the same class, the same name and
+        equal axes. A system never equals `None`, not even
+        `CoordinateSystem()`: as an endpoint of a transformation, `None` is no
+        system and defers to the context, whereas `CoordinateSystem()` is a
+        system and is kept as given. [`compatible_with`][] asks the looser
+        question of whether two systems could describe the same space.
     """
 
     name: tx.Optional[str] = None
-    """The name of the coordinate system."""
+    """The name of the system, if any."""
 
-    axes: _Axes[AxisList[tx.Union[Axis, _Ellipsis]]] = [...]
-    """The axes of the coordinate system, in order. `[...]`, the default,
-    says nothing about them; `axes=None` reads as the default."""
+    axes: Axes[AxisList[_EllipsisOr[Axis]]] = [...]
+    """The axes, in order. The default, `[...]`, says nothing about them."""
 
     order: tx.Optional[tx.Literal["C", "F"]] = None
-    """The memory order of the array the coordinates index: `"C"` (the
-    last axis changes fastest), `"F"` (the first axis does), or `None`
-    when it is not specified. Only an [`ArrayCoordinateSystem`][] indexes
-    an array, so any other system refuses an order; the field is
-    declared here so that every class can be called with it, and pass it
-    on to the C- or F-ordered class it selects."""
+    """The memory order of the indexed array, or `None` when unspecified.
 
-    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+    With `"C"` the last axis varies fastest, and with `"F"` the first one does.
+    Only an [`ArrayCoordinateSystem`][] indexes an array, and other systems
+    refuse an order with a ValueError.
+    """
+
+    def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
-        _bind_axes_default(cls)
-
-    # --- validation ---------------------------------------------------
+        # Each subclass declares its own `axes` default, read for `None`.
+        bind_axes_default(cls)
 
     def __post_init__(self) -> None:
+        if self.axes is None:
+            self.axes = [...]
         if sum(a is ... for a in self.axes) > 1:
             raise ValueError(
                 "The axes of a coordinate system hold at most one `...`, "
@@ -1138,17 +279,9 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
                 f"which the order selects whenever the axes allow one."
             )
 
-    # --- properties ---------------------------------------------------
-
     @property
     def ndim(self) -> tx.Optional[int]:
-        """The number of axes, or `None` when the system is open.
-
-        A closed system has exactly `len(axes)` axes. An open system,
-        whose axes hold `...`, has an unknown number of axes, and its
-        `ndim` is `None`. This is
-        [`AxisSequence.ndim`][brainhops.datamodel.systems.AxisSequence.ndim]
-        of its axes.
+        """The number of axes, or `None` for an open system.
 
         !!! example
             ```pycon
@@ -1162,24 +295,14 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         """
         return self.axes.ndim
 
-    # --- operations ---------------------------------------------------
-
     def expand(self, ndim: int) -> tx.Self:
-        """The closed system of `ndim` axes that this system describes.
+        """Return the closed system of `ndim` axes that this system describes.
 
-        The axes are expanded by
-        [`AxisSequence.expand`][brainhops.datamodel.systems.AxisSequence.expand]:
-        in an open system, `...` is replaced with as many unknown
-        `Axis()` as needed to reach `ndim` axes. The class is called
-        again with the closed axes, and the other fields, the name
-        included, are kept: the result is of this class, or of the
-        subclass that the closed axes select from it (an
-        `ArrayCoordinateSystem` closed to two axes is an
-        `ArrayCoordinateSystem2D`). Each unknown `Axis()` is first read as
-        the type of axis the class declares, so a `SpatialCoordinateSystem`
-        closed to three axes has three spatial axes, and is a
-        `SpatialCoordinateSystem3D`. Use it once the number of axes is
-        known, for instance from the shape of the data.
+        [`AxisSequence.expand`][] replaces `...` with unknown axes of the type
+        the class declares, and the class is called again with the other fields
+        kept, so the result may be a subclass: a [`SpatialCoordinateSystem`][]
+        closed to three axes is a [`SpatialCoordinateSystem3D`][]. A closed
+        system is returned as is.
 
         !!! example
             ```pycon
@@ -1197,39 +320,31 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         Returns
         -------
         CoordinateSystem
-            A closed system of `ndim` axes, of this class or of one of its
-            subclasses. A closed system is returned as itself.
+            The closed system.
 
         Raises
         ------
         ValueError
-            If `ndim` is less than the number of explicit axes of an open
-            system, or differs from the number of axes of a closed one.
+            If `ndim` is smaller than the number of explicit axes of an open
+            system, or differs from the number of axes of a closed system.
         TypeError
             If `ndim` is not an integer.
         """
         expanded = self.axes.expand(ndim)
         if not self.axes.is_open:
             return self
-        # The class converts the closed axes item by item, and dispatches
-        # on them once converted.
         return replace(self, axes=expanded)
 
     def restrict(
         self, refs: tx.Iterable[tx.Union[int, str]]
     ) -> "CoordinateSystem":
-        """The system of the axes at some positions of this system.
+        """Return the system of the axes at some positions.
 
-        The axes are restricted by
-        [`AxisSequence.restrict`][brainhops.datamodel.systems.AxisSequence.restrict]:
-        a reference is a position in the space or a name, and a position
-        of an open system that falls among the axes that `...` stands
-        for gives an unknown `Axis()`. The axes are listed in the order
-        of `refs`. The result describes a different space, so the class
-        and the name of this system are not carried over: it is the
-        closed system that `CoordinateSystem(axes=...)` builds from the
-        restricted axes, which is a [`CoordinateSystem2D`][], an
-        [`RASCoordinateSystem`][], ... when the axes select one.
+        The axes are selected by [`AxisSequence.restrict`][], by position or
+        name, in the order of `refs`. A position covered by the `...` of an
+        open system gives an unknown axis. The result describes another space,
+        so neither the class nor the name is carried over: the result is
+        whatever `CoordinateSystem(axes=...)` builds from the selected axes.
 
         !!! example
             ```pycon
@@ -1248,14 +363,12 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         Returns
         -------
         CoordinateSystem
-            A closed system of `len(refs)` axes.
+            A closed system with one axis per reference.
 
         Raises
         ------
         ValueError, IndexError, TypeError
-            As
-            [`AxisSequence.restrict`][brainhops.datamodel.systems.AxisSequence.restrict]
-            does.
+            As raised by [`AxisSequence.restrict`][].
         """
         return CoordinateSystem(axes=self.axes.restrict(refs))
 
@@ -1264,17 +377,13 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         positions: tx.Iterable[int],
         ndim: tx.Optional[int] = None,
     ) -> "CoordinateSystem":
-        """The system of a larger space in which this system's axes sit.
+        """Return the system of a larger space that contains this system's
+        axes.
 
-        This is the inverse of [`restrict`][]. The axes are embedded by
-        [`AxisSequence.embed`][brainhops.datamodel.systems.AxisSequence.embed]:
-        axis `j` of this system sits at `positions[j]` of the result,
-        and every other position holds an unknown `Axis()`. The result
-        describes a different space, so the class and the name of this
-        system are not carried over: it is the system that
-        `CoordinateSystem(axes=...)` builds from the embedded axes -- a
-        plain, open `CoordinateSystem` when `ndim` is not given, and the
-        closed system the axes select when it is.
+        This is the inverse of [`restrict`][]. With [`AxisSequence.embed`][],
+        axis `j` sits at `positions[j]` and every other position holds an
+        unknown axis. As with [`restrict`][], neither the class nor the name is
+        carried over.
 
         !!! example
             ```pycon
@@ -1290,40 +399,29 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         positions : iterable of int
             The non-negative position of each axis in the larger space.
         ndim : int, optional
-            The number of axes of the larger space. When it is not given,
-            the number is unknown, and the result ends with `...` after
-            the last embedded axis.
+            The number of axes of the larger space. If omitted, the result is
+            open and ends with `...` after the last embedded axis.
 
         Returns
         -------
         CoordinateSystem
-            A system that is closed when `ndim` is given, and open
-            otherwise.
+            A closed system if `ndim` is given, and an open one otherwise.
 
         Raises
         ------
         ValueError, TypeError
-            As
-            [`AxisSequence.embed`][brainhops.datamodel.systems.AxisSequence.embed]
-            does.
+            As raised by [`AxisSequence.embed`][].
         """
         return CoordinateSystem(axes=self.axes.embed(positions, ndim=ndim))
 
     def compatible_with(self, other: tx.Optional["CoordinateSystem"]) -> bool:
-        """Whether `self` and `other` could describe the same space.
+        """Return whether two systems could describe the same space.
 
-        Two systems are compatible when their axes are
-        [`AxisSequence.compatible_with`][brainhops.datamodel.systems.AxisSequence.compatible_with]
-        each other: some choice of the axes that each `...` stands for
-        makes them match axis by axis, each pair being
-        [`Axis.compatible_with`][brainhops.datamodel.axes.Axis.compatible_with].
-        Only the axes are compared, not the names of the systems. `None`
-        is read as a system about which nothing is known, which is
-        compatible with every system.
-
-        For two closed systems, this asks for the same number of axes,
-        pairwise compatible. Unlike `==`, an unknown `Axis()` matches
-        any axis. The relation is symmetric, but not transitive.
+        Only the axes are compared, with [`AxisSequence.compatible_with`][]:
+        the systems are compatible when some choice of the axes that each `...`
+        stands for makes them match pairwise under [`Axis.compatible_with`][].
+        Unlike `==`, an unknown axis matches any axis, and `None` is compatible
+        with every system. The relation is symmetric but not transitive.
 
         !!! example
             ```pycon
@@ -1338,54 +436,33 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             False
             ```
 
-        Parameters
-        ----------
-        other : CoordinateSystem or None
-            The system to compare with.
-
-        Returns
-        -------
-        bool
-            Whether the two systems could describe the same space.
-
         Raises
         ------
         TypeError
-            If `other` is neither a [`CoordinateSystem`][] nor `None`.
+            If `other` is neither a coordinate system nor `None`.
         """
         if other is not None and not isinstance(other, CoordinateSystem):
             raise TypeError(
                 f"A coordinate system is compatible only with another "
                 f"CoordinateSystem or None, not with {type(other).__name__}."
             )
-        return self.axes.compatible_with(_axes_or_unknown(other))
+        other_axes = getattr(other, "axes", AxisList([...]))
+        return self.axes.compatible_with(other_axes)
 
 
-def _axes_or_unknown(
-    system: tx.Optional[CoordinateSystem],
-) -> AxisSequence:
-    """The axes of `system`, or `[...]` when the system is missing.
-
-    A missing system (`None`), such as an undeclared endpoint of a
-    transformation, says nothing about its axes, which read as `[...]`.
-    Where a system cannot be missing, read `system.axes` instead.
-    """
-    return AxisList([...]) if system is None else system.axes
-
-
-_bind_axes_default(CoordinateSystem)
+bind_axes_default(CoordinateSystem)
 
 
 class CoordinateSystem2D(CoordinateSystem, on={"axes": _is2d}):
-    """A coordinate systems with exactly two dimensions."""
+    """A coordinate system with exactly two axes."""
 
-    axes: _Axes[_2Axes] = (Axis(), Axis())
+    axes: Axes[_2Axes] = Factory()
 
 
 class CoordinateSystem3D(CoordinateSystem, on={"axes": _is3d}):
-    """A coordinate system with exactly three dimensions."""
+    """A coordinate system with exactly three axes."""
 
-    axes: _Axes[_3Axes] = (Axis(), Axis(), Axis())
+    axes: Axes[_3Axes] = Factory()
 
 
 # ----------------------------------------------------------------------
@@ -1396,33 +473,14 @@ class CoordinateSystem3D(CoordinateSystem, on={"axes": _is3d}):
 class PhysicalCoordinateSystem(CoordinateSystem):
     """A coordinate system whose coordinates measure physical quantities.
 
-    Every axis it states is measured in a physical unit, or in a unit not
-    yet specified (`None`): a millimetre or a second, never
-    [`IndexUnit`][], which says the coordinates count the samples of an
-    array. So reversing one of its axes is a sign flip, never the origin
-    shift a sampled axis needs, and a conversion factor to another
-    physical system of the same kind exists as soon as the units are all
-    given.
+    Each stated axis has a physical unit, such as mm or s, or an unspecified
+    one (`None`), but never an [`IndexUnit`][]. Reversing an axis is therefore
+    a sign flip rather than the origin shift of a sampled axis. Axis types
+    already enforce the kind of each unit, so this class only refuses index
+    units.
 
-    The unit of an axis is of the kind its axis measures: a spatial axis
-    takes a unit of space and a time axis a unit of time. The type of the
-    axis already enforces that -- `SpaceAxis(unit="s")` is refused -- so
-    this class only refuses the index units.
-
-    It may be open, and its units may be unspecified, since neither says
-    anything non-physical: `...` stands for axes about which nothing is
-    known, and `None` for a unit about which nothing is. A system with no
-    axis at all, `[]`, has nothing to refuse either. No array, pixel or
-    voxel system is a physical one: their axes count samples.
-
-    This is a base to inherit deliberately rather than a dispatch target:
-    a physical spatial system is selected as a spatial one. The concrete
-    systems that are physical by construction -- [`RASmm`][],
-    [`LPSmm`][], [`RSAmm`][] -- compose it in, and are stricter: they are
-    in millimetres, on every axis. Their own constraint is what dispatch
-    selects them on, so axes in RAS order in centimetres, or with no
-    unit, build an `RASCoordinateSystem`, and built by name, `RASmm`
-    refuses them.
+    The class is a base, not a dispatch target. [`RASmm`][], [`LPSmm`][] and
+    [`RSAmm`][] build on it and require mm on every axis.
 
     !!! example
         ```pycon
@@ -1465,62 +523,65 @@ class PhysicalCoordinateSystem(CoordinateSystem):
 # ----------------------------------------------------------------------
 
 
+def _index_axis(i: int) -> Axis:
+    return Axis(f"dim{i}", unit=_INDEX)
+
+
+class _AxesFactory(Factory):
+    _AxisFactory = tx.Callable[..., AXIS]
+
+    def __init__(
+        self, ndim: int, axis_factory: tx.Optional[_AxisFactory] = None
+    ) -> None:
+        self.ndim = ndim
+        self.axis_factory = axis_factory or (lambda *a: Axis())
+        super().__init__(self._factory)
+
+    def _factory(self) -> tx.Tuple[AXIS, ...]:
+        return tuple(map(self.axis_factory, range(self.ndim)))
+
+
+class _ArrayAxesFactory(_AxesFactory):
+    def __init__(self, ndim: int) -> None:
+        super().__init__(ndim, _index_axis)
+
+
 class ArrayCoordinateSystem(CoordinateSystem):
-    """A coordinate system for a multidimensional array.
+    """A coordinate system that indexes a multidimensional array.
 
-    Its coordinates count samples, so the axes it builds by default carry
-    the index unit (see [`IndexUnit`][]). Its `order` is the memory
-    order of the array, `None` when it is not specified: an
-    `ArrayCoordinateSystem` says nothing about it.
-
-    It is a base rather than a dispatch target: calling it with two or
-    three axes builds the matching fixed-arity class, and a system of two
-    or three sampled axes is selected as one of those from
-    [`CoordinateSystem`][] too. Calling any class with `order="C"` or
-    `order="F"` builds the C- or F-ordered class that the order and the
-    axes select (see the module).
+    The coordinates count samples, so the default axes of the two- and
+    three-dimensional subclasses carry an [`IndexUnit`][]. The class is not a
+    dispatch target itself: called with two or three axes, it builds the
+    matching fixed-arity class, and called with `order="C"` or `"F"`, the
+    matching ordered class.
     """
 
     name: tx.Optional[str] = "array"
 
 
 class CArrayCoordinateSystem(ArrayCoordinateSystem, on={"order": "C"}):
-    """A coordinate system for a C-ordered multidimensional array.
-
-    The first axis is the slowest changing in memory, and the last axis
-    the fastest changing. It is what `order="C"` selects.
-    """
+    """A C-ordered array system, whose last axis varies fastest in memory."""
 
     name: tx.Optional[str] = "carray"
 
 
 class FArrayCoordinateSystem(ArrayCoordinateSystem, on={"order": "F"}):
-    """A coordinate system for an F-ordered multidimensional array.
-
-    The first axis is the fastest changing in memory, and the last axis
-    the slowest changing. It is what `order="F"` selects.
-    """
+    """An F-ordered array system, whose first axis varies fastest in memory."""
 
     name: tx.Optional[str] = "farray"
 
 
-def _dim(i: int) -> Axis:
-    return Axis(f"dim{i}", unit=_INDEX)
-
-
-# `ArrayCoordinateSystem` is not a dispatch target, so a class statement
-# cannot say that `ArrayCoordinateSystem(axes=[a, b])` is two-dimensional
-# without also claiming every two-dimensional system of sampled axes
-# from `CoordinateSystem2D` -- which `on=` does too, so both are said.
+# Not a dispatch target, so the 2-D case is registered by hand; `on=`
+# covers the systems reached from CoordinateSystem2D.
 @ArrayCoordinateSystem.register_polymorph(axes=_is2d)
 class ArrayCoordinateSystem2D(
     CoordinateSystem2D,
     ArrayCoordinateSystem,
     on={"axes": _both(_is2d, _is_array)},
 ):
-    """A coordinate system for an array with two dimensions."""
+    """An array coordinate system with two axes."""
 
-    axes: _Axes[_2Axes] = (_dim(0), _dim(1))
+    axes: Axes[_2Axes] = _ArrayAxesFactory(2)
 
 
 @ArrayCoordinateSystem.register_polymorph(axes=_is3d)
@@ -1529,38 +590,35 @@ class ArrayCoordinateSystem3D(
     ArrayCoordinateSystem,
     on={"axes": _both(_is3d, _is_array)},
 ):
-    """A coordinate system for an array with three dimensions."""
+    """An array coordinate system with three axes."""
 
-    axes: _Axes[_3Axes] = (_dim(0), _dim(1), _dim(2))
+    axes: Axes[_3Axes] = _ArrayAxesFactory(3)
 
 
-# The C- and F-ordered classes below inherit from two dispatch targets --
-# a fixed-arity class, selected on its axes, and an ordered one, selected
-# on `order` -- so bagof selects them on what both stand for, from every
-# class above them: `CoordinateSystem(axes=<3 axes>, order="F")` is an
-# `FArrayCoordinateSystem3D`.
+# Two dispatch targets (arity and order), so these classes are selected
+# on what both stand for, without a constraint of their own.
 class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
-    """A coordinate system for a C-ordered array with two dimensions."""
+    """A C-ordered array coordinate system with two axes."""
 
-    axes: _Axes[_2Axes] = (_dim(0), _dim(1))
+    axes: Axes[_2Axes] = _ArrayAxesFactory(2)
 
 
 class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
-    """A coordinate system for a C-ordered array with three dimensions."""
+    """A C-ordered array coordinate system with three axes."""
 
-    axes: _Axes[_3Axes] = (_dim(0), _dim(1), _dim(2))
+    axes: Axes[_3Axes] = _ArrayAxesFactory(3)
 
 
 class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
-    """A coordinate system for an F-ordered array with two dimensions."""
+    """An F-ordered array coordinate system with two axes."""
 
-    axes: _Axes[_2Axes] = (_dim(0), _dim(1))
+    axes: Axes[_2Axes] = _ArrayAxesFactory(2)
 
 
 class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
-    """A coordinate system for an F-ordered array with three dimensions."""
+    """An F-ordered array coordinate system with three axes."""
 
-    axes: _Axes[_3Axes] = (_dim(0), _dim(1), _dim(2))
+    axes: Axes[_3Axes] = _ArrayAxesFactory(3)
 
 
 # ----------------------------------------------------------------------
@@ -1568,68 +626,70 @@ class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
 # ----------------------------------------------------------------------
 
 
+def _SpaceAxes(*names) -> tx.Tuple[SpaceAxis, ...]:
+    return tuple(map(SpaceAxis, names))
+
+
+def _SpaceArrayAxis(name: str) -> SpaceAxis:
+    return SpaceAxis(name, unit=_INDEX)
+
+
+def _SpaceArrayAxes(*names) -> tx.Tuple[SpaceAxis, ...]:
+    return tuple(map(_SpaceArrayAxis, names))
+
+
+def _SpaceAxesFactory(*names) -> Factory:
+    return Factory(lambda: _SpaceAxes(*names))
+
+
+def _SpaceArrayAxesFactory(*names) -> Factory:
+    return Factory(lambda: _SpaceArrayAxes(*names))
+
+
 class SpatialCoordinateSystem(CoordinateSystem, on={"axes": _is_spatial}):
-    """A coordinate system, whose axes have spatial meaning."""
+    """A coordinate system whose axes are all spatial."""
 
-    axes: _Axes[AxisList[tx.Union[SpaceAxis, _Ellipsis]]] = [...]
+    axes: Axes[AxisList[_EllipsisOr[SpaceAxis]]] = [...]
 
 
-# A spatial system of sampled axes is both spatial and an array, and the
-# spatial reading wins: the pixel and voxel systems below are spatial
-# systems, and are reached through them. The C- and F-ordered voxel
-# systems inherit from two dispatch targets -- a 3D spatial system and an
-# ordered 3D array -- and bagof selects them on what both stand for, from
-# every class above. A C- or F-ordered pixel system is a pixel system, and
-# a pixel system asks for axes that count samples, which an ordered one
-# does not (the order already says the axes index an array, so a spatial
-# axis whose unit is not given is enough): it stays out of the dispatch of
-# every class (`on=None`), and is registered by hand with its ordered
-# array base (on its spatial axes), and with the pixel and the 2D spatial
-# systems (on its order), through which every class above reaches it.
+# Spatial systems of sampled axes are reached through the spatial ones.
+# An ordered pixel system needs no sampled axes (the order already says
+# that they index an array), so it stays out of dispatch and is
+# registered by hand with its bases.
+
+
 class SpatialCoordinateSystem2D(
     CoordinateSystem2D, SpatialCoordinateSystem, on={}, priority=1
 ):
-    """A 2D coordinate system, whose axes have spatial meaning."""
+    """A spatial coordinate system with two axes."""
 
-    axes: _Axes[_2SpatialAxes] = (SpaceAxis(), SpaceAxis())
+    axes: Axes[_2SpatialAxes] = _SpaceAxesFactory("dim0", "dim1")
 
 
 class SpatialCoordinateSystem3D(
     CoordinateSystem3D, SpatialCoordinateSystem, on={}, priority=1
 ):
-    """A 3D coordinate system, whose axes have spatial meaning."""
+    """A spatial coordinate system with three axes."""
 
-    axes: _Axes[_3SpatialAxes] = (
-        SpaceAxis(),
-        SpaceAxis(),
-        SpaceAxis(),
-    )
-
-
-def _space(name: str) -> SpaceAxis:
-    return SpaceAxis(name=name, unit=_INDEX)
+    axes: Axes[_3SpatialAxes] = _SpaceAxesFactory("dim0", "dim1", "dim2")
 
 
 class PixelCoordinateSystem(
     SpatialCoordinateSystem2D, ArrayCoordinateSystem2D
 ):
-    """A coordinate system for 2D pixel grids."""
+    """A coordinate system for two-dimensional pixel grids."""
 
     name: tx.Optional[str] = "pixel"
-    axes: _Axes[_2SpatialAxes] = (_space("dim0"), _space("dim1"))
+    axes: Axes[_2SpatialAxes] = _SpaceArrayAxesFactory("dim0", "dim1")
 
 
 class VoxelCoordinateSystem(
     SpatialCoordinateSystem3D, ArrayCoordinateSystem3D
 ):
-    """A coordinate system for 3D voxel grids."""
+    """A coordinate system for three-dimensional voxel grids."""
 
     name: tx.Optional[str] = "voxel"
-    axes: _Axes[_3SpatialAxes] = (
-        _space("dim0"),
-        _space("dim1"),
-        _space("dim2"),
-    )
+    axes: Axes[_3SpatialAxes] = _SpaceArrayAxesFactory("dim0", "dim1", "dim2")
 
 
 @CArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)
@@ -1638,11 +698,11 @@ class VoxelCoordinateSystem(
 class CPixelCoordinateSystem(
     PixelCoordinateSystem, CArrayCoordinateSystem2D, on=None
 ):
-    """A coordinate system for C-ordered 2D pixel grids."""
+    """A coordinate system for C-ordered pixel grids, with axes j and i."""
 
     name: tx.Optional[str] = "cpixel"
     order: tx.Literal["C"] = "C"
-    axes: _Axes[_2SpatialAxes] = (_space("j"), _space("i"))
+    axes: Axes[_2SpatialAxes] = _SpaceArrayAxesFactory("j", "i")
 
 
 @FArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)
@@ -1651,122 +711,96 @@ class CPixelCoordinateSystem(
 class FPixelCoordinateSystem(
     PixelCoordinateSystem, FArrayCoordinateSystem2D, on=None
 ):
-    """A coordinate system for F-ordered 2D pixel grids."""
+    """A coordinate system for F-ordered pixel grids, with axes i and j."""
 
     name: tx.Optional[str] = "fpixel"
     order: tx.Literal["F"] = "F"
-    axes: _Axes[_2SpatialAxes] = (_space("i"), _space("j"))
+    axes: Axes[_2SpatialAxes] = _SpaceArrayAxesFactory("i", "j")
 
 
 class CVoxelCoordinateSystem(
     SpatialCoordinateSystem3D, CArrayCoordinateSystem3D
 ):
-    """A coordinate system for C-ordered 3D voxel grids."""
+    """A coordinate system for C-ordered voxel grids, with axes k, j and i."""
 
     name: tx.Optional[str] = "cvoxel"
-    axes: _Axes[_3SpatialAxes] = (_space("k"), _space("j"), _space("i"))
+    axes: Axes[_3SpatialAxes] = _SpaceArrayAxesFactory("k", "j", "i")
 
 
 class FVoxelCoordinateSystem(
     SpatialCoordinateSystem3D, FArrayCoordinateSystem3D
 ):
-    """A coordinate system for F-ordered 3D voxel grids."""
+    """A coordinate system for F-ordered voxel grids, with axes i, j and k."""
 
     name: tx.Optional[str] = "fvoxel"
-    axes: _Axes[_3SpatialAxes] = (_space("i"), _space("j"), _space("k"))
+    axes: Axes[_3SpatialAxes] = _SpaceArrayAxesFactory("i", "j", "k")
 
 
 # ----------------------------------------------------------------------
 #   ANATOMICAL COORDINATE SYSTEMS
 # ----------------------------------------------------------------------
-# An anatomical system fixes a direction per axis and says nothing about
-# the metric: an array can be RAS-oriented and indexed in samples. Their
-# default axes are instances of their own, built from the classes. They
-# take precedence over the pixel and voxel systems, which say less about a
-# system of oriented, sampled axes than the orientation does.
+# An anatomical system fixes a direction per axis but no metric. It takes
+# precedence over pixel and voxel systems, which say less about oriented
+# sampled axes.
 
 
 class RASCoordinateSystem(
     SpatialCoordinateSystem3D, on={"axes": _is_anat("RAS")}, priority=2
 ):
-    """The RAS anatomical coordinate system.
+    """The RAS anatomical system, used by NIfTI and many neuroimaging formats.
 
-    Coordinates increase toward the right, the anterior, and the
-    superior directions. This coordinate system is used by NIfTI files,
-    and by many other neuroimaging formats.
+    Coordinates increase towards the right, anterior and superior directions.
     """
 
     name: tx.Optional[str] = "RAS"
-    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS]] = (
-        _axes.R(),
-        _axes.A(),
-        _axes.S(),
-    )
+    axes: Axes[AxisTuple[_axes.R, _axes.A, _axes.S]] = Factory()
 
 
 class LPSCoordinateSystem(
     SpatialCoordinateSystem3D, on={"axes": _is_anat("LPS")}, priority=2
 ):
-    """The LPS anatomical coordinate system.
+    """The LPS anatomical system, used by ITK and hence by ANTs and 3D Slicer.
 
-    Coordinates increase toward the left, the posterior, and the
-    superior directions. This coordinate system is used by ITK, and
-    therefore also by ANTs, 3D Slicer, and other ITK-based tools.
+    Coordinates increase towards the left, posterior and superior directions.
     """
 
     name: tx.Optional[str] = "LPS"
-    axes: _Axes[AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS]] = (
-        _axes.L(),
-        _axes.P(),
-        _axes.S(),
-    )
+    axes: Axes[AxisTuple[_axes.L, _axes.P, _axes.S]] = Factory()
 
 
 class RSACoordinateSystem(
     SpatialCoordinateSystem3D, on={"axes": _is_anat("RSA")}, priority=2
 ):
-    """The RSA anatomical coordinate system.
+    """The RSA anatomical system, found in some FreeSurfer LTA files.
 
-    Coordinates increase toward the right, the superior, and the
-    anterior directions. This coordinate system appears in some
-    FreeSurfer LTA files.
+    Coordinates increase towards the right, superior and anterior directions.
     """
 
     name: tx.Optional[str] = "RSA"
-    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA]] = (
-        _axes.R(),
-        _axes.S(),
-        _axes.A(),
-    )
+    axes: Axes[AxisTuple[_axes.R, _axes.S, _axes.A]] = Factory()
 
 
 # ----------------------------------------------------------------------
 #   PHYSICAL ANATOMICAL SPACES
 # ----------------------------------------------------------------------
-# These shorthands are the millimetre anatomical systems -- the spaces
-# that nearly every file format means when it writes an anatomical affine.
-# Each is in millimetres, and nothing else: every axis is measured in mm,
-# not in another unit of length (which would need the data rescaled, not
-# the system relabelled), and not in a unit left unspecified. Each is
-# selected on its own orientation *and* the millimetre on every axis: the
-# orientation is what its anatomical parent already checks, and checking
-# it again keeps `PhysicalCoordinateSystem(axes=<LPS axes in mm>)` from
-# reaching `RASmm`. RAS axes in another unit, or with no unit, build an
-# `RASCoordinateSystem` -- there is no physical RAS system for another
-# unit to select -- or, from `PhysicalCoordinateSystem`, stay one.
+# Anatomical spaces in mm, as most formats mean by an anatomical affine.
+# Another length unit would need the data rescaled, not the system
+# relabelled. The orientation is checked again so that LPS axes in mm do
+# not reach RASmm.
 
 
-class _Millimetres(PhysicalCoordinateSystem):
-    """A physical coordinate system in millimetres, on every axis.
+class MillimetricCoordinateSystem(
+    SpatialCoordinateSystem, PhysicalCoordinateSystem
+):
+    """A physical coordinate system in millimetres on every axis.
 
-    Building one with an axis in another unit, or with none, is refused:
-    the class says what the unit is.
+    An axis in another unit, or without a unit, raises a ValueError.
     """
 
     def __post_init__(self) -> None:
         super().__post_init__()
         for axis in self.axes:
-            if axis is ... or axis.unit == _MILLIMETRE:
+            if axis is ... or axis.unit == _MM:
                 continue
             name = type(self).__name__
             raise ValueError(
@@ -1779,118 +813,105 @@ class _Millimetres(PhysicalCoordinateSystem):
             )
 
 
-def _mm(axis: tx.Type[Axis]) -> Axis:
-    return axis(unit="mm")
-
-
 class RASmm(
     RASCoordinateSystem,
-    _Millimetres,
+    MillimetricCoordinateSystem,
     on={"axes": _both(_is_anat("RAS"), _is_mm)},
 ):
-    """[`RASCoordinateSystem`][] in millimetres."""
+    """A [`RASCoordinateSystem`][] in millimetres."""
 
     name: tx.Optional[str] = "RAS"
-    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS]] = (
-        _mm(_axes.AxisLR),
-        _mm(_axes.AxisPA),
-        _mm(_axes.AxisIS),
+    axes: Axes[AxisTuple[_axes.R, _axes.A, _axes.S]] = Factory(
+        lambda: (
+            _axes.R("x", unit=_MM),
+            _axes.A("y", unit=_MM),
+            _axes.S("z", unit=_MM),
+        )
     )
 
 
 class LPSmm(
     LPSCoordinateSystem,
-    _Millimetres,
+    MillimetricCoordinateSystem,
     on={"axes": _both(_is_anat("LPS"), _is_mm)},
 ):
-    """[`LPSCoordinateSystem`][] in millimetres."""
+    """An [`LPSCoordinateSystem`][] in millimetres."""
 
     name: tx.Optional[str] = "LPS"
-    axes: _Axes[AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS]] = (
-        _mm(_axes.AxisRL),
-        _mm(_axes.AxisAP),
-        _mm(_axes.AxisIS),
+    axes: Axes[AxisTuple[_axes.L, _axes.P, _axes.S]] = Factory(
+        lambda: (
+            _axes.L("x", unit=_MM),
+            _axes.P("y", unit=_MM),
+            _axes.S("z", unit=_MM),
+        )
     )
 
 
 class RSAmm(
     RSACoordinateSystem,
-    _Millimetres,
+    MillimetricCoordinateSystem,
     on={"axes": _both(_is_anat("RSA"), _is_mm)},
 ):
-    """[`RSACoordinateSystem`][] in millimetres."""
+    """An [`RSACoordinateSystem`][] in millimetres."""
 
     name: tx.Optional[str] = "RSA"
-    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA]] = (
-        _mm(_axes.AxisLR),
-        _mm(_axes.AxisIS),
-        _mm(_axes.AxisPA),
+    axes: Axes[AxisTuple[_axes.R, _axes.S, _axes.A]] = Factory(
+        lambda: (
+            _axes.R("x", unit=_MM),
+            _axes.S("y", unit=_MM),
+            _axes.A("z", unit=_MM),
+        )
     )
 
 
 # ----------------------------------------------------------------------
 #   ANATOMICAL VOXEL SPACES
 # ----------------------------------------------------------------------
-# An F-ordered grid lists its axes x, y, z; a C-ordered one lists them z,
-# y, x. So an F-ordered RAS grid has axes that point R, A, S, and a
-# C-ordered one has axes that point S, A, R.
-#
-# An F-ordered one is what both its parents stand for -- its orientation
-# and an F-ordered voxel grid -- so bagof selects it from every class
-# above it, with no constraint of its own. A C-ordered one lists its axes
-# in an order its anatomical parent does not select (S, A, R is not R, A,
-# S), so it cannot stand for what that parent does: it stays out of the
-# dispatch of every class (`on=None`), and is registered by hand with its
-# C-ordered voxel base, on its own axis order. Every class that reaches
-# that base reaches it too.
+# An F-ordered grid lists its axes x, y, z and a C-ordered one z, y, x.
+# The F-ordered systems are selected on both parents. The C-ordered ones
+# list their axes in an order their anatomical parent does not select,
+# so they stay out of dispatch and are registered on their own order.
 
 
-def _sampled(axis: tx.Type[Axis], name: str) -> Axis:
-    return axis(name=name, unit=_INDEX)
-
-
+@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("RAS"))
 class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
-    """Combines [`RASCoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
-
-    This coordinate system describes an F-ordered voxel grid whose axes
-    already point in RAS order.
-    """
+    """An F-ordered voxel grid whose axes point in RAS order."""
 
     name: tx.Optional[str] = "fRAS"
-    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS]] = (
-        _sampled(_axes.AxisLR, "x"),
-        _sampled(_axes.AxisPA, "y"),
-        _sampled(_axes.AxisIS, "z"),
+    axes: Axes[AxisTuple[_axes.R, _axes.A, _axes.S]] = Factory(
+        lambda: (
+            _axes.R("x", unit=_INDEX),
+            _axes.A("y", unit=_INDEX),
+            _axes.S("z", unit=_INDEX),
+        )
     )
 
 
+@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("LPS"))
 class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
-    """Combines [`LPSCoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
-
-    This coordinate system describes an F-ordered voxel grid whose axes
-    already point in LPS order.
-    """
+    """An F-ordered voxel grid whose axes point in LPS order."""
 
     name: tx.Optional[str] = "fLPS"
-    axes: _Axes[AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS]] = (
-        _sampled(_axes.AxisRL, "x"),
-        _sampled(_axes.AxisAP, "y"),
-        _sampled(_axes.AxisIS, "z"),
+    axes: Axes[AxisTuple[_axes.L, _axes.P, _axes.S]] = Factory(
+        lambda: (
+            _axes.L("x", unit=_INDEX),
+            _axes.P("y", unit=_INDEX),
+            _axes.S("z", unit=_INDEX),
+        )
     )
 
 
+@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("RSA"))
 class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
-    """Combines [`RSACoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
-
-    This coordinate system describes an F-ordered voxel grid whose axes
-    already point in RSA order.
-    """
+    """An F-ordered voxel grid whose axes point in RSA order."""
 
     name: tx.Optional[str] = "fRSA"
-    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA]] = (
-        _sampled(_axes.AxisLR, "x"),
-        _sampled(_axes.AxisIS, "y"),
-        _sampled(_axes.AxisPA, "z"),
+    axes: Axes[AxisTuple[_axes.R, _axes.S, _axes.A]] = Factory(
+        lambda: (
+            _axes.R("x", unit=_INDEX),
+            _axes.S("y", unit=_INDEX),
+            _axes.A("z", unit=_INDEX),
+        )
     )
 
 
@@ -1898,18 +919,16 @@ class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
 class CRASCoordinateSystem(
     RASCoordinateSystem, CVoxelCoordinateSystem, on=None
 ):
-    """Combines [`RASCoordinateSystem`][] with [`CVoxelCoordinateSystem`][].
-
-    This coordinate system describes a C-ordered voxel grid whose axes
-    already point in RAS order.
-    """
+    """A C-ordered RAS voxel grid, whose axes are listed S, A, R."""
 
     name: tx.Optional[str] = "cRAS"
     order: tx.Literal["C"] = "C"
-    axes: _Axes[AxisTuple[_axes.AxisIS, _axes.AxisPA, _axes.AxisLR]] = (
-        _sampled(_axes.AxisIS, "z"),
-        _sampled(_axes.AxisPA, "y"),
-        _sampled(_axes.AxisLR, "x"),
+    axes: Axes[AxisTuple[_axes.S, _axes.A, _axes.R]] = Factory(
+        lambda: (
+            _axes.S("z", unit=_INDEX),
+            _axes.A("y", unit=_INDEX),
+            _axes.R("x", unit=_INDEX),
+        )
     )
 
 
@@ -1917,18 +936,16 @@ class CRASCoordinateSystem(
 class CLPSCoordinateSystem(
     LPSCoordinateSystem, CVoxelCoordinateSystem, on=None
 ):
-    """Combines [`LPSCoordinateSystem`][] with [`CVoxelCoordinateSystem`][].
-
-    This coordinate system describes a C-ordered voxel grid whose axes
-    already point in LPS order.
-    """
+    """A C-ordered LPS voxel grid, whose axes are listed S, P, L."""
 
     name: tx.Optional[str] = "cLPS"
     order: tx.Literal["C"] = "C"
-    axes: _Axes[AxisTuple[_axes.AxisIS, _axes.AxisAP, _axes.AxisRL]] = (
-        _sampled(_axes.AxisIS, "z"),
-        _sampled(_axes.AxisAP, "y"),
-        _sampled(_axes.AxisRL, "x"),
+    axes: Axes[AxisTuple[_axes.S, _axes.P, _axes.L]] = Factory(
+        lambda: (
+            _axes.S("z", unit=_INDEX),
+            _axes.P("y", unit=_INDEX),
+            _axes.L("x", unit=_INDEX),
+        )
     )
 
 
@@ -1936,16 +953,14 @@ class CLPSCoordinateSystem(
 class CRSACoordinateSystem(
     RSACoordinateSystem, CVoxelCoordinateSystem, on=None
 ):
-    """Combines [`RSACoordinateSystem`][] with [`CVoxelCoordinateSystem`][].
-
-    This coordinate system describes a C-ordered voxel grid whose axes
-    already point in RSA order.
-    """
+    """A C-ordered RSA voxel grid, whose axes are listed A, S, R."""
 
     name: tx.Optional[str] = "cRSA"
     order: tx.Literal["C"] = "C"
-    axes: _Axes[AxisTuple[_axes.AxisPA, _axes.AxisIS, _axes.AxisLR]] = (
-        _sampled(_axes.AxisPA, "z"),
-        _sampled(_axes.AxisIS, "y"),
-        _sampled(_axes.AxisLR, "x"),
+    axes: Axes[AxisTuple[_axes.A, _axes.S, _axes.R]] = Factory(
+        lambda: (
+            _axes.A("x", unit=_INDEX),
+            _axes.S("y", unit=_INDEX),
+            _axes.R("z", unit=_INDEX),
+        )
     )

@@ -1,21 +1,13 @@
-"""
-Tests for the FSL transformation readers.
+"""Tests for the FSL transformation readers.
 
-FSL expresses transformations in *scaled-mm* coordinates: voxel indices
-scaled by pixel size, with the x-axis flipped when the voxel-to-world
-affine has a positive determinant. These tests pin down the scaled-mm
-affine, the FLIRT `.mat` affine, and the FNIRT warp readers.
-
-The FNIRT numeric tests use the real `fslpy` test fixtures in
-`data/fsl/`, and check the reader against `fslpy` itself where it is
-installed. See `data/fsl/ATTRIBUTION.md` for the provenance and license
-of those fixtures.
+FSL works in scaled millimetres: voxel indices times the pixel size, with
+x flipped when the voxel-to-world matrix has a positive determinant. The
+FNIRT tests use the fslpy fixtures in data/fsl/ (see ATTRIBUTION.md there)
+and compare with fslpy when it is installed.
 """
 
-# stdlib
 from pathlib import Path
 
-# dependencies
 import numpy as np
 import pytest
 
@@ -39,8 +31,7 @@ from brainhops.io.transformations.fsl.fnirt._base import (  # noqa: E402
 data_dir = Path(__file__).parent / "data"
 fsl_dir = data_dir / "fsl"
 
-# A "neurological" reference (positive determinant, so FSL flips x) and a
-# "radiological" moving image (negative determinant, no flip).
+# A neurological reference (FSL flips x) and a radiological moving image.
 REF_AFFINE = np.array(
     [[2, 0, 0, -30], [0, 2, 0, -40], [0, 0, 2.5, -20], [0, 0, 0, 1]], float
 )
@@ -62,7 +53,7 @@ def _apply(matrix, coords):  # noqa: ANN001, ANN202
 
 
 def _fsl_vox2scaled(affine, shape, pixdim):  # noqa: ANN001, ANN202
-    """The FSL scaled-mm affine, written out from FSL's documented rule."""
+    """Compute the FSL scaled-mm affine by the documented rule."""
     matrix = np.diag(list(pixdim) + [1.0])
     if np.linalg.det(affine[:3, :3]) > 0:
         flip = np.eye(4)
@@ -99,7 +90,7 @@ def test_scaled_mm_affine_object_matches_geometry() -> None:
 
 
 class _StubHeader:
-    """A header-like object with degenerate geometry fields."""
+    """Header stub with degenerate geometry fields."""
 
     def __init__(self, affine, zooms, shape) -> None:  # noqa: ANN001
         self._affine, self._zooms, self._shape = affine, zooms, shape
@@ -115,12 +106,12 @@ class _StubHeader:
 
 
 def test_degenerate_header_does_not_crash() -> None:
-    """A non-finite affine and missing zooms still yield a finite geometry."""
+    """A non-finite affine and zero zooms still give a finite geometry."""
     header = _StubHeader(np.full((4, 4), np.nan), (0.0, 0.0, 0.0), (4, 5, 6))
     geom = _ImageGeometry(header)
     assert np.all(np.isfinite(geom.vox2fsl))
     assert np.all(np.isfinite(geom.fsl2ras))
-    # Missing zooms are replaced with one, not left at zero.
+    # Missing zooms are replaced with one, not zero.
     assert np.all(geom.pixdim == 1.0)
 
 
@@ -145,8 +136,7 @@ FLIRT_MATRIX = np.array(
     float,
 )
 
-# Reference -> moving RAS matrix produced by the reader, checked against
-# fslpy `fromFlirt`.
+# Reference-to-moving RAS matrix, checked against fslpy fromFlirt.
 EXPECTED_FLIRT_REF2MOV = np.array(
     [
         [1.019659, 0.030023, -0.021678, 82.357399],
@@ -171,7 +161,7 @@ def test_flirt_is_an_affine() -> None:
 
 
 def test_flirt_matrix_is_reference_to_moving_ras() -> None:
-    """The computed matrix maps reference RAS to moving RAS (known answer)."""
+    """The matrix maps reference RAS to moving RAS (known answer)."""
     flirt = _flirt(
         reference=_image(REF_SHAPE, REF_AFFINE),
         moving=_image(MOV_SHAPE, MOV_AFFINE),
@@ -182,7 +172,7 @@ def test_flirt_matrix_is_reference_to_moving_ras() -> None:
 
 
 def test_flirt_matrix_is_the_documented_composition() -> None:
-    """The matrix equals ``mov.fsl2ras @ inv(M) @ ref.ras2fsl``."""
+    """The matrix equals mov.fsl2ras @ inv(M) @ ref.ras2fsl."""
     ref_v2f = _fsl_vox2scaled(REF_AFFINE, REF_SHAPE, [2.0, 2.0, 2.5])
     mov_v2f = _fsl_vox2scaled(MOV_AFFINE, MOV_SHAPE, [1.5, 1.5, 3.0])
     ref_ras2fsl = ref_v2f @ np.linalg.inv(REF_AFFINE)
@@ -196,7 +186,7 @@ def test_flirt_matrix_is_the_documented_composition() -> None:
 
 
 def test_a_sequence_holding_flirt_inverts() -> None:
-    """`Sequence.inverse` passes `compute` on to the FLIRT inverse."""
+    """`Sequence.inverse` passes compute to the FLIRT inverse."""
     flirt = _flirt(
         reference=_image(REF_SHAPE, REF_AFFINE),
         moving=_image(MOV_SHAPE, MOV_AFFINE),
@@ -309,11 +299,11 @@ def test_fnirt_deformation_field_is_a_first_degree_displacement() -> None:
     _, absolute, _ = _fnirt_setup()
     warp = _warp(absolute)
     assert warp.degree == 1
-    assert warp.coeff is False
+    assert warp.store == "values"
     field = warp.transformations[1]
     assert type(field) is _xforms.DisplacementField
     assert field.degree == 1
-    assert field.coeff is False
+    assert field.store == "values"
     assert np.asarray(field.field).shape == REF_SHAPE + (3,)
 
 
@@ -347,7 +337,7 @@ def test_fnirt_deformation_type_override() -> None:
 
 
 def test_fnirt_deformation_type_change_is_reflected() -> None:
-    """Changing `deformation_type` rebuilds the cached chain."""
+    """Changing deformation_type rebuilds the cached chain."""
     _, absolute, _ = _fnirt_setup()
     warp = _warp(absolute)
     warp.deformation_type = "absolute"
@@ -390,7 +380,7 @@ def _real_src():  # noqa: ANN202
 
 
 def test_both_fnirt_fixtures_dispatch_to_one_reader() -> None:
-    """Deformation (2006) and coefficient (2007) both read as one class."""
+    """Deformation and coefficient fixtures are read by one class."""
     for name in ("displacementfield.nii.gz", "coefficientfield.nii.gz"):
         path = fsl_dir / name
         assert io.transformations.sniff(path) is FnirtWarpField
@@ -398,30 +388,29 @@ def test_both_fnirt_fixtures_dispatch_to_one_reader() -> None:
 
 
 def test_generic_reader_does_not_claim_fsl_intents() -> None:
-    """The generic RAS-coordinates reader no longer sniffs FSL intents."""
+    """The generic RAS coordinates reader does not claim FSL intents."""
     from brainhops.io.transformations.nifti.fields import (
         NiftiRASCoordinatesField,
     )
 
     img = nb.load(str(fsl_dir / "coefficientfield.nii.gz"))
-    # A CERTAIN score would mean it is still claiming the FSL intent.
+    # A score of 1.0 would mean that the generic reader claims the file.
     assert NiftiRASCoordinatesField._score_nibabel(img.header) < 1.0
 
 
 def test_coefficient_field_exposes_degree_and_coeff() -> None:
     coef = io.transformations.load(fsl_dir / "coefficientfield.nii.gz")
-    assert coef.degree == 3  # cubic
-    assert coef.coeff is True
-    # The stored knot spacing and reference pixel sizes are read from the
-    # header for the chain, in reference voxels.
+    assert coef.degree == 3
+    assert coef.store == "coefficients"
+    # Knot spacing and reference pixel sizes come from the header.
     assert np.allclose(coef._stored_knot_spacing(), [5.0, 5.0, 5.0])
     assert np.allclose(coef._reference_pixdim(), [2.0, 2.0, 2.0])
 
 
-def test_deformation_field_exposes_degree_and_coeff() -> None:
+def test_deformation_field_exposes_degree_and_store() -> None:
     warp = io.transformations.load(fsl_dir / "displacementfield.nii.gz")
     assert warp.degree == 1
-    assert warp.coeff is False
+    assert warp.store == "values"
 
 
 def test_coefficient_field_needs_both_images() -> None:
@@ -445,7 +434,7 @@ def test_coefficient_field_chain_shape() -> None:
     field = chain[1]
     assert type(field) is _xforms.DisplacementField
     assert field.degree == 3
-    assert field.coeff is True
+    assert field.store == "coefficients"
     # The coefficients stay on the coarse knot grid.
     assert np.asarray(field.field).shape == (6, 13, 7, 3)
     world = _world_field(coef, _real_ref())
@@ -453,10 +442,7 @@ def test_coefficient_field_chain_shape() -> None:
 
 
 def _fnirt_world_oracle(name, shape):  # noqa: ANN001, ANN202
-    """The fslpy world-to-world FNIRT deformation for a fixture.
-
-    The test is skipped where fslpy is not installed.
-    """
+    """Compute the fslpy world-to-world deformation, or skip without fslpy."""
     fsl_image = pytest.importorskip("fsl.data.image")
     fsl_fnirt = pytest.importorskip("fsl.transform.fnirt")
     nonlinear = pytest.importorskip("fsl.transform.nonlinear")
@@ -474,7 +460,7 @@ def _fnirt_world_oracle(name, shape):  # noqa: ANN001, ANN202
     "name", ["coefficientfield.nii.gz", "displacementfield.nii.gz"]
 )
 def test_fnirt_fixture_matches_fslpy(name) -> None:  # noqa: ANN001
-    """The reader reproduces fslpy's world-to-world FNIRT deformation."""
+    """The reader reproduces the fslpy world-to-world deformation."""
     ref_img, src_img = _real_ref(), _real_src()
     warp = io.transformations.load(
         fsl_dir / name, reference=ref_img, moving=src_img
@@ -512,7 +498,7 @@ def test_coefficient_field_repr_and_inspection_do_not_raise() -> None:
 
 
 def test_anchor_offset_is_floor_degree_over_two() -> None:
-    """The knot offset is `degree // 2`, the same for cubic and quadratic."""
+    """The knot offset is degree // 2 for cubic and quadratic splines."""
     assert np.allclose(_anchor_offsets(3, [5, 5, 5]), [1, 1, 1])
     assert np.allclose(_anchor_offsets(2, [5, 5, 5]), [1, 1, 1])
     # A dense field (degree 1, spacing 1) has no offset.
@@ -520,7 +506,7 @@ def test_anchor_offset_is_floor_degree_over_two() -> None:
 
 
 def test_anchor_offset_is_zero_where_knot_spacing_is_one() -> None:
-    """An axis with unit knot spacing has no coarse grid, so no offset."""
+    """An axis with a knot spacing of one has no offset."""
     assert np.allclose(_anchor_offsets(2, [1, 5, 5]), [0, 1, 1])
     assert np.allclose(_anchor_offsets(3, [5, 1, 5]), [1, 0, 1])
 
@@ -531,7 +517,7 @@ def test_anchor_offset_is_zero_where_knot_spacing_is_one() -> None:
 
 
 def test_constant_boundary_maps_to_grid_constant() -> None:
-    """The constant condition uses scipy's zero-padding grid-constant mode."""
+    """A constant boundary maps to the grid-constant mode of scipy."""
     from brainhops._core.bsplines import _scipy_boundary
 
     assert _scipy_boundary("constant") == ("grid-constant", 0.0)
@@ -558,27 +544,14 @@ ARRAY_BACKENDS = [
         ),
     ),
 ]
-"""The array backends a fold is checked on: both now prefilter exactly."""
+"""Array backends on which folding is checked."""
 
 
 @pytest.mark.parametrize("array_backend", ARRAY_BACKENDS)
 def test_affine_folds_into_coefficient_field_warp_stays_correct(
     array_backend: str,
 ) -> None:
-    """Folding the trailing affine into a coefficient field keeps the warp.
-
-    An explicit ``compute()`` with no leading sampling domain folds the
-    trailing affine into the field. The three-step chain collapses to two
-    steps, and the coefficient state of the field is carried through. When
-    the warp instead leads with a sampling grid, it is evaluated exactly and
-    reproduces the fslpy reference across the field of view.
-
-    Checked on each backend from the load onwards: the interpolation
-    backend is chosen from the array, not from the ambient setting. Folding
-    converts the field back to spline coefficients, and this coefficient
-    grid has an axis of six samples, shorter than the prefilter's halo:
-    the dask prefilter merges such chunks rather than refusing them.
-    """
+    """Folding the trailing affine into a coefficient field keeps the warp."""
     with backend(array_backend):
         coef = io.transformations.load(
             fsl_dir / "coefficientfield.nii.gz",
@@ -586,50 +559,39 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct(
             moving=_real_src(),
         )
         _, disp, post = coef.transformations
-        assert disp.coeff is True
+        assert disp.store == "coefficients"
 
-        # The affine folds into the field rather than raising. The result
-        # is a displacement field again, and its coefficient state is
-        # preserved.
+        # The affine folds into a displacement field that keeps coefficients.
         folded = post(disp).compute()
         assert type(folded) is _xforms.DisplacementField
-        assert folded.coeff is True
+        assert folded.store == "coefficients"
 
-        # compute() therefore folds the trailing affine into the field,
-        # leaving two steps in place of three.
+        # compute() folds the trailing affine: two steps replace three.
         computed = _xforms.Sequence(
             transformations=list(coef.transformations)
         ).compute()
         names = [type(t).__name__ for t in computed.transformations]
         assert names == ["RASToWarpField", "DisplacementField"]
 
-        # Led by a sampling grid, the full warp reproduces the fslpy
-        # reference.
+        # Led by a sampling grid, the full warp reproduces fslpy.
         out = _world_field(coef, _real_ref())
         oracle = _fnirt_world_oracle("coefficientfield.nii.gz", out.shape)
         assert np.allclose(out, oracle, atol=1e-4)
 
 
 def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
-    """Folding the trailing affine into a dense field is exact in the FOV.
-
-    A dense displacement field has spline degree one, so interpolation
-    reproduces an affine exactly at every grid node. Folding the trailing
-    affine into the field and evaluating the collapsed two-step warp against
-    a sampling grid therefore agrees with the full three-step warp and with
-    the fslpy reference across the field of view.
-    """
+    """Folding the trailing affine into a dense field is exact."""
     warp = io.transformations.load(
         fsl_dir / "displacementfield.nii.gz",
         reference=_real_ref(),
         moving=_real_src(),
     )
     _, disp, post = warp.transformations
-    assert disp.coeff is False
+    assert disp.store == "values"
 
     folded = post(disp).compute()
     assert type(folded) is _xforms.DisplacementField
-    assert folded.coeff is False
+    assert folded.store == "values"
 
     computed = _xforms.Sequence(
         transformations=list(warp.transformations)
@@ -637,8 +599,7 @@ def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     names = [type(t).__name__ for t in computed.transformations]
     assert names == ["RASToWarpField", "DisplacementField"]
 
-    # The full three-step warp and the folded two-step warp both reproduce
-    # the fslpy reference when they lead with a sampling grid.
+    # Led by a sampling grid, both chains reproduce fslpy.
     out_full = _world_field(warp, _real_ref())
     out_folded = _world_field(computed, _real_ref())
     oracle = _fnirt_world_oracle("displacementfield.nii.gz", out_full.shape)

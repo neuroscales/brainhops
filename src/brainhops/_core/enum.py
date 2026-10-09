@@ -8,28 +8,20 @@ from .compat import StrEnum
 
 
 class EnumConverter:
-    """
-    The converter of a free-text value that has a list of known terms.
+    """Converter from free text to the known terms of an enum.
 
-    The known terms are the members of an enum. A string that is the
-    value of a member becomes that member, any other string stays a
-    string, and `None` stays `None`. A field annotated with
-    `ConvertTo(EnumConverter(SpaceEnum))` therefore holds a `SpaceEnum`
-    member for a known space and the plain string for any other space.
+    A string that equals the value of a member of the enum is converted to
+    that member. Any other string is kept as a string, and `None` is kept as
+    `None`. A field annotated with `ConvertTo(EnumConverter(SpaceEnum))`
+    therefore holds a `SpaceEnum` member when the text names a known space,
+    and a plain string otherwise.
 
-    `bagof` does not convert a `Union[Enum, str]` this way by itself. Its
-    union converter returns a value that already fits one branch of the
-    union as it is, so a string stays a string, and the enum branch is
-    never tried. Registering a converter for the union does not help
-    either, because `bagof` matches a parametrised union by equality:
-    each enum, and each wrapping of its union (`Optional[...]`, or the
-    metadata `Maybe[...]`, which flatten into other unions), would need a
-    registration of its own, and a shape that was left out would silently
-    keep the string. An explicit converter on the field cannot be missed.
-
-    The converter is a class rather than a closure so that it has a
-    readable `repr` and can be pickled, since it is stored in the
-    metadata of a field.
+    The converter is declared on each field because the union converter of
+    bagof keeps a string as it is, without trying the enum branch, and a
+    converter registered for the union would need one registration per
+    enum and per wrapping, such as `Optional[...]`. It is a class rather
+    than a closure so that it has a readable representation and can be
+    pickled with the field metadata.
 
     Examples
     --------
@@ -48,33 +40,33 @@ class EnumConverter:
     __slots__ = ("enum",)
 
     def __init__(self, enum: tx.Type[Enum]) -> None:
-        """
+        """Create a converter for an enum.
+
         Parameters
         ----------
-        enum : type
-            The enum whose members are the known terms.
+        enum : type of Enum
+            Enum whose members are the known terms.
         """
         self.enum = enum
 
     def __call__(self, value: tx.Any) -> tx.Any:
-        """
-        Convert a value.
+        """Convert a value to a member of the enum when possible.
 
         Parameters
         ----------
-        value : Enum, str or None
-            The value to convert.
+        value : Any
+            A member of the enum, a string, or `None`.
 
         Returns
         -------
-        Enum, str or None
-            The member whose value is `value`, or `value` itself when it
-            is `None`, a member, or a string that names no member.
+        Enum or str or None
+            The member whose value equals `value`. A member, `None`, and a
+            string that names no member are returned unchanged.
 
         Raises
         ------
         TypeError
-            If `value` is neither a member, a string nor `None`.
+            If `value` is not a member of the enum, a string, or `None`.
         """
         enum = self.enum
         if value is None or isinstance(value, enum):

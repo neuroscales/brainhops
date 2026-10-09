@@ -1,30 +1,28 @@
-# stdlib
 from collections.abc import MutableSequence as AbcMutableSequence
 from collections.abc import Sequence as AbcSequence
 
-# dependencies
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import NotKwOnly, replace
 
-# api
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import kinds
 from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.errors import CompositionError, ConversionError
 
-# internals
-from . import registries
+from . import nocycles
 from .base import Transformation
-from .check import is_kind
-from .compose import compose
+from .compute.check import is_kind
+from .compute.compose import compose
+from .compute.factor import PatternCache, factor_sequence
+from .compute.simplify import SimplifyLike, SimplifyTable
+from .compute.simplify import simplify as _simplify
+from .compute.utils import require_endomorphism
 from .concrete import (
     CartesianField,
     CoordinatesField,
     DisplacementField,
     Identity,
-    is_identity,
 )
-from .errors import CompositionError, ConversionError
-from .factor import PatternCache, factor_sequence
 from .inverse import Inverse
 from .meta import SubspaceTransformation
 from .modes import (
@@ -34,16 +32,11 @@ from .modes import (
     mode_children,
     normalize_modes,
 )
-from .registries import register_sequence
-from .simplify import SimplifyLike, SimplifyTable
-from .simplify import simplify as _simplify
-from .utils import require_endomorphism
+from .nocycles import register_sequence
 
 
 class SequenceMixin(AbcSequence):
-    # Implements the abc.Sequence API, assuming the existence of a
-    # `transformations` attribute that is a sequence of `Transformation`
-    # objects.
+    # Sequence API over the `transformations` attribute.
 
     def __len__(self) -> int:
         return len(self.transformations or [])
@@ -51,22 +44,20 @@ class SequenceMixin(AbcSequence):
     def __getitem__(self, index: tx.Union[int, slice]) -> Transformation:
         return self.transformations[index]
 
-    def __delitem__(self, index: tx.Union[int, slice]) -> None:
-        del self.transformations[index]
-
     def __iter__(self) -> tx.Iterator[Transformation]:
         return iter(self.transformations or [])
 
 
 class MutableSequenceMixin(SequenceMixin, AbcMutableSequence):
-    # Implements the abc.MutableSequence API, assuming the existence of a
-    # a `transformations` attribute that is a mutable sequence of
-    # `Transformation` objects.
+    # Mutable sequence API over the `transformations` attribute.
 
     def __setitem__(
         self, index: tx.Union[int, slice], value: Transformation
     ) -> None:
         self.transformations[index] = value
+
+    def __delitem__(self, index: tx.Union[int, slice]) -> None:
+        del self.transformations[index]
 
     def insert(self, index: int, value: Transformation) -> None:
         if self.transformations is None:
@@ -100,44 +91,30 @@ class MutableSequenceMixin(SequenceMixin, AbcMutableSequence):
 
 @register_sequence
 class Sequence(SequenceMixin, Transformation):
-    """A sequence of transformations.
+    """An ordered chain of transformations.
 
-    This is a base class shared by mutable and immutable sequences.
-
-    It can also be used as a factory itself, in which case it returns
-    a `MutableSequence`.
+    [`Sequence`][] is the base class of [`MutableSequence`][] and
+    [`ImmutableSequence`][]. Calling `Sequence` directly acts as a factory and
+    returns a [`MutableSequence`][].
 
     !!! note
-        Transformations in a sequence are listed in the order in which
-        they are applied. It reads as the opposite order to function
-        composition (or matrix multiplication), which may be confusing.
-
-        * `Sequence([t1, t2, t3])(x)` is equivalent to `t3(t2(t1(x)))`.
-        * `Sequence([t1, t2, t3]) @ x` is equivalent to `t3 @ t2 @ t1 @ x`.
+        The transformations are listed in the order in which they are applied,
+        which is the opposite of the order used when writing a composition of
+        functions or a product of matrices. `Sequence([t1, t2, t3])(x)` is
+        equivalent to `t3(t2(t1(x)))`, and `Sequence([t1, t2, t3]) @ x` is
+        equivalent to `t3 @ t2 @ t1 @ x`.
     """
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("transformations",)
+    data_fields = ("transformations",)
 
-    # --- attributes ---------------------------------------------------
-
-    # The chain is stored under a private name, for the same reason the
-    # endpoints are (see `Transformation`): the constructor argument stays
-    # `transformations=` while `replace()` carries over what the sequence
-    # was *given* rather than what its `transformations` property reports.
-    # A subclass whose chain is derived -- a structured reader block
-    # assembles it from the file it parsed -- would otherwise have every
-    # `replace()` freeze the derived chain into a declared one, so a copy
-    # made with a new parameter would keep serving the chain built from
-    # the old one, and would share that very list with the original.
-    _transformations: tx.Annotated[
-        tx.Optional[tx.Sequence[Transformation]],
-        tx.Doc(
-            """
-            A list of transformations, in the order in which they are
-            applied to an input coordinate system.
-            """
-        ),
-    ] = None
+    # The chain is stored under a private name so that `replace()` carries over
+    # what was given rather than what the property reports. In a subclass that
+    # derives its chain, the copy would otherwise serve a stale chain that
+    # shares its list with the original.
+    _transformations: NotKwOnly[tx.Optional[tx.Sequence[Transformation]]] = (
+        None
+    )
+    """Transformations, in the order in which they are applied."""
 
     transformations = smartproperty("transformations")
 
@@ -153,20 +130,14 @@ class Sequence(SequenceMixin, Transformation):
             return self.transformations[-1].output
         return None
 
-    # --- factory ------------------------------------------------------
-
     def __new__(cls, *args, **kwargs) -> tx.Type[tx.Self]:
         if cls is Sequence:
             return MutableSequence(*args, **kwargs)
         return super().__new__(cls)
 
-    # --- methods ------------------------------------------------------
-
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
-        # NOTE
-        #   Not all sequence subclasses can contain their inverse.
-        #   We therefore return an exact `Sequence`, rather than using
-        #   `type(self)`.
+        # Return a plain `Sequence` rather than `type(self)`, because not every
+        # subclass can hold its own inverse.
         if self.transformations is None:
             return Sequence(input=self.output, output=self.input)
         return Sequence(
@@ -174,57 +145,54 @@ class Sequence(SequenceMixin, Transformation):
                 t.inverse(compute=compute, **kwargs)
                 for t in reversed(self.transformations)
             ],
-            # NOTE
-            #   we carry over the declared (private) endpoints, not the
-            #   derived (public) ones, so that the latter keep being
-            #   derived in the inverse object.
+            # Carry over the declared endpoints only, so that derived endpoints
+            # stay derived in the inverse.
             input=self._output,
             output=self._input,
         )
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
-        """Return the principal square root of this chain.
+        """Return the principal square root of the chain.
 
-        The chain is first simplified, which costs nothing. A chain
-        `[P, *X, P^-1]`, where `P^-1` is the lazy inverse of `P`, or both
-        are affines whose product is exactly the identity, is a change of
-        coordinates around `X`, and its square root is
-        `[P, sqrt(X), P^-1]`: a field stored in voxels between a
-        world-to-voxel affine and its lazy inverse keeps that form. Any
-        other chain is composed now, and the square root of the
-        transformation it composes to is returned.
+        The chain is first simplified. A chain `[P, *X, P^-1]`, where `P^-1` is
+        the lazy inverse of `P` or the two ends are affine transformations
+        whose product is exactly the identity, is a change of coordinates
+        around `X`, and its square root is `[P, sqrt(X), P^-1]`. Any other
+        chain is composed, and the square root of the result is returned.
 
         Raises
         ------
         DomainError
-            If the chain does not map a space to itself, or if the square
-            root of what it reduces to is not defined.
+            If the chain does not map a space onto itself, or if the square
+            root of its reduced form is undefined (see
+            [`DomainError`][brainhops.errors.DomainError]).
         NotImplementedError
-            If the chain does not compose to a single transformation.
+            If the chain is neither a change of coordinates nor composes to a
+            single transformation.
         """
         return _chain_sqrt(self, compute, kwargs)
 
     def to(
         self, cls: tx.Optional[tx.Type[Transformation]] = None, **kwargs
     ) -> Transformation:
-        """Convert this chain to a different type or encoding.
+        """Convert the chain to another type or encoding.
 
-        See [`Transformation.to`][brainhops.datamodel.transformations.\
-Transformation.to]. A chain has no tangent of its own -- the tangent of a
-        composition is not the sum of the tangents -- so `log=` re-encodes
-        the transformation it reduces to, and anything else is refused
-        before it is computed:
+        A chain has no tangent of its own, because the tangent of a composition
+        is not the sum of the tangents. A `log=` keyword therefore re-encodes
+        the transformation that the chain reduces to, which is possible in
+        three cases:
 
-        * a chain that simplifies to one transformation is that one;
-        * a change of coordinates `[P, *X, P^-1]` (see [`sqrt`][brainhops.\
-datamodel.transformations.Sequence.sqrt]) keeps its ends, and re-encodes
-          `X`: the flow of a velocity commutes with the conjugation, so this
-          is exact. A velocity read between a world-to-voxel affine and its
-          inverse (`|svf`) is turned into its displacement that way;
-        * a chain of affines is composed, which is cheap and exact.
+        - A chain that simplifies to a single transformation is converted as
+          that transformation.
+        - A change of coordinates `[P, *X, P^-1]` (see
+          [`Sequence.sqrt`][brainhops.datamodel.transformations.Sequence.sqrt])
+          keeps its ends and re-encodes `X`, which is exact because the flow of
+          a velocity commutes with a change of coordinates.
+        - A chain of affine transformations is composed.
 
-        Any other chain -- one with a field, between ends that do not undo
-        each other -- raises `ConversionError`.
+        Any other chain raises a [`ConversionError`][] before anything is
+        computed. Without `log=`, the conversion follows
+        [`Transformation.to`][brainhops.datamodel.transformations.Transformation.to].
         """
         if "log" in kwargs:
             return _chain_to(self, cls, kwargs)
@@ -237,70 +205,46 @@ datamodel.transformations.Sequence.sqrt]) keeps its ends, and re-encodes
         simplify: SimplifyLike = "analytic",
         factor: bool = False,
     ) -> Transformation:
-        """
-         Compute the resulting transform of the sequence of transformations.
+        """Compute the transformation that results from the chain.
 
-         Assuming that `mode=True`:
+        With `mode=True`, a chain of affine-like transformations yields an
+        affine-like transformation, and a chain whose first applied element is
+        a coordinate field yields a coordinate field. When the first applied
+        element is affine-like but the chain contains other elements, the
+        result is a sequence of two: the composition of the affine-like
+        elements before the first other element, then the composition of
+        everything from that element onward.
 
-         * If all transformations in the sequence are affine-like
-           transformations, `compute()` returns an affine-like transform.
-
-        * If the first (= rightmost) transform in the sequence is a
-           coordinate field, `compute()` returns a coordinate field.
-
-         * If the first (= rightmost) transform in the sequence is an
-           affine-like transform, and the sequence contains at least one
-           non-affine-like transform, `compute()` returns a sequence of two
-           transformations:
-
-           1. the composition of all affine-like transformations that
-              appear before the first non-affine-like transform in the
-             sequence, and
-           2. the composition of all transformations in the sequence,
-              starting from the first non-affine-like transform in the
-              sequence.
-
-         Parameters
-         ----------
-         mode : [list of] name or type, optional
-             Kinds of transformations to compose.
-             * If `True` (default): compose every kind in the sequence.
-             * If `False`: compose nothing (simplify-only).
-             * If a (list of) transformation type(s): compose only pairs
-               of transformations of these kinds.
-         simplify : simplify policy, default="analytic"
-             Whether to simplify sub-transformations prior to composition,
-             and how hard to try to simplify them.
-             * `"analytic"` (the default) looks at the type structure only;
-             * `"numeric"` looks at the numeric values of the transformation;
-             * `False`/`"none"`/`None` disables simplification.
-         factor : bool, default=False
-             Whether to rewrite the sequence into its axis-group normal
-             form `[grid?, F_1..F_m, Pi_perm?]`: a leading grid (if any),
-             one axis-preserving subspace factor per group of axes that
-             transform together, and a trailing reindex permutation. Off
-             by default, so the result is byte-for-byte the plain
-             `compute()` result. Nothing is ever composed across groups;
-             `mode` still decides whether the restricted pieces inside a
-             group compose. A chain that creates or drops axes is left
-             unfactored. With `mode=False` nothing is computed, so
-             `factor` has nothing to act on and is ignored.
+        Parameters
+        ----------
+        mode : ModeLike, default=True
+            Kinds to compose, as a name, a type or a list of them. `True`
+            composes everything, and `False` only simplifies.
+        simplify : SimplifyLike, default="analytic"
+            Simplification policy applied before composition: `"analytic"` uses
+            the type structure only, `"numeric"` also inspects values, and
+            `False`, `"none"` or `None` disables simplification.
+        factor : bool, default=False
+            Rewrite the chain into its axis-group normal form
+            `[grid?, F_1, ..., F_m, Pi_perm?]`, with one axis-preserving
+            subspace factor per group of axes that transform together and an
+            optional final permutation. Nothing is composed across groups, and
+            a chain that creates or drops axes is left unfactored. The option
+            is ignored with `mode=False`.
         """
         modes = normalize_modes(mode)
         policy = SimplifyTable.from_like(simplify)
         if not modes:
-            # `mode=False` (compose nothing): simplification alone. Each
-            # leaf is downcast per its policy and each free pair collapses,
-            # but nothing is composed, bridged or materialized -- this is
-            # exactly what `simplify()` does.
+            # Simplification only, exactly as `simplify()` does: leaves are
+            # downcast and free pairs collapse, but nothing is composed,
+            # bridged or materialized.
             return _simplify(self, policy=policy)
         return _compute_sequence(self, modes, policy, factor=factor)
 
     def _flattened(self) -> tx.Self:
-        # Flatten nested sequences into a single sequence, and propagate
-        # the sequence's own input and output onto its first and last
-        # transformations. Subclasses that must keep a fixed shape (such
-        # as `Geometry`) override this.
+        # Flatten nested sequences and push the endpoints of the sequence onto
+        # its first and last elements. Subclasses with a fixed shape, such as
+        # geometries, override this method.
         if self.transformations is None:
             return self
         inp, out = self.input, self.output
@@ -311,10 +255,9 @@ datamodel.transformations.Sequence.sqrt]) keeps its ends, and re-encodes
             elif i == len(self) - 1 and t.output is None and out is not None:
                 t = t.to(output=out)
             if isinstance(t, Sequence):
-                # A `Geometry` child contributes its grid followed by its
-                # transformation, which may itself still be a sequence. That
-                # leaves one level of nesting in the splice, which is fine:
-                # `_compute_sequence` re-flattens on the next pass.
+                # A nested child (such as a geometry, which contributes a grid
+                # and then a transformation) may leave one level of nesting;
+                # the next pass of `_compute_sequence` flattens it again.
                 flattened.extend(t._flattened().transformations or [])
             else:
                 flattened.append(t)
@@ -322,53 +265,31 @@ datamodel.transformations.Sequence.sqrt]) keeps its ends, and re-encodes
 
 
 class MutableSequence(MutableSequenceMixin, Sequence):
-    """A sequence of transformations.
+    """A mutable sequence of transformations, stored as a list.
 
     !!! note
-        Transformations in a sequence are listed in the order in which
-        they are applied. It reads as the opposite order to function
-        composition (or matrix multiplication), which may be confusing.
-
-        * `Sequence([t1, t2, t3])(x)` is equivalent to `t3(t2(t1(x)))`.
-        * `Sequence([t1, t2, t3]) @ x` is equivalent to `t3 @ t2 @ t1 @ x`.
+        The transformations are listed in the order in which they are applied,
+        which is the opposite of the order used when writing a composition of
+        functions or a product of matrices. `Sequence([t1, t2, t3])(x)` is
+        equivalent to `t3(t2(t1(x)))`, and `Sequence([t1, t2, t3]) @ x` is
+        equivalent to `t3 @ t2 @ t1 @ x`.
     """
 
-    # NOTE: this makes `transformations` a list instead of any sequence
-    _transformations: tx.Annotated[
-        tx.Optional[tx.List[Transformation]],
-        tx.Doc(
-            """
-            A list of transformations, in the order in which they are
-            applied to an input coordinate system.
-            """
-        ),
-    ] = None
+    # Narrow the chain to a list.
+    _transformations: NotKwOnly[tx.Optional[tx.List[Transformation]]] = None
 
 
 class ImmutableSequence(Sequence):
     """A [`Sequence`][] whose contents cannot be edited in place.
 
-    Every in-place edit -- item assignment, deletion, insertion -- raises
-    `TypeError`.
+    The chain is stored as a tuple and the class has no mutating methods, so
+    item assignment, deletion and insertion fail.
     """
 
-    def _refuse_in_place_edit(self, *args: tx.Any) -> tx.NoReturn:
-        raise TypeError(f"{type(self).__name__} cannot be edited in place.")
-
-    __setitem__ = _refuse_in_place_edit
-    __delitem__ = _refuse_in_place_edit
-    insert = _refuse_in_place_edit
-
-    # NOTE: this makes `transformations` a tuple instead of any sequence
-    _transformations: tx.Annotated[
-        tx.Optional[tx.Tuple[Transformation, ...]],
-        tx.Doc(
-            """
-            A tuple of transformations, in the order in which they are
-            applied to an input coordinate system.
-            """
-        ),
-    ] = None
+    # Narrow the chain to a tuple.
+    _transformations: NotKwOnly[tx.Optional[tx.Tuple[Transformation, ...]]] = (
+        None
+    )
 
 
 # ======================================================================
@@ -388,61 +309,38 @@ def _compute_sequence(
     policy: SimplifyTable,
     factor: bool = False,
 ) -> Transformation:
-    """Compute a sequence: bridge, simplify, compose -- to a fixpoint.
+    """Compute a sequence by bridging, simplifying and composing to a fixpoint.
 
-    The three steps are ordered by what each of them is allowed to cost.
+    The steps are ordered by the cost that each one is allowed to incur.
 
-    1. **Bridge.** Reconcile every boundary where two adjacent transforms
-       disagree on the system they share. The composers assume compatible
-       systems, so the bridge that reorders, rescales or flips the
-       mismatched axes is inserted here -- the one step that *adds* an
-       element, which is why it belongs to computation and not to
-       simplification. It runs first because a bridge reads its neighbours:
-       a reversed array-index axis needs the extent that an adjacent grid
-       carries, and that grid is exactly what step 2 may drop. Bridging
-       reads no parameter and materializes nothing, so running it ahead of
-       the cancellation below costs nothing. A bridge is built from exactly
-       invertible pieces, so two opposite bridges cancel and simplify away
-       on the next round.
+    1. Bridge every boundary at which adjacent transformations disagree on
+       their shared coordinate system, since composers assume compatible
+       systems. Bridging is the only step that adds elements, so it belongs to
+       computation rather than simplification. It runs first because it reads
+       the neighbours (a reversed array-index axis needs the extent of the
+       adjacent grid), but it reads no parameter, and opposite bridges cancel
+       in the next round.
+    2. Simplify the leaves. This precedes every composition because it is the
+       only step that can drop a lazy inverse for free, whereas a composer that
+       folds a neighbour into a field destroys the cancelling pair.
+    3. Compose the runs of adjacent transformations that the mode admits.
 
-    2. **Simplify.** Downcast every leaf and collapse every pair that
-       collapses for free. This runs before every composition, because it
-       is the only step that can make a lazy inverse disappear without
-       paying for it: once a composer has folded a neighbour into a field,
-       the pair that would have cancelled is gone. Simplification never
-       lengthens the sequence.
-
-    3. **Compose.** Fuse each run of adjacent transforms the mode admits,
-       reading their parameters.
-
-    A round that does not shorten the sequence cannot be improved on by
-    another, so the loop stops there.
-
-    Under `factor=True`, a fourth step runs between 2 and 3:
-
-    2b. **Factor.** Rewrite the sequence into its axis-group normal form
-        (see `factor.factor_sequence`). It runs after simplification, so a
-        lazy pair has already cancelled and every leaf is downcast, and
-        before composition, which two extra gates then keep from undoing
-        it (see `_factor_pair_ok`). The factor pass may lengthen the
-        sequence, so the length test above cannot detect the fixpoint: a
-        round that leaves every leaf the *same object* is the fixpoint
-        instead, with a hard iteration cap that raises rather than loop
-        forever should a pass fail to be identity-preserving on the normal
-        form. With `factor=False` none of this runs, and the length-based
-        exit is unchanged.
+    A round that does not shorten the sequence cannot be improved by another,
+    so the loop stops. With `factor=True`, the chain is also rewritten into its
+    axis-group normal form (see [`factor_sequence`][]) between steps 2 and 3.
+    Because factoring may lengthen the sequence, the fixpoint is instead a
+    round that leaves every leaf as the same object, and an iteration cap
+    raises an error rather than looping forever.
     """
-    # The factor pass memoizes each leaf's dependency pattern across rounds.
+    # The factoring pass memoizes the dependency pattern of each leaf across
+    # rounds.
     cache = PatternCache()
     iteration = 0
     max_iter = 0
     while True:
-        # --- 1. bridge ---
-        # Bridging runs on the direct children, because a nested sequence
-        # carries its endpoint systems on itself and flattening would drop
-        # them. Flattening then happens without rebuilding any endpoint, so
-        # a transform stays the same object that its inverse names and the
-        # cancellation below keeps linking the two by identity.
+        # Bridge the direct children, because a nested sequence carries its
+        # endpoints on itself. Flattening then rebuilds no endpoint, which
+        # keeps identity-based cancellation working.
         flat = _unnest(_insert_bridges(seq.transformations or []))
         if not flat:
             return Identity(input=seq.input, output=seq.output)
@@ -451,20 +349,18 @@ def _compute_sequence(
         if factor and not max_iter:
             max_iter = _factor_cap(flat)
 
-        # Propagate the sequence's own endpoints onto its first and last
-        # elements, but only when it carries any, so the identity link is
-        # preserved in the common case of an endpoint-less composition.
+        # Push the endpoints onto the ends only if the sequence has any, which
+        # preserves the identity link in the common case without endpoints.
         if seq.input is not None or seq.output is not None:
             seq = seq._flattened()
 
-        # --- 2. simplify ---
         simplified = _simplify(seq, policy=policy)
         if not isinstance(simplified, Sequence):
-            # It collapsed to a single transform: nothing left to compose.
+            # The chain collapsed to a single transformation: nothing is left
+            # to compose.
             return simplified
         seq = simplified
 
-        # --- 2b. factor ---
         if factor:
             factored = factor_sequence(
                 seq, modes, simplify=policy, cache=cache
@@ -473,21 +369,19 @@ def _compute_sequence(
                 return factored
             seq = factored
 
-        # --- 3. compose ---
         memo: tx.Set[Family] = set()
         for submode in modes:
             result = _compose_mode(seq, submode, memo, factor)
             if not isinstance(result, Sequence):
-                # A single transform: give it one last downcast, since the
-                # products of a composition are exactly the leaves the
-                # simplify pass above has not seen.
+                # One last downcast, since composition products are leaves that
+                # the simplifier has not seen.
                 return _simplify(result, policy=policy)
             seq = result
 
         if factor:
-            # The fixpoint under `factor=True`: a round that left every leaf
-            # the same object. Its simplify step has already seen exactly
-            # these leaves, so no final pass is needed.
+            # Fixpoint: the round left every leaf as the same object. The
+            # simplifier has already seen these leaves, so no final pass is
+            # needed.
             after = _unnest(seq.transformations)
             if len(after) == len(flat) and all(
                 a is b for a, b in zip(after, flat)
@@ -501,8 +395,8 @@ def _compute_sequence(
                     "identity-preserving on the normal form"
                 )
         elif len(_unnest(seq.transformations)) >= before:
-            # No pass shrank the sequence, so a further round cannot
-            # either. One last simplify pass over the composition products.
+            # No pass shrank the sequence, so another round cannot either.
+            # Simplify the composition products one last time.
             return _simplify(seq, policy=policy)
 
 
@@ -512,83 +406,66 @@ def _compose_mode(
     memo: tx.Set[Family],
     factor: bool = False,
 ) -> Transformation:
-    # Compose the runs a single mode admits, depth first.
-    #
-    # We optimize by recursively descending into the subclasses of the
-    # mode. This combines similar transformations first: given `mode
-    # = affine`, two adjacent translations are folded into one translation
-    # before anything is widened to an affine.
+    # Compose the runs admitted by one mode, depth first, so that finer kinds
+    # combine first: with `mode="affine"`, adjacent translations fold into one
+    # translation before widening to an affine.
 
-    # --- Flatten sequence
     if not _is_flat(seq):
         seq = seq._flattened()
 
-    # --- Check if nothing to do
     if not seq.transformations:
         return seq
 
-    # --- A mode already visited has nothing left to fold
+    # A mode that was already visited has nothing left to fold.
     if mode in memo:
         return seq
 
-    # --- First, fold every child mode (finer kinds first)
+    # Fold the finer child modes first.
     for child in mode_children(mode):
         seq = _compose_mode(seq, child, memo, factor)
         if not isinstance(seq, Sequence):
             return seq
 
-    # Mark that we've been through this mode
-    # !!! DO NOT RETURN HERE
+    # Never visit this mode again.
     memo.add(mode)
 
-    # --- Compose transformations that belong to this mode in order
-
-    # Ensure a list of transformations (and make a copy so we can pop it)
     inputs = list(getattr(seq, "transformations", [seq]))
     outputs = []
 
-    # Compose any consecutive run that matches the mode. `is_family`
-    # sees through wrappers via `is_kind` (analytic), so a subspace that
-    # embeds an affine matches `mode="affine"` and composes with its
-    # neighbours.
+    # Compose each consecutive run that matches the mode. `is_family` sees
+    # through wrappers, so a subspace transformation embedding an affine
+    # matches `mode="affine"` and composes with its neighbours.
     while inputs:
         item = inputs.pop(0)
         if is_family(item, mode):
             while inputs and is_family(inputs[0], mode):
                 if factor and not _factor_pair_ok(item, inputs[0]):
-                    # Under `factor=True`, composition must not undo the
-                    # factor pass (see `_factor_pair_ok`).
+                    # Composition must not undo the factoring pass.
                     break
                 next_input = inputs.pop(0)
                 try:
-                    # NOTE: we compose to the left ! (see sequence definition)
-                    # `compose` is mode-free: the gate that decides which
-                    # adjacent transforms are handed to it is `is_family`
-                    # above, not the composer.
+                    # Compose in sequence order. `compose` ignores modes;
+                    # `is_family` is the gate that decides which pairs reach
+                    # it.
                     item = compose(next_input, item)
                 except CompositionError:
-                    # The two are of admitted kinds but cannot be combined
-                    # (e.g. two subspace transforms whose axes do not line
-                    # up). Keep them side by side and carry on.
+                    # Admitted kinds that cannot combine, such as subspace
+                    # transformations over misaligned axes, are kept side by
+                    # side.
                     outputs.append(item)
                     item = next_input
         outputs.append(item)
 
-    # Return
     if len(outputs) == 1:
         return outputs[0]
     return Sequence(transformations=outputs)
 
 
 def _factor_pair_ok(a: Transformation, b: Transformation) -> bool:
-    # Whether the compose pass may combine the adjacent pair `(a, b)` under
-    # `factor=True`. Two extra gates keep composition from undoing the
-    # factor pass:
-    #   1. a `CartesianField` (the sampling domain) composes with nothing;
-    #   2. a subspace factor composes only next to another subspace over the
-    #      same axes, or an `Identity` -- never with a bare permutation or
-    #      affine, which the subspace composers would fold it into, destroying
-    #      the normal form.
+    # Under `factor=True`, a `CartesianField` composes with nothing, and a
+    # subspace factor composes only with another one over the same axes or with
+    # an `Identity`. Next to anything else, the subspace composers would fold
+    # the factor in and destroy the normal form.
     if isinstance(a, CartesianField) or isinstance(b, CartesianField):
         return False
     a_sub = isinstance(a, SubspaceTransformation)
@@ -605,23 +482,21 @@ def _factor_pair_ok(a: Transformation, b: Transformation) -> bool:
 
 
 def _axes_tuple(axes: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
-    # An axis vector (possibly a numpy array) as a comparable tuple.
+    # Axis vectors may be arrays; compare them as tuples.
     return None if axes is None else tuple(int(x) for x in axes)
 
 
 def _factor_cap(flat: tx.List[Transformation]) -> int:
-    # A generous upper bound on productive fixpoint rounds under
-    # `factor=True`: `2 * (N + L) + 4`, with `N` an over-estimate of the work
-    # dimension and `L` the chain length, floored so a legitimate multi-round
-    # convergence is never cut short. It is only a safety net: a pass that
-    # is identity-preserving on the normal form converges in a few rounds.
+    # Generous bound on productive rounds: `N` overestimates the working
+    # dimension and `L` is the length of the chain. The cap is only a safety
+    # net, since a pass that preserves the normal form converges quickly.
     n = 0
     for t in flat:
         shape = getattr(t, "shape", None)
         if shape is not None:
             n = max(n, len(shape))
         if not isinstance(t, Inverse):
-            # Never read an inverse's matrix: it would materialize it.
+            # Reading the matrix of an inverse would materialize it.
             matrix = getattr(t, "matrix", None)
             if matrix is not None:
                 rows, cols = matrix.shape
@@ -641,9 +516,8 @@ def _factor_cap(flat: tx.List[Transformation]) -> int:
 def _chain_sqrt(
     seq: Sequence, compute: bool, kwargs: tx.Dict[str, tx.Any]
 ) -> Transformation:
-    # The square root of a chain (see `Sequence.sqrt`). It does not
-    # distribute over a composition, except over a change of coordinates,
-    # which it commutes with: `sqrt(P^-1 X P) = P^-1 sqrt(X) P`.
+    # The square root does not distribute over a composition, but it commutes
+    # with a change of coordinates: `sqrt(P^-1 X P) == P^-1 sqrt(X) P`.
     require_endomorphism(seq, "square root")
     chain = seq.simplify()
     if not isinstance(chain, Sequence):
@@ -678,9 +552,8 @@ def _chain_to(
     cls: tx.Optional[tx.Type[Transformation]],
     kwargs: tx.Dict[str, tx.Any],
 ) -> Transformation:
-    # A chain stored as its tangent, or not (see `Sequence.to`). The
-    # endpoints are those of the chain; every other keyword re-encodes the
-    # transformation it reduces to.
+    # The endpoints belong to the chain; every other keyword re-encodes the
+    # transformation that the chain reduces to.
     ends = {k: kwargs.pop(k) for k in ("input", "output") if k in kwargs}
     chain = seq.simplify()
     if not isinstance(chain, Sequence):
@@ -712,14 +585,10 @@ def _chain_to(
 
 
 def _undoes(first: Transformation, last: Transformation) -> bool:
-    # Whether `last` undoes `first`, i.e. `last @ first` is the identity.
-    # It is decided exactly, like any numeric test of the library: a lazy
-    # inverse undoes its forward, which the pair simplifier decides from
-    # object identity, and two affine ends undo each other when their
-    # product is the identity, as `is_identity` reads it. Two matrices that
-    # are inverses only up to rounding are not taken for a change of
-    # coordinates, since the operator would then be applied to a chain that
-    # is not quite the one given. A field end is never composed to decide.
+    # Whether `last @ first` is exactly the identity: a lazy inverse undoes its
+    # forward, and two affine ends undo each other when their product is the
+    # identity. Matrices that are inverse only up to rounding do not qualify,
+    # and a field end is never composed to decide.
     if isinstance(_simplify(first, last), Identity):
         return True
     if not (is_kind(first, kinds.Affine) and is_kind(last, kinds.Affine)):
@@ -728,7 +597,7 @@ def _undoes(first: Transformation, last: Transformation) -> bool:
         product = compose(last, first)
     except (CompositionError, ValueError):
         return False
-    return is_identity(product, compute=True)
+    return product.is_identity(compute=True)
 
 
 # ----------------------------------------------------------------------
@@ -737,14 +606,10 @@ def _undoes(first: Transformation, last: Transformation) -> bool:
 
 
 def _normalize_inverse(t: Transformation) -> Transformation:
-    # Expand a generic `Inverse` front-door into the typed inverse of
-    # the transform it holds, so the sequence engine computes it and
-    # cancellation recognizes it like any other inverse. An endpoint
-    # override on the `Inverse` is carried onto the result. A typed
-    # inverse (its `_inverseof` is set) is already such a result and is
-    # left as is: `Inverse(forward=X)` becomes `X.inverse()`, which for
-    # a field or an affine is the typed inverse whose `forward` is `X`.
-    if not isinstance(t, Inverse) or t._inverseof is not None:
+    # Expand the generic `Inverse` front door into the typed inverse of the
+    # held transformation, so that the engine can compute it and cancellation
+    # can recognize it. A typed inverse is left alone.
+    if not isinstance(t, Inverse) or t._resultof is not None:
         return t
     if t.forward is None:
         return Identity(input=t.input, output=t.output)
@@ -758,18 +623,15 @@ def _normalize_inverse(t: Transformation) -> Transformation:
 
 
 def _is_flat(self: Sequence) -> bool:
-    # Check if the sequence is flat (does not contain any nested sequences).
     if self.transformations is None:
         return True
     return all(not isinstance(t, Sequence) for t in self.transformations)
 
 
 def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
-    # Flatten nested sequences into a single list, without touching the
-    # endpoints of any transform (unlike `_flatten`, which may rebuild
-    # the first and last transform to propagate coordinate systems, and
-    # in doing so would read a lazy field). A generic `Inverse`
-    # front-door is expanded to its typed inverse along the way.
+    # Flatten nested sequences without touching any endpoint (unlike
+    # `_flattened`, which may rebuild the first or last element and so read a
+    # lazy field). Generic inverses are expanded on the way.
     flattened = []
     for t in transformations or []:
         t = _normalize_inverse(t)
@@ -781,13 +643,9 @@ def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
 
 
 def _interpolates(xform: Transformation) -> bool:
-    # Whether applying a transform resamples data through a spline.
-    #
-    # A transform interpolates when, looking past a sequence, a subspace
-    # wrapper, and an inverse, it reaches a displacement field or a
-    # coordinate field that is not a plain grid. A `CartesianField` is
-    # the identity map over its grid and reads no value off it, so it
-    # does not interpolate. An affine, a permutation, and the like never
+    # Whether applying a transformation resamples through a spline, that is,
+    # whether it reaches a displacement or coordinates field. A
+    # `CartesianField` is the identity over its grid, so it does not
     # interpolate.
     if xform is None:
         return False
@@ -810,24 +668,20 @@ def _interpolates(xform: Transformation) -> bool:
 
 
 def _splice(spliced: tx.List[Transformation], nxt: Transformation) -> None:
-    # Add `nxt` to the running list `spliced`, reconciling the boundary it
-    # shares with the transform already at the end of the list. The adaptor
-    # returns the pair with whatever bridge or subspace embedding the boundary
-    # needs already placed between them. The two transforms it contains are
-    # never rebuilt, so a leaf stays the same object its inverse names and
-    # the adjacent-inverse cancellation still links the two by identity.
+    # Append `nxt`, letting the adaptor place a bridge or subspace embedding at
+    # the boundary. Neither transformation is rebuilt, so each leaf stays the
+    # same object that its inverse names.
     if not spliced:
         spliced.append(nxt)
         return
     prev = spliced[-1]
     pieces = list(
-        registries.ADAPT(prev, nxt, allow_type_grouped_positional=True)
+        nocycles.ADAPT(prev, nxt, allow_type_grouped_positional=True)
     )
     if pieces[0] is not prev:
-        # `prev` was embedded in the fuller space of `nxt`, so the piece
-        # that replaces it now presents a different left boundary. The old
-        # `prev` is dropped and the embedded piece is re-spliced against
-        # `prev`'s own left neighbour, which may in turn need reconciling.
+        # `prev` was embedded in the fuller space of `nxt`, so its left
+        # boundary changed; splice the embedded piece again against its left
+        # neighbour.
         spliced.pop()
         _splice(spliced, pieces[0])
         spliced.extend(pieces[1:])
@@ -838,31 +692,16 @@ def _splice(spliced: tx.List[Transformation], nxt: Transformation) -> None:
 def _insert_bridges(
     transformations: tx.List[Transformation],
 ) -> tx.List[Transformation]:
-    # Reconcile every boundary where two adjacent transforms disagree on
-    # the system they share. The output system of one and the input system
-    # of the next are reconciled by the adaptor, whose pieces are spliced in
-    # at that boundary so the result still contains both transforms. A
-    # boundary whose systems already agree, or where either system is
-    # unspecified, is left alone. Reconciling runs before the sequence is
-    # flattened, because a nested sequence carries its endpoint systems on
-    # the sequence and not on the leaves that flattening would expose.
-    # A boundary can hide inside a nested sequence or behind a generic
-    # inverse, both of which the flattening later removes. So each nested
-    # sequence has its own children bridged first, keeping its endpoints,
-    # and each generic inverse is expanded to the typed inverse the
-    # flattening would produce, so the boundary is read from the system
-    # that inverse actually presents. Neither step rebuilds a leaf's
-    # endpoints, so a transform stays the same object its inverse names and
-    # the adjacent-inverse cancellation still links the two by identity.
+    # Reconcile every boundary at which the output system of one transformation
+    # disagrees with the input system of the next. Boundaries may hide inside
+    # nested sequences or behind a generic inverse, so nested children are
+    # bridged first and generic inverses are expanded. No leaf has its
+    # endpoints rebuilt.
     prepared: tx.List[Transformation] = []
     for t in transformations:
         t = _normalize_inverse(t)
-        # Only a plain sequence is rebuilt with its children bridged. A
-        # specialized sequence, such as a multiscale field or a geometry,
-        # keeps its own shape and derives its elements, so its boundaries
-        # are read through it rather than rebuilt. `Sequence` itself is a
-        # factory that builds a `MutableSequence`, so a plain sequence is
-        # exactly one of the two concrete kinds.
+        # Only plain sequences are rebuilt; a specialized sequence (such as a
+        # multiscale field or a geometry) keeps its own shape.
         if type(t) in (MutableSequence, ImmutableSequence):
             t = replace(
                 t, transformations=_insert_bridges(t.transformations or [])

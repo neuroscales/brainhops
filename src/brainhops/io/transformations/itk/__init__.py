@@ -1,5 +1,4 @@
-"""
-Readers and writers for ITK transformation formats.
+"""Readers and writers for ITK transform files.
 
 | Format                   | Module  | Class                       | Writes |
 | ------------------------ | ------- | --------------------------- | ------ |
@@ -8,37 +7,25 @@ Readers and writers for ITK transformation formats.
 | binary MATLAB (`.mat`)   | `mat`   | `MatTransform`              | yes    |
 | NIfTI warp (`.nii[.gz]`) | `nifti` | `ItkNiftiDisplacementField` | yes    |
 
+The blocks of a `CompositeTransform` are read in application order, which is
+the reverse of the file order.
+
 ## ANTs
 
-ANTs writes its transformations through ITK's own writers
-(`itk::ants::WriteTransform` in `Utilities/itkantsReadWriteTransform.h`),
-so they are ITK files, and every reader here also answers to
-`hint="ants"`, exactly as it does to `hint="itk"`:
+ANTs writes its transforms with the ITK writers, so every reader accepts
+`hint="ants"` as well as `hint="itk"`:
 
-- warps, `<prefix><n>Warp.nii.gz` and `<prefix><n>InverseWarp.nii.gz`,
-  are ITK NIfTI displacement fields, in 2-D or 3-D;
-- composite transforms, `<prefix>Composite.h5` and
-  `<prefix>InverseComposite.h5`, are ITK HDF5 files;
-- B-spline (`BSpline.txt`) transforms, and the output of
-  `ConvertTransformFile` in text mode, are ITK text files;
-- linear transforms, `<prefix><n>GenericAffine.mat` (and `Rigid.mat`,
-  `Affine.mat`, `Similarity.mat`, `Translation.mat` and
-  `DerivedInitialMovingTranslation.mat`), are ITK binary MATLAB files.
+- warps (`<prefix><n>Warp.nii.gz`, `<prefix><n>InverseWarp.nii.gz`) are NIfTI
+  displacement fields, in 2-D or 3-D;
+- composites (`<prefix>Composite.h5`, `<prefix>InverseComposite.h5`) are HDF5
+  files;
+- B-splines (`BSpline.txt`) and `ConvertTransformFile` output are text files;
+- linear transforms (`<prefix><n>GenericAffine.mat` and the other `.mat`
+  outputs) are binary MATLAB files.
 
-How an ANTs transform list (`-t A -t B`, `[file.mat,1]`) maps onto a
-brainhops `Sequence` is described in
-[`brainhops.io.transformations.itk.mat`][].
-
-The blocks of a `CompositeTransform` (in any ITK file) are read in the
-order they apply to points, which is the reverse of their order in the
-file: ITK applies the last block of a composite first.
-
-Not every ANTs output can be read yet:
-
-- time-varying velocity fields, `<prefix><n>VelocityField.nii.gz`, are
-  `(D + 1)`-dimensional vector images that must be integrated, not
-  displacement fields.
-- with `--minc`, ANTs writes MINC `.xfm`/`.mnc` files instead.
+[`brainhops.io.transformations.itk.mat`][] explains how an ANTs transform list
+maps to a sequence. Velocity fields (`VelocityField.nii.gz`), which need
+integration, and MINC output (`--minc`) are not supported.
 """
 
 __all__ = [
@@ -64,20 +51,18 @@ from ._common import (
 )
 from ._xform import ItkTransform
 
-# The h5 reader needs h5py, which is optional. It is imported only when
-# h5py is available, mirroring how the transformations package imports
-# its own optional-dependency submodules.
+# The HDF5 reader needs the optional h5py.
 try:
     from . import h5
 
     __all__ += ["h5"]
-except ImportError:  # h5py is optional
+except ImportError:
     pass
 
-# The NIfTI field readers need nibabel, which is optional too.
+# The NIfTI readers need the optional nibabel.
 try:
     from . import nifti
 
     __all__ += ["nifti"]
-except ImportError:  # nibabel is optional
+except ImportError:
     pass

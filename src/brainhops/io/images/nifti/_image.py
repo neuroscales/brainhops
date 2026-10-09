@@ -1,12 +1,10 @@
-# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
-# internals
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -17,57 +15,56 @@ from brainhops.datamodel.transformations import (
     Translation,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._nifti_units import nifti_to_unit
-from brainhops.io.base.nifti import (
+from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common.nifti import NiftiParser
+from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
-    NiftiParser,
-    _image_with_geometry,
+)
+from brainhops.io.common.nifti._geometry import _image_with_geometry
+from brainhops.io.common.nifti._header import (
     _nifti_intent,
     _nifti_shape,
     _nifti_to_axes,
     _NiftiObject,
 )
-from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common.nifti._units import nifti_to_unit
 from brainhops.io.images.base import WritableFileBasedImage
 
 
 @register_format
 class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
-    """
-    An image that is encoded by a NIfTI file.
+    """An image stored in a NIfTI file.
 
     !!! note "Why the bases are in this order"
-        `SingleScaleImage.data` has no default, while `NiftiParser`
-        contributes `image` and `_header`, which do. Struct fields are
-        collected in reverse MRO order, so `SingleScaleImage` has to come
-        *last* or `data` ends up behind a defaulted field and `bagof`
-        rejects the signature. Leading with `NiftiParser` also lets its
-        lazy `data`/`system` properties -- which pull from the nibabel
-        image on demand -- take precedence over the plain fields.
+        `SingleScaleImage.data` has no default, while [`NiftiParser`][]
+        contributes the defaulted fields `image` and `_header`. Fields are
+        collected in reverse method resolution order, so
+        [`SingleScaleImage`][] must come last; otherwise `data` would
+        follow a defaulted field and `bagof` would reject the signature.
+        Leading with [`NiftiParser`][] also lets its lazy `data` and
+        `system` properties, which are read from the nibabel image on
+        demand, take precedence over plain fields.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
-        """
-        float a NIfTI header as a plain image.
+        """Score a NIfTI header as a plain image.
 
-        Any NIfTI can be read as an image, so this is never zero -- but
-        a file whose intent code says "displacement field" is very
-        probably wanted as a transformation, not as an image.
+        Any NIfTI file can be read as an image, but a displacement-field
+        intent suggests that the file is meant as a transformation, so it
+        is only a weak match.
         """
         intent = _nifti_intent(header)
         if intent is None:
             return Confidence.MAYBE
         if intent in _NIFTI_FIELD_INTENTS:
             return Confidence.WEAK
-        # An intent code is often left unset, so the shape has to be
-        # read too: a trailing axis of length 3 on a 4D-or-more volume
-        # may be a deformation field, and reading it as a plain image
-        # would be technically valid but almost never what was wanted.
+        # The intent is often unset, so the shape is checked too: a trailing
+        # axis of length 3 on a 4D or larger image may be a deformation.
         shape = _nifti_shape(header)
         if shape and len(shape) >= 4 and shape[-1] == 3:
             return Confidence.WEAK
@@ -77,20 +74,12 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
 
     @property
     def transformations(self) -> tx.List[Transformation]:
-        """The voxel-to-world transformations recorded by the header,
-        decoded on first access unless set explicitly.
+        """Voxel-to-world transformations, decoded from the header.
 
-        An image built from data alone has no header, so it records no
-        transformation and the list is empty.
-
-        The decoded transformations are kept for as long as the image holds
-        the same header object, so each access hands back the same
-        transformations (in a new list): `img.transformation is
-        img.transformation`, and a transformation composed with the inverse
-        of the very same one cancels without being computed. Setting
-        another header decodes it anew. A header changed in place is not
-        noticed: assign a new header object (a copy, say) to decode it
-        anew.
+        The decoded transformations are cached while the image holds the
+        same header object, so `img.transformation is img.transformation`.
+        A header modified in place is not noticed; a modified copy should
+        be assigned instead.
         """
         if getattr(self, "_transformations", None):
             return self._transformations
@@ -110,29 +99,34 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
     def to_nibabel(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """
-        Build the `nibabel` image that encodes this image.
+        """Build the nibabel image that encodes this image.
 
-        The image data becomes the NIfTI data array. The preferred
-        transformation becomes the sform, and a rigid transformation among
-        the others, or the rigid part of the sform, becomes the qform. A
-        large array is written as NIfTI-2, and a smaller one as NIfTI-1.
+        The data become the NIfTI array. The preferred transformation
+        becomes the sform, and the qform is a rigid transformation among
+        the others or the rigid part of the sform. Large arrays are
+        written as NIfTI-2 and smaller ones as NIfTI-1.
 
-        A preferred transformation that is not an affine, such as a
-        displacement field, cannot describe NIfTI geometry, and raises
-        `UnrepresentableTransformationError`.
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose description and intent are copied. The geometry
+            always comes from this image.
+        **overrides : Any
+            Values of `dtype`, `intent` and `descrip`, which take
+            precedence over the derived values and `like`.
 
-        When `like` is given, non-encoding header fields such as the
-        description and the intent are copied from it. The template may be a
-        path to a NIfTI file, a `nibabel` image or header, or another object
-        read from NIfTI. The geometry always comes from this image, never
-        from the template.
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
 
-        Keyword arguments override header fields after the derived values
-        and after `like`, so an explicit value always wins. `dtype` sets the
-        stored data type, `intent` the intent code, and `descrip` the
-        description. The array's own data type is kept unless `dtype` is
-        given.
+        Raises
+        ------
+        WriterError
+            If the image has no data.
+        UnrepresentableTransformationError
+            If the preferred transformation is not affine, as for a
+            displacement field.
         """
         data = self.data
         if data is None:
@@ -151,10 +145,9 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
 def _nifti_to_transformations(
     header: nb.Nifti1Header,
 ) -> tx.List[Transformation]:
-    """
-    Convert a NIfTI header to a list of transformations.
+    """Convert a NIfTI header to transformations.
 
-    The output list contains, in order:
+    The transformations are, in order:
 
     1. A transformation from voxel to scaled voxel space, named "physical";
     2. The qform voxel-to-RAS rigid transformation, named "qform";
@@ -162,42 +155,27 @@ def _nifti_to_transformations(
     4. The qform voxel-to-RAS rigid transformation, named after its code.
     5. The sform voxel-to-RAS affine transformation, named after its code.
 
-    Code names are one of
-    {"unknown", "scanner", "aligned", "talairach", "mni", "template"}.
+    The code names are `"unknown"`, `"scanner"`, `"aligned"`,
+    `"talairach"`, `"mni"` and `"template"`. A form whose code is zero is
+    not set and is omitted, along with its entry named after the code.
+    When the qform and the sform have the same code, the fourth entry is
+    omitted. As a result, the last transformation is the affine that
+    nibabel's `get_best_affine()` returns, named after its code.
 
-    The order is slightly different in two cases:
-    - If the qform and sform are identical, transform 4 (the qform named
-      after its code) is omitted.
-    - If the sform is zero, transforms 4 and 5 are inverted (the qform
-      named after its code comes after the sform named after its code).
-
-    This is so the last transformation in the list matches nibabel's
-    `get_best_affine()` function, while being named after its code.
-
-    The NIfTI affine applies to the spatial axes. In an image with other
-    axes (time, ...), each voxel-to-RAS transformation is therefore a
-    `Sequence` of a `SubspaceTransformation` that applies the affine to the
-    spatial axes and, when there is a time axis, one that maps the time
-    axis by its spacing and offset (`pixdim[4]`, `toffset`), as a `Scaling`
-    then a `Translation`. Every other axis passes through. In an image with
-    spatial axes only, it is a plain `Affine`.
-
-    A time spacing of zero (or not finite) means that the repetition time
-    is missing. The time axis is then not mapped: the sequence holds the
-    spatial subspace transform only, and the time axis stays a frame index
-    (unit `index`) in every space, including the physical one.
+    The NIfTI affine applies to the spatial axes. When there are other
+    axes, each voxel-to-RAS transformation is a `Sequence` made of a
+    `SubspaceTransformation` of the spatial axes and, for a time axis, one
+    that scales by `pixdim[4]` and translates by `toffset`. Other axes pass
+    through, and a time axis without a valid spacing stays a frame index
+    in every space. An image with only spatial axes gets a plain `Affine`.
     """
 
-    # Allocate output
     xforms = []
 
-    # --- preliminaries ------------------------------------------------
-
     axes = _nifti_to_axes(header)
-    # The header's units, through the one NIfTI <-> brainhops converter.
-    # An unknown spatial unit reads as millimetres (the ecosystem's
-    # convention), an unknown temporal one as unspecified; see
-    # `brainhops.io.base._nifti_units` for every policy.
+    # Units go through the single NIfTI-to-brainhops converter, which reads
+    # an unknown spatial unit as millimeters and leaves an unknown time
+    # unit unspecified (see `brainhops.io.common.nifti._units`).
     space, time = header.get_xyzt_units()
     units = {
         "space": nifti_to_unit(space, "space"),
@@ -214,15 +192,11 @@ def _nifti_to_transformations(
         if axis.name is not None and axis.type == "space"
     ]
 
-    # --- coordinate systems -------------------------------------------
-
     named_axes = [axis for axis in axes if axis.name is not None]
 
-    # The spacing of each named axis. A time axis whose spacing is zero
-    # (or not finite) has no repetition time: NIfTI writes `pixdim[4] = 0`
-    # when the time step is missing. Such an axis is not mapped to time at
-    # all: it stays a frame index in every space, and only the spatial
-    # axes are mapped to the world.
+    # A time axis whose spacing is zero or non-finite (pixdim[4] = 0 when
+    # the step is missing) has no TR. It is not mapped to time and stays a
+    # frame index in every space.
     zooms = header.get_zooms()
     zooms = [zooms[i] for i, axis in enumerate(axes) if axis.name is not None]
     untimed = {
@@ -232,23 +206,17 @@ def _nifti_to_transformations(
     }
     zooms = [1.0 if j in untimed else z for j, z in enumerate(zooms)]
 
-    # >> Voxel space
-    # `_nifti_to_axes` gives the axes of the voxel space: they count samples.
-    # A NIfTI array is stored, and read by nibabel, in F order: the first
-    # axis changes fastest.
+    # The axes count samples, in Fortran order as nibabel reads them.
     voxel_space = CoordinateSystem(name="voxel", axes=named_axes, order="F")
 
-    # >> Physical space
-    # The same axes, measured in the header's units. An axis of another
-    # type (a channel, a vector component) has no physical unit: its unit
-    # is left unspecified rather than inherit "index" from the voxel space.
+    # Axes that are neither space nor time, such as channels, have no unit
+    # rather than inheriting the index unit.
     phys_axes = [
         axis if j in untimed else replace(axis, unit=units.get(axis.type))
         for j, axis in enumerate(named_axes)
     ]
     phys_space = CoordinateSystem(name="physical", axes=phys_axes)
 
-    # >>> RAS space
     ras_axes = [
         replace(
             axis,
@@ -262,13 +230,11 @@ def _nifti_to_transformations(
     ]
     ras_space = CoordinateSystem(name="RAS", axes=ras_axes)
 
-    # --- voxel-to-physical --------------------------------------------
     vox2phys = Scaling(input=voxel_space, output=phys_space, scale=zooms)
     xforms.append(vox2phys)
 
-    # The positions, in the voxel space, of its spatial axes and of its
-    # time axis. The voxel space holds the named axes only, so a position
-    # in it is not always a position in the header.
+    # The voxel space holds only the named axes, so these positions are not
+    # always the positions in the header.
     named = [i for i, axis in enumerate(axes) if axis.name is not None]
     space_pos = [named.index(i) for i in keep_dims]
     time_pos = [
@@ -279,7 +245,7 @@ def _nifti_to_transformations(
     product = bool(space_pos) and len(space_pos) < len(named_axes)
 
     def _coded_affine(matrix: np.ndarray, label: str) -> Transformation:
-        """Build the voxel-to-RAS transformation for a qform/sform matrix."""
+        """Build the voxel-to-RAS transformation of a qform or sform."""
         matrix = matrix[keep_dims + [-1], :][:, keep_dims + [-1]]
         if product:
             return _coded_product(matrix, label)
@@ -290,21 +256,15 @@ def _nifti_to_transformations(
         )
 
     def _coded_product(matrix: np.ndarray, label: str) -> Sequence:
-        """
-        Build the voxel-to-RAS transformation of an image with more than
-        spatial axes.
+        """Build the voxel-to-RAS transformation of an image with more axes.
 
-        The NIfTI affine applies to the spatial axes, and the time axis is
-        mapped by its own spacing (`pixdim[4]`) and origin (`toffset`).
-        The two act on disjoint axes, so the transformation is the
-        sequence of a subspace transform over the spatial axes and, when
-        there is a time axis, one over the time axis. Every other axis
-        passes through.
+        The affine maps the spatial axes and the time axis is mapped by its
+        own spacing and origin, as a sequence of subspace transformations.
         """
         world = replace(ras_space, name=label)
-        # >> Between the two steps, the spatial axes are in world (RAS)
-        #    coordinates and every other axis is still a voxel index. It is
-        #    neither the voxel space nor the world space, so it is unnamed.
+        # Between the two steps, the spatial axes are in world coordinates
+        # while the others are still voxel indices. That space is neither
+        # the voxel nor the world space, so it has no name.
         middle_axes = list(voxel_space.axes)
         for j in space_pos:
             middle_axes[j] = world.axes[j]
@@ -322,11 +282,8 @@ def _nifti_to_transformations(
         )
         steps = [spatial]
         if time_pos:
-            # >> t_world = toffset + dt * t_index. The spacing scales the
-            #    index into the physical time since the first frame (the
-            #    time axis of the physical space), and `toffset`, which
-            #    NIfTI states in the time unit, shifts it to the world
-            #    time.
+            # t_world = toffset + dt * t_index: the spacing gives the time
+            # since the first frame, and `toffset` shifts it to world time.
             (it,) = time_pos
             dt = zooms[it]
             toffset = float(header["toffset"])
@@ -357,10 +314,8 @@ def _nifti_to_transformations(
             )
         return Sequence(transformations=steps, input=voxel_space, output=world)
 
-    # --- qform --------------------------------------------------------
-    # `get_qform`/`get_sform` return `None` when the corresponding code
-    # is 0, i.e. the form is simply not set. Only one of the two is
-    # required to be present.
+    # get_qform and get_sform return None for a form whose code is 0, and
+    # only one of the two forms is required.
     qmatrix, qcode = header.get_qform(coded=True)
     qform = None
     if qmatrix is not None:
@@ -368,7 +323,6 @@ def _nifti_to_transformations(
         qform = _coded_affine(qmatrix, "qform")
         xforms.append(qform)
 
-    # --- sform --------------------------------------------------------
     smatrix, scode = header.get_sform(coded=True)
     sform = None
     if smatrix is not None:
@@ -376,12 +330,9 @@ def _nifti_to_transformations(
         sform = _coded_affine(smatrix, "sform")
         xforms.append(sform)
 
-    # --- named & best affines -----------------------------------------
-    # The last transformation in the list must be the one nibabel calls
-    # the "best" affine, but named after its code rather than its form.
-    # Each is built again under its code's name rather than renamed, so the
-    # world space is named consistently at every step of a transformation
-    # that has several.
+    # The last transformation must be nibabel's best affine, named after
+    # its code. It is rebuilt under that name rather than renamed, so that
+    # the world space is named consistently in every step of a sequence.
     if sform is not None and qform is not None:
         if scode == qcode:
             xforms.append(_coded_affine(smatrix, sname))
