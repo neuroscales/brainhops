@@ -163,7 +163,8 @@ def test_parameterless_operation_rejects_a_value() -> None:
 
 
 def test_operation_registered_on_a_subclass_stays_in_that_subclass() -> None:
-    # Regression test for #374: every class used to share one registry.
+    # Each subclass keeps its own registry of operations. All classes
+    # used to share a single registry.
     class WarpSpec(TransformationSpec, frozen=True):
         pass
 
