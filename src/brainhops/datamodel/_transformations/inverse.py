@@ -359,7 +359,7 @@ class InverseCoordinatesField(
     _data: Derived[_OptionalArray]
     _field: Derived[_OptionalArray]
     _values: Derived[_OptionalArray]
-    _coordinates: Derived[_OptionalArray]
+    _coefficients: Derived[_OptionalArray]
     _degree: Derived[InterpolationOrder]
     _bound: Derived[tx.Union[BoundaryCondition, float]]
     _store: Derived[StoreEnum]

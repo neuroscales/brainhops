@@ -214,10 +214,13 @@ class ConcreteTransformation(Transformation):
             if (reverse := type(self)._reverseof) is not None:
                 # A paired type inverts to the other half of its pair, which
                 # states the swapped direction.
-                return reverse(input=self.output, output=self.input)
-            return self.to(input=self.output, output=self.input)
-        # The `Inverse` operator selects the lazy wrapper class of this family.
-        obj = nocycles.OPERATORS["inverse"](self)
+                obj = reverse(input=self.output, output=self.input)
+            else:
+                obj = self.to(input=self.output, output=self.input)
+        else:
+            # The `Inverse` operator selects the lazy wrapper class of this
+            # family.
+            obj = nocycles.OPERATORS["inverse"](self)
         if compute:
             obj = obj.compute(**kwargs)
         return obj
@@ -554,6 +557,8 @@ class CoordinatesField(TransformationField):
 
     @lazyproperty
     def _inverse(self) -> tx.Optional[ArrayProtocol]:
+        if self.data is None:
+            return None
         ifield = _inv_coords(self.field)
         return _values2data(ifield, self.store, self.degree, self.bound)
 
@@ -643,11 +648,20 @@ class CartesianField(CoordinatesField):
 
     # --- methods ------------------------------------------------------
 
-    def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
+    def inverse(self, compute: bool = False, **kwargs) -> Transformation:
         # A grid is the identity over its own coordinates, so its inverse is
         # itself with the endpoints swapped, and there is nothing to defer.
-        cls = type(self)
-        return cls(shape=self.shape, input=self.output, output=self.input)
+        # The flags are copied so that the inverse encodes its `data` in the
+        # same way as this grid.
+        obj = type(self)(
+            shape=self.shape,
+            degree=self.degree,
+            bound=self.bound,
+            store=self.store,
+            input=self.output,
+            output=self.input,
+        )
+        return obj.compute(**kwargs) if compute else obj
 
     # A grid is the identity, so it is its own square and square root. It is
     # returned as it is, not as an `Identity`, because it is also a sampling
