@@ -27,7 +27,6 @@ from brainhops.datamodel.systems import (  # noqa: E402
 from brainhops.errors import ConversionError  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     WriterError,
-    WriterNotImplementedError,
 )
 from brainhops.io.transformations.base import (  # noqa: E402
     WritableFileBasedTransformation,
@@ -486,24 +485,27 @@ def test_save_gives_each_format_reason_to_refuse(tmp_path) -> None:  # noqa: ANN
 
 
 # ----------------------------------------------------------------------
-#   FNIRT IS READ, NOT WRITTEN
+#   FNIRT WRITING
 # ----------------------------------------------------------------------
 
 
-def test_fnirt_is_not_offered_for_writing() -> None:
-    assert FnirtWarpField not in WritableFileBasedTransformation._REGISTRY
+def test_fnirt_is_offered_for_writing() -> None:
+    assert FnirtWarpField in WritableFileBasedTransformation._REGISTRY
 
 
-def test_a_fnirt_warp_is_not_written(tmp_path) -> None:  # noqa: ANN001
+def test_a_fnirt_warp_is_written(tmp_path) -> None:  # noqa: ANN001
     image = nb.Nifti1Image(np.zeros((*SHAPE, 3), dtype="float32"), VOX2WORLD)
     image.header.set_intent(2006)
     warp = FnirtWarpField.from_nibabel(image)
-    with pytest.raises(WriterNotImplementedError, match="moving image"):
-        warp.save(tmp_path / "warp.nii.gz")
+    path = tmp_path / "warp.nii.gz"
+    warp.save(path)
+    written = nb.load(path)
+    assert int(written.header["intent_code"]) == 2006
+    np.testing.assert_array_equal(written.get_fdata(), image.get_fdata())
     # It is written as a NIfTI displacement field instead.
     warp.moving = image
-    NiftiRASDisplacementField.from_any(warp).save(tmp_path / "warp.nii.gz")
-    back = io.transformations.load(tmp_path / "warp.nii.gz")
+    NiftiRASDisplacementField.from_any(warp).save(path)
+    back = io.transformations.load(path)
     assert isinstance(back, NiftiRASDisplacementField)
     points = _world()
     np.testing.assert_allclose(

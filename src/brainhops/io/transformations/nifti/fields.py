@@ -217,7 +217,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
     which a velocity is integrated into.
 
     Another transformation is converted to this format by its converters
-    ([`brainhops.io.transformations.nifti.converters`][]), exactly or not
+    ([`brainhops.io.transformations.nifti._converters`][]), exactly or not
     at all. Its chain is carried over, rather than re-read from a NIfTI
     header that comes with it and says something else (a NiftyReg file
     holds positions, say). Its encoding is not: `log` and `steps` are this
