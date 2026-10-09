@@ -32,7 +32,7 @@ def register_operator(name: str) -> tx.Callable[[type], type]:
 
     Parameters
     ----------
-    name
+    name : str
         Name of the operator, which is also the name of the transformation
         method that applies it.
 

@@ -87,15 +87,18 @@ def restrict(
 
     Parameters
     ----------
-    t
+    t : Transformation
         Transformation from `ni` to `no` axes.
-    rows
+    rows : list of int
         Sorted positions of the block among the `no` output axes.
-    cols
+    cols : list of int
         Sorted positions of the block among the `ni` input axes.
-    ni, no
-        Axis counts, inferred from `t` when omitted and checked against `t`
-        when given.
+    ni : int, optional
+        Number of input axes, inferred from `t` when omitted and checked
+        against `t` when given.
+    no : int, optional
+        Number of output axes, inferred from `t` when omitted and checked
+        against `t` when given.
 
     Returns
     -------
@@ -129,14 +132,17 @@ def embed(
 
     Parameters
     ----------
-    t
+    t : Transformation or None
         Transformation from `len(in_axes)` to `len(out_axes)` axes. None stands
         for the identity and embeds as a reindex of `in_axes` onto `out_axes`.
-    in_axes, out_axes
-        Positions that `t` reads among the `ni` axes and writes among the `no`
-        axes.
-    ni, no
-        Axis counts of the wider space, which `t` cannot state.
+    in_axes : list of int
+        Positions that `t` reads among the `ni` axes.
+    out_axes : list of int
+        Positions that `t` writes among the `no` axes.
+    ni : int
+        Number of input axes of the wider space, which `t` cannot state.
+    no : int
+        Number of output axes of the wider space, which `t` cannot state.
 
     Returns
     -------

@@ -83,16 +83,18 @@ def bridge(
 
     Parameters
     ----------
-    source, target
-        Coordinate systems on either side of the bridge.
-    extents
+    source : CoordinateSystem or None
+        Coordinate system on the input side of the bridge.
+    target : CoordinateSystem or None
+        Coordinate system on the output side of the bridge.
+    extents : Extents, optional
         Number of samples along each target axis, needed only to reverse
         an array-index axis.
-    allow_positional
+    allow_positional : bool, default=False
         Pair the remaining axes by position, when both systems have the
         same number of axes. This option takes precedence over
         `allow_type_grouped_positional`.
-    allow_type_grouped_positional
+    allow_type_grouped_positional : bool, default=False
         Pair the remaining axes by their order within each type group. The
         typeless group acts as a wildcard for the single remaining typed
         group of the same size, and groups whose sizes differ on the two
@@ -415,12 +417,17 @@ def adapt(
 
     Parameters
     ----------
-    first, second
-        Transformations applied in this order.
-    extents
+    first : Transformation
+        Transformation applied first.
+    second : Transformation
+        Transformation applied after `first`.
+    extents : Extents, optional
         Sample counts passed to [`bridge`][]. When omitted, they are read
         from a grid on either side of the boundary.
-    allow_positional, allow_type_grouped_positional
+    allow_positional : bool, default=False
+        Passed to [`bridge`][] when the boundary systems have the same
+        number of axes.
+    allow_type_grouped_positional : bool, default=False
         Passed to [`bridge`][] when the boundary systems have the same
         number of axes.
 
@@ -519,13 +526,13 @@ def embed(
 
     Parameters
     ----------
-    transform
+    transform : Transformation
         Transformation to embed.
-    full
+    full : CoordinateSystem or None
         Fuller system that the wrapper reads from or writes to.
     side : {"input", "output"}
         Side of `transform` on which the fuller space lies.
-    extents
+    extents : Extents, optional
         Sample counts passed to [`bridge`][].
 
     Returns

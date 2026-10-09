@@ -124,17 +124,17 @@ class Transformation(
 
         Parameters
         ----------
-        mode
+        mode : ModeLike, default=True
             Kinds of transformation that may be composed or materialized, given
             as types, names or symbols (`"affine"`, `"Aff"`, `"rigid"`,
             `"SO(3)"`). The default, `True`, admits every kind. A concrete leaf
             has nothing to compose and ignores the mode.
-        simplify
+        simplify : SimplifyLike, default="analytic"
             How hard to simplify. `"analytic"` (the default) reasons from the
             structure of the types only, `"numeric"` (or `True`) also reads the
             parameter values, and `False`, `"none"` or `None` disables
             simplification.
-        factor
+        factor : bool, default=False
             Whether to rewrite the result as independent factors, one for each
             group of axes that transform together. Nothing is composed across
             groups, and `mode` still governs composition within a group.
@@ -167,10 +167,10 @@ class Transformation(
 
         Parameters
         ----------
-        policy
+        policy : SimplifyLike, default="analytic"
             How hard to simplify, with the values accepted by the `simplify`
             argument of [`compute`][].
-        compute
+        compute : ModeLike or bool or None, default=False
             Compose mode, with the values accepted by the `mode` argument of
             [`compute`][]. The default, `False`, composes nothing, whereas
             `None` composes every kind.
@@ -191,9 +191,9 @@ class Transformation(
 
         Parameters
         ----------
-        compute
+        compute : bool, default=False
             Whether to compute the inverse now rather than lazily.
-        **kwargs
+        **kwargs : Any
             Arguments passed to [`compute`][] when `compute` is true.
 
         Returns
@@ -212,9 +212,9 @@ class Transformation(
 
         Parameters
         ----------
-        compute
+        compute : bool, default=False
             Whether to compute the square now rather than return the sequence.
-        **kwargs
+        **kwargs : Any
             Arguments passed to [`compute`][] when `compute` is true.
 
         Returns
@@ -248,9 +248,9 @@ class Transformation(
 
         Parameters
         ----------
-        compute
+        compute : bool, default=False
             Whether to compute the root now rather than lazily.
-        **kwargs
+        **kwargs : Any
             Arguments passed to [`compute`][] when `compute` is true.
 
         Returns
@@ -291,15 +291,15 @@ class Transformation(
 
         Parameters
         ----------
-        cls
+        cls : type of Transformation, optional
             Type to convert to. By default, the type is normally kept.
-        lossy
+        lossy : bool, default=False
             Whether to allow a conversion that loses information.
-        error
+        error : type of Exception or Exception or bool, default=True
             What to do when the conversion fails. `True` (the default) raises
             the original error again, an exception or exception type is raised
             from it, and any other value is returned in place of the result.
-        **kwargs
+        **kwargs : Any
             Attributes of the converted transformation. `store="coefficients"`
             re-encodes the data of a displacement field and keeps its map. A
             view such as `field=` or `matrix=` sets the map, stored in the
@@ -352,9 +352,9 @@ class Transformation(
 
         Parameters
         ----------
-        kind
+        kind : type of Kind
             Kind to test, from [`kinds`][].
-        compute
+        compute : bool, default=False
             Whether to read the values of the parameters rather than only the
             structure of the types.
 

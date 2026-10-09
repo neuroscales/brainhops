@@ -141,15 +141,15 @@ class ConcreteTransformation(Transformation):
 
         Parameters
         ----------
-        mode
+        mode : ModeLike, default=True
             Ignored unless `factor` is true. The mode decides which kinds are
             composed, and a leaf has nothing to compose, so the downcast is
             gated by `simplify` alone.
-        simplify
+        simplify : SimplifyLike, default="analytic"
             Simplify policy, which decides whether the kind checks reason from
             the structure of the types (`"analytic"`), also read values
             (`"numeric"`), or are skipped (`"none"`).
-        factor
+        factor : bool, default=False
             Whether to factor the leaf into its normal form over groups of
             axes, by computing it as a one-element sequence. A diagonal affine
             transformation, for example, splits into one block per axis.

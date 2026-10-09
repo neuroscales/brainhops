@@ -75,7 +75,7 @@ def normalize_modes(mode: ModeLike) -> tx.List[Family]:
 
     Parameters
     ----------
-    mode
+    mode : ModeLike
         The value to normalize.
 
     Returns
