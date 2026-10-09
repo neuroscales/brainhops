@@ -17,7 +17,9 @@ from brainhops import io
 src = io.load("source.nii.gz")  # -> NiftiImage
 dst = io.load("dest.nii.gz")  # -> NiftiImage
 aff = io.load("affine.lta")  # -> LtaTransformation
-dsp = io.load("disp.nii.gz", hint="displacements")  # -> NiftiRASDisplacementField
+dsp = io.load(  # -> NiftiRASDisplacementField
+    "disp.nii.gz", hint="displacements"
+)
 wrp = io.load("warp.nii.gz", hint="spm")  # -> SpmCoordinatesField
 ```
 
