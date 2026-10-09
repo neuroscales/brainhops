@@ -11,7 +11,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     WriterError,
 )
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.tiff import _utils as backend
 from brainhops.io.images.tiff._image import (
     TiffImage,
@@ -35,7 +35,7 @@ class TiffMultiScaleImage(
     _TiffMixin,
     BinaryFileReader,
     BinaryFileWriter,
-    FileBasedImage,
+    ImageFormat,
     MultiScaleImage,
 ):
     """A pyramidal TIFF series, read as a multiscale image.

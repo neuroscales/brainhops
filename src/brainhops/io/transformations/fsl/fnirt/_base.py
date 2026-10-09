@@ -17,7 +17,7 @@ from brainhops.io.common.nifti._header import (
     _nifti_vector_field,
     _NiftiObject,
 )
-from brainhops.io.transformations.base import FileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 
 from .._affines import _ImageGeometry
@@ -60,7 +60,7 @@ _SPLINE_DEGREE = {
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
-class _WritableNifti(FileBasedTransformation, NiftiParser):
+class _WritableNifti(TransformationFormat, NiftiParser):
     """
     A transformation read from or written to a NIfTI file.
 

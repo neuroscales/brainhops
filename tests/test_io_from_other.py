@@ -15,9 +15,9 @@ from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.transformations import Affine  # noqa: E402
 from brainhops.io.base import ImageSpec  # noqa: E402
 from brainhops.io.base.parsers import ParserError  # noqa: E402
-from brainhops.io.images import FileBasedImage  # noqa: E402
+from brainhops.io.images import ImageFormat  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
-from brainhops.io.transformations import FileBasedTransformation  # noqa: E402
+from brainhops.io.transformations import TransformationFormat  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASDisplacementField,
     NiftiVoxelToRAS,
@@ -54,7 +54,7 @@ def test_a_concrete_format_reads_a_path(tmp_path, as_type) -> None:  # noqa: ANN
 
 def test_a_dispatcher_reads_a_path_in_the_format_it_finds(tmp_path) -> None:  # noqa: ANN001
     source = _write_image(tmp_path / "image.nii.gz")
-    image = FileBasedImage.from_any(source)
+    image = ImageFormat.from_any(source)
     assert isinstance(image, NiftiImage)
     assert np.array_equal(np.asarray(image.data), DATA)
 
@@ -62,7 +62,7 @@ def test_a_dispatcher_reads_a_path_in_the_format_it_finds(tmp_path) -> None:  # 
 def test_a_transformation_dispatcher_reads_a_path(tmp_path) -> None:  # noqa: ANN001
     source = _write_field(tmp_path / "field.nii")
     # Intent code 1006 (displacement vector) is read as a displacement.
-    field = FileBasedTransformation.from_any(source)
+    field = TransformationFormat.from_any(source)
     assert isinstance(field, NiftiRASDisplacementField)
 
 
@@ -83,11 +83,11 @@ def test_bytes_are_read(tmp_path) -> None:  # noqa: ANN001
 def test_a_structured_source_is_read_with_its_hints(tmp_path) -> None:  # noqa: ANN001
     source = _write_image(tmp_path / "image.nii")
     spec = ImageSpec(path=source, hints=("nifti",))
-    image = FileBasedImage.from_any(spec)
+    image = ImageFormat.from_any(spec)
     assert isinstance(image, NiftiImage)
     # A hint that names no image format leaves no reader.
     with pytest.raises(ParserError):
-        FileBasedImage.from_any(ImageSpec(path=source, hints=("zarr",)))
+        ImageFormat.from_any(ImageSpec(path=source, hints=("zarr",)))
 
 
 def test_keyword_options_reach_the_reader(tmp_path) -> None:  # noqa: ANN001
@@ -156,7 +156,7 @@ def _file_based_classes() -> list:
     from brainhops.io.base import FileBasedObject
 
     found = set(FileBasedObject._REGISTRY)
-    found |= {FileBasedImage, FileBasedTransformation}
+    found |= {ImageFormat, TransformationFormat}
     return sorted(found, key=lambda cls: cls.__qualname__)
 
 

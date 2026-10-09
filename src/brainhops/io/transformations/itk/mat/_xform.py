@@ -1,7 +1,7 @@
 import typing_extensions as tx
 
 from brainhops.io.base._base import register_format
-from brainhops.io.transformations.base import FileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 
 from .._xform import ItkTransform
 from ._parser import MatTransformParser
@@ -11,7 +11,7 @@ from ._parser import MatTransformParser
 class MatTransform(
     MatTransformParser,
     ItkTransform,
-    FileBasedTransformation,
+    TransformationFormat,
 ):
     """Transformation stored in an ITK binary MATLAB (`.mat`) file.
 

@@ -14,7 +14,7 @@ from brainhops.io.base import (
     format_hints,
     parser_for,
 )
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 
 def test_source_spec_is_a_magic_model_with_a_path() -> None:
@@ -165,17 +165,17 @@ def test_registered_parser_is_inherited_by_subclasses() -> None:
     class DerivedImage(Image):
         pass
 
-    assert parser_for(DerivedImage) is FileBasedImage
+    assert parser_for(DerivedImage) is ImageFormat
 
 
 def test_explicit_parser_wins_for_a_union() -> None:
     annotation = tx.Annotated[tx.Union[Image, str], Parser(Image)]
-    assert parser_for(annotation) is FileBasedImage
+    assert parser_for(annotation) is ImageFormat
 
 
 def test_unique_registered_union_parser_is_found_automatically() -> None:
     annotation = tx.Union[object, Image]
-    assert parser_for(annotation) is FileBasedImage
+    assert parser_for(annotation) is ImageFormat
 
 
 def test_hints_are_qualified_along_individual_inheritance_branches() -> None:

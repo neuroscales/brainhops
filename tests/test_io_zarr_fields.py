@@ -152,11 +152,11 @@ def test_from_node_refuses_a_node_without_ome(tmp_path: Path) -> None:
 
 def test_field_is_a_registered_file_format() -> None:
     from brainhops.io.transformations.base import (
-        FileBasedTransformation,
+        TransformationFormat,
     )
 
     assert issubclass(OmeZarrField, FileWriter)
-    assert OmeZarrField in FileBasedTransformation._REGISTRY
+    assert OmeZarrField in TransformationFormat._REGISTRY
 
 
 def test_load_discovers_the_field_format(tmp_path: Path) -> None:

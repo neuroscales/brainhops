@@ -24,7 +24,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.transformations import FileBasedTransformation
+from brainhops.io.transformations import TransformationFormat
 from brainhops.io.transformations.freesurfer.lta import (
     LtaPhysicalSystem,
     LtaStruct,
@@ -257,7 +257,7 @@ def test_lta_is_a_registered_writable_format() -> None:
     from brainhops.io import FileBasedObject
 
     assert LtaTransformation in FileBasedObject._REGISTRY
-    assert LtaTransformation in FileBasedTransformation._REGISTRY
+    assert LtaTransformation in TransformationFormat._REGISTRY
     assert issubclass(LtaTransformation, FileWriter)
     assert LtaTransformation.EXTENSIONS == (".lta",)
     # The views read the same files, so registering them would be ambiguous.
@@ -270,7 +270,7 @@ def test_lta_is_a_registered_writable_format() -> None:
     [
         io.load,
         io.transformations.load,
-        FileBasedTransformation.from_any,
+        TransformationFormat.from_any,
         LtaTransformation.from_any,
         LtaTransformation.load,
     ],

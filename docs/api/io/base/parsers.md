@@ -27,13 +27,18 @@ Public format objects implement the Image/Transformation API and hold their
 internal representation. They can use the shared readers and writers without
 inheriting a parser. `Format` owns the format-selection methods and reuses
 the input adapter mixins. `FileBasedObject` is the root registry for public
-objects. A family owns a registry through `@format_registry`; a concrete
-format joins its ancestors' registries through `@register_format`.
+objects; `ImageFormat` and `TransformationFormat` scope it to images and
+transformations. `TransformationFormat` also supplies the `xform` hint,
+without a separate marker class. Neither dispatcher inherits `Image` or
+`Transformation`; concrete objects supply their model. The dispatchers retain field-free construction support
+from `DataModelBase` for cooperative `from_any` and `from_instance` calls.
+A family owns a registry through `@format_registry`; a concrete format joins its ancestors' registries
+through `@register_format`.
 
 ```python
 @register_format
 class MyTransformation(
-    TextFileReader, TextFileWriter, Affine, FileBasedTransformation
+    TextFileReader, TextFileWriter, TransformationFormat, Affine
 ):
     # Model properties wrap a private native representation.
     # from_lines reads that representation, then wraps it.

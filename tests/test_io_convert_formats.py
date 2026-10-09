@@ -31,7 +31,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     WriterError,
 )
 from brainhops.io.transformations.base import (  # noqa: E402
-    FileBasedTransformation,
+    TransformationFormat,
 )
 from brainhops.io.transformations.base.affines import (  # noqa: E402
     LPSToVoxel,
@@ -493,7 +493,7 @@ def test_save_gives_each_format_reason_to_refuse(tmp_path) -> None:  # noqa: ANN
 
 def test_fnirt_is_offered_for_writing() -> None:
     assert issubclass(FnirtWarpField, FileWriter)
-    assert FnirtWarpField in FileBasedTransformation._REGISTRY
+    assert FnirtWarpField in TransformationFormat._REGISTRY
 
 
 def test_a_fnirt_warp_is_written(tmp_path) -> None:  # noqa: ANN001

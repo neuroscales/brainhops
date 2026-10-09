@@ -37,7 +37,7 @@ def format_registry(cls: tx.Type[_T]) -> tx.Type[_T]:
     best-scoring registered format, and its `load` and `from_*` methods choose
     that format and delegate to it. The decorator is applied to the root
     [`FileBasedObject`][] and to the base class of each kind of object, such
-    as `FileBasedImage` and `FileBasedTransformation`. A dispatcher is never
+    as `ImageFormat` and `TransformationFormat`. A dispatcher is never
     added to the registries of its ancestors; only classes decorated with
     [`register_format`][] are.
     """
@@ -490,21 +490,12 @@ class _FileBasedModelMixin:
     """Give file-based data models a `from_any` that reads files first.
 
     A path, an open file, binary content or a [`SourceSpec`][] is read with
-    `load`, and any other value is passed to the data model. The mixin is
-    listed before the data model in the bases of `FileBasedImage` and
-    `FileBasedTransformation`, so that data models never deal with files.
-
-    !!! note "Why this is not part of `FileBasedObject`"
-        To take effect, this `from_any` must precede `DataModelBase.from_any`
-        in the MRO, but `FileBasedObject` comes after the data model in every
-        file-based class. Parser bases declare the data model first, as in
-        `NiftiParser(DataModelBase, BinaryFileReader, BinaryFileWriter)`.
-        Their chain leads to `FileBasedObject`, so listing it first makes
-        the MRO of `NiftiImage` inconsistent. Listing data models last would
-        require reordering every parser, dispatcher and format, and the file
-        machinery's own field declarations would then shadow the specific ones:
-        for example, `NiftiVoxelToRAS` would lose its voxel and RAS endpoint
-        defaults. A mixin that is not a parser has no such constraints.
+    `load`, and any other value is passed to the data model. This mixin,
+    inherited by `ImageFormat` and `TransformationFormat`, must precede
+    `DataModelBase` in each concrete class's MRO. The format dispatcher
+    supplies file handling; the concrete class supplies its data model.
+    Keeping this mixin separate from the input adapters lets native parsers
+    retain their specialized methods without hiding file-aware construction.
 
     !!! note "Every string is a file"
         No file-based class takes a string as the first constructor argument,

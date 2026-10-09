@@ -1,7 +1,6 @@
 """Format-independent base of all file-based transformations."""
 
 __all__ = [
-    "FileBasedTransformation",
     "TransformationFormat",
     "AffineTransformationFormat",
     "affines",
@@ -12,6 +11,6 @@ __all__ = [
 ]
 
 from . import affines, conversions, fields
-from ._base import FileBasedTransformation
-from ._formats import AffineTransformationFormat, TransformationFormat
+from ._base import TransformationFormat
+from ._formats import AffineTransformationFormat
 from ._load import load, sniff

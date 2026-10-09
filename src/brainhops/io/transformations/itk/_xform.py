@@ -1,8 +1,8 @@
 from brainhops.datamodel import transformations as _xforms
-from brainhops.io.transformations.base import FileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 
 
-class ItkTransform(_xforms.MutableSequence, FileBasedTransformation):
+class ItkTransform(_xforms.MutableSequence, TransformationFormat):
     """Base class for transformations stored in ITK files.
 
     An ITK file holds a chain of blocks, and the parser turns each block

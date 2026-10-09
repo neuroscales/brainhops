@@ -6,7 +6,7 @@ from brainhops._core.typing import Deactivated
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
-from brainhops.io.transformations.base import FileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 
 from .._affines import _ImageGeometry
 from .._formats import FslAffineFormat
@@ -19,7 +19,7 @@ class FlirtTransform(
     FslAffineFormat,
     FlirtMatrixParser,
     _xforms.Affine,
-    FileBasedTransformation,
+    TransformationFormat,
 ):
     """Linear transformation stored in an FSL FLIRT `.mat` file.
 

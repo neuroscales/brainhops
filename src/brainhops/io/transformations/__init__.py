@@ -6,7 +6,7 @@ parsing the file.
 """
 
 __all__ = [
-    "FileBasedTransformation",
+    "TransformationFormat",
     "base",
     "elastix",
     "freesurfer",
@@ -21,7 +21,7 @@ from brainhops._core.dependencies import has_abczarr_driver
 
 from . import base, elastix, freesurfer, itk, matrix, niftyreg
 from .base import (
-    FileBasedTransformation,
+    TransformationFormat,
     load,
     sniff,
 )

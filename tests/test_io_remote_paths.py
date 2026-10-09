@@ -169,11 +169,11 @@ def test_save_chooses_the_format_from_the_url_path(note_formats) -> None:  # noq
 
 
 def test_from_other_reads_a_remote_path_rather_than_building() -> None:
-    from brainhops.io.images import FileBasedImage
+    from brainhops.io.images import ImageFormat
 
     # Reading fails, but the path is neither made local nor taken as data.
     with pytest.raises(ParserError):
-        FileBasedImage.from_any(RemotePath("s3://bucket/missing.nii.gz"))
+        ImageFormat.from_any(RemotePath("s3://bucket/missing.nii.gz"))
     assert RemotePath.fspath_calls == 0
 
 
@@ -189,6 +189,6 @@ def test_a_zarr_store_round_trips_through_in_memory_storage() -> None:
     data = np.arange(8, dtype="float32").reshape(2, 2, 2)
     store = Path("memory://brainhops-tests/remote.zarr")
     io.save(SingleScaleImage(data=data), store)
-    back = io.images.FileBasedImage.from_any(store)
+    back = io.images.ImageFormat.from_any(store)
     assert isinstance(back, ZarrImage)
     assert np.array_equal(np.asarray(back.data), data)

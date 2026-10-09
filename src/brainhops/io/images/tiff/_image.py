@@ -30,7 +30,7 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.tiff import _utils as backend
 
@@ -870,7 +870,7 @@ class TiffImage(
     _TiffMixin,
     BinaryFileReader,
     BinaryFileWriter,
-    FileBasedImage,
+    ImageFormat,
     SingleScaleImage,
 ):
     """One image of a TIFF file, read and written with tifffile.

@@ -29,7 +29,7 @@ from brainhops.io.common.mrtrix._codecs import (
     mrtrix_dtype,
     parse_layout,
 )
-from brainhops.io.images import FileBasedImage
+from brainhops.io.images import ImageFormat
 from brainhops.io.images.mrtrix import MrtrixImage
 
 # ----------------------------------------------------------------------
@@ -426,7 +426,7 @@ def test_other_content_is_not_mrtrix() -> None:
 
 def test_the_format_is_registered() -> None:
     assert MrtrixImage in FileBasedObject._REGISTRY
-    assert MrtrixImage in FileBasedImage._REGISTRY
+    assert MrtrixImage in ImageFormat._REGISTRY
     assert issubclass(MrtrixImage, FileWriter)
 
 

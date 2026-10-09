@@ -30,7 +30,7 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     SnifferExistsError,
 )
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 
 # ----------------------------------------------------------------------
@@ -663,7 +663,7 @@ _Associated = tx.Annotated[
 
 
 class OpenSlideImage(
-    _OpenSlideMixin, BinaryFileReader, FileBasedImage, SingleScaleImage
+    _OpenSlideMixin, BinaryFileReader, ImageFormat, SingleScaleImage
 ):
     """A single level of a whole-slide image, read with OpenSlide.
 
@@ -769,7 +769,7 @@ class OpenSlideImage(
 
 
 class OpenSlideMultiScaleImage(
-    _OpenSlideMixin, BinaryFileReader, FileBasedImage, MultiScaleImage
+    _OpenSlideMixin, BinaryFileReader, ImageFormat, MultiScaleImage
 ):
     """A whole-slide image read with OpenSlide, as a pyramid.
 
@@ -787,7 +787,7 @@ class OpenSlideMultiScaleImage(
     bounds: _Bounds = None
     associated_images: _Associated = None
 
-    PRIORITY: tx.ClassVar[int] = FileBasedImage.PRIORITY + 1
+    PRIORITY: tx.ClassVar[int] = ImageFormat.PRIORITY + 1
     """Content in memory is not sniffed, so when it is read by hint, the
     multiscale and single-scale classes of a vendor would tie. The higher
     priority makes the multiscale class be tried first. That class declines a

@@ -318,10 +318,10 @@ def test_a_nonaffine_geometry_cannot_be_written(tmp_path) -> None:  # noqa: ANN0
 
 
 def test_the_writer_is_registered_for_the_image_kind() -> None:
-    from brainhops.io.images.base import FileBasedImage
+    from brainhops.io.images.base import ImageFormat
 
     assert issubclass(NiftiImage, FileWriter)
-    assert NiftiImage in FileBasedImage._REGISTRY
+    assert NiftiImage in ImageFormat._REGISTRY
     assert issubclass(NiftiImage, SingleScaleImage)
 
 

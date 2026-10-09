@@ -38,7 +38,7 @@ from brainhops.io.common.afni._geometry import (
     afni_geometry_from_matrix,
     afni_view,
 )
-from brainhops.io.images import FileBasedImage
+from brainhops.io.images import ImageFormat
 from brainhops.io.images.afni import AfniImage
 
 # ----------------------------------------------------------------------
@@ -543,7 +543,7 @@ def test_dispatch_by_extension_and_hints(tmp_path) -> None:  # noqa: ANN001
 
 def test_the_format_is_registered() -> None:
     assert AfniImage in FileBasedObject._REGISTRY
-    assert AfniImage in FileBasedImage._REGISTRY
+    assert AfniImage in ImageFormat._REGISTRY
     assert issubclass(AfniImage, FileWriter)
 
 

@@ -20,7 +20,7 @@ from brainhops.io.base.parsers import (
     TextFileReader,
 )
 from brainhops.io.common import _arrays as arrays
-from brainhops.io.transformations import FileBasedTransformation, load, sniff
+from brainhops.io.transformations import TransformationFormat, load, sniff
 from brainhops.io.transformations.matrix import (
     CsvMatrixAffine,
     Mat73MatrixAffine,
@@ -618,9 +618,9 @@ def test_container_hint_overrides_extension(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_base_is_abstract(tmp_path) -> None:  # noqa: ANN001
-    assert MatrixAffine not in FileBasedTransformation._REGISTRY
+    assert MatrixAffine not in TransformationFormat._REGISTRY
     for cls in CONCRETE:
-        assert cls in FileBasedTransformation._REGISTRY
+        assert cls in TransformationFormat._REGISTRY
         assert issubclass(cls, MatrixAffine)
     with pytest.raises(NotImplementedError):
         MatrixAffine.from_text(_text(A))
@@ -722,7 +722,7 @@ def test_mat_dispatcher(tmp_path, fmt, variant) -> None:  # noqa: ANN001
 
 def test_mat_dispatcher_is_not_registered() -> None:
     """Only the variants are registered, so the dispatcher never competes."""
-    assert MatMatrixAffine not in FileBasedTransformation._REGISTRY
+    assert MatMatrixAffine not in TransformationFormat._REGISTRY
     with pytest.raises(ParserContentError):
         MatMatrixAffine.from_text(_text(A))
     assert MatMatrixAffine.sniff_text(_text(A)) == Confidence.NO

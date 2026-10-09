@@ -1,7 +1,8 @@
-__all__ = ["FileBasedImage"]
+__all__ = ["ImageFormat"]
 
 import typing_extensions as tx
 
+from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import (
     FileBasedObject,
@@ -13,10 +14,12 @@ from brainhops.io.base.specs import register_parser
 
 @register_parser(Image)
 @format_registry
-class FileBasedImage(_FileBasedModelMixin, Image, FileBasedObject):
-    """An image stored in a file.
+class ImageFormat(
+    _FileBasedModelMixin, DataModelBase, FileBasedObject, eq=False
+):
+    """Format dispatcher and common base for stored images.
 
-    [`FileBasedImage`][] is the common base of the image formats, and it
+    [`ImageFormat`][] is the common base of the image formats, and it
     chooses which format reads a given file. A concrete reader inherits
     from this class and registers itself with `@register_format`, so that
     [`load`][brainhops.io.images.load] finds the reader without a

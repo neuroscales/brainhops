@@ -7,13 +7,9 @@ dots, so that an affine format answers to `"affine"` and also to
 `"xform.affine"`.
 """
 
-__all__ = ["TransformationFormat", "AffineTransformationFormat"]
+__all__ = ["AffineTransformationFormat"]
 
-
-class TransformationFormat:
-    """Marker of any stored transformation format."""
-
-    HINTS = ("xform",)
+from ._base import TransformationFormat
 
 
 class AffineTransformationFormat(TransformationFormat):

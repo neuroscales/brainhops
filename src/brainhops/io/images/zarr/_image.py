@@ -15,11 +15,11 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common.zarr import StoreLike, ZarrParserWriter
 from brainhops.io.common.zarr._parsers import _as_node
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 
 @register_format
-class ZarrImage(ZarrParserWriter, FileBasedImage, SingleScaleImage):
+class ZarrImage(ZarrParserWriter, ImageFormat, SingleScaleImage):
     """An image stored as a plain Zarr array.
 
     A plain array has no world geometry, so the image is read with an identity

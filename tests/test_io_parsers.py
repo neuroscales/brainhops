@@ -219,10 +219,12 @@ def test_the_writer_entry_point_does_not_shadow_the_converter() -> None:
     from brainhops.datamodel.transformations import Transformation
     from brainhops.io.base.parsers import FileWriter
     from brainhops.io.transformations.base import (
-        FileBasedTransformation,
+        TransformationFormat,
     )
 
-    class WritableTransformation(FileBasedTransformation, FileWriter):
+    class WritableTransformation(
+        Transformation, TransformationFormat, FileWriter
+    ):
         pass
 
     mro = WritableTransformation.__mro__

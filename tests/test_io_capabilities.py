@@ -5,8 +5,11 @@ from pathlib import Path
 
 import pytest
 import typing_extensions as tx
+from bagof.magic import fields
 
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.images import Image
+from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import (
     FileBasedObject,
     Format,
@@ -23,6 +26,8 @@ from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
 )
+from brainhops.io.images import ImageFormat
+from brainhops.io.transformations import TransformationFormat
 
 
 @pytest.mark.parametrize(
@@ -61,12 +66,22 @@ def test_format_membership_and_public_adapters_do_not_imply_parsing() -> None:
     [
         Format,
         FileBasedObject,
+        ImageFormat,
+        TransformationFormat,
     ],
 )
 def test_dispatchers_do_not_inherit_the_reader_contract(
     dispatcher: type,
 ) -> None:
     assert not issubclass(dispatcher, FileReader)
+    assert not issubclass(dispatcher, (Image, Transformation))
+
+
+@pytest.mark.parametrize("dispatcher", [ImageFormat, TransformationFormat])
+def test_domain_dispatchers_do_not_declare_model_fields(
+    dispatcher: type,
+) -> None:
+    assert not list(fields(dispatcher))
 
 
 @pytest.mark.parametrize(

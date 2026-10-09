@@ -20,7 +20,7 @@ from brainhops.io.common._arrays import (
 )
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
-    FileBasedTransformation,
+    TransformationFormat,
 )
 
 from . import _conventions
@@ -41,7 +41,7 @@ class MatrixAffine(
     AffineTransformationFormat,
     ArrayParser,
     _xforms.Affine,
-    FileBasedTransformation,
+    TransformationFormat,
     repr=HIDE_IF_NONE,
 ):
     """

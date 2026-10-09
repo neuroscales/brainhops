@@ -16,7 +16,7 @@ from brainhops.datamodel.units import (
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.common.minc import MincDimension, MincParser
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 _PHYSICAL = "physical"
 """Name of the scaled voxel space."""
@@ -33,7 +33,7 @@ _RAS_ORIENTATION = {
 _UNIT_TYPES = {"space": SpaceUnit, "time": TimeUnit}
 
 
-class MincImage(MincParser, FileBasedImage, SingleScaleImage):
+class MincImage(MincParser, ImageFormat, SingleScaleImage):
     """An image stored in a MINC file, of version 1 or 2.
 
     This class answers to the format hint `"minc"` and reads both

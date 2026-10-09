@@ -33,7 +33,7 @@ from brainhops.io.common.nrrd._constants import (
     _SPACE_NAMES,
     SPACES,
 )
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 _INDEX = "index"
 
@@ -331,7 +331,7 @@ def _nrrd_to_transformations(header: NrrdHeader) -> tx.List[Transformation]:
 # ----------------------------------------------------------------------
 
 
-class NrrdImage(NrrdParser, FileBasedImage, SingleScaleImage):
+class NrrdImage(NrrdParser, ImageFormat, SingleScaleImage):
     """An image stored in a NRRD file, attached or detached.
 
     This class is the unregistered base of [`AttachedNrrdImage`][] and

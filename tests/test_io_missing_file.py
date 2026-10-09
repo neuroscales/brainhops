@@ -31,9 +31,9 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserExistsError,
     SnifferExistsError,
 )
-from brainhops.io.images import FileBasedImage  # noqa: E402
+from brainhops.io.images import ImageFormat  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
-from brainhops.io.transformations import FileBasedTransformation  # noqa: E402
+from brainhops.io.transformations import TransformationFormat  # noqa: E402
 
 
 class Greeting(TextFileReader):
@@ -118,7 +118,7 @@ def test_dispatched_load_of_a_missing_file(missing, entry) -> None:  # noqa: ANN
 
 
 @pytest.mark.parametrize(
-    "dispatcher", [FileBasedObject, FileBasedImage, FileBasedTransformation]
+    "dispatcher", [FileBasedObject, ImageFormat, TransformationFormat]
 )
 def test_dispatched_from_file_of_a_missing_file(missing, dispatcher) -> None:  # noqa: ANN001
     for source in _spellings(missing):

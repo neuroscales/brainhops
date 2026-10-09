@@ -3,10 +3,10 @@
 import typing_extensions as tx
 
 from brainhops.io.common.nifti import NiftiParser
-from brainhops.io.transformations.base import FileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 
 
-class NiftiBasedTransformation(FileBasedTransformation, NiftiParser):
+class NiftiBasedTransformation(TransformationFormat, NiftiParser):
     """
     Transformation stored in a NIfTI file.
 

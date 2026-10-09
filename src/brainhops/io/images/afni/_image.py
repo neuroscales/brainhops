@@ -28,7 +28,7 @@ from brainhops.io.common.afni._geometry import (
     afni_voxel_to_dicom,
     afni_world,
 )
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 _INDEX = "index"
 _MM = "millimeter"
@@ -109,7 +109,7 @@ def _afni_axes(header: AfniHeader) -> tx.List[Axis]:
 
 
 @register_format
-class AfniImage(AfniParser, FileBasedImage, SingleScaleImage):
+class AfniImage(AfniParser, ImageFormat, SingleScaleImage):
     """An image stored as an AFNI dataset (`.HEAD` and `.BRIK` files).
 
     The data are indexed `[x, y, z]`, or `[x, y, z, sub-brick]`, in
