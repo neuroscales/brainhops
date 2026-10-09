@@ -236,6 +236,8 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         """The squaring steps of a velocity, which this field does not have."""
         return None
 
+    # --- reading ------------------------------------------------------
+
     @classmethod
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         """
@@ -259,6 +261,8 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             )
         return super().from_nibabel(nifti, **kwargs)
 
+    # --- copies -------------------------------------------------------
+
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """
@@ -271,6 +275,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             kwargs.setdefault("transformations", tuple(other))
         return super().from_instance(other, *args, **kwargs)
 
+    # --- endpoints ----------------------------------------------------
     # The endpoints are declared rather than read off the chain, which would
     # decode the field data.
 
@@ -287,6 +292,8 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         The floating world space that the field maps to, in RAS millimetres.
         """
         return _systems.RASmm()
+
+    # --- decoding -----------------------------------------------------
 
     def _stored_vectors(self) -> ArrayProtocol:
         """Return the stored vectors as an (X, Y, Z, 3) array."""
@@ -332,6 +339,8 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         """
         return self._field_chain()
 
+    # --- slots --------------------------------------------------------
+
     def _slot(self, index: int) -> tx.Optional[_xforms.Transformation]:
         chain = self.transformations
         # A chain that starts with an affine has its field slots shifted by
@@ -354,6 +363,8 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         The affine from the voxels of the field back to RAS world coordinates.
         """
         return self._slot(2)
+
+    # --- writing ------------------------------------------------------
 
     _WHAT: tx.ClassVar[str] = "A NiftyReg field"
 

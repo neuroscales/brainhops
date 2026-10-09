@@ -50,6 +50,8 @@ class H5TransformParser(
     file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_h5(
         cls,
@@ -65,6 +67,8 @@ class H5TransformParser(
                 error = SnifferContentError
             raise error("HDF5 file is not an ITK transform file")
         return Confidence.NO
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_h5(

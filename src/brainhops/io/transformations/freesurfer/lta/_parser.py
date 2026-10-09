@@ -41,6 +41,8 @@ class LtaParser(Magic, TextFileParserWriter):
 
     _HAS_KEYS = True
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_line(
         cls,
@@ -75,6 +77,8 @@ class LtaParser(Magic, TextFileParserWriter):
                 f'Not an LTA file: expected "type = <int>", got {line!r}'
             )
         return Confidence.NO
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_(cls, other: FileOrContentLike) -> tx.Self:
@@ -127,6 +131,8 @@ class LtaParser(Magic, TextFileParserWriter):
             parse = LtaFieldParser(key, field.type)
             setattr(obj, field.name, parse(lines))
         return obj
+
+    # --- to -----------------------------------------------------------
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the LTA lines of the object.

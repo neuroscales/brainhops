@@ -48,6 +48,9 @@ def _zero_inversions(thunk: object) -> object:
 # Former helper names, expressed with SimplifyTable.
 
 
+# --- old helpers wrapping new helpers ---------------------------------
+
+
 def normalize_simplify(value: object) -> SimplifyTable:
     return SimplifyTable.from_like(value)
 

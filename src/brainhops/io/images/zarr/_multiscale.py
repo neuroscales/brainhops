@@ -72,6 +72,8 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
 
+    # ---- attributes --------------------------------------------------
+
     _axes: tx.Annotated[
         tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]],
         tx.Doc(
@@ -89,6 +91,8 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         tx.Optional[Multiscale],
         tx.Doc("The OME multiscale metadata, normalized to 0.6."),
     ] = None
+
+    # ---- properties --------------------------------------------------
 
     @property
     def node(self) -> ZarrGroup:
@@ -134,6 +138,8 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         # list is empty when the levels sit directly in world space.
         return list(self._layout["commons"])
 
+    # ---- load --------------------------------------------------------
+
     @classmethod
     def from_node(cls, node: tx.Any, **kwargs) -> tx.Self:
         """Read a pyramid from an opened Zarr group.
@@ -144,6 +150,8 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         image = super().from_node(node, **kwargs)
         _ = image._layout
         return image
+
+    # ---- workers  ----------------------------------------------------
 
     @smartproperty(cache=True, fset=False)
     def _layout(self) -> tx.Dict[str, tx.Any]:

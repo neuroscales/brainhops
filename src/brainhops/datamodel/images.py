@@ -32,6 +32,8 @@ class Image(IdentityComparison, DataModelBase, eq=False):
         with `numpy.array_equal(a, b)`, and compare their geometries.
     """
 
+    # --- array API ----------------------------------------------------
+
     def __array__(self, dtype: tx.Optional[DTypeLike] = None) -> np.ndarray:
         """Convert the data to a NumPy array, optionally of a given type."""
         return np.asarray(self.data, dtype=dtype)
@@ -142,6 +144,8 @@ class SingleScaleImage(Image):
                 self.transformation,
             )
         )
+
+    # --- methods ------------------------------------------------------
 
     def reslice(
         self,

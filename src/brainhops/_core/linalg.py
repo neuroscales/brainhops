@@ -21,6 +21,9 @@ error of the boundary are refused rather than given an inaccurate answer.
 """
 
 
+# --- linalg -----------------------------------------------------------
+
+
 def inv(matrix: "ArrayProtocol") -> "ArrayProtocol":
     """Return the inverse of a square matrix."""
     nx = get_array_backend(matrix)
@@ -73,6 +76,9 @@ def logm(
     return to(ensure_real(scipy.linalg.logm(host)), matrix, dtype=dtype)
 
 
+# --- checks utils -----------------------------------------------------
+
+
 class _BoolWithMessage:
     def __new__(
         cls, value: bool, message: str = "", return_reason: bool = True
@@ -90,6 +96,9 @@ class _BoolWithMessage:
 
     def __bool__(self) -> bool:
         return self._value
+
+
+# --- checks -----------------------------------------------------------
 
 
 def is_positive(array: ArrayProtocol) -> bool:
@@ -169,6 +178,9 @@ def require_principal(linear: np.ndarray, what: str = "This") -> None:
             f"{what} is not defined: it {result}, "
             f"so it has no principal square root or logarithm."
         )
+
+
+# --- backend utils ----------------------------------------------------
 
 
 def to_host(array: ArrayProtocol, **kwargs) -> np.ndarray:

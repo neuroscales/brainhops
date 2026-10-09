@@ -267,6 +267,7 @@ def _(t: Sequence, policy: SimplifyTable) -> Transformation:
 #
 # ======================================================================
 
+# --- Identity ---------------------------------------------------------
 # An identity next to another transformation contributes nothing except an
 # endpoint, that is, an input or output coordinate system, so it is dropped.
 # The other transformation takes over that endpoint, but it is rebuilt only
@@ -303,6 +304,7 @@ def _(
     return replace(first, output=second.output)
 
 
+# --- Cancellation -----------------------------------------------------
 # A transformation next to its own lazy inverse cancels with it. An Inverse
 # refers to the transformation that it undoes through `forward`, so the test
 # is an O(1) check of object identity that materializes neither side.
@@ -324,6 +326,9 @@ def _(
     if not _cancels(first, second):
         return None
     return Identity(input=first.input, output=second.output)
+
+
+# --- Subspace pairs ---------------------------------------------------
 
 
 @simplifier

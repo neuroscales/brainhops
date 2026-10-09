@@ -141,6 +141,7 @@ class FnirtWarpField(
             return Confidence.CERTAIN
         return Confidence.NO
 
+    # --- image keyword handling ---------------------------------------
     # `NiftiParser.from_file` forwards keyword arguments to `nibabel.load`,
     # which rejects `moving=` and `reference=`, so these are set after parsing.
 
@@ -221,6 +222,8 @@ class FnirtWarpField(
         return StoreEnum.from_coefficients(
             _nifti_intent(self.header) in _COEFFICIENT_INTENTS
         )
+
+    # --- intent-driven behaviour --------------------------------------
 
     def _intent(self) -> tx.Optional[int]:
         if self.header is None:
@@ -343,6 +346,8 @@ class FnirtWarpField(
             'deformation_type must be "absolute", "relative" or None, '
             f"not {deformation_type!r}."
         )
+
+    # --- the chain ----------------------------------------------------
 
     def _resolvable(self) -> bool:
         if self.header is None or self.moving is None:

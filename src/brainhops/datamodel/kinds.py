@@ -139,6 +139,8 @@ from bagof.magic import Magic, replace
 
 from brainhops._core.compat import PLACEHOLDER, partial
 
+# --- API helpers ------------------------------------------------------
+
 
 def public(obj: tx.Any) -> tx.Any:
     __all__.append(obj.__name__)
@@ -169,6 +171,9 @@ FSYMBOLTOCLASS: _StrMap = {}
 SYMBOLTOCLASS: _StrMap = {}
 INVERTIBLE_OF: _TypeMap = {}
 NONINVERTIBLE_OF: _TypeMap = {}
+
+
+# --- checks -----------------------------------------------------------
 
 
 @public
@@ -261,6 +266,9 @@ def is_embeddable(cls: _Type) -> bool:
     return cls not in NONEMBEDDABLE
 
 
+# --- generators -------------------------------------------------------
+
+
 @public
 @lru_cache(maxsize=1)  # noqa: UP033
 def all_sets() -> tx.FrozenSet[type]:
@@ -306,6 +314,9 @@ def as_unrestricted(cls: _Type) -> _Type:
     The set itself is returned when no such superset is registered.
     """
     return NONINVERTIBLE_OF.get(cls, cls)
+
+
+# --- decorators -------------------------------------------------------
 
 
 def group(cls: _Type) -> _Type:
@@ -420,6 +431,8 @@ class TransformationFamily(
     tuple `(kind, ndim, odim)`.
     """
 
+    # --- attributes ---------------------------------------------------
+
     kind: Kind
     """The kind of every transformation in the family."""
 
@@ -467,6 +480,7 @@ class TransformationFamily(
         fsymbol = fsymbol.format(n=ndim, m=odim)
         return fsymbol
 
+    # --- magic --------------------------------------------------------
     # The family implements the sequence protocol, so that it unpacks into
     # three values.
 
@@ -489,9 +503,13 @@ class TransformationFamily(
         yield self.ndim
         yield self.odim
 
+    # --- to -----------------------------------------------------------
+
     def to_tuple(self) -> tx.Tuple[Kind, Dim, Dim]:
         """Convert the family into a `(kind, ndim, odim)` tuple."""
         return (self.kind, self.ndim, self.odim)
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def parse(
@@ -510,6 +528,7 @@ class TransformationFamily(
         ValueError
             If `repr` describes no kind or family.
         """
+        # --- already a family ---
         if isinstance(repr, TransformationFamily):
             updates = {}
             if ndim is not MISSING and repr.ndim != ndim:
@@ -520,6 +539,7 @@ class TransformationFamily(
                 repr = replace(repr, **updates)
             return repr
 
+        # --- a (kind, ndim) pair ---
         if isinstance(repr, tuple):
             if not is_family_tuple(repr):
                 raise ValueError(
@@ -528,21 +548,25 @@ class TransformationFamily(
                 )
             return cls.from_tuple(repr, ndim, odim)
 
+        # --- a bare dimension ---
         # A bool is an int in Python, but it is not a dimension.
         if isinstance(repr, int) and not isinstance(repr, bool):
             if ndim is MISSING:
                 ndim = repr
             return cls(Transformation, ndim, odim)
 
+        # --- a kind ---
         if isinstance(repr, type):
             return cls(repr, ndim, odim)
 
+        # --- a name or a symbol ---
         if isinstance(repr, str):
             try:
                 return cls.from_name(repr, ndim, odim)
             except ValueError:
                 return cls.from_symbol(repr, ndim, odim)
 
+        # --- error ---
         raise ValueError(f"Invalid transformation kind or family: {repr!r}")
 
     @classmethod

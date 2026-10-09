@@ -75,6 +75,9 @@ class Confidence:
 # ----------------------------------------------------------------------
 
 
+# ---- sniff -----------------------------------------------------------
+
+
 class FileSniffer:
     """Class that can sniff files to decide whether they are of its type.
 
@@ -327,6 +330,9 @@ class FileSniffer:
         )
 
 
+# ---- from ------------------------------------------------------------
+
+
 def _passthrough_from_fileobj(func: tx.Callable) -> tx.Callable:
     """Mark a `from_fileobj` as a passthrough.
 
@@ -529,6 +535,9 @@ class FileParser(FileSniffer):
         raise ParserNotImplementedError(
             f"from_line() is not available in parser of type {cls.__name__}"
         )
+
+
+# ---- to --------------------------------------------------------------
 
 
 class FileParserWriter(FileParser):

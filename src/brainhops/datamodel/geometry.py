@@ -31,6 +31,8 @@ def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
 
 
 class _GeometryFields(DataModelBase):
+    # --- attributes ---------------------------------------------------
+
     # The `Sequence` base exposes this slot as `transformations`, which is
     # also the name of the constructor argument.
     _transformations: tx.Annotated[
@@ -63,6 +65,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
     A geometry pairs the Cartesian field on which the image is sampled
     with the transformation from voxel to world coordinates.
     """
+
+    # --- properties ---------------------------------------------------
 
     @property
     def transformation(self) -> Transformation:
@@ -98,6 +102,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
                 output=self.grid.output,
             )
 
+    # --- operators ----------------------------------------------------
+
     def __rmatmul__(self, other: Transformation) -> tx.Self:
         """Return the geometry with `other` applied after its transformation.
 
@@ -129,6 +135,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
             )
         )
 
+    # --- methods ------------------------------------------------------
+
     def compute(
         self,
         mode: tx.Optional[ModeLike] = None,
@@ -151,6 +159,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
             input=self.input,
             output=self.output,
         )
+
+    # --- helpers ------------------------------------------------------
 
     def _flattened(self) -> tx.Self:
         # Only the transformation is flattened, and the grid is never merged

@@ -217,12 +217,16 @@ def _yield_triangles(field: np.ndarray) -> _tx.Iterator[np.ndarray]:
     #    R E D    #
     # =========== #
 
+    # --- no shift
+
     x00 = field[0::2, 0::2]
     x01 = field[0::2, 1::2]
     x10 = field[1::2, 0::2]
     x11 = field[1::2, 1::2]
 
     yield from yield_red(x00, x01, x10, x11)
+
+    # --- xy shift
 
     x00 = field[1::2, 1::2]
     x01 = field[1::2, 2::2]
@@ -235,12 +239,16 @@ def _yield_triangles(field: np.ndarray) -> _tx.Iterator[np.ndarray]:
     #  B L A C K  #
     # =========== #
 
+    # --- x shift
+
     x00 = field[1::2, 0::2]
     x01 = field[1::2, 1::2]
     x10 = field[2::2, 0::2]
     x11 = field[2::2, 1::2]
 
     yield from yield_black(x00, x01, x10, x11)
+
+    # --- y shift
 
     x00 = field[0::2, 1::2]
     x01 = field[0::2, 2::2]

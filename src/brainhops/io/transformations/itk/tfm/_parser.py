@@ -42,6 +42,8 @@ class TfmTransformParser(
     their order in the file, because ITK applies the last block first.
     """
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_line(
         cls,
@@ -67,6 +69,8 @@ class TfmTransformParser(
                 error = SnifferContentError
             raise error(f"Not an ITK transform block: {line!r}")
         return Confidence.NO
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_lines(

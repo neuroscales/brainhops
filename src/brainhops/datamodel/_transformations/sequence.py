@@ -109,6 +109,8 @@ class Sequence(SequenceMixin, Transformation):
 
     data_fields = ("transformations",)
 
+    # --- attributes ---------------------------------------------------
+
     # The chain is stored under a private name so that `replace()` carries over
     # what was given rather than what the property reports. In a subclass that
     # derives its chain, the copy would otherwise serve a stale chain that
@@ -132,10 +134,14 @@ class Sequence(SequenceMixin, Transformation):
             return self.transformations[-1].output
         return None
 
+    # --- factory ------------------------------------------------------
+
     def __new__(cls, *args, **kwargs) -> tx.Type[tx.Self]:
         if cls is Sequence:
             return MutableSequence(*args, **kwargs)
         return super().__new__(cls)
+
+    # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         # Return a plain `Sequence` rather than `type(self)`, because not every
@@ -345,6 +351,7 @@ def _compute_sequence(
     iteration = 0
     max_iter = 0
     while True:
+        # --- 1. bridge ---
         # Bridge the direct children before flattening, because a nested
         # sequence carries its endpoints on itself. Flattening then has no
         # endpoint to rebuild, so every leaf stays the same object and
@@ -363,6 +370,7 @@ def _compute_sequence(
         if seq.input is not None or seq.output is not None:
             seq = seq._flattened()
 
+        # --- 2. simplify ---
         simplified = _simplify(seq, policy=policy)
         if not isinstance(simplified, Sequence):
             # The chain collapsed to a single transformation, so nothing is
@@ -370,6 +378,7 @@ def _compute_sequence(
             return simplified
         seq = simplified
 
+        # --- 2b. factor ---
         if factor:
             factored = factor_sequence(
                 seq, modes, simplify=policy, cache=cache
@@ -378,6 +387,7 @@ def _compute_sequence(
                 return factored
             seq = factored
 
+        # --- 3. compose ---
         memo: tx.Set[Family] = set()
         for submode in modes:
             result = _compose_mode(seq, submode, memo, factor)
@@ -420,17 +430,23 @@ def _compose_mode(
     # coarser ones. For example, with `mode="affine"`, adjacent translations
     # fold into a single translation before they are widened to an affine.
 
+    # --- Flatten sequence
     if not _is_flat(seq):
         seq = seq._flattened()
 
+    # --- Check if nothing to do
     if not seq.transformations:
         return seq
 
     # A mode that was already visited has nothing left to fold.
+
+    # --- A mode already visited has nothing left to fold
     if mode in memo:
         return seq
 
     # Fold the finer child modes first.
+
+    # --- First, fold every child mode (finer kinds first)
     for child in mode_children(mode):
         seq = _compose_mode(seq, child, memo, factor)
         if not isinstance(seq, Sequence):
@@ -438,6 +454,8 @@ def _compose_mode(
 
     # Never visit this mode again.
     memo.add(mode)
+
+    # --- Compose transformations that belong to this mode in order
 
     inputs = list(getattr(seq, "transformations", [seq]))
     outputs = []

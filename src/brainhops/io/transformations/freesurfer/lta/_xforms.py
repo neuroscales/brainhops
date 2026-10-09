@@ -153,6 +153,8 @@ class LtaTransformation(
     def data(self, value: np.ndarray) -> None:
         self._data = value
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_line(
         cls,
@@ -162,6 +164,8 @@ class LtaTransformation(
     ) -> float:
         """Score a line as the first line of an LTA file."""
         return LtaStruct.sniff_line(line, error=error, **kwargs)
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_(cls, other: tx.Any) -> tx.Self:
@@ -207,6 +211,8 @@ class LtaTransformation(
         constructor and override the file.
         """
         return cls.from_struct(LtaStruct.from_lines(lines), **kwargs)
+
+    # --- to -----------------------------------------------------------
 
     def to_struct(self) -> LtaStruct:
         """Return the [`LtaStruct`][] that encodes the transformation.

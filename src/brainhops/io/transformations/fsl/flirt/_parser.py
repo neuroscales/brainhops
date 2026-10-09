@@ -40,6 +40,8 @@ class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
     ] = None
     """The reference image."""
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_lines(
         cls,
@@ -59,6 +61,8 @@ class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
                 error = SnifferContentError
             raise error("Not a FLIRT (4, 4) matrix.")
         return Confidence.NO
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:

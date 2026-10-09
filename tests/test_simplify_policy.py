@@ -40,6 +40,9 @@ def _small(shape: tuple = (6, 7, 2), seed: int = 0) -> np.ndarray:
 # Former helper names, expressed with SimplifyTable.
 
 
+# --- old helpers wrapping new helpers ---------------------------------
+
+
 def normalize_simplify(value: object) -> SimplifyTable:
     return SimplifyTable.from_like(value)
 

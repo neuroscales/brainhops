@@ -154,6 +154,9 @@ table when it is imported.
 """
 
 
+# --- Machinery --------------------------------------------------------
+
+
 class IsKind:
     """Membership predicate and registry of checkers.
 
@@ -176,6 +179,8 @@ class IsKind:
         # computed. Every registration resets the memo.
         self._memo: tx.Optional[tx.Tuple[object, tx.Dict[Key, Selection]]]
         self._memo = None
+
+    # -- registration ---------------------------------------------------
 
     def register(self, *args: tx.Any) -> tx.Any:
         """Register a checker, or return a decorator that registers one.
@@ -256,6 +261,8 @@ class IsKind:
         self._registry[(source, node)] = shim
         self._memo = None  # a new checker can change any selection
 
+    # -- dict-like lookup (for `checkers`) ------------------------------
+
     def __contains__(self, key: Key) -> bool:
         return key in self._registry
 
@@ -263,6 +270,8 @@ class IsKind:
         """Return the checker registered for `(source, node)`, or `default`."""
         shim = self._registry.get(key)
         return default if shim is None else shim._impl
+
+    # -- calling --------------------------------------------------------
 
     def __call__(
         self, x: Transformation, kind: KindLike, compute: bool = False
@@ -306,6 +315,8 @@ class IsKind:
             if impl(x, kind, compute):
                 return True
         return False
+
+    # -- selection ------------------------------------------------------
 
     def _selection(
         self, x: Transformation, kind: Kind, compute: bool
@@ -371,6 +382,8 @@ class IsKind:
         return tuple(selection)
 
 
+# --- Public API -------------------------------------------------------
+
 is_kind: IsKind = IsKind()
 """Membership predicate shared by the transformation operations."""
 
@@ -415,6 +428,9 @@ def is_family(x: Transformation, family: FamilyLike) -> bool:
     # be inferred from the content, such as the shape of a matrix or field.
     space = AxisList([...]).expand(family.ndim)
     return all(get_axes(e).compatible_with(space) for e in (x.input, x.output))
+
+
+# --- Public helpers ---------------------------------------------------
 
 
 def register_kind_alias(

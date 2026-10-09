@@ -60,11 +60,15 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     examining the wrapped transformation and the axes it acts on.
     """
 
+    # --- class attributes ---------------------------------------------
+
     data_fields: tx.ClassVar[tx.Tuple[str]] = (
         "transformation",
         "input_axes",
         "output_axes",
     )
+
+    # --- attributes ---------------------------------------------------
 
     transformation: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
     """Transformation to apply."""
@@ -75,6 +79,8 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     output_axes: NotKwOnly[tx.Optional[npvector[Integral]]] = None
     """Axes of the output coordinate system to transform."""
 
+    # --- properties ---------------------------------------------------
+
     @smartproperty
     def input(self) -> tx.Optional[CoordinateSystem]:
         system = getattr(self.transformation, "input", None)
@@ -84,6 +90,8 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     def output(self) -> tx.Optional[CoordinateSystem]:
         system = getattr(self.transformation, "output", None)
         return _subsystem(system, self.output_axes, full=self._output)
+
+    # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         if self.transformation is None:
@@ -127,10 +135,16 @@ class Projection(MetaTransformation):
     by swapping the two lists.
     """
 
+    # --- class attributes ---------------------------------------------
+
     data_fields: tx.ClassVar[tx.Tuple[str]] = "dropped", "created"
+
+    # --- attributes ---------------------------------------------------
 
     dropped: NotKwOnly[npvector[Integral]] = ()
     created: NotKwOnly[npvector[Integral]] = ()
+
+    # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         # Swapping the dropped and created axes is the exact inverse, so there
@@ -153,13 +167,19 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
     the backward transformation when no forward one is given.
     """
 
+    # --- class attributes ---------------------------------------------
+
     data_fields: tx.ClassVar[tx.Tuple[str]] = "forward", "backward"
+
+    # --- attributes ---------------------------------------------------
 
     forward: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
     """Forward transformation."""
 
     backward: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
     """Backward transformation."""
+
+    # --- properties ---------------------------------------------------
 
     @smartproperty
     def input(self) -> tx.Optional[CoordinateSystem]:
@@ -176,6 +196,8 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         if self.backward is not None and self.backward.input is not None:
             return self.backward.input
         return None
+
+    # --- methods ------------------------------------------------------
 
     def compute(
         self,

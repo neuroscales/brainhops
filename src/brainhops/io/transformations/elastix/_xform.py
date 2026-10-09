@@ -90,6 +90,8 @@ class ElastixTransform(
     `initial` when reading is kept here as it is.
     """
 
+    # --- syntax -------------------------------------------------------
+
     @classmethod
     def _read_map(cls, lines: tx.Iterable[str]) -> ParameterMap:
         raise NotImplementedError
@@ -97,6 +99,8 @@ class ElastixTransform(
     @classmethod
     def _format_map(cls, pmap: ParameterMap) -> tx.Iterator[str]:
         raise NotImplementedError
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_lines(
@@ -132,6 +136,8 @@ class ElastixTransform(
     ) -> float:
         """Score the text of a file, as in [`sniff_lines`][]."""
         return cls.sniff_lines(text.splitlines(), error=error, **kwargs)
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
@@ -238,6 +244,8 @@ class ElastixTransform(
         obj.block  # noqa: B018
         return obj
 
+    # --- chain --------------------------------------------------------
+
     @property
     def initial_filename(self) -> tx.Optional[str]:
         """The file name of the initial transform, if the map names one."""
@@ -278,6 +286,8 @@ class ElastixTransform(
         `Direction`, and its transformation maps voxels to LPS millimetres.
         """
         return fixed_geometry(self.parameter_map)
+
+    # --- to -----------------------------------------------------------
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a file.

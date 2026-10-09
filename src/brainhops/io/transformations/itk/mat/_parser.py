@@ -73,6 +73,8 @@ class MatTransformParser(
     directly in `transformations`.
     """
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_fileobj(
         cls,
@@ -121,6 +123,8 @@ class MatTransformParser(
                 f"an ITK transform class.",
             )
         return Confidence.CERTAIN
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_bytes(
@@ -199,6 +203,8 @@ class MatTransformParser(
         obj = cls()
         obj.transformations = _application_order(blocks, composites, position)
         return obj
+
+    # --- to -----------------------------------------------------------
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a file.

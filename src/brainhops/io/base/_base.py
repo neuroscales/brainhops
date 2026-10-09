@@ -123,9 +123,13 @@ class FormatDispatcher(FileParser):
         can be asked to score the input itself.
     """
 
+    # ---- helpers -----------------------------------------------------
+
     @classmethod
     def _is_dispatcher(cls) -> bool:
         return "_REGISTRY" in cls.__dict__
+
+    # ---- sniff -------------------------------------------------------
 
     @classmethod
     def sniff(
@@ -277,6 +281,8 @@ class FormatDispatcher(FileParser):
             "input line",
             **kwargs,
         )
+
+    # ---- from --------------------------------------------------------
 
     @classmethod
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:

@@ -551,6 +551,8 @@ class _TiffMixin:
             backend.TiffSource(content=bytes(content)), **kwargs
         )
 
+    # --- writing ------------------------------------------------------
+
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the image to an open binary file.
 
@@ -612,6 +614,8 @@ class _TiffMixin:
 
     def _writer(self, **kwargs) -> tx.Callable[[tx.Any], None]:
         raise NotImplementedError  # pragma: no cover
+
+    # --- writing helpers ----------------------------------------------
 
     def _level_storage(
         self,
@@ -879,6 +883,8 @@ class TiffImage(
     metadata attributes are written back on save as far as they still apply.
     """
 
+    # --- format-specific metadata -------------------------------------
+
     dialect: tx.Annotated[
         tx.Optional[str],
         tx.Doc(
@@ -948,6 +954,8 @@ class TiffImage(
         data, _ = raster.to_canonical(raw, self.storage_axes)
         return data
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_fileobj(
         cls,
@@ -964,6 +972,8 @@ class TiffImage(
         if cls._sniff_head(file, error):
             return Confidence.LIKELY
         return Confidence.NO
+
+    # --- load ---------------------------------------------------------
 
     @classmethod
     def from_source(
@@ -1052,6 +1062,8 @@ class TiffImage(
         image._read_options = (mmap, lazy)
         image._ome_index = metadata.ome_index
         return image
+
+    # --- save ---------------------------------------------------------
 
     def _writer(
         self,

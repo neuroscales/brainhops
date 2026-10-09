@@ -258,6 +258,7 @@ transformations.StationaryVelocityField].
         KwOnly(),
     ] = None
 
+    # --- reading ------------------------------------------------------
     # The NIfTI parser hands its keyword arguments to nibabel, so the
     # encoding options are popped first and set on the field read.
 
@@ -289,6 +290,8 @@ transformations.StationaryVelocityField].
     # Another transformation is converted, as `t.to(cls)` converts it;
     # anything else is read or copied as the bases do.
 
+    # --- copies -------------------------------------------------------
+
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         if converts_to(cls, other):
@@ -314,6 +317,7 @@ transformations.StationaryVelocityField].
                 kwargs.setdefault("transformations", tuple(other))
         return super().from_instance(other, *args, **kwargs)
 
+    # --- endpoints ----------------------------------------------------
     # The endpoints are declared rather than read off the chain, which would
     # decode the data.
 
@@ -328,6 +332,8 @@ transformations.StationaryVelocityField].
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The anatomical space that the field maps to, in RAS millimetres."""
         return _systems.RASmm()
+
+    # --- decoding -----------------------------------------------------
 
     def _vox2ras(self) -> np.ndarray:
         """Return the (4, 4) voxel-to-RAS affine of the grid."""
@@ -363,6 +369,8 @@ transformations.StationaryVelocityField].
                 f"supported, and this one has {data.shape[-1]} components."
             )
         return data
+
+    # --- chain --------------------------------------------------------
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
@@ -402,6 +410,8 @@ transformations.StationaryVelocityField].
         The affine from the voxels of the field back to RAS world coordinates.
         """
         return self.transformations[2]
+
+    # --- writing ------------------------------------------------------
 
     def to_nibabel(
         self,
