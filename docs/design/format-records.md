@@ -319,14 +319,20 @@ its status.
    with the slope and intercept of the record. Status: open.
 4. Using the record as the base header means choosing which header
    fields are reset and which are kept. Fields such as `cal_*`,
-   `slice_*` and the extensions now survive a save, and the `like=`
-   argument and the header overrides overlap with the metadata.
+   `dim_info`, `slice_*` and the extensions now survive a save, but
+   `dim_info` and `slice_*` become stale when the writer transposes the
+   axes. The intent of the record now also takes precedence over
+   `like=`, because `_apply_like` copies the intent only when it is 0.
    Status: open.
 5. A NIfTI affine has two sources, a matrix in `raw` or the `sform` of
    the record, and the inverse of an affine that comes from the header
    must also come from the header. Status: open.
 6. Reading `data` turns the proxy into an array with the array backend,
-   which copies with NumPy but stays lazy with Dask. Status: open.
+   which copies with NumPy but stays lazy with Dask. An edit made in
+   place on the decoded array would then be lost, because an untouched
+   `raw` is written from the proxy. Status: decided in pass 1b, where
+   the proxy is always written and the decoded NumPy arrays are
+   read-only, so that values are changed by assigning `data`.
 7. In the first pass, `metadata` is a field of the format classes,
    while #287 puts it on the roots of the data model. The name also
    clashes with `Transformation.metadata_fields`, which may be renamed.
@@ -357,9 +363,11 @@ its status.
 13. Several public names break and must be announced. They include
     `NiftiReaderWriter`, `sniff_nibabel`, the `image` and `header`
     attributes, the `header=` argument of `from_nibabel`, `LtaStruct`,
-    the modules `nifti.affines`, `nifti.base` and `nifti.fields`, and
-    the positional parameters recorded in the constructor signature
-    test. Status: open.
+    the modules `nifti.affines`, `nifti.base` and `nifti.fields`, the
+    positional parameters recorded in the constructor signature test,
+    and `NiftiImage.system`, which pass 1b makes read-only so that
+    setting it raises an error. `NiftiReaderWriter` is still exported
+    until pass 1c. Status: open.
 14. The design needs `bagof-magic` 0.3.dev2 or later, which is not on
     PyPI yet, so the checks before each pull request need it installed
     from another source. Status: open.
@@ -377,7 +385,7 @@ its status.
     an untouched object is still saved byte for byte.
 18. `replace` reads `data` through the property, so a copy made with
     `replace` turns the proxy into an array and is no longer saved byte
-    for byte. Status: open.
+    for byte. Status: still open after pass 1b.
 19. The `repr` of an image decoded the whole proxy to show `data`.
     Status: resolved in pass 1a, where `SingleScaleImage.data` is
     hidden from `repr`, which changes the public `repr`.
@@ -399,3 +407,37 @@ its status.
     header is a prefix of the file. Formats with a separate header
     file, such as detached NRRD and MINC, need a hook in their exemplar
     in the third pass. Status: open.
+24. An untouched save is identical byte for byte only when the geometry
+    is encoded back exactly. A `qform` or `sform` whose code is 0 is
+    written back with code 2, and the padding before `vox_offset` is
+    lost. A possible fix is to treat the geometry as unchanged while
+    `_transformations` is unset, and to keep the form fields of the
+    record in that case. Status: open.
+25. Encoding a model in millimeters over a record whose spatial unit
+    is unknown could replace that unit. Status: decided in pass 1b,
+    where the unknown unit of the record is kept.
+26. The fields of a nibabel header are views into the header, so the
+    stored scaling changed when the structural fields were reset.
+    Status: resolved in pass 1b, where the scaling is read with
+    `.item()` before the reset.
+27. `_new_nifti` builds the nibabel image twice, so that nibabel
+    validates the data type and applies its policy on 64-bit integers.
+    The array is not copied. Status: accepted.
+28. Code in the FSL formats and in `_files._like_header` still reaches
+    the record through attributes, as in `metadata.raw.header`. A
+    helper `_header(obj)` replaces these lookups. Status: open until
+    pass 1c.
+29. The base adapter has no fallback from `sniff_bytes` to
+    `sniff_fileobj`, so each class writes `sniff_bytes` once. Status:
+    accepted.
+30. `NiftiMetadata.save("x.nii.gz")` wrote an uncompressed file.
+    Status: resolved in pass 1b, where `NiftiRaw.to_filename`
+    compresses the file when its name ends in `.gz`. Whether
+    `FileWriter.to_filename` should do the same for every format is an
+    open question.
+31. `NiftiImage.transformations` is cached and returned as the same
+    object each time, so appending to the list in place persists. It
+    used to return a copy. Status: decided in pass 1b.
+32. `read_nifti` parses the header twice when it reads a local path,
+    once for the record and once for the nibabel image. Status:
+    accepted.
