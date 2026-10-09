@@ -147,13 +147,13 @@ def from_ome(
 
     Parameters
     ----------
-    transform
+    transform : Any
         The OME coordinate transformation.
-    perm
+    perm : sequence of int
         The permutation from the stored OME axis order to the brainhops order.
-    ndim
+    ndim : int
         The number of spatial dimensions.
-    read_field
+    read_field : callable, optional
         A callable that reads the displacement or coordinate field from the
         node that a field transformation names. It is only needed for field
         transformations.

@@ -221,8 +221,10 @@ class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
         (`GCAM_RAS`).
     index : (W, H, D, 3) int32 array
         The GCA node to which each node maps.
-    image, atlas : M3zGeometry or None
-        Source and target geometries from `TAG_GCAMORPH_GEOM`, or `None`.
+    image : M3zGeometry or None
+        Source geometry from `TAG_GCAMORPH_GEOM`, or `None`.
+    atlas : M3zGeometry or None
+        Target geometry from `TAG_GCAMORPH_GEOM`, or `None`.
     type : int or None
         `GCAM_VOX` or `GCAM_RAS` from `TAG_GCAMORPH_TYPE`. `None` means voxels.
     labels : (W, H, D) int32 array or None
