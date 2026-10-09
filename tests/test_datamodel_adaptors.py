@@ -7,13 +7,16 @@ embedding of a transform into a space with more axes, and end-to-end
 examples with FSL and ITK transforms applied to images.
 """
 
+import itertools
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+import typing_extensions as tx
 
 from brainhops.datamodel._transformations.compute.adaptors import (
+    _match_axes,
     adapt,
     bridge,
     embed,
@@ -769,6 +772,102 @@ def test_axes_match_by_unit_when_names_differ() -> None:
     result = bridge(source, target)
     assert isinstance(result, Scaling)
     np.testing.assert_allclose(result.scale, [1000.0])
+
+
+# ----------------------------------------------------------------------
+#   REGRESSION: PAIRING DOES NOT DEPEND ON THE ORDER OF THE AXES
+# ----------------------------------------------------------------------
+
+
+def _all_matches(
+    source_axes: tx.List[Axis], target_axes: tx.List[Axis]
+) -> tx.List[tx.Dict[int, tx.Optional[int]]]:
+    """Return the matching for every order of the source and target axes.
+
+    Each matching maps the identity of a target axis to the identity of
+    the source axis paired with it, or to None, so that matchings computed
+    in different orders can be compared.
+    """
+    matchings = []
+    for sources in itertools.permutations(source_axes):
+        for targets in itertools.permutations(target_axes):
+            match, _ = _match_axes(list(sources), list(targets), False)
+            matchings.append(
+                {
+                    id(target): None if i is None else id(sources[i])
+                    for target, i in zip(targets, match)
+                }
+            )
+    return matchings
+
+
+def test_a_unit_shared_by_two_target_axes_is_ambiguous() -> None:
+    # Two target axes have the same single source candidate by unit. The
+    # match is ambiguous, so neither target axis is paired, whatever the
+    # order of the axes.
+    source = [Axis(name="a", unit="mm"), Axis(name="b")]
+    target = [Axis(name="c", unit="mm"), Axis(name="d", unit="mm")]
+    for matching in _all_matches(source, target):
+        assert matching == {id(target[0]): None, id(target[1]): None}
+
+
+def test_a_line_shared_by_two_target_axes_is_ambiguous() -> None:
+    # Two collinear target axes have the same single source candidate by
+    # orientation, and neither one is paired.
+    source = [Axis(name="a", orientation=LeftToRight()), Axis(name="b")]
+    target = [
+        Axis(name="c", orientation=LeftToRight()),
+        Axis(name="d", orientation=RightToLeft()),
+    ]
+    for matching in _all_matches(source, target):
+        assert matching == {id(target[0]): None, id(target[1]): None}
+
+
+def test_a_name_shared_by_two_target_axes_is_ambiguous() -> None:
+    # Two target axes with the same name have the same single source
+    # candidate by name, and neither one is paired.
+    source = [Axis(name="x"), Axis(name="b")]
+    target = [Axis(name="x"), Axis(name="x", type="space")]
+    for matching in _all_matches(source, target):
+        assert matching == {id(target[0]): None, id(target[1]): None}
+
+
+def test_a_pair_by_unit_frees_the_remaining_candidate() -> None:
+    # The spatial target axis "c" can only be paired with "a", because "b"
+    # is a channel axis. Once "c" is paired, "a" is no longer a candidate
+    # of the untyped target axis "d", which is then paired with "b". The
+    # result is the same in every order.
+    source = [
+        SpaceAxis(name="a", unit="mm"),
+        Axis(name="b", type="channel", unit="mm"),
+    ]
+    target = [SpaceAxis(name="c", unit="mm"), Axis(name="d", unit="mm")]
+    for matching in _all_matches(source, target):
+        assert matching == {
+            id(target[0]): id(source[0]),
+            id(target[1]): id(source[1]),
+        }
+
+
+def test_a_bridge_reports_both_ambiguous_axes_in_every_order() -> None:
+    # The bridge fails because the unit match is ambiguous, and it reports
+    # both target axes as unmatched, whatever their order. The first
+    # target axis used to take the source axis, and only the second
+    # one was reported.
+    source = CoordinateSystem(
+        axes=[SpaceAxis(name="a", unit="mm"), SpaceAxis(name="b")]
+    )
+    c = SpaceAxis(name="c", unit="mm")
+    d = SpaceAxis(name="d", unit="mm")
+    for target_axes in ([c, d], [d, c]):
+        target = CoordinateSystem(axes=target_axes)
+        with pytest.raises(AdaptationError) as error:
+            bridge(source, target)
+        message = str(error.value)
+        assert "'c'" in message
+        assert "'d'" in message
+        assert "'a'" in message
+        assert "'b'" in message
 
 
 # ----------------------------------------------------------------------

@@ -256,6 +256,11 @@ def _match_axes(
     matches. `warning` describes a positional pairing, or is None when no
     pair was formed by position. The warning is returned so that the
     caller can issue it once the pairing can no longer fail.
+
+    Apart from the pairing by position, the result does not depend on the
+    order in which the axes are listed. When several target axes have the
+    same single candidate in a tier, the match is ambiguous and none of
+    these target axes is paired by that tier.
     """
 
     # Axes with different types never match, because a shared name, unit or
@@ -269,14 +274,40 @@ def _match_axes(
         match[j] = i
         used[i] = True
 
+    def take_unique(
+        candidates_of: tx.Callable[[int], tx.List[int]],
+    ) -> None:
+        # A target axis is paired only when it has a single candidate and
+        # no other target axis has that same source axis as its single
+        # candidate. Several target axes that claim the same source axis
+        # are ambiguous and stay unmatched, so the result does not depend
+        # on the order of the axes. Each pair that is accepted removes a
+        # source axis from the candidates of the other target axes, which
+        # may leave one of them with a single candidate, so the search is
+        # repeated until no new pair is found.
+        while True:
+            claims: tx.Dict[int, tx.List[int]] = {}
+            for j in range(n_target):
+                if match[j] is not None:
+                    continue
+                candidates = candidates_of(j)
+                if len(candidates) == 1:
+                    claims.setdefault(candidates[0], []).append(j)
+            pairs = [(js[0], i) for i, js in claims.items() if len(js) == 1]
+            if not pairs:
+                return
+            for j, i in pairs:
+                take(j, i)
+
     # First tier: axes of the same type that lie along the same oriented line.
     # This is the strongest signal, and it pairs a right-to-left axis with a
     # left-to-right one regardless of their names. When several source axes
     # qualify, a shared name breaks the tie.
-    for j, target in enumerate(target_axes):
+    def same_line(j: int) -> tx.List[int]:
+        target = target_axes[j]
         line = _orientation_line(target)
         if line is None:
-            continue
+            return []
         candidates = [
             i
             for i, source in enumerate(source_axes)
@@ -284,22 +315,22 @@ def _match_axes(
             and source.type == target.type
             and _orientation_line(source) == line
         ]
-        if len(candidates) == 1:
-            take(j, candidates[0])
-        elif len(candidates) > 1:
-            named = [
+        if len(candidates) > 1:
+            candidates = [
                 i for i in candidates if source_axes[i].name == target.name
             ]
-            if len(named) == 1:
-                take(j, named[0])
+        return candidates
+
+    take_unique(same_line)
 
     # Second tier: axes that share a name. Two axes of different types, or two
     # axes oriented along different lines, are never paired by name, because a
     # shared name cannot turn a rotation into a flip.
-    for j, target in enumerate(target_axes):
-        if match[j] is not None or target.name is None:
-            continue
-        candidates = [
+    def same_name(j: int) -> tx.List[int]:
+        target = target_axes[j]
+        if target.name is None:
+            return []
+        return [
             i
             for i, source in enumerate(source_axes)
             if not used[i]
@@ -307,16 +338,15 @@ def _match_axes(
             and not _type_conflict(source, target)
             and not _orientation_conflict(source, target)
         ]
-        if len(candidates) == 1:
-            take(j, candidates[0])
 
-    # Third tier: axes measured in the same kind of unit, when exactly one
-    # unused source axis qualifies. Two axes of different types, or two axes
-    # oriented along different lines, are again not paired.
-    for j, target in enumerate(target_axes):
-        if match[j] is not None:
-            continue
-        candidates = [
+    take_unique(same_name)
+
+    # Third tier: axes measured in the same kind of unit. Two axes of
+    # different types, or two axes oriented along different lines, are again
+    # not paired.
+    def same_unit_kind(j: int) -> tx.List[int]:
+        target = target_axes[j]
+        return [
             i
             for i, source in enumerate(source_axes)
             if not used[i]
@@ -324,8 +354,8 @@ def _match_axes(
             and not _type_conflict(source, target)
             and not _orientation_conflict(source, target)
         ]
-        if len(candidates) == 1:
-            take(j, candidates[0])
+
+    take_unique(same_unit_kind)
 
     # Last tier: axes at the same position. A positional pairing may hide a
     # genuine mismatch, so it is used only when the caller permits it, and it
