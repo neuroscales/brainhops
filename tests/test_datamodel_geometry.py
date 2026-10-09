@@ -211,8 +211,8 @@ def test_geometry_getitem_rejects_invalid_index(
     index: tuple, with_system: bool
 ) -> None:
     # An invalid element must raise the same error whether or not the axes
-    # of the grid are known (#389). Booleans are rejected because NumPy
-    # reads them as masks and not as positions.
+    # of the grid are known. Booleans are rejected because NumPy reads
+    # them as masks and not as positions.
     system = _voxel_system() if with_system else None
     geometry = Geometry(
         (CartesianField(shape=(4, 5, 6), input=system), Affine(np.eye(3, 4)))
@@ -226,7 +226,7 @@ def test_single_scale_image_getitem_accepts_numpy_integers(
     with_system: bool,
 ) -> None:
     # A NumPy integer drops an axis like a built-in integer, with or
-    # without a system on the grid (#389).
+    # without a system on the grid.
     system = _voxel_system() if with_system else None
     data = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
     img = SingleScaleImage(
@@ -250,7 +250,7 @@ def test_single_scale_image_getitem_rejects_invalid_index(
     with_system: bool,
 ) -> None:
     # The error comes from the array or from the index conversion, but an
-    # invalid index never yields a sub-image (#389).
+    # invalid index never yields a sub-image.
     system = _voxel_system() if with_system else None
     img = SingleScaleImage(
         data=np.zeros((4, 5, 6)),
@@ -263,7 +263,7 @@ def test_single_scale_image_getitem_rejects_invalid_index(
 
 
 def test_index2transform_returns_affine_and_shape() -> None:
-    # The return annotation names the pair that is returned (#388).
+    # The return annotation names the pair that is returned.
     affine, shape = _index2transform((slice(None), 1, slice(None)), (4, 5, 6))
     assert isinstance(affine, Affine)
     assert shape == (4, 6)
