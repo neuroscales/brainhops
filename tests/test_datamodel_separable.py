@@ -443,7 +443,8 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
     system = _voxel_system(1)
     with backend("numpy"):
         data = np.arange(10.0)
-        # A gather, then a genuine resampling through the weight matrix.
+        # The first case is a gather; the second is a genuine resampling
+        # through the weight matrix.
         for scale, shift in ((1.0, 2.0), (0.9999999, 0.0)):
             matrix = np.asarray([[scale, shift]])
             grid = CartesianField(shape=(10,), input=system, output=system)
@@ -470,7 +471,8 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
 def test_separable_matches_monolithic_through_an_inner_less_reindex(
     degree: int,
 ) -> None:
-    # An inner-less subspace over other axes is a reindex (#110).
+    # A subspace with no inner transformation that maps axes to other
+    # axes is a reindex (#110).
     system = _voxel_system(3)
     with backend("numpy"):
         rng = np.random.default_rng(0)
@@ -587,14 +589,16 @@ def test_exact_unit_scale_is_a_gather_and_near_unit_is_a_matrix() -> None:
 
 
 def test_unit_scale_with_coeff_at_high_degree_is_a_matrix() -> None:
-    # Above degree 1, coefficients need a reconstruction, so a matrix.
+    # Above degree 1, coefficients need a reconstruction, so the step
+    # uses the weight matrix.
     assert _classify_single(1.0, 2.0, degree=3, coeff=True) == "matrix"
     assert _classify_single(1.0, 2.0, degree=1, coeff=True) == "gather"
     assert _classify_single(1.0, 2.0, degree=0, coeff=True) == "gather"
 
 
 def test_unit_scale_with_reflect_above_degree_one_is_a_matrix() -> None:
-    # The reflect prefilter is inexact above degree 1, so a matrix.
+    # The reflect prefilter is inexact above degree 1, so the step uses
+    # the weight matrix.
     assert _classify_single(1.0, 2.0, degree=3, bound="reflect") == "matrix"
     assert _classify_single(1.0, 2.0, degree=5, bound="reflect") == "matrix"
     assert _classify_single(1.0, 2.0, degree=1, bound="reflect") == "gather"
@@ -784,7 +788,7 @@ def test_class_a_only_pipeline_preserves_dtype() -> None:
     with backend("numpy"):
         rng = np.random.default_rng(9)
         data = rng.normal(size=(6, 7)).astype(np.float32)
-        # Two flips, each a gather.
+        # The two flips are both gathers.
         seq = _diagonal_seq([-1.0, -1.0], [5.0, 6.0], system, system, (6, 7))
         got = sep.pull_separable(
             data,
@@ -874,7 +878,8 @@ def test_cras_to_fras_bridge_factors_into_singletons() -> None:
         )
         nf = transformation.compute(mode=kinds.Affine, factor=True)
         _, groups = sep._groups(nf, 3)
-        # One grid axis and one data axis per group, covering every axis.
+        # Each group holds one grid axis and one data axis, and the groups
+        # cover every axis.
         assert len(groups) == 3
         for group in groups:
             assert len(group["G"]) == 1 and len(group["D"]) == 1
@@ -1059,7 +1064,8 @@ def test_issue_11_spatial_warp_and_time_affine() -> None:
 
 def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
     img, vox4, world4 = _demonstration_image()
-    # No warp: a diagonal affine with a y flip and fewer time points.
+    # There is no warp, only a diagonal affine with a y flip and fewer
+    # time points.
     src = Affine(
         matrix=np.diag([2.0, 2.0, 2.0, 1.0, 1.0])[:-1],
         input=vox4,
@@ -1600,7 +1606,8 @@ def _own_grid_image(dtype: object = float) -> SingleScaleImage:
 
 
 def _cras_to_fras() -> tuple:
-    # A cRAS image onto an fRAS grid, by flip and swap: gathers only.
+    # Map a cRAS image onto an fRAS grid by a flip and a swap, which
+    # only need gathers.
     from brainhops.datamodel.systems import (
         CRASCoordinateSystem,
         FRASCoordinateSystem,
@@ -1765,7 +1772,8 @@ def test_copy_on_the_dask_backend_is_lazy_and_not_copied(
 
 
 def _space_and_time(angle: float, dz: float, dt: float) -> Sequence:
-    # An affine over x, y, z, then a scaling and translation over t.
+    # Build an affine over x, y and z, followed by a scaling and a
+    # translation over t.
     full = CoordinateSystem().expand(4)
     c, s = np.cos(angle), np.sin(angle)
     spatial = Affine(

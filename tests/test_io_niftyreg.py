@@ -184,7 +184,10 @@ def _nreg_image(
 
 
 def _cpp_vox2world(ref_vox2world: np.ndarray) -> np.ndarray:
-    """As reg_createControlPointGrid: origin one control point before."""
+    """Return the grid affine of reg_createControlPointGrid.
+
+    The origin lies one control point before the reference origin.
+    """
     grid = ref_vox2world.copy()
     grid[:3, :3] = ref_vox2world[:3, :3] * SPACING
     grid[:3, 3] = _world([-1, -1, -1], grid)
@@ -216,7 +219,7 @@ def rng() -> np.random.RandomState:
 
 
 def _write_aladin(path: Path, matrix: np.ndarray) -> Path:
-    """As reg_tool_WriteAffineFile: %.7g, separated by spaces."""
+    """Write an affine in %.7g, as reg_tool_WriteAffineFile does."""
     with open(path, "w") as f:
         for row in matrix:
             f.write(" ".join(f"{value:.7g}" for value in row) + "\n")
@@ -370,7 +373,7 @@ def _deformation(rng: np.random.RandomState) -> np.ndarray:
 def test_deformation_field_matches_niftyreg(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    """Trilinear between voxels, sliding beyond the grid."""
+    """The field is trilinear between voxels and slides beyond the grid."""
     positions = _deformation(rng)
     path = tmp_path / "def.nii.gz"
     nb.save(_nreg_image(positions, REF_VOX2RAS, 0), path)
@@ -550,7 +553,7 @@ def test_linear_grid_matches_niftyreg(
 
 
 def _with_extension(image: "nb.Nifti1Image", matrix: np.ndarray) -> None:
-    """The affine extension: a raw mat44 in two NIFTI_ECODE_IGNORE blocks."""
+    """The affine extension is a raw mat44 in two NIFTI_ECODE_IGNORE blocks."""
     content = np.asarray(matrix, "<f4").tobytes() + bytes(8)
     for _ in range(2):
         image.header.extensions.append(nb.nifti1.Nifti1Extension(0, content))

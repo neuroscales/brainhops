@@ -119,7 +119,7 @@ def test_the_pint_free_names_are_what_pint_gives() -> None:
         parsed = units._parse(units._ALIASES.get(name, name))
         assert units._canonical_name(parsed) == canonical, name
         assert str(parsed.dimensionality) == dimension, name
-    # Only the names that brainhops builds at import time.
+    # The table holds only the names that brainhops builds at import time.
     assert set(units._PINT_FREE) == {"index", "mm", "millimeter"}
 
 

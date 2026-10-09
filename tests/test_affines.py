@@ -127,7 +127,6 @@ def test_rmdiv_matches_homogeneous_baseline() -> None:
 
 def test_axis_scales_of_a_rotated_anisotropic_matrix() -> None:
     # The scales are the column norms of the linear part, which a rotation
-    #
     # does not change.
     theta = 0.4
     rot = np.array(

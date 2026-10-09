@@ -229,11 +229,11 @@ def test_what_itk_refuses_is_refused() -> None:
     parameters, fixed = _parameters(3)
     name = "AffineTransform_double_3_3"
     refused = [
-        # Truncated values.
+        # The values are truncated.
         content[:-8],
-        # No fixed parameters, while ITK reads variables in pairs.
+        # The fixed parameters are missing, but ITK reads variables in pairs.
         _variable(name, parameters),
-        # Not column vectors, the only shape that ITK reads.
+        # The variables are not column vectors, the only shape that ITK reads.
         _variable(name, parameters, cols=12) + _variable("fixed", fixed),
         _variable(name, parameters, cols=2) + _variable("fixed", fixed),
     ]
@@ -271,7 +271,7 @@ def test_mat_is_dispatched_from_an_open_file(filename: Path) -> None:
 def test_sniffer_claims_only_itk_matlab_files() -> None:
     content = _fixture(3).read_bytes()
     assert MatTransform.sniff_bytes(content) == 1.0
-    # A MATLAB v4 variable not named after an ITK class.
+    # A MATLAB v4 variable that is not named after an ITK class is refused.
     assert MatTransform.sniff_bytes(_variable("data", [1.0, 2.0])) == 0.0
     # MATLAB v5 starts with a text header.
     v5 = b"MATLAB 5.0 MAT-file, Platform: GLNXA64".ljust(128, b" ")
@@ -434,7 +434,7 @@ def test_what_itk_cannot_hold_is_refused(tmp_path) -> None:  # noqa: ANN001
 
     matrix = _random_affine(3)
     refused = [
-        # Not the space that ITK works in.
+        # The affine is not in the space that ITK works in.
         MatTransform(
             [
                 xforms.Affine(
@@ -442,9 +442,9 @@ def test_what_itk_cannot_hold_is_refused(tmp_path) -> None:  # noqa: ANN001
                 )
             ]
         ),
-        # Not square.
+        # The matrix is not square.
         MatTransform([xforms.Affine(np.ones((2, 4)))]),
-        # A chain of blocks, or no block at all.
+        # The file holds a chain of blocks, or no block at all.
         MatTransform(
             transformations=[xforms.Affine(matrix), xforms.Affine(matrix)]
         ),
@@ -476,7 +476,7 @@ def test_written_files_are_read_by_itk(tmp_path) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("ndim", NDIMS)
 def test_ants_use_inverse_is_the_inverse(ndim: int) -> None:
-    """[file.mat,1] in an ANTs transform list is ~io.load(file.mat)."""
+    """An entry [file.mat,1] in an ANTs list is the inverse of the file."""
     inverse = ~io.load(_fixture(ndim))
     homogeneous = np.eye(ndim + 1)
     homogeneous[:ndim] = _expected(ndim)

@@ -566,7 +566,7 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct(
         assert type(folded) is _xforms.DisplacementField
         assert folded.store == "coefficients"
 
-        # compute() folds the trailing affine: two steps replace three.
+        # `compute()` folds the trailing affine, so two steps replace three.
         computed = _xforms.Sequence(
             transformations=list(coef.transformations)
         ).compute()

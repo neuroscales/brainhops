@@ -200,7 +200,8 @@ def test_mrtrix_states_times_in_seconds(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_mrtrix_orders_the_axes_after_the_spatial_ones(tmp_path) -> None:  # noqa: ANN001
-    # Time, then channels, after the spatial axes; the slice gains a z axis.
+    # Time and then channels follow the spatial axes, and the slice gains a
+    # z axis.
     values = np.random.rand(4, 5, 3, 2).astype("f4")
     xform = Scaling(scale=[1.0, 2.0, 3.0, 4.0], input=_system("cxty"))
     image = MrtrixImage(

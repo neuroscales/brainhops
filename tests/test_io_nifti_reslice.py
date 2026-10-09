@@ -157,7 +157,7 @@ def test_a_4d_nifti_resliced_onto_its_own_grid_is_unchanged(
 def test_a_4d_nifti_with_numpy_data_resliced_onto_its_own_geometry(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """The geometry is decoded once per header, so it cancels itself."""
+    """Reslicing an image onto its own geometry returns the same data."""
     data = np.arange(np.prod(SHAPE), dtype="float32").reshape(SHAPE)
     path = _save(tmp_path / "bold.nii.gz", data, _rotation(0.3))
     img = io.load(path)

@@ -57,7 +57,8 @@ NDIMS = [2, 3]
 SHAPES = {2: (4, 5), 3: (4, 5, 6)}
 """Small grid shapes in which no two axes have the same length."""
 
-# Permuted, flipped, anisotropic and offset, so that errors cannot cancel.
+# The voxel-to-RAS matrices are permuted, flipped, anisotropic and offset,
+# so that errors cannot cancel.
 VOX2RAS = {
     2: np.array(
         [
@@ -247,7 +248,7 @@ def test_a_constant_lps_displacement_moves_ras_points_with_x_y_negated(
     field = ItkNiftiDisplacementField.from_file(
         _write(tmp_path / "warp.nii.gz", vectors.copy())
     )
-    # On and between grid nodes alike.
+    # The points lie both on and between grid nodes.
     points_ras = np.array(
         [[10.0, -20.0, 30.0], [5.5, -17.0, 37.0], [1.0, -14.5, 45.0]]
     )[:, :ndim]
@@ -750,7 +751,7 @@ def test_points_move_where_itk_moves_them(tmp_path, ndim) -> None:  # noqa: ANN0
     path = tmp_path / "sitk.nii.gz"
     sitk.WriteImage(image, str(path))
 
-    # ITK layout, VECTOR intent and RAS geometry.
+    # The file has the ITK layout, the VECTOR intent and a RAS geometry.
     header = nb.load(str(path)).header
     assert int(header["intent_code"]) == VECTOR
     assert header.get_data_shape() == (

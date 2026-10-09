@@ -49,7 +49,8 @@ X, Y, Z = Axis(name="x"), Axis(name="y"), Axis(name="z")
 # A time axis has no unit unless one is given.
 T = TimeAxis(name="t", unit="second")
 
-# Unknown axes, as a list or a tuple; both are stored as the default [...].
+# Unknown axes spelled as a list or as a tuple. Both spellings are stored
+# as the default [...].
 UNKNOWN_SPELLINGS = {"[...]": [...], "(...,)": (...,)}
 
 # Where `...` sits among the explicit axes X and T.
@@ -439,7 +440,7 @@ def test_a_shared_name_is_ambiguous(any_layout: str) -> None:
     axes = AxisList([*ANY_LAYOUTS[any_layout], Axis(name="x")])
     with pytest.raises(ValueError, match="2 axes"):
         axes["x"]
-    # index and `in` find the first match, as lists do.
+    # Both `index` and `in` find the first match, as they do for lists.
     assert axes.index("x") == ANY_LAYOUTS[any_layout].index(X)
     assert "x" in axes
 
@@ -939,9 +940,9 @@ def test_compatible_refuses_a_non_system() -> None:
 # ----------------------------------------------------------------------
 #   DISPATCH OF OPEN SYSTEMS
 # ----------------------------------------------------------------------
-# Every dispatch predicate speaks about all axes, which an open system does
-# not know, so no predicate holds and a class called with open axes builds
-# that class itself.
+# Every dispatch predicate makes a claim about all axes, which an open
+# system does not know. No predicate therefore holds, and a class called
+# with open axes builds that class itself.
 
 MM = "mm"
 SAMPLE = "index"
@@ -1018,7 +1019,7 @@ def test_an_open_system_keeps_the_class_it_was_called_as(
 def test_no_dispatch_predicate_holds_of_an_open_list(
     predicate: tx.Callable, axes: tx.Optional[list]
 ) -> None:
-    # Neither an error nor a match, wherever `...` sits.
+    # The predicate neither raises nor matches, wherever `...` sits.
     assert predicate(axes) is False
     if axes is not None:
         assert predicate(AxisList(axes)) is False

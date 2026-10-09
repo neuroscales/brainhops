@@ -38,7 +38,8 @@ def test_value_coeff_round_trip(
     degree,  # noqa: ANN001
     bound,  # noqa: ANN001
 ) -> None:
-    # Values to coefficients and back recovers the samples, for every bound.
+    # Converting values to coefficients and back recovers the samples, for
+    # every bound.
     rng = np.random.default_rng(0)
     values = _random_field(rng, ndim)
     field = field_type(field=values.copy(), degree=degree, bound=bound)

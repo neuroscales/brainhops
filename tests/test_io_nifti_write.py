@@ -479,7 +479,8 @@ def _xyzt_system(order, unit_space, unit_time):  # noqa: ANN001, ANN202
     return CoordinateSystem(axes=[axes[n] for n in order])
 
 
-# x, y, z, t vox-to-world: a spatial affine, TR 2 s and offset 0.5 s.
+# The x, y, z, t vox-to-world matrix holds a spatial affine, a TR of 2 s
+# and a time offset of 0.5 s.
 XYZT = np.array(
     [
         [0.0, -2.0, 0.0, 0.0, 10.0],
@@ -491,7 +492,7 @@ XYZT = np.array(
 
 
 def _reordered(voxel_order, world_order):  # noqa: ANN001, ANN202
-    # XYZT with voxel columns and world rows in the given orders.
+    # Return XYZT with its voxel columns and world rows in the given orders.
     columns = ["xyzt".index(n) for n in voxel_order] + [4]
     rows = ["xyzt".index(n) for n in world_order]
     return XYZT[rows][:, columns]

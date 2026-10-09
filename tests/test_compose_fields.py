@@ -44,15 +44,15 @@ from brainhops.errors import (
     ConversionError,
 )
 
-# Anisotropic, sheared and shifted, far from the identity, so that a dropped
-#
-# setting or arithmetic on coefficients gives a large error.
+# The affine is anisotropic, sheared and shifted, far from the identity, so
+# that a dropped setting or arithmetic on coefficients gives a large error.
 AFFINE_MATRIX = np.array([[1.7, 0.4, 2.0], [-0.3, 0.9, -1.5]])
 
-# Large enough to keep the query points several nodes from every edge.
+# The grid keeps the query points several nodes away from every edge.
 GRID_SHAPE = (14, 15)
 
-# Offset from the nodes, so that a wrong spline degree changes the result.
+# The points are offset from the nodes, so that a wrong spline degree
+# changes the result.
 QUERY_POINTS = np.array(
     [[5.5, 6.5], [7.2, 8.1], [6.3, 5.7], [8.0, 9.0], [5.8, 7.4]]
 )
@@ -120,7 +120,6 @@ def test_fold_affine_into_field_matches_inorder_reference(
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
 
     # Under dask, the folded field is a dask array prefiltered chunk by chunk,
-    #
     # with a halo wide enough to match the prefilter over a whole axis.
     with backend(array_backend):
         field = field_type(
@@ -135,11 +134,8 @@ def test_fold_affine_into_field_matches_inorder_reference(
         result = _evaluate(folded, QUERY_POINTS)
 
     # The fold of a coordinate field is exact. The fold of a displacement field
-    #
     # of degree above 1 has an extra term, because the node grid that the
-    #
     # representation subtracts is not exactly reproduced by cubic interpolation
-    #
     # of a finite grid.
     interior_term = field_type is DisplacementField and degree > 1
     atol = 1e-3 if interior_term else 1e-10
@@ -161,7 +157,8 @@ def _sub3(name: str) -> CoordinateSystem:
     return CoordinateSystem(name=name, axes=[R(), A(), S()])
 
 
-# Sheared and shifted, so that a dropped or misplaced component is visible.
+# The affine is sheared and shifted, so that a dropped or misplaced
+# component is visible.
 SUB_AFFINE = np.array(
     [[1.3, 0.2, -0.1, 4.0], [0.0, 0.9, 0.3, -2.0], [0.1, 0.0, 1.1, 1.0]]
 )
@@ -281,7 +278,6 @@ def _coords_3d() -> CoordinatesField:
 
 def test_empty_subspace_coords_reindexes_like_the_affine_reduction() -> None:
     # Swapped axis vectors reindex the components, as the affine reduction
-    #
     # does; relabelling alone would not pass.
     To = _empty_subspace_3d([0, 1], [1, 0])
     Ti = _coords_3d()
@@ -393,7 +389,6 @@ def _field_wrapper(seed: int) -> SubspaceTransformation:
 
 def test_merge_adjacent_subspaces_drops_an_inverse_pair() -> None:
     # The pair cancels symbolically, leaving an identity rather than an empty
-    #
     # sequence.
     wrapper = _field_wrapper(4)
     computed = Sequence([wrapper.inverse(), wrapper]).compute(
@@ -431,7 +426,6 @@ def test_full_subspace_cancellation_computes_to_the_identity() -> None:
 
 def _subspace_reindex(input_axes, output_axes) -> SubspaceTransformation:  # noqa: ANN001
     # A subspace transform whose axis vectors move components from
-    #
     # `input_axes` to `output_axes`.
     return SubspaceTransformation(
         transformation=None,
@@ -444,7 +438,6 @@ def _subspace_reindex(input_axes, output_axes) -> SubspaceTransformation:  # noq
 
 def test_subspace_compose_identity_inner_keeps_axis_reindex() -> None:
     # The inner transforms cancel, but the axis vectors form a real
-    #
     # permutation, so the result is a reindex and not a bare identity.
     Ti = _subspace_reindex([0, 1, 2], [1, 2, 0])
     To = _subspace_reindex([1, 2, 0], [1, 2, 0])
@@ -458,7 +451,6 @@ def test_subspace_compose_identity_inner_keeps_axis_reindex() -> None:
     np.testing.assert_array_equal(composed.output_axes, [1, 2, 0])
 
     # Input axis i goes to output axis o for each (o, i) pair, and the time
-    #
     # axis passes through: y = [x2, x0, x1, x3].
     matrix = np.asarray(composed.to(Affine).matrix)
     expected = np.zeros((4, 5))
@@ -482,7 +474,8 @@ def test_subspace_compose_identity_inner_matching_axes_is_identity() -> None:
 
 
 def test_subspace_to_affine_on_a_field_inner_raises() -> None:
-    # A field inner cannot be reduced to an affine.
+    # A subspace whose inner transform is a field cannot be reduced to an
+    # affine.
     voxel = _sub3("voxel")
     warp = DisplacementField(
         field=np.zeros((4, 4, 4, 3)), input=voxel, output=voxel
@@ -528,7 +521,6 @@ def test_subspace_affine_embed_folds_a_non_interpolating_subspace() -> None:
 
 def test_interpolating_subspace_does_not_embed_into_an_affine() -> None:
     # A subspace wrapping a field interpolates, so it does not fold into an
-    #
     # affine and survives in a sequence.
     wrapper = _field_wrapper(7)
     aff = Affine(matrix=np.eye(4, 5), input=_full4("s"), output=_full4("s"))
@@ -543,7 +535,6 @@ def test_compose_cancels_inverse_by_identity_without_materializing(
     monkeypatch,  # noqa: ANN001
 ) -> None:
     # Cancellation runs before the numeric composers, so an affine composed
-    #
     # with its inverse never computes a matrix inverse.
     real_inv = np.linalg.inv
     calls = {"n": 0}
@@ -598,7 +589,6 @@ def test_a_3d_affine_refuses_a_4d_field() -> None:
 
 def test_restrictive_mode_prevents_field_through_field_composition() -> None:
     # The affine-only mode keeps two field wrappers apart; the default merges
-    #
     # them.
     first = _field_wrapper(4)
     second = _field_wrapper(5)
@@ -642,7 +632,6 @@ def test_compose_identity_with_lazy_inverse_stays_unmaterialized(
 
 def test_compose_tries_the_pair_simplifiers_before_any_composer() -> None:
     # No composer can materialize the inverse of a coordinate field, so only
-    #
     # the pair simplifiers can cancel the pair.
     cf = CoordinatesField(field=np.zeros((5, 6, 2)))
     assert isinstance(compose(cf.inverse(), cf), Identity)
@@ -652,7 +641,6 @@ def test_dispatch_order_and_terminal_composition_error(
     monkeypatch,  # noqa: ANN001
 ) -> None:
     # Only the most specific composer runs, and a `CompositionError` that it
-    #
     # raises is final: there is no fallback to a less specific composer.
     from bagof.dispatchers import Function
 
@@ -706,7 +694,6 @@ def test_matrix_that_changes_axes_is_not_folded_into_a_displacement(
     rows: int, affine: bool
 ) -> None:
     # A displacement field maps a space onto itself, so a matrix that changes
-    #
     # the number of axes cannot be folded into it and stays in the sequence.
     rng = np.random.default_rng(0)
     field = DisplacementField(field=rng.normal(size=(4, 5, 3, 3)) * 0.3)

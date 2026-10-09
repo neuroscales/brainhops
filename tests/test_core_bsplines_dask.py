@@ -281,7 +281,6 @@ def test_dask_coefficients_are_scipys(
     )
     assert lazy.chunks == da.from_array(values, chunks=(1, *chunks)).chunks
     # scipy approximates the reflect extension, also used by nearest, near
-    #
     # the edges of a short axis.
     atol = 1e-6 if bound in ("reflect", "nearest") else 1e-9
     np.testing.assert_allclose(np.asarray(lazy), expected, atol=atol)

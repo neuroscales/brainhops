@@ -32,7 +32,6 @@ from brainhops.errors import AxisError
 
 def _messages(error: BaseException) -> list:
     # Every message in the chain of causes, including the failed union
-    #
     # branches kept in `causes`.
     seen, todo, out = set(), [error], []
     while todo:
@@ -161,7 +160,6 @@ def test_an_axis_of_another_unit_kind_is_not_read_as_spatial() -> None:
 
 def test_a_sibling_axis_is_read_field_by_field() -> None:
     # An axis with an arbitrary orientation is a sibling of `SpaceAxis`, and
-    #
     # is still read field by field rather than as the name of the new axis.
     orientation = Orientation(value="toward-the-light")
     axis = Axis(name="x", orientation=orientation, unit="mm")
@@ -229,7 +227,6 @@ def test_compatible_refuses_a_non_axis(other: object) -> None:
 
 def test_an_axis_with_defaults_is_not_unknown() -> None:
     # Only `Axis()` is unknown. A `SpaceAxis` states its type, but its unit
-    #
     # stays None, and thus compatible with any unit, until one is given.
     assert SpaceAxis() != Axis()
     assert SpaceAxis(unit=None) != Axis()

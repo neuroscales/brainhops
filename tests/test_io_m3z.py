@@ -32,7 +32,7 @@ SHAPE = (4, 3, 5)
 
 SPACING = 2
 
-# Source image: 1.5 x 1 x 2 mm voxels with permuted axes.
+# The source image has 1.5 x 1 x 2 mm voxels and permuted axes.
 IMAGE = dict(
     valid=1,
     shape=(20, 18, 16),
@@ -43,7 +43,8 @@ IMAGE = dict(
     cras=(3.0, -7.0, 11.0),
     fname=b"/subjects/bert/mri/norm.mgz",
 )
-# Atlas: LIA, 1 mm, the node grid times the spacing.
+# The atlas is LIA with 1 mm voxels, and its shape is the node grid
+# times the spacing.
 ATLAS = dict(
     valid=1,
     shape=(8, 6, 10),
@@ -70,7 +71,7 @@ LINEAR = np.array(
 
 
 def _vox2ras(geom: tx.Dict[str, tx.Any]) -> np.ndarray:
-    """Transcribe VGgetVoxelToRasXform: shape / 2 lands at c_ras."""
+    """Transcribe VGgetVoxelToRasXform, which maps voxel shape / 2 to c_ras."""
     m = np.eye(4)
     m[:3, 0] = np.multiply(geom["xras"], geom["size"][0])
     m[:3, 1] = np.multiply(geom["yras"], geom["size"][1])
@@ -81,7 +82,7 @@ def _vox2ras(geom: tx.Dict[str, tx.Any]) -> np.ndarray:
 
 
 def _positions(shape: tx.Tuple[int, int, int] = SHAPE) -> np.ndarray:
-    """Source voxel positions, affine in the node index plus a bump."""
+    """Return source voxel positions, affine in the node index plus a bump."""
     i, j, k = np.meshgrid(*map(np.arange, shape), indexing="ij")
     return np.stack(
         [
@@ -223,7 +224,8 @@ def test_read_without_tags(tmp_path: Path) -> None:
     s = morph.struct
     assert s.tags == () and s.image is None and s.labels is None
     assert s.coordinates == GCAM_VOX and s.xform is None
-    # FreeSurfer default geometry: 256^3, 1 mm, LIA, centred.
+    # The default FreeSurfer geometry is a centred 256^3 grid of 1 mm LIA
+    # voxels.
     lia = _vox2ras(
         dict(
             shape=(256, 256, 256),

@@ -276,7 +276,8 @@ def test_shapes_2d() -> None:
     xform = TxtMatrixAffine.from_text(_text(a2[:2]))
     assert np.allclose(_homog(xform), a2)
     assert isinstance(xform.input, systems.CoordinateSystem2D)
-    # (3, 3) is 3-D linear by default, 2-D homogeneous with ndim=2.
+    # A (3, 3) matrix is 3-D linear by default and 2-D homogeneous with
+    # ndim=2.
     assert _homog(TxtMatrixAffine.from_text(_text(a2))).shape == (4, 4)
     xform = TxtMatrixAffine.from_text(_text(a2), ndim=2)
     assert np.allclose(_homog(xform), a2)
@@ -321,7 +322,7 @@ def test_defaults() -> None:
 def test_row_vector_convention() -> None:
     xform = TxtMatrixAffine.from_text(_text(A.T), vector="row")
     assert np.allclose(_homog(xform), A)
-    # (4, 3) row-vector equals (3, 4) column-vector.
+    # A (4, 3) row-vector matrix equals the (3, 4) column-vector one.
     xform = TxtMatrixAffine.from_text(_text(A[:3].T), vector="row")
     assert np.allclose(_homog(xform), A)
     assert np.allclose(np.asarray(xform.raw_matrix), A[:3].T)
@@ -408,7 +409,7 @@ def test_images_place_voxel_spaces_in_world() -> None:
     expected = tgt_aff @ vox2vox @ np.linalg.inv(src_aff)
     assert np.allclose(_homog(xform), expected)
 
-    # An image only places voxel spaces.
+    # A source image only places voxel spaces, so a RAS input is refused.
     with pytest.raises(ParserContentError):
         TxtMatrixAffine.from_text(_text(A), input="ras", source=src)
 

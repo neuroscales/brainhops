@@ -40,8 +40,8 @@ from brainhops.datamodel.transformations import (
 
 
 def _M(t: object, node: str, policy: object = "analytic") -> bool:
-    # The policy accepts the old ladder words; only 'numeric' or True reads
-    # values.
+    # The policy still accepts the old ladder words, but only 'numeric' or
+    # True reads values.
     compute = policy == "numeric" or policy is True
     return is_kind(t, getattr(H, node), compute=compute)
 
@@ -93,7 +93,7 @@ def test_none_parameter_is_identity() -> None:
 
 
 def test_square_affine_is_optimistically_invertible() -> None:
-    a = Affine(matrix=np.eye(4)[:3])  # 3-D -> 3-D, square
+    a = Affine(matrix=np.eye(4)[:3])  # 3-D to 3-D, square
     assert _M(a, "AffineTransformation")
     assert _M(a, "InvertibleAffineTransformation")
     assert _M(a, "BijectiveTransformation")
@@ -102,7 +102,7 @@ def test_square_affine_is_optimistically_invertible() -> None:
 
 
 def test_wide_affine_is_surjective_only() -> None:
-    w = Affine(matrix=np.zeros((2, 4)))  # 3-D -> 2-D
+    w = Affine(matrix=np.zeros((2, 4)))  # 3-D to 2-D
     assert _M(w, "AffineTransformation")
     assert _M(w, "SurjectiveTransformation")
     assert not _M(w, "InvertibleAffineTransformation")
@@ -111,7 +111,7 @@ def test_wide_affine_is_surjective_only() -> None:
 
 
 def test_tall_affine_is_injective_only() -> None:
-    t = Affine(matrix=np.zeros((4, 3)))  # 2-D -> 4-D
+    t = Affine(matrix=np.zeros((4, 3)))  # 2-D to 4-D
     assert _M(t, "InjectiveTransformation")
     assert not _M(t, "SurjectiveTransformation")
     assert not _M(t, "InvertibleAffineTransformation")
@@ -180,11 +180,11 @@ def test_numeric_retracts_singular_square() -> None:
 
 
 def test_numeric_retracts_rank_deficient_wide_and_tall() -> None:
-    # 3-D -> 2-D, linear block of rank 1
+    # 3-D to 2-D, linear block of rank 1
     wide = Affine(matrix=np.array([[1.0, 1, 1, 0], [2, 2, 2, 0]]))
     assert _M(wide, "SurjectiveTransformation", "analytic")
     assert not _M(wide, "SurjectiveTransformation", "numeric")
-    # 2-D -> 4-D, linear block of rank 1
+    # 2-D to 4-D, linear block of rank 1
     tall = Affine(
         matrix=np.array([[1.0, 2, 0], [2, 4, 0], [0, 0, 0], [0, 0, 0]])
     )
@@ -235,7 +235,7 @@ def test_subspace_reindex_permutes() -> None:
         input_axes=[0, 1],
         output_axes=[1, 0],
     )
-    # No longer a pure translation, but still Euclidean.
+    # The result is no longer a pure translation, but it is still Euclidean.
     assert _M(subT, "EuclideanTransformation")
     assert _M(subT, "BijectiveTransformation")
     assert _M(subT, "AffineTransformation")
@@ -458,7 +458,7 @@ def test_mode_concrete_class_means_isinstance() -> None:
 
 def test_mode_Aff_admits_only_invertible_affines() -> None:
     # A wide affine is affine but not invertible, so mode='Aff' rejects it.
-    wide = Affine(matrix=np.zeros((2, 4)))  # 3-D -> 2-D
+    wide = Affine(matrix=np.zeros((2, 4)))  # 3-D to 2-D
     assert is_kind(wide, H.Affine)
     assert not is_kind(wide, H.InvertibleAffine)
 
@@ -480,7 +480,8 @@ def test_selection_memo_follows_registry_and_values() -> None:
     ik = IsKind()
     ik.register(Source, H.Affine)(lambda x, kind, compute: x.flag)
 
-    # Same type, different values: the selection is shared, the answer not.
+    # With the same type but other values, the selection is shared but the
+    # answer is not.
     assert ik(Source(flag=True), H.Matrix)
     assert not ik(Source(flag=False), H.Matrix)
 

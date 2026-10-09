@@ -91,7 +91,7 @@ def test_a_structured_source_is_read_with_its_hints(tmp_path) -> None:  # noqa: 
 
 
 def test_keyword_options_reach_the_reader(tmp_path) -> None:  # noqa: ANN001
-    # mmap is a nibabel.load option, so keywords reach load.
+    # `mmap` is a `nibabel.load` option, so keywords reach load.
     source = _write_image(tmp_path / "image.nii")
     image = NiftiImage.from_any(source, mmap=False)
     assert np.array_equal(np.asarray(image.data), DATA)

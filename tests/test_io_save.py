@@ -170,7 +170,8 @@ def test_an_ambiguity_tells_the_user_how_to_choose(formats, tmp_path) -> None:  
     message = str(raised.value)
     lines = message.splitlines()
 
-    # The file and the object, then one line per candidate in order.
+    # The message names the file and the object, then lists one line per
+    # candidate in order.
     assert "'x.n'" in lines[0] and "Note" in lines[0]
     assert "2 formats" in lines[0]
     # Each candidate is described by its own docstring, with the call that
