@@ -180,6 +180,8 @@ class IsKind:
         self._memo: tx.Optional[tx.Tuple[object, tx.Dict[Key, Selection]]]
         self._memo = None
 
+    # -- registration ---------------------------------------------------
+
     def register(self, *args: tx.Any) -> tx.Any:
         """Register a checker, or return a decorator that registers one.
 
@@ -259,6 +261,8 @@ class IsKind:
         self._registry[(source, node)] = shim
         self._memo = None  # a new checker can change any selection
 
+    # -- dict-like lookup (for `checkers`) ------------------------------
+
     def __contains__(self, key: Key) -> bool:
         return key in self._registry
 
@@ -266,6 +270,8 @@ class IsKind:
         """Return the checker registered for `(source, node)`, or `default`."""
         shim = self._registry.get(key)
         return default if shim is None else shim._impl
+
+    # -- calling --------------------------------------------------------
 
     def __call__(
         self, x: Transformation, kind: KindLike, compute: bool = False
@@ -309,6 +315,8 @@ class IsKind:
             if impl(x, kind, compute):
                 return True
         return False
+
+    # -- selection ------------------------------------------------------
 
     def _selection(
         self, x: Transformation, kind: Kind, compute: bool
