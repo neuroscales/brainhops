@@ -1,25 +1,31 @@
 """Restriction of a transformation to a block of its axes, and embedding back.
 
-The factor pass cuts a chain into independent axis groups with two
-dispatched operations, and this module is the single place that knows, type
-by type, how to perform them. `restrict(t, rows, cols, ni, no)` returns the
-piece of `t` that maps the input axes `cols` to the output axes `rows`.
-The block must be decoupled from the other axes, which the factor pass
-guarantees. `embed(t, in_axes, out_axes, ni, no)` is the reverse: the
-local-space form of `SubspaceTransformation(t, in_axes, out_axes)`, in which
-the other axes pass through in order.
+The factor pass splits a chain into groups of axes that transform
+independently. To do so, it cuts each element of the chain into the pieces
+that concern each group, and it sometimes places a piece back into a wider
+space. This module defines the two dispatched operations that perform these
+steps, and it is the only place that knows how to perform them for each
+type of transformation.
 
-Both operations keep the cheaper type (a restricted Scaling stays a
-Scaling), keep a lazy inverse lazy by restricting its forward
-transformation, and return `t` itself when the block covers everything it
-acts on, so that `Sub(warp) . Sub(warp^-1)` still cancels by identity. An
-embedding is a plain Affine when `t` has an affine reading. Writing these
-operations as compositions with a Projection would lose all of these
-properties, and the required composers do not exist.
+`restrict(t, rows, cols, ni, no)` returns the piece of `t` that maps the
+input axes `cols` to the output axes `rows`. The block must be decoupled
+from the other axes, which the factor pass guarantees.
+`embed(t, in_axes, out_axes, ni, no)` performs the reverse operation. It
+returns the form of `SubspaceTransformation(t, in_axes, out_axes)` over the
+whole local space, in which the other axes pass through in order.
 
-Rules are [`bagof.dispatchers`][] functions keyed on the type of `t`, and
-the built-in ones live in the `restrictors` module. A new class registers
-its rules as follows:
+Both operations keep the cheaper type, so that a restricted Scaling stays a
+Scaling, and both keep a lazy inverse lazy. Restriction does so by
+restricting the forward transformation, and it returns `t` itself when the
+block covers every axis that `t` acts on, so that `Sub(warp) . Sub(warp^-1)`
+still cancels by object identity. An embedding is a plain Affine when the
+affine matrix of `t` can be read. Writing these operations as compositions
+with a Projection would lose all of these properties, and the composers that
+such compositions require do not exist.
+
+Each rule is registered with a [`bagof.dispatchers`][] function, which
+selects the rule from the type of `t`. The built-in rules live in the
+`restrictors` module, and a new class registers its own rules as follows:
 
 ```python
 @restrictor
@@ -57,7 +63,7 @@ _embed: Function = Function("embed")
 
 
 def restrictor(func: tx.Callable) -> tx.Callable:
-    """Register a restriction rule, keyed on the hint of its first parameter.
+    """Register a restriction rule for the type hint of its first parameter.
 
     A rule takes `(t, rows, cols, ni, no)` and returns the restricted
     transformation, or None for an identity piece.
@@ -67,7 +73,7 @@ def restrictor(func: tx.Callable) -> tx.Callable:
 
 
 def embedder(func: tx.Callable) -> tx.Callable:
-    """Register an embedding rule, keyed on the hint of its first parameter.
+    """Register an embedding rule for the type hint of its first parameter.
 
     A rule takes `(t, in_axes, out_axes, ni, no)` and returns the embedded
     transformation.
@@ -84,6 +90,10 @@ def restrict(
     no: tx.Optional[int] = None,
 ) -> tx.Optional["Transformation"]:
     """Restrict a transformation to a decoupled block of its axes.
+
+    The block is described by the output axes `rows` and the input axes
+    `cols`. The block is decoupled when the outputs in `rows` depend only on
+    the inputs in `cols`, and no other output depends on those inputs.
 
     Parameters
     ----------
@@ -147,8 +157,9 @@ def embed(
     Returns
     -------
     Transformation
-        An Affine from `ni` to `no` axes if `t` has an affine reading, and
-        otherwise a SubspaceTransformation that wraps `t`.
+        An Affine from `ni` to `no` axes if the affine matrix of `t` can be
+        read, and otherwise a SubspaceTransformation that wraps `t`. A lazy
+        inverse is always wrapped, so that it is not materialized.
 
     Raises
     ------
@@ -168,8 +179,8 @@ def embed(
 def _resolve_counts(
     t: tx.Any, ni: tx.Optional[int], no: tx.Optional[int]
 ) -> tx.Tuple[int, int]:
-    # Given counts are checked against those stated by `t`; omitted ones are
-    # taken from `t`.
+    # Check each given axis count against the count stated by `t`, and take
+    # each omitted count from `t`.
     stated = axis_counts(t)
     resolved = []
     for given, known, side in zip((ni, no), stated, ("input", "output")):

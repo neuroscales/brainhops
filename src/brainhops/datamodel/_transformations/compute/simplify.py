@@ -1,31 +1,38 @@
 """Simplification: optional rewrites into an equivalent, cheaper form.
 
-A simplifier has one of two arities, registered as overloads of a single
-dispatched function that [`simplify`][] selects by the number of arguments.
-A simplifier with one input, `f(t, policy)`, always returns a
-transformation, possibly `t` itself; it downcasts a leaf, for example an
-Affine whose matrix is a permutation into a Permutation. A simplifier with
-two inputs, `f(first, second, policy)`, rewrites a pair at no cost (a
-transformation next to its inverse becomes the identity) or returns None to
-decline, which is a common answer and not an exception. `first` is applied
-before `second`, as in a [`Sequence`][].
+Simplification replaces a transformation, or a pair of consecutive
+transformations, by an equivalent that is cheaper to store or to apply. The
+rules that do so are called simplifiers. They are all registered with one
+dispatched function, which [`simplify`][] calls with either one or two
+transformations. A simplifier that takes one transformation, called as
+`f(t, policy)`, always returns a transformation, possibly `t` itself. It
+downcasts the transformation to a cheaper type, so that, for example, an
+Affine whose matrix is a permutation becomes a Permutation. A simplifier
+that takes two transformations, called as `f(first, second, policy)`,
+either replaces the pair by one transformation at no cost, as when a
+transformation next to its inverse becomes the identity, or returns None to
+decline. Declining is a common answer and not an error. As in a
+[`Sequence`][], `first` is applied before `second`.
 
-Simplification is optional and never raises, unlike composition with
-[`compose`][brainhops.datamodel._transformations.compose.compose], whose
-refusal raises a CompositionError. The sweep of a sequence asks every
-adjacent pair and mostly hears no, so it needs this contract. A simplifier
-never lengthens a sequence and never reconciles a boundary, which is the
-business of composition, so a pair whose systems disagree is declined.
-`compose` tries the pair simplifiers first, because a cost-free rewrite is
-always right when it applies, and for a pair such as `~field @ field` it is
-the only answer.
+Simplification is optional and never raises. Composition with
+[`compose`][brainhops.datamodel._transformations.compose.compose] differs
+in this respect, because it raises a CompositionError when it refuses a
+pair. The simplification of a sequence asks every adjacent pair and is
+usually told no, so declining must be silent. A simplifier never makes a
+sequence longer and never reconciles the coordinate systems of two
+neighbours, which is the job of composition, so it declines a pair whose
+systems disagree. `compose` tries the pair simplifiers first, because a
+cost-free rewrite is always correct when it applies, and for a pair such as
+`~field @ field` it is the only answer.
 
 Each simplifier receives, as `policy`, a [`SimplifyTable`][] that maps a
-[`TransformationFamily`][] to a [`SimplifyPolicy`][], with a fallback under
-the key None. The simplifier resolves the table against the transformation
-in hand to none (leave it), analytic (read structure only) or numeric (read
-values). A table is passed instead of a resolved level so that a wrapper
-can resolve its inner transformation against the caller's own keys.
+[`TransformationFamily`][] to a [`SimplifyPolicy`][], with a fallback
+policy under the key None. The simplifier resolves the table against the
+transformation in hand, which gives one of three levels: none leaves the
+transformation alone, analytic reads only its structure, and numeric also
+reads its values. A table is passed instead of a resolved level so that a
+wrapper can resolve its inner transformation against the keys that the
+caller gave.
 """
 
 __all__ = [
@@ -61,10 +68,18 @@ if tx.TYPE_CHECKING:
     from ..base import Transformation
 
 LeafSimplifier = tx.Callable[..., "Transformation"]
-"""Simplifier `f(t, policy)`, which always returns a transformation."""
+"""Simplifier for a single transformation, which always returns one.
+
+A leaf simplifier is called as `f(t, policy)`, and it returns `t` itself
+when nothing applies.
+"""
 
 PairSimplifier = tx.Callable[..., tx.Optional["Transformation"]]
-"""Simplifier `f(first, second, policy)`, which may return None."""
+"""Simplifier for two consecutive transformations, which may decline.
+
+A pair simplifier is called as `f(first, second, policy)`, and it returns
+None when the pair does not collapse.
+"""
 
 
 # ======================================================================
@@ -93,16 +108,20 @@ SimplifyLike: tx.TypeAlias = tx.Union[
 # ======================================================================
 
 
-# Both arities are overloads of one function, with call shapes that never
-# compete. A leaf rule is total and the most specific one wins. A pair rule is
-# partial and several may apply with none more specific, so `simplify` walks
-# _simplify.candidates() most specific first, ties in registration order, until
-# one does not decline.
+# Leaf rules and pair rules are registered on one function, and the two
+# never compete, because a call with one transformation matches only leaf
+# rules and a call with two matches only pair rules. A leaf rule always gives
+# an answer, so the most specific one is called. A pair rule may decline,
+# and several pair rules may apply without one being more specific than the
+# others. `simplify` therefore walks through _simplify.candidates(), from the
+# most specific rule to the least specific and in registration order among
+# ties, until one rule does not decline.
 _simplify: Function = Function("simplify")
 
 
 def _arity_from_hints(func: tx.Callable) -> int:
-    # Every parameter except `policy` and the catch-alls is an operand.
+    # Count the operands of a rule, which are all of its parameters except
+    # `policy` and the catch-all `*args` and `**kwargs`.
     n = sum(
         1
         for name, param in inspect.signature(func).parameters.items()
@@ -118,16 +137,16 @@ def _arity_from_hints(func: tx.Callable) -> int:
 
 
 def _register_leaf(func: tx.Callable) -> tx.Callable:
-    # A genuine tie between two leaves raises AmbiguousMethodError when a call
-    # reaches it.
+    # Two leaf rules that are equally specific for the same type are a real
+    # conflict, and a call that reaches them raises AmbiguousMethodError.
     _simplify.register(func)
     return func
 
 
 def _register_pair(func: tx.Callable) -> tx.Callable:
-    # Specificity ties between pairs (about 255) are not defects: candidates()
-    # returns them in registration order, and no single-winner call is made on
-    # a pair.
+    # Pair rules are often equally specific, with about 255 such ties. These
+    # ties are not defects, because candidates() returns tied rules in
+    # registration order and no call on a pair asks for a single winner.
     _simplify.register(func)
     return func
 
@@ -155,11 +174,14 @@ def simplifier(func: tx.Callable) -> tx.Callable:
 def simplifier(*args) -> tx.Callable:
     """Register a simplifier.
 
-    Used bare, as `@simplifier`, the decorator reads the operand types from the
-    hints of every parameter except `policy`: one operand makes a leaf
-    simplifier, and two make a pair simplifier. Called with explicit types, as
-    in `@simplifier(Identity, Transformation)`, it keys the simplifier on those
-    types instead, which suits generated simplifiers that carry no hints.
+    A simplifier is a rule that rewrites one transformation, or a pair of
+    consecutive transformations, into a cheaper equivalent. Used bare, as
+    `@simplifier`, the decorator reads the operand types from the type hints
+    of every parameter except `policy`. One operand makes a leaf simplifier,
+    and two operands make a pair simplifier. Called with explicit types, as
+    in `@simplifier(Identity, Transformation)`, the decorator registers the
+    simplifier for those types instead, which suits generated simplifiers
+    that carry no hints.
     """
     if len(args) == 1 and not isinstance(args[0], type):
         func = args[0]
@@ -173,8 +195,9 @@ def simplifier(*args) -> tx.Callable:
     types = args
 
     def decorator(func: tx.Callable) -> tx.Callable:
-        # Overlay the operand hints and leave `policy` and the catch-alls as
-        # written.
+        # The explicit types are laid over the hints of the operands, followed
+        # by SimplifyTable for `policy`. The catch-all parameters keep the
+        # hints that they were written with.
         overlay = (*types, SimplifyTable)
         _simplify.register(overlay)(func)
         return func
@@ -238,7 +261,7 @@ def simplify(
         One transformation to downcast, or two consecutive ones (`first` before
         `second`) to collapse.
     policy : SimplifyLike, default=SimplifyPolicy.analytic
-        How hard each transformation may be inspected. Anything that
+        How closely each transformation may be inspected. Anything that
         [`SimplifyTable.from_like`][] accepts is normalized to a
         [`SimplifyTable`][] before dispatch.
 
@@ -291,10 +314,11 @@ def simplify(
     first, second = transformations
 
     if boundary_disagrees(first, second):
-        # Pair rules assume that the two sides of the boundary line up; a rule
-        # that drops an operand would otherwise swallow the reordering or flip
-        # between them. Reconciling is the job of `adapt`, which inserts an
-        # element, and compute bridges before simplifying.
+        # Pair rules assume that the output system of `first` lines up with
+        # the input system of `second`. Otherwise, a rule that drops one
+        # operand would also drop the reordering or the flip of axes between
+        # them. Reconciling the two systems is the job of `adapt`, which
+        # inserts an element, and compute runs this step before simplifying.
         return None
 
     # The first rule that does not decline gives the collapse. When every rule
@@ -319,7 +343,8 @@ _POLICY_RANK = {
     SimplifyPolicy.numeric: 2,
 }
 
-# Resolves a SimplifyPolicy by value and by lower-cased name.
+# This converter resolves a SimplifyPolicy from its value or from its
+# lower-case name.
 _to_policy = get_converter(SimplifyPolicy)
 
 
@@ -352,8 +377,10 @@ def normalize_policy(value: tx.Any) -> SimplifyPolicy:
 
 
 def _safest_policy(*policies: SimplifyPolicy) -> SimplifyPolicy:
-    # SimplifyPolicy is a StrEnum, so comparing with < would follow string
-    # order and rank 'analytic' below 'none'. Always rank through _POLICY_RANK.
+    # Return the safest policy, which is the one that allows the least
+    # rewriting. SimplifyPolicy is a StrEnum, so comparing with < would follow
+    # string order and rank 'analytic' below 'none'. The policies are
+    # therefore always ranked through _POLICY_RANK.
     return min(policies, key=_POLICY_RANK.__getitem__)
 
 
@@ -386,8 +413,8 @@ class SimplifyTable(dict):
     """
 
     def __setitem__(self, family: Family, policy: SimplifyPolicy) -> None:
-        # Colliding keys keep the safest policy, the same tie-break as in
-        # resolution.
+        # When a family is set twice, the table keeps the safer of the two
+        # policies, which is the same rule that resolution uses for ties.
         if family in self:
             policy = _safest_policy(self[family], policy)
         super().__setitem__(family, policy)
@@ -416,9 +443,9 @@ class SimplifyTable(dict):
         if _is_policy_like(value):
             return cls({None: normalize_policy(value)})
 
-        # Otherwise the value names families, which become analytic while the
-        # fallback stays none: look at these kinds and leave everything else
-        # alone.
+        # Otherwise, the value names families. Those families are simplified
+        # analytically, and the fallback stays none, so that every other
+        # transformation is left alone.
         return cls.from_families(value)
 
     @classmethod
@@ -443,7 +470,8 @@ class SimplifyTable(dict):
         if isinstance(value, cls):
             return value
 
-        fallback = SimplifyPolicy.analytic  # no None key
+        # The fallback is analytic when the mapping has no None key.
+        fallback = SimplifyPolicy.analytic
         table = cls()
         for family, policy in value.items():
             policy = normalize_policy(policy)
@@ -455,17 +483,17 @@ class SimplifyTable(dict):
         return table
 
     def is_noop(self) -> bool:
-        """Whether the table leaves every transformation untouched."""
+        """Return whether the table leaves every transformation untouched."""
         return all(p is SimplifyPolicy.none for p in self.values())
 
     def resolve(self, *transformations: "Transformation") -> SimplifyPolicy:
         """Resolve the policy of one or several transformations.
 
-        Every entry whose family admits a transformation applies, and the
-        safest of those policies wins; when no entry matches, the fallback
-        applies. For several transformations, the safest of their policies
-        wins, so a pair is rewritten only as hard as its most protected member
-        allows.
+        Each entry whose family contains the transformation applies to it,
+        and the safest of those policies wins. When no entry matches, the
+        fallback applies. For several transformations, the safest of their
+        policies wins, so a pair is rewritten only as far as its most
+        protected member allows.
         """
         return _safest_policy(*map(self._resolve_one, transformations))
 
@@ -479,8 +507,8 @@ class SimplifyTable(dict):
 
 
 ANALYTIC_FLOOR = SimplifyTable({None: SimplifyPolicy.analytic})
-"""Table that allows structural rewrites of anything, numeric ones of nothing.
+"""Table that allows structural rewrites of everything and no numeric ones.
 
-This is the floor that every caller gets for free. `compose` uses it for
-the cost-free tier that it tries before fusing anything.
+Every caller gets this level of simplification for free. `compose` uses it
+for the cost-free tier that it tries before fusing anything.
 """
