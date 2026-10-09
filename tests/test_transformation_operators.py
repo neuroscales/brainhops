@@ -19,6 +19,7 @@ from brainhops.datamodel.systems import (
 from brainhops.datamodel.transformations import (
     UNARY_OPERATORS,
     Affine,
+    AffineExponential,
     Bijection,
     CartesianField,
     CoordinatesField,
@@ -29,6 +30,7 @@ from brainhops.datamodel.transformations import (
     Projection,
     Rotation,
     Scaling,
+    ScalingExponential,
     Sequence,
     Sqrt,
     StationaryVelocityField,
@@ -544,3 +546,16 @@ GENERATOR = np.array([[0.05, -0.2], [0.2, 0.03]])
 def _linear_velocity(**kwargs) -> DisplacementField:
     grid = _grid(SHAPE)
     return DisplacementField(field=(grid - CENTER) @ GENERATOR.T, **kwargs)
+
+
+@pytest.mark.parametrize("operator", ["sqrt", "square"])
+@pytest.mark.parametrize("cls", [AffineExponential, ScalingExponential])
+def test_the_root_and_square_of_an_unset_tangent_are_unset(
+    cls: type, operator: str
+) -> None:
+    # Regression test for #383: unset data stands for the identity, whose
+    # square root and square are the identity itself.
+    tangent = cls()
+    result = getattr(tangent, operator)()
+    assert type(result) is cls
+    assert result.data is None

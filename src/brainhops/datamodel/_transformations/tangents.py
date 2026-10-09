@@ -58,12 +58,18 @@ class TangentMixin:
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         require_endomorphism(self, "square root")
-        obj = replace(self, data=self.data * 0.5)
+        # Unset data stands for the identity, which is returned unchanged.
+        obj = self
+        if self.data is not None:
+            obj = replace(self, data=self.data * 0.5)
         return obj.compute(**kwargs) if compute else obj
 
     def square(self, compute: bool = False, **kwargs) -> Transformation:
         require_endomorphism(self, "square")
-        obj = replace(self, data=self.data * 2.0)
+        # Unset data stands for the identity, which is returned unchanged.
+        obj = self
+        if self.data is not None:
+            obj = replace(self, data=self.data * 2.0)
         return obj.compute(**kwargs) if compute else obj
 
     def _target_class(
