@@ -553,8 +553,8 @@ def _linear_velocity(**kwargs) -> DisplacementField:
 def test_the_root_and_square_of_an_unset_tangent_are_unset(
     cls: type, operator: str
 ) -> None:
-    # Regression test for #383: unset data stands for the identity, whose
-    # square root and square are the identity itself.
+    # Unset data stands for the identity, whose square root and square
+    # are the identity itself.
     tangent = cls()
     result = getattr(tangent, operator)()
     assert type(result) is cls

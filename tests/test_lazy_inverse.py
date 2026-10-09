@@ -940,16 +940,16 @@ def test_an_equal_subspace_product_does_not_cancel() -> None:
 
 
 def test_the_coordinates_inverse_has_the_displacement_signature() -> None:
-    # Regression test for #379: the inverse of a coordinates field takes
-    # only `forward`, `input` and `output`, like the other lazy inverses.
+    # The inverse of a coordinates field takes only `forward`, `input`
+    # and `output`, like the other lazy inverses.
     coords = inspect.signature(InverseCoordinatesField).parameters
     disp = inspect.signature(InverseDisplacementField).parameters
     assert list(coords) == list(disp)
 
 
 def test_a_grid_inverse_keeps_the_flags_of_the_grid() -> None:
-    # Regression test for #380: the inverse of a grid encodes its `data`
-    # with the same flags as the grid.
+    # The inverse of a grid encodes its `data` with the same flags as
+    # the grid.
     grid = CartesianField(
         (4, 5, 6), degree=3, bound="mirror", store="coefficients"
     )
@@ -961,15 +961,16 @@ def test_a_grid_inverse_keeps_the_flags_of_the_grid() -> None:
 
 
 def test_the_inverse_of_an_unset_coordinates_field_is_unset() -> None:
-    # Regression test for #381.
+    # The inverse of a coordinates field without data has no data
+    # either.
     inverse = InverseCoordinatesField(CoordinatesField())
     assert inverse.data is None
 
 
 @pytest.mark.parametrize("cls", [DisplacementField, CoordinatesField])
 def test_a_computed_identity_inverse_is_computed(cls: type) -> None:
-    # Regression test for #382: `inverse(compute=True)` computes the
-    # inverse of an identity, as `inverse().compute()` does.
+    # The call `inverse(compute=True)` computes the inverse of an
+    # identity, as `inverse().compute()` does.
     forward = cls()
     expected = type(forward.inverse().compute())
     assert type(forward.inverse(compute=True)) is expected
@@ -977,8 +978,8 @@ def test_a_computed_identity_inverse_is_computed(cls: type) -> None:
 
 
 def test_a_computed_grid_inverse_passes_the_options_to_compute() -> None:
-    # Regression test for #382: the inverse of a grid passes `compute`
-    # and its options on to `compute()`.
+    # The inverse of a grid passes `compute` and its options on to
+    # `compute()`.
     grid = CartesianField((4, 5, 6))
     with mock.patch.object(
         CartesianField, "compute", autospec=True, return_value=grid
