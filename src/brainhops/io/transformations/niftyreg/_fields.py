@@ -815,8 +815,10 @@ def _(
     t: _xforms.Sequence, cls: tx.Type[NiftyRegSequence], **kwargs
 ) -> NiftyRegSequence:
     # NiftyReg stores a field on the grid of its file, in one of several
-    # encodings, and nothing converts to it yet (#312). Without this
-    # refusal, a chain would be relabelled as the format.
+    # encodings, and no exact conversion into it is written yet (#312).
+    # Without this refusal, the converters of the data model would
+    # rebuild a chain as the format with the same parameters, and the
+    # result would not be the map that the file says it holds.
     raise no_exact_conversion(t, cls)
 
 
@@ -824,9 +826,9 @@ def _(
 def _(
     t: NiftyRegSequence, cls: tx.Type[NiftyRegSequence], **kwargs
 ) -> NiftyRegSequence:
-    # Within its own format, a chain is changed by the rules of any chain,
-    # which keep its type. Another variant of the format is not converted
-    # to yet.
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type. A conversion
+    # into another variant of the format is not written yet.
     if not isinstance(t, cls):
         raise no_exact_conversion(t, cls)
     return smart_replace(t, cls, **kwargs)

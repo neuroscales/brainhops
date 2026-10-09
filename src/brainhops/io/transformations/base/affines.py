@@ -1,15 +1,18 @@
 """Format-independent affine transformations between the standard voxel,
 RAS and LPS coordinate systems.
 
-Each class is bound to the systems it names, and checks that its endpoints
-are compatible with them. The names of the axes are not compared, and an
-endpoint with fewer axes is compared with the first axes of the system, as
-the world of a 2-D image is the first two axes of RAS or LPS. A
-transformation between other systems is therefore not relabelled as one of
-these classes: `Scaling(input=LPSmm(), output=LPSmm()).to(VoxelToRAS)`
-raises an
-[`IncompatibleSystemError`][brainhops.errors.IncompatibleSystemError]. An
-endpoint that is not known, or has axes that are not known, is accepted.
+Each class is bound to the coordinate systems that its name states, and
+it checks, when it is built, that its endpoints are compatible with
+those systems. The names of the axes are not compared. An endpoint with
+fewer axes than the system is compared with the first axes of the
+system, because the world of a 2-D image is made of the first two axes
+of RAS or LPS. An endpoint that is not known, or whose axes are not
+known, is accepted.
+
+The check means that a transformation between other systems cannot be
+given one of these classes while keeping its parameters. For example,
+`Scaling(input=LPSmm(), output=LPSmm()).to(VoxelToRAS)` raises an
+[`IncompatibleSystemError`][brainhops.errors.IncompatibleSystemError].
 """
 
 import typing_extensions as tx
@@ -124,14 +127,23 @@ def _check_endpoint(
     """
     Refuse an endpoint of `t` that cannot be the system its class names.
 
-    The endpoint (`name` is `"input"` or `"output"`) must be compatible with
-    `expected`, in the sense of
+    The endpoint must be compatible with `expected`, in the sense of
     [`CoordinateSystem.compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with],
-    with two allowances. The names of the axes are not compared: a name
-    labels an axis, and `RASmm` calls its axes `x`, `y` and `z` where
-    `RASCoordinateSystem` calls them by their orientation. And a system
-    with fewer axes is compared with the first axes of `expected`, as the
-    world of a 2-D image is the first two axes of RAS or LPS.
+    with two allowances. First, the names of the axes are not compared,
+    because a name only labels an axis. For example, `RASmm` calls its
+    axes `x`, `y` and `z`, whereas `RASCoordinateSystem` calls them by
+    their orientation. Second, a system with fewer axes is compared with
+    the first axes of `expected`, because the world of a 2-D image is
+    made of the first two axes of RAS or LPS.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation whose endpoint is checked.
+    name : str
+        The endpoint to check, either `"input"` or `"output"`.
+    expected : CoordinateSystem
+        The system that the class of `t` is bound to on that side.
 
     Raises
     ------
@@ -165,9 +177,10 @@ def _compatible(
 
 
 def _unnamed(axis: Axis) -> Axis:
-    # The axis without its name. An anatomical axis cannot be unnamed and
-    # takes the name of its orientation, which every axis of that
-    # orientation rebuilt here takes too.
+    # Rebuild the axis without its name. An anatomical axis cannot be
+    # left unnamed, so it takes the name of its orientation, and every
+    # axis with that orientation that is rebuilt here takes the same
+    # name.
     return Axis(
         type=axis.type,
         unit=axis.unit,

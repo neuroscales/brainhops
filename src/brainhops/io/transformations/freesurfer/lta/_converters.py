@@ -1,13 +1,17 @@
 """
 Private converters into the LTA format.
 
-The format derives its coordinate systems from what it holds, so it has
-no endpoints to check, and a transformation relabelled as it would not
-be what the format says it holds. Each family that the converters of the
-data model would otherwise rebuild as an `LtaTransformation` is
-therefore refused here, until an exact conversion is written (#312). A
-format converted to its own class is changed as any transformation of
-its family is.
+These converters make a conversion into the format, such as
+`t.to(LtaTransformation)`, fail with a reason instead of building a
+wrong object. The format derives its coordinate systems from the content
+it holds, so it has no endpoints to check. Without these converters, the
+converters of the data model would rebuild a transformation as an
+`LtaTransformation` with the same parameters, and the result would not
+be the map that the format says it holds. Each family that would be
+rebuilt in this way is refused until an exact conversion is written
+(#312). An `LtaTransformation` that is converted to its own class is
+changed by the rules of its family, as any other transformation of that
+family is.
 """
 
 import typing_extensions as tx
@@ -35,7 +39,8 @@ def _(
     t: _xforms.Affine, cls: tx.Type[LtaTransformation], **kwargs
 ) -> LtaTransformation:
     # An LTA file stores an affine together with the geometry of the two
-    # volumes it maps, and nothing converts to it yet.
+    # volumes that it maps, and no exact conversion into it is written
+    # yet.
     raise no_exact_conversion(t, cls)
 
 
@@ -43,9 +48,10 @@ def _(
 def _(
     t: LtaTransformation, cls: tx.Type[LtaTransformation], **kwargs
 ) -> LtaTransformation:
-    # Within its own format, an affine is changed by the rules of any
-    # affine (a new `matrix=`, say), which keep its type. Another variant
-    # of the format is not converted to yet.
+    # A transformation that is already in this format is changed by the
+    # rules of any affine, for example when it is given a new `matrix=`,
+    # and these rules keep its type. A conversion into another variant
+    # of the format is not written yet.
     if not isinstance(t, cls):
         raise no_exact_conversion(t, cls)
     return _convert_withlog(t, cls, "matrix", **kwargs)

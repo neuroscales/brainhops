@@ -432,10 +432,10 @@ def test_a_transformation_no_nifti_format_holds_is_refused(
     obj: tx.Any,
 ) -> None:
     # A NIfTI transformation maps voxels to RAS, or RAS to RAS through a
-    # linearly interpolated field. One that does not -- a world-to-world
-    # affine or scaling, a field interpolated with cubic splines -- would
-    # come back meaning something it did not say, so it is refused, with
-    # each format's reason.
+    # linearly interpolated field. A transformation that does not, such
+    # as an affine or a scaling between world spaces, or a field
+    # interpolated with cubic splines, would be read back as a different
+    # map. It is therefore refused, with the reason of each format.
     with pytest.raises(WriterError, match="from_any"):
         io.save(obj, tmp_path / "transform.nii")
     assert not (tmp_path / "transform.nii").exists()

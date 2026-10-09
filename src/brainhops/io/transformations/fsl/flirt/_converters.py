@@ -1,11 +1,14 @@
 """
 Private converters into the FLIRT format.
 
-A FLIRT matrix is derived from a raw matrix and the geometry of two
-images, which a conversion is not given, so each family that the
-converters of the data model would otherwise rebuild as a
-`FlirtTransform` is refused here, with that reason. A `FlirtTransform`
-converted to its own class is changed as any affine is.
+These converters make a conversion into the format, such as
+`t.to(FlirtTransform)`, fail with a reason instead of building a wrong
+object. The matrix of a `FlirtTransform` is derived from a raw matrix
+and from the geometry of two images, and a conversion is not given
+those images. Each family that the converters of the data model would
+otherwise rebuild as a `FlirtTransform` is therefore refused. A
+`FlirtTransform` that is converted to its own class is changed by the
+rules of any affine.
 """
 
 import typing_extensions as tx
@@ -32,8 +35,9 @@ from ._xform import FlirtTransform
 def _(
     t: _xforms.Affine, cls: tx.Type[FlirtTransform], **kwargs
 ) -> FlirtTransform:
-    # The RAS endpoints of a FLIRT transform would accept a relabelled
-    # affine, but its matrix is not stored: it is derived from the images.
+    # The RAS endpoints of a FLIRT transform would accept an affine
+    # rebuilt with the same parameters, but the matrix of the transform
+    # is not stored. It is derived from the raw matrix and the images.
     raise unrepresentable(
         t,
         cls,
@@ -47,6 +51,7 @@ def _(
 def _(
     t: FlirtTransform, cls: tx.Type[FlirtTransform], **kwargs
 ) -> FlirtTransform:
-    # Within its own format, an affine is changed by the rules of any
-    # affine (a new `matrix=`, say), which keep its type.
+    # A transformation that is already in this format is changed by the
+    # rules of any affine, for example when it is given a new `matrix=`,
+    # and these rules keep its type.
     return _convert_withlog(t, cls, "matrix", **kwargs)

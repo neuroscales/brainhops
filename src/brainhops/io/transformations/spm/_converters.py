@@ -52,8 +52,8 @@ def _(
     cls: tx.Type[SpmCoordinatesField],
     **kwargs,
 ) -> SpmCoordinatesField:
-    # Within its own format, a chain is changed by the rules of any chain,
-    # which keep its type.
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type.
     return smart_replace(t, cls, **kwargs)
 
 

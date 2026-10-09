@@ -76,15 +76,18 @@ class LossyConversionError(ConversionError):
 
 
 class IncompatibleSystemError(ConversionError):
-    """A transformation is given a system its class cannot have.
+    """Error raised when a class refuses the endpoint it is given.
 
-    A class that is bound to coordinate systems, such as `VoxelToRAS`,
-    accepts only endpoints compatible with them. The error is a
-    [`ConversionError`][brainhops.errors.ConversionError], because a
-    conversion that rebuilds a transformation as such a class would
-    relabel it: `t.to(VoxelToRAS)` of a transformation between LPS spaces
-    raises it, as a conversion that cannot be made, and so does
-    `VoxelToRAS(input=LPSmm())`.
+    Some classes are bound to coordinate systems. For example,
+    `VoxelToRAS` maps voxel coordinates to RAS millimetres. Such a class
+    accepts only endpoints that are compatible with its systems, and
+    raises this error for any other endpoint. Building
+    `VoxelToRAS(input=LPSmm())` raises it, and so does
+    `t.to(VoxelToRAS)` when `t` maps between LPS spaces.
+
+    The error is a [`ConversionError`][] because `t.to(VoxelToRAS)`
+    rebuilds `t` as the bound class, and that conversion cannot be made
+    without changing what `t` means.
     """
 
 

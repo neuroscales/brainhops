@@ -135,10 +135,11 @@ class NiftyRegAffine(
 def _(
     t: _xforms.Affine, cls: tx.Type[NiftyRegAffine], **kwargs
 ) -> NiftyRegAffine:
-    # Exactly, or raise: the bridges from and to RAS (an affine between LPS
-    # spaces is flipped), and the reduction to one affine. An affine whose
-    # systems are not known is taken to map RAS to RAS, as the systems of a
-    # NiftyReg affine accept it.
+    # `affine_between` either converts `t` exactly or raises. It bridges
+    # the endpoints of `t` to RAS, which flips an affine between LPS
+    # spaces, and it reduces a chain to one affine. An affine whose
+    # systems are not known is taken to map RAS to RAS, because the
+    # endpoints of a NiftyReg affine accept unknown systems.
     cls = NiftyRegAffine
     format_options(t, cls, kwargs)
     matrix = affine_between(t, _RAS, _RAS, cls)
@@ -149,6 +150,7 @@ def _(
 def _(
     t: NiftyRegAffine, cls: tx.Type[NiftyRegAffine], **kwargs
 ) -> NiftyRegAffine:
-    # Within its own format, an affine is changed by the rules of any
-    # affine (a new `matrix=`, say), which keep its type.
+    # A transformation that is already in this format is changed by the
+    # rules of any affine, for example when it is given a new `matrix=`,
+    # and these rules keep its type.
     return _convert_withlog(t, cls, "matrix", **kwargs)

@@ -13,19 +13,23 @@ raises a `ConversionError` that says what the format cannot hold.
 | any field, `Sequence`              | `NiftiRASDisplacementField`   |
 | any field, `Sequence`              | `NiftiRASCoordinatesField`    |
 
-"Any affine" is each family that has an affine form (`Identity`,
-`Translation`, `Scaling`, `Permutation`, `Linear` and `Rotation`, `Affine`,
-their tangents, and `SubspaceTransformation`), and "any field" each
-family of fields. Each is named, so that its endpoints are bridged: the
-converters of the data model would rebuild it as the format with its own
-endpoints, which the format refuses unless they are its own.
+In this table, "any affine" means every family that has an affine
+form, which is `Identity`, `Translation`, `Scaling`, `Permutation`,
+`Linear` and `Rotation`, `Affine`, their tangents, and
+`SubspaceTransformation`. "Any field" means every family of fields. Each
+family is registered with its own converter so that its endpoints are
+bridged to those of the format. Otherwise, the converters of the data
+model would rebuild the transformation as the format with its original
+endpoints, and the format refuses endpoints that are not compatible
+with its own.
 
-The endpoints are those of `t`, bridged exactly to the format's: an
-affine to LPS is flipped into RAS, and one whose systems are not known is
-taken to map the format's. A field is held only as NIfTI stores it -- its
-values, read back with linear interpolation and the nearest value outside
-the grid -- and a displacement field only between a world-to-grid affine
-and its inverse. A field of displacements is not stored as one of
+The endpoints are those of `t`, bridged exactly to those of the format.
+An affine to LPS is flipped into RAS, and an affine whose systems are
+not known is taken to map the systems of the format. A field is held
+only as NIfTI stores it, which means that its values are read back with
+linear interpolation and with the nearest value outside the grid. A
+displacement field is held only between a world-to-grid affine and its
+inverse. A field of displacements is not stored as one of
 coordinates, or the reverse: the two extend differently outside their
 grid, so they are not the same map there.
 
@@ -34,7 +38,7 @@ helper it calls first (`_ras_displacement`, `_ras_coordinates`, or
 `affine_between`). Nothing is resampled or approximated. The options a
 converter is given are the format's own (`header=`, and `log=` and
 `steps=` for a displacement field); one that would change the map, such
-as `input=` or `matrix=`, is refused (by `format_options`).
+as `input=` or `matrix=`, is refused by `format_options`.
 """
 
 # dependencies
@@ -52,6 +56,8 @@ from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
 from brainhops.datamodel.enums import BoundaryCondition
+
+# io
 from brainhops.io.transformations.base._conversions import (
     affine_between,
     apply_affine,
@@ -60,8 +66,6 @@ from brainhops.io.transformations.base._conversions import (
     undoes,
     unrepresentable,
 )
-
-# io
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 from .affines import NiftiRASToVoxel, NiftiVoxelToRAS
@@ -199,8 +203,8 @@ def _(
     cls: tx.Type[NiftiRASDisplacementField],
     **kwargs,
 ) -> NiftiRASDisplacementField:
-    # Within its own format, a chain is changed by the rules of any chain,
-    # which keep its type.
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type.
     return smart_replace(t, cls, **kwargs)
 
 

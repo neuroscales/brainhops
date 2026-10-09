@@ -1,17 +1,20 @@
 """
-Every transformation converted into a format: exactly, or refused (#343).
+Exact conversions into the file formats, and their refusals (#343).
 
-The converters of the data model rebuild a transformation as the class
-they are asked for. A class bound to coordinate systems (`VoxelToRAS`, the
-NIfTI and NiftyReg affines, the RAS and LPS fields) checks that its
-endpoints are compatible with them, so a relabel between other systems
-fails as it is built, with a `ConversionError`. The exact converters of
-NIfTI and NiftyReg bridge the endpoints instead (an affine to LPS is
-flipped into RAS). A format whose content a relabel would make wrong keeps
-an explicit refusal, and a format with no systems of its own (a bare
-matrix, an ITK chain) holds the relabelled transformation with its own
-endpoints. A format converted to its own class is changed as any
-transformation of its family is.
+The converters of the data model rebuild a transformation as whatever
+class they are asked for and keep its parameters, which is called
+relabelling. Some classes are bound to coordinate systems, such as
+`VoxelToRAS`, the NIfTI and NiftyReg affines, and the RAS and LPS
+fields. Such a class checks that its endpoints are compatible with its
+systems, so a relabel between other systems fails with a
+`ConversionError` when the class is built. The exact converters of
+NIfTI and NiftyReg bridge the endpoints instead, so that an affine to
+LPS is flipped into RAS. A format whose content a relabel would make
+wrong keeps an explicit refusal. A format with no coordinate systems of
+its own, such as a bare matrix or an ITK chain, holds the relabelled
+transformation with its original endpoints. A format that is converted
+to its own class is changed by the rules of its family, as any other
+transformation of that family is.
 """
 
 import numpy as np
@@ -99,11 +102,15 @@ MATRIX = np.array(
 """An affine with a permutation, a flip, a scaling and an offset."""
 
 LPS2RAS = np.diag([-1.0, -1.0, 1.0, 1.0])
-"""LPS and RAS differ by the sign of their first two axes."""
+"""The matrix that flips the first two axes, turning LPS into RAS."""
 
 
 def _families(input: tx.Any, output: tx.Any) -> tx.Dict[str, tx.Any]:
-    """One transformation of each family, between `input` and `output`."""
+    """
+    Return one transformation of each family.
+
+    Each transformation maps `input` to `output`.
+    """
     ends = dict(input=input, output=output)
     field = np.zeros((2, 3, 4, 3))
     return {
@@ -142,7 +149,7 @@ FORMATS = [
     X5Transform,
     ElastixTransform,
 ]
-"""Formats bound to RAS, LPS or their own spaces."""
+"""The formats that are bound to RAS, to LPS or to their own spaces."""
 
 
 # ----------------------------------------------------------------------
@@ -162,7 +169,10 @@ BOUND = [
     (RASToWarpField, LPSmm(), "input"),
     (WarpFieldToRAS, VOXEL, "output"),
 ]
-"""Affine classes bound to systems, and an endpoint they cannot have."""
+"""
+The affine classes bound to systems, each with an endpoint that it
+cannot have and the side of that endpoint.
+"""
 
 
 @pytest.mark.parametrize(
@@ -204,8 +214,8 @@ def test_a_flirt_transform_refuses_an_incompatible_endpoint() -> None:
 def test_a_bound_class_accepts_a_compatible_endpoint(
     voxel: tx.Any, world: tx.Any
 ) -> None:
-    # Names label axes, and an endpoint or axis that is not known may be
-    # the one the class is bound to.
+    # The names of axes are only labels, and an endpoint or an axis that
+    # is not known may be the one that the class is bound to.
     t = VoxelToRAS(matrix=MATRIX[:-1], input=voxel, output=world)
     assert type(t) is VoxelToRAS
 
@@ -266,10 +276,10 @@ def test_a_transformation_no_format_holds_is_refused(
 def test_a_format_without_an_exact_conversion_refuses(
     family: str, cls: type
 ) -> None:
-    # A relabel would build a wrong object: an LTA without the geometry of
-    # its volumes, a field format around a chain that is not its own. The
-    # format may hold some transformations of the family, which are for its
-    # exact converter to tell (#312).
+    # A relabel would build a wrong object, such as an LTA without the
+    # geometry of its volumes, or a field format around a chain that is
+    # not its own. The format may hold some transformations of the
+    # family, and an exact converter will decide which ones (#312).
     t = _families(RASmm(), RASmm())[family]
     with pytest.raises(ConversionError, match="#312"):
         t.to(cls)
@@ -430,7 +440,7 @@ def test_an_lps_to_lps_affine_is_flipped_into_niftyreg() -> None:
 @pytest.mark.parametrize("family", ["scaling", "affine", "sequence"])
 def test_an_affine_of_unknown_systems_maps_niftyreg_ones(family: str) -> None:
     # Unknown endpoints are compatible with RAS, so they are taken to be
-    # NiftyReg's, as NIfTI takes them to be its own.
+    # the endpoints of NiftyReg, as NIfTI takes them to be its own.
     t = _families(None, None)[family]
     niftyreg = t.to(NiftyRegAffine)
     np.testing.assert_array_equal(

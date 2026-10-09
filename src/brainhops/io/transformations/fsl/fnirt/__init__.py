@@ -9,6 +9,8 @@ __all__ = ["FnirtWarpField"]
 
 from ._base import FnirtWarpField
 
-# The converters into these formats register themselves when this module
-# is imported, here, so that `t.to(Format)` refuses with a reason.
+# Importing the private converters registers them with the data model,
+# so that a conversion into one of these formats, such as
+# `t.to(Format)`, fails with a reason instead of building a wrong
+# object.
 from . import _converters  # noqa: E402, F401  isort: skip

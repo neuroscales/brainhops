@@ -23,15 +23,20 @@ them ([`converts_to`][] and [`convert_instance`][]), so that
 `Format.from_any(t)`, `Format.from_instance(t)` and `t.to(Format)` are
 one conversion.
 
-The generic converters of the data model rebuild a transformation as the
-class they are asked for. A format bound to coordinate systems checks its
-endpoints as it is built, so a transformation between other systems is
-not relabelled as it, and its exact converters, named for each family,
-bridge the endpoints first.
-A format that derives its systems from what it holds cannot check them,
-and refuses each family with [`no_exact_conversion`][] until it has
-exact converters. A format converted to its own class is changed by the
-rules of its family, as any transformation of that family.
+The converters of the data model, which know nothing of file formats,
+rebuild a transformation as whatever class they are asked for and keep
+its parameters. This is called relabelling, and it is wrong when the
+new class means a different map. A format that is bound to coordinate
+systems therefore checks its endpoints when it is built, so that a
+transformation between other systems cannot be relabelled as that
+format. The exact converters of such a format, one for each family of
+transformations, bridge the endpoints before they build the format.
+
+A format that derives its coordinate systems from the content it holds
+has no endpoints to check. Its converters refuse every family with
+[`no_exact_conversion`][] until exact converters are written for it
+(#312). A format that is converted to its own class is changed by the
+rules of its family, as any other transformation of that family is.
 """
 
 __all__ = [
@@ -89,13 +94,27 @@ def no_exact_conversion(
     t: _xforms.Transformation, cls: type
 ) -> ConversionError:
     """
-    The error a converter raises when its format has no exact conversion
-    yet.
+    Return the error that a format without an exact converter raises.
 
-    The format may hold some transformations of the family of `t`, but
-    which ones, and how, is for an exact converter to decide (#312). Until
-    it has one, `t` is refused: the format derives its systems from what it
-    holds, so `t` relabelled as it would not be what it says it holds.
+    Some formats derive their coordinate systems from the content they
+    hold. Such a format may be able to hold some transformations of the
+    family of `t`, but an exact converter, which is not written yet,
+    must decide which ones and how (#312). Until that converter exists,
+    the format refuses `t` with this error. If `t` were relabelled as
+    the format instead, the result would not be the map that the format
+    says it holds.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation being converted.
+    cls : type
+        The format it is converted to.
+
+    Returns
+    -------
+    ConversionError
+        The error, for the converter to raise.
     """
     return unrepresentable(
         t,
