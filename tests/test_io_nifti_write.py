@@ -1116,7 +1116,8 @@ def test_a_keyword_override_wins_over_the_object_and_like(tmp_path) -> None:  # 
 
 def test_nifti_axes_are_copies_of_the_module_templates() -> None:
     """A system read from a header never holds the shared axis templates."""
-    from brainhops.io.common.nifti import _NIFTI_AXES, _nifti_to_axes
+    from brainhops.io.common.nifti._constants import _NIFTI_AXES
+    from brainhops.io.common.nifti._header import _nifti_to_axes
 
     header = nb.Nifti1Image(np.zeros((2, 3, 4, 5)), np.eye(4)).header
     for axis, template in zip(_nifti_to_axes(header), _NIFTI_AXES):
@@ -1131,7 +1132,7 @@ def test_nifti_axes_are_copies_of_the_module_templates() -> None:
 def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
     """The axes read from a header are voxel axes: they count samples."""
     from brainhops.datamodel.units import IndexUnit
-    from brainhops.io.common.nifti import _nifti_to_axes
+    from brainhops.io.common.nifti._header import _nifti_to_axes
 
     image = nb.Nifti1Image(np.zeros(shape, dtype="float32"), np.eye(4))
     if intent:

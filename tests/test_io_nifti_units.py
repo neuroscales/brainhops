@@ -7,10 +7,10 @@ import pytest
 
 import brainhops.io as io
 from brainhops.datamodel.units import IndexUnit, Unit
-from brainhops.io.common._nifti_units import (
+from brainhops.io.common.nifti import NiftiUnitWarning
+from brainhops.io.common.nifti._units import (
     NIFTI_SPACE_CODES,
     NIFTI_TIME_CODES,
-    NiftiUnitWarning,
     nifti_to_unit,
     unit_to_nifti,
 )

@@ -1,7 +1,7 @@
 A plain matrix file stores an affine and nothing else. There is one
 reader per container, each built on that container's generic array
-parser from [`brainhops.io.base.arrays`][brainhops.io.base.arrays], and
-all deriving from the abstract `MatrixAffine`, which is never registered:
+parser (from the private `brainhops.io.common._arrays` module), and all
+deriving from the abstract `MatrixAffine`, which is never registered:
 
 | Class                   | Container                   | Extensions             | Hints                                 |
 |-------------------------|-----------------------------|------------------------|---------------------------------------|

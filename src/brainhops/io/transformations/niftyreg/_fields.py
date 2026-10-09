@@ -27,9 +27,11 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
 )
-from brainhops.io.common.nifti import (
+from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
+)
+from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _new_nifti,

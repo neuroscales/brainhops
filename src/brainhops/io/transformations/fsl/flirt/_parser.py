@@ -18,8 +18,8 @@ from brainhops.io.base.parsers import (
 )
 
 # io
-from brainhops.io.common.arrays import ArrayContainerError, read_text_rows
-from brainhops.io.common.nifti import _NiftiObject
+from brainhops.io.common._arrays import ArrayContainerError, read_text_rows
+from brainhops.io.common.nifti._header import _NiftiObject
 
 # The moving and reference images may be a nibabel header or image, or a
 # brainhops image. This is the type FLIRT accepts for either of them.
@@ -112,7 +112,7 @@ def _read_matrix_rows(lines: tx.Iterable[str]) -> tx.List[tx.List[float]]:
     """Read whitespace-separated float rows, skipping blank lines.
 
     The parsing is shared with the other plain-matrix readers
-    (`brainhops.io.base.arrays`). FLIRT writes whitespace-separated
+    (`brainhops.io.common._arrays`). FLIRT writes whitespace-separated
     values and no comments, so only those are accepted here. A
     non-numeric value makes the whole content unreadable (`[]`).
     """

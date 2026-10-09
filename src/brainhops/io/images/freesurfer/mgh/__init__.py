@@ -25,8 +25,8 @@ voxel space (voxel size in mm, and TR in ms for the frames when the
 footer records one), the voxel-to-tkr RAS affine (`"tkr"`, FreeSurfer's
 `Torig`, the space surfaces live in) and the voxel-to-scanner RAS affine
 (`"scanner"`, FreeSurfer's `Norig`), which is preferred. See
-[`brainhops.io.base.freesurfer`][] for how both derive from the header,
-and [`brainhops.io.base.mgh`][] for the file layout.
+[`brainhops.io.common.freesurfer`][] for how both derive from the header,
+and [`brainhops.io.common.mgh`][] for the file layout.
 
 **`goodRASFlag`.** When it is not positive, FreeSurfer ignores the stored
 geometry and uses 1 mm voxels, coronal LIA direction cosines and a zero

@@ -43,11 +43,8 @@ from brainhops.io.base.parsers import (
     ParserTypeError,
     WriterError,
 )
-from brainhops.io.common.zarr import (
-    StoreLike,
-    ZarrParserWriter,
-    _as_node,
-)
+from brainhops.io.common.zarr import StoreLike, ZarrParserWriter
+from brainhops.io.common.zarr._parsers import _as_node
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 from brainhops.io.transformations.zarr import _map, _node
 
@@ -71,13 +68,13 @@ class OmeZarrField(
 
     An OME-Zarr field is a Zarr store, so this is a file format. It is read
     from a store with
-    [`from_store`][brainhops.io.base.zarr.ZarrParser.from_store] and written
-    with [`to_store`][brainhops.io.base.zarr.ZarrParser.to_store], and it is
+    [`from_store`][brainhops.io.common.zarr.ZarrParser.from_store] and written
+    with [`to_store`][brainhops.io.common.zarr.ZarrParser.to_store], and it is
     discoverable through
     [`load`][brainhops.io.transformations.load] like any other
     transformation format. An already-opened Zarr node is read with
-    [`from_node`][brainhops.io.base.zarr.ZarrParser.from_node] and written
-    with [`to_node`][brainhops.io.base.zarr.ZarrParser.to_node].
+    [`from_node`][brainhops.io.common.zarr.ZarrParser.from_node] and written
+    with [`to_node`][brainhops.io.common.zarr.ZarrParser.to_node].
 
     The field is a
     [`MultiscaleField`][brainhops.datamodel.transformations.MultiscaleField],

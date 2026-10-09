@@ -3,7 +3,7 @@ Readers and writers for images stored in NRRD files.
 
 NRRD ("Nearly Raw Raster Data", <https://teem.sourceforge.net/nrrd/>) is
 the native format of 3D Slicer and teem, and is read and written by ITK.
-It is parsed by [`brainhops.io.base.nrrd`][brainhops.io.base.nrrd], with
+It is parsed by [`brainhops.io.common.nrrd`][brainhops.io.common.nrrd], with
 no dependency beyond numpy:
 
 | Class                     | Extension | Hints                       |

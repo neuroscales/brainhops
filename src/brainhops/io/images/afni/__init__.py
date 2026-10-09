@@ -8,8 +8,8 @@ be compressed (`.BRIK.gz`, `.BRIK.bz2`). Either file, or the dataset's
 name without extension, can be given.
 
 The header format, and every convention checked against the AFNI
-sources, is described in [`brainhops.io.base.afni`][brainhops.io.base.afni],
-which the image reader shares with the AFNI transformation formats.
+sources, is described in [`brainhops.io.common.afni`][], which the image
+reader shares with the AFNI transformation formats.
 
 ```python
 import brainhops.io as io

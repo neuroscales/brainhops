@@ -18,18 +18,20 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common._nifti_units import nifti_to_unit
-from brainhops.io.common.nifti import (
+from brainhops.io.common.nifti import NiftiParser
+from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
-    NiftiParser,
-    _image_with_geometry,
+)
+from brainhops.io.common.nifti._geometry import _image_with_geometry
+from brainhops.io.common.nifti._header import (
     _nifti_intent,
     _nifti_shape,
     _nifti_to_axes,
     _NiftiObject,
 )
+from brainhops.io.common.nifti._units import nifti_to_unit
 from brainhops.io.images.base import WritableFileBasedImage
 
 
@@ -197,7 +199,7 @@ def _nifti_to_transformations(
     # The header's units, through the one NIfTI <-> brainhops converter.
     # An unknown spatial unit reads as millimetres (the ecosystem's
     # convention), an unknown temporal one as unspecified; see
-    # `brainhops.io.base._nifti_units` for every policy.
+    # `brainhops.io.common.nifti._units` for every policy.
     space, time = header.get_xyzt_units()
     units = {
         "space": nifti_to_unit(space, "space"),

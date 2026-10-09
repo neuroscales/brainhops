@@ -28,7 +28,8 @@ from bagof.magic import HIDE_IF_NONE, Factory, Magic
 from brainhops.io.base.parsers import ParserContentError
 
 # io
-from brainhops.io.common.hdf5 import delayed_dataset, read_string
+from brainhops.io.common.hdf5._delayed import delayed_dataset
+from brainhops.io.common.hdf5._parsers import read_string
 
 X5_FORMAT = "X5"
 """The value of the root `Format` attribute of every X5 file."""

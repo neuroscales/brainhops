@@ -13,7 +13,7 @@ numpy:
 
 The header format, and every convention checked against the MRtrix3
 sources, is described in
-[`brainhops.io.base.mrtrix`][brainhops.io.base.mrtrix], which the image
+[`brainhops.io.common.mrtrix`][brainhops.io.common.mrtrix], which the image
 reader shares with the MRtrix transformation formats.
 
 ```python

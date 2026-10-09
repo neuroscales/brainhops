@@ -68,7 +68,7 @@ depth` -- then fifteen float32 -- `xsize, ysize, zsize`, the direction
 cosines `x_r, x_a, x_s, y_r, y_a, y_s, z_r, z_a, z_s` and the centre
 `c_r, c_a, c_s` -- then a 512-byte, `NUL`-padded file name: the
 FreeSurfer volume geometry of
-[`brainhops.io.base.freesurfer`][brainhops.io.base.freesurfer]. A file
+[`brainhops.io.common.freesurfer`][brainhops.io.common.freesurfer]. A file
 without this tag has FreeSurfer's default geometry for both volumes
 (`initVolGeom`: 256^3 voxels of 1 mm, LIA, centred on the origin).
 

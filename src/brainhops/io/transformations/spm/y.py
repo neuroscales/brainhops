@@ -6,7 +6,7 @@ import typing_extensions as tx
 # internals
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
-from brainhops.io.common.nifti import _NiftiObject
+from brainhops.io.common.nifti._header import _NiftiObject
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.nifti.affines import NiftiRASToVoxel

@@ -14,7 +14,7 @@ from brainhops.datamodel import transformations as _xforms
 # io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserContentError
-from brainhops.io.common.arrays import (
+from brainhops.io.common._arrays import (
     ArrayParser,
     CsvArrayParser,
     Mat73ArrayParser,
@@ -64,7 +64,7 @@ class MatrixAffine(
     Abstract: it reads no container, and is not decorated with
     `@register_format`, so it never takes part in dispatch. Each
     container has its own registered subclass, which mixes in that
-    container's [`ArrayParser`][brainhops.io.base.arrays.ArrayParser]:
+    container's [`ArrayParser`][brainhops.io.common._arrays.ArrayParser]:
 
     - [`TxtMatrixAffine`][]: whitespace-separated text (`.txt`, `.dat`,
       `.1D`); hint `"matrix.txt"`.

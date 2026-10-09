@@ -3,7 +3,7 @@ Tests for AFNI datasets (`prefix+view.HEAD` + `prefix+view.BRIK[.gz]`).
 
 The fixtures are hand-crafted from the format's specification
 (`README.attributes` and the AFNI sources quoted in
-`brainhops.io.base.afni`), with a reference encoder that is deliberately
+`brainhops.io.common.afni`), with a reference encoder that is deliberately
 independent of the reader: the header is written attribute by attribute
 as AFNI's `thd_writeatr.c` does, and the BRIK is packed with `struct`,
 one voxel at a time, `x` fastest.
@@ -33,14 +33,13 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.base.specs import format_hints
-from brainhops.io.common.afni import (
-    DICOM_TO_RAS,
-    AfniHeader,
+from brainhops.io.common.afni import AfniHeader
+from brainhops.io.common.afni._constants import DICOM_TO_RAS
+from brainhops.io.common.afni._data import afni_dataset_files, brick_dtype
+from brainhops.io.common.afni._geometry import (
     afni_cardinal_matrix,
-    afni_dataset_files,
     afni_geometry_from_matrix,
     afni_view,
-    brick_dtype,
 )
 from brainhops.io.images import FileBasedImage, WritableFileBasedImage
 from brainhops.io.images.afni import AfniImage

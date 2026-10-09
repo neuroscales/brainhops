@@ -28,7 +28,8 @@ from brainhops.io.base.parsers import (  # noqa: E402
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.common.minc import MincDimension, minc_version  # noqa: E402
+from brainhops.io.common.minc import MincDimension  # noqa: E402
+from brainhops.io.common.minc._utils import minc_version  # noqa: E402
 from brainhops.io.images.minc import (  # noqa: E402
     Minc1Image,
     Minc2Image,

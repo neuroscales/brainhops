@@ -25,8 +25,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     ParserError,
 )
-from brainhops.io.common.mrtrix import (
-    MrtrixHeader,
+from brainhops.io.common.mrtrix import MrtrixHeader
+from brainhops.io.common.mrtrix._codecs import (
     dtype_to_mrtrix,
     mrtrix_dtype,
     parse_layout,

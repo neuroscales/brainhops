@@ -9,12 +9,9 @@ from bagof.magic import HIDE_IF_NONE, Factory, Magic
 from brainhops.io.base.parsers import Confidence, SnifferContentError
 
 # io
-from brainhops.io.common.hdf5 import (
-    DelayedH5Array,
-    Hdf5Parser,
-    delayed_dataset,
-    read_string,
-)
+from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5Parser
+from brainhops.io.common.hdf5._delayed import delayed_dataset
+from brainhops.io.common.hdf5._parsers import read_string
 
 # locals
 from .._common import ItkStruct, ItkTransformClass, _application_order

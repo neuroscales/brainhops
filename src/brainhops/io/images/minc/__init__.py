@@ -33,7 +33,7 @@ dimensions (`xspace` -> `x`, `yspace` -> `y`, `zspace` -> `z`, `time`
 -> `t`), whatever order the file stores them in. The world space is
 MINC's: right, anterior and superior along `x`, `y` and `z`, with each
 dimension running along its direction cosines from its `start` by its
-(possibly negative) `step`. See [`brainhops.io.base.minc`][] for the
+(possibly negative) `step`. See [`brainhops.io.common.minc`][] for the
 file layout and the limitations.
 
 **Writing.** `nibabel` cannot write MINC, so these classes are
@@ -43,7 +43,7 @@ toolkit).
 
 **Metadata.** The dimensions (`start`, `step`, direction cosines,
 units) are kept on the object as
-[`dimensions`][brainhops.io.base.minc.MincParser.dimensions]. The other
+[`dimensions`][brainhops.io.common.minc.MincParser.dimensions]. The other
 MINC attributes (patient, acquisition, history) are not read.
 """
 

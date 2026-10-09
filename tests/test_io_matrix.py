@@ -24,7 +24,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     TextFileParser,
 )
-from brainhops.io.common import arrays
+from brainhops.io.common import _arrays as arrays
 from brainhops.io.transformations import FileBasedTransformation, load, sniff
 from brainhops.io.transformations.matrix import (
     CsvMatrixAffine,

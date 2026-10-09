@@ -6,7 +6,7 @@ an array of samples and, at most, a pixel size. It records no origin, no
 orientation and no world space. This module holds the conventions such a
 format is read and written with, so that every raster reader (the Pillow
 reader, the TIFF reader, ...) agrees on them. It mirrors
-[`brainhops.io.base.nifti`][], which holds what the NIfTI-based images and
+[`brainhops.io.common.nifti`][], which holds what the NIfTI-based images and
 transformations share. Nothing in it depends on a particular decoding
 library: a backend (Pillow, tifffile) decodes the file into a C-ordered
 array and a description of its axes, and this module does the rest.

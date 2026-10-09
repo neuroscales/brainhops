@@ -21,8 +21,9 @@ from brainhops.io.common._geometry import (
     arrange_voxel_to_ras,
     declared_axes,
 )
-from brainhops.io.common.mgh import _MRI_PARAMS, MghParser
-from brainhops.io.common.nifti import _scale_spatial, _unit_scale
+from brainhops.io.common.mgh import MghParser
+from brainhops.io.common.mgh._constants import _MRI_PARAMS
+from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
 from brainhops.io.images.base import WritableFileBasedImage
 
 _SCANNER = "scanner"
@@ -72,9 +73,9 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
 
     FreeSurfer-specific header content -- the MRI acquisition parameters
     of the footer, the raw `goodRASFlag` and the trailing tags -- is kept
-    on the object ([`mri_params`][brainhops.io.base.mgh.MghParser.
+    on the object ([`mri_params`][brainhops.io.common.mgh.MghParser.
     mri_params], the private `_good_ras` and
-    [`tags`][brainhops.io.base.mgh.MghParser.tags]) and written back.
+    [`tags`][brainhops.io.common.mgh.MghParser.tags]) and written back.
 
     !!! note "`goodRASFlag`"
         When the header's `goodRASFlag` is not positive, FreeSurfer
@@ -128,7 +129,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
 
         The axes are placed by the types and names the voxel space of
         that transformation declares, as NIfTI places them (see
-        [`plan_axes`][brainhops.io.base._geometry.plan_axes]): the
+        [`plan_axes`][brainhops.io.common._geometry.plan_axes]): the
         spatial axes first (`x, y, z` in that order when they are so
         named), then the one axis MGH stores besides them, its frames.
         The data is transposed to match (lazily, for a lazy array), and a
@@ -255,7 +256,7 @@ def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
 _MGH_POLICY = dict(fill_space=True, max_nonspatial=1)
 """
 Where MGH stores the axes of an array (see
-[`plan_axes`][brainhops.io.base._geometry.plan_axes]): three spatial axes,
+[`plan_axes`][brainhops.io.common._geometry.plan_axes]): three spatial axes,
 then the frames.
 """
 

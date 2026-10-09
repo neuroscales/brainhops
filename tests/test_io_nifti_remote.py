@@ -25,7 +25,8 @@ nb = pytest.importorskip("nibabel")
 from bagof.paths import Path  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
-from brainhops.io.common import nifti as nifti_base  # noqa: E402
+from brainhops.io.common.nifti import _files as nifti_base  # noqa: E402
+from brainhops.io.common.nifti import _parsers as nifti_parsers  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS  # noqa: E402
 
@@ -244,6 +245,7 @@ def test_a_local_path_is_loaded_by_name(
 
     monkeypatch.setattr(nb.Nifti1Image, "from_filename", classmethod(spy))
     monkeypatch.setattr(nifti_base, "_nifti_from_stream", no_stream)
+    monkeypatch.setattr(nifti_parsers, "_nifti_from_stream", no_stream)
 
     for file in (str(target), target, Path(target), f"file://{target}"):
         calls.clear()
