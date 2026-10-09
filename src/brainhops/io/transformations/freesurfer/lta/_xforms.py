@@ -18,12 +18,13 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     UnrepresentableTransformationError,
 )
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
-    WritableFileBasedTransformation,
+    TransformationFormat,
 )
 
 from .._formats import FreesurferTransformationFormat
@@ -51,14 +52,14 @@ class LtaFormat(FreesurferTransformationFormat, AffineTransformationFormat):
     HINTS = ("lta",)
 
 
-# `TextFileParserWriter` bridges bytes and text, which the writer of
-# `WritableFileBasedTransformation` cannot do, so it must come first.
+# Text adapters supply byte decoding and encoding before the generic bases.
 @register_format
 class LtaTransformation(
     LtaFormat,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     _xforms.Affine,
-    WritableFileBasedTransformation,
+    TransformationFormat,
     reverse=False,  # `struct` must be the last field
 ):
     """Transformation that can be encoded as a Linear Transform Array.

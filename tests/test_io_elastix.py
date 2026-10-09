@@ -595,7 +595,7 @@ def test_unrepresentable_chains_are_refused(tmp_path: Path) -> None:
 
 def test_the_base_is_not_registered() -> None:
     """Only the text and TOML syntaxes take part in dispatch."""
-    registry = io.transformations.FileBasedTransformation._REGISTRY
+    registry = io.transformations.TransformationFormat._REGISTRY
     assert ElastixParameterTransform in registry
     assert ElastixTomlTransform in registry
     assert ElastixTransform not in registry

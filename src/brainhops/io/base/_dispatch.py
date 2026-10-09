@@ -251,7 +251,7 @@ def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
 def _registry_depth(cls: type) -> int:
     """Count the dispatcher levels above a format.
 
-    A format registered under `FileBasedImage` is classified more finely than
+    A format registered under `ImageFormat` is classified more finely than
     one registered only under the root, and therefore wins a tie. Only the
     ancestors that own a registry are counted, rather than all ancestors,
     because the depth of the class hierarchy says nothing about how well a

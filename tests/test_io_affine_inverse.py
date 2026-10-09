@@ -97,15 +97,15 @@ def test_an_spm_field_inverts(tmp_path) -> None:  # noqa: ANN001
 @pytest.mark.parametrize("cls", [NiftiRASToVoxel, NiftiVoxelToRAS])
 def test_reading_the_image_does_not_replace_the_matrix(cls) -> None:  # noqa: ANN001
     # Reading the voxels must not replace the matrix computed from the header.
-    from brainhops.io.common.nifti import NiftiParser
+    from brainhops.io.common.nifti import NiftiReaderWriter
 
     img = _image()
     t = cls(image=img, header=img.header)
-    NiftiParser.data.fget(t)
+    NiftiReaderWriter.data.fget(t)
     assert t.matrix.shape == (3, 4)
     expected = VOX2RAS if cls is NiftiVoxelToRAS else np.linalg.inv(VOX2RAS)
     np.testing.assert_allclose(t.matrix, expected[:3])
     # An explicit matrix still wins over the header.
     explicit = cls(np.eye(4)[:3], image=img, header=img.header)
-    NiftiParser.data.fget(explicit)
+    NiftiReaderWriter.data.fget(explicit)
     np.testing.assert_array_equal(explicit.matrix, np.eye(4)[:3])

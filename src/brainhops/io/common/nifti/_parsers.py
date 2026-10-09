@@ -17,7 +17,8 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     ParserExistsError,
     SnifferContentError,
@@ -41,7 +42,7 @@ from ._header import (
 )
 
 
-class NiftiParser(DataModelBase, BinaryFileParserWriter):
+class NiftiReaderWriter(DataModelBase, BinaryFileReader, BinaryFileWriter):
     """Base class for objects stored as NIfTI files."""
 
     HINTS = ("nifti",)
@@ -86,10 +87,13 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
             import nibabel as nb
             image1 = nb.load("image1.nii")
             image2 = nb.load("image2.nii")
-            NiftiParser(image1).header                        # `image1.header`
-            NiftiParser(header=image2.header).header          # `image2.header`
-            NiftiParser(image1, header=image2.header).header  # `image2.header`
-            obj = NiftiParser(image1)
+            # `image1.header`
+            NiftiReaderWriter(image1).header
+            # `image2.header`
+            NiftiReaderWriter(header=image2.header).header
+            # `image2.header`
+            NiftiReaderWriter(image1, header=image2.header).header
+            obj = NiftiReaderWriter(image1)
             obj.header = image2.header
             obj.header                                        # `image2.header`
             ```

@@ -5,7 +5,7 @@ coordinates of the moving image to the scaled millimetre coordinates of the
 reference image.
 """
 
-__all__ = ["FlirtMatrixParser", "FlirtTransform"]
+__all__ = ["FlirtMatrixReader", "FlirtTransform"]
 
-from ._parser import FlirtMatrixParser
+from ._parser import FlirtMatrixReader
 from ._xform import FlirtTransform

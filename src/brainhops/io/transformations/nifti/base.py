@@ -2,11 +2,11 @@
 
 import typing_extensions as tx
 
-from brainhops.io.common.nifti import NiftiParser
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.common.nifti import NiftiReaderWriter
+from brainhops.io.transformations.base import TransformationFormat
 
 
-class NiftiBasedTransformation(WritableFileBasedTransformation, NiftiParser):
+class NiftiBasedTransformation(TransformationFormat, NiftiReaderWriter):
     """
     Transformation stored in a NIfTI file.
 

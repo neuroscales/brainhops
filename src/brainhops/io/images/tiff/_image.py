@@ -22,14 +22,15 @@ from brainhops.datamodel.transformations import (
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     ParserContentError,
     ParserExistsError,
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.tiff import _utils as backend
 
@@ -867,8 +868,9 @@ def _wrap_write(function: tx.Callable[[], None]) -> None:
 @register_format
 class TiffImage(
     _TiffMixin,
-    BinaryFileParserWriter,
-    WritableFileBasedImage,
+    BinaryFileReader,
+    BinaryFileWriter,
+    ImageFormat,
     SingleScaleImage,
 ):
     """One image of a TIFF file, read and written with tifffile.

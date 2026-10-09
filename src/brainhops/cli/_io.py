@@ -18,10 +18,10 @@ from ._errors import CliError, WritingUnavailable
 
 def _image_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
     """Map each image format hint to the registered image formats."""
-    from brainhops.io.images.base import FileBasedImage
+    from brainhops.io.images.base import ImageFormat
 
     result: tx.Dict[str, tx.Set[type]] = {}
-    for fmt in getattr(FileBasedImage, "_REGISTRY", set()):
+    for fmt in getattr(ImageFormat, "_REGISTRY", set()):
         for hint in format_hints(fmt):
             result.setdefault(hint, set()).add(fmt)
     return result
@@ -68,10 +68,10 @@ def load_image(source: tx.Union[str, ImageSpec]) -> Image:
 
 def _transform_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
     """Map each transformation format hint to the registered formats."""
-    from brainhops.io.transformations.base import FileBasedTransformation
+    from brainhops.io.transformations.base import TransformationFormat
 
     result: tx.Dict[str, tx.Set[type]] = {}
-    for fmt in getattr(FileBasedTransformation, "_REGISTRY", set()):
+    for fmt in getattr(TransformationFormat, "_REGISTRY", set()):
         for hint in format_hints(fmt):
             result.setdefault(hint, set()).add(fmt)
     return result

@@ -22,10 +22,11 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     ParserNotImplementedError,
     SnifferContentError,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.itk._common import ItkStruct
 
 from ._blocks import fixed_geometry, map_to_block, transformation_to_map
@@ -44,12 +45,12 @@ from ._parser import (
 _NO_INITIAL = "NoInitialTransform"
 
 
-# `TextFileParserWriter` bridges bytes and text, so it must precede
-# `WritableFileBasedTransformation`, whose writer knows no encoding.
+# Text adapters supply byte decoding and encoding before the generic bases.
 class ElastixTransform(
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     _xforms.Sequence,
-    WritableFileBasedTransformation,
+    TransformationFormat,
     repr=HIDE_IF_NONE,
     reverse=False,  # keep `transformations` the first positional field
 ):

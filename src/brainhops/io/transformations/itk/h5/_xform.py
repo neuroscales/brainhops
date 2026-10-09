@@ -3,12 +3,12 @@ import typing_extensions as tx
 from brainhops.io.base._base import register_format
 
 from .._xform import ItkTransform
-from ._parser import H5TransformParser
+from ._parser import H5TransformReader
 
 
 @register_format
 class H5Transform(
-    H5TransformParser,
+    H5TransformReader,
     ItkTransform,
 ):
     """Transformation stored in an ITK HDF5 (`.h5`) file."""

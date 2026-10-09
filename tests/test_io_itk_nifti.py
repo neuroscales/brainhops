@@ -22,7 +22,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
 )
 from brainhops.io.base.specs import format_hints  # noqa: E402
 from brainhops.io.transformations.base import (  # noqa: E402
-    FileBasedTransformation,
+    TransformationFormat,
 )
 from brainhops.io.transformations.base.affines import (  # noqa: E402
     LPSToVoxel,
@@ -554,7 +554,7 @@ def test_coordinates_are_never_claimed_on_content(itk_warp) -> None:  # noqa: AN
 
 
 def test_ants_and_itk_name_the_same_readers() -> None:
-    readers = FileBasedTransformation._REGISTRY
+    readers = TransformationFormat._REGISTRY
     itk = {cls for cls in readers if "itk" in format_hints(cls)}
     ants = {cls for cls in readers if "ants" in format_hints(cls)}
     assert itk

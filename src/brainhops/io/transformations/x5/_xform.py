@@ -1,4 +1,4 @@
-__all__ = ["X5Transform", "X5TransformParser"]
+__all__ = ["X5Transform", "X5TransformReaderWriter"]
 
 from warnings import warn
 
@@ -14,8 +14,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferContentError,
 )
-from brainhops.io.common.hdf5 import Hdf5ParserWriter
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.common.hdf5 import Hdf5ReaderWriter
+from brainhops.io.transformations.base import TransformationFormat
 
 from ._blocks import node_to_transformation, transformation_to_nodes
 from ._struct import (
@@ -28,9 +28,9 @@ from ._struct import (
 )
 
 
-class X5TransformParser(
+class X5TransformReaderWriter(
     Magic,
-    Hdf5ParserWriter,
+    Hdf5ReaderWriter,
     repr=HIDE_IF_NONE,
 ):
     """A parser that reads and writes the raw content of a BIDS X5 file."""
@@ -154,9 +154,9 @@ class X5TransformParser(
 
 @register_format
 class X5Transform(
-    X5TransformParser,
+    X5TransformReaderWriter,
     _xforms.Sequence,
-    WritableFileBasedTransformation,
+    TransformationFormat,
 ):
     """A transformation stored in a BIDS X5 (`.x5`) file.
 

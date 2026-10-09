@@ -19,11 +19,12 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel.transformations import Affine
 from brainhops.io.base.parsers import (
     Confidence,
+    FileWriter,
     SnifferContentError,
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.transformations import FileBasedTransformation
+from brainhops.io.transformations import TransformationFormat
 from brainhops.io.transformations.freesurfer.lta import (
     LtaPhysicalSystem,
     LtaStruct,
@@ -253,17 +254,15 @@ def test_content_given_as_a_str_is_a_path(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_lta_is_a_registered_writable_format() -> None:
-    from brainhops.io import FileBasedObject, WritableFileBasedObject
-    from brainhops.io.transformations import WritableFileBasedTransformation
+    from brainhops.io import Format
 
-    assert LtaTransformation in FileBasedObject._REGISTRY
-    assert LtaTransformation in FileBasedTransformation._REGISTRY
-    assert LtaTransformation in WritableFileBasedObject._REGISTRY
-    assert LtaTransformation in WritableFileBasedTransformation._REGISTRY
+    assert LtaTransformation in Format._REGISTRY
+    assert LtaTransformation in TransformationFormat._REGISTRY
+    assert issubclass(LtaTransformation, FileWriter)
     assert LtaTransformation.EXTENSIONS == (".lta",)
     # The views read the same files, so registering them would be ambiguous.
     for view, _ in VIEWS:
-        assert view not in FileBasedObject._REGISTRY
+        assert view not in Format._REGISTRY
 
 
 @pytest.mark.parametrize(
@@ -271,7 +270,7 @@ def test_lta_is_a_registered_writable_format() -> None:
     [
         io.load,
         io.transformations.load,
-        FileBasedTransformation.from_any,
+        TransformationFormat.from_any,
         LtaTransformation.from_any,
         LtaTransformation.load,
     ],

@@ -1,4 +1,4 @@
-__all__ = ["M3zFormat", "M3zParser", "M3zMorph"]
+__all__ = ["M3zFormat", "M3zReaderWriter", "M3zMorph"]
 
 import zlib
 
@@ -13,13 +13,14 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     SnifferContentError,
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -49,9 +50,10 @@ class M3zFormat(FreesurferTransformationFormat):
     HINTS = ("m3z",)
 
 
-class M3zParser(
+class M3zReaderWriter(
     Magic,
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     repr=HIDE_IF_NONE,
     eq=False,
 ):
@@ -152,9 +154,9 @@ class M3zParser(
 @register_format
 class M3zMorph(
     M3zFormat,
-    M3zParser,
+    M3zReaderWriter,
     _xforms.ImmutableSequence,
-    WritableFileBasedTransformation,
+    TransformationFormat,
 ):
     """Non-linear transformation stored in a FreeSurfer morph.
 

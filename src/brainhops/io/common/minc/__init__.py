@@ -28,9 +28,9 @@ MINC.
 """
 
 __all__ = [
-    "MincParser",
+    "MincReader",
     "MincDimension",
 ]
 
 from ._dimensions import MincDimension
-from ._parsers import MincParser
+from ._parsers import MincReader

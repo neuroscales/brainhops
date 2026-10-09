@@ -4,14 +4,14 @@ import typing_extensions as tx
 
 from brainhops._core.path import FileOrContentLike
 
-from ._base import FileBasedTransformation
+from ._base import TransformationFormat
 
 
 def load(
     filelike: FileOrContentLike,
     brute: bool = False,
     **kwargs,
-) -> FileBasedTransformation:
+) -> TransformationFormat:
     """Read a transformation from a file, detecting its format.
 
     Parameters
@@ -25,10 +25,10 @@ def load(
 
     Returns
     -------
-    FileBasedTransformation
+    TransformationFormat
         The transformation read from the file.
     """
-    return FileBasedTransformation.load(filelike, brute=brute, **kwargs)
+    return TransformationFormat.load(filelike, brute=brute, **kwargs)
 
 
 def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
@@ -49,4 +49,4 @@ def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
     type or None
         The format class, or `None` when no single format is the best match.
     """
-    return FileBasedTransformation.sniff(filelike, **kwargs)
+    return TransformationFormat.sniff(filelike, **kwargs)

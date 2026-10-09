@@ -33,7 +33,7 @@ the axes are named after the dimensions (`xspace` gives `x`, `time` gives
 [`brainhops.io.common.minc`][brainhops.io.common.minc]. Since nibabel
 cannot write MINC, an image is saved to another format, such as NIfTI.
 Attributes other than the
-[`dimensions`][brainhops.io.common.minc.MincParser.dimensions] are not
+[`dimensions`][brainhops.io.common.minc.MincReader.dimensions] are not
 read.
 """
 

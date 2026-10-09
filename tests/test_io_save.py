@@ -26,11 +26,15 @@ from brainhops.datamodel.transformations import (
     CoordinatesField,
     DisplacementField,
 )
+from brainhops.io.base import Format
 from brainhops.io.base._base import (
-    WritableTextFileBasedObject,
     register_format,
 )
-from brainhops.io.base.parsers import AmbiguousFormatError, WriterError
+from brainhops.io.base.parsers import (
+    AmbiguousFormatError,
+    TextFileWriter,
+    WriterError,
+)
 
 needs_nibabel = pytest.mark.skipif(not HAS_NIBABEL, reason="needs nibabel")
 needs_zarr = pytest.mark.skipif(
@@ -76,7 +80,7 @@ def _note_format(name: str, model: type = Note, **attrs: tx.Any) -> type:
 
     namespace = {"to_lines": to_lines}
     namespace.update(attrs)
-    return type(name, (model, WritableTextFileBasedObject), namespace)
+    return type(name, (model, Format, TextFileWriter), namespace)
 
 
 @pytest.fixture
