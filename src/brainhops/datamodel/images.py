@@ -27,13 +27,13 @@ class Image(IdentityComparison, DataModelBase, eq=False):
     !!! note
         Images compare and hash by identity: `a == b` means `a is b`, even for
         images with the same data and transformations, and `==` never raises.
-        Images can therefore be used in sets and as dictionary keys. Values are
-        compared explicitly, for example with `numpy.array_equal(a, b)` and a
-        comparison of the geometries.
+        Images can therefore be used in sets and as dictionary keys. To compare
+        the contents of two images, compare their data explicitly, for example
+        with `numpy.array_equal(a, b)`, and compare their geometries.
     """
 
     def __array__(self, dtype: tx.Optional[DTypeLike] = None) -> np.ndarray:
-        """Convert the data to a NumPy array of an optional data type."""
+        """Convert the data to a NumPy array, optionally of a given type."""
         return np.asarray(self.data, dtype=dtype)
 
     @property
@@ -130,7 +130,7 @@ class SingleScaleImage(Image):
 
         The geometry pairs the Cartesian field matching the data shape with the
         preferred voxel-to-world transformation. Any image can be resliced onto
-        it.
+        this geometry.
         """
         return Geometry(
             (
@@ -159,12 +159,15 @@ class SingleScaleImage(Image):
         ----------
         geometry : Image or Geometry or Transformation, optional
             The target voxel-to-world geometry. An image or a geometry also
-            fixes the output shape; a bare transformation keeps the current
-            shape. By default, the image is resampled onto its own grid.
+            determines the output shape, whereas a bare transformation keeps
+            the current shape. By default, the image is resampled onto its own
+            geometry.
         degree : int, default=1
-            Spline degree, from 0 (nearest neighbour) and 1 (linear) up to 5.
+            Spline degree, from 0 (nearest neighbour) up to 5. A degree of 1
+            gives linear interpolation.
         bound : str or float, default="reflect"
-            Boundary condition. A float is a constant value beyond the edge.
+            Boundary condition. A float is used as a constant value beyond
+            the edge.
             The strings are:
 
                 - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
@@ -173,13 +176,14 @@ class SingleScaleImage(Image):
                 - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
                 - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
         coeff : bool, default=False
-            Whether the data already holds spline coefficients. Otherwise, the
+            Whether the data already holds spline coefficients. If false, the
             data is prefiltered before interpolation.
         copy : bool, default=False
             If true, the output never shares memory with the input. If false,
-            pure gathers (flips, permutations and unit-step slices) may return
-            a view, as with `torch.Tensor.to`. Dask arrays are immutable and
-            are never copied.
+            a reslicing that only rearranges existing voxels, such as a flip,
+            a permutation or a slice with a unit step, may return a view, as
+            `torch.Tensor.to` does. Dask arrays are immutable and are never
+            copied.
 
         Returns
         -------
@@ -195,13 +199,15 @@ class SingleScaleImage(Image):
         if not isinstance(geometry, Geometry):
             geometry = Geometry((self.geometry.grid, geometry))
 
-        # With a multiscale field, pick the level matching the output grid.
+        # Replace each multiscale field by the level that best matches the
+        # output grid.
         preferred = _at_resolution(
             self.transformation, geometry.transformation
         )
 
-        # Axis groups are applied separately, so that rescaled, flipped or
-        # permuted axes stay cheap. Imported here to avoid an import cycle.
+        # Each group of independent axes is resampled separately, so that
+        # rescaling, flipping or permuting axes stays cheap. The function is
+        # imported here to avoid an import cycle.
         from ._transformations.compute.separable import pull_separable
 
         transformation = (
@@ -235,7 +241,7 @@ class SingleScaleImage(Image):
     ) -> "SingleScaleImage":
         """Index the data, keeping every transformation consistent with it.
 
-        The index is made of integers, slices and `None`.
+        The index may contain integers, slices and `None`.
         """
         if not isinstance(index, tuple):
             index = (index,)
@@ -331,8 +337,9 @@ class MultiScaleImage(Image):
     def geometry(self) -> Geometry:
         """The geometry of the highest-resolution level.
 
-        The geometry pairs the grid of that level with the pyramid
-        transformation composed with the level's own transformation.
+        The geometry pairs the grid of the highest-resolution level with the
+        preferred transformation of the pyramid, composed with that level's
+        own transformation.
         """
         return Geometry(
             (
@@ -358,11 +365,14 @@ class MultiScaleImage(Image):
         Parameters
         ----------
         geometry : Image or Geometry or Transformation, optional
-            The target geometry, read as in [`SingleScaleImage.reslice`][].
+            The target geometry, interpreted as in
+            [`SingleScaleImage.reslice`][].
         degree : int, default=1
-            Spline degree, from 0 (nearest neighbour) and 1 (linear) up to 5.
+            Spline degree, from 0 (nearest neighbour) up to 5. A degree of 1
+            gives linear interpolation.
         bound : str or float, default="reflect"
-            Boundary condition. A float is a constant value beyond the edge.
+            Boundary condition. A float is used as a constant value beyond
+            the edge.
             The strings are:
 
                 - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
@@ -371,13 +381,14 @@ class MultiScaleImage(Image):
                 - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
                 - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
         coeff : bool, default=False
-            Whether the data already holds spline coefficients. Otherwise, the
+            Whether the data already holds spline coefficients. If false, the
             data is prefiltered before interpolation.
         copy : bool, default=False
             If true, the output never shares memory with the input. If false,
-            pure gathers (flips, permutations and unit-step slices) may return
-            a view, as with `torch.Tensor.to`. Dask arrays are immutable and
-            are never copied.
+            a reslicing that only rearranges existing voxels, such as a flip,
+            a permutation or a slice with a unit step, may return a view, as
+            `torch.Tensor.to` does. Dask arrays are immutable and are never
+            copied.
 
         Returns
         -------
@@ -426,9 +437,9 @@ def _level_voxel_sizes(
 ) -> tx.List[tx.Optional[ArrayProtocol]]:
     """Return the voxel size of each level in world units, finest first.
 
-    The pyramid transformation is included, so that sizes are measured in the
-    units of the target. A level whose placement is not affine, even ignoring
-    fields, gives `None`.
+    The preferred transformation of the pyramid is included, so that the sizes
+    are measured in the units of the target. A level whose transformation is
+    not affine, even when its fields are ignored, gets `None`.
     """
     sizes = []  # type: tx.List[tx.Optional[ArrayProtocol]]
     for level in image.images or ():

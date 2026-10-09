@@ -34,12 +34,13 @@ _T = tx.TypeVar("_T", bound=type)
 
 
 def singleton(cls: _T) -> _T:
-    """Make a class a singleton.
+    """Make a class a singleton, so that only one instance of it can exist.
 
-    Calling the class again returns its single instance, and subclassing it
-    raises a TypeError, since a subclass would be a second kind of the same
-    thing. The classes below are also frozen, because every axis shares the one
-    instance and mutating it would change all of them.
+    Calling the class again returns the existing instance. Subclassing a
+    singleton raises a TypeError, because a subclass would introduce a second
+    variant of an object that is meant to be unique. The orientation classes
+    in this module are also frozen: every axis with a given orientation holds
+    the same instance, so mutating that instance would change all of them.
     """
 
     registry = {}
@@ -136,19 +137,23 @@ class SuperiorToInferior(
 
 
 R = LR = leftToRight = LeftToRight()
-"""Left to right, named `R` after the end of the axis (also `LR`)."""
+"""Left-to-right orientation, also available as `R` and `LR`.
+
+Each single-letter name refers to the end of the axis towards which
+coordinates increase: `R` is the right end of a left-to-right axis.
+"""
 
 L = RL = rightToLeft = RightToLeft()
-"""Right to left (`L`, `RL`)."""
+"""Right-to-left orientation, also available as `L` and `RL`."""
 
 A = PA = posteriorToAnterior = PosteriorToAnterior()
-"""Posterior to anterior (`A`, `PA`)."""
+"""Posterior-to-anterior orientation, also available as `A` and `PA`."""
 
 P = AP = anteriorToPosterior = AnteriorToPosterior()
-"""Anterior to posterior (`P`, `AP`)."""
+"""Anterior-to-posterior orientation, also available as `P` and `AP`."""
 
 I = SI = superiorToInferior = SuperiorToInferior()
-"""Superior to inferior (`I`, `SI`)."""
+"""Superior-to-inferior orientation, also available as `I` and `SI`."""
 
 S = IS = inferiorToSuperior = InferiorToSuperior()
-"""Inferior to superior (`S`, `IS`)."""
+"""Inferior-to-superior orientation, also available as `S` and `IS`."""
