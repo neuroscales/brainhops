@@ -1,4 +1,8 @@
-"""Base classes that let a format sniff, read and write itself.
+"""Independent sniffing, reading and writing capabilities for file formats.
+
+Readers are shared by native parsers and public format dispatchers. Writers
+do not inherit reading or sniffing. The combined ``*ParserWriter`` classes
+remain compatibility wrappers; new implementations compose the capabilities.
 
 The errors that these classes raise are also importable from here.
 """
@@ -6,12 +10,18 @@ The errors that these classes raise are also importable from here.
 __all__ = [
     "Confidence",
     "FileSniffer",
+    "FileReader",
+    "FileWriter",
     "FileParser",
     "FileParserWriter",
     "BinaryFileSniffer",
+    "BinaryFileReader",
+    "BinaryFileWriter",
     "BinaryFileParser",
     "BinaryFileParserWriter",
     "TextFileSniffer",
+    "TextFileReader",
+    "TextFileWriter",
     "TextFileParser",
     "TextFileParserWriter",
 ]
@@ -352,8 +362,8 @@ def _overrides_from_fileobj(cls: type) -> bool:
     return False
 
 
-class FileParser(FileSniffer):
-    """Class that can read files of its type."""
+class FileReader(FileSniffer):
+    """Input adapters shared by native parsers and public formats."""
 
     @classmethod
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
@@ -516,8 +526,8 @@ class FileParser(FileSniffer):
         )
 
 
-class FileParserWriter(FileParser):
-    """Class that can read and write files of its type."""
+class FileWriter:
+    """Output adapters, independent of reading and sniffing."""
 
     _WRITE_MODE = "w"
 
@@ -680,7 +690,7 @@ def _not_text(
     return Confidence.NO
 
 
-class TextFileParser(TextFileSniffer, FileParser):
+class TextFileReader(TextFileSniffer, FileReader):
     """Class that can read text files of its type."""
 
     @classmethod
@@ -693,8 +703,8 @@ class TextFileParser(TextFileSniffer, FileParser):
         return cls.from_text(content.decode(encoding), **kwargs)
 
 
-class TextFileParserWriter(TextFileParser, FileParserWriter):
-    """Class that can read and write text files of its type."""
+class TextFileWriter(FileWriter):
+    """Output adapters for text, without any reading methods."""
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the text of the file, encoded.
@@ -716,13 +726,44 @@ class BinaryFileSniffer(FileSniffer):
     _READ_MODE: str = "rb"
 
 
-class BinaryFileParser(BinaryFileSniffer, FileParser):
+class BinaryFileReader(BinaryFileSniffer, FileReader):
     """Class that can read binary files of its type."""
 
     ...
 
 
-class BinaryFileParserWriter(BinaryFileParser, FileParserWriter):
-    """Class that can read and write binary files of its type."""
+class BinaryFileWriter(FileWriter):
+    """Output adapters for binary files, without any reading methods."""
 
     _WRITE_MODE: str = "wb"
+
+
+# ----------------------------------------------------------------------
+#   PARSERS AND COMPATIBILITY COMBINATIONS
+# ----------------------------------------------------------------------
+
+
+class FileParser(FileReader):
+    """Reader base for a native format representation."""
+
+
+class TextFileParser(TextFileReader, FileParser):
+    """Reader base for a native text format representation."""
+
+
+class BinaryFileParser(BinaryFileReader, FileParser):
+    """Reader base for a native binary format representation."""
+
+
+class FileParserWriter(FileParser, FileWriter):
+    """Compatibility combination; prefer explicit reader and writer bases."""
+
+
+class TextFileParserWriter(TextFileParser, TextFileWriter, FileParserWriter):
+    """Compatibility combination of text parsing and writing."""
+
+
+class BinaryFileParserWriter(
+    BinaryFileParser, BinaryFileWriter, FileParserWriter
+):
+    """Compatibility combination of binary parsing and writing."""

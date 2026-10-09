@@ -9,7 +9,8 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     SnifferContentError,
     WriterError,
@@ -54,7 +55,10 @@ def _dpi_pair(dpi: tx.Any) -> tx.Tuple[float, float]:
 
 @register_format
 class PillowImage(
-    BinaryFileParserWriter, WritableFileBasedImage, SingleScaleImage
+    BinaryFileReader,
+    BinaryFileWriter,
+    WritableFileBasedImage,
+    SingleScaleImage,
 ):
     """A two-dimensional raster image, read and written with Pillow.
 

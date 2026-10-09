@@ -1,5 +1,6 @@
 __all__ = [
     "format_registry",
+    "Format",
     "FormatDispatcher",
     "register_format",
     "FileBasedObject",
@@ -17,12 +18,12 @@ from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
-    BinaryFileParserWriter,
-    FileParser,
-    FileParserWriter,
-    TextFileParser,
-    TextFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
+    FileReader,
+    FileWriter,
+    TextFileReader,
+    TextFileWriter,
     _passthrough_from_fileobj,
 )
 from brainhops.io.base.specs import SourceSpec
@@ -99,14 +100,31 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
 # ----------------------------------------------------------------------
 
 
-class FormatDispatcher(FileParser):
+@format_registry
+class Format:
+    """Public format membership, independent of reading and writing.
+
+    Concrete public formats register here with `register_format`. Reading
+    public objects inherit `FileBasedObject`; writing adds `FileWriter`.
+    Generic saving selects writers from this registry. Generic loading uses
+    the narrower `FileBasedObject` registry, so write-only formats and
+    standalone metadata readers are not candidates. Native parser
+    representations do not inherit this class.
+    """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    PREFIXES: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    PRIORITY: tx.ClassVar[int] = 0
+
+
+class FormatDispatcher(FileReader):
     """Dispatch between the formats registered under a dispatcher.
 
     On a class decorated with [`format_registry`][], the `sniff*` methods
     identify the registered format that matches the input, and `load` and the
     `from_*` methods choose a format and delegate to it. On a class without a
     registry, which is a concrete format, every method behaves as the
-    [`FileParser`][] method it overrides.
+    [`FileReader`][] method it overrides.
 
     The mixin owns no registry itself. A kind that the generic `load` must
     never return, such as `FileBasedMetadata`, can therefore dispatch between
@@ -403,7 +421,7 @@ class FormatDispatcher(FileParser):
 
 
 @format_registry
-class FileBasedObject(FormatDispatcher):
+class FileBasedObject(FormatDispatcher, Format):
     """Root of all objects stored in files.
 
     Subclasses decorated with [`format_registry`][] dispatch between the
@@ -413,36 +431,36 @@ class FileBasedObject(FormatDispatcher):
     describes the dispatch.
     """
 
-    # TODO: FileBasedObject reaches FileParser only through FormatDispatcher,
-    # while WritableFileBasedObject inherits FileParserWriter directly; this
-    # asymmetry is confusing.
+
+@format_registry
+class WritableFileBasedObject(FileBasedObject, FileWriter):
+    """Compatibility base for public formats that both read and write.
+
+    New formats may combine `FileBasedObject` and `FileWriter` directly.
+    A write-only public format combines `Format` and `FileWriter` instead.
+    """
 
 
 @format_registry
-class WritableFileBasedObject(FileParserWriter, FileBasedObject):
-    """Object stored in a writable file."""
-
-
-@format_registry
-class TextFileBasedObject(TextFileParser, FileBasedObject):
+class TextFileBasedObject(TextFileReader, FileBasedObject):
     """Object stored in a text file."""
 
 
 @format_registry
-class BinaryFileBasedObject(BinaryFileParser, FileBasedObject):
+class BinaryFileBasedObject(BinaryFileReader, FileBasedObject):
     """Object stored in a binary file."""
 
 
 @format_registry
 class WritableTextFileBasedObject(
-    TextFileParserWriter, WritableFileBasedObject
+    TextFileReader, TextFileWriter, WritableFileBasedObject
 ):
     """Object stored in a writable text file."""
 
 
 @format_registry
 class WritableBinaryFileBasedObject(
-    BinaryFileParserWriter, WritableFileBasedObject
+    BinaryFileReader, BinaryFileWriter, WritableFileBasedObject
 ):
     """Object stored in a writable binary file."""
 
@@ -464,8 +482,8 @@ class _FileBasedModelMixin:
         To take effect, this `from_any` must precede `DataModelBase.from_any`
         in the MRO, but `FileBasedObject` comes after the data model in every
         file-based class. Parser bases declare the data model first, as in
-        `NiftiParser(DataModelBase, BinaryFileParserWriter)`, and their chain
-        leads to `FileBasedObject`, so listing `FileBasedObject` first makes
+        `NiftiParser(DataModelBase, BinaryFileParser, BinaryFileWriter)`.
+        Their chain leads to `FileBasedObject`, so listing it first makes
         the MRO of `NiftiImage` inconsistent. Listing data models last would
         require reordering every parser, dispatcher and format, and the file
         machinery's own field declarations would then shadow the specific ones:
@@ -548,7 +566,7 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
         if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
             continue
         names = [field.name for field in fields(klass)]
-        if issubclass(klass, FileParser):
+        if issubclass(klass, (Format, FileReader, FileWriter)):
             for name in names:
                 owners.setdefault(name, []).append(klass)
         else:

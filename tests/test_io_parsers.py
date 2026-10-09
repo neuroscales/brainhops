@@ -219,14 +219,14 @@ def test_a_boolean_sniffer_is_a_valid_scoring_sniffer() -> None:
 def test_the_writer_entry_point_does_not_shadow_the_converter() -> None:
     """The writer entry point must not shadow Transformation.to(cls)."""
     from brainhops.datamodel.transformations import Transformation
-    from brainhops.io.base.parsers import FileParserWriter
+    from brainhops.io.base.parsers import FileWriter
     from brainhops.io.transformations.base import (
         WritableFileBasedTransformation,
     )
 
     mro = WritableFileBasedTransformation.__mro__
     assert next(c for c in mro if "to" in c.__dict__) is Transformation
-    assert next(c for c in mro if "save" in c.__dict__) is FileParserWriter
+    assert next(c for c in mro if "save" in c.__dict__) is FileWriter
 
 
 # ----------------------------------------------------------------------

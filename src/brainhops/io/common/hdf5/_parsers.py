@@ -16,7 +16,7 @@ from brainhops._core.streams import preserve_position
 # io
 from brainhops.io.base.parsers import (
     BinaryFileParser,
-    BinaryFileParserWriter,
+    BinaryFileWriter,
     Confidence,
     ParserExistsError,
     SnifferContentError,
@@ -198,7 +198,7 @@ class Hdf5Parser(BinaryFileParser):
                     f.close()
 
 
-class Hdf5ParserWriter(Hdf5Parser, BinaryFileParserWriter):
+class Hdf5ParserWriter(Hdf5Parser, BinaryFileWriter):
     """
     A mixin that reads and writes a format stored in HDF5.
 

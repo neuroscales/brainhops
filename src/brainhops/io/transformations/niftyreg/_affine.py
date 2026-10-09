@@ -7,7 +7,8 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     WriterError,
 )
 from brainhops.io.common._arrays import TxtArrayParser, is_numeric_array
@@ -32,7 +33,8 @@ def _is_homogeneous(array: np.ndarray) -> bool:
 class NiftyRegAffine(
     NiftyRegAffineFormat,
     TxtArrayParser,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     RASToRAS,
     WritableFileBasedTransformation,
 ):

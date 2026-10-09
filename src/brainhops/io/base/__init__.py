@@ -2,6 +2,8 @@
 
 __all__ = [
     "FileBasedObject",
+    "Format",
+    "FormatDispatcher",
     "WritableFileBasedObject",
     "TextFileBasedObject",
     "BinaryFileBasedObject",
@@ -27,6 +29,8 @@ from . import parsers
 from ._base import (
     BinaryFileBasedObject,
     FileBasedObject,
+    Format,
+    FormatDispatcher,
     TextFileBasedObject,
     WritableBinaryFileBasedObject,
     WritableFileBasedObject,

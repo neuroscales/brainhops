@@ -13,7 +13,7 @@ from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base.parsers import (
     Confidence,
     FileParser,
-    FileParserWriter,
+    FileWriter,
     ParserExistsError,
     ParserTypeError,
     WriterError,
@@ -171,7 +171,7 @@ class ZarrParser(DataModelBase, FileParser):
         raise NotImplementedError
 
 
-class ZarrParserWriter(ZarrParser, FileParserWriter):
+class ZarrParserWriter(ZarrParser, FileWriter):
     def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:
         """Copy the stored object into an opened Zarr array or group.
 

@@ -6,7 +6,8 @@ from brainhops._core.streams import preserve_position
 from brainhops.datamodel.images import MultiScaleImage
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     WriterError,
 )
@@ -31,7 +32,11 @@ _WHOLE_SLIDE = 0.9
 
 @register_format
 class TiffMultiScaleImage(
-    _TiffMixin, BinaryFileParserWriter, WritableFileBasedImage, MultiScaleImage
+    _TiffMixin,
+    BinaryFileReader,
+    BinaryFileWriter,
+    WritableFileBasedImage,
+    MultiScaleImage,
 ):
     """A pyramidal TIFF series, read as a multiscale image.
 

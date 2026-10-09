@@ -10,7 +10,8 @@ from brainhops._core.peek import peekable_lines
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
-    TextFileParserWriter,
+    TextFileParser,
+    TextFileWriter,
 )
 
 # Once comments are stripped, the first line of an LTA file gives the
@@ -23,12 +24,12 @@ _FIRST_LINE = re.compile(r"^type\s*=\s*\d+$")
 # ----------------------------------------------------------------------
 
 
-class LtaParser(Magic, TextFileParserWriter):
+class LtaParser(Magic, TextFileParser, TextFileWriter):
     """Mixin that lets a class be sniffed, read and written as LTA.
 
     `LtaStruct` and its blocks inherit their `sniff*`, `from_*` and `to_*`
     methods from this class, which follows the contract of
-    [`TextFileParserWriter`][]: front doors such as `load` and `save`, and
+    [`TextFileParser`][] and [`TextFileWriter`][]: `load` and `save`, and
     the format steps `sniff_line`, `from_lines` and `to_lines`.
 
     A struct is read field by field, in declaration order. A field whose type

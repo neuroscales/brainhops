@@ -22,7 +22,8 @@ from brainhops.datamodel.transformations import (
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     ParserContentError,
     ParserExistsError,
@@ -846,7 +847,8 @@ def _wrap_write(function: tx.Callable[[], None]) -> None:
 @register_format
 class TiffImage(
     _TiffMixin,
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     WritableFileBasedImage,
     SingleScaleImage,
 ):

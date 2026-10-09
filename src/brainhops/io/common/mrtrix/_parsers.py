@@ -16,7 +16,8 @@ from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileParser,
+    BinaryFileWriter,
     Confidence,
     ParserContentError,
     ParserExistsError,
@@ -40,7 +41,7 @@ from ._header import MrtrixHeader
 # ----------------------------------------------------------------------
 
 
-class MrtrixParser(DataModelBase, BinaryFileParserWriter):
+class MrtrixParser(DataModelBase, BinaryFileParser, BinaryFileWriter):
     """
     The base class of objects encoded as an MRtrix image.
 

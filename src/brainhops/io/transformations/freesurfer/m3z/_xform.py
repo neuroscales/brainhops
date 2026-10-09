@@ -13,7 +13,8 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileParser,
+    BinaryFileWriter,
     Confidence,
     SnifferContentError,
     UnrepresentableTransformationError,
@@ -50,7 +51,8 @@ class M3zFormat(FreesurferTransformationFormat):
 
 class M3zParser(
     Magic,
-    BinaryFileParserWriter,
+    BinaryFileParser,
+    BinaryFileWriter,
     repr=HIDE_IF_NONE,
     eq=False,
 ):
