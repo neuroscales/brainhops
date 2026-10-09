@@ -9,10 +9,15 @@ retract an analytic assumption.
 from unittest import mock
 
 import numpy as np
+import pytest
 
 from brainhops.datamodel import kinds as H
 from brainhops.datamodel._transformations import concrete as _concrete
 from brainhops.datamodel._transformations.compute import checkers as _checkers
+from brainhops.datamodel._transformations.compute.check import (
+    KIND_ALIASES,
+    register_kind_alias,
+)
 from brainhops.datamodel._transformations.compute.checkers import (
     _bijective_targets,
     _embed_targets,
@@ -361,6 +366,14 @@ def test_class_kinds() -> None:
     )
     assert not is_kind(Affine(matrix=np.eye(4)[:3]), TransformationField)
     assert issubclass(InverseAffine, Inverse)
+
+
+def test_kind_alias_refuses_a_tuple() -> None:
+    # Issue #384: a tuple used to be accepted, and only its last kind was
+    # kept under the name.
+    with pytest.raises(TypeError):
+        register_kind_alias("demo-384", (DisplacementField, CoordinatesField))
+    assert "demo-384" not in KIND_ALIASES
 
 
 # ----------------------------------------------------------------------

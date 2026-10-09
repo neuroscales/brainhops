@@ -433,23 +433,34 @@ def is_family(x: Transformation, family: FamilyLike) -> bool:
 # --- Public helpers ---------------------------------------------------
 
 
-def register_kind_alias(
-    name: str, cls: tx.Union[Kind, tx.Tuple[Kind, ...]]
-) -> None:
+def register_kind_alias(name: str, cls: Kind) -> None:
     """Register a name for a class kind or a kind node.
 
     The name is stored in lower case. Wrapper and field kinds have no node,
     because their membership depends on their contents, so a name for such
     a class is matched by `isinstance` (see [`is_kind`][]). A name that
     resolves to a node, such as `"scaling"` for the diagonal set, is still
-    answered as a question about a set, with checkers. When a tuple is
-    given, each class is assigned to the same name in turn, so only the
-    last one is kept.
+    answered as a question about a set, with checkers. A name stands for
+    exactly one class, as it does in [`normalize_kind`][].
+
+    Parameters
+    ----------
+    name : str
+        Name under which the kind is registered.
+    cls : Kind
+        Kind node or class kind that the name stands for.
+
+    Raises
+    ------
+    TypeError
+        If `cls` is not a class, for example a tuple of kinds.
     """
-    if not isinstance(cls, tuple):
-        cls = (cls,)
-    for a_cls in cls:
-        KIND_ALIASES[name.lower()] = a_cls
+    if not isinstance(cls, type):
+        raise TypeError(
+            f"not a transformation kind: {cls!r}. An alias names a single "
+            f"class, a node of `kinds` or a concrete transformation class."
+        )
+    KIND_ALIASES[name.lower()] = cls
 
 
 def normalize_kind(kind_like: KindLike) -> Kind:
