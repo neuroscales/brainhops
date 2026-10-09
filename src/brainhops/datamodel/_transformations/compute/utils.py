@@ -1,13 +1,10 @@
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# datamodel
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import ConversionError
 
 if tx.TYPE_CHECKING:
-    # internals
     from brainhops.datamodel.systems import CoordinateSystem
 
     from ..base import Transformation
@@ -16,10 +13,10 @@ if tx.TYPE_CHECKING:
 def get_ndim(
     t: "Transformation", default: tx.Optional[int] = None
 ) -> tx.Optional[int]:
-    """The number of axes of the input system of `t`, or else of its output.
+    """Return the axis count of the input system of `t`, else of its output.
 
-    `default` is returned when neither system is closed: a missing or an
-    open system says nothing about the number of axes.
+    `default` is returned when neither system is closed, since a missing or
+    open system says nothing about the count.
     """
     ndim = get_axes(t.input).ndim
     if ndim is None:
@@ -31,21 +28,15 @@ def systems_disagree(
     source: tx.Optional["CoordinateSystem"],
     target: tx.Optional["CoordinateSystem"],
 ) -> bool:
-    """
-    Whether two adjacent coordinate systems need reconciling.
+    """Whether two adjacent coordinate systems need reconciling.
 
-    `source` is where one transform leaves its coordinates and `target` is
-    where the next one expects to find them. Two closed systems disagree
-    when they are not equal. A system that is missing or open (its axes
-    hold `...`) disagrees with its neighbour only when the
-    axes it does state cannot match the neighbour's, i.e. when the two are
+    `source` is where one transformation leaves the coordinates and `target` is
+    where the next one expects them. Two closed systems disagree when they are
+    unequal. A missing or open system disagrees only when its stated axes are
     not
-    [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with]:
-    not knowing is never a reason to refuse.
-
-    This is the precondition of everything that assumes the two ends of a
-    boundary line up -- the composers, and the two-argument simplifiers.
-    [`adapt`][] is what removes a disagreement.
+    [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with]
+    those of its neighbour, because not knowing is never a reason to refuse.
+    [`adapt`][] removes a disagreement.
     """
     source_axes, target_axes = (
         get_axes(source),
@@ -59,22 +50,17 @@ def systems_disagree(
 def boundary_disagrees(
     first: "Transformation", second: "Transformation"
 ) -> bool:
-    """Whether two consecutive transforms disagree on the system they share.
-
-    `first` is applied before `second`, so the boundary is between the
-    output of `first` and the input of `second`.
-    """
+    """Whether `first` and `second` disagree on the system between them."""
     return systems_disagree(first.output, second.input)
 
 
 def with_endpoints(
     t: "Transformation", like: "Transformation"
 ) -> "Transformation":
-    """Carry the endpoints `like` declares onto `t`, which replaces it.
+    """Carry the endpoints that `like` declares onto `t`.
 
-    Only the *declared* endpoints are read, so an endpoint `like` derives
-    stays derived, and `t` is returned as is when `like` declares none --
-    the same object, so a lazy inverse that names it still cancels with it.
+    When `like` declares none, `t` is returned as the same object, so that a
+    lazy inverse naming it still cancels.
     """
     edits = {}
     if like._input is not None:
@@ -87,18 +73,14 @@ def with_endpoints(
 def require_endomorphism(t: "Transformation", operator: str) -> None:
     """Refuse a transformation that does not map a space to itself.
 
-    Squaring a transformation composes it with itself, and its square
-    root, exponential and logarithm are defined through such compositions,
-    so each of them needs a transformation whose output lives where its
-    input does. A transformation fails that test when its two systems
-    disagree (see [`systems_disagree`][]) or when it states different
-    numbers of input and output axes (see [`axis_counts`][]). What is not
-    stated is never a reason to refuse, and nothing is materialized.
+    The square root, exponential and logarithm require an endomorphism. The
+    check fails when the systems disagree or when the stated axis counts
+    differ; an unstated count is never a reason to refuse.
 
     Raises
     ------
     DomainError
-        If `t` does not map a space to itself.
+        If `t` is not an endomorphism.
     """
     from ....errors import DomainError
 
@@ -119,10 +101,10 @@ def require_endomorphism(t: "Transformation", operator: str) -> None:
 
 
 def axis_list(axes: tx.Optional[tx.Any]) -> tx.List[int]:
-    """A plain list of integer axis indices (empty for `None`).
+    """Return axis indices as a list of ints, empty for None.
 
-    An axis vector may be a numpy array, whose truth value is ambiguous, so
-    it is tested against `None` rather than for truthiness.
+    The test is against None, because the truth value of an array is
+    ambiguous.
     """
     if axes is None:
         return []
@@ -132,29 +114,24 @@ def axis_list(axes: tx.Optional[tx.Any]) -> tx.List[int]:
 def axis_counts(
     t: tx.Any,
 ) -> tx.Tuple[tx.Optional[int], tx.Optional[int]]:
-    """The `(input, output)` axis counts a transformation states.
+    """Return the input and output axis counts that a transformation states.
 
-    Each count is `None` when nothing on `t` states it. They are read, in
-    order, from:
+    Each count is None when nothing states it. The counts are read from:
 
     * a matrix shape (`Affine`, `Linear`, `Rotation`), allowing for the
       homogeneous column of an affine;
     * the length of `scale`, `translation` or `permutation`;
-    * a field: the last dimension of a displacement field, the spatial rank
-      and last dimension of a coordinates field, the rank of a grid;
+    * a field: the last dimension of a displacement field, the spatial rank and
+      last dimension of a coordinates field, the rank of a grid;
     * a lazy inverse: its forward's counts, swapped;
     * a lazy square root, exponential or logarithm: its forward's counts;
-    * a sequence: its ends, reading past any leading (or trailing) member
-      that preserves the dimension without stating it;
+    * a sequence: its ends, reading past any leading (or trailing) member that
+      preserves the dimension without stating it;
     * the declared input and output systems.
 
-    Only *declared* systems are read, and only a closed system states a
-    count: a missing or open system (one whose axes hold `...`) leaves it
-    unknown, and is never guessed from. A subspace that declares no system
-    derives an open one from its inner system, so it states its counts
-    through its declared systems only.
-
-    Reading never materializes a lazy inverse or composes a sequence.
+    The declared systems are the fallback, and only a closed system states a
+    count. Reading never materializes a lazy inverse or composes a
+    sequence.
     """
     from ..base import Transformation
     from ..concrete import (
@@ -177,13 +154,13 @@ def axis_counts(
     ni: tx.Optional[int] = None
     no: tx.Optional[int] = None
     if isinstance(t, Inverse):
-        # Before the concrete families: a typed inverse such as
-        # `InverseScaling` is also a `Scaling`.
+        # A typed inverse such as InverseScaling is also a Scaling, so inverses
+        # are checked before the concrete families.
         if t.forward is not None:
             no, ni = axis_counts(t.forward)
     elif isinstance(t, Operation):
-        # Likewise for a lazy operator, which maps a space to itself: its
-        # counts are its forward's, read without materializing it.
+        # A lazy operator maps a space to itself, so its counts are those of
+        # its forward transformation.
         if t.forward is not None:
             ni, no = axis_counts(t.forward)
     elif isinstance(t, Sequence):
@@ -205,9 +182,8 @@ def axis_counts(
             if t.shape is not None:
                 ni = no = len(t.shape)
         elif isinstance(t, (DisplacementField, CoordinatesField)):
-            # Only the shape is read, and it is the same in every
-            # encoding: it is read off the stored array, so that a count
-            # never decodes a field of spline coefficients.
+            # Only the shape is read, so a spline-coefficient field is never
+            # decoded.
             field = t.data
             if field is not None:
                 no = int(field.shape[-1])
@@ -225,11 +201,8 @@ def axis_counts(
 def _sequence_ends(
     members: tx.List["Transformation"],
 ) -> tx.Tuple[tx.Optional[int], tx.Optional[int]]:
-    # The input count of the first member that states one, and the output
-    # count of the last. A member that states neither count is read past
-    # only when it is known to preserve the dimension (an identity, a
-    # subspace, a matrix-less affine, a field); anything else stops the
-    # read, so a count is never taken across a member that may change it.
+    # A member that states neither count is read past only if it preserves the
+    # dimension.
     ni = _first_count(members, 0)
     no = _first_count(members[::-1], 1)
     return ni, no
@@ -253,20 +226,19 @@ def _first_count(
 
 
 UNREADABLE = object()
-"""
-Returned by `affine_matrix` for a transform that has no affine reading
-(no converter to `Affine`: a projection, a bijection, a field, ...). It is
-distinct from `None`, which marks an unparameterized (identity) affine-ish
-transform.
+"""Sentinel for a transformation without an affine reading.
+
+It is distinct from None, which marks an affine-like transformation
+without parameters, that is, the identity.
 """
 
 
 def affine_matrix(t: "Transformation") -> tx.Any:
-    """The affine matrix of an affine-ish transform, as a numpy array.
+    """Return the affine matrix of an affine-like transformation as an array.
 
-    Returns `None` when the transform is matrix-less (an identity), and
-    `UNREADABLE` when it cannot be converted to an `Affine` at all.
-    Never call it on a lazy `Inverse`: converting one materializes it.
+    The result is None for the identity and [`UNREADABLE`][] when there is no
+    conversion to Affine. A lazy Inverse must not be passed, because the
+    conversion would materialize it.
     """
     from ..concrete import Affine
 

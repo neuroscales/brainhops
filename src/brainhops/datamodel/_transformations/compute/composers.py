@@ -1,30 +1,21 @@
-"""
-This module implements function that compute the composition of two
-transformations. It assumes that their input and output coordinate
-systems are compatible (see `adaptors` for composing transformations
-that do not have compatible coordinate systems). It also assumes that
-transfmations are fully defined (i.e., their parameters are not `None`).
+"""Composers for pairs of transformations.
 
-A composer takes two transformations To and Ti, and returns a
-transformation T such that T = To @ Ti, i.e. such that T(x) = To(Ti(x))
-for any x in the domain of Ti. The input coordinate system of T is the
-input coordinate system of Ti, and the output coordinate system of T is
-the output coordinate system of To.
+Each composer computes `T = To @ Ti`, that is `T(x) = To(Ti(x))` on the
+domain of `Ti`. The input system of `T` is the input system of `Ti`,
+and its output system is the output system of `To`. The composers
+assume that the adjoining coordinate systems are compatible, which
+`adaptors` ensures, and that both transformations are fully defined,
+with no unset parameter.
 """
 
-# dependencies
 import typing_extensions as tx
 from bagof.magic import replace
 
-# core
 from brainhops._core.bsplines import pull_field
 from brainhops.backends import get_array_backend
-
-# datamodel
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import CompositionError
 
-# internals
 from ..base import Transformation
 from ..concrete import (
     Affine,
@@ -100,7 +91,7 @@ def _(To: Linear, Ti: Linear) -> Linear:
 
 @composer
 def _(To: Rotation, Ti: Rotation) -> Rotation:
-    # The rotations are a group: the product of two is a rotation.
+    # Rotations form a group.
     return Rotation(
         matrix=To.matrix @ Ti.matrix, input=Ti.input, output=To.output
     )
@@ -268,9 +259,9 @@ def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
 
 
 def _check_square(To: tx.Union[Linear, Affine]) -> None:
-    # A displacement field maps a space onto itself, so it cannot absorb a
-    # matrix that changes the number of axes. The pair is refused, and the
-    # compose pass keeps the two side by side.
+    # A displacement field maps a space to itself and cannot absorb a matrix
+    # that changes the number of axes. The pair is refused, and the compose
+    # pass keeps both transformations side by side.
     rows, cols = To.matrix.shape
     if isinstance(To, Affine):
         cols -= 1
@@ -324,9 +315,8 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
-            # The displacement of `To`, as spline coefficients
-            # (not the velocity, which a `StationaryVelocityField`
-            # stores under `data`)
+            # The displacement as spline coefficients; a
+            # StationaryVelocityField keeps its velocity under `data`.
             To.to(log=False, store="coefficients").data,
             coords=x2.field,
             degree=To.degree,
@@ -351,9 +341,6 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
-            # The displacement of `To`, as spline coefficients
-            # (not the velocity, which a `StationaryVelocityField`
-            # stores under `data`)
             To.to(log=False, store="coefficients").data,
             coords=x2.field,
             degree=To.degree,
@@ -399,12 +386,9 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
 
 @composer
 def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
-    # Apply a transform that acts on a subset of the axes to a field of
-    # coordinates. The acted-on components of the field are carried through
-    # the inner transform, and the remaining components pass through
-    # unchanged. The inner transform is evaluated lazily, by pulling it at
-    # the acted-on sub-coordinates, so the extra axes are never tiled to
-    # full size.
+    # The components acted on go through the inner transformation, and the
+    # others pass unchanged. The inner transformation is pulled at the
+    # sub-coordinates, so the extra axes are never tiled to full size.
     Ti = Ti.compute()
     x = Ti.field
     ba = get_array_backend(x)
@@ -416,18 +400,16 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
     in_axes = [int(i) for i in To.input_axes]
     out_axes = [int(i) for i in To.output_axes]
     if To.transformation is None:
-        # A missing inner is the identity. With matching axis vectors the
-        # whole transform is the identity, so the field is only relabelled.
-        # Otherwise it is a pure axis reindex, assembled below exactly like
-        # a transform with an inner (and like the subspace-to-affine
-        # reduction), with the acted-on components taken as they are.
+        # A missing inner transformation is the identity. With equal axis
+        # vectors the field is only relabelled; otherwise the subspace is a
+        # pure reindexing of axes.
         if in_axes == out_axes:
             return replace(Ti, output=To.output)
         acted = x[..., in_axes]
     else:
         if _interpolates(To.transformation):
-            # Positional access reads the axes the system states, even an
-            # open one, and an unknown `Axis()` anywhere else.
+            # Positional access reads the axes that the system states, even
+            # when it is open.
             axes = get_axes(To.input)
             for i in in_axes:
                 axis = axes.at(i)
@@ -457,11 +439,8 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
             )
         acted = result.field
 
-    # Reassemble the full field. The acted-on components take their new
-    # values from the inner result (or as they are, for a missing inner),
-    # and each pass-through component is copied straight from the input,
-    # matched to its output position in order, exactly as the
-    # subspace-to-affine reduction matches them.
+    # Pass-through components are matched to the free output positions in
+    # order, as in the reduction of a subspace to an affine.
     n = x.shape[-1]
     acted_in = set(in_axes)
     acted_out = set(out_axes)
@@ -486,26 +465,24 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
 
 @composer
 def _(To: _AffineIsh, Ti: SubspaceTransformation) -> Affine:
-    # Embed a subspace transform that merely embeds an affine in a larger
-    # space, then compose the two as plain affines. A subspace that wraps a
-    # field cannot be reduced this way -- a field is applied by composing it
-    # with a sampling domain, not by reduction to an affine -- so it stays a
-    # wrapper and this composition is declined.
+    # A subspace that wraps a field cannot be reduced to an affine: fields are
+    # applied by composing them with a sampling domain.
     if _interpolates(Ti):
         raise CompositionError(
             "A subspace transform that wraps a field is not embedded into an "
             "affine; it stays a wrapper and is applied by composing it with a "
             "sampling domain."
         )
-    # The subspace's output space is the affine's input space, so a count
-    # the affine states closes a subspace whose systems leave it unknown.
+    # The output space of the subspace is the input space of the affine, so the
+    # axis count of the affine closes a subspace whose systems leave it
+    # unknown.
     Ti = _close_subspace(Ti, n_out=axis_counts(To)[0])
     return compose(To, Ti.to(Affine))
 
 
 @composer
 def _(To: SubspaceTransformation, Ti: _AffineIsh) -> Affine:
-    # The mirror of the embed above, with the subspace transform on the left.
+    # Mirror of the composer above, with the subspace on the left.
     if _interpolates(To):
         raise CompositionError(
             "A subspace transform that wraps a field is not embedded into an "
@@ -521,19 +498,10 @@ def _(
     To: SubspaceTransformation,
     Ti: SubspaceTransformation,
 ) -> Transformation:
-    # Compose two transforms that act on subsets of the axes. The two
-    # compose into one subspace transform only when the axes the first
-    # writes are the axes the second reads. The inner transforms compose in
-    # order (through a `Sequence`, which cancels an inner/inner inverse pair
-    # symbolically before any field is materialized), and a pair that
-    # reduces to the identity collapses the whole composition to the
-    # identity.
-    #
-    # This composer is mode-free: it always composes the inners it is
-    # handed. Whether a pair of adjacent subspace transforms is handed here
-    # at all (for instance, whether two subspace-wrapped fields are composed
-    # under a restrictive mode, which would resample one field through the
-    # other) is decided by the sequence engine's gate, not here.
+    # Two subspace transformations compose into one only when the axes written
+    # by the first are the axes read by the second. The inner transformations
+    # are composed through a Sequence, which cancels an inner transformation
+    # against its inverse before any field is materialized.
     if (
         To.input_axes is None
         or Ti.output_axes is None
@@ -547,15 +515,8 @@ def _(
     inner_prev = Ti.transformation or Identity()
     inner_next = To.transformation or Identity()
     inner = Sequence([inner_prev, inner_next]).compute()
-    # The inner transforms cancelling to the identity only tells half the
-    # story: the composition still reindexes the axes unless the axes the
-    # first reads are the axes the second writes. It collapses to a bare
-    # identity only when the inner is the identity AND those axes match.
-    # Otherwise it stays a subspace transform: an identity inner over a
-    # differing pair of axis vectors is a pure axis reindex, which embeds to
-    # the affine that maps each input axis to its output axis, and which
-    # `is_identity` (unlike a `transformation=None` subspace) correctly
-    # reports as non-identity.
+    # An identity inner transformation over differing axis vectors is still a
+    # pure reindexing, so it collapses to Identity only when the axes match.
     same_axes = (Ti.input_axes is None) == (To.output_axes is None) and (
         Ti.input_axes is None or list(Ti.input_axes) == list(To.output_axes)
     )
@@ -572,10 +533,8 @@ def _(
 
 @composer
 def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
-    # Apply a transform that acts on a subset of the axes to a field of
-    # displacements. The displacement field is read as a field of
-    # coordinates, the subspace transform is applied, and the grid is
-    # subtracted back off to return to displacements.
+    # Read the displacements as coordinates, apply the subspace, and subtract
+    # the grid again.
     Ti = Ti.compute()
     y = compose(To, Ti.to(CoordinatesField))
     field = y.field - CartesianField(shape=Ti.field.shape[:-1]).field
