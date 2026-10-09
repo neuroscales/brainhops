@@ -1002,8 +1002,8 @@ class CRSACoordinateSystem(
     order: tx.Literal["C"] = "C"
     axes: Axes[AxisTuple[_axes.A, _axes.S, _axes.R]] = Factory(
         lambda: (
-            _axes.A("x", unit=_INDEX),
+            _axes.A("z", unit=_INDEX),
             _axes.S("y", unit=_INDEX),
-            _axes.R("z", unit=_INDEX),
+            _axes.R("x", unit=_INDEX),
         )
     )
