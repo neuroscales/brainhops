@@ -14,14 +14,13 @@ from bagof.magic import fields_dict, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel._transformations import concrete as xconcrete
-from brainhops.datamodel._transformations import converters as xc
+from brainhops.datamodel._transformations.compute import converters as xc
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
-    ConversionError,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -36,6 +35,7 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_identity,
 )
+from brainhops.errors import ConversionError
 
 
 def test_flatten_removes_nesting_and_keeps_endpoints() -> None:
@@ -224,7 +224,7 @@ def test_replace_cartesian_field_changes_degree_and_bound() -> None:
     assert replaced.bound == BoundaryCondition.reflect
     # Everything not named is carried over unchanged.
     assert replaced.shape == (3, 4)
-    assert replaced.coeff is False
+    assert replaced.store == "values"
     assert replaced.field.shape == (3, 4, 2)
 
 
@@ -245,12 +245,14 @@ def test_replace_coordinates_field_round_trips_explicit_field() -> None:
     # Guard against regressing the base: CoordinatesField takes `data` as
     # a normal init field, so replace carries the stored array over as is.
     values = np.zeros((5, 6, 2))
-    cf = CoordinatesField(data=values.copy(), degree=3, coeff=True)
+    cf = CoordinatesField(
+        data=values.copy(), degree=3, store="coefficients"
+    )
     replaced = replace(cf, degree=1)
     assert isinstance(replaced, CoordinatesField)
     assert not isinstance(replaced, CartesianField)
     assert replaced.degree == 1
-    assert replaced.coeff is True
+    assert replaced.store == "coefficients"
     np.testing.assert_array_equal(np.asarray(replaced.data), values)
 
 
@@ -349,7 +351,7 @@ def test_interior_non_identity_field_is_preserved() -> None:
     assert _has_displacement(result)
 
 
-def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
+def test_store_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
     # The value-to-coefficient conversion is deliberately non-idempotent.
     # Rebuilding through ``replace`` must reuse the already-converted
     # field rather than converting it a second time.
@@ -361,9 +363,11 @@ def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
 
     monkeypatch.setattr(xconcrete, "value2coeff_field", spy)
     values = np.zeros((5, 6, 2))
-    field = DisplacementField(field=values.copy(), degree=3, coeff=False)
-    coeffs = field.to(coeff=True)
-    assert coeffs.coeff is True
+    field = DisplacementField(
+        field=values.copy(), degree=3, store="values"
+    )
+    coeffs = field.to(store="coefficients")
+    assert coeffs.store == "coefficients"
     assert calls["count"] == 1
     np.testing.assert_allclose(coeffs.data, values + 1.0)
 
@@ -371,7 +375,7 @@ def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
     # so the conversion is suppressed rather than run a second time.
     calls["count"] = 0
     supplied = np.full((5, 6, 2), 7.0)
-    result = field.to(coeff=True, data=supplied)
+    result = field.to(store="coefficients", data=supplied)
     assert calls["count"] == 0
     np.testing.assert_allclose(result.data, supplied)
 
@@ -836,29 +840,37 @@ def test_replace_carries_over_an_assigned_chain() -> None:
 
 
 def test_to_never_returns_a_type_that_was_not_asked_for() -> None:
-    # `convert` scores its target by `distance(cls, T2)`, which is finite
+    # `convert` scores its target by subclassing, which is finite
     # whenever a converter produces a *supertype* of what was asked for --
     # so the catch-all same-type converter matches every request. A
     # conversion to a type nothing can produce must say so rather than
     # quietly hand back the original type.
     import pytest
 
-    from brainhops.datamodel.transformations import ConversionError
+    from brainhops.datamodel.transformations import Transformation
+    from brainhops.errors import ConversionError
 
-    class Unreachable(Affine):
-        """A type no converter produces."""
+    class Unreachable(Transformation):
+        """A type of no family, so no converter produces it."""
 
     with pytest.raises(ConversionError):
         Affine(matrix=np.eye(3)[:2]).to(Unreachable)
+
+    # A refinement of a family is reached, though: its converter rebuilds
+    # the transform as the class that was asked for.
+    class Refinement(Affine):
+        """An affine of its own class, as an io format is."""
+
+    built = Affine(matrix=np.eye(3)[:2]).to(Refinement)
+    assert type(built) is Refinement
+    np.testing.assert_array_equal(built.matrix, np.eye(3)[:2])
 
 
 def test_to_reports_a_lossy_conversion_rather_than_performing_it() -> None:
     import pytest
 
-    from brainhops.datamodel.transformations import (
-        LossyConversionError,
-        Rotation,
-    )
+    from brainhops.datamodel.transformations import Rotation
+    from brainhops.errors import LossyConversionError
 
     lin = Linear(matrix=np.diag([2.0, 3.0]))
     # By default the loss is refused, and reported as an exception.

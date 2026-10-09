@@ -1,25 +1,25 @@
 # dependencies
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import NotKwOnly, replace
 
 # core
 from brainhops._core.affines import axis_scales
 from brainhops._core.affines import inv as _affine_inv
 from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core.typing import ArrayProtocol, Derived
 
 # api
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.base import DataModelBase
+from brainhops.errors import ConversionError
 
 # internals
 from .base import Transformation
+from .compute.simplify import SimplifyLike
 from .concrete import Affine, CoordinatesField, DisplacementField, Identity
-from .errors import ConversionError
 from .inverse import Inverse
 from .modes import ModeLike
 from .sequence import ImmutableSequence, Sequence
-from .simplify import SimplifyLike
 
 # typing
 SINGLE_SCALE = tx.TypeVar("SINGLE_SCALE", covariant=True)
@@ -40,10 +40,8 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
 
     # --- attributes ---------------------------------------------------
 
-    scales: tx.Annotated[
-        tx.List[tx.Any],
-        tx.Doc("The resolution scales, ordered from finest to coarsest."),
-    ] = ()
+    scales: NotKwOnly[tx.List[SINGLE_SCALE]] = ()
+    """The resolution scales, ordered from finest to coarsest."""
 
     @property
     def nscales(self) -> int:
@@ -51,14 +49,14 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         return len(self.scales)
 
     @property
-    def _finest(self) -> tx.Any:
+    def _finest(self) -> SINGLE_SCALE:
         # The finest resolution scale, or `None` when there are no scales.
         scales = self.scales
         return scales[0] if scales else None
 
     # --- methods ------------------------------------------------------
 
-    def to_singlescale(self, index: int = 0) -> tx.Any:
+    def to_singlescale(self, index: int = 0) -> SINGLE_SCALE:
         """Return the resolution scale at a given index.
 
         Index `0` is the finest scale. The scale is returned as it is
@@ -108,14 +106,13 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
 
     # --- attributes ---------------------------------------------------
 
-    scales: tx.Annotated[
-        tx.List[Sequence],
-        tx.Doc(
-            "The resolution scales, ordered from finest to coarsest. Each "
-            "scale is a sequence that maps the input space to the output "
-            "space, sampled on that scale's grid."
-        ),
-    ] = ()
+    scales: NotKwOnly[tx.List[Sequence]] = ()
+    """
+    The resolution scales, ordered from finest to coarsest.
+
+    Each scale is a sequence that maps the input space to the output
+    space, sampled on that scale's grid.
+    """
 
     # `transformations` is served on demand from the finest scale rather
     # than stored, so it is not a constructor-taken field here. Declaring
@@ -123,7 +120,7 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
     # init-field and keeps it out of `__init__`, `fields()` and
     # `replace()`, while the property keeps the container reading as the
     # finest scale.
-    _transformations: tx.ClassVar[tx.Tuple[Transformation, ...]]
+    _transformations: Derived[tx.Tuple[Transformation, ...]]
 
     @property
     def transformations(self) -> tx.Tuple[Transformation, ...]:

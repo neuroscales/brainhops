@@ -22,7 +22,7 @@ from brainhops.backends import get_array_backend
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 
 # io
 from brainhops.io.base.parsers import WriterError
@@ -62,7 +62,8 @@ class LPSCoordinatesField(_xforms.CoordinatesField):
 # so that the formats agree on them.
 #
 # The same chain holds a field of B-spline coefficients of RAS
-# displacements (an X5 `bspline` transform), with `coeff=True`: the
+# displacements (an X5 `bspline` transform), with
+# `store="coefficients"`: the
 # displacement at a point is a linear combination of the coefficients,
 # so rotating the coefficients rotates the displacement they encode.
 
@@ -73,7 +74,7 @@ def ras_displacement_chain(
     *,
     degree: tx.Any = 1,
     bound: tx.Any = BoundaryCondition.nearest,
-    coeff: bool = False,
+    store: tx.Any = StoreEnum.values,
     log: bool = False,
     steps: tx.Optional[int] = None,
 ) -> tx.Tuple[RASToVoxel, _xforms.DisplacementField, VoxelToRAS]:
@@ -84,7 +85,7 @@ def ras_displacement_chain(
     ----------
     vectors : array, shape `(*shape, ndim)`
         Displacements in RAS millimetres, one vector per voxel -- or,
-        when `coeff` is set, the spline coefficients of those
+        when `store` is `"coefficients"`, the spline coefficients of those
         displacements, one vector per knot. When `log` is set, they are
         the stationary velocity whose flow is the map, rather than its
         displacement.
@@ -92,7 +93,7 @@ def ras_displacement_chain(
         The voxel-to-RAS affine of the grid the vectors are sampled on.
     degree, bound
         Spline degree and boundary condition of the field.
-    coeff : bool
+    store : {"values", "coefficients"}
         Whether `vectors` are spline coefficients rather than values.
     log : bool
         Whether `vectors` are a stationary velocity, which makes the field
@@ -130,7 +131,7 @@ transformations.StationaryVelocityField]. A velocity rotates into voxel
             output=voxel,
             degree=degree,
             bound=bound,
-            coeff=coeff,
+            store=store,
             log=log,
             **velocity,
         ),
@@ -142,7 +143,7 @@ def split_ras_displacement_chain(
     chain: tx.Sequence[_xforms.Transformation],
     what: str = "A displacement field",
     ndim: tx.Optional[int] = None,
-    coeff: bool = False,
+    store: tx.Any = StoreEnum.values,
     degree: tx.Any = None,
     bound: tx.Any = None,
     log: bool = False,
@@ -162,7 +163,7 @@ def split_ras_displacement_chain(
         How to name the field in error messages.
     ndim : int, optional
         The number of spatial dimensions the format supports.
-    coeff : bool
+    store : {"values", "coefficients"}
         Whether the format stores spline coefficients rather than
         sampled values. A field of values written to a format of
         coefficients is encoded, and the reverse is decoded.
@@ -196,10 +197,11 @@ def split_ras_displacement_chain(
             f"{what} is written from a chain of three transformations: "
             f"RAS to voxel, a displacement field, and voxel to RAS."
         )
-    encoding: tx.Dict[str, tx.Any] = {"coeff": coeff, "log": log}
-    if coeff and degree is not None:
+    encoding: tx.Dict[str, tx.Any] = {"store": store, "log": log}
+    coefficients = StoreEnum(store) is StoreEnum.coefficients
+    if coefficients and degree is not None:
         encoding["degree"] = degree
-    if coeff and bound is not None:
+    if coefficients and bound is not None:
         encoding["bound"] = bound
     displacement = chain[1].to(**encoding)
     if displacement.data is None:

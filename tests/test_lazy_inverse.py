@@ -2,7 +2,7 @@
 
 These cover which families defer their inversion to a type-transparent
 lazy wrapper and which stay eager, the preservation of ``degree``,
-``bound`` and ``coeff`` across an inversion, double-inverse cancellation,
+``bound`` and ``store`` across an inversion, double-inverse cancellation,
 adjacent transform/inverse cancellation in a ``Sequence``, and the
 equivalence of a materialized lazy inverse with the former eager inverse.
 """
@@ -15,7 +15,7 @@ import pytest
 from brainhops._core.bsplines import coeff2value_field
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.datamodel import transformations as _xf
-from brainhops.datamodel._transformations import inverse as _inv
+from brainhops.datamodel._transformations import concrete as _concrete
 from brainhops.datamodel.systems import (
     CoordinateSystem,
     LPSCoordinateSystem,
@@ -182,25 +182,27 @@ def test_affine_cancels_symbolically_with_zero_matrix_inversions() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_displacement_inverse_preserves_degree_coeff_bound() -> None:
+def test_displacement_inverse_preserves_degree_store_bound() -> None:
     df = DisplacementField(
-        data=_small_field(), degree=3, bound=2.0, coeff=True
+        data=_small_field(), degree=3, bound=2.0, store="coefficients"
     )
     inv = df.inverse()
     assert inv.degree == 3
     assert inv.bound == 2.0
-    assert inv.coeff is True
+    assert inv.store == "coefficients"
     # The endpoints are swapped.
     assert inv.input is df.output
     assert inv.output is df.input
 
 
-def test_coordinates_inverse_preserves_degree_coeff_bound() -> None:
-    cf = CoordinatesField(data=_small_field(), degree=2, bound=1.0, coeff=True)
+def test_coordinates_inverse_preserves_degree_store_bound() -> None:
+    cf = CoordinatesField(
+        data=_small_field(), degree=2, bound=1.0, store="coefficients"
+    )
     inv = cf.inverse()
     assert inv.degree == 2
     assert inv.bound == 1.0
-    assert inv.coeff is True
+    assert inv.store == "coefficients"
 
 
 # ----------------------------------------------------------------------
@@ -211,7 +213,7 @@ def test_coordinates_inverse_preserves_degree_coeff_bound() -> None:
 def test_materialized_field_matches_eager_inverse() -> None:
     values = _small_field(seed=3)
     df = DisplacementField(
-        field=values, degree=1, bound="nearest", coeff=False
+        field=values, degree=1, bound="nearest", store="values"
     )
     inv = df.inverse()
     np.testing.assert_allclose(np.asarray(inv.field), inverse_disp(values))
@@ -228,29 +230,29 @@ def test_coefficient_inverse_is_a_coefficient_field() -> None:
     # The inverse of a coefficient field is itself a coefficient field. The
     # metadata carries across without materializing anything.
     df = DisplacementField(
-        data=_small_field(), degree=3, bound=2.0, coeff=True
+        data=_small_field(), degree=3, bound=2.0, store="coefficients"
     )
     inv = df.inverse()
-    assert inv.coeff is True
+    assert inv.store == "coefficients"
     assert inv.degree == 3
     assert inv.bound == 2.0
 
 
 @pytest.mark.xfail(
     reason="#63: bsplines coeff2value/value2coeff are broken on this base; "
-    "the coeff re-fit round-trip is fixed in a separate session.",
+    "the coefficient re-fit round-trip is fixed in a separate session.",
     strict=False,
 )
 def test_coefficient_inverse_refits_to_coefficients() -> None:
     # A coefficient field is inverted by re-fitting: coeff -> value ->
-    # inverse -> coeff. The numeric round-trip depends on the corrected
+    # inverse -> coefficients. The round-trip depends on the corrected
     # bsplines conversions (#63).
     degree, bound = 3, "nearest"
     values = _small_field(seed=7)
     df = DisplacementField(
-        field=values, degree=degree, bound=bound, coeff=False
+        field=values, degree=degree, bound=bound, store="values"
     )
-    coeff = df.to(coeff=True)
+    coeff = df.to(store="coefficients")
     materialized = coeff.inverse().data
     expected = inverse_disp(values)
     # Reading the coefficient inverse back as values should recover the
@@ -298,9 +300,9 @@ def test_coordinate_inverse_of_coefficients_stays_coefficients() -> None:
     # A field of spline coefficients is inverted by re-fitting: the
     # coefficients are read out as coordinates, inverted, and fitted back.
     cf, _grid, _values = _coordinate_field(seed=2)
-    coeffs = cf.to(degree=3).to(coeff=True)
+    coeffs = cf.to(degree=3).to(store="coefficients")
     inverse = coeffs.inverse()
-    assert inverse.coeff is True
+    assert inverse.store == "coefficients"
     assert inverse.degree == coeffs.degree
     recovered = coeff2value_field(
         np.asarray(inverse.data), degree=coeffs.degree, bound=coeffs.bound
@@ -315,13 +317,13 @@ def test_coordinate_inverse_cancels_rather_than_inverting() -> None:
     # field it inverts, the pair cancels and the mesh inversion never runs.
     cf, _grid, _values = _coordinate_field(seed=3)
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         result = Sequence(transformations=[cf, cf.inverse()]).compute()
     assert isinstance(result, Identity)
     assert calls["n"] == 0
@@ -334,7 +336,7 @@ def test_coordinate_inverse_cancels_rather_than_inverting() -> None:
 
 def test_double_inverse_returns_operand() -> None:
     df = DisplacementField(
-        data=_small_field(), degree=3, coeff=True, bound=2.0
+        data=_small_field(), degree=3, store="coefficients", bound=2.0
     )
     assert df.inverse().inverse() is df
 
@@ -367,7 +369,9 @@ def test_cancellation_does_not_materialize() -> None:
     # cancellation touched the field it would raise. It collapses to the
     # identity instead, which proves the pair is removed before any
     # numeric inversion.
-    df = DisplacementField(data=_small_field(), degree=3, coeff=True)
+    df = DisplacementField(
+        data=_small_field(), degree=3, store="coefficients"
+    )
     result = Sequence(transformations=[df, df.inverse()]).compute()
     assert isinstance(result, Identity)
 
@@ -411,13 +415,16 @@ def test_lazy_inverse_of_lazy_inverse_cancels() -> None:
 def test_composed_lazy_inverse_equals_composed_eager_inverse() -> None:
     values = _small_field(seed=5)
     df = DisplacementField(
-        field=values, degree=1, bound="nearest", coeff=False
+        field=values, degree=1, bound="nearest", store="values"
     )
     t = Translation(translation=[1.0, 2.0])
 
     lazy = Sequence(transformations=[df.inverse(), t]).compute()
     eager = DisplacementField(
-        field=inverse_disp(values), degree=1, bound="nearest", coeff=False
+        field=inverse_disp(values),
+        degree=1,
+        bound="nearest",
+        store="values",
     )
     expected = Sequence(transformations=[eager, t]).compute()
 
@@ -455,13 +462,13 @@ def test_level_inv_at_level_cancels_zero_field_inversions() -> None:
     # lazy inverse symbolically, before any numeric inversion runs.
     level, _ = _displacement_level()
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         result = (level.inverse() @ level).compute()
 
     assert isinstance(result, Identity)
@@ -472,13 +479,13 @@ def test_level_at_level_inv_cancels_zero_field_inversions() -> None:
     # The other order, level @ level^-1, cancels the same way.
     level, _ = _displacement_level()
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         result = (level @ level.inverse()).compute()
 
     assert isinstance(result, Identity)
@@ -496,7 +503,9 @@ def test_is_identity_compute_false_does_not_materialize() -> None:
     # inverse never can. is_identity(compute=False) must answer from the
     # operand without reading the lazy field, so it must not raise.
     for operand in (
-        DisplacementField(data=_small_field(), degree=3, coeff=True),
+        DisplacementField(
+            data=_small_field(), degree=3, store="coefficients"
+        ),
         CoordinatesField(field=_small_field()),
     ):
         inv = operand.inverse()
@@ -612,13 +621,13 @@ def test_materialization_cached_across_replace_and_to() -> None:
     inv = df.inverse()
     first = np.asarray(inv.field)
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         rebuilt = inv.to(input=None)  # a plain endpoint edit
         again = np.asarray(rebuilt.field)
     # The rebuilt wrapper reused the cached materialization on the operand.
@@ -629,7 +638,7 @@ def test_materialization_cached_across_replace_and_to() -> None:
 def test_compute_materializes_to_a_plain_instance() -> None:
     values = _small_field(seed=9)
     df = DisplacementField(
-        field=values, degree=1, bound="nearest", coeff=False
+        field=values, degree=1, bound="nearest", store="values"
     )
     computed = df.inverse().compute()
     assert type(computed) is DisplacementField
@@ -641,7 +650,7 @@ def test_compute_materializes_to_a_plain_instance() -> None:
 def test_to_plain_type_materializes() -> None:
     values = _small_field(seed=10)
     df = DisplacementField(
-        field=values, degree=1, bound="nearest", coeff=False
+        field=values, degree=1, bound="nearest", store="values"
     )
     plain = df.inverse().to(DisplacementField)
     assert type(plain) is DisplacementField
@@ -872,10 +881,10 @@ def test_a_pair_is_declared_once_and_resolved_both_ways() -> None:
     # Only the half defined second can name the other -- the first
     # cannot name a class that does not exist yet -- so the declaration
     # sits there alone and the hook points both halves at each other.
-    assert VoxelToLPS._reverseof is None
-    assert LPSToVoxel._reverseof is VoxelToLPS
-    assert VoxelToLPS._reverse_type is LPSToVoxel
-    assert LPSToVoxel._reverse_type is VoxelToLPS
+    # `LPSToVoxel` is the one that names its half in its own body ...
+    assert LPSToVoxel.__dict__["_reverseof"] is VoxelToLPS
+    # ... and the hook writes the other direction onto `VoxelToLPS`.
+    assert VoxelToLPS._reverseof is LPSToVoxel
 
 
 def test_a_refinement_inherits_the_pairing_of_its_base() -> None:
@@ -885,8 +894,8 @@ def test_a_refinement_inherits_the_pairing_of_its_base() -> None:
     class MyVoxelToLPS(VoxelToLPS):
         pass
 
-    assert MyVoxelToLPS._reverse_type is LPSToVoxel
-    assert LPSToVoxel._reverse_type is VoxelToLPS
+    assert MyVoxelToLPS._reverseof is LPSToVoxel
+    assert LPSToVoxel._reverseof is VoxelToLPS
 
     inv = MyVoxelToLPS(matrix=np.diag([2.0, 4.0, 8.0, 1.0])[:3])
     assert type(inv.inverse().compute()) is LPSToVoxel
@@ -902,7 +911,7 @@ def test_an_unpaired_pinned_type_keeps_its_own_class() -> None:
         _input: CoordinateSystem = VoxelCoordinateSystem()
         _output: CoordinateSystem = RASCoordinateSystem()
 
-    assert PinnedRotation._reverse_type is None
+    assert PinnedRotation._reverseof is None
 
     empty = PinnedRotation().inverse()
     assert type(empty) is PinnedRotation
@@ -923,7 +932,7 @@ def test_an_unpaired_type_is_unchanged_on_every_path(cls: type) -> None:
     # inverts to its own class on the lazy, the materialized and the
     # unset-parameter path alike.
     lps, ras = LPSCoordinateSystem(), RASCoordinateSystem()
-    assert cls._reverse_type is None
+    assert cls._reverseof is None
 
     empty = cls(input=lps, output=ras).inverse()
     assert type(empty) is cls
@@ -998,7 +1007,9 @@ def test_a_subspace_product_cancels_its_inverse_by_identity() -> None:
     # them lazy, so the product next to its own inverse cancels, step by
     # step, from object identity alone: nothing is inverted.
     product = _space_and_time()
-    with mock.patch.object(_inv, "inverse_affine", side_effect=AssertionError):
+    with mock.patch.object(
+        _concrete, "affine_inv", side_effect=AssertionError
+    ):
         for chain in (
             [product, product.inverse()],
             [product.inverse(), product],

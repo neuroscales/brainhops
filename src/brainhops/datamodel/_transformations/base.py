@@ -1,6 +1,5 @@
 # dependencies
 import typing_extensions as tx
-from bagof.magic import KwOnly
 
 # api
 from brainhops._core.properties import smartproperty
@@ -8,14 +7,15 @@ from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel.base import DataModelBase, IdentityComparison
 from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.errors import ConversionError, LossyConversionError
 
 # internals
-from . import registries
-from .convert import convert
-from .errors import ConversionError, LossyConversionError
+from . import nocycles
+from .compute.check import is_kind
+from .compute.convert import convert
+from .compute.simplify import SimplifyLike
+from .compute.utils import require_endomorphism
 from .modes import ModeLike
-from .simplify import SimplifyLike
-from .utils import require_endomorphism
 
 # typing
 if tx.TYPE_CHECKING:
@@ -24,9 +24,9 @@ if tx.TYPE_CHECKING:
 
 
 @kinds.Transformation.register  # virtual registration in hierarchy
-@registries.register_transformation  # register in registry for cyclic imports
+@nocycles.register_transformation  # register in registry for cyclic imports
 class Transformation(
-    IdentityComparison, DataModelBase, reverse=True, eq=False
+    IdentityComparison, DataModelBase, reverse=True, eq=False, kw_only=True
 ):
     """
     A transformation between coordinate systems.
@@ -52,48 +52,86 @@ class Transformation(
         typically used to transform images. For example, a transformation
         that deforms an image from space A to space B, will actually
         map coordinates from space B to space A. In our model, this
-        transformation would be represented as `Transform(input=B, output=A)`.
+        transformation would be represented as
+        `Transformation(input=B, output=A)`.
 
     !!! note "Transformations compare by identity"
         `t1 == t2` is `t1 is t2`: two distinct transformations are never
         equal, even when they hold the same parameters in the same
-        systems, and `==` never raises. A transformation hashes by
-        identity too, so it can be put in a set or used as a dictionary
-        key. Whether two transformations represent the same map has no
-        single answer, so none is picked. To test whether two map
-        coordinates the same way, check that one composed with the
-        inverse of the other is the identity --
-        `is_identity((t1.inverse() @ t2).compute(), compute=True)` -- and
-        compare their `input`/`output` systems explicitly.
+        systems, and `==` never raises. This is to avoid triggering
+        expensive array computations when comparing transformations.
+
+        A transformation hashes by identity too, so it can be put in a
+        set or used as a dictionary key.
+
+        To test whether two transformations are equivalent, one solution
+        is to check whether one composed with the inverse of the other
+        is the identity:
+
+        ```python
+        is_identity((~t1 @ t2).compute(), compute=True)
+        ```
+
+        This still comes with caveats: this test requires one of the
+        transformations to be invertible, and the numeric test performed
+        by `is_identity` only returns `True` when the resulting
+        transformation is exactly the identity. Numerical errors
+        intrinsic to floating point arithmetic may cause two
+        transformations that are equivalent to not be recognized as such.
     """
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.Annotated[
-        tx.ClassVar[tx.Tuple[str, ...]],
-        tx.Doc("The attributes that parameterize the transformation."),
-    ] = ()
+    data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    """The attributes that parameterize the transformation."""
 
-    metadata_fields: tx.Annotated[
-        tx.ClassVar[tx.Tuple[str, ...]],
-        tx.Doc("The meta-attributes that define the encoding."),
-    ] = ()
+    metadata_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    """The meta-attributes that define the encoding."""
 
-    derived_fields: tx.Annotated[
-        tx.ClassVar[tx.Tuple[str, ...]],
-        tx.Doc("The attributes that are derived from other attributes."),
-    ] = ()
+    derived_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    """The attributes that are derived from other attributes."""
+
+    mutually_exclusive_fields: tx.ClassVar[
+        tx.Optional[tx.Tuple[str, ...]]
+    ] = None
+    """
+    Arguments that cannot be set together in `__init__`.
+
+    If `None`, it is the one stored parameter and the views that spell it
+    differently -- `data_fields + derived_fields` -- which is a group only
+    for a class that stores a single parameter. A class whose data fields
+    are independent of one another has no such group by default, and
+    declares one here if it needs it.
+    """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        mutex = self.mutually_exclusive_fields
+        if mutex is None:
+            # `data`, `matrix`, `field`, `values`, `coefficients`... are
+            # names for one parameter, so two of them is that parameter
+            # twice. A class with several data fields -- a subspace's
+            # `transformation` and its axes, a bijection's two directions
+            # -- sets them together, so the default group does not apply.
+            mutex = (
+                self.data_fields + self.derived_fields
+                if len(self.data_fields) <= 1 else ()
+            )
+        _mutually_exclusive(self, arguments, mutex)
+        self._set_derived_fields(arguments)
+
+    def _set_derived_fields(self, arguments: tx.Any) -> None:
+        for name in self.derived_fields:
+            if (value := arguments.get(name)) is not None:
+                setattr(self, name, value)
 
     # --- attributes ---------------------------------------------------
 
     # The endpoints are stored under private names, so the constructor
     # argument stays `input=`/`output=` while `replace()` carries over
     # what the transform was *given* rather than what its `input`/`output`
-    # property reports. A subclass whose endpoints are derived -- a
-    # `Sequence` reads them off its children -- would otherwise have every
-    # `replace()` freeze the derived value into a declared one, and a
-    # sequence that declares nothing would come back claiming the systems
-    # its children happen to name.
+    # property reports. A subclass whose endpoints are derived would
+    # otherwise have every `replace()` freeze the derived value into a
+    # declared one.
     #
     # The endpoints are keyword-only. A positional parameter's place in
     # `__init__` follows the order bagof collects fields in, which follows
@@ -103,29 +141,22 @@ class Transformation(
     # are positional. bagof does not carry `KwOnly` over to a field that
     # a subclass declares again: a subclass that gives an endpoint a new
     # default must write `KwOnly[...]` itself.
-    _input: tx.Annotated[
-        tx.Optional[CoordinateSystem],
-        tx.Doc(
-            """
-            The input coordinate system of the transformation.
-            If not specified, it can be inferred from the context (e.g.,
-            from the coordinate system of the image being transformed).
-            """
-        ),
-        KwOnly(),
-    ] = None
 
-    _output: tx.Annotated[
-        tx.Optional[CoordinateSystem],
-        tx.Doc(
-            """
-            The output coordinate system of the transformation.
-            If not specified, it can be inferred from the context (e.g.,
-            from the coordinate system of the image being transformed).
-            """
-        ),
-        KwOnly(),
-    ] = None
+    _input: tx.Optional[CoordinateSystem] = None
+    """
+    The input coordinate system of the transformation.
+
+    If not specified, it can be inferred from the context
+    (e.g., from the coordinate system of the image being transformed).
+    """
+
+    _output: tx.Optional[CoordinateSystem] = None
+    """
+    The output coordinate system of the transformation.
+
+    If not specified, it can be inferred from the context
+    (e.g., from the coordinate system of the image being transformed).
+    """
 
     input = smartproperty("input")
     output = smartproperty("output")
@@ -234,8 +265,7 @@ class Transformation(
         compute : bool, default=False
             Whether to compute the result now rather than return it lazily.
         **kwargs
-            Passed to [`compute`][brainhops.datamodel.transformations.\
-Transformation.compute] when `compute` is true.
+            Passed to [`compute`][] when `compute` is true.
 
         Raises
         ------
@@ -243,7 +273,7 @@ Transformation.compute] when `compute` is true.
             If the transformation does not map a space to itself.
         """
         require_endomorphism(self, "square")
-        obj = registries.SEQUENCE([self, self])
+        obj = nocycles.SEQUENCE([self, self])
         return obj.compute(**kwargs) if compute else obj
 
     def sqrt(self, compute: bool = False, **kwargs) -> "Transformation":
@@ -268,8 +298,7 @@ Transformation.compute] when `compute` is true.
         compute : bool, default=False
             Whether to compute the result now rather than return it lazily.
         **kwargs
-            Passed to [`compute`][brainhops.datamodel.transformations.\
-Transformation.compute] when `compute` is true.
+            Passed to [`compute`][] when `compute` is true.
 
         Raises
         ------
@@ -302,9 +331,9 @@ Transformation.compute] when `compute` is true.
 
         Conversion can be
 
-        * between type: `linear.to(Affine)`                ; or
-        * within type: `displacement.to(coeff=True)`       ; or
-        * both: `coords.to(DisplacementField, coeff=True)` .
+        * between types: `linear.to(Affine)`                       ; or
+        * within a type: `displacement.to(store="coefficients")`   ; or
+        * both: `coords.to(DisplacementField, store="values")`     .
 
         Parameters
         ----------
@@ -323,7 +352,7 @@ Transformation.compute] when `compute` is true.
             This allows transformations to be modified within their type.
             For example, a [`DisplacementField`][] can be converted from
             a field of values to a field of spline coefficients by
-            setting `coeff=True` in `kwargs`: a change of encoding flag
+            passing `store="coefficients"`: a change of encoding flag
             re-encodes the stored `data`, and keeps the map. A view's
             name (`field=`, `matrix=`, ...) sets the map, as values, and
             it is stored in the encoding of the result; `data=` is
@@ -335,33 +364,185 @@ Transformation.compute] when `compute` is true.
             The converted transformation.
         """
         # Conversion can be
-        # * between types: `linear.to(Affine)`                        ; or
-        # * within type:   `displacement.to(coeff=True)`              ; or
-        # * both:          `coords.to(DisplacementField, coeff=True)` .
+        # * between types: `linear.to(Affine)`                       ; or
+        # * within a type: `displacement.to(store="coefficients")`   ; or
+        # * both:          `coords.to(DisplacementField, store=...)` .
         #
         # All of these things are handled by `convert()`. Within type
         # conversion calls the `T -> T` converter, whereas between types
         # conversion calls the `T1 -> T2` converter.
-        cls = cls or type(self)
+        cls = cls or self._target_class(kwargs)
         try:
             return convert(self, cls, **kwargs)
         except LossyConversionError as e:
             if lossy:
-                # The conversion is possible but discards information, and
-                # the caller asked for it anyway. The transform it would
-                # have produced travels on the exception.
+                # The conversion is possible but discards information,
+                # and the caller asked for it anyway. The transform it
+                # would have produced travels on the exception.
                 return e.result
             failure = e
         except ConversionError as e:
             failure = e
         # The conversion failed and the caller did not opt into the loss.
-        # `error` says what to do about it: re-raise, raise something else,
-        # or stand in for the result.
+        # `error` says what to do about it: re-raise, raise something
+        # else, or stand in for the result.
         if error is True:
             raise failure
         if is_instance_or_subclass(error, Exception):
             raise error from failure
         return error
+
+    def _target_class(
+        self, kwargs: tx.Dict[str, tx.Any]
+    ) -> tx.Type["Transformation"]:
+        """The type [`to`][] converts to when the caller names none.
+
+        This class, normally: `t.to(store="coefficients")` is still a `t`.
+        A class that a flag *selects*, though, answers with the one the
+        new value of that flag selects, since the flag and the class say
+        the same thing: `log=False` on a tangent asks for the map, which
+        the plain class of the family holds and the tangent does not.
+
+        Naming the class here rather than inside the converter is what
+        lets [`convert`][] check that what came back is of the type that
+        was asked for.
+        """
+        return type(self)
+
+    # --- kind checks --------------------------------------------------
+
+    def is_kind(
+        self, kind: tx.Type[kinds.Kind], compute: bool = False
+    ) -> bool:
+        """
+        Return whether a transformation is of a given kind.
+
+        A transformation is recognized as a kind when it is a (virtual)
+        instance  of the specified kind, or when its parameters are
+        compatible with that kind.
+
+        Parameters
+        ----------
+        kind : type[kinds.Kind]
+            The kind to check for.
+        compute : bool, default=False
+            Whether to look at the numeric values of the transformation's
+            parameters, rather than just its type structure, to determine
+            whether it is of the given kind.
+
+        Returns
+        -------
+        bool
+            True if the transformation is of the specified kind,
+            False otherwise.
+        """
+        return is_kind(self, kind, compute)
+
+    def is_identity(self, compute: bool = False) -> bool:
+        """Return whether a transformation is the identity.
+
+        A transformation is recognized as the identity when its parameters
+        are unset, or when it is an instance of [`Identity`][]. When
+        `compute` is true, the parameters of a transformation such as
+        [`Translation`][], [`Scaling`][], [`Permutation`][], [`Linear`][],
+        [`Affine`][], or [`DisplacementField`][] are also inspected, so that
+        a transformation whose parameters happen to encode the identity is
+        recognized as such even though it is not stored as one.
+
+        A [`CartesianField`][] is a regular grid of coordinates, which is the
+        identity map over its grid by construction. When `compute` is true, a
+        [`CartesianField`][] is therefore recognized as the identity. When
+        `compute` is false, a [`CartesianField`][] that carries a grid is not
+        recognized as the identity, because its `shape` parameter is set. A
+        [`CartesianField`][] with no grid has an unset `shape` parameter and
+        is recognized as the identity by the parameter check under either
+        value of `compute`. The `shape` is read, never the derived `field`, so
+        the meshgrid is not built by a structural check.
+
+        Recognizing a grid as the identity does not mean a grid may be dropped
+        on sight. A grid also defines the sampling domain onto which data is
+        resampled. The decision to factor a grid away is made by the sequence
+        simplifier, which only does so for a grid that sits strictly between
+        two other transformations.
+        """
+        return self.is_kind(kinds.Identity, compute)
+
+    def is_translation(self, compute: bool = False) -> bool:
+        """Return whether a transformation is a pure translation.
+
+        A transformation is recognized as a translation when it is an
+        instance of [`kinds.Translation`][], or when [`is_identity`][]
+        recognizes it as the identity, which is itself a translation by zero.
+
+        When `compute` is true, the matrix of an [`Affine`][] transformation
+        is also inspected for a linear part equal to the identity.
+        """
+        return self.is_kind(kinds.Translation, compute)
+
+
+    def is_scaling(self, compute: bool = False) -> bool:
+        """Return whether a transformation is a pure scaling.
+
+        A transformation is recognized as a scaling when it is an instance
+        of [`kinds.Diagonal`][], or when [`is_identity`][]
+        recognizes it as the identity, which is itself a scaling by one.
+
+        When `compute` is true, the matrix of a [`Linear`][] or [`Affine`][]
+        transformation is also inspected for a diagonal structure.
+        """
+        return self.is_kind(kinds.Diagonal, compute)
+
+
+    def is_permutation(self, compute: bool = False) -> bool:
+        """Return whether a transformation is a pure permutation of axes.
+
+        A transformation is recognized as a permutation when it is an
+        instance of [`kinds.Permutation`][], or when [`is_identity`][]
+        recognizes it as the identity, which is itself a trivial permutation.
+
+        When `compute` is true, the matrix of a [`Linear`][] or [`Affine`][]
+        transformation is also inspected for a binary, one-per-row and
+        one-per-column structure.
+        """
+        return self.is_kind(kinds.Permutation, compute)
+
+
+    def is_rotation(self, compute: bool = False) -> bool:
+        """Return whether a transformation is a pure rotation.
+
+        A transformation is recognized as a rotation when it is an instance
+        of [`kinds.SpecialOrthogonal`][], or when
+        [`is_identity`][] recognizes it as the identity, which is itself a
+        rotation by zero.
+
+        When `compute` is true, the matrix of a [`Linear`][] or [`Affine`][]
+        transformation is also inspected for orthogonality and a positive
+        determinant.
+        """
+        return self.is_kind(kinds.SpecialOrthogonal, compute)
+
+
+    def is_linear(self, compute: bool = False) -> bool:
+        """Return whether a transformation is linear, without a translation.
+
+        A transformation is recognized as linear when it is an instance of
+        [`kinds.Linear`][], or when [`is_identity`][]
+        recognizes it as the identity, which is itself linear.
+
+        When `compute` is true, the matrix of an [`Affine`][] transformation
+        is also inspected for a zero translation component.
+        """
+        return self.is_kind(kinds.Linear, compute)
+
+
+    def is_affine(self, compute: bool = False) -> bool:
+        """Return whether a transformation is affine.
+
+        A transformation is recognized as affine when it is an instance
+        of [`kinds.Affine`][], or when [`is_identity`][]
+        recognizes it as the identity, which is itself affine.
+        """
+        return self.is_kind(kinds.Affine, compute)
 
     # --- operators ----------------------------------------------------
 
@@ -427,8 +608,7 @@ Transformation.compute] when `compute` is true.
 
         Besides `True` and `False`, `compute` accepts a mode -- a
         transformation-type name, a type, or a list of either -- which is
-        forwarded to [`compute`][brainhops.datamodel.transformations.\
-Transformation.compute] as its `mode` and selects which kinds of
+        forwarded to [`compute`][] as its `mode` and selects which kinds of
         transformations are composed.
         """
         ...
@@ -441,9 +621,7 @@ Transformation.compute] as its `mode` and selects which kinds of
         Compose this transform with another transform, computing the
         result under the given mode.
 
-        `compute` mirrors the `mode` argument of
-        [`compute`][brainhops.datamodel.transformations.Transformation.\
-compute]:
+        `compute` mirrors the `mode` argument of [`compute`][]:
 
         * `compute=True` computes with `mode=None` (every kind),
         * `compute=<mode>` computes with that mode, and
@@ -456,7 +634,7 @@ compute]:
         # `compute=<mode>` computes with that mode; `compute=False` returns
         # the uncomputed sequence.
         if isinstance(x, Transformation):
-            x = registries.SEQUENCE([x, self])
+            x = nocycles.SEQUENCE([x, self])
         else:
             raise TypeError(f"Unsupported type for transformation: {type(x)}")
         if compute is not False:
@@ -486,3 +664,26 @@ compute]:
 
     def __invert__(self) -> "Transformation":
         return self.inverse()
+
+
+def _mutually_exclusive(
+    xform: Transformation, arguments: tx.Any, names: tx.Tuple[str, ...]
+) -> None:
+    """
+    Refuse a call that spells one parameter more than once.
+
+    `names` is the stored parameter and the views that are other
+    spellings of it: `data` and `matrix`, or `data`, `field`, `values`
+    and `coefficients`. A view is the map and fills `data`, so no two of
+    them can be given together. `replace()` reaches here too: it carries
+    `data` over.
+    """
+    given = [f"{name}=" for name in names if arguments.get(name) is not None]
+    if len(given) <= 1:
+        return
+    raise TypeError(
+        f"{type(xform).__name__}() got {', '.join(given)}, which are "
+        f"spellings of one parameter. To change the map of an existing "
+        f"transformation, use t.to(...); to store an array as it is "
+        f"encoded, pass data= alone."
+    )

@@ -4,6 +4,7 @@ and boundary conditions."""
 __all__ = [
     "BoundaryCondition",
     "InterpolationOrder",
+    "StoreEnum",
     "OrientationType",
     "AnatomicalOrientationValue",
     "SimplifyPolicy",
@@ -65,6 +66,32 @@ class BoundaryCondition(StrEnum):
     constant = zero = zeros = "constant"                    # (0 0 0 0 | a b c d | 0 0 0 0)
 # fmt: on
 # ruff: enable[E501]
+
+
+class StoreEnum(StrEnum):
+    """
+    What a [`TransformationField`][brainhops.datamodel.transformations.\
+TransformationField]'s `data` holds, which its `store` flag says:
+
+    - `"values"`: `data` holds the field's values, and its `field` view
+        is `data` itself.
+    - `"coefficients"`: `data` holds the spline coefficients of the field,
+        and its `field` view is `data` decoded to values.
+    """
+
+    COEFFICIENTS = COEFFS = coefficients = coeffs = "coefficients"
+    VALUES = values = "values"
+
+    @classmethod
+    def from_coefficients(cls, coefficients: bool) -> "StoreEnum":
+        """
+        The flag for a format that says whether it stores coefficients.
+
+        A file format holds one or the other, so it states it as a
+        boolean; this is that boolean read as the flag the data model
+        takes.
+        """
+        return cls.coefficients if coefficients else cls.values
 
 
 class InterpolationOrder(IntEnum):

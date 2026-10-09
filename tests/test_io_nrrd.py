@@ -17,12 +17,12 @@ import pytest
 
 import brainhops.io as io
 from brainhops.datamodel.transformations import Affine, Scaling
-from brainhops.io.base.nrrd import NrrdHeader, dtype_to_nrrd, nrrd_dtype
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     ParserError,
 )
+from brainhops.io.common.nrrd import NrrdHeader, dtype_to_nrrd, nrrd_dtype
 from brainhops.io.images import FileBasedImage
 from brainhops.io.images.nrrd import (
     AttachedNrrdImage,

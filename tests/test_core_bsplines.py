@@ -9,16 +9,16 @@ broken in two ways that no test covered:
   instead of the *spatial* ones, so ``map_coordinates`` rejected the
   coordinate array (``RuntimeError``).
 
-Together these made ``DisplacementField.to(coeff=...)`` and
-``CoordinatesField.to(coeff=...)`` raise for any field carrying data, and
-therefore made composing any ``coeff=True`` field fail (the composers call
-``Ti.to(coeff=False)``).
+Together these made ``DisplacementField.to(store=...)`` and
+``CoordinatesField.to(store=...)`` raise for any field carrying data, and
+therefore made composing any field of coefficients fail (the composers
+call ``Ti.to(store="values")``).
 """
 
 import numpy as np
 import pytest
 
-from brainhops.datamodel._transformations.compose import compose
+from brainhops.datamodel._transformations.compute.compose import compose
 from brainhops.datamodel.transformations import (
     CoordinatesField,
     DisplacementField,
@@ -52,11 +52,11 @@ def test_value_coeff_round_trip(
     values = _random_field(rng, ndim)
     field = field_type(field=values.copy(), degree=degree, bound=bound)
 
-    coeffs = field.to(coeff=True)
-    assert coeffs.coeff is True
+    coeffs = field.to(store="coefficients")
+    assert coeffs.store == "coefficients"
 
-    recovered = coeffs.to(coeff=False)
-    assert recovered.coeff is False
+    recovered = coeffs.to(store="values")
+    assert recovered.store == "values"
     np.testing.assert_allclose(np.asarray(recovered.field), values, atol=1e-6)
 
 
@@ -64,21 +64,22 @@ def test_repro_from_report() -> None:
     # Verbatim reproduction from the bug report.
     f = np.random.RandomState(0).randn(6, 7, 2) * 0.05
     D = DisplacementField(field=f, degree=3)
-    C = D.to(coeff=True)
-    V = C.to(coeff=False)
+    C = D.to(store="coefficients")
+    V = C.to(store="values")
     assert np.allclose(np.asarray(V.field), f, atol=1e-6)
 
 
 @pytest.mark.parametrize("degree", DEGREES)
 def test_compose_coeff_fields_does_not_raise(degree) -> None:  # noqa: ANN001
-    # Composition routes through ``Ti.to(coeff=False)``, so a broken
-    # coefficient conversion made composing any ``coeff=True`` field fail.
+    # Composition routes through ``Ti.to(store="values")``, so a broken
+    # coefficient conversion made composing any field of coefficients
+    # fail.
     rng = np.random.default_rng(1)
     d1 = DisplacementField(field=_random_field(rng, 2), degree=degree).to(
-        coeff=True
+        store="coefficients"
     )
     d2 = DisplacementField(field=_random_field(rng, 2), degree=degree).to(
-        coeff=True
+        store="coefficients"
     )
 
     out = compose(d1, d2)

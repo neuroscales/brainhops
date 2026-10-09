@@ -7,22 +7,22 @@ from nibabel.freesurfer import mghformat as _mgh
 # internals
 from brainhops._core import path
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._geometry import (
-    Arrangement,
-    arrange_voxel_to_ras,
-    declared_axes,
-)
-from brainhops.io.base.mgh import _MRI_PARAMS, MghParser
-from brainhops.io.base.nifti import _scale_spatial, _unit_scale
 from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.common._geometry import (
+    Arrangement,
+    arrange_voxel_to_ras,
+    declared_axes,
+)
+from brainhops.io.common.mgh import _MRI_PARAMS, MghParser
+from brainhops.io.common.nifti import _scale_spatial, _unit_scale
 from brainhops.io.images.base import WritableFileBasedImage
 
 _SCANNER = "scanner"

@@ -6,7 +6,7 @@ from bagof.magic import replace
 
 # internals
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -17,8 +17,9 @@ from brainhops.datamodel.transformations import (
     Translation,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._nifti_units import nifti_to_unit
-from brainhops.io.base.nifti import (
+from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common._nifti_units import nifti_to_unit
+from brainhops.io.common.nifti import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
@@ -29,7 +30,6 @@ from brainhops.io.base.nifti import (
     _nifti_to_axes,
     _NiftiObject,
 )
-from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.images.base import WritableFileBasedImage
 
 

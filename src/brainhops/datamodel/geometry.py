@@ -9,14 +9,14 @@ from bagof.magic import Factory, NoRepr
 
 # core
 from brainhops.backends import get_array_backend
-from brainhops.datamodel.base import DataModelBase
 
 # internals
+from ._sugar import get_axes
 from .axes import Axis
+from .base import DataModelBase
 from .systems import (
     AxisSequence,
     CoordinateSystem,
-    _axes_or_unknown,
 )
 from .transformations import (
     Affine,
@@ -244,7 +244,7 @@ def _index2transform(
 
     # Compute output axes. An open system is closed to the number of axes
     # of the array; one that states no axis at all gives none.
-    input_axes: tx.Optional[AxisSequence] = _axes_or_unknown(system)
+    input_axes: tx.Optional[AxisSequence] = get_axes(system)
     if input_axes == [...]:
         input_axes = None
     elif input_axes.is_open:

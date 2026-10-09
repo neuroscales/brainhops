@@ -16,9 +16,9 @@ from unittest import mock
 import numpy as np
 
 from brainhops.datamodel import kinds as H
-from brainhops.datamodel._transformations import inverse as _inv
+from brainhops.datamodel._transformations import concrete as _concrete
+from brainhops.datamodel._transformations.compute.simplify import SimplifyTable
 from brainhops.datamodel._transformations.concrete import is_translation
-from brainhops.datamodel._transformations.simplify import SimplifyTable
 from brainhops.datamodel.enums import SimplifyPolicy
 from brainhops.datamodel.kinds import TransformationFamily
 from brainhops.datamodel.transformations import (
@@ -42,13 +42,13 @@ def _aff() -> Affine:
 
 def _zero_inversions(thunk: object) -> object:
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         result = thunk()
     assert calls["n"] == 0
     return result

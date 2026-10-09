@@ -15,8 +15,8 @@ import brainhops.backends as backends
 from brainhops._core.bsplines import pull, spline_matrix
 from brainhops.backends import backend
 from brainhops.datamodel import kinds
-from brainhops.datamodel._transformations import factor as fac
-from brainhops.datamodel._transformations import separable as sep
+from brainhops.datamodel._transformations.compute import factor as fac
+from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.axes import A, Axis, R, S, SpaceAxis, TimeAxis
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import SingleScaleImage
@@ -24,7 +24,6 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
-    CompositionError,
     DisplacementField,
     Permutation,
     Scaling,
@@ -32,6 +31,7 @@ from brainhops.datamodel.transformations import (
     SubspaceTransformation,
     Translation,
 )
+from brainhops.errors import CompositionError
 
 # ----------------------------------------------------------------------
 #   FIXTURES AND HELPERS

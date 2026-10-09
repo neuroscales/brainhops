@@ -72,7 +72,7 @@ class LtaTransformation(
     Freesurfer, and can represent different types of Affine transformations.
 
     This is the registered format for `.lta` files: `io.load`,
-    `io.transformations.load` and `from_other` read them, and `io.save`
+    `io.transformations.load` and `from_any` read them, and `io.save`
     writes them. The views below it (`LtaTransformationVoxToVox`,
     `LtaTransformationPhysToPhys`, `LtaTransformationRASToRAS`) read the
     same files, but are not registered: they would claim every `.lta`

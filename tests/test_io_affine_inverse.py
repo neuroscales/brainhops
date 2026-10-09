@@ -103,7 +103,7 @@ def test_an_spm_field_inverts(tmp_path) -> None:  # noqa: ANN001
 def test_reading_the_image_does_not_replace_the_matrix(cls) -> None:  # noqa: ANN001
     # The parser's image `data` and the affine's matrix share a name, not
     # a slot: loading the voxels must not turn them into the matrix.
-    from brainhops.io.base.nifti import NiftiParser
+    from brainhops.io.common.nifti import NiftiParser
 
     img = _image()
     t = cls(image=img, header=img.header)

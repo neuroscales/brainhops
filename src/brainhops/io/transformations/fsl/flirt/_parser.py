@@ -11,15 +11,15 @@ from brainhops._core.typing import ArrayLike
 
 # datamodel
 from brainhops.datamodel.images import Image
-
-# io
-from brainhops.io.base.arrays import ArrayContainerError, read_text_rows
-from brainhops.io.base.nifti import _NiftiObject
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
     TextFileParser,
 )
+
+# io
+from brainhops.io.common.arrays import ArrayContainerError, read_text_rows
+from brainhops.io.common.nifti import _NiftiObject
 
 # The moving and reference images may be a nibabel header or image, or a
 # brainhops image. This is the type FLIRT accepts for either of them.

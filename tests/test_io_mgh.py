@@ -30,16 +30,16 @@ from brainhops.datamodel.transformations import (  # noqa: E402
     DisplacementField,
     Scaling,
 )
-from brainhops.io.base.freesurfer import (  # noqa: E402
-    fs_geometry_from_vox2ras,
-    fs_vox2ras,
-    fs_vox2tkr,
-    mat2orient,
-)
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     UnrepresentableTransformationError,
     WriterError,
+)
+from brainhops.io.common.freesurfer import (  # noqa: E402
+    fs_geometry_from_vox2ras,
+    fs_vox2ras,
+    fs_vox2tkr,
+    mat2orient,
 )
 from brainhops.io.images.freesurfer import MghImage  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
@@ -603,8 +603,8 @@ cras   = 0.0 0.0 0.0
 def test_the_freesurfer_hint_selects_mgh_and_lta(tmp_path) -> None:  # noqa: ANN001
     """MGH and LTA share the FreeSurfer format base, whose `"freesurfer"`
     hint selects both; each keeps its own hints too."""
-    from brainhops.io.base.freesurfer import FreesurferFormat
     from brainhops.io.base.specs import format_hints
+    from brainhops.io.common.freesurfer import FreesurferFormat
     from brainhops.io.transformations.freesurfer.lta import (
         LtaTransformation,
     )

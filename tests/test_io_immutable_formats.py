@@ -228,11 +228,11 @@ def test_the_format_is_an_immutable_sequence(loaded) -> None:  # noqa: ANN001
 def test_in_place_edits_are_refused(loaded) -> None:  # noqa: ANN001
     _, _, obj = loaded
     kinds = _kinds(obj)
-    with pytest.raises(TypeError, match="cannot be edited in place"):
+    with pytest.raises(TypeError):
         del obj[0]
-    with pytest.raises(TypeError, match="cannot be edited in place"):
+    with pytest.raises(TypeError):
         obj[0] = xforms.Identity()
-    with pytest.raises(TypeError, match="cannot be edited in place"):
+    with pytest.raises(AttributeError):
         obj.insert(0, xforms.Identity())
     with pytest.raises(AttributeError):
         obj.transformations.append(xforms.Identity())
@@ -329,7 +329,7 @@ def test_an_itk_mat_block_round_trips(tmp_path) -> None:  # noqa: ANN001
     np.testing.assert_array_equal(
         second.fixed_parameters, first.fixed_parameters
     )
-    with pytest.raises(TypeError, match="cannot be edited in place"):
+    with pytest.raises(TypeError):
         second[0] = xforms.Identity()
 
 

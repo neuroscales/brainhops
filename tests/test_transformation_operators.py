@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from brainhops.datamodel import kinds
-from brainhops.datamodel._transformations import operators as _ops
+from brainhops.datamodel._transformations import concrete as _concrete
 from brainhops.datamodel.systems import (
     CoordinateSystem,
     SpaceAxis,
@@ -25,7 +25,6 @@ from brainhops.datamodel.transformations import (
     CartesianField,
     CoordinatesField,
     DisplacementField,
-    DomainError,
     Identity,
     Linear,
     Permutation,
@@ -40,6 +39,7 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_kind,
 )
+from brainhops.errors import DomainError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 # ----------------------------------------------------------------------
@@ -101,6 +101,13 @@ def _transforms() -> list:
     ]
 
 
+def _rootable() -> list:
+    # The same, less the permutation: no reordering of axes is the half
+    # of another, so a permutation has no square root of its own kind
+    # and `Permutation.sqrt` refuses (see `test_a_permutation_has_no_root`).
+    return [t for t in _transforms() if not isinstance(t, Permutation)]
+
+
 # ----------------------------------------------------------------------
 #   API: LAZY, TYPED WRAPPERS
 # ----------------------------------------------------------------------
@@ -111,7 +118,6 @@ def _transforms() -> list:
     [
         ("sqrt", Translation(translation=np.ones(3)), Sqrt, Translation),
         ("sqrt", Scaling(scale=np.ones(3) * 2), Sqrt, Scaling),
-        ("sqrt", Permutation(permutation=CYCLE), Sqrt, Linear),
         ("sqrt", Rotation(matrix=ROTATION), Sqrt, Rotation),
         ("sqrt", Linear(matrix=LINEAR), Sqrt, Linear),
         ("sqrt", Affine(matrix=AFFINE), Sqrt, Affine),
@@ -155,8 +161,10 @@ def test_wrapper_endpoints_are_the_forward_endpoints() -> None:
 
 def test_nothing_is_computed_until_the_parameter_is_read() -> None:
     affine = Affine(matrix=AFFINE)
+    # The forward derives the square root of its own matrix, under
+    # `_sqrt`, and the wrapper reads it from there.
     with mock.patch.object(
-        _ops, "affine_sqrtm", side_effect=AssertionError("computed")
+        _concrete, "affine_sqrtm", side_effect=AssertionError("computed")
     ) as compute:
         root = affine.sqrt()
         # Neither a kind check, a simplification, an endpoint edit, nor a
@@ -191,7 +199,7 @@ def test_operators_are_listed_by_name() -> None:
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("t", _transforms(), ids=lambda t: type(t).__name__)
+@pytest.mark.parametrize("t", _rootable(), ids=lambda t: type(t).__name__)
 def test_sqrt_squared_is_the_transform(t: Transformation) -> None:
     root = t.sqrt(compute=True)
     np.testing.assert_allclose(
@@ -199,6 +207,22 @@ def test_sqrt_squared_is_the_transform(t: Transformation) -> None:
     )
     # And the lazy square of a lazy root is the transform itself.
     assert t.sqrt().square() is t
+
+
+def test_a_permutation_has_no_root() -> None:
+    # No reordering of axes is the half of another: the three-cycle is a
+    # third of a turn, so its root is a sixth of one, which permutes no
+    # axes. Read as the linear transform it stands for, it does have one.
+    p = Permutation(permutation=CYCLE)
+    with pytest.raises(NotImplementedError):
+        p.sqrt()
+    root = p.to(Linear).sqrt(compute=True)
+    np.testing.assert_allclose(
+        _matrix((root @ root).compute()), _matrix(p), atol=1e-12
+    )
+    # The identity permutes nothing, and is its own root.
+    identity = Permutation()
+    assert identity.sqrt() is identity
 
 
 @pytest.mark.parametrize("t", _transforms(), ids=lambda t: type(t).__name__)
@@ -304,7 +328,6 @@ def test_operators_act_on_a_subspace_inner(method: str) -> None:
         ("sqrt", Translation(translation=np.ones(3)), Translation),
         ("sqrt", Scaling(scale=np.array([2.0, 3.0, 4.0])), Scaling),
         ("sqrt", Rotation(matrix=ROTATION), Rotation),
-        ("sqrt", Permutation(permutation=CYCLE), Linear),
         ("sqrt", Linear(matrix=LINEAR), Linear),
         ("sqrt", Affine(matrix=AFFINE), Affine),
         ("square", Translation(translation=np.ones(3)), Translation),
@@ -336,8 +359,6 @@ def test_sqrt_of_a_rotation_is_a_rotation() -> None:
     [
         (Rotation(matrix=ROTATION).sqrt(), kinds.SpecialOrthogonal, True),
         (Scaling(scale=np.ones(3) * 2).sqrt(), kinds.Diagonal, True),
-        (Permutation(permutation=CYCLE).sqrt(), kinds.Permutation, False),
-        (Permutation(permutation=CYCLE).sqrt(), kinds.Linear, True),
     ],
 )
 def test_kind_membership_is_read_from_the_forward(
@@ -375,7 +396,6 @@ def test_domain_error_is_a_value_error() -> None:
         (Rotation(matrix=_rotation(np.pi)), "negative real axis"),
         (Linear(matrix=np.diag([-1.0, 1.0, 1.0])), "negative real axis"),
         (Affine(matrix=np.diag([1.0, -2.0, 1.0, 1.0])[:3]), "negative"),
-        (Permutation(permutation=np.array([1, 0, 2])), "negative real axis"),
         (Linear(matrix=np.diag([1.0, 0.0, 1.0])), "singular"),
         (Scaling(scale=np.array([1.0, -2.0])), "positive"),
         (Scaling(scale=np.array([1.0, 0.0])), "positive"),

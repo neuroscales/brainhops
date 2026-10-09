@@ -71,14 +71,16 @@ composers'.
 import typing_extensions as tx
 from bagof.dispatchers import Function, NoMethodError
 
+# api
+from brainhops.errors import CompositionError
+
 # internals
-from .errors import CompositionError
 from .simplify import ANALYTIC_FLOOR, simplify
 from .utils import boundary_disagrees
 
 # typing
 if tx.TYPE_CHECKING:
-    from .base import Transformation
+    from ..base import Transformation
 
 
 _compose: Function = Function("compose")

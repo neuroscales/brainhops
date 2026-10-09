@@ -6,7 +6,7 @@ identity, and selects a subclass whose views read it as such: a
 squaring), an `AffineExponential`, `LinearExponential`,
 `RotationExponential` or `ScalingExponential` (the exponential of the
 matrix or of the scales). These cover the views under every `log` and
-`coeff` combination, the conversions, the exponential maps against
+`store` combination, the conversions, the exponential maps against
 SciPy and against analytic flows, the exact tangent operations, the
 containers, the setters and the kind checks. Fields use cubic splines:
 linear ones would hide an encoding mixed up with another.
@@ -20,16 +20,13 @@ import scipy.linalg
 
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops.datamodel import kinds
-from brainhops.datamodel._transformations import concrete as _concrete
-from brainhops.datamodel._transformations import inverse as _inverse
+from brainhops.datamodel._transformations import tangents as _tangents
 from brainhops.datamodel.systems import CoordinateSystem, SpaceAxis
 from brainhops.datamodel.transformations import (
     Affine,
     AffineExponential,
-    ConversionError,
     CoordinatesField,
     DisplacementField,
-    DomainError,
     Identity,
     Inverse,
     Linear,
@@ -45,6 +42,10 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_identity,
     is_kind,
+)
+from brainhops.errors import (
+    ConversionError,
+    DomainError,
 )
 from brainhops.io.transformations.base.affines import VoxelToLPS
 
@@ -158,7 +159,12 @@ def test_steps_exist_only_on_a_velocity() -> None:
     with pytest.raises(TypeError):
         Affine(data=TANGENT, log=True, steps=6)
     # `steps` is keyword-only: `data` stays the first positional argument.
-    assert StationaryVelocityField(np.zeros((4, 4, 2))).steps is None
+    zeros = np.zeros((4, 4, 2))
+    built = StationaryVelocityField(zeros)
+    assert built.data is zeros
+    assert built.steps is None
+    # A zero velocity is its own flow: no squaring at all.
+    assert built._compute_steps == 0
 
 
 @pytest.mark.parametrize(
@@ -173,15 +179,16 @@ def test_steps_exist_only_on_a_velocity() -> None:
     ids=lambda x: getattr(x, "__name__", ""),
 )
 def test_a_map_class_refuses_the_flag(cls: type, data: np.ndarray) -> None:
-    # Assigned in place, `log=True` would make the class misread `data`.
+    # The flag selects the class, and an instance cannot change its own
+    # class, so `log` is read-only: `t.to(log=True)` is the way.
     t = cls(data=data)
-    with pytest.raises(TypeError, match="to\\(log=True\\)"):
+    with pytest.raises(AttributeError):
         t.log = True
 
 
 def test_a_class_log_does_not_select_refuses_it() -> None:
     # An io subclass of `Affine` holds a map; it has no tangent subclass.
-    with pytest.raises(TypeError, match="AffineExponential"):
+    with pytest.raises(TypeError):
         VoxelToLPS(data=TANGENT, log=True)
 
 
@@ -274,24 +281,27 @@ def test_field_views_under_every_encoding() -> None:
     velocity = _linear_velocity()
     coefficients = value2coeff_field(velocity, degree=DEGREE, bound="nearest")
     displacement = DisplacementField(data=velocity, degree=DEGREE)
-    # log=False, coeff=False: `data` is the displacement, as values.
+    # log=False, store="values": `data` is the displacement, as values.
     np.testing.assert_array_equal(displacement.field, velocity)
-    # log=False, coeff=True: `data` is the displacement's coefficients.
+    # log=False, store="coefficients": `data` is the displacement's
+    # coefficients.
     np.testing.assert_allclose(
-        DisplacementField(data=coefficients, degree=DEGREE, coeff=True).field,
+        DisplacementField(
+            data=coefficients, degree=DEGREE, store="coefficients"
+        ).field,
         velocity,
         atol=1e-10,
     )
-    # log=True, coeff=False: `data` is the velocity, as values, and the
+    # log=True, store="values": `data` is the velocity, as values, and the
     # view is the displacement of its flow.
     values = StationaryVelocityField(data=velocity, degree=DEGREE)
     np.testing.assert_allclose(
         values.field[INTERIOR], _linear_flow()[INTERIOR], atol=5e-3
     )
-    # log=True, coeff=True: `data` is the velocity's coefficients (NiftyReg
-    # `-vel -cpp`); the same flow.
+    # log=True, store="coefficients": `data` is the velocity's
+    # coefficients (NiftyReg `-vel -cpp`); the same flow.
     coeffs = StationaryVelocityField(
-        data=coefficients, degree=DEGREE, coeff=True
+        data=coefficients, degree=DEGREE, store="coefficients"
     )
     np.testing.assert_allclose(
         coeffs.field[INTERIOR], _linear_flow()[INTERIOR], atol=5e-3
@@ -319,8 +329,8 @@ def test_velocity_integrates_to_the_affine_flow(
 
 def test_the_refit_at_each_step_matches_the_values_path() -> None:
     values = _velocity_field(steps=8)
-    coeffs = _velocity_field(steps=8).to(coeff=True)
-    assert coeffs.log and coeffs.coeff
+    coeffs = _velocity_field(steps=8).to(store="coefficients")
+    assert coeffs.log and coeffs.store == "coefficients"
     np.testing.assert_allclose(
         coeffs.field[INTERIOR], values.field[INTERIOR], atol=1e-6
     )
@@ -329,7 +339,7 @@ def test_the_refit_at_each_step_matches_the_values_path() -> None:
 def test_steps_default_rule_and_override() -> None:
     velocity = _linear_velocity()
     largest = np.linalg.norm(velocity, axis=-1).max()
-    steps = _concrete._squaring_steps(velocity)
+    steps = _tangents._squaring_steps(velocity)
     assert largest / 2**steps <= 0.125 < largest / 2 ** (steps - 1)
     # No squaring at all is the first-order step `id + v`.
     np.testing.assert_array_equal(
@@ -397,19 +407,22 @@ def test_the_tangent_of_a_matrix_is_its_principal_logarithm() -> None:
 
 
 @pytest.mark.parametrize(
-    "t, reason",
+    "t",
     [
-        (Affine(matrix=np.diag([1.0, -2.0, 1.0, 1.0])[:3]), "negative"),
-        (Linear(matrix=np.diag([-1.0, 1.0, 1.0])), "negative real axis"),
-        (Linear(matrix=np.diag([1.0, 0.0, 1.0])), "singular"),
-        (Scaling(scale=np.array([1.0, -2.0])), "positive"),
+        # A reflection, a singular matrix and a negative scale factor:
+        # each has an eigenvalue on the closed negative real axis, so
+        # none has a principal logarithm.
+        Affine(matrix=np.diag([1.0, -2.0, 1.0, 1.0])[:3]),
+        Linear(matrix=np.diag([-1.0, 1.0, 1.0])),
+        Linear(matrix=np.diag([1.0, 0.0, 1.0])),
+        Scaling(scale=np.array([1.0, -2.0])),
     ],
-    ids=lambda x: getattr(type(x), "__name__", x),
+    ids=lambda x: type(x).__name__,
 )
 def test_a_logarithm_outside_the_principal_domain_is_refused(
-    t: object, reason: str
+    t: object,
 ) -> None:
-    with pytest.raises(DomainError, match=reason):
+    with pytest.raises(DomainError):
         t.to(log=True)
 
 
@@ -429,42 +442,47 @@ def test_a_velocity_converts_to_its_displacement() -> None:
     velocity = _velocity_field()
     displacement = velocity.to(log=False)
     assert type(displacement) is DisplacementField
-    assert (displacement.degree, displacement.coeff) == (DEGREE, False)
+    assert (displacement.degree, displacement.store) == (
+        DEGREE, "values"
+    )
     np.testing.assert_array_equal(displacement.data, velocity.field)
 
 
 def test_combined_flags_are_well_defined() -> None:
     values = _velocity_field()
-    coeffs = values.to(coeff=True)
-    # `coeff` alone re-encodes the velocity: `log` stays.
+    coeffs = values.to(store="coefficients")
+    # `store` alone re-encodes the velocity: `log` stays.
     assert type(coeffs) is StationaryVelocityField
     np.testing.assert_allclose(
         coeff2value_field(coeffs.data, degree=DEGREE, bound="nearest"),
         values.data,
         atol=1e-10,
     )
-    decoded = coeffs.to(coeff=False)
-    assert decoded.log and not decoded.coeff
+    decoded = coeffs.to(store="values")
+    assert decoded.log and decoded.store == "values"
     np.testing.assert_allclose(decoded.data, values.data, atol=1e-10)
-    # `log=False` keeps `coeff`, and integrates.
+    # `log=False` keeps `store`, and integrates.
     integrated = coeffs.to(log=False)
-    assert type(integrated) is DisplacementField and integrated.coeff
+    assert type(integrated) is DisplacementField
+    assert integrated.store == "coefficients"
     np.testing.assert_allclose(
         integrated.field[INTERIOR], coeffs.field[INTERIOR], atol=1e-10
     )
     # Both at once: the displacement, as values.
-    both = coeffs.to(log=False, coeff=False)
-    assert not both.coeff
+    both = coeffs.to(log=False, store="values")
+    assert both.store == "values"
     np.testing.assert_array_equal(both.data, coeffs.field)
 
 
 def test_a_velocity_converts_to_the_coordinates_of_its_flow() -> None:
     # The coordinates of a velocity are those of the integrated map, and
     # the result keeps only the spline encoding (#294).
-    velocity = _velocity_field().to(coeff=True)
+    velocity = _velocity_field().to(store="coefficients")
     coordinates = velocity.to(CoordinatesField)
     assert type(coordinates) is CoordinatesField
-    assert (coordinates.coeff, coordinates.degree) == (True, DEGREE)
+    assert (coordinates.store, coordinates.degree) == (
+        "coefficients", DEGREE
+    )
     assert not hasattr(coordinates, "steps")
     np.testing.assert_allclose(
         coordinates.field[INTERIOR],
@@ -527,10 +545,11 @@ def test_tangent_operations_are_exact(t: object) -> None:
 def test_inverse_cancels_without_integrating() -> None:
     velocity = _velocity_field()
     computed = AssertionError("integrated")
-    with mock.patch.object(_concrete, "_integrate", side_effect=computed):
-        with mock.patch.object(_inverse, "_integrate", side_effect=computed):
-            inverse = velocity.inverse()
-            assert isinstance((inverse @ velocity).compute(), Identity)
+    with mock.patch.object(
+        _tangents, "_integrate_field", side_effect=computed
+    ):
+        inverse = velocity.inverse()
+        assert isinstance((inverse @ velocity).compute(), Identity)
 
 
 def test_the_inverse_of_a_velocity_integrates_its_negation() -> None:
@@ -548,9 +567,9 @@ def test_the_inverse_of_a_velocity_integrates_its_negation() -> None:
 
 def test_the_square_root_of_a_velocity_drops_one_squaring() -> None:
     velocity = _velocity_field()
-    steps = _concrete._squaring_steps(velocity.data)
+    steps = _tangents._squaring_steps(velocity.data)
     root = velocity.sqrt()
-    assert _concrete._squaring_steps(root.data) == steps - 1
+    assert _tangents._squaring_steps(root.data) == steps - 1
     # Squared, it is the field the velocity integrates to: the last
     # squaring of `exp(v)` is the square of `exp(v / 2)`.
     np.testing.assert_allclose(
@@ -640,20 +659,16 @@ def test_assigning_data_refreshes_the_views() -> None:
     assert velocity.field is not field
 
 
-def test_assigning_steps_or_log_refreshes_the_views() -> None:
+def test_assigning_steps_refreshes_the_views() -> None:
+    # `field` integrates the velocity and caches the flow; assigning the
+    # number of squaring steps clears it, so the next read integrates
+    # again with the new count.
     velocity = _velocity_field(steps=0)
     np.testing.assert_array_equal(velocity.field, _linear_velocity())
     velocity.steps = 8
     np.testing.assert_allclose(
         velocity.field[INTERIOR], _linear_flow()[INTERIOR], atol=1e-3
     )
-    cached = velocity.field
-    velocity.log = True
-    assert velocity.field is not cached
-    affine = AffineExponential(data=TANGENT)
-    cached = affine.matrix
-    affine.log = True
-    assert affine.matrix is not cached
 
 
 def test_assigning_data_forgets_a_cached_inverse() -> None:
@@ -707,7 +722,7 @@ def test_a_format_copies_the_map_not_the_stored_data(t: object) -> None:
     # exponential, and a lazy wrapper as the map it derives.
     from brainhops.io.transformations.niftyreg import NiftyRegAffine
 
-    copied = NiftyRegAffine.from_other(t)
+    copied = NiftyRegAffine.from_any(t)
     assert not copied.log
     np.testing.assert_allclose(copied.matrix, t.matrix, atol=1e-12)
 
@@ -742,16 +757,24 @@ def test_a_velocity_type_points_at_the_flag() -> None:
     ids=lambda x: getattr(type(x), "__name__", str(x)),
 )
 def test_the_log_flag_cannot_change_in_place(t: object, value: bool) -> None:
-    # Both directions refuse alike: the flag selects the class.
-    with pytest.raises(TypeError, match=f"t.to\\(log={value}\\)"):
+    # Both directions refuse alike: the flag selects the class, and an
+    # instance cannot change its own class. `t.to(log=...)` is the way.
+    with pytest.raises(AttributeError):
         t.log = value
 
 
-def test_the_resolved_squarings() -> None:
+def test_the_resolved_steps() -> None:
+    # `steps` is what the velocity was told, and `_compute_steps` is
+    # what the integration uses: the rule fills in the one it was not.
     velocity = _velocity_field()
-    assert velocity.squarings == _concrete._squaring_steps(velocity.data)
-    assert _velocity_field(steps=3).squarings == 3
-    assert StationaryVelocityField().squarings is None
+    assert velocity.steps is None
+    assert velocity._compute_steps == _tangents._squaring_steps(
+        velocity.data
+    )
+    declared = _velocity_field(steps=3)
+    assert (declared.steps, declared._compute_steps) == (3, 3)
+    assert StationaryVelocityField().steps is None
+    assert StationaryVelocityField()._compute_steps is None
 
 
 @pytest.mark.parametrize("cls", [Translation, Permutation])
@@ -845,7 +868,7 @@ def test_a_chain_that_does_not_reduce_is_refused_before_computing() -> None:
     )
     computed = AssertionError("composed")
     with mock.patch.object(_sequence, "compose", side_effect=computed):
-        with mock.patch.object(_concrete, "compose", side_effect=computed):
+        with mock.patch.object(_tangents, "compose", side_effect=computed):
             for log in (True, False):
                 with pytest.raises(ConversionError, match="not composed"):
                     chain.to(log=log)

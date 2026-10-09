@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 
 from brainhops.datamodel import kinds
-from brainhops.datamodel._transformations import inverse as _inv
+from brainhops.datamodel._transformations import concrete as _concrete
+from brainhops.datamodel._transformations.compute.simplify import SimplifyTable
 from brainhops.datamodel._transformations.modes import normalize_family
-from brainhops.datamodel._transformations.simplify import SimplifyTable
 from brainhops.datamodel.enums import SimplifyPolicy
 from brainhops.datamodel.kinds import TransformationFamily
 from brainhops.datamodel.transformations import (
@@ -333,13 +333,13 @@ def test_affine_inverse_pair_cancels_under_numeric(policy: object) -> None:
 def test_displacement_pair_cancels_zero_inversions(policy: object) -> None:
     df = DisplacementField(field=_small())
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         result = Sequence(transformations=[df, df.inverse()]).compute(
             simplify=policy
         )
@@ -358,13 +358,13 @@ def test_analytic_never_materializes_a_coordinate_inverse() -> None:
 def test_analytic_does_not_invert_a_displacement() -> None:
     df = DisplacementField(field=_small())
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         Sequence(transformations=[df.inverse()]).compute(simplify="analytic")
     assert calls["n"] == 0
 
@@ -500,13 +500,13 @@ def test_a_lazy_inverse_is_never_materialized_by_a_downcast() -> None:
     # makes the downcast do it -- not even `numeric`.
     df = DisplacementField(field=_small())
     calls = {"n": 0}
-    real = _inv.inverse_disp
+    real = _concrete.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_inv, "inverse_disp", counting):
+    with mock.patch.object(_concrete, "inverse_disp", counting):
         lazy = df.inverse()
         assert lazy.simplify("numeric") is lazy
     assert calls["n"] == 0
@@ -529,7 +529,7 @@ def test_a_downcast_forward_rewraps_as_its_own_family() -> None:
 
 
 def test_simplify_takes_one_or_two_transforms() -> None:
-    from brainhops.datamodel._transformations.simplify import simplify
+    from brainhops.datamodel._transformations.compute.simplify import simplify
 
     aff = Affine(matrix=np.array([[2.0, 0, 1], [0, 3, 2]]))
     # One in, one out: total, always a transform back.
@@ -548,7 +548,7 @@ def test_simplify_takes_one_or_two_transforms() -> None:
 
 
 def test_simplify_rejects_a_policy_passed_positionally() -> None:
-    from brainhops.datamodel._transformations.simplify import simplify
+    from brainhops.datamodel._transformations.compute.simplify import simplify
 
     aff = Affine(matrix=np.array([[2.0, 0, 1], [0, 3, 2]]))
     with pytest.raises(TypeError, match="positionally"):
@@ -596,8 +596,8 @@ def test_a_pair_over_a_disagreeing_boundary_is_declined() -> None:
 
 
 def test_compose_says_so_rather_than_swallowing_the_boundary() -> None:
-    from brainhops.datamodel._transformations.compose import compose
-    from brainhops.datamodel.transformations import CompositionError
+    from brainhops.datamodel._transformations.compute.compose import compose
+    from brainhops.errors import CompositionError
 
     ident, aff = _reordered_pair()
     with pytest.raises(CompositionError, match="disagree on the system"):

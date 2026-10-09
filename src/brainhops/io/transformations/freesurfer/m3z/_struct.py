@@ -28,15 +28,16 @@ import typing_extensions as tx
 # externals
 from bagof.magic import HIDE_IF_NONE, Magic, field
 
+from brainhops.io.base.parsers import ParserContentError
+
 # io
-from brainhops.io.base.freesurfer import (
+from brainhops.io.common.freesurfer import (
     FS_DEFAULT_XRAS,
     FS_DEFAULT_YRAS,
     FS_DEFAULT_ZRAS,
     fs_geometry_from_vox2ras,
     fs_vox2ras,
 )
-from brainhops.io.base.parsers import ParserContentError
 
 # type hints
 _3Ints = tx.Tuple[int, int, int]

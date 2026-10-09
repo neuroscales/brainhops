@@ -24,7 +24,12 @@ from brainhops.datamodel.enums import BoundaryCondition
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import (
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserContentError,
+    WriterError,
+)
+from brainhops.io.common.nifti import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_NAME_NIFTYREG,
@@ -37,11 +42,6 @@ from brainhops.io.base.nifti import (
     _nifti_intent_name,
     _nifti_shape,
     _NiftiObject,
-)
-from brainhops.io.base.parsers import (
-    Confidence,
-    ParserContentError,
-    WriterError,
 )
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.base.fields import LPSCoordinatesField
@@ -477,7 +477,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
                 "field, and voxel to LPS."
             )
         # ITK stores sampled displacements: a velocity is integrated.
-        displacement = chain[1].to(log=False, coeff=False)
+        displacement = chain[1].to(log=False, store="values")
         if displacement.data is None:
             raise WriterError(
                 "This field has no displacements, so there is nothing to "
@@ -587,7 +587,7 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
                 "transformations: LPS to voxel, and a coordinates field."
             )
         # ITK stores sampled vectors.
-        coordinates = chain[1].to(coeff=False)
+        coordinates = chain[1].to(store="values")
         if coordinates.data is None:
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."

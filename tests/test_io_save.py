@@ -185,12 +185,12 @@ def test_an_ambiguity_tells_the_user_how_to_choose(formats, tmp_path) -> None:  
     assert "2 formats" in lines[0]
     # Each candidate is described in the words of its own docstring, when
     # it has one, and comes with the call that writes the object in it.
-    assert lines[1] == "  - Bare: `Bare.from_other(obj).save(path)`"
+    assert lines[1] == "  - Bare: `Bare.from_any(obj).save(path)`"
     assert lines[2] == (
         "  - Plain (A note written as plain text): "
-        "`Plain.from_other(obj).save(path)`"
+        "`Plain.from_any(obj).save(path)`"
     )
-    assert "from_other(obj).save(path)" in lines[-1]
+    assert "from_any(obj).save(path)" in lines[-1]
     # Neither the docstring of the data model, nor the list of fields
     # generated for a class with none, describes the format. How
     # maintainers settle a tie is not the user's concern.
@@ -438,7 +438,7 @@ def test_a_general_transformation_is_not_given_a_nifti_meaning(
     # A NIfTI transformation means voxel-to-RAS. A general one would come
     # back meaning something it did not say, so it is refused, and the
     # caller builds the NIfTI format explicitly if that is what is meant.
-    with pytest.raises(WriterError, match="from_other"):
+    with pytest.raises(WriterError, match="from_any"):
         io.save(obj, tmp_path / "transform.nii")
     assert not (tmp_path / "transform.nii").exists()
 
@@ -447,7 +447,7 @@ def test_a_general_transformation_is_not_given_a_nifti_meaning(
 def test_the_explicit_route_writes_a_general_affine(tmp_path) -> None:  # noqa: ANN001
     from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
-    NiftiVoxelToRAS.from_other(Affine(MATRIX)).save(tmp_path / "affine.nii")
+    NiftiVoxelToRAS.from_any(Affine(MATRIX)).save(tmp_path / "affine.nii")
     back = NiftiVoxelToRAS.load(tmp_path / "affine.nii")
     np.testing.assert_allclose(back.matrix, MATRIX)
 

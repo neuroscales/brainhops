@@ -132,7 +132,7 @@ def test_the_container_is_not_mutable() -> None:
         field[0] = l1
     with pytest.raises(TypeError):
         del field[0]
-    with pytest.raises(TypeError):
+    with pytest.raises(AttributeError):
         field.insert(0, l1)
 
 

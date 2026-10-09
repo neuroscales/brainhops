@@ -18,12 +18,12 @@ from brainhops.datamodel import transformations as _xforms
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.hdf5 import Hdf5ParserWriter
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     SnifferContentError,
 )
+from brainhops.io.common.hdf5 import Hdf5ParserWriter
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 
 # locals

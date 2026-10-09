@@ -16,6 +16,9 @@ nb = pytest.importorskip("nibabel")
 import brainhops.io as io  # noqa: E402
 from brainhops.backends import available_backends, backend  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
+from brainhops.datamodel._transformations import (  # noqa: E402
+    tangents as _tangents,
+)
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,
     NiftiRASDisplacementField,
@@ -397,7 +400,7 @@ def test_a_spline_field_is_written_as_its_values(tmp_path) -> None:  # noqa: ANN
             xforms.DisplacementField(
                 data=coefficients,
                 degree=3,
-                coeff=True,
+                store="coefficients",
                 input=voxel,
                 output=voxel,
             ),
@@ -411,10 +414,21 @@ def test_a_spline_field_is_written_as_its_values(tmp_path) -> None:  # noqa: ANN
     np.testing.assert_allclose(written, values, atol=1e-10)
     reloaded = io.transformations.load(target)
     assert type(reloaded) is NiftiRASDisplacementField
-    assert reloaded.displacement.coeff is False
+    assert reloaded.displacement.store == "values"
     np.testing.assert_allclose(
         np.asarray(reloaded.displacement.field), values, atol=1e-10
     )
+
+
+def test_assigning_data_refreshes_the_field_view() -> None:
+    """Its `data` is the array the parser holds, so the property is
+    hand-written -- and it still has to clear the views keyed on it, or
+    `field` would keep serving the array that was there before."""
+    grid = np.stack(np.meshgrid(*[np.arange(4.0)] * 3, indexing="ij"), -1)
+    coords = NiftiRASCoordinatesField(data=grid)
+    assert coords.field is coords.field  # cached
+    coords.data = grid + 10.0
+    np.testing.assert_allclose(np.asarray(coords.field), grid + 10.0)
 
 
 # ----------------------------------------------------------------------
@@ -435,7 +449,7 @@ def test_a_displacement_field_refuses_in_place_edits(standard_warp) -> None:  # 
         field[0] = ras2voxel
     with pytest.raises(TypeError):
         del field[0]
-    with pytest.raises(TypeError):
+    with pytest.raises(AttributeError):
         field.insert(0, ras2voxel)
     assert len(field) == 3
     assert field.ras2voxel is ras2voxel
@@ -485,6 +499,8 @@ def velocity_warp(tmp_path):  # noqa: ANN001, ANN201
 
 
 @pytest.mark.parametrize(
+    # `steps` is the count the field integrates with: the one the spec
+    # names, or the one the default rule picks when it names none.
     "spec, steps",
     [
         ("{}|svf", None),
@@ -505,7 +521,11 @@ def test_a_velocity_is_read_with_the_log_option(
     assert type(field) is NiftiRASDisplacementField and field.log
     velocity = field.displacement
     assert type(velocity) is xforms.StationaryVelocityField
-    assert velocity.steps == steps
+    if steps is None:
+        # The file names no count, so the default rule picks one.
+        assert velocity.steps is None
+        steps = _tangents._squaring_steps(np.asarray(velocity.values))
+    assert velocity._compute_steps == steps
     points = _grid_points()[1:3, 1:3, 1:3].reshape(-1, 3)
     np.testing.assert_allclose(
         _apply(field, points), points + VELOCITY, atol=1e-4

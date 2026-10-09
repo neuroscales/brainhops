@@ -79,20 +79,21 @@ read a lazy inverse's parameters, and it would return a new object where
 object identity must be kept. A dispatched operation has none of these
 problems.
 """
+__all__ = ["restrict", "restrictor", "embed", "embedder"]
 
 # dependencies
 import typing_extensions as tx
 from bagof.dispatchers import Function, NoMethodError
 
+# api
+from brainhops.errors import RestrictionError
+
 # internals
-from .errors import RestrictionError
 from .utils import axis_counts
 
 # typing
 if tx.TYPE_CHECKING:
-    from .base import Transformation
-
-__all__ = ["restrict", "restrictor", "embed", "embedder"]
+    from ..base import Transformation
 
 
 _restrict: Function = Function("restrict")

@@ -250,7 +250,7 @@ def test_a_volume_series_from_mrtrix_stays_four_dimensional_in_nifti(  # noqa: D
 
 
 def test_complete_basis() -> None:  # noqa: D103
-    from brainhops.io.base._geometry import complete_basis
+    from brainhops.io.common._geometry import complete_basis
 
     # Two in-plane directions: the unit normal, right-handed.
     columns = np.array([[0.0, 2.0], [0.0, 0.0], [3.0, 0.0]])

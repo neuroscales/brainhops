@@ -10,7 +10,7 @@ from bagof.magic import replace
 # internals
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -19,8 +19,12 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import Unit, is_indexunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._geometry import RAS_FROM_ORIENTATION, reduce_to_affine
-from brainhops.io.base.nrrd import (
+from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common._geometry import (
+    RAS_FROM_ORIENTATION,
+    reduce_to_affine,
+)
+from brainhops.io.common.nrrd import (
     _ENCODINGS,
     _SPACE_NAMES,
     SPACES,
@@ -31,7 +35,6 @@ from brainhops.io.base.nrrd import (
     _format_vectors,
     dtype_to_nrrd,
 )
-from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.images.base import WritableFileBasedImage
 
 _INDEX = "index"

@@ -8,7 +8,7 @@ from collections.abc import Mapping
 
 import typing_extensions as tx
 from bagof.converters import ConversionError, Converter, register_converter
-from bagof.magic import HIDE_IF_NONE, Field, Magic, fields
+from bagof.magic import Field, HideIfNone, Magic, fields
 
 
 class IdentityComparison:
@@ -38,7 +38,7 @@ class DataModelBase(
     Magic,
     convert=True,
     mapping=False,
-    repr=HIDE_IF_NONE,
+    repr=HideIfNone,
     doc=True,
     pin_discriminant="pin+narrow",
 ):
@@ -66,7 +66,7 @@ class DataModelBase(
         this class, or the keywords its constructor takes without
         storing them (its `InitVar`s, such as the `matrix=` of an
         `Affine`), will be used. Other keys are ignored, but see
-        [`from_other`][brainhops.datamodel.base.DataModelBase.from_other],
+        [`from_any`][brainhops.datamodel.base.DataModelBase.from_any],
         which refuses them.
 
         Additional positional and/or keyword arguments can be provided,
@@ -126,7 +126,7 @@ class DataModelBase(
         return _build(cls, read, args, kwargs)
 
     @classmethod
-    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """
         Create an instance of the class from any object that can be
         interpreted as a dictionary, or an instance of a similar class,
@@ -158,6 +158,8 @@ class DataModelBase(
         else:
             return cls(other, *args, **kwargs)
 
+
+# --- helpers ----------------------------------------------------------
 
 # A value read from nowhere: the source carries nothing for the field.
 _ABSENT = object()
@@ -258,10 +260,12 @@ def _check_fixed(
 # that cannot be passed to the constructor are checked.
 _REGISTRATION = "__magic_registration__"
 
+_OPTIONS = "__magic_options__"
+
 
 def _is_polymorphic(cls: type) -> bool:
     """Whether calling `cls` builds the subclass its arguments select."""
-    options = cls.__dict__.get("__magic_options__")
+    options = getattr(cls, _OPTIONS, None)
     return bool(getattr(options, "polymorphic", False))
 
 
@@ -280,7 +284,7 @@ def _selected_on(cls: type) -> tx.Dict[str, tx.List[tx.Any]]:
     """The `on=` constraints of `cls` and its parents, by field name."""
     out: tx.Dict[str, tx.List[tx.Any]] = {}
     for base in cls.__mro__:
-        registration = base.__dict__.get(_REGISTRATION)
+        registration = getattr(base, _REGISTRATION, None)
         try:
             specs = registration[1]
         except (TypeError, IndexError, KeyError):
@@ -348,6 +352,11 @@ def _refuse_unknown_keys(cls: type, other: tx.Mapping) -> None:
         )
 
 
+# --- Converter --------------------------------------------------------
+# This is so that fields that are themselves (our kind of) magic can be
+# set from dictionaries, or from instances with compatible fields.
+
+
 @register_converter(DataModelBase)
 class DataModelConverter(Converter[DataModelBase, tx.Any]):
     """Converts a value to a [`DataModelBase`][] instance.
@@ -356,7 +365,7 @@ class DataModelConverter(Converter[DataModelBase, tx.Any]):
     automatically wherever a field is typed with [`DataModelBase`][] or
     one of its subclasses and conversion is enabled. A value that is
     already an instance of the target type is returned unchanged. Any
-    other value is converted through [`DataModelBase.from_other`][] of
+    other value is converted through [`DataModelBase.from_any`][] of
     the target type, so that a mapping or an instance of a parent class
     is read field by field instead of being passed to the constructor
     as its first argument.
@@ -373,7 +382,7 @@ class DataModelConverter(Converter[DataModelBase, tx.Any]):
     def __call__(self, value: tx.Any) -> DataModelBase:
         """Convert `value` to an instance of the target type."""
         # `Converter.__call__` would call the target class itself. Route
-        # through `from_other` instead, with the same wrapping: a
+        # through `from_any` instead, with the same wrapping: a
         # `ConversionError` passes through untouched, and a plain
         # `TypeError` or `ValueError` becomes a `ValueConversionError`.
         # Its message is kept, so that the field error built from it says
@@ -381,7 +390,7 @@ class DataModelConverter(Converter[DataModelBase, tx.Any]):
         if isinstance(value, self.origin):
             return value
         try:
-            return self.origin.from_other(value)
+            return self.origin.from_any(value)
         except ConversionError:
             raise
         except (TypeError, ValueError) as e:

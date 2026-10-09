@@ -10,10 +10,11 @@ rule is exercised once, plus the refusal of an unsupported type.
 import numpy as np
 import pytest
 
-from brainhops.datamodel._transformations.errors import RestrictionError
-from brainhops.datamodel._transformations.registries import INVERSE_CACHE
-from brainhops.datamodel._transformations.restrict import embed, restrict
-from brainhops.datamodel._transformations.utils import axis_counts
+from brainhops.datamodel._transformations.compute.restrict import (
+    embed,
+    restrict,
+)
+from brainhops.datamodel._transformations.compute.utils import axis_counts
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -32,6 +33,19 @@ from brainhops.datamodel.transformations import (
     SubspaceTransformation,
     Translation,
 )
+from brainhops.errors import RestrictionError
+
+
+def _inverted(forward: object) -> bool:
+    """Whether `forward` has already derived its own inverse parameter.
+
+    Every concrete family derives it under `_inverse`, a `lazyproperty`
+    that caches on the forward under `_cache__inverse` and is cleared when
+    the forward's `data` or a flag is assigned. A lazy `Inverse` reports
+    that value rather than holding one, so an empty cache means nothing
+    was inverted.
+    """
+    return "_cache__inverse" in forward.__dict__
 
 
 def _sub(inner: object, in_axes: list, out_axes: list = None) -> object:
@@ -155,7 +169,7 @@ def test_partial_inverse_of_a_sequence_stays_lazy() -> None:
     shift, scale = piece.transformations
     assert isinstance(shift, Inverse) and isinstance(scale, Inverse)
     assert np.array_equal(scale.forward.scale, [4.0])
-    assert not getattr(forward, INVERSE_CACHE, None)
+    assert not _inverted(forward)
 
 
 @pytest.mark.parametrize(
@@ -179,7 +193,7 @@ def test_inverse_covering_the_block_is_the_same_lazy_object(
     inverse = forward.inverse()
     assert isinstance(inverse, Inverse)
     assert restrict(inverse, [0, 1], [0, 1], 2, 2) is inverse
-    assert not getattr(forward, INVERSE_CACHE, None)
+    assert not _inverted(forward)
 
 
 def test_partial_inverse_is_reinverted_lazily() -> None:
@@ -188,7 +202,7 @@ def test_partial_inverse_is_reinverted_lazily() -> None:
     assert isinstance(piece, Inverse)
     assert type(piece.forward) is Scaling
     assert np.array_equal(piece.forward.scale, [4.0])
-    assert not getattr(forward, INVERSE_CACHE, None)
+    assert not _inverted(forward)
     assert np.allclose(piece.scale, [0.25])
 
 
@@ -200,7 +214,7 @@ def test_partial_affine_inverse_swaps_the_block() -> None:
     piece = restrict(forward.inverse(), [1], [1, 2], 3, 2)
     assert isinstance(piece, Inverse)
     assert np.array_equal(_matrix(piece.forward), [[4.0, 0.0], [1.0, 0.0]])
-    assert not getattr(forward, INVERSE_CACHE, None)
+    assert not _inverted(forward)
 
 
 def test_identity_inverse_restricts_to_nothing() -> None:
@@ -300,7 +314,7 @@ def test_embed_lazy_inverse_stays_wrapped() -> None:
     piece = embed(inverse, [1], [1], 2, 2)
     assert isinstance(piece, SubspaceTransformation)
     assert piece.transformation is inverse
-    assert not getattr(forward, INVERSE_CACHE, None)
+    assert not _inverted(forward)
 
 
 def test_embed_field_stays_wrapped() -> None:
@@ -420,7 +434,7 @@ def test_restrict_infers_the_counts_of_an_inverse_and_a_subspace() -> None:
     forward = Scaling(scale=np.asarray([2.0, 4.0]))
     piece = restrict(forward.inverse(), [1], [1])
     assert isinstance(piece, Inverse)
-    assert not getattr(forward, INVERSE_CACHE, None)
+    assert not _inverted(forward)
     sub = SubspaceTransformation(
         transformation=Scaling(scale=np.asarray([2.0])),
         input_axes=np.asarray([2]),

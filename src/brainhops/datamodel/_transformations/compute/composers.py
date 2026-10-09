@@ -19,12 +19,14 @@ from bagof.magic import replace
 # core
 from brainhops._core.bsplines import pull_field
 from brainhops.backends import get_array_backend
-from brainhops.datamodel.systems import _axes_or_unknown
+
+# datamodel
+from brainhops.datamodel._sugar import get_axes
+from brainhops.errors import CompositionError
 
 # internals
-from .base import Transformation
-from .compose import compose, composer
-from .concrete import (
+from ..base import Transformation
+from ..concrete import (
     Affine,
     CartesianField,
     CoordinatesField,
@@ -36,9 +38,9 @@ from .concrete import (
     Scaling,
     Translation,
 )
-from .errors import CompositionError
-from .meta import SubspaceTransformation, _close_subspace
-from .sequence import Sequence, _interpolates
+from ..meta import SubspaceTransformation, _close_subspace
+from ..sequence import Sequence, _interpolates
+from .compose import compose, composer
 from .utils import axis_counts
 
 # ----------------------------------------------------------------------
@@ -148,8 +150,7 @@ def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
 
 @composer
 def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     field = Ti.field + To.translation
     return CoordinatesField(
         field=field,
@@ -157,44 +158,41 @@ def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 @composer
 def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
-    field = Ti.field * To.scale
+    Ti = Ti.compute()
+    data = Ti.data * To.scale
     return CoordinatesField(
-        field=field,
+        data=data,
         input=Ti.input,
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 @composer
 def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
-    field = Ti.field[..., To.permutation]
+    Ti = Ti.compute()
+    data = Ti.data[..., To.permutation]
     return CoordinatesField(
-        field=field,
+        data=data,
         input=Ti.input,
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 @composer
 def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     field = Ti.field @ To.matrix.T
     return CoordinatesField(
         field=field,
@@ -202,14 +200,13 @@ def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 @composer
 def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     field = Ti.field @ To.matrix[:, :-1].T + To.matrix[:, -1]
     return CoordinatesField(
         field=field,
@@ -217,8 +214,8 @@ def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -228,8 +225,7 @@ def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
 
 @composer
 def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     field = Ti.field + To.translation
     return DisplacementField(
         field=field,
@@ -237,14 +233,13 @@ def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 @composer
 def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
     field = To.scale * Ti.field + (To.scale - 1) * grid
     return DisplacementField(
@@ -253,14 +248,13 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 @composer
 def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
     field = (grid + Ti.field)[..., To.permutation] - grid
     return DisplacementField(
@@ -269,8 +263,8 @@ def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 def _check_square(To: tx.Union[Linear, Affine]) -> None:
@@ -290,8 +284,7 @@ def _check_square(To: tx.Union[Linear, Affine]) -> None:
 @composer
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
     field = (grid + Ti.field) @ To.matrix.T - grid
     return DisplacementField(
@@ -300,15 +293,14 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 @composer
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
     field = (grid + Ti.field) @ To.matrix[:, :-1].T + To.matrix[:, -1] - grid
     return DisplacementField(
@@ -317,8 +309,8 @@ def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -328,13 +320,14 @@ def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
 
 @composer
 def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
-            # The displacement of `To`, as coefficients: not the velocity
-            # a `StationaryVelocityField` stores as its `data`.
-            To.to(log=False, coeff=True).data,
+            # The displacement of `To`, as spline coefficients
+            # (not the velocity, which a `StationaryVelocityField`
+            # stores under `data`)
+            To.to(log=False, store="coefficients").data,
             coords=x2.field,
             degree=To.degree,
             bound=To.bound,
@@ -348,19 +341,20 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
         output=To.output,
         degree=To.degree,
         bound=To.bound,
-        coeff=False,
-    ).to(coeff=To.coeff)
+        store=To.store,
+    )
 
 
 @composer
 def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
-            # The displacement of `To`, as coefficients: not the velocity
-            # a `StationaryVelocityField` stores as its `data`.
-            To.to(log=False, coeff=True).data,
+            # The displacement of `To`, as spline coefficients
+            # (not the velocity, which a `StationaryVelocityField`
+            # stores under `data`)
+            To.to(log=False, store="coefficients").data,
             coords=x2.field,
             degree=To.degree,
             bound=To.bound,
@@ -374,16 +368,15 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=Ti.coeff)
+        store=Ti.store,
+    )
 
 
 @composer
 def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     field = pull_field(
-        To.to(coeff=True).data,
+        To.to(store="coefficients").data,
         coords=Ti.field,
         degree=To.degree,
         bound=To.bound,
@@ -395,8 +388,8 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -412,8 +405,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
     # unchanged. The inner transform is evaluated lazily, by pulling it at
     # the acted-on sub-coordinates, so the extra axes are never tiled to
     # full size.
-    coeff = Ti.coeff
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     x = Ti.field
     ba = get_array_backend(x)
     if To.input_axes is None or To.output_axes is None:
@@ -436,7 +428,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
         if _interpolates(To.transformation):
             # Positional access reads the axes the system states, even an
             # open one, and an unknown `Axis()` anywhere else.
-            axes = _axes_or_unknown(To.input)
+            axes = get_axes(To.input)
             for i in in_axes:
                 axis = axes.at(i)
                 if getattr(axis, "discrete", None):
@@ -452,11 +444,9 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
             field=x[..., in_axes],
             degree=Ti.degree,
             bound=Ti.bound,
-            coeff=False,
+            store="values",
         )
-        result = Sequence(
-            transformations=[domain, To.transformation]
-        ).compute()
+        result = Sequence([domain, To.transformation]).compute()
         if isinstance(result, DisplacementField):
             result = result.to(CoordinatesField)
         if not isinstance(result, CoordinatesField):
@@ -465,7 +455,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
                 "to a field of coordinates, so it cannot be applied to a "
                 "field."
             )
-        acted = result.to(coeff=False).field
+        acted = result.field
 
     # Reassemble the full field. The acted-on components take their new
     # values from the inner result (or as they are, for a missing inner),
@@ -483,14 +473,15 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
     for o, i in zip(passthrough_out, passthrough_in):
         columns[o] = x[..., i]
     y = ba.stack(columns, axis=-1)
+
     return CoordinatesField(
         field=y,
         input=Ti.input,
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=coeff)
+        store=Ti.store,
+    )
 
 
 @composer
@@ -553,14 +544,9 @@ def _(
             "axes, but the axes the first writes differ from the axes the "
             "second reads."
         )
-    inner_prev = Ti.transformation
-    inner_next = To.transformation
-    inner = Sequence(
-        transformations=[
-            inner_prev or Identity(),
-            inner_next or Identity(),
-        ]
-    ).compute()
+    inner_prev = Ti.transformation or Identity()
+    inner_next = To.transformation or Identity()
+    inner = Sequence([inner_prev, inner_next]).compute()
     # The inner transforms cancelling to the identity only tells half the
     # story: the composition still reindexes the axes unless the axes the
     # first reads are the axes the second writes. It collapses to a bare
@@ -590,7 +576,7 @@ def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
     # displacements. The displacement field is read as a field of
     # coordinates, the subspace transform is applied, and the grid is
     # subtracted back off to return to displacements.
-    Ti = Ti.compute().to(coeff=False)
+    Ti = Ti.compute()
     y = compose(To, Ti.to(CoordinatesField))
     field = y.field - CartesianField(shape=Ti.field.shape[:-1]).field
     return DisplacementField(
@@ -599,5 +585,5 @@ def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
         output=To.output,
         degree=Ti.degree,
         bound=Ti.bound,
-        coeff=False,
-    ).to(coeff=Ti.coeff)
+        store=Ti.store,
+    )

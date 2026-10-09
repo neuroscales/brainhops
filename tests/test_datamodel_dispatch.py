@@ -13,7 +13,7 @@ from bagof.magic import PolymorphError
 
 from brainhops.datamodel import axes as ax
 from brainhops.datamodel import systems as cs
-from brainhops.datamodel.orientation import (
+from brainhops.datamodel.orientations import (
     AnatomicalOrientation,
     AnteriorToPosterior,
     LeftToRight,

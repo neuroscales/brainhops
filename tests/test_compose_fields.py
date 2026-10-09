@@ -3,14 +3,14 @@
 Composing an affine-like transformation with a ``CoordinatesField`` or a
 ``DisplacementField`` folds the affine into the stored field. The folded
 field must keep the interpolation settings of the input field (``degree``,
-``bound`` and ``coeff``); otherwise it is later re-interpolated at the wrong
+``bound`` and ``store``); otherwise it is later re-interpolated at the wrong
 settings. A field of spline coefficients must be converted to sampled values
 before the affine arithmetic and converted back afterwards; otherwise the
 arithmetic runs on coefficients and yields garbage.
 
 Both faults were present in the affine-into-field composers. This file locks
 the fix in two ways: it checks that the folded field reports the same
-``degree``, ``bound`` and ``coeff`` as its input, and it checks that
+``degree``, ``bound`` and ``store`` as its input, and it checks that
 evaluating the folded field at interior points reproduces the in-order
 reference ``A(interp(f))``.
 """
@@ -23,7 +23,7 @@ from brainhops.backends import (
     backend,
     get_array_backend,
 )
-from brainhops.datamodel._transformations.compose import compose
+from brainhops.datamodel._transformations.compute.compose import compose
 from brainhops.datamodel._transformations.sequence import (
     normalize_modes,
 )
@@ -37,8 +37,6 @@ from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
-    CompositionError,
-    ConversionError,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -48,6 +46,10 @@ from brainhops.datamodel.transformations import (
     SubspaceTransformation,
     Transformation,
     is_identity,
+)
+from brainhops.errors import (
+    CompositionError,
+    ConversionError,
 )
 
 # An anisotropic affine with shear and a shift, so a dropped setting or
@@ -64,9 +66,13 @@ QUERY_POINTS = np.array(
     [[5.5, 6.5], [7.2, 8.1], [6.3, 5.7], [8.0, 9.0], [5.8, 7.4]]
 )
 
-# Coefficients require a spline degree of at least two, so `coeff=True` is
-# paired only with the cubic degree.
-DEGREE_COEFF = [(1, False), (3, False), (3, True)]
+# Coefficients require a spline degree of at least two, so a field of
+# coefficients is paired only with the cubic degree.
+DEGREE_STORE = [
+    (1, "values"),
+    (3, "values"),
+    (3, "coefficients"),
+]
 
 ARRAY_BACKENDS = [
     "numpy",
@@ -94,33 +100,33 @@ def _evaluate(field, points):  # noqa: ANN001, ANN202
 
 
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
-@pytest.mark.parametrize("degree, coeff", DEGREE_COEFF)
+@pytest.mark.parametrize("degree, store", DEGREE_STORE)
 def test_fold_affine_into_field_keeps_interpolation_settings(
     field_type: type,
     degree: int,
-    coeff: bool,
+    store: str,
 ) -> None:
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
     field = field_type(
         field=values, degree=degree, bound=BoundaryCondition.mirror
-    ).to(coeff=coeff)
+    ).to(store=store)
 
     folded = (Affine(matrix=AFFINE_MATRIX) @ field).compute()
 
     assert folded.degree == field.degree
     assert folded.bound == field.bound
-    assert folded.coeff == field.coeff
+    assert folded.store == field.store
 
 
 @pytest.mark.parametrize("array_backend", ARRAY_BACKENDS)
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
-@pytest.mark.parametrize("degree, coeff", DEGREE_COEFF)
+@pytest.mark.parametrize("degree, store", DEGREE_STORE)
 def test_fold_affine_into_field_matches_inorder_reference(
     field_type: type,
     degree: int,
-    coeff: bool,
+    store: str,
     array_backend: str,
 ) -> None:
     rng = np.random.default_rng(0)
@@ -134,7 +140,7 @@ def test_fold_affine_into_field_matches_inorder_reference(
     with backend(array_backend):
         field = field_type(
             field=values, degree=degree, bound=BoundaryCondition.mirror
-        ).to(coeff=coeff)
+        ).to(store=store)
 
         matrix = AFFINE_MATRIX
         sampled = _evaluate(field, QUERY_POINTS)
@@ -237,13 +243,13 @@ def test_subspace_coords_permuted_positions_align() -> None:
 
 
 def test_subspace_coords_preserves_interpolation_settings() -> None:
-    # C1. The degree, bound and coeff of the input field are preserved.
+    # C1. The degree, bound and store of the input field are preserved.
     To = _subspace_affine([0, 1, 2])
     Ti = _coords_4d()
     got = compose(To, Ti)
     assert got.degree == Ti.degree
     assert got.bound == Ti.bound
-    assert got.coeff == Ti.coeff
+    assert got.store == Ti.store
 
 
 def test_subspace_coords_promotes_an_integer_domain() -> None:
@@ -440,7 +446,7 @@ def test_field_subspaces_are_not_composed_under_affine_mode(
     # C4. Two subspace-wrapped fields kept separate by an affine-only mode
     # are never resampled, so the numeric field composition is never reached.
     # The same pair merges under the default mode.
-    from brainhops.datamodel._transformations import composers
+    from brainhops.datamodel._transformations.compute import composers
 
     def _boom(*args, **kwargs) -> None:
         raise AssertionError("a field was composed numerically")
@@ -621,7 +627,7 @@ def test_an_equal_but_distinct_transform_never_cancels() -> None:
     # Cancellation is decided from object identity alone: the inverse of an
     # equal-valued, distinct transform is not recognized, and recognizing
     # it never compares the two (which would raise).
-    from brainhops.datamodel._transformations import simplifiers
+    from brainhops.datamodel._transformations.compute import simplifiers
 
     affine = Affine(matrix=SUB_AFFINE)
     twin = Affine(matrix=SUB_AFFINE.copy())
@@ -722,7 +728,9 @@ def test_dispatch_order_and_terminal_composition_error(
     # "no composer applies", and a `CompositionError` it raises is terminal.
     from bagof.dispatchers import Function
 
-    from brainhops.datamodel._transformations import compose as compose_mod
+    from brainhops.datamodel._transformations.compute import (
+        compose as compose_mod,
+    )
 
     a = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]))
     b = Affine(matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))

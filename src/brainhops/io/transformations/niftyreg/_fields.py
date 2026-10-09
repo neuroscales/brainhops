@@ -19,11 +19,15 @@ from brainhops.backends import get_array_backend
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import (
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserContentError,
+)
+from brainhops.io.common.nifti import (
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
     _apply_like,
@@ -34,10 +38,6 @@ from brainhops.io.base.nifti import (
     _nifti_shape,
     _nifti_vector_field,
     _NiftiObject,
-)
-from brainhops.io.base.parsers import (
-    Confidence,
-    ParserContentError,
 )
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
@@ -242,7 +242,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition used outside of the field of view."""
 
-    coeff: tx.ClassVar[bool] = False
+    store: tx.ClassVar[StoreEnum] = StoreEnum.values
     """Whether the field holds spline coefficients rather than values."""
 
     log: tx.ClassVar[bool] = False
@@ -343,7 +343,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             vox2world,
             degree=self.degree,
             bound=self.bound,
-            coeff=self.coeff,
+            store=self.store,
             log=self.log,
             steps=self.steps,
         )
@@ -394,7 +394,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             chain,
             self._WHAT,
             ndim=_NDIM,
-            coeff=self.coeff,
+            store=self.store,
             degree=self.degree,
             bound=self.bound,
             log=self.log,
@@ -593,10 +593,10 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         return 3
 
     @property
-    def coeff(self) -> bool:
+    def store(self) -> StoreEnum:
         """Whether the grid holds spline coefficients: so it does, at any
         degree above one (at degree one, coefficients are values)."""
-        return self.degree > 1
+        return StoreEnum.from_coefficients(self.degree > 1)
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
@@ -647,7 +647,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
             chain,
             self._WHAT,
             ndim=_NDIM,
-            coeff=degree > 1,
+            store=StoreEnum.from_coefficients(degree > 1),
             degree=degree,
             bound=self.bound,
         )
@@ -770,7 +770,7 @@ StationaryVelocityField]: the velocity, in voxel units, negated for a
 def _written_steps(chain: tx.Sequence[_xforms.Transformation]) -> int:
     """The squaring steps NiftyReg is told to integrate a velocity with:
     those of the velocity, or else the number its default rule picks."""
-    return int(chain[1].squarings)
+    return int(chain[1]._compute_steps)
 
 
 @register_format
@@ -791,7 +791,7 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
     _WHAT: tx.ClassVar[str] = "A NiftyReg velocity grid"
 
     degree: tx.ClassVar[int] = 3
-    coeff: tx.ClassVar[bool] = True
+    store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
 
     def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()

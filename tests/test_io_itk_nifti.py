@@ -229,7 +229,7 @@ def test_itks_interpolation_is_kept(itk_warp) -> None:  # noqa: ANN001
     displacement = ItkNiftiDisplacementField.from_file(itk_warp).displacement
     assert displacement.degree == 1
     assert displacement.bound == "nearest"
-    assert not displacement.coeff
+    assert displacement.store == "values"
 
 
 def test_a_file_that_is_not_in_itks_layout_is_refused(tmp_path) -> None:  # noqa: ANN001
@@ -750,7 +750,7 @@ def test_spline_coefficients_are_written_as_values(tmp_path: Path) -> None:
                 input=voxel,
                 output=voxel,
                 degree=3,
-                coeff=True,
+                store="coefficients",
             ),
             VoxelToLPS(matrix=np.eye(4)[:3]),
         ]
@@ -759,7 +759,7 @@ def test_spline_coefficients_are_written_as_values(tmp_path: Path) -> None:
     nb.save(field.to_nibabel(), str(path))
     reloaded = io.transformations.load(path, hint="itk")
     assert isinstance(reloaded, ItkNiftiDisplacementField)
-    assert reloaded.displacement.coeff is False
+    assert reloaded.displacement.store == "values"
     np.testing.assert_allclose(
         np.asarray(reloaded.displacement.field), values, atol=1e-10
     )

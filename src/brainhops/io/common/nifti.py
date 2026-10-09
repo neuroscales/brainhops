@@ -22,12 +22,10 @@ from brainhops._core.streams import open_compressed
 # internals
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.systems import (
-    CoordinateSystem,
-    _axes_or_unknown,
-)
+from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.datamodel.units import (
     is_indexunit,
@@ -35,13 +33,6 @@ from brainhops.datamodel.units import (
     is_spaceunit,
     is_timeunit,
 )
-from brainhops.io.base._geometry import (
-    AxisLayout,
-    arrange_voxel_to_ras,
-    declared_axes,
-    embed_affine,
-)
-from brainhops.io.base._nifti_units import nifti_unit_meters, unit_to_nifti
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,
@@ -52,6 +43,13 @@ from brainhops.io.base.parsers import (
     WriterNotImplementedError,
     preserve_position,
 )
+from brainhops.io.common._geometry import (
+    AxisLayout,
+    arrange_voxel_to_ras,
+    declared_axes,
+    embed_affine,
+)
+from brainhops.io.common._nifti_units import nifti_unit_meters, unit_to_nifti
 
 # typing
 _NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
@@ -1264,7 +1262,7 @@ def _space_unit_meters(
     Only the axes the space states can carry a unit, so the `...` of an open
     space reads as it would once closed: as axes with no unit.
     """
-    for axis in _axes_or_unknown(system):
+    for axis in get_axes(system):
         unit = getattr(axis, "unit", None)
         if is_physicalunit(unit) and is_spaceunit(unit):
             return float(unit.scale)
@@ -1289,7 +1287,7 @@ def _xyzt_labels(
     """
     space = time = None
     # The `...` of an open space carries no unit, as it would once closed.
-    for axis in _axes_or_unknown(system):
+    for axis in get_axes(system):
         unit = getattr(axis, "unit", None)
         if not is_physicalunit(unit):
             continue

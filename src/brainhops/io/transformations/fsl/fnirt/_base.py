@@ -9,16 +9,17 @@ from brainhops.backends import get_array_backend
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import (
+from brainhops.io.base.parsers import Confidence
+from brainhops.io.common.nifti import (
     _nifti_intent,
     _nifti_vector_field,
     _NiftiObject,
 )
-from brainhops.io.base.parsers import Confidence
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
@@ -185,11 +186,13 @@ class FnirtWarpField(
         return _SPLINE_DEGREE.get(_nifti_intent(self.header))
 
     @property
-    def coeff(self) -> tx.Optional[bool]:
+    def store(self) -> tx.Optional[StoreEnum]:
         """Whether the field holds spline coefficients rather than values."""
         if self.header is None:
             return None
-        return _nifti_intent(self.header) in _COEFFICIENT_INTENTS
+        return StoreEnum.from_coefficients(
+            _nifti_intent(self.header) in _COEFFICIENT_INTENTS
+        )
 
     # --- intent-driven behaviour --------------------------------------
 
@@ -351,7 +354,7 @@ class FnirtWarpField(
         return _warp_chain(
             field=self._field_array(ref),
             degree=self._degree(),
-            coeff=self._is_coeff(),
+            store=StoreEnum.from_coefficients(self._is_coeff()),
             bound=self._bound(),
             ref_to_field=self._ref_to_field(ref),
             knot_spacing=self._knot_spacing(ref),
@@ -422,7 +425,7 @@ class FnirtWarpField(
     def __repr__(self) -> str:
         return stored_repr(
             self,
-            ("degree", "coeff", "deformation_type", "moving", "reference"),
+            ("degree", "store", "deformation_type", "moving", "reference"),
         )
 
     def __len__(self) -> int:
@@ -445,7 +448,7 @@ class FnirtWarpField(
 def _warp_chain(
     field: np.ndarray,
     degree: int,
-    coeff: bool,
+    store: tx.Any,
     bound: tx.Union[str, float],
     ref_to_field: np.ndarray,
     knot_spacing: np.ndarray,
@@ -509,7 +512,7 @@ def _warp_chain(
     return (
         RASToWarpField(matrix=ras_to_grid[:-1]),
         _xforms.DisplacementField(
-            data=prescaled, degree=degree, bound=bound, coeff=coeff
+            data=prescaled, degree=degree, bound=bound, store=store
         ),
         WarpFieldToRAS(matrix=grid_to_ras[:-1]),
     )

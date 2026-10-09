@@ -22,13 +22,13 @@ netcdf_file = pytest.importorskip("scipy.io").netcdf_file
 
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel.transformations import Affine, Scaling  # noqa: E402
-from brainhops.io.base.minc import MincDimension, minc_version  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     ParserContentError,
     SnifferContentError,
     WriterError,
 )
+from brainhops.io.common.minc import MincDimension, minc_version  # noqa: E402
 from brainhops.io.images.minc import (  # noqa: E402
     Minc1Image,
     Minc2Image,

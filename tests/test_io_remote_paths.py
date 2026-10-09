@@ -2,7 +2,7 @@
 Tests for file names read from remote paths, without touching a network.
 
 Dispatch reads a file's name to match it against the extensions formats
-declare, both when reading (`load`, `from_other`) and when writing
+declare, both when reading (`load`, `from_any`) and when writing
 (`save`). The name must be read from the text of the path alone: a
 remote path cannot be turned into a local one, and the name of a URL is
 at the end of its path, not in its query.
@@ -182,7 +182,7 @@ def test_from_other_reads_a_remote_path_rather_than_building() -> None:
     # without making the path local, rather than by handing the path to
     # the constructor as image data.
     with pytest.raises(ParserError):
-        FileBasedImage.from_other(RemotePath("s3://bucket/missing.nii.gz"))
+        FileBasedImage.from_any(RemotePath("s3://bucket/missing.nii.gz"))
     assert RemotePath.fspath_calls == 0
 
 
@@ -199,6 +199,6 @@ def test_a_zarr_store_round_trips_through_in_memory_storage() -> None:
     data = np.arange(8, dtype="float32").reshape(2, 2, 2)
     store = Path("memory://brainhops-tests/remote.zarr")
     io.save(SingleScaleImage(data=data), store)
-    back = io.images.FileBasedImage.from_other(store)
+    back = io.images.FileBasedImage.from_any(store)
     assert isinstance(back, ZarrImage)
     assert np.array_equal(np.asarray(back.data), data)

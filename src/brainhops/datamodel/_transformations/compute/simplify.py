@@ -72,8 +72,8 @@ from bagof.dispatchers import Function, NoMethodError
 from brainhops.datamodel.enums import SimplifyPolicy
 
 # internals
-from . import registries
-from .modes import (
+from .. import nocycles
+from ..modes import (
     Family,
     FamilyLike,
     _is_family_like,
@@ -84,7 +84,7 @@ from .utils import boundary_disagrees
 
 # typing
 if tx.TYPE_CHECKING:
-    from .base import Transformation
+    from ..base import Transformation
 
 LeafSimplifier = tx.Callable[..., "Transformation"]
 """
@@ -111,10 +111,10 @@ common answer and so must not be an exception. The arguments are in
 # ======================================================================
 
 
-PolicyLike = tx.Union[SimplifyPolicy, bool, str, None]
+PolicyLike: tx.TypeAlias = tx.Union[SimplifyPolicy, bool, str, None]
 """Something that can be normalized to a [`SimplifyPolicy`][]."""
 
-SimplifyLike = tx.Union[
+SimplifyLike: tx.TypeAlias = tx.Union[
     PolicyLike,
     FamilyLike,
     tx.Iterable[FamilyLike],
@@ -322,9 +322,10 @@ def simplify(
             f"not {len(transformations)}"
         )
 
-    Transformation = registries.TRANSFORMATION
-    if Transformation is not None and not all(
-        isinstance(t, Transformation) for t in transformations
+    Transformation = nocycles.TRANSFORMATION
+    if (
+        Transformation is not None
+        and not all(isinstance(t, Transformation) for t in transformations)
     ):
         raise TypeError(
             "simplify() takes transformations positionally and its policy "

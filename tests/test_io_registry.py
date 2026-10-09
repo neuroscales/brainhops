@@ -497,6 +497,8 @@ def test_a_format_without_a_docstring_is_not_described() -> None:
     fields, under an `Attributes` heading. That describes nothing, so
     the message names the format without a description.
     """
+    pytest.importorskip("nibabel")
+
     from brainhops.io.base._dispatch import _ambiguity_message, _describe
     from brainhops.io.transformations.nifti.base import (
         NiftiBasedTransformation,

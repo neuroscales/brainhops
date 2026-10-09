@@ -14,7 +14,6 @@ from brainhops.datamodel import transformations as X
 from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import (
     Axis,
-    AxisError,
     ChannelAxis,
     CoordinateAxis,
     DisplacementAxis,
@@ -29,10 +28,17 @@ from brainhops.datamodel.transformations import (
     MultiscaleField,
     Scaling,
 )
-from brainhops.io.transformations.zarr import OmeFieldError, OmeZarrField
-from brainhops.io.transformations.zarr._axes import _to_axis
 
+# `brainhops.io.transformations.zarr` imports abczarr itself, so the skip
+# has to come before the import, not after it.
 abczarr = pytest.importorskip("abczarr")
+
+from brainhops.errors import AxisError  # noqa: E402
+from brainhops.io.transformations.zarr import (  # noqa: E402
+    OmeFieldError,
+    OmeZarrField,
+)
+from brainhops.io.transformations.zarr._axes import _to_axis  # noqa: E402
 
 
 def _write_field_store(

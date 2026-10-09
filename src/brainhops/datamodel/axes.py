@@ -25,8 +25,6 @@ __all__ = [
     "I",
     "SI",
     "SuperiorToInferiorAxis",
-    "vector_axis",
-    "AxisError",
 ]
 # dependencies
 import typing_extensions as tx
@@ -38,7 +36,7 @@ from brainhops._core.typing import NoRepr
 # locals
 from .base import DataModelBase
 from .enums import AnatomicalOrientationValue, AxisType
-from .orientation import (
+from .orientations import (
     AnteriorToPosterior,
     InferiorToSuperior,
     LeftToRight,
@@ -49,41 +47,11 @@ from .orientation import (
 )
 from .units import IndexUnit, SpaceUnit, TimeUnit, Unit
 
-# --- Dispatch helpers -------------------------------------------------
-
-
-def _is_not_none(obj: tx.Any) -> bool:
-    """Whether `obj` is not `None`."""
-    return obj is not None
-
-
-def _is_anatomical(orientation: tx.Optional[Orientation]) -> bool:
-    """Whether `orientation` is an anatomical orientation."""
-    return getattr(orientation, "type", None) == "anatomical"
-
-
-def _has_value(value: str) -> tx.Callable[[tx.Optional[Orientation]], bool]:
-    """
-    Whether `orientation` is an anatomical orientation with the given value.
-    """
-
-    if not isinstance(value, AnatomicalOrientationValue):
-        try:
-            value = AnatomicalOrientationValue(value)
-        except ValueError:
-            ...
-        try:
-            value = AnatomicalOrientationValue[value]
-        except KeyError:
-            ...
-
-    def _check(orientation: tx.Optional[Orientation]) -> bool:
-        return getattr(orientation, "value", None) == value
-
-    return _check
-
-
-# --- API --------------------------------------------------------------
+# ======================================================================
+#
+#                               B A S E
+#
+# ======================================================================
 
 
 class Axis(DataModelBase, polymorphic=True):
@@ -132,10 +100,12 @@ class Axis(DataModelBase, polymorphic=True):
     """
 
     def __pre_init__(self, arguments: tx.Any) -> None:
-        # `...` is not a placeholder for an axis: a coordinate system
-        # with a fixed number of dimensions lists every one of them. As
-        # the first positional argument it would otherwise be read as
-        # the axis name, and refused with a message about strings.
+        # This is not really needed, but helps diagnosing the use of `...`
+        # in fixed-sized coordinate systems, where it is forbidden. For
+        # example, `CoordinateSystem(axes=["x", "y", ...])` is allowed,
+        # but `CoordinateSystem3D(axes=["x", "y", ...])` is not.
+        # Otherwise, the raised error would be "could not convert
+        # Ellipsis -- ToUnion(Optional[str])", which is much less clear.
         if arguments.name is Ellipsis:
             raise TypeError("`...` is not an axis")
 
@@ -230,35 +200,29 @@ class Axis(DataModelBase, polymorphic=True):
                 f"An axis merges only with another Axis, not with "
                 f"{type(other).__name__}."
             )
-        conflicts = _conflicts(self, other)
-        if conflicts:
-            name, mine, theirs = conflicts[0]
-            raise ValueError(
-                f"Cannot merge axes that disagree on {name}: "
-                f"{mine!r} != {theirs!r}."
-            )
-        if isinstance(other, type(self)):
-            cls = type(other)
-        elif isinstance(self, type(other)):
-            cls = type(self)
+        # The merged axis is of the more derived of the two classes,
+        # which is the one that can hold every field either side sets.
+        # `_merge_with` reads the fields of `first`, so that is the one.
+        if isinstance(self, type(other)):
+            cls, first, second = type(self), self, other
+        elif isinstance(other, type(self)):
+            cls, first, second = type(other), other, self
         else:
+            # Neither class refines the other. A disagreement on a field
+            # is the plainer reason and is reported first -- a
+            # left-to-right axis and a right-to-left one disagree on
+            # their orientation; only when the two agree on everything
+            # is there simply no class to hold what both describe.
+            _refuse_conflicts(self, other)
             raise ValueError(
                 f"Cannot merge a {type(self).__name__} with a "
                 f"{type(other).__name__}: neither class derives from the "
                 f"other, so no class holds what both describe."
             )
-        kwargs = {}
-        for field in fields(cls):
-            if not (field.init and field.kw):
-                # A constant of the class, such as the type of a
-                # `SpaceAxis`. No conflict was found, so it already
-                # agrees with the value on the other side, if any.
-                continue
-            value = getattr(self, field.name, None)
-            if value is None:
-                value = getattr(other, field.name, None)
-            kwargs[field.public_name] = value
-        return cls(**kwargs)
+        return cls(**_merge_with(first, second))
+
+
+# --- Helpers ----------------------------------------------------------
 
 
 def _field_names(axis: Axis) -> tx.List[str]:
@@ -279,6 +243,76 @@ def _conflicts(
         if mine is not None and theirs is not None and mine != theirs:
             conflicts.append((name, mine, theirs))
     return conflicts
+
+
+def _refuse_conflicts(first: Axis, second: Axis) -> None:
+    # Refuse two axes that set one field to different values.
+    conflicts = _conflicts(first, second)
+    if conflicts:
+        name, mine, theirs = conflicts[0]
+        raise ValueError(
+            f"Cannot merge axes that disagree on {name}: "
+            f"{mine!r} != {theirs!r}."
+        )
+
+
+def _merge_with(first: Axis, second: Axis) -> tx.Dict[str, tx.Any]:
+    _refuse_conflicts(first, second)
+    kwargs = {}
+    for field in fields(type(first)):
+        if not (field.init and field.kw):
+            # A constant of the class, such as the type of a
+            # `SpaceAxis`. No conflict was found, so it already
+            # agrees with the value on the other side, if any.
+            continue
+        value = getattr(first, field.name, None)
+        if value is None:
+            value = getattr(second, field.name, None)
+        kwargs[field.public_name] = value
+    return kwargs
+
+
+# ======================================================================
+#
+#                             B Y   T Y P E
+#
+# ======================================================================
+
+# --- Dispatch helpers -------------------------------------------------
+
+
+def _is_not_none(obj: tx.Any) -> bool:
+    """Whether `obj` is not `None`."""
+    return obj is not None
+
+
+def _is_anatomical(orientation: tx.Optional[Orientation]) -> bool:
+    """Whether `orientation` is an anatomical orientation."""
+    return getattr(orientation, "type", None) == "anatomical"
+
+
+def _has_value(value: str) -> tx.Callable[[tx.Optional[Orientation]], bool]:
+    """
+    Whether `orientation` is an anatomical orientation with the given value.
+    """
+
+    if not isinstance(value, AnatomicalOrientationValue):
+        try:
+            value = AnatomicalOrientationValue(value)
+        except ValueError:
+            ...
+        try:
+            value = AnatomicalOrientationValue[value]
+        except KeyError:
+            ...
+
+    def _check(orientation: tx.Optional[Orientation]) -> bool:
+        return getattr(orientation, "value", None) == value
+
+    return _check
+
+
+# --- API --------------------------------------------------------------
 
 
 class SpaceAxis(Axis, on={"type": "space"}):
@@ -346,22 +380,27 @@ class OrientedAxis(Axis, on={"orientation": _is_not_none}):
 
 
 class OrientedTimeAxis(TimeAxis, OrientedAxis):
+    # automatically on={"type": "time", "orientation": _is_not_none}
     """A time axis that carries an orientation."""
 
 
 class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
+    # automatically on={"type": "space", "orientation": _is_not_none}
     """A spatial axis that carries an orientation."""
 
 
+# ======================================================================
+#
+#                          A N A T O M I C A L
+#
+# ======================================================================
+
+
 # An anatomical orientation says that the axis runs through space, so a
-# generic `Axis(orientation=R())` -- which names no type -- is read as a
-# spatial axis. That is a step the class statement cannot express (the
-# classes it registers with all ask for `type="space"`), so it is
-# registered with the root by hand, on the orientation alone: an axis of
-# another type with an anatomical orientation is a contradiction, and
-# building it as an anatomical axis refuses it. An anatomical axis whose
-# unit is an index unit is a spatial axis of a voxel grid that points in
-# that direction.
+# generic `Axis(orientation=R())`,` which names no type, is known to be
+# a spatial axis. That is a step the class statement cannot express
+# (all parents it is registered with ask for `type="space"`), so it is
+# registered with the root by hand, on the orientation alone.
 @Axis.register_polymorph(on={"orientation": _is_anatomical})
 class AnatomicalAxis(
     OrientedSpaceAxis,
@@ -430,96 +469,32 @@ class SuperiorToInferiorAxis(
     orientation: NoRepr[SuperiorToInferior] = SuperiorToInferior()
 
 
-# Aliases
-AxisLR: tx.TypeAlias = LeftToRightAxis
-AxisRL: tx.TypeAlias = RightToLeftAxis
-AxisAP: tx.TypeAlias = AnteriorToPosteriorAxis
-AxisPA: tx.TypeAlias = PosteriorToAnteriorAxis
-AxisIS: tx.TypeAlias = InferiorToSuperiorAxis
-AxisSI: tx.TypeAlias = SuperiorToInferiorAxis
-
-
+# --- Aliases ----------------------------------------------------------
 # Short names. These are the classes, not instances: an axis is mutable,
 # so a module-level instance would be shared by every system that took it.
 # Build one where it is needed -- `R()`, `R(unit="mm")`, `R(name="x")` --
 # and test with `isinstance(axis, R)`.
 
-R = LR = LeftToRightAxis
+R: tx.TypeAlias = LeftToRightAxis
+LR: tx.TypeAlias = LeftToRightAxis
 """A left-to-right anatomical axis (coordinates increase toward the right)."""
 
-L = RL = RightToLeftAxis
+L: tx.TypeAlias = RightToLeftAxis
+RL: tx.TypeAlias = RightToLeftAxis
 """A right-to-left anatomical axis (coordinates increase toward the left)."""
 
-A = PA = PosteriorToAnteriorAxis
+A: tx.TypeAlias = PosteriorToAnteriorAxis
+PA: tx.TypeAlias = PosteriorToAnteriorAxis
 """A posterior-to-anterior anatomical axis (increasing toward the front)."""
 
-P = AP = AnteriorToPosteriorAxis
+P: tx.TypeAlias = AnteriorToPosteriorAxis
+AP: tx.TypeAlias = AnteriorToPosteriorAxis
 """An anterior-to-posterior anatomical axis (increasing toward the back)."""
 
-S = IS = InferiorToSuperiorAxis
+S: tx.TypeAlias = InferiorToSuperiorAxis
+IS: tx.TypeAlias = InferiorToSuperiorAxis
 """An inferior-to-superior anatomical axis (increasing toward the top)."""
 
-I = SI = SuperiorToInferiorAxis
+I: tx.TypeAlias = SuperiorToInferiorAxis
+SI: tx.TypeAlias = SuperiorToInferiorAxis
 """A superior-to-inferior anatomical axis (increasing toward the bottom)."""
-
-
-# --- IO helpers --------------------------------------------------------
-
-
-class AxisError(ValueError):
-    """Raised when a list of axes cannot be read as a vector field.
-
-    A vector field names its grid axes together with exactly one vector
-    axis, of type `displacement` or `coordinate`. A list that names no
-    vector axis, more than one, or one of each type, is refused with this
-    error.
-    """
-
-
-def vector_axis(
-    axes: tx.Optional[tx.Sequence[tx.Any]],
-) -> tx.Tuple[str, int]:
-    """Return the type and position of the single vector axis of a field.
-
-    A vector field lists every grid axis together with exactly one vector
-    axis. The vector axis is either a `displacement` axis or a
-    `coordinate` axis, and it carries the components of the vector stored
-    at each grid point. This function returns a pair of the vector axis
-    type, one of `"displacement"` or `"coordinate"`, and its index in
-    `axes`.
-
-    A list of axes that names no vector axis, more than one vector axis,
-    or both a displacement axis and a coordinate axis, is refused with an
-    [`AxisError`][brainhops.datamodel.axes.AxisError].
-    """
-    axes = list(axes or [])
-    displacement = [
-        i
-        for i, a in enumerate(axes)
-        if getattr(a, "type", None) == "displacement"
-    ]
-    coordinate = [
-        i
-        for i, a in enumerate(axes)
-        if getattr(a, "type", None) == "coordinate"
-    ]
-    if len(displacement) == 1 and not coordinate:
-        return "displacement", displacement[0]
-    if len(coordinate) == 1 and not displacement:
-        return "coordinate", coordinate[0]
-    if displacement and coordinate:
-        raise AxisError(
-            "These axes name both a displacement axis and a coordinate "
-            "axis, which cannot be read as one field. Store the "
-            "displacement axes and the coordinate axes as separate fields."
-        )
-    if len(displacement) > 1 or len(coordinate) > 1:
-        raise AxisError(
-            "These axes name more than one vector axis. A field must "
-            "carry exactly one axis of type displacement or coordinate."
-        )
-    raise AxisError(
-        "These axes name no displacement axis and no coordinate axis, so "
-        "the vector components cannot be identified. A field must carry "
-        "exactly one axis of type displacement or coordinate."
-    )

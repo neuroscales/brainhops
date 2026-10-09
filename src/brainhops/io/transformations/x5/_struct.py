@@ -25,9 +25,10 @@ import typing_extensions as tx
 # externals
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
-# io
-from brainhops.io.base.hdf5 import delayed_dataset, read_string
 from brainhops.io.base.parsers import ParserContentError
+
+# io
+from brainhops.io.common.hdf5 import delayed_dataset, read_string
 
 X5_FORMAT = "X5"
 """The value of the root `Format` attribute of every X5 file."""
@@ -43,10 +44,7 @@ TRANSFORM_CHAIN = "TransformChain"
 _NODE_ATTRS = ("Type", "SubType", "Representation", "Metadata", "ArrayLength")
 
 
-class X5Domain(
-    Magic,
-    repr=HIDE_IF_NONE,
-):
+class X5Domain(Magic, repr=HIDE_IF_NONE):
     """
     The `Domain` group of a transform: the grid it is sampled on.
 
@@ -70,10 +68,7 @@ class X5Domain(
     `"cartesian"`."""
 
 
-class X5Node(
-    Magic,
-    repr=HIDE_IF_NONE,
-):
+class X5Node(Magic, repr=HIDE_IF_NONE):
     """
     One numbered group `/TransformGroup/<i>` of an X5 file.
 
@@ -125,10 +120,7 @@ class X5Node(
     """Any other attribute of the group, as read."""
 
 
-class X5Header(
-    Magic,
-    repr=HIDE_IF_NONE,
-):
+class X5Header(Magic, repr=HIDE_IF_NONE):
     """The root of an X5 file: its attributes and its chains."""
 
     format: str = X5_FORMAT

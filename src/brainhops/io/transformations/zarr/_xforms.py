@@ -23,8 +23,9 @@ from brainhops._core.affines import inv as _affine_inv
 from brainhops.backends import get_array_backend
 
 # internals
+from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
-from brainhops.datamodel.axes import Axis, vector_axis
+from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
@@ -42,7 +43,7 @@ from brainhops.io.base.parsers import (
     ParserTypeError,
     WriterError,
 )
-from brainhops.io.base.zarr import (
+from brainhops.io.common.zarr import (
     StoreLike,
     ZarrParserWriter,
     _as_node,

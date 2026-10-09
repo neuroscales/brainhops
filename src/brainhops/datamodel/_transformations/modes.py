@@ -12,10 +12,19 @@ simplify=False)` composes everything without retyping anything.
 """
 
 __all__ = [
+    # compute mode
     "ModeLike",
     "mode_admits",
     "mode_children",
     "normalize_modes",
+    "normalize_family",
+    # kind & family
+    "Family",
+    "FamilyLike",
+    "Kind",
+    "KindLike",
+    "is_family",
+    "is_kind",
     "normalize_family",
 ]
 
@@ -29,7 +38,7 @@ from brainhops.datamodel.kinds import TransformationFamily
 # The membership predicates, and the single key-normalizing routine, all
 # live in `check`, next to the checker registry they dispatch on. They are
 # re-exported here because mode resolution is their main caller.
-from .check import (
+from .compute.check import (
     FamilyLike,
     Kind,
     KindLike,
@@ -44,58 +53,16 @@ if tx.TYPE_CHECKING:
     from .base import Transformation
 
 
-Family = TransformationFamily
+Family: tx.TypeAlias = TransformationFamily
 """
 A [`TransformationFamily`][] is a [`Kind`][] and, optionally, a
 dimensionality.
 """
 
-ModeLike = tx.Union[None, bool, FamilyLike, tx.Iterable[FamilyLike]]
-"""Possible input to the `mode` argument of [`compute()`][]."""
-
-__all__ += [
-    "Family",
-    "FamilyLike",
-    "Kind",
-    "KindLike",
-    "is_family",
-    "is_kind",
-    "normalize_family",
+ModeLike: tx.TypeAlias = tx.Union[
+    None, bool, FamilyLike, tx.Iterable[FamilyLike]
 ]
-
-
-# ======================================================================
-#
-#                            M O D E S
-#
-# ======================================================================
-
-
-def _is_kind_like(kind: tx.Any) -> bool:
-    if isinstance(kind, str):
-        return True
-    # One kind is one node of the hierarchy -- and a concrete transform is
-    # registered into it, so it is one too.
-    return isinstance(kind, type) and issubclass(kind, TransformationSet)
-
-
-def _is_family_like(mode: tx.Any) -> bool:
-    if isinstance(mode, TransformationFamily):
-        return True
-    if _is_kind_like(mode):
-        return True
-    if isinstance(mode, int) and not isinstance(mode, bool):
-        return True
-    if not isinstance(mode, tuple):
-        return False
-    if len(mode) != 2:
-        return False
-    kind, ndim = mode
-    if not _is_kind_like(kind):
-        return False
-    if isinstance(ndim, bool) or not isinstance(ndim, (int, type(None))):
-        return False
-    return True
+"""Possible input to the `mode` argument of [`compute()`][]."""
 
 
 def normalize_modes(mode: ModeLike) -> tx.List[Family]:
@@ -143,3 +110,30 @@ def mode_children(mode: Family) -> tx.List[Family]:
 def mode_admits(t: "Transformation", modes: tx.Iterable[Family]) -> bool:
     """Whether any family in `modes` admits a transform."""
     return any(is_family(t, m) for m in modes)
+
+
+def _is_kind_like(kind: tx.Any) -> bool:
+    if isinstance(kind, str):
+        return True
+    # One kind is one node of the hierarchy -- and a concrete transform is
+    # registered into it, so it is one too.
+    return isinstance(kind, type) and issubclass(kind, TransformationSet)
+
+
+def _is_family_like(mode: tx.Any) -> bool:
+    if isinstance(mode, TransformationFamily):
+        return True
+    if _is_kind_like(mode):
+        return True
+    if isinstance(mode, int) and not isinstance(mode, bool):
+        return True
+    if not isinstance(mode, tuple):
+        return False
+    if len(mode) != 2:
+        return False
+    kind, ndim = mode
+    if not _is_kind_like(kind):
+        return False
+    if isinstance(ndim, bool) or not isinstance(ndim, (int, type(None))):
+        return False
+    return True

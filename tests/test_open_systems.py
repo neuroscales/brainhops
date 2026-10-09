@@ -12,16 +12,16 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
-from brainhops.datamodel._transformations import separable as sep
-from brainhops.datamodel._transformations.adaptors import (
+from brainhops.datamodel._transformations.compute import separable as sep
+from brainhops.datamodel._transformations.compute.adaptors import (
     _grid_extents,
     adapt,
     bridge,
     embed,
 )
-from brainhops.datamodel._transformations.check import is_family
-from brainhops.datamodel._transformations.compose import compose
-from brainhops.datamodel._transformations.utils import (
+from brainhops.datamodel._transformations.compute.check import is_family
+from brainhops.datamodel._transformations.compute.compose import compose
+from brainhops.datamodel._transformations.compute.utils import (
     axis_counts,
     get_ndim,
     systems_disagree,
@@ -34,12 +34,9 @@ from brainhops.datamodel.systems import (
     RASCoordinateSystem,
 )
 from brainhops.datamodel.transformations import (
-    AdaptationError,
     Affine,
     Bijection,
     CartesianField,
-    CompositionError,
-    ConversionError,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -48,6 +45,11 @@ from brainhops.datamodel.transformations import (
     Sequence,
     SubspaceTransformation,
     Translation,
+)
+from brainhops.errors import (
+    AdaptationError,
+    CompositionError,
+    ConversionError,
 )
 
 CS = CoordinateSystem

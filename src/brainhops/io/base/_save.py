@@ -59,7 +59,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         is not turned into the voxel-to-RAS affine a NIfTI file holds,
         since it would come back meaning something it did not say. Build
         the format you want when that is what the file should hold:
-        `NiftiVoxelToRAS.from_other(affine).save(file)`.
+        `NiftiVoxelToRAS.from_any(affine).save(file)`.
 
     Parameters
     ----------
@@ -137,7 +137,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     raise WriterError(
         f"Cannot write {type(obj).__name__} to {name!r}: none of the "
         f"formats registered for it ({formats}) can hold it as it is. "
-        f"Build the format you want with its `from_other` and save "
+        f"Build the format you want with its `from_any` and save "
         f"that.{detail}"
     )
 
@@ -247,10 +247,10 @@ def _ambiguity_message(
         about = _describe(cls)
         if about:
             line += f" ({about})"
-        line += f": `{cls.__name__}.from_other(obj).save(path)`"
+        line += f": `{cls.__name__}.from_any(obj).save(path)`"
         lines.append(line)
     lines.append(
         f"Choose one by converting the object to that format and saving "
-        f"it, as in `{candidates[0].__name__}.from_other(obj).save(path)`."
+        f"it, as in `{candidates[0].__name__}.from_any(obj).save(path)`."
     )
     return "\n".join(lines)

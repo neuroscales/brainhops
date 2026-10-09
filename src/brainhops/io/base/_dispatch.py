@@ -190,6 +190,10 @@ def _to_filename(other: tx.Any) -> tx.Optional[str]:
     `x.nii.gz`, and the last link of an fsspec chain
     (`simplecache::s3://...`) is the file.
     """
+    # FIXME: this should be in _core.path, probably.
+    # Also, why not return a `Path`?
+    # Also, this function is called to_filename but returns a base name (?)
+
     if isinstance(other, DirEntry):
         # A directory entry is a local path, but `str()` gives its repr.
         text = other.path
@@ -204,6 +208,7 @@ def _to_filename(other: tx.Any) -> tx.Optional[str]:
 
 def _base_name(text: str) -> str:
     """The last component of a local path or of the path of a URL."""
+    # FIXME Can we not use `bagof.paths.Path` instead? It's made for this.
     if "::" in text and "://" in text:
         # An fsspec chain: the last link is the file, the others are
         # layers over it (caches, archives).
@@ -225,6 +230,7 @@ def _has_scheme(text: str) -> bool:
     and is at least two characters long here, so that a Windows drive
     letter such as `C:` is not read as one.
     """
+    # FIXME Can we not use `bagof.paths.Path` instead? It's made for this.
     scheme, colon, _ = text.partition(":")
     return (
         bool(colon)
@@ -454,6 +460,8 @@ def parse(
     ParserContentError
         If no parser could read the content.
     """
+    # FIXME: hints/hint/options are not documented
+
     errors: tx.List[tx.Tuple[type, str, Exception]] = []
     tried: tx.List[type] = []
     if not registry:

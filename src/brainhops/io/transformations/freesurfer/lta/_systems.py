@@ -10,7 +10,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops.datamodel import axes as _axes
-from brainhops.datamodel import orientation as _orientation
+from brainhops.datamodel import orientations as _orientation
 from brainhops.datamodel import systems as _systems
 
 # local

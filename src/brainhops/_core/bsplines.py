@@ -495,6 +495,7 @@ def value2coeff(
         def convert(x: ArrayProtocol) -> ArrayProtocol:
             return nd.spline_filter(x, order=degree, mode=mode)
 
+    input = ensure_floating(input)
     output = _over_batch(
         nx,
         input,
@@ -874,3 +875,13 @@ def value2coeff_field(
     field = value2coeff(field, degree, bound, inplace=inplace, ndim=ndim)
     field = nx.moveaxis(field, 0, -1)
     return field
+
+
+def ensure_floating(values: ArrayProtocol) -> ArrayProtocol:
+    # The coefficients of integer or boolean values are not integers, and
+    # fitting them in an integer array would truncate them: such an array
+    # is fitted in `float32`, on its own backend. A floating array keeps
+    # its dtype.
+    if values.dtype.kind in "biu":
+        return values.astype("float32")
+    return values

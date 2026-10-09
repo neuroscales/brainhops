@@ -14,12 +14,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from brainhops.datamodel._transformations.adaptors import (
+from brainhops.datamodel._transformations.compute.adaptors import (
     adapt,
     bridge,
     embed,
 )
-from brainhops.datamodel._transformations.compose import compose
+from brainhops.datamodel._transformations.compute.compose import compose
 from brainhops.datamodel.axes import (
     A,
     Axis,
@@ -32,7 +32,7 @@ from brainhops.datamodel.axes import (
     TimeAxis,
 )
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import (
+from brainhops.datamodel.orientations import (
     LeftToRight,
     Orientation,
     PosteriorToAnterior,
@@ -51,10 +51,8 @@ from brainhops.datamodel.systems import (
     VoxelCoordinateSystem,
 )
 from brainhops.datamodel.transformations import (
-    AdaptationError,
     Affine,
     CartesianField,
-    CompositionError,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -66,6 +64,10 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
     is_identity,
+)
+from brainhops.errors import (
+    AdaptationError,
+    CompositionError,
 )
 
 # The physical anatomical axes, in millimetres. `R`/`A`/`S` fix a direction
@@ -426,6 +428,11 @@ def test_itk_transform_applied_to_a_nifti_image_bridges_ras_and_lps() -> None:
     ITK transform acts in LPS. Composing the two crosses the RAS/LPS
     boundary, and the adaptor inserts the sign flip that reconciles them.
     """
+    # `brainhops.io.images` imports with or without nibabel; it is the
+    # NIfTI reader that it only registers when nibabel is there, and
+    # without it the load below fails to find a parser instead of
+    # skipping.
+    pytest.importorskip("nibabel")
     images = pytest.importorskip("brainhops.io.images")
     transformations = pytest.importorskip("brainhops.io.transformations")
 

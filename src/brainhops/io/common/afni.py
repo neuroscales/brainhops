@@ -123,15 +123,11 @@ from bagof.magic import Magic
 
 # internals
 from brainhops._core import path
+from brainhops._core.properties import smartproperty
 from brainhops._core.streams import open_compressed
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import LPSmm
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base._geometry import (
-    embed_affine,
-    ras_conversion,
-    reduce_to_affine,
-)
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base.parsers import (
@@ -142,6 +138,11 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     WriterError,
     preserve_position,
+)
+from brainhops.io.common._geometry import (
+    embed_affine,
+    ras_conversion,
+    reduce_to_affine,
 )
 
 # ----------------------------------------------------------------------
@@ -1155,14 +1156,7 @@ class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
         ),
     ] = None
 
-    @property
-    def header(self) -> tx.Optional[AfniHeader]:
-        """The AFNI header this object was read from, if any."""
-        return getattr(self, "_header", None)
-
-    @header.setter
-    def header(self, value: tx.Optional[AfniHeader]) -> None:
-        self._header = value
+    header = smartproperty("header")
 
     def _scaled_data(self) -> tx.Optional[tx.Any]:
         """The stored values, scaled by `BRICK_FLOAT_FACS`."""

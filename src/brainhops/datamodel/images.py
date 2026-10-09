@@ -244,7 +244,7 @@ class SingleScaleImage(Image):
         # so an axis that is only rescaled, flipped, or permuted is handled
         # cheaply and only a coupled group keeps the N-dimensional pull.
         # The executor is imported lazily to avoid an import cycle.
-        from ._transformations.separable import pull_separable
+        from ._transformations.compute.separable import pull_separable
 
         transformation = (
             preferred.inverse() @ geometry.transformation @ geometry.grid

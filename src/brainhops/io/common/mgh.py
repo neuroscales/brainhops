@@ -52,20 +52,6 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.io.base.freesurfer import (
-    FS_DEFAULT_XRAS,
-    FS_DEFAULT_YRAS,
-    FS_DEFAULT_ZRAS,
-    FreesurferFormat,
-    fs_vox2ras,
-    fs_vox2tkr,
-)
-from brainhops.io.base.nifti import (
-    _accepted,
-    _image_from_stream,
-    _image_to_stream,
-    _is_local,
-)
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,
@@ -73,6 +59,20 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     WriterNotImplementedError,
     preserve_position,
+)
+from brainhops.io.common.freesurfer import (
+    FS_DEFAULT_XRAS,
+    FS_DEFAULT_YRAS,
+    FS_DEFAULT_ZRAS,
+    FreesurferFormat,
+    fs_vox2ras,
+    fs_vox2tkr,
+)
+from brainhops.io.common.nifti import (
+    _accepted,
+    _image_from_stream,
+    _image_to_stream,
+    _is_local,
 )
 
 MGH_HEADER_SIZE = 284

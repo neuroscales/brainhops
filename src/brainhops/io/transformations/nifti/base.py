@@ -4,7 +4,7 @@
 import typing_extensions as tx
 
 # internals
-from brainhops.io.base.nifti import NiftiParser
+from brainhops.io.common.nifti import NiftiParser
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 
 

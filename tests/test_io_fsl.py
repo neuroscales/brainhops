@@ -309,11 +309,11 @@ def test_fnirt_deformation_field_is_a_first_degree_displacement() -> None:
     _, absolute, _ = _fnirt_setup()
     warp = _warp(absolute)
     assert warp.degree == 1
-    assert warp.coeff is False
+    assert warp.store == "values"
     field = warp.transformations[1]
     assert type(field) is _xforms.DisplacementField
     assert field.degree == 1
-    assert field.coeff is False
+    assert field.store == "values"
     assert np.asarray(field.field).shape == REF_SHAPE + (3,)
 
 
@@ -411,17 +411,17 @@ def test_generic_reader_does_not_claim_fsl_intents() -> None:
 def test_coefficient_field_exposes_degree_and_coeff() -> None:
     coef = io.transformations.load(fsl_dir / "coefficientfield.nii.gz")
     assert coef.degree == 3  # cubic
-    assert coef.coeff is True
+    assert coef.store == "coefficients"
     # The stored knot spacing and reference pixel sizes are read from the
     # header for the chain, in reference voxels.
     assert np.allclose(coef._stored_knot_spacing(), [5.0, 5.0, 5.0])
     assert np.allclose(coef._reference_pixdim(), [2.0, 2.0, 2.0])
 
 
-def test_deformation_field_exposes_degree_and_coeff() -> None:
+def test_deformation_field_exposes_degree_and_store() -> None:
     warp = io.transformations.load(fsl_dir / "displacementfield.nii.gz")
     assert warp.degree == 1
-    assert warp.coeff is False
+    assert warp.store == "values"
 
 
 def test_coefficient_field_needs_both_images() -> None:
@@ -445,7 +445,7 @@ def test_coefficient_field_chain_shape() -> None:
     field = chain[1]
     assert type(field) is _xforms.DisplacementField
     assert field.degree == 3
-    assert field.coeff is True
+    assert field.store == "coefficients"
     # The coefficients stay on the coarse knot grid.
     assert np.asarray(field.field).shape == (6, 13, 7, 3)
     world = _world_field(coef, _real_ref())
@@ -586,14 +586,14 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct(
             moving=_real_src(),
         )
         _, disp, post = coef.transformations
-        assert disp.coeff is True
+        assert disp.store == "coefficients"
 
         # The affine folds into the field rather than raising. The result
         # is a displacement field again, and its coefficient state is
         # preserved.
         folded = post(disp).compute()
         assert type(folded) is _xforms.DisplacementField
-        assert folded.coeff is True
+        assert folded.store == "coefficients"
 
         # compute() therefore folds the trailing affine into the field,
         # leaving two steps in place of three.
@@ -625,11 +625,11 @@ def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
         moving=_real_src(),
     )
     _, disp, post = warp.transformations
-    assert disp.coeff is False
+    assert disp.store == "values"
 
     folded = post(disp).compute()
     assert type(folded) is _xforms.DisplacementField
-    assert folded.coeff is False
+    assert folded.store == "values"
 
     computed = _xforms.Sequence(
         transformations=list(warp.transformations)
