@@ -7,5 +7,5 @@ and data is read only by `compute()`, which must choose a chunking strategy
 that balances the number of reads against the volume read. Nibabel's
 `ArrayProxy` follows a similar model, but only for local files.
 """
-# TODO: Mostly unimplemented. Earlier versions in nitorch relied
-# on nibabel functions, which should be avoided here.
+# TODO: This module is mostly unimplemented. Earlier versions in nitorch
+# relied on nibabel functions, which should be avoided here.

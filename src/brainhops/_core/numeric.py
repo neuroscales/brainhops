@@ -23,16 +23,15 @@ def shortest_decimal(
     value: float,
     encode: tx.Optional[tx.Callable[[float], float]] = None,
 ) -> float:
-    """Return the decimal with the fewest digits that is stored as the same
-    float32.
+    """Return the shortest decimal that is stored as the same float32.
 
     A writer stores a decimal `d` as `float32(encode(d))`, where `encode`
     converts `d` into the unit of the file. A reader obtains the double
     `value`, which is close to `d` but rarely equal to it. The returned
-    decimal reads as it was written, and writing it again stores the same
-    bits. With the default identity encoding, the result is the shortest
-    representation of a float32 that round-trips, which is what
-    `str(numpy.float32(value))` prints.
+    decimal is the shortest number that the writer could have written, and
+    writing it again stores the same bits. With the default identity
+    encoding, the result is the shortest representation of a float32 that
+    round-trips, which is what `str(numpy.float32(value))` prints.
 
     Parameters
     ----------

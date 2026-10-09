@@ -7,8 +7,8 @@ from ._inv3d import inverse3d
 def inverse(field: np.ndarray) -> np.ndarray:
     """Invert a displacement field.
 
-    The grid of the field is treated as a mesh in which each cell defines an
-    affine transform, following Ashburner, Andersson and Friston,
+    The grid of the field is treated as a mesh in which each simplex defines
+    an affine transform, following Ashburner, Andersson and Friston,
     "High-Dimensional Image Registration Using Symmetric Priors", NeuroImage,
     1999 (in 2D, https://www.fil.ion.ucl.ac.uk/spm/doc/papers/john_high_dim.pdf),
     and "Image Registration Using a Symmetric Prior - in Three Dimensions",

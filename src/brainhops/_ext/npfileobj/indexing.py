@@ -178,8 +178,10 @@ def is_fullslice(index, shape, do_neg2pos=True):
 def slice_length(index: slice, shape: int, do_neg2pos: bool = True) -> int:
     """Return the number of elements that a slice selects.
 
-    Unless `do_neg2pos` is false, the slice must not have been converted
-    with [`neg2pos`][] beforehand. The same holds for the other slice helpers.
+    By default, the slice is converted with [`neg2pos`][], so it must not
+    have been converted beforehand. A slice that has already been converted
+    is passed with `do_neg2pos=False`. The other slice helpers follow the
+    same convention.
     """
 
     def sign(x: float) -> int:
@@ -321,7 +323,8 @@ def guess_shape(
             output_shape.append(1)
             continue
         if isinstance(idx, oob_slice):
-            # Size 0; consumes an input dimension unless it is a new axis.
+            # An out-of-bound slice has size 0, and it consumes an input
+            # dimension unless it stands in for a new axis.
             output_shape.append(0)
             if not idx.newaxis:
                 _, *shape = shape
@@ -388,8 +391,8 @@ def expand_index(
     #    array[int]  | 1              | array.dim() | no
     #    array[bool] | array.dim()    | 1           | no
     #
-    # Like nibabel, advanced indexing is not supported: its broadcasting
-    # rules are less intuitive than Matlab's.
+    # As in nibabel, advanced indexing is not supported, because its
+    # broadcasting rules are less intuitive than Matlab's.
 
     nb_dim_in = []
     nb_dim_out = []
@@ -498,7 +501,7 @@ def compose_index(
             new_parent = [*new_parent, None]
             child = child[1:]
 
-        # Probably unreachable.
+        # This branch is probably unreachable.
         if not child:
             new_parent += parent
             break
@@ -507,7 +510,8 @@ def compose_index(
         i_parent += 1
 
         if isinstance(p, int):
-            # Already dropped by the parent: only the original dim is consumed.
+            # The parent has already dropped this dimension, so only the
+            # original dimension is consumed.
             sz0, *full_shape = full_shape
             new_parent.append(p)
             continue
@@ -547,7 +551,8 @@ def compose_index(
 
         if isinstance(p, slice):
             if isinstance(c, int):
-                # Absolute position, which depends on the sign of the step.
+                # Compute the absolute position, which depends on the sign
+                # of the step.
                 if c < 0 or c >= sz:
                     oob(i_parent)
                 if p.step is not None and p.step < 0:
@@ -638,11 +643,11 @@ def split_operation(
     Raises
     ------
     ValueError
-        If `direction` does not start with `"r"` or `"w"`, in either case.
+        If `direction` does not start with `"r"` or `"w"`, ignoring case.
     """
 
     def remap(perm: _tx.Sequence[int]) -> list:
-        """Renumber the dimensions to 0, ..., n - 1."""
+        """Renumber the dimensions as 0, ..., n - 1, keeping their order."""
         remaining_dims = sorted(perm)
         dim_map = {}
         for new, old in enumerate(remaining_dims):

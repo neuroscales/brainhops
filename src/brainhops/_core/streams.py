@@ -1,7 +1,8 @@
 """Utilities for reading streams without consuming them."""
 
-# TODO: merge with _core.peek, which also looks ahead without consuming;
-# the modules stay separate until the many callers of peek are updated.
+# TODO: Merge this module with _core.peek, which also looks ahead without
+# consuming its input. The modules stay separate until the many callers of
+# peek are updated.
 
 __all__ = [
     "preserve_position",
@@ -20,10 +21,12 @@ import typing_extensions as tx
 def preserve_position(file: tx.IO) -> tx.Generator[tx.IO, None, None]:
     """Restore a stream to its current position when the context exits.
 
-    Sniffers and parsers consume the streams that they read, and a
-    dispatch may try several of them on one stream. The entry position is
-    restored even after an exception, rather than zero, since the stream
-    may be a sub-stream of a larger file. A stream that cannot seek is
+    Format detectors and parsers consume the streams that they read, and
+    the code that chooses a reader may try several of them on the same
+    stream. The context manager therefore records the position of the
+    stream on entry and seeks back to it on exit, even after an exception.
+    The stream returns to the entry position rather than to the start
+    because it may be a part of a larger file. A stream that cannot seek is
     yielded untouched.
 
     Parameters
@@ -108,10 +111,10 @@ except ImportError:  # pragma: no cover - Python built without liblzma
 def open_compressed(file: tx.BinaryIO) -> tx.IO:
     """Wrap a binary stream in a decompressor if its magic bytes match.
 
-    Libraries usually detect compression from the file name, which a bare
-    stream lacks, so a `.nii.gz` file object would otherwise read as
-    garbage. Detection starts at the current position, which is restored
-    before the stream is wrapped.
+    Libraries usually detect compression from the file name. A bare stream
+    has no file name, so a file object opened on a `.nii.gz` file would
+    otherwise read as garbage. The magic bytes are read from the current
+    position, which is restored before the stream is wrapped.
 
     Parameters
     ----------
