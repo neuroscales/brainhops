@@ -76,7 +76,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         `NiftiRASDisplacementField`, `NiftiRASCoordinatesField`,
         `SpmCoordinatesField`), `from_instance` is `obj.to(Format)`, so
         both passes run the same conversion. `NiftyRegAffine` converts
-        an affine between declared world spaces in step 4.
+        an affine between world spaces (or unknown ones) in step 4.
 
     Parameters
     ----------

@@ -128,9 +128,11 @@ affine.to(NiftiVoxelToRAS)  # the same conversion
 ```
 
 Every family with an affine form, such as a `Scaling` or a `Translation`,
-is converted in the same way. A format that has no exact conversion yet
-refuses `t.to(Format)` with a `ConversionError` rather than relabelling
-`t` as the format.
+is converted in the same way. A class bound to coordinate systems, such
+as `VoxelToRAS`, accepts only endpoints compatible with them, so a
+transformation between other systems is refused with a `ConversionError`
+rather than relabelled. A format that has no exact conversion yet, and no
+systems to check, refuses `t.to(Format)` in the same way.
 
 An LTA file states which coordinate systems its affine maps between. A
 general `Affine` is therefore written to an LTA file only if its `input`

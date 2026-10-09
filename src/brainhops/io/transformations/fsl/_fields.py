@@ -1,7 +1,9 @@
+import typing_extensions as tx
 from bagof.magic import KwOnly
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.io.transformations.base.affines import RAS, check_endpoint
 
 
 class RASToWarpField(_xforms.Affine):
@@ -16,6 +18,10 @@ class RASToWarpField(_xforms.Affine):
 
     _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        check_endpoint(self, "input", RAS)
+
 
 class WarpFieldToRAS(_xforms.Affine):
     """Affine transformation from an FNIRT warp grid to the moving RAS space.
@@ -26,3 +32,7 @@ class WarpFieldToRAS(_xforms.Affine):
     """
 
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        check_endpoint(self, "output", RAS)

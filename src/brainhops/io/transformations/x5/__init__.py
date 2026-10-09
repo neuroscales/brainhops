@@ -131,7 +131,3 @@ __all__ = [
 from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
 from ._struct import X5Domain, X5Header, X5Node
 from ._xform import X5Transform, X5TransformReaderWriter
-
-# The converters into these formats register themselves when this module
-# is imported, here, so that `t.to(Format)` refuses rather than relabels.
-from . import _converters  # noqa: E402, F401  isort: skip

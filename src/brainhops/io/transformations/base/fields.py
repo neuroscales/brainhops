@@ -21,7 +21,14 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base.parsers import WriterError
 
-from .affines import RASToVoxel, VoxelToRAS
+from .affines import (
+    LPS,
+    RAS,
+    VOXEL,
+    RASToVoxel,
+    VoxelToRAS,
+    check_endpoint,
+)
 
 
 class RASCoordinatesField(_xforms.CoordinatesField):
@@ -32,6 +39,11 @@ class RASCoordinatesField(_xforms.CoordinatesField):
     )
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        check_endpoint(self, "input", VOXEL)
+        check_endpoint(self, "output", RAS)
+
 
 class LPSCoordinatesField(_xforms.CoordinatesField):
     """Coordinates field from voxel space to LPS millimetres."""
@@ -40,6 +52,11 @@ class LPSCoordinatesField(_xforms.CoordinatesField):
         _systems.VoxelCoordinateSystem()
     )
     _output: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        check_endpoint(self, "input", VOXEL)
+        check_endpoint(self, "output", LPS)
 
 
 # ----------------------------------------------------------------------

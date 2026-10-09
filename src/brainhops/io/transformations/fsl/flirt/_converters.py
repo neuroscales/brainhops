@@ -1,11 +1,11 @@
 """
 Private converters into the FLIRT format.
 
-Each family that the converters of the data model would otherwise
-rebuild as a `FlirtTransform` is refused here until an exact conversion
-is written (#312), so that a transformation is never relabelled as the
-format. A format converted to its own class is changed as any
-transformation of its family is.
+A FLIRT matrix is derived from a raw matrix and the geometry of two
+images, which a conversion is not given, so each family that the
+converters of the data model would otherwise rebuild as a
+`FlirtTransform` is refused here, with that reason. A `FlirtTransform`
+converted to its own class is changed as any affine is.
 """
 
 import typing_extensions as tx
@@ -15,7 +15,7 @@ from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     _convert_withlog,
 )
-from brainhops.io.transformations.base.conversions import no_exact_conversion
+from brainhops.io.transformations.base.conversions import unrepresentable
 
 from ._xform import FlirtTransform
 
@@ -32,9 +32,15 @@ from ._xform import FlirtTransform
 def _(
     t: _xforms.Affine, cls: tx.Type[FlirtTransform], **kwargs
 ) -> FlirtTransform:
-    # FLIRT stores an affine between the scaled voxels of two images, and
-    # nothing converts to it yet.
-    raise no_exact_conversion(t, cls)
+    # The RAS endpoints of a FLIRT transform would accept a relabelled
+    # affine, but its matrix is not stored: it is derived from the images.
+    raise unrepresentable(
+        t,
+        cls,
+        "a FLIRT matrix maps the scaled millimetres of a moving and a "
+        "reference image, which a conversion is not given. Build the "
+        "FlirtTransform from its raw matrix and its two images instead.",
+    )
 
 
 @converter

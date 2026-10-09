@@ -1,11 +1,12 @@
 """
 Private converters into the M3Z format.
 
-Each family that the converters of the data model would otherwise
-rebuild as an `M3zMorph` is refused here until an exact conversion is
-written (#312), so that a transformation is never relabelled as the
-format. A format converted to its own class is changed as any
-transformation of its family is.
+The format derives its coordinate systems from what it holds, so it has
+no endpoints to check, and a transformation relabelled as it would not
+be what the format says it holds. Each family that the converters of the
+data model would otherwise rebuild as an `M3zMorph` is therefore refused
+here, until an exact conversion is written (#312). A format converted to
+its own class is changed as any transformation of its family is.
 """
 
 import typing_extensions as tx

@@ -1,11 +1,13 @@
 """
 Private converters into the OME-Zarr field format.
 
-Each family that the converters of the data model would otherwise
-rebuild as an `OmeZarrField` is refused here until an exact conversion
-is written (#312), so that a transformation is never relabelled as the
-format. A format converted to its own class is changed as any
-transformation of its family is.
+The format derives its coordinate systems from what it holds, so it has
+no endpoints to check, and a transformation relabelled as it would not
+be what the format says it holds. Each family that the converters of the
+data model would otherwise rebuild as an `OmeZarrField` is therefore
+refused here, until an exact conversion is written (#312). A format
+converted to its own class is changed as any transformation of its
+family is.
 """
 
 import typing_extensions as tx

@@ -2,12 +2,16 @@
 Every transformation converted into a format: exactly, or refused (#343).
 
 The converters of the data model rebuild a transformation as the class
-they are asked for, so without a converter of its own, a format would be
-answered with a relabelled transformation: a `Scaling` between LPS spaces
-as a `NiftiVoxelToRAS`, say. Each format therefore has a converter for
-each family that would reach it, which converts exactly, or refuses. A
-format converted to its own class is changed as any transformation of its
-family is, and is not refused.
+they are asked for. A class bound to coordinate systems (`VoxelToRAS`, the
+NIfTI and NiftyReg affines, the RAS and LPS fields) checks that its
+endpoints are compatible with them, so a relabel between other systems
+fails as it is built, with a `ConversionError`. The exact converters of
+NIfTI and NiftyReg bridge the endpoints instead (an affine to LPS is
+flipped into RAS). A format whose content a relabel would make wrong keeps
+an explicit refusal, and a format with no systems of its own (a bare
+matrix, an ITK chain) holds the relabelled transformation with its own
+endpoints. A format converted to its own class is changed as any
+transformation of its family is.
 """
 
 import numpy as np
@@ -18,13 +22,31 @@ nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
+from brainhops.datamodel.axes import Axis  # noqa: E402
 from brainhops.datamodel.systems import (  # noqa: E402
+    CoordinateSystem,
+    FVoxelCoordinateSystem,
     LPSmm,
+    RASCoordinateSystem,
     RASmm,
     VoxelCoordinateSystem,
 )
-from brainhops.errors import ConversionError  # noqa: E402
+from brainhops.errors import (  # noqa: E402
+    ConversionError,
+    IncompatibleSystemError,
+)
 from brainhops.io.base.parsers import WriterError  # noqa: E402
+from brainhops.io.transformations.base.affines import (  # noqa: E402
+    LPSToVoxel,
+    RASToRAS,
+    RASToVoxel,
+    VoxelToLPS,
+    VoxelToRAS,
+)
+from brainhops.io.transformations.base.fields import (  # noqa: E402
+    LPSCoordinatesField,
+    RASCoordinatesField,
+)
 from brainhops.io.transformations.elastix import (  # noqa: E402
     ElastixTransform,
 )
@@ -34,6 +56,10 @@ from brainhops.io.transformations.freesurfer.lta import (  # noqa: E402
     LtaTransformationVoxToVox,
 )
 from brainhops.io.transformations.freesurfer.m3z import M3zMorph  # noqa: E402
+from brainhops.io.transformations.fsl._fields import (  # noqa: E402
+    RASToWarpField,
+    WarpFieldToRAS,
+)
 from brainhops.io.transformations.fsl.flirt import (  # noqa: E402
     FlirtTransform,
 )
@@ -110,15 +136,93 @@ FORMATS = [
     NiftyRegDisplacementField,
     FlirtTransform,
     LtaTransformation,
-    TxtMatrixAffine,
-    TfmTransform,
     ItkNiftiDisplacementField,
     FnirtWarpField,
     M3zMorph,
     X5Transform,
     ElastixTransform,
 ]
-"""Formats with an exact conversion, and formats with none yet."""
+"""Formats bound to RAS, LPS or their own spaces."""
+
+
+# ----------------------------------------------------------------------
+#   CLASSES BOUND TO COORDINATE SYSTEMS
+# ----------------------------------------------------------------------
+
+
+BOUND = [
+    (VoxelToRAS, LPSmm(), "output"),
+    (RASToVoxel, LPSmm(), "input"),
+    (VoxelToLPS, RASmm(), "output"),
+    (LPSToVoxel, RASmm(), "input"),
+    (RASToRAS, LPSmm(), "output"),
+    (NiftiVoxelToRAS, LPSmm(), "output"),
+    (NiftiRASToVoxel, VOXEL, "input"),
+    (NiftyRegAffine, LPSmm(), "input"),
+    (RASToWarpField, LPSmm(), "input"),
+    (WarpFieldToRAS, VOXEL, "output"),
+]
+"""Affine classes bound to systems, and an endpoint they cannot have."""
+
+
+@pytest.mark.parametrize(
+    "cls, system, side", BOUND, ids=[cls.__name__ for cls, _, _ in BOUND]
+)
+def test_a_bound_class_refuses_an_incompatible_endpoint(
+    cls: type, system: CoordinateSystem, side: str
+) -> None:
+    with pytest.raises(IncompatibleSystemError, match="not compatible"):
+        cls(matrix=MATRIX[:-1], **{side: system})
+
+
+@pytest.mark.parametrize(
+    "cls, output",
+    [(RASCoordinatesField, LPSmm()), (LPSCoordinatesField, RASmm())],
+)
+def test_a_bound_field_refuses_an_incompatible_endpoint(
+    cls: type, output: CoordinateSystem
+) -> None:
+    with pytest.raises(IncompatibleSystemError):
+        cls(field=np.zeros((2, 3, 4, 3)), output=output)
+
+
+def test_a_flirt_transform_refuses_an_incompatible_endpoint() -> None:
+    with pytest.raises(IncompatibleSystemError):
+        FlirtTransform(flirt_matrix=np.eye(4), input=LPSmm())
+
+
+@pytest.mark.parametrize(
+    "voxel, world",
+    [
+        (None, None),
+        (FVoxelCoordinateSystem(), RASCoordinateSystem()),
+        (VOXEL, CoordinateSystem(axes=[Axis(), Axis(), Axis()])),
+        (CoordinateSystem(axes=[...]), RASmm()),
+    ],
+    ids=["unknown", "other-names", "unknown-axes", "open"],
+)
+def test_a_bound_class_accepts_a_compatible_endpoint(
+    voxel: tx.Any, world: tx.Any
+) -> None:
+    # Names label axes, and an endpoint or axis that is not known may be
+    # the one the class is bound to.
+    t = VoxelToRAS(matrix=MATRIX[:-1], input=voxel, output=world)
+    assert type(t) is VoxelToRAS
+
+
+def test_a_2d_world_is_the_first_axes_of_lps() -> None:
+    # ITK holds the world of a 2-D image as the L and P axes.
+    world = CoordinateSystem(axes=LPSmm().axes[:2])
+    pixel = CoordinateSystem(axes=VOXEL.axes[:2])
+    t = VoxelToLPS(matrix=np.eye(3)[:2], input=pixel, output=world)
+    assert t.output == world
+
+
+def test_a_relabel_into_a_bound_class_is_a_conversion_error() -> None:
+    scaling = xforms.Scaling([2.0, 3.0, 4.0], input=LPSmm(), output=LPSmm())
+    with pytest.raises(ConversionError, match="not compatible"):
+        scaling.to(VoxelToRAS)
+    assert scaling.to(VoxelToRAS, error=False) is False
 
 
 # ----------------------------------------------------------------------
@@ -132,7 +236,7 @@ def test_a_transformation_no_format_holds_is_refused(
     family: str, cls: type
 ) -> None:
     # Between two voxel spaces, a transformation is held by none of these
-    # formats, whose spaces are RAS or their own.
+    # formats, whose spaces are RAS, LPS or their own.
     t = _families(VOXEL, VOXEL)[family]
     with pytest.raises(ConversionError):
         t.to(cls)
@@ -143,20 +247,16 @@ def test_a_transformation_no_format_holds_is_refused(
     "family, cls",
     [
         *(
-            (family, cls)
-            for cls in (FlirtTransform, LtaTransformation, TxtMatrixAffine)
+            (family, LtaTransformation)
             for family in ("scaling", "linear", "affine", "sequence")
         ),
         *(
             (family, cls)
             for cls in (
                 NiftyRegDisplacementField,
-                TfmTransform,
                 ItkNiftiDisplacementField,
                 FnirtWarpField,
                 M3zMorph,
-                X5Transform,
-                ElastixTransform,
             )
             for family in ("sequence", "immutable-sequence")
         ),
@@ -166,12 +266,45 @@ def test_a_transformation_no_format_holds_is_refused(
 def test_a_format_without_an_exact_conversion_refuses(
     family: str, cls: type
 ) -> None:
-    # The format may hold some transformations of the family, which are
-    # for its exact converter to tell (#312); until then, every one is
-    # refused, even between systems the format could hold.
+    # A relabel would build a wrong object: an LTA without the geometry of
+    # its volumes, a field format around a chain that is not its own. The
+    # format may hold some transformations of the family, which are for its
+    # exact converter to tell (#312).
     t = _families(RASmm(), RASmm())[family]
     with pytest.raises(ConversionError, match="#312"):
         t.to(cls)
+
+
+@pytest.mark.parametrize("family", ["scaling", "affine", "sequence"])
+def test_flirt_says_why_it_refuses(family: str) -> None:
+    t = _families(RASmm(), RASmm())[family]
+    with pytest.raises(ConversionError, match="moving and a reference image"):
+        t.to(FlirtTransform)
+
+
+# ----------------------------------------------------------------------
+#   FORMATS WITHOUT SYSTEMS OF THEIR OWN
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("family", ["scaling", "affine", "sequence"])
+def test_a_bare_matrix_holds_a_relabelled_affine(family: str) -> None:
+    # A bare matrix is given its conventions when it is read, so it keeps
+    # the endpoints of the affine, and the map is unchanged.
+    t = _families(LPSmm(), LPSmm())[family]
+    matrix = t.to(TxtMatrixAffine)
+    assert type(matrix) is TxtMatrixAffine
+    assert matrix.input == LPSmm()
+    np.testing.assert_array_equal(
+        matrix.homogeneous_matrix, t.to(xforms.Affine).homogeneous_matrix
+    )
+
+
+def test_an_itk_chain_holds_a_relabelled_chain() -> None:
+    chain = _families(LPSmm(), LPSmm())["sequence"]
+    itk = chain.to(TfmTransform)
+    assert type(itk) is TfmTransform
+    assert list(itk.transformations) == list(chain.transformations)
 
 
 def test_a_scaling_between_lps_spaces_is_not_a_nifti_affine() -> None:
@@ -295,12 +428,14 @@ def test_an_lps_to_lps_affine_is_flipped_into_niftyreg() -> None:
 
 
 @pytest.mark.parametrize("family", ["scaling", "affine", "sequence"])
-def test_an_affine_of_undeclared_systems_is_not_a_niftyreg_affine(
-    family: str,
-) -> None:
+def test_an_affine_of_unknown_systems_maps_niftyreg_ones(family: str) -> None:
+    # Unknown endpoints are compatible with RAS, so they are taken to be
+    # NiftyReg's, as NIfTI takes them to be its own.
     t = _families(None, None)[family]
-    with pytest.raises(ConversionError, match="does not declare"):
-        t.to(NiftyRegAffine)
+    niftyreg = t.to(NiftyRegAffine)
+    np.testing.assert_array_equal(
+        niftyreg.homogeneous_matrix, t.to(xforms.Affine).homogeneous_matrix
+    )
 
 
 def test_a_ras_to_ras_affine_is_saved_as_niftyreg(tmp_path) -> None:  # noqa: ANN001
@@ -388,17 +523,22 @@ def test_a_chain_format_is_converted_to_itself() -> None:
 @pytest.mark.parametrize(
     "t, cls",
     [
-        (TxtMatrixAffine(matrix=MATRIX[:-1]), CsvMatrixAffine),
         (
             LtaTransformationVoxToVox(matrix=MATRIX[:-1]),
             LtaTransformationRASToRAS,
         ),
         (TfmTransform([xforms.Scaling([1.0, 2.0, 3.0])]), H5Transform),
     ],
-    ids=["matrix", "lta", "itk"],
+    ids=["lta", "itk"],
 )
 def test_another_variant_of_a_format_is_not_relabelled(
     t: xforms.Transformation, cls: type
 ) -> None:
-    with pytest.raises(ConversionError, match="#312"):
+    with pytest.raises(ConversionError):
         t.to(cls)
+
+
+def test_another_container_of_a_bare_matrix_holds_it() -> None:
+    csv = TxtMatrixAffine(matrix=MATRIX[:-1]).to(CsvMatrixAffine)
+    assert type(csv) is CsvMatrixAffine
+    np.testing.assert_array_equal(csv.matrix, MATRIX[:-1])

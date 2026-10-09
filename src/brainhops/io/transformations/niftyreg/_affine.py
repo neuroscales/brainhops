@@ -3,7 +3,6 @@
 import numpy as np
 import typing_extensions as tx
 
-from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
@@ -19,20 +18,16 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.base.affines import RASToRAS
+from brainhops.io.transformations.base.affines import RAS, RASToRAS
 from brainhops.io.transformations.base.conversions import (
     affine_between,
     format_options,
-    unrepresentable,
 )
 
 from ._formats import NiftyRegAffineFormat
 
 _SHAPE = (4, 4)
 """Shape of the matrix that NiftyReg reads and writes."""
-
-RAS = _systems.RASmm()
-"""The RAS world, in millimetres, that a NiftyReg affine maps to itself."""
 
 
 def _is_homogeneous(array: np.ndarray) -> bool:
@@ -141,19 +136,11 @@ def _(
     t: _xforms.Affine, cls: tx.Type[NiftyRegAffine], **kwargs
 ) -> NiftyRegAffine:
     # Exactly, or raise: the bridges from and to RAS (an affine between LPS
-    # spaces is flipped), and the reduction to one affine. The file is a bare
-    # matrix that does not say what it maps, so an affine whose systems are
-    # not declared is not taken to map RAS to RAS.
+    # spaces is flipped), and the reduction to one affine. An affine whose
+    # systems are not known is taken to map RAS to RAS, as the systems of a
+    # NiftyReg affine accept it.
     cls = NiftyRegAffine
     format_options(t, cls, kwargs)
-    if t.input is None or t.output is None:
-        raise unrepresentable(
-            t,
-            cls,
-            "NiftyReg stores an affine from RAS world coordinates to RAS "
-            "world coordinates, and this affine does not declare its "
-            "endpoints.",
-        )
     matrix = affine_between(t, RAS, RAS, cls)
     return cls(matrix=matrix[:-1])
 

@@ -16,8 +16,9 @@ raises a `ConversionError` that says what the format cannot hold.
 "Any affine" is each family that has an affine form (`Identity`,
 `Translation`, `Scaling`, `Permutation`, `Linear` and `Rotation`, `Affine`,
 their tangents, and `SubspaceTransformation`), and "any field" each
-family of fields. Each is named, because the converters of the data model
-would otherwise rebuild it as the format, whatever its endpoints.
+family of fields. Each is named, so that its endpoints are bridged: the
+converters of the data model would rebuild it as the format with its own
+endpoints, which the format refuses unless they are its own.
 
 The endpoints are those of `t`, bridged to the format's (see
 [`brainhops.io.transformations.base.conversions`][]): an affine to LPS

@@ -10,5 +10,5 @@ __all__ = ["FnirtWarpField"]
 from ._base import FnirtWarpField
 
 # The converters into these formats register themselves when this module
-# is imported, here, so that `t.to(Format)` refuses rather than relabels.
+# is imported, here, so that `t.to(Format)` refuses with a reason.
 from . import _converters  # noqa: E402, F401  isort: skip

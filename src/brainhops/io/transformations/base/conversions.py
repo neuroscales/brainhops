@@ -23,12 +23,16 @@ them ([`converts_to`][] and [`convert_instance`][]), so that
 `Format.from_any(t)`, `Format.from_instance(t)` and `t.to(Format)` are
 one conversion.
 
-Every format has a converter for each family that the generic converters
-of the data model would otherwise relabel as it: without one, the
-`Affine` converter would rebuild a `Scaling` as a `NiftiVoxelToRAS`
-whatever its endpoints. A format without an exact conversion yet refuses
-with [`no_exact_conversion`][], and a format converted to its own class is
-changed by the rules of its family, as any transformation of that family.
+The generic converters of the data model rebuild a transformation as the
+class they are asked for. A format bound to coordinate systems checks its
+endpoints as it is built (see
+[`check_endpoint`][brainhops.io.transformations.base.affines.check_endpoint]),
+so a transformation between other systems is not relabelled as it, and
+its exact converters, named for each family, bridge the endpoints first.
+A format that derives its systems from what it holds cannot check them,
+and refuses each family with [`no_exact_conversion`][] until it has
+exact converters. A format converted to its own class is changed by the
+rules of its family, as any transformation of that family.
 """
 
 __all__ = [
@@ -91,7 +95,8 @@ def no_exact_conversion(
 
     The format may hold some transformations of the family of `t`, but
     which ones, and how, is for an exact converter to decide (#312). Until
-    it has one, `t` is refused rather than relabelled as the format.
+    it has one, `t` is refused: the format derives its systems from what it
+    holds, so `t` relabelled as it would not be what it says it holds.
     """
     return unrepresentable(
         t,
