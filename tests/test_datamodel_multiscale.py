@@ -83,6 +83,9 @@ def _two_level_displacement(rng: np.random.Generator) -> tuple:
 # Structure
 
 
+# --- structure ---------------------------------------------------------
+
+
 def test_a_level_is_a_sequence() -> None:
     field, (l0, l1), *_ = _two_level_displacement(np.random.default_rng(0))
     assert isinstance(field, Sequence)
@@ -131,6 +134,9 @@ def test_the_container_is_not_mutable() -> None:
 # Transparency in composition
 
 
+# --- transparency in composition ---------------------------------------
+
+
 def test_composes_like_its_finest_level() -> None:
     field, _, (xf0, lin0, _), _ = _two_level_displacement(
         np.random.default_rng(6)
@@ -159,6 +165,9 @@ def test_compute_returns_a_plain_transformation() -> None:
 
 
 # Level selection
+
+
+# --- level selection ---------------------------------------------------
 
 
 def test_nearest_level_matches_the_target_resolution() -> None:
@@ -203,6 +212,9 @@ def test_an_identity_led_level_has_no_resolution() -> None:
 # Ground truth
 
 
+# --- ground truth ------------------------------------------------------
+
+
 def test_displacement_level_moves_world_points_by_the_world_field() -> None:
     # Each voxel moves by exactly the stored displacement, in world units.
     xf0, lin0 = _rotated_anisotropic_affine(2.0, 0.5)
@@ -226,6 +238,9 @@ def test_coordinate_level_recovers_the_stored_coordinates() -> None:
 
 
 # Reslice wiring
+
+
+# --- reslice wiring ----------------------------------------------------
 
 
 def test_at_resolution_selects_the_matching_level() -> None:

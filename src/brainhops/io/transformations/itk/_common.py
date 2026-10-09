@@ -216,6 +216,8 @@ class ItkAffineBase(ItkBlockBase):
     )
     """The names of the slots that form the chain, in order."""
 
+    # --- slots --------------------------------------------------------
+
     @smartproperty(cache=True)
     def center(self) -> tx.Optional[ArrayProtocol]:
         """The center of rotation, or `None` if the stored vector is empty."""
@@ -246,6 +248,8 @@ class ItkAffineBase(ItkBlockBase):
     def translation(self) -> tx.Optional[_xforms.Transformation]:
         """The translation applied after the linear part."""
         return None
+
+    # --- sequence -----------------------------------------------------
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
@@ -298,6 +302,8 @@ class ItkDisplacementBase(ItkBlockBase):
     transposes the warp, so each subclass states which layout it uses.
     """
 
+    # --- decoding -----------------------------------------------------
+
     @lazyproperty
     def _grid(self) -> tx.Tuple[np.ndarray, tx.Tuple[int, ...]]:
         return _vox2lps(self.fixed_parameters, self.ndim_input)
@@ -337,6 +343,8 @@ class ItkDisplacementBase(ItkBlockBase):
         rotate = backend.asarray(lps2vox[:, :ndim], dtype=disp.dtype)
         return backend.matmul(rotate, disp[..., None])[..., 0]
 
+    # --- slots --------------------------------------------------------
+
     @smartproperty(cache=True)
     def lps2voxel(self) -> LPSToVoxel:
         """Affine from LPS world coordinates to warp-grid voxels."""
@@ -361,6 +369,8 @@ class ItkDisplacementBase(ItkBlockBase):
         """Affine from warp-grid voxels to LPS world coordinates."""
         vox2lps, _ = self._grid
         return VoxelToLPS(matrix=vox2lps)
+
+    # --- sequence -----------------------------------------------------
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:

@@ -788,6 +788,9 @@ def test_a_copy_of_a_velocity_into_a_displacement_is_integrated() -> None:
 # Wrap a transform in a change of coordinates and its inverse.
 
 
+# --- a chain between a change of coordinates --------------------------
+
+
 def _framed(middle: object) -> Sequence:
     voxel_to_world = VoxelToLPS(matrix=np.diag([2.0, 3.0, 1.0])[:2])
     return Sequence([voxel_to_world.inverse(), middle, voxel_to_world])

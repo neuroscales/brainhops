@@ -30,6 +30,8 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
     grid.
     """
 
+    # --- attributes ---------------------------------------------------
+
     scales: NotKwOnly[tx.List[SINGLE_SCALE]] = ()
     """Scales, from finest to coarsest."""
 
@@ -43,6 +45,8 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         # Return the finest scale, or `None` if there are no scales.
         scales = self.scales
         return scales[0] if scales else None
+
+    # --- methods ------------------------------------------------------
 
     def to_singlescale(self, index: int = 0) -> SINGLE_SCALE:
         """Return the scale at `index`, where 0 is the finest.
@@ -86,6 +90,8 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
     supports no item assignment, insertion or deletion.
     """
 
+    # --- attributes ---------------------------------------------------
+
     scales: NotKwOnly[tx.List[Sequence]] = ()
     """Scales, from finest to coarsest.
 
@@ -122,6 +128,8 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
     input = smartproperty("input")
     output = smartproperty("output")
 
+    # --- methods ------------------------------------------------------
+
     def compute(
         self,
         mode: tx.Optional[ModeLike] = None,
@@ -146,6 +154,8 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
             input=self.output,
             output=self.input,
         )
+
+    # --- helpers ------------------------------------------------------
 
     def _as_sequence(self) -> Sequence:
         # Return the finest scale as a plain sequence that carries the

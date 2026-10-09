@@ -387,6 +387,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
 
     # No shift
 
+    # --- no shift
+
     x000 = field[0::2, 0::2, 0::2]
     x001 = field[0::2, 0::2, 1::2]
     x010 = field[0::2, 1::2, 0::2]
@@ -399,6 +401,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
     yield from yield_red(x000, x001, x010, x011, x100, x101, x110, x111)
 
     # Shift in x and y
+
+    # --- xy shift
 
     x000 = field[1::2, 1::2, 0::2]
     x001 = field[1::2, 1::2, 1::2]
@@ -413,6 +417,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
 
     # Shift in y and z
 
+    # --- yz shift
+
     x000 = field[0::2, 1::2, 1::2]
     x001 = field[0::2, 1::2, 2::2]
     x010 = field[0::2, 2::2, 1::2]
@@ -425,6 +431,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
     yield from yield_red(x000, x001, x010, x011, x100, x101, x110, x111)
 
     # Shift in x and z
+
+    # --- xz shift
 
     x000 = field[1::2, 0::2, 1::2]
     x001 = field[1::2, 0::2, 2::2]
@@ -443,6 +451,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
 
     # Shift in x
 
+    # --- x shift
+
     x000 = field[1::2, 0::2, 0::2]
     x001 = field[1::2, 0::2, 1::2]
     x010 = field[1::2, 1::2, 0::2]
@@ -455,6 +465,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
     yield from yield_black(x000, x001, x010, x011, x100, x101, x110, x111)
 
     # Shift in y
+
+    # --- y shift
 
     x000 = field[0::2, 1::2, 0::2]
     x001 = field[0::2, 1::2, 1::2]
@@ -469,6 +481,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
 
     # Shift in z
 
+    # --- z shift
+
     x000 = field[0::2, 0::2, 1::2]
     x001 = field[0::2, 0::2, 2::2]
     x010 = field[0::2, 1::2, 1::2]
@@ -481,6 +495,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
     yield from yield_black(x000, x001, x010, x011, x100, x101, x110, x111)
 
     # Shift in x, y and z
+
+    # --- xyz shift
 
     x000 = field[1::2, 1::2, 1::2]
     x001 = field[1::2, 1::2, 2::2]

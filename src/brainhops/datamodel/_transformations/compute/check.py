@@ -154,6 +154,9 @@ table when it is imported.
 """
 
 
+# --- Machinery --------------------------------------------------------
+
+
 class IsKind:
     """Membership predicate and registry of checkers.
 
@@ -371,6 +374,8 @@ class IsKind:
         return tuple(selection)
 
 
+# --- Public API -------------------------------------------------------
+
 is_kind: IsKind = IsKind()
 """Membership predicate shared by the transformation operations."""
 
@@ -415,6 +420,9 @@ def is_family(x: Transformation, family: FamilyLike) -> bool:
     # be inferred from the content, such as the shape of a matrix or field.
     space = AxisList([...]).expand(family.ndim)
     return all(get_axes(e).compatible_with(space) for e in (x.input, x.output))
+
+
+# --- Public helpers ---------------------------------------------------
 
 
 def register_kind_alias(

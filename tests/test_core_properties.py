@@ -149,6 +149,9 @@ def test_the_former_options_are_gone() -> None:
 # smartsetter
 
 
+# --- smartsetter ------------------------------------------------------
+
+
 def _setter_box() -> type:
     # `value` reads `_value`, named after its setter, and counts its calls;
     # `other` reads the given `_stored`.

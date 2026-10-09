@@ -56,6 +56,8 @@ class X5TransformParser(
     file: tx.Optional[h5py.File] = None
     """The open HDF5 file, when it was read with `keep_open=True`."""
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_h5(
         cls,
@@ -70,6 +72,8 @@ class X5TransformParser(
                 error = SnifferContentError
             raise error("HDF5 file is not an X5 file: no Format='X5'.")
         return Confidence.NO
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_h5(
@@ -124,6 +128,8 @@ class X5TransformParser(
             file=h5file if keep_open else None,
             **kwargs,
         )
+
+    # --- to -----------------------------------------------------------
 
     def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
         header, nodes = self.to_struct()
@@ -183,6 +189,8 @@ class X5Transform(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
     HINTS = ("x5", "bids")
 
+    # --- chain --------------------------------------------------------
+
     @property
     def selection(self) -> tx.Tuple[int, ...]:
         """The indices of the nodes that this transformation chains, in order.
@@ -235,6 +243,8 @@ class X5Transform(
         decoded chain, and the assigned chain is what the writer encodes.
         """
         return tuple(self.node_transformation(i) for i in self.selection)
+
+    # --- to -----------------------------------------------------------
 
     def to_struct(self) -> tx.Tuple[X5Header, tx.List[X5Node]]:
         """Return the header and nodes that encode this transformation.

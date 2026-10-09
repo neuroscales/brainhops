@@ -69,6 +69,9 @@ def _spatial_axes() -> tx.List[SpaceAxis]:
 # Axis-order seam
 
 
+# ---- the axis-order seam ---------------------------------------------
+
+
 def test_seam_maps_storage_order_to_canonical_and_back() -> None:
     stored = [
         TimeAxis(name="t"),
@@ -99,6 +102,9 @@ def test_seam_round_trips_any_permutation() -> None:
 
 
 # Pure Zarr array
+
+
+# ---- pure Zarr array -------------------------------------------------
 
 
 def test_pure_array_round_trip(tmp_path: Path) -> None:
@@ -147,6 +153,9 @@ def test_pure_array_preserves_chunks(tmp_path: Path) -> None:
 # Dispatch
 
 
+# ---- dispatch --------------------------------------------------------
+
+
 def test_dispatch_selects_array_reader_for_a_plain_array(
     tmp_path: Path,
 ) -> None:
@@ -168,6 +177,9 @@ def test_dispatch_selects_ome_reader_for_a_multiscale_group(
 
 
 # OME-Zarr multiscale
+
+
+# ---- OME-Zarr multiscale ---------------------------------------------
 
 
 def _small_pyramid() -> OmeZarrImage:
@@ -511,6 +523,9 @@ def test_reader_refuses_unsupported_coordinate_transformation(
 # Public read and write API
 
 
+# ---- public read/write API -------------------------------------------
+
+
 def test_from_store_and_to_store_round_trip(tmp_path: Path) -> None:
     data = np.arange(12, dtype="float32").reshape(3, 4)
     path = str(tmp_path / "api.zarr")
@@ -595,6 +610,9 @@ def test_multiscale_to_node_writes_into_a_group(tmp_path: Path) -> None:
 # Laziness
 
 
+# ---- laziness --------------------------------------------------------
+
+
 def test_opening_a_pyramid_does_not_read_its_levels(tmp_path: Path) -> None:
     path = str(tmp_path / "lazy.zarr")
     _small_pyramid().save(path)
@@ -613,6 +631,9 @@ def test_opening_a_pyramid_does_not_read_its_levels(tmp_path: Path) -> None:
 # Chunking
 
 
+# ---- chunking --------------------------------------------------------
+
+
 def test_one_chunking_is_applied_to_every_level(tmp_path: Path) -> None:
     path = str(tmp_path / "chunked.zarr")
     # One chunk shape, in brainhops order, applies to every level.
@@ -624,6 +645,9 @@ def test_one_chunking_is_applied_to_every_level(tmp_path: Path) -> None:
 
 
 # Vector component axis
+
+
+# ---- the vector component axis ---------------------------------------
 
 
 def _displacement_field() -> OmeZarrImage:
@@ -682,6 +706,9 @@ def test_field_components_are_not_reordered_by_the_axis_permutation(
 # OME version option
 
 
+# ---- the OME version option ------------------------------------------
+
+
 def test_write_version_defaults_to_the_newest_stable(tmp_path: Path) -> None:
     path = str(tmp_path / "default.zarr")
     _small_pyramid().save(path)
@@ -720,6 +747,9 @@ def test_write_version_falls_back_to_the_source_version(
 # Axes derived from OME metadata
 
 
+# ---- axes are derived from the OME metadata --------------------------
+
+
 def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
     axes = [
         SpaceAxis(name="x"),
@@ -747,6 +777,9 @@ def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
 
 
 # Native transformation mapping
+
+
+# ---- native transformation mapping -----------------------------------
 
 
 def _authored_pyramid(
@@ -890,6 +923,9 @@ def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
 
 
 # Displacement and coordinate fields
+
+
+# ---- displacement and coordinate fields ------------------------------
 
 
 def _field_array() -> np.ndarray:

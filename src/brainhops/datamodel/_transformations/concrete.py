@@ -56,6 +56,7 @@ from .modes import ModeLike
 _TypeReference = tx.ClassVar[tx.Optional[tx.Type[Transformation]]]
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 
+# --- helpers ----------------------------------------------------------
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the cached views listed in `derived_fields`."""
@@ -94,6 +95,9 @@ def _alias(name: str, source: str, fset: bool = True) -> property:
         fset = None
 
     return property(fget, fset, doc=f"Alias for `{source}`.")
+
+
+# --- API --------------------------------------------------------------
 
 
 class ConcreteTransformation(Transformation):
@@ -248,12 +252,15 @@ class TransformationField(ConcreteTransformation):
     without changing it.
     """
 
+    # --- class attributes ---------------------------------------------
+
     map_field: tx.ClassVar[str] = "field"
 
     data_fields: _FieldNames = ("data",)
     metadata_fields: _FieldNames = "degree", "bound", "store"
     derived_fields: _FieldNames = "field", "values", "coefficients", "_inverse"
 
+    # --- attributes ---------------------------------------------------
     # The data and the flags are stored under private names, behind properties
     # whose assignment clears the cached views. The constructor still takes
     # `data=`, `degree=`, and so on.
@@ -293,6 +300,8 @@ class TransformationField(ConcreteTransformation):
     `store="values"`, the spline is evaluated before the field is stored.
     """
 
+    # --- [meta]data views ---------------------------------------------
+
     data = _invalidating_property("data")
     degree = _invalidating_property("degree")
     bound = _invalidating_property("bound")
@@ -307,6 +316,8 @@ class TransformationField(ConcreteTransformation):
         `"coefficients"`.
         """
         return StoreEnum.values
+
+    # --- overloads ----------------------------------------------------
 
     if tx.TYPE_CHECKING:
 
@@ -368,6 +379,8 @@ class TransformationField(ConcreteTransformation):
             self.store = StoreEnum.coefficients
         super()._set_derived_fields(arguments)
 
+    # --- derived views ------------------------------------------------
+
     @lazyproperty
     def values(self) -> tx.Optional[ArrayProtocol]:
         """Field as values, of shape `(*shape, ndim)`.
@@ -426,11 +439,15 @@ class DisplacementField(TransformationField, polymorphic=True):
     always holds displacements.
     """
 
+    # --- class attributes ---------------------------------------------
+
     _base_metadata_fields: _FieldNames = TransformationField.metadata_fields
     metadata_fields: _FieldNames = (
         *_base_metadata_fields,
         "log",
     )
+
+    # --- attributes ---------------------------------------------------
 
     _log: bool = False
     """Whether `data` holds a stationary velocity rather than a displacement.
@@ -441,6 +458,8 @@ class DisplacementField(TransformationField, polymorphic=True):
     """
 
     log = _invalidating_property("log", fset=False)
+
+    # --- overloads ----------------------------------------------------
 
     if tx.TYPE_CHECKING:
 
@@ -500,6 +519,8 @@ class DisplacementField(TransformationField, polymorphic=True):
         _refuse_log(self, arguments.get("log"), "StationaryVelocityField")
         super().__post_init__(arguments)
 
+    # --- derived views ------------------------------------------------
+
     @lazyproperty
     def _inverse(self) -> tx.Optional[ArrayProtocol]:
         """Parameter of the inverse field, cached.
@@ -512,6 +533,8 @@ class DisplacementField(TransformationField, polymorphic=True):
             return None
         ifield = inverse_disp(self.field)
         return _values2data(ifield, self.store, self.degree, self.bound)
+
+    # --- methods ------------------------------------------------------
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         if not is_identity(self):
@@ -527,10 +550,14 @@ class DisplacementField(TransformationField, polymorphic=True):
 class CoordinatesField(TransformationField):
     """Coordinates field on a regular grid, whose input space is the grid."""
 
+    # --- derived ------------------------------------------------------
+
     @lazyproperty
     def _inverse(self) -> tx.Optional[ArrayProtocol]:
         ifield = _inv_coords(self.field)
         return _values2data(ifield, self.store, self.degree, self.bound)
+
+    # --- methods ------------------------------------------------------
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         raise NotImplementedError(
@@ -548,6 +575,8 @@ class CartesianField(CoordinatesField):
     or a flag is assigned.
     """
 
+    # --- class attributes ---------------------------------------------
+
     # The map is generated from the shape, so there is no map to copy or
     # re-encode.
     map_field: tx.ClassVar[tx.Optional[str]] = None
@@ -555,6 +584,8 @@ class CartesianField(CoordinatesField):
     _base_derivied_fields: _FieldNames = CoordinatesField.derived_fields
     derived_fields: _FieldNames = (*_base_derivied_fields, "data")
     data_fields: _FieldNames = ("shape",)
+
+    # --- attributes ---------------------------------------------------
 
     _shape: NotKwOnly[tx.Optional[tx.Tuple[int, ...]]] = None
     """Shape of the grid."""
@@ -568,7 +599,11 @@ class CartesianField(CoordinatesField):
     _values: Deactivated[tx.Optional[ArrayProtocol]]
     _coefficients: Deactivated[tx.Optional[ArrayProtocol]]
 
+    # --- attribute views ----------------------------------------------
+
     shape = _invalidating_property("shape")
+
+    # --- overloads ----------------------------------------------------
 
     if tx.TYPE_CHECKING:
 
@@ -583,6 +618,8 @@ class CartesianField(CoordinatesField):
             input: tx.Optional[CoordinateSystem] = None,
             output: tx.Optional[CoordinateSystem] = None,
         ) -> None: ...
+
+    # --- derived attributes -------------------------------------------
 
     @lazyproperty
     def field(self) -> tx.Optional[ArrayProtocol]:
@@ -603,6 +640,8 @@ class CartesianField(CoordinatesField):
     def data(self) -> tx.Optional[ArrayProtocol]:
         """Coordinates of the grid points, encoded according to the flags."""
         return _values2data(self.field, self.store, self.degree, self.bound)
+
+    # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         # A grid is the identity over its own coordinates, so its inverse is
@@ -633,6 +672,8 @@ class Affine(ConcreteTransformation, polymorphic=True):
     whose `data` is the tangent of the map about the identity.
     """
 
+    # --- class attributes ---------------------------------------------
+
     map_field: tx.ClassVar[str] = "matrix"
 
     data_fields: _FieldNames = ("data",)
@@ -644,6 +685,7 @@ class Affine(ConcreteTransformation, polymorphic=True):
         "_inverse",
     )
 
+    # --- attributes ---------------------------------------------------
     # `data` and `log` are stored under private names, behind properties whose
     # assignment clears the views derived from them, as for a field.
 
@@ -666,6 +708,8 @@ class Affine(ConcreteTransformation, polymorphic=True):
 
     _homogeneous_matrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Homogeneous matrix of shape `(No+1, Ni+1)`, accepted for `data`."""
+
+    # --- overloads ----------------------------------------------------
 
     if tx.TYPE_CHECKING:
 
@@ -703,6 +747,8 @@ class Affine(ConcreteTransformation, polymorphic=True):
         _refuse_log(self, arguments.get("log"), "AffineExponential")
         super().__post_init__(arguments)
 
+    # --- views --------------------------------------------------------
+
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
     matrix = _alias("matrix", "data")
@@ -739,11 +785,15 @@ class Linear(ConcreteTransformation, polymorphic=True):
     whose `data` is the tangent of the map about the identity.
     """
 
+    # --- class attributes ---------------------------------------------
+
     map_field: tx.ClassVar[str] = "matrix"
 
     data_fields: _FieldNames = ("data",)
     metadata_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = "matrix", "_sqrt", "_inverse"
+
+    # --- attributes ---------------------------------------------------
 
     _data: NotKwOnly[tx.Optional[npmatrix[Real]]] = None
     """Matrix of shape `(No, Ni)`. `None` stands for the identity."""
@@ -759,6 +809,8 @@ class Linear(ConcreteTransformation, polymorphic=True):
 
     _matrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Matrix, accepted in place of `data`."""
+
+    # --- overloads ----------------------------------------------------
 
     if tx.TYPE_CHECKING:
 
@@ -791,6 +843,8 @@ class Linear(ConcreteTransformation, polymorphic=True):
         _refuse_log(self, arguments.get("log"), classname)
         super().__post_init__(arguments)
 
+    # --- views --------------------------------------------------------
+
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
     matrix = _alias("matrix", "data")
@@ -821,11 +875,15 @@ class Rotation(Linear):
     # TODO: implement rotations in other representations (quaternions, Euler
     # angles, ...).
 
+    # --- attributes ---------------------------------------------------
+
     _data: NotKwOnly[tx.Optional[npmatrix[Real]]] = None
     """Matrix of shape `(N, N)`, with determinant one.
 
     `None` stands for the identity.
     """
+
+    # --- views --------------------------------------------------------
 
     @lazyproperty
     def _inverse(self) -> tx.Optional[ArrayProtocol]:
@@ -838,10 +896,14 @@ class Rotation(Linear):
 class Permutation(ConcreteTransformation):
     """Permutation of the axes."""
 
+    # --- class attributes ---------------------------------------------
+
     map_field: tx.ClassVar[str] = "permutation"
 
     data_fields: _FieldNames = ("data",)
     derived_fields: _FieldNames = "permutation", "_inverse"
+
+    # --- attributes ---------------------------------------------------
 
     _data: NotKwOnly[tx.Optional[npvector[Integral]]] = None
     """Vector of shape `(N,)` giving the input axis of each output axis.
@@ -852,6 +914,8 @@ class Permutation(ConcreteTransformation):
 
     _permutation: InitVar[tx.Optional[npvector[Integral]]] = None
     """Permutation vector, accepted in place of `data`."""
+
+    # --- views --------------------------------------------------------
 
     data = _invalidating_property("data")
     permutation = _alias("permutation", "data")
@@ -866,6 +930,8 @@ class Permutation(ConcreteTransformation):
         for i, p in enumerate(perm):
             inverse_permutation[p] = i
         return backend.asarray(inverse_permutation, dtype=perm.dtype)
+
+    # --- overloads ----------------------------------------------------
 
     if tx.TYPE_CHECKING:
 
@@ -886,6 +952,8 @@ class Permutation(ConcreteTransformation):
             input: tx.Optional[CoordinateSystem] = None,
             output: tx.Optional[CoordinateSystem] = None,
         ) -> None: ...
+
+    # --- methods ------------------------------------------------------
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         if not is_identity(self):
@@ -910,11 +978,15 @@ class Scaling(ConcreteTransformation, polymorphic=True):
     whose `data` holds the logarithms of the factors.
     """
 
+    # --- class attributes ---------------------------------------------
+
     map_field: tx.ClassVar[str] = "scale"
 
     data_fields: _FieldNames = ("data",)
     metadata_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = "scale", "_sqrt", "_inverse"
+
+    # --- attributes ---------------------------------------------------
 
     _data: NotKwOnly[tx.Optional[npvector[Real]]] = None
     """Vector of shape `(N,)` of scale factors, one per axis.
@@ -932,6 +1004,8 @@ class Scaling(ConcreteTransformation, polymorphic=True):
 
     _scale: InitVar[tx.Optional[npvector[Real]]] = None
     """Scale factors, accepted in place of `data`."""
+
+    # --- overloads ----------------------------------------------------
 
     if tx.TYPE_CHECKING:
 
@@ -959,6 +1033,8 @@ class Scaling(ConcreteTransformation, polymorphic=True):
         _refuse_log(self, arguments.get("log"), "ScalingExponential")
         super().__post_init__(arguments)
 
+    # --- views --------------------------------------------------------
+
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
     scale = _alias("scale", "data")
@@ -982,10 +1058,14 @@ class Scaling(ConcreteTransformation, polymorphic=True):
 class Translation(ConcreteTransformation):
     """Translation by a vector."""
 
+    # --- class attributes ---------------------------------------------
+
     map_field: tx.ClassVar[str] = "translation"
 
     data_fields: _FieldNames = ("data",)
     derived_fields: _FieldNames = "translation", "_sqrt", "_inverse"
+
+    # --- attributes ---------------------------------------------------
 
     _data: NotKwOnly[tx.Optional[npvector[Real]]] = None
     """Vector of shape `(N,)` to translate by.
@@ -995,6 +1075,8 @@ class Translation(ConcreteTransformation):
 
     _translation: InitVar[tx.Optional[npvector[Real]]] = None
     """Translation vector, accepted in place of `data`."""
+
+    # --- views --------------------------------------------------------
 
     data = _invalidating_property("data")
     translation = _alias("translation", "data")
@@ -1010,6 +1092,8 @@ class Translation(ConcreteTransformation):
         if self.translation is None:
             return None
         return -self.translation
+
+    # --- overloads ----------------------------------------------------
 
     if tx.TYPE_CHECKING:
 
@@ -1041,6 +1125,8 @@ class Identity(ConcreteTransformation):
     is always `None` and is not a constructor argument.
     """
 
+    # --- views --------------------------------------------------------
+
     @property
     def data(self) -> None:
         """Always `None`, since the identity stores nothing."""
@@ -1053,6 +1139,8 @@ class Identity(ConcreteTransformation):
     @property
     def _inverse(self) -> None:
         return None
+
+    # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         cls = type(self)

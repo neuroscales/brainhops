@@ -69,6 +69,8 @@ class PillowImage(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = EXTENSIONS
     HINTS = ("pillow",)
 
+    # --- format-specific metadata -------------------------------------
+
     image_format: tx.Annotated[
         tx.Optional[str],
         tx.Doc("Pillow's name for the format of the file, such as 'PNG'."),
@@ -99,6 +101,8 @@ class PillowImage(
         tx.Optional[int],
         tx.Doc("The number of frames in the file."),
     ] = None
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -132,6 +136,8 @@ class PillowImage(
     ) -> float:
         """Return the confidence that bytes hold an image that Pillow reads."""
         return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
+
+    # --- load ---------------------------------------------------------
 
     @classmethod
     def from_fileobj(
@@ -221,6 +227,8 @@ class PillowImage(
         The options are those of `from_fileobj`.
         """
         return cls.from_fileobj(BytesIO(content), **kwargs)
+
+    # --- save ---------------------------------------------------------
 
     def _storage(
         self,

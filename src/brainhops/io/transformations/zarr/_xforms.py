@@ -287,6 +287,8 @@ class OmeZarrField(
             node = abczarr.open_group(location, mode="w")
         self.to_node(node, **kwargs)
 
+    # --- level construction ---
+
     @property
     def _kind(self) -> str:
         # Without axes, the field holds coordinates, with its vector components

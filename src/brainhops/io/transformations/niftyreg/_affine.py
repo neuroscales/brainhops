@@ -70,6 +70,8 @@ class NiftyRegAffine(
     # rejected.
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 1 << 16
 
+    # --- ArrayParser hooks --------------------------------------------
+
     @classmethod
     def _accepts_array(cls, array: np.ndarray) -> bool:
         return is_numeric_array(array) and array.ndim == 2
@@ -98,6 +100,8 @@ class NiftyRegAffine(
                 f"{array[-1].tolist()}."
             )
         return cls(matrix=array[:-1], **kwargs)
+
+    # --- writing ------------------------------------------------------
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the four lines of the file, one matrix row each."""

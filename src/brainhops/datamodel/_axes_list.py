@@ -208,6 +208,8 @@ class AxisSequence(tx.Sequence[AXIS]):
         """
         return tuple(... if axis is ... else _name(axis) for axis in self)
 
+    # --- axes ---------------------------------------------------------
+
     @property
     def ndim(self) -> tx.Optional[int]:
         """Number of axes, or `None` when the sequence is open.
@@ -445,6 +447,7 @@ class AxisSequence(tx.Sequence[AXIS]):
             s1[len(s1) - m :], s2[len(s2) - m :]
         )
 
+    # --- private helpers ----------------------------------------------
     # Positions in the space count from the first axis when non-negative and
     # from the last axis when negative.
 
@@ -586,6 +589,9 @@ class AxisList(AxisSequence[AXIS], list):
     _entry = list.__getitem__
 
 
+# ---- converter -------------------------------------------------------
+
+
 class _NoneReadsAsDefault:
     """Field converter that reads `None` as the default of the field.
 
@@ -631,6 +637,9 @@ def bind_axes_default(cls: type) -> None:
             field.converter, _NoneReadsAsDefault
         ):
             field.converter.field = field
+
+
+# ---- private helpers -------------------------------------------------
 
 
 def _split(

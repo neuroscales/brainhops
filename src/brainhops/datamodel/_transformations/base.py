@@ -56,6 +56,8 @@ class Transformation(
         transformations.
     """
 
+    # --- class attributes ---------------------------------------------
+
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Names of the attributes that parameterize the transformation."""
 
@@ -99,6 +101,8 @@ class Transformation(
             if (value := arguments.get(name)) is not None:
                 setattr(self, name, value)
 
+    # --- attributes ---------------------------------------------------
+
     # The input and output systems are stored under private names, so that
     # `replace()` carries over the systems given to the constructor rather
     # than the values that the `input` and `output` properties report. A
@@ -117,6 +121,8 @@ class Transformation(
 
     input = smartproperty("input")
     output = smartproperty("output")
+
+    # --- methods ------------------------------------------------------
 
     def compute(
         self,
@@ -355,6 +361,8 @@ class Transformation(
         """
         return type(self)
 
+    # --- kind checks --------------------------------------------------
+
     def is_kind(
         self, kind: tx.Type[kinds.Kind], compute: bool = False
     ) -> bool:
@@ -454,6 +462,8 @@ class Transformation(
         [`kinds.Affine`][brainhops.datamodel.kinds.Affine] or the identity.
         """
         return self.is_kind(kinds.Affine, compute)
+
+    # --- operators ----------------------------------------------------
 
     @tx.overload
     def __call__(

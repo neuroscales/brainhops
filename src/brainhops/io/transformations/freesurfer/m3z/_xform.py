@@ -66,6 +66,8 @@ class M3zParser(
     See [`M3zStruct`][].
     """
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_fileobj(
         cls,
@@ -105,6 +107,8 @@ class M3zParser(
             raise error("Not a FreeSurfer morph (m3z) file.")
         return Confidence.NO
 
+    # --- from ---------------------------------------------------------
+
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
         """Build a parser from the bytes of a `.m3z` or `.m3d` file."""
@@ -114,6 +118,8 @@ class M3zParser(
     def from_struct(cls, struct: M3zStruct, **kwargs) -> tx.Self:
         """Build a parser from the raw content of a morph."""
         return cls(struct=struct, **kwargs)
+
+    # --- to -----------------------------------------------------------
 
     def to_struct(self, **kwargs) -> M3zStruct:
         """Return the raw content that encodes this object."""
@@ -184,6 +190,8 @@ class M3zMorph(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
 
+    # --- chain --------------------------------------------------------
+
     @property
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain, in the order of application.
@@ -227,6 +235,8 @@ class M3zMorph(
             _xforms.CoordinatesField(input=voxel, output=voxel, **options),
             VoxelToRAS(matrix=struct.image_geometry.vox2ras[:3]),
         )
+
+    # --- to -----------------------------------------------------------
 
     def to_struct(
         self,

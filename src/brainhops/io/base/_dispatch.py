@@ -505,6 +505,7 @@ def parse(
     if ok:
         return result
 
+    # --- Brute force ---------------------------------------------------
     if brute:
         for subclass in sorted(allowed, key=lambda c: c.__qualname__):
             if subclass in tried:
@@ -513,6 +514,7 @@ def parse(
             if ok:
                 return result
 
+    # --- Failure) Raise -----------------------------------------------
     raise _failure(source, list(allowed), errors)
 
 

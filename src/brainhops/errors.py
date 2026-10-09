@@ -4,6 +4,9 @@ if tx.TYPE_CHECKING:
     from .datamodel._transformations.base import Transformation
 
 
+# --- transformations --------------------------------------------------
+
+
 class AdaptationError(TypeError):
     """A coordinate system cannot be adapted to another.
 
@@ -72,12 +75,18 @@ class LossyConversionError(ConversionError):
         self.result = result
 
 
+# --- IO helpers --------------------------------------------------------
+
+
 class AxisError(ValueError):
     """A list of axes cannot be read as a vector field.
 
     The axes of a vector field must include exactly one vector axis, whose
     type is `displacement` or `coordinate`. The other axes are grid axes.
     """
+
+
+# ---- sniff -----------------------------------------------------------
 
 
 class SnifferError(Exception):
@@ -108,6 +117,9 @@ class SnifferNotImplementedError(SnifferError, NotImplementedError):
     """A sniffer function is not implemented."""
 
     pass
+
+
+# ---- from ------------------------------------------------------------
 
 
 class ParserError(Exception):
@@ -152,6 +164,9 @@ class AmbiguousFormatError(ParserError):
     """
 
     pass
+
+
+# ---- to ------------------------------------------------------------
 
 
 class WriterError(ParserError):

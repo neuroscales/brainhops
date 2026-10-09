@@ -82,6 +82,8 @@ class TiffMultiScaleImage(
         tx.Doc("The axes of the series as tifffile stores them."),
     ] = None
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_fileobj(
         cls,
@@ -115,6 +117,8 @@ class TiffMultiScaleImage(
         if levels <= 1:
             return Confidence.NO
         return _WHOLE_SLIDE if slide else Confidence.CERTAIN
+
+    # --- load ---------------------------------------------------------
 
     @classmethod
     def from_source(
@@ -175,6 +179,8 @@ class TiffMultiScaleImage(
         )
         image._ome_index = getattr(first, "_ome_index", None)
         return image
+
+    # --- save ---------------------------------------------------------
 
     def _writer(
         self,

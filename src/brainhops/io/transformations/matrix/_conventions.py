@@ -272,6 +272,7 @@ def to_affine(
     in_system = make_system(input, n)
     out_system = make_system(output, n)
 
+    # --- 1-based voxel indices -> 0-based ---------------------------
     in_base, out_base = check_index_base(index_base)
     scalar = not isinstance(index_base, (tuple, list))
     in_index, out_index = map(is_index_system, (in_system, out_system))
@@ -298,6 +299,7 @@ def to_affine(
     if out_base:
         homog = _shift(n, -1.0) @ homog
 
+    # --- voxel endpoints -> image world spaces -----------------------
     for image, end in ((source, "input"), (target, "output")):
         if image is None:
             continue

@@ -5,6 +5,7 @@ import typing_extensions as tx
 # The aliases of each dependency (short name, qualified module name and
 # HAS_ flag) are defined once, so that __getattr__ and __dir__ agree.
 
+# ---- I/O -------------------------------------------------------------
 _NIBABEL = ("nb", "nibabel", "HAS_NIBABEL")
 _H5PY = ("h5", "h5py", "HAS_H5PY")
 _ABCZARR = ("abczarr", "abczarr", "HAS_ABCZARR")
@@ -12,8 +13,10 @@ _PILLOW = ("pil", "PIL", "HAS_PILLOW")
 _TIFFFILE = ("tifffile", "tifffile", "HAS_TIFFFILE")
 _OPENSLIDE = ("openslide", "openslide", "HAS_OPENSLIDE")
 
+# ---- units -----------------------------------------------------------
 _PINT = ("pint", "pint", "HAS_PINT")
 
+# ---- backends --------------------------------------------------------
 _NUMPY = ("np", "numpy", "HAS_NUMPY")
 _CUPY = ("cp", "cupy", "HAS_CUPY")
 _DASK = ("dk", "dask", "HAS_DASK")
