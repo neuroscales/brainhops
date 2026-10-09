@@ -187,3 +187,86 @@ def test_sub_geometry_reslice_reproduces_numpy_indexing(
     with backend("numpy"):
         got = img.reslice(geometry, degree=degree, bound="reflect").data
     assert np.array_equal(np.asarray(got), data[index])
+
+
+def _voxel_system() -> CoordinateSystem:
+    return CoordinateSystem(
+        name="voxel",
+        axes=[SpaceAxis(name=name, unit="index") for name in "xyz"],
+    )
+
+
+@pytest.mark.parametrize("with_system", [False, True])
+@pytest.mark.parametrize(
+    "index",
+    [
+        (slice(None), 1.5, slice(None)),
+        (slice(None), "a"),
+        (True, slice(None)),
+        (np.bool_(True), slice(None)),
+        (..., 0, ...),
+    ],
+)
+def test_geometry_getitem_rejects_invalid_index(
+    index: tuple, with_system: bool
+) -> None:
+    # An invalid element must raise the same error whether or not the axes
+    # of the grid are known (#389). Booleans are rejected because NumPy
+    # reads them as masks and not as positions.
+    system = _voxel_system() if with_system else None
+    geometry = Geometry(
+        (CartesianField(shape=(4, 5, 6), input=system), Affine(np.eye(3, 4)))
+    )
+    with pytest.raises(ValueError, match="Invalid index"):
+        geometry[index]
+
+
+@pytest.mark.parametrize("with_system", [False, True])
+def test_single_scale_image_getitem_accepts_numpy_integers(
+    with_system: bool,
+) -> None:
+    # A NumPy integer drops an axis like a built-in integer, with or
+    # without a system on the grid (#389).
+    system = _voxel_system() if with_system else None
+    data = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
+    img = SingleScaleImage(
+        data=data,
+        transformations=[
+            Affine(matrix=np.eye(3, 4), input=system, output=system)
+        ],
+    )
+    expected = img[slice(None), 2, slice(None)]
+    got = img[slice(None), np.int64(2), slice(None)]
+    assert got.data.shape == (4, 6)
+    np.testing.assert_array_equal(
+        np.asarray(got.transformation.compute().matrix),
+        np.asarray(expected.transformation.compute().matrix),
+    )
+    assert got.geometry.shape == (4, 6)
+
+
+@pytest.mark.parametrize("with_system", [False, True])
+def test_single_scale_image_getitem_rejects_invalid_index(
+    with_system: bool,
+) -> None:
+    # The error comes from the array or from the index conversion, but an
+    # invalid index never yields a sub-image (#389).
+    system = _voxel_system() if with_system else None
+    img = SingleScaleImage(
+        data=np.zeros((4, 5, 6)),
+        transformations=[
+            Affine(matrix=np.eye(3, 4), input=system, output=system)
+        ],
+    )
+    with pytest.raises((IndexError, ValueError)):
+        img[slice(None), 1.5, slice(None)]
+
+
+def test_index2transform_returns_affine_and_shape() -> None:
+    # The return annotation names the pair that is returned (#388).
+    affine, shape = _index2transform((slice(None), 1, slice(None)), (4, 5, 6))
+    assert isinstance(affine, Affine)
+    assert shape == (4, 6)
+    annotation = _index2transform.__annotations__["return"]
+    assert annotation.__origin__ is tuple
+    assert annotation.__args__[0] is Affine

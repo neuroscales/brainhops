@@ -2,6 +2,9 @@
 
 __all__ = ["Geometry"]
 
+import numbers
+import sys
+
 import typing_extensions as tx
 from bagof.magic import Factory, NoRepr
 
@@ -24,6 +27,15 @@ from .transformations import (
     SimplifyLike,
     Transformation,
 )
+
+if sys.version_info >= (3, 10):
+    from types import EllipsisType
+else:
+    EllipsisType = type(Ellipsis)
+
+# An element of the index of an array: an integer, a slice, `None` (which
+# inserts an axis) or an ellipsis.
+_IndexElement = tx.Union[int, slice, None, EllipsisType]
 
 
 def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
@@ -115,9 +127,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
             output=other.output,
         )
 
-    def __getitem__(
-        self, index: tx.Tuple[tx.Union[int, slice, None], ...]
-    ) -> tx.Self:
+    def __getitem__(self, index: tx.Tuple[_IndexElement, ...]) -> tx.Self:
         """Return the geometry of a sub-image.
 
         The index is the one that would be applied to the image data: a
@@ -188,17 +198,19 @@ class Geometry(_GeometryFields, ImmutableSequence):
 
 
 def _index2transform(
-    index: tx.Tuple[tx.Union[int, slice, None], ...],
+    index: tx.Tuple[_IndexElement, ...],
     shape: tx.Tuple[int, ...],
     system: tx.Optional[CoordinateSystem] = None,
-) -> Transformation:
+) -> tx.Tuple[Affine, tx.Tuple[int, ...]]:
     """Convert an array index into an affine from sub-array to array.
 
     Parameters
     ----------
-    index : tuple of int or slice or None
-        Tuple of integers, slices, `None` and at most one ellipsis, which
-        is appended when missing.
+    index : tuple of int or slice or None or ellipsis
+        Tuple of integers (NumPy integers included), slices, `None` and
+        at most one ellipsis, which is appended when missing. Booleans
+        are rejected, because NumPy reads them as masks and not as
+        positions.
     shape : tuple of int
         Shape of the original array.
     system : CoordinateSystem, optional
@@ -214,8 +226,25 @@ def _index2transform(
     Raises
     ------
     ValueError
-        If an index element is invalid and the axes of `system` are known.
+        If an index element is not an integer, a slice, `None` or an
+        ellipsis, or if the index contains more than one ellipsis.
     """
+    # Validate every element before anything else, so that an invalid
+    # element raises an error whether or not the axes of `system` are
+    # known. Integers are converted to built-in integers, which the code
+    # below expects.
+    checked_index = []
+    for idx in index:
+        if isinstance(idx, numbers.Integral) and not isinstance(idx, bool):
+            checked_index.append(int(idx))
+        elif idx is None or idx is ... or isinstance(idx, slice):
+            checked_index.append(idx)
+        else:
+            raise ValueError(f"Invalid index: {idx}")
+    index = tuple(checked_index)
+    if sum(1 for idx in index if idx is ...) > 1:
+        raise ValueError(f"Invalid index: {index} has more than one ellipsis")
+
     if ... not in index:
         index = (*index, ...)
     index_ellipsis = index.index(...)
@@ -241,10 +270,9 @@ def _index2transform(
                 axis_walker.pop(0)
             elif isinstance(idx, slice):
                 output_axes.append(axis_walker.pop(0))
-            elif idx is None:
-                output_axes.append(Axis())
             else:
-                raise ValueError(f"Invalid index: {idx}")
+                # The element is `None`, which inserts a new axis.
+                output_axes.append(Axis())
 
     # Start from zeros and set every entry explicitly. An identity seed
     # would leave a spurious 1 in the row of a dropped (integer) axis and
