@@ -153,7 +153,7 @@ class H5TransformReader(
 
             # Warp parameters can be large, so they are read lazily on request.
             # A group without a parameters dataset gives empty parameters,
-            # whether or not the data are loaded (#371).
+            # whether or not the data are loaded.
             LARGE_TYPES = ("DisplacementFieldTransform", "BSplineTransform")
             if load or xtype not in LARGE_TYPES or parameters_key is None:
                 parameters = parameters[()]

@@ -543,8 +543,8 @@ def test_h5_warp_without_parameters_reads_the_same_lazily(
 
     The lazy reader used to look up a parameters dataset that the group
     does not have, which failed with an `UnboundLocalError` for a single
-    group and with a `KeyError` when an earlier group had parameters
-    (#371). Both settings of `load` now give empty parameters.
+    group and with a `KeyError` when an earlier group had parameters.
+    Both settings of `load` now give empty parameters.
     """
     h5py = pytest.importorskip("h5py")
     from brainhops.io.transformations.itk.h5._parser import (
