@@ -130,6 +130,7 @@ class H5TransformReader(
                 continue
 
             parameters = np.array([])
+            parameters_key = None
             if "TransformParameters" in nodes[node]:
                 parameters_key = "TransformParameters"
                 parameters = nodes[node]["TransformParameters"]
@@ -151,8 +152,10 @@ class H5TransformReader(
             fixed_parameters = fixed_parameters[()]
 
             # Warp parameters can be large, so they are read lazily on request.
+            # A group without a parameters dataset gives empty parameters,
+            # whether or not the data are loaded.
             LARGE_TYPES = ("DisplacementFieldTransform", "BSplineTransform")
-            if load or xtype not in LARGE_TYPES:
+            if load or xtype not in LARGE_TYPES or parameters_key is None:
                 parameters = parameters[()]
             else:
                 parameters = delayed_dataset(
