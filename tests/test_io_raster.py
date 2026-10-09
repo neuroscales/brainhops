@@ -136,8 +136,8 @@ def test_default_axes() -> None:
 
 @pytest.mark.parametrize("ndim", [1, 4, 5, 6, 7, 8])
 def test_default_axes_channel_names_are_unique(ndim: int) -> None:
-    # Regression test for #378: from six dimensions on, the channel
-    # axis `c` used to appear twice.
+    # From six dimensions on, the channel axis `c` used to appear
+    # twice.
     axes = raster.default_axes(ndim, channel=True)
     names = [a.name for a in axes]
     assert len(names) == ndim
