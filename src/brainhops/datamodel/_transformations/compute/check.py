@@ -243,13 +243,13 @@ class IsKind:
 
         Parameters
         ----------
-        x
+        x : Transformation
             Transformation in question.
-        kind
+        kind : KindLike
             Kind node, class kind, or a string naming one: a kind name or
             symbol such as `"affine"` or `"SO(3)"`, or a registered alias such
             as `"inverse"`.
-        compute
+        compute : bool, default=False
             Whether values may be read.
 
         Returns
@@ -355,9 +355,9 @@ def is_family(x: Transformation, family: FamilyLike) -> bool:
 
     Parameters
     ----------
-    x
+    x : Transformation
         Transformation in question.
-    family
+    family : FamilyLike
         Family, `(kind, ndim)` pair, bare number of dimensions, kind, or
         string naming a kind.
 
@@ -402,7 +402,7 @@ def normalize_kind(kind_like: KindLike) -> Kind:
 
     Parameters
     ----------
-    kind_like
+    kind_like : KindLike
         Kind node, class kind, or a string naming one.
 
     Returns
@@ -450,7 +450,7 @@ def normalize_family(family_like: FamilyLike) -> Family:
 
     Parameters
     ----------
-    family_like
+    family_like : FamilyLike
         Family, `(kind, ndim)` pair, bare number of dimensions, kind, or
         string naming a kind.
 

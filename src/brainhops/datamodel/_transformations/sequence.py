@@ -217,14 +217,14 @@ class Sequence(SequenceMixin, Transformation):
 
         Parameters
         ----------
-        mode
+        mode : ModeLike, default=True
             Kinds to compose, as a name, a type or a list of them. `True`
             composes everything, and `False` only simplifies.
-        simplify
+        simplify : SimplifyLike, default="analytic"
             Simplification policy applied before composition: `"analytic"` uses
             the type structure only, `"numeric"` also inspects values, and
             `False`, `"none"` or `None` disables simplification.
-        factor
+        factor : bool, default=False
             Rewrite the chain into its axis-group normal form
             `[grid?, F_1, ..., F_m, Pi_perm?]`, with one axis-preserving
             subspace factor per group of axes that transform together and an

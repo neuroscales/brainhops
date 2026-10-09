@@ -82,15 +82,15 @@ def factor_sequence(
 
     Parameters
     ----------
-    seq
+    seq : Sequence
         Chain to factor. Nested sequences are flattened, and a leading
         [`CartesianField`][] is the sampling grid, kept as is.
-    mode
+    mode : ModeLike, default=True
         Kinds of transformation allowed to compose inside a group, as in
         [`Sequence.compute`][].
-    simplify
+    simplify : SimplifyLike, default="analytic"
         Simplification policy for composing the pieces of each group.
-    cache
+    cache : PatternCache, optional
         Memo of dependency patterns, shared across the rounds of one
         computation. A fresh cache is used if it is omitted.
 

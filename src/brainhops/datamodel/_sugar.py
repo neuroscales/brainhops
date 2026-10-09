@@ -10,7 +10,7 @@ def get_axes(system: tx.Optional[CoordinateSystem]) -> AxisList:
 
     Parameters
     ----------
-    system
+    system : CoordinateSystem or None
         A coordinate system, or `None`.
 
     Returns
@@ -32,7 +32,7 @@ def vector_axis(
 
     Parameters
     ----------
-    axes
+    axes : sequence or None
         The axes of the field. `None` counts as no axes.
 
     Returns

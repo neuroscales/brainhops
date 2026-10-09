@@ -181,12 +181,12 @@ def _index2transform(
 
     Parameters
     ----------
-    index
+    index : tuple of int or slice or None
         Tuple of integers, slices, `None` and at most one ellipsis, which
         is appended when missing.
-    shape
+    shape : tuple of int
         Shape of the original array.
-    system
+    system : CoordinateSystem, optional
         Coordinate system of the original array.
 
     Returns

@@ -103,7 +103,7 @@ class Axis(DataModelBase, polymorphic=True):
 
         Parameters
         ----------
-        other
+        other : Axis
             The axis to compare with.
 
         Returns
@@ -143,7 +143,7 @@ class Axis(DataModelBase, polymorphic=True):
 
         Parameters
         ----------
-        other
+        other : Axis
             Another description of the same axis.
 
         Returns

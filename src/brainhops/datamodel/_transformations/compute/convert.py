@@ -98,9 +98,9 @@ def convert(x: FROM, cls: tx.Type[TO], **kwargs: tx.Any) -> TO:
 
     Parameters
     ----------
-    x
+    x : Transformation
         Transformation to convert.
-    cls
+    cls : type of Transformation
         Requested transformation type.
 
     Returns

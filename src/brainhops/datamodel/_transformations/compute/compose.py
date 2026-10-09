@@ -74,9 +74,9 @@ def compose(
 
     Parameters
     ----------
-    x1
+    x1 : Transformation
         Transformation applied second.
-    x2
+    x2 : Transformation
         Transformation applied first.
 
     Returns

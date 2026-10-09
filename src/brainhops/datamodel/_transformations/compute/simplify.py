@@ -234,10 +234,10 @@ def simplify(
 
     Parameters
     ----------
-    *transformations
+    *transformations : Transformation
         One transformation to downcast, or two consecutive ones (`first` before
         `second`) to collapse.
-    policy
+    policy : SimplifyLike, default=SimplifyPolicy.analytic
         How hard each transformation may be inspected. Anything that
         [`SimplifyTable.from_like`][] accepts is normalized to a
         [`SimplifyTable`][] before dispatch.

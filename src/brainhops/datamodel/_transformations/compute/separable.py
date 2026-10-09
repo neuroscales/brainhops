@@ -62,19 +62,19 @@ def pull_separable(
 
     Parameters
     ----------
-    data
+    data : Any
         Image to reslice.
-    seq
+    seq : Transformation
         Uncomputed transformation from output grid coordinates to data
         coordinates.
-    degree
+    degree : int
         Spline degree, from 0 to 5.
-    bound
+    bound : str or float
         Boundary condition, as accepted by
         [`pull`][brainhops._core.bsplines.pull].
-    coeff
+    coeff : bool
         Whether `data` already holds spline coefficients.
-    copy
+    copy : bool, default=False
         Whether the result must be a fresh array. When `copy` is False, as with
         `torch.Tensor.to`, a reslice made only of gathers (a flip, a
         permutation or a unit-step slice) may return a view of `data`. No copy

@@ -162,10 +162,12 @@ class AxisSequence(tx.Sequence[AXIS]):
 
         Parameters
         ----------
-        query
+        query : Axis or str
             An axis, or the name of an axis.
-        start, stop
-            Search window, as for `list.index`.
+        start : int, default=0
+            Start of the search window, as for `list.index`.
+        stop : int, default=sys.maxsize
+            End of the search window, as for `list.index`.
 
         Returns
         -------
@@ -336,9 +338,9 @@ class AxisSequence(tx.Sequence[AXIS]):
 
         Parameters
         ----------
-        positions
+        positions : iterable of int
             Non-negative position of each axis.
-        ndim
+        ndim : int, optional
             Number of axes of the larger space. When it is omitted, the result
             is open and ends with `...`.
 

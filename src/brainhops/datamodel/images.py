@@ -161,9 +161,9 @@ class SingleScaleImage(Image):
             The target voxel-to-world geometry. An image or a geometry also
             fixes the output shape; a bare transformation keeps the current
             shape. By default, the image is resampled onto its own grid.
-        degree : int
+        degree : int, default=1
             Spline degree, from 0 (nearest neighbour) and 1 (linear) up to 5.
-        bound : str or float
+        bound : str or float, default="reflect"
             Boundary condition. A float is a constant value beyond the edge.
             The strings are:
 
@@ -172,10 +172,10 @@ class SingleScaleImage(Image):
                 - 'mirror': mirror at edge        (d c b | a b c d | c b a)
                 - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
                 - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-        coeff : bool
+        coeff : bool, default=False
             Whether the data already holds spline coefficients. Otherwise, the
             data is prefiltered before interpolation.
-        copy : bool
+        copy : bool, default=False
             If true, the output never shares memory with the input. If false,
             pure gathers (flips, permutations and unit-step slices) may return
             a view, as with `torch.Tensor.to`. Dask arrays are immutable and
@@ -359,9 +359,9 @@ class MultiScaleImage(Image):
         ----------
         geometry : Image or Geometry or Transformation, optional
             The target geometry, read as in [`SingleScaleImage.reslice`][].
-        degree : int
+        degree : int, default=1
             Spline degree, from 0 (nearest neighbour) and 1 (linear) up to 5.
-        bound : str or float
+        bound : str or float, default="reflect"
             Boundary condition. A float is a constant value beyond the edge.
             The strings are:
 
@@ -370,10 +370,10 @@ class MultiScaleImage(Image):
                 - 'mirror': mirror at edge        (d c b | a b c d | c b a)
                 - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
                 - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-        coeff : bool
+        coeff : bool, default=False
             Whether the data already holds spline coefficients. Otherwise, the
             data is prefiltered before interpolation.
-        copy : bool
+        copy : bool, default=False
             If true, the output never shares memory with the input. If false,
             pure gathers (flips, permutations and unit-step slices) may return
             a view, as with `torch.Tensor.to`. Dask arrays are immutable and
