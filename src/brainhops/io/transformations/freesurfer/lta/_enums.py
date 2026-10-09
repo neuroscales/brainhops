@@ -1,18 +1,16 @@
 __all__ = ["LtaType", "LtaMatrixType", "LtaValidity"]
 
-# stdlib
 from enum import Enum
 
 
 class LtaType(int, Enum):
-    """The affine transformation type recorded in an LTA file header.
+    """Type of the affine transformation in an LTA header.
 
-    This enumeration identifies the coordinate systems that the
-    transformation maps between, such as voxel-to-voxel or
-    RAS-to-RAS.
+    The type identifies the coordinate systems that the affine maps between,
+    for example voxel to voxel or RAS to RAS.
     """
 
-    # Affine transformation types
+    # Affine types.
     LINEAR_VOX_TO_VOX = 0
     LINEAR_VOXEL_TO_VOXEL = LINEAR_VOX_TO_VOX
     LINEAR_RAS_TO_RAS = 1
@@ -20,7 +18,7 @@ class LtaType(int, Enum):
     LINEAR_CORONAL_RAS_TO_CORONAL_RAS = 21
     LINEAR_COR_TO_COR = LINEAR_CORONAL_RAS_TO_CORONAL_RAS
     LINEAR_RSA_TO_RSA = LINEAR_COR_TO_COR
-    # Transformation file types (invalid in a LTA file)
+    # File types, which are invalid in an LTA file.
     TRANSFORM_ARRAY_TYPE = 10
     MORPH_3D_TYPE = 11
     MNI_TRANSFORM_TYPE = 12
@@ -28,7 +26,7 @@ class LtaType(int, Enum):
 
 
 class LtaMatrixType(int, Enum):
-    """The element type of a matrix parsed from an LTA file."""
+    """Element type of a matrix parsed from an LTA file."""
 
     UNKNOWN_MATRIX = 0
     REAL_MATRIX = 1
@@ -36,7 +34,7 @@ class LtaMatrixType(int, Enum):
 
 
 class LtaValidity(int, Enum):
-    """Whether a volume-geometry block in an LTA file is populated."""
+    """Whether a volume-geometry block is populated."""
 
     VOLUME_INFO_INVALID = 0
     VOLUME_INFO_VALID = 1

@@ -1,9 +1,8 @@
-"""
-The raw content of an X5 file, as stored, before any interpretation.
+"""The raw content of an X5 file, before it is interpreted.
 
-These structs mirror the HDF5 layout one to one, so that a file read and
-written back keeps everything it said -- its JSON metadata included --
-even when brainhops cannot turn a transform into a datamodel object.
+The structures mirror the HDF5 layout one to one, so that reading and
+writing a file keeps all of its content, including JSON metadata, even when
+no transformation can be built from it.
 """
 
 __all__ = [
@@ -14,133 +13,126 @@ __all__ = [
     "write_x5",
 ]
 
-# stdlib
 import json
 
-# dependencies
 import h5py
 import numpy as np
 import typing_extensions as tx
-
-# externals
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 from brainhops.io.base.parsers import ParserContentError
-
-# io
 from brainhops.io.common.hdf5 import delayed_dataset, read_string
 
 X5_FORMAT = "X5"
-"""The value of the root `Format` attribute of every X5 file."""
+"""The value of the root `Format` attribute."""
 
 X5_VERSION = np.uint16(1)
-"""The root `Version` attribute written, as nitransforms writes it."""
+"""The root `Version` that is written, as nitransforms writes it."""
 
 TRANSFORM_GROUP = "TransformGroup"
 TRANSFORM_CHAIN = "TransformChain"
 
-# Node attributes and datasets that have a field of their own; any other
-# attribute is kept, as read, in `X5Node.attrs`.
+# Node attributes with their own fields; the others go to `attrs`.
 _NODE_ATTRS = ("Type", "SubType", "Representation", "Metadata", "ArrayLength")
 
 
 class X5Domain(Magic, repr=HIDE_IF_NONE):
-    """
-    The `Domain` group of a transform: the grid it is sampled on.
+    """The `Domain` group: the grid on which a transform is sampled.
 
-    REQUIRED for a `nonlinear` transform, RECOMMENDED for a `linear` one.
+    The group is required for nonlinear transforms and recommended for linear
+    ones.
     """
 
     grid: bool = True
-    """Whether the samples lie on a regular grid (`Grid` dataset)."""
+    """The `Grid` dataset: whether the samples lie on a regular grid."""
 
     size: tx.Tuple[int, ...] = ()
-    """The number of samples per dimension (`Size` dataset)."""
+    """The `Size` dataset: the number of samples per dimension."""
 
     mapping: tx.Any = None
-    """
-    The `(D + 1, D + 1)` affine from sample indices to world (RAS)
-    coordinates (`Mapping` dataset): the voxel-to-RAS affine of the grid.
-    """
+    """The `Mapping` dataset: the voxel-to-RAS affine of the grid."""
 
     coordinates: tx.Optional[str] = None
-    """The kind of world coordinates (`Coordinates` attribute), e.g.
-    `"cartesian"`."""
+    """The `Coordinates` attribute, such as `"cartesian"`."""
 
 
 class X5Node(Magic, repr=HIDE_IF_NONE):
-    """
-    One numbered group `/TransformGroup/<i>` of an X5 file.
+    """One numbered group `/TransformGroup/<i>`.
 
-    Every field mirrors an attribute or a dataset of the group. Large
-    datasets (`Transform`, `Inverse`, `Jacobian`) are read lazily when
-    the file is opened with `load=False`.
+    The fields mirror the group's attributes and datasets. The large datasets
+    (`Transform`, `Inverse` and `Jacobian`) are loaded lazily when the file is
+    read with `load=False`.
     """
 
     type: str = "linear"
-    """`Type`: `"linear"`, `"nonlinear"` or `"composite"`. fslpy's
-    `"affine"` is read as `"linear"`."""
+    """The `Type` attribute: `linear`, `nonlinear` or `composite`.
+
+    The fslpy spelling `affine` is read as `linear`.
+    """
 
     transform: tx.Any = None
-    """`Transform`: the parameters -- a `(D + 1, D + 1)` matrix, a stack
-    of them, or a dense field."""
+    """The `Transform` dataset: a matrix, a stack of matrices, or a field."""
 
     subtype: tx.Optional[str] = None
-    """`SubType`, e.g. `"affine"`, `"densefield"` or `"bspline"`."""
+    """The `SubType` attribute, such as `affine`, `densefield` or `bspline`."""
 
     representation: tx.Optional[str] = None
-    """`Representation`, e.g. `"matrix"`, `"displacements"` or
-    `"deformations"`."""
+    """The `Representation` attribute, such as `matrix` or `displacements`."""
 
     metadata: tx.Any = None
-    """`Metadata`: the JSON attribute, decoded (a `dict`), or the raw
-    string if it is not valid JSON."""
+    """The `Metadata` attribute, decoded from JSON.
+
+    Metadata that is not valid JSON is kept as a string.
+    """
 
     dimension_kinds: tx.Optional[tx.Tuple[str, ...]] = None
-    """`DimensionKinds`: what each axis of `transform` holds, e.g.
-    `("space", "space", "space", "vector")`."""
+    """The `DimensionKinds` dataset: what each axis of `transform` holds."""
 
     domain: tx.Optional[X5Domain] = None
     """The `Domain` group."""
 
     inverse: tx.Any = None
-    """`Inverse`: an optional precomputed inverse."""
+    """The optional precomputed inverse."""
 
     jacobian: tx.Any = None
-    """`Jacobian`: an optional cached Jacobian determinant."""
+    """The optional cached Jacobian determinant."""
 
     additional_parameters: tx.Any = None
-    """`AdditionalParameters`: subtype-specific parameters (for a
-    `bspline`, the affine of the grid of knots)."""
+    """The `AdditionalParameters` dataset, which depends on the subtype.
+
+    For a B-spline, this dataset is the affine of the knot grid.
+    """
 
     array_length: int = 1
-    """`ArrayLength`: how many transforms `transform` stacks."""
+    """The `ArrayLength` attribute: the number of stacked transforms."""
 
     attrs: tx.Dict[str, tx.Any] = Factory(dict)
-    """Any other attribute of the group, as read."""
+    """The other attributes of the group, as read."""
 
 
 class X5Header(Magic, repr=HIDE_IF_NONE):
-    """The root of an X5 file: its attributes and its chains."""
+    """The root of an X5 file: its attributes and chains."""
 
     format: str = X5_FORMAT
     """The root `Format` attribute."""
 
     version: tx.Any = X5_VERSION
-    """The root `Version` attribute, as read: `1` for the current draft,
-    `"0.1.0"` for fslpy's earlier layout."""
+    """The root `Version` attribute, as read.
+
+    The current draft writes 1, and the earlier fslpy layout writes `"0.1.0"`.
+    """
 
     attrs: tx.Dict[str, tx.Any] = Factory(dict)
-    """Any other root attribute, as read."""
+    """The other root attributes, as read."""
 
     chains: tx.List[tx.Tuple[int, ...]] = Factory(list)
-    """
-    The chains of `/TransformChain`, in order: each lists, in the order
-    they are applied, the indices of the transforms it chains.
+    """The chains of `/TransformChain`, in order.
+
+    Each chain lists node indices in the order the nodes are applied.
     """
 
     legacy: bool = False
-    """Whether the file used fslpy's earlier (`0.x`) layout."""
+    """Whether the file uses the earlier fslpy layout."""
 
 
 # ----------------------------------------------------------------------
@@ -149,7 +141,7 @@ class X5Header(Magic, repr=HIDE_IF_NONE):
 
 
 def is_x5(h5file: h5py.File) -> bool:
-    """Whether an open HDF5 file says it is an X5 file."""
+    """Return whether the root `Format` of an open HDF5 file says X5."""
     try:
         return read_string(h5file.attrs.get("Format")) == X5_FORMAT
     except (ValueError, UnicodeDecodeError):
@@ -159,7 +151,7 @@ def is_x5(h5file: h5py.File) -> bool:
 def read_x5(
     h5file: h5py.File, load: bool = True, keep_open: bool = False
 ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
-    """Read the header and the transform nodes of an open X5 file."""
+    """Read the header and nodes of an open X5 file."""
     if not is_x5(h5file):
         raise ParserContentError("Not an X5 file: no root Format='X5'.")
     if TRANSFORM_GROUP not in h5file and "Transform" in h5file:
@@ -204,7 +196,7 @@ def _index(key: str) -> int:
 
 
 def _read_chain(dataset: h5py.Dataset, count: int) -> tx.Tuple[int, ...]:
-    """A chain, stored by nitransforms as a string `"0/1/2"`."""
+    """Parse a chain such as `"0/1/2"` into validated node indices."""
     text = read_string(dataset)
     try:
         chain = tuple(int(i) for i in text.split("/"))
@@ -226,7 +218,7 @@ def _read_dataset(
     if key not in group:
         return None
     dataset = group[key]
-    if load or dataset.ndim <= 2:  # matrices are always read
+    if load or dataset.ndim <= 2:  # matrices are always loaded
         return dataset[()]
     return delayed_dataset(group.file, dataset.name, keep_open)
 
@@ -240,7 +232,7 @@ def _read_node(group: h5py.Group, load: bool, keep_open: bool) -> X5Node:
             f"X5 group {group.name} has no Transform dataset."
         )
     xtype = read_string(attrs["Type"])
-    if xtype == "affine":  # fslpy
+    if xtype == "affine":  # fslpy spelling
         xtype = "linear"
     node = X5Node(
         type=xtype,
@@ -259,8 +251,7 @@ def _read_node(group: h5py.Group, load: bool, keep_open: bool) -> X5Node:
     if "DimensionKinds" in group:
         kinds = np.asarray(group["DimensionKinds"][()], dtype=object)
         kinds = tuple(read_string(kind) for kind in kinds.ravel())
-        # nitransforms writes `np.asarray(None, dtype="S")`, i.e. b"None",
-        # when a transform has no kinds.
+        # nitransforms writes b"None" when there are no kinds.
         node.dimension_kinds = None if kinds == ("None",) else kinds
     if "Domain" in group:
         node.domain = _read_domain(group["Domain"])
@@ -289,15 +280,11 @@ def _read_domain(group: h5py.Group) -> X5Domain:
     return domain
 
 
-# --- fslpy's earlier layout -------------------------------------------
-#
-# fslpy (`fsl.transform.x5`, 3.x) writes `Version="0.1.0"` files with a
-# single transform at the root: a `Type` attribute ("linear" or
-# "nonlinear"), a `/Transform` group holding a `Matrix` dataset, and the
-# two image spaces `/A` and `/B`. A deformation also holds its grid in
-# `/Transform/Mapping/Matrix`, and says in `SubType` whether it stores
-# "relative" displacements or "absolute" coordinates. Both map world
-# coordinates of space A to world coordinates of space B.
+# The earlier fslpy layout (Version 0.1.0) holds a single transform: a root
+# Type attribute (linear or nonlinear), a /Transform group with a Matrix
+# dataset, and the image spaces /A and /B. A deformation also stores its grid
+# in /Transform/Mapping/Matrix, and its SubType is relative (displacements)
+# or absolute (coordinates).
 
 
 def _read_legacy(h5file: h5py.File) -> tx.Tuple[X5Header, tx.List[X5Node]]:
@@ -369,12 +356,11 @@ def _read_legacy(h5file: h5py.File) -> tx.Tuple[X5Header, tx.List[X5Node]]:
 def write_x5(
     h5file: h5py.File, header: X5Header, nodes: tx.Sequence[X5Node]
 ) -> None:
-    """Write a header and transform nodes into an empty HDF5 file."""
+    """Write a header and its nodes into an empty HDF5 file."""
     h5file.attrs["Format"] = X5_FORMAT
     version = header.version
     if header.legacy or version is None:
-        # The nodes are always written in the current layout, so they
-        # are given its version, not the one of fslpy's layout.
+        # Nodes are always written in the current layout.
         version = X5_VERSION
     h5file.attrs["Version"] = version
     for key, value in header.attrs.items():

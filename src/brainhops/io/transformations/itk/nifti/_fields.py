@@ -1,28 +1,22 @@
-"""ITK displacement and coordinate fields, stored as LPS NIfTI vector images.
+"""
+ITK displacement and coordinates fields stored as LPS NIfTI vector images.
 
-The encoding, the sources it is taken from, and how these readers are
-told apart from the RAS NIfTI fields are described in the package
-docstring, [`brainhops.io.transformations.itk.nifti`][].
+The encoding and the way these files are told apart from RAS NIfTI fields are
+described in [`brainhops.io.transformations.itk.nifti`][].
 """
 
-# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
-# core
 from brainhops._core import affines as _affines
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
-
-# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.enums import BoundaryCondition
-
-# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -47,54 +41,42 @@ from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.base.fields import LPSCoordinatesField
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
-# locals
 from .._systems import _make_system
 
 _NDIMS = (2, 3)
 """
-The numbers of spatial dimensions these readers support.
+Supported spatial dimensions.
 
-NIfTI stores three spatial axes, and ITK writes a vector image of fewer
-dimensions with singleton axes in their place, so a 2-D and a 3-D field
-are stored alike and read by the same code. ITK can also write a 4-D
-vector image, with its fourth dimension in the time axis, but NIfTI has
-no geometry for that axis, so it is not read here.
+ITK pads an image with fewer than three dimensions with singleton axes, so 2-D
+and 3-D fields share the same code. A 4-D field is not supported, since NIfTI
+has no geometry for a time axis.
 """
 
 _NIFTI_NDIM = 3
-"""The number of spatial axes, and of geometric dimensions, of a NIfTI."""
 
 _RAS_LPS = np.diag([-1.0, -1.0, 1.0, 1.0])
 """
-The homogeneous matrix that maps RAS to LPS, and LPS to RAS.
+Homogeneous RAS-to-LPS matrix, which negates the first two axes.
 
-It negates the first two axes and is its own inverse. ITK applies it to
-the direction and origin of an image of any dimension when it writes the
-NIfTI sform and qform, and when it reads them back
-(`itkNiftiImageIO.cxx`, `SetNIfTIOrientationFromImageIO` and
-`SetImageIOOrientationFromNIfTI`), so a 2-D ITK image lives in (L, P).
+ITK applies it to the direction and origin of an image of any dimension when it
+writes or reads the sform and qform (`itkNiftiImageIO.cxx`), so a 2-D ITK image
+lives in (L, P).
 """
 
 _NIFTI_XFORM_SCANNER_ANAT = 1
 """
-The sform and qform code ITK writes.
-
-`SetNIfTIOrientationFromImageIO` sets both codes to
-`NIFTI_XFORM_SCANNER_ANAT`, so a field that was not read from a file is
-written the same way.
+The sform and qform code that ITK writes, used for fields not read from a file.
 """
 
 
 def _itk_ndim(shape: tx.Optional[tx.Sequence[int]]) -> tx.Optional[int]:
     """
-    The number of spatial dimensions of a field stored in ITK's layout.
+    Return the spatial dimension of a field in the ITK layout, or `None`.
 
-    ITK writes a vector image with `dim[0] = 5`, singleton axes in place
-    of the spatial and time dimensions it does not have, and its
-    components in the fifth axis (`WriteImageInformation`): a 3-D field
-    is `(X, Y, Z, 1, 3)` and a 2-D one `(X, Y, 1, 1, 2)`. A displacement
-    has as many components as the grid has dimensions. `None` when the
-    shape is not one of these layouts.
+    ITK writes a vector image with five dimensions, padding the missing spatial
+    and time axes with singletons and storing the components in the fifth axis.
+    A 3-D field has shape (X, Y, Z, 1, 3) and a 2-D field has shape (X, Y, 1,
+    1, 2).
     """
     if shape is None or len(shape) != 5 or int(shape[3]) != 1:
         return None
@@ -107,18 +89,12 @@ def _itk_ndim(shape: tx.Optional[tx.Sequence[int]]) -> tx.Optional[int]:
 
 
 def _voxel_system(ndim: int) -> _systems.CoordinateSystem:
-    """
-    The voxel system of an `ndim`-dimensional grid.
-
-    Its axes are spatial and count samples, so the system is a
-    `PixelCoordinateSystem` in 2-D and a `VoxelCoordinateSystem` in 3-D.
-    """
+    """Return a voxel space whose axes count samples in index units."""
     axes = [SpaceAxis(name=f"dim{i}", unit="index") for i in range(ndim)]
     return _systems.CoordinateSystem(axes=axes)
 
 
 def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
-    """The square homogeneous matrix of an affine-like slot."""
     try:
         matrix = xform.to(_xforms.Affine).homogeneous_matrix
     except Exception as error:
@@ -139,38 +115,30 @@ def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
 
 class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     """
-    A field stored in an ITK NIfTI vector image, from LPS to LPS.
+    Base class of the fields stored in ITK NIfTI vector images.
 
-    The vectors of the image are in ITK's LPS physical space, while the
-    NIfTI header carries the usual voxel-to-RAS affine. This base reads
-    both, and leaves to its subclasses what the vectors mean:
-    displacements ([`ItkNiftiDisplacementField`][]) or absolute
+    The vectors are expressed in the LPS physical space of ITK, while the
+    header holds the usual voxel-to-RAS affine. Subclasses decide whether the
+    vectors are displacements ([`ItkNiftiDisplacementField`][]) or absolute
     coordinates ([`ItkNiftiCoordinatesField`][]).
 
-    The same code reads 2-D and 3-D fields: the dimension is read off the
-    header, and the endpoints are the ITK spaces of that dimension --
-    (L, P) in 2-D and `LPSmm` in 3-D, both in millimetres.
-
-    The chain is made of named slots, so the field is an
-    [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]:
-    editing it in place raises `TypeError`.
-
-    Abstract: it is not decorated with `@register_format`, so it never
-    takes part in dispatch.
+    The dimension of the field is read from the header, and its endpoints are
+    the ITK spaces of that dimension: (L, P) in 2-D and `LPSmm` in 3-D. The
+    field is an
+    [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]
+    of named slots, so editing it in place raises a `TypeError`. This class is
+    not registered as a format.
     """
 
     HINTS = ("itk", "ants")
 
-    # --- reading ------------------------------------------------------
-
     @classmethod
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         """
-        Build the field from a `nibabel` header or image.
+        Build a field from a `nibabel` image or header.
 
-        The header must be in ITK's layout, so a file that is not an ITK
-        field is refused here, from its header alone, rather than when
-        its chain is first built.
+        A file that is not in the ITK layout is rejected from its header alone,
+        rather than when the chain is built.
         """
         header = nifti.header if isinstance(nifti, nb.Nifti1Image) else nifti
         shape = _nifti_shape(header)
@@ -181,49 +149,40 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             )
         return super().from_nibabel(nifti, **kwargs)
 
-    # --- endpoints ----------------------------------------------------
-    #
-    # Declared rather than read off the chain, as the ITK blocks do:
-    # reading them off the chain would build the chain, and building it
-    # decodes the field data. They are the LPS spaces the ITK blocks use,
-    # so a warp read from NIfTI and an affine read from a `.tfm` name the
-    # same space.
+    # The endpoints are declared rather than read off the chain, which would
+    # decode the data. They are the ITK LPS spaces, so a NIfTI warp and a .tfm
+    # affine name the same space.
 
     def _ndim(self) -> tx.Optional[int]:
-        """The number of spatial dimensions, without decoding the data."""
+        """Return the spatial dimension without decoding the data."""
         header = self.header
         if header is not None:
             return _itk_ndim(_nifti_shape(header))
         chain = getattr(self, "_transformations", None)
         if chain:
-            # The first slot maps LPS to voxels: one row per dimension.
+            # The first slot maps LPS to voxels, with one row per dimension.
             return int(np.asarray(chain[0].matrix).shape[0])
         return None
 
     @smartproperty(cache=True)
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The anatomical space the field maps from."""
+        """The ITK physical space that the field maps from."""
         ndim = self._ndim()
         return None if ndim is None else _make_system(ndim)
 
     @smartproperty(cache=True)
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The anatomical space the field maps to."""
+        """The ITK physical space that the field maps to."""
         ndim = self._ndim()
         return None if ndim is None else _make_system(ndim)
 
-    # --- decoding -----------------------------------------------------
-
     def _grid(self) -> tx.Tuple[int, np.ndarray]:
         """
-        The dimension of the field's grid, and its compact voxel-to-LPS
-        affine, of shape `(ndim, ndim + 1)`.
+        Return the grid dimension and the compact voxel-to-LPS affine.
 
-        The header stores voxel-to-RAS, as every NIfTI does, so the first
-        two rows are negated. A 2-D grid keeps the rows and columns of x
-        and y, as ITK does when it reads a 2-D image. `get_best_affine`
-        prefers the sform when its code is set; ITK writes the same
-        matrix to both forms.
+        The affine has shape `(ndim, ndim + 1)`. The header stores a
+        voxel-to-RAS affine, so its first two rows are negated. ITK writes the
+        same matrix to the sform and the qform.
         """
         header = self.header
         ndim = None if header is None else self._ndim()
@@ -238,15 +197,13 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
     def _lps_vectors(self, ndim: int) -> ArrayProtocol:
         """
-        The stored vectors, as an `(*shape, ndim)` array in LPS.
+        Return the stored vectors as an LPS array of shape `(*shape, ndim)`.
 
-        The singleton axes of ITK's five-dimensional layout are dropped.
-        A `VECTOR` (1007) file is read as it is, because ITK writes its
-        LPS vectors unconverted. A three-component `DISPVECT` (1006) file
-        holds RAS vectors, so its first two components are negated, as
-        ITK 5.4 and later does when it reads one
-        (`ConvertRASDisplacementVectors`, on by default). ITK leaves a
-        two-component `DISPVECT` file unconverted, and so does this.
+        Vectors stored under the `VECTOR` intent (1007) are read as they are,
+        because ITK writes LPS vectors unconverted. A 3-component field under
+        the `DISPVECT` intent (1006) holds RAS vectors, so its first two
+        components are negated, as ITK 5.4 and later do on reading. A
+        2-component `DISPVECT` field is left unconverted, as in ITK.
         """
         data = self.data
         if data is None:
@@ -266,20 +223,20 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     def _spaces(
         ndim: int,
     ) -> tx.Tuple[_systems.CoordinateSystem, _systems.CoordinateSystem]:
-        """The LPS space and the voxel space of an `ndim`-D field."""
         return _make_system(ndim), _voxel_system(ndim)
-
-    # --- slots --------------------------------------------------------
 
     @property
     def lps2voxel(self) -> tx.Optional[_xforms.Transformation]:
-        """The affine from LPS world coordinates to the field's voxels."""
+        """The affine from LPS world coordinates to the voxels of the field."""
         return self.transformations[0]
 
-    # --- writing ------------------------------------------------------
-
     def _xform_codes(self) -> tx.Tuple[int, int]:
-        """The sform and qform codes to store."""
+        """
+        Return the sform and qform codes to store.
+
+        The codes come from the header when either is set, and each falls back
+        on the other. Otherwise both are `NIFTI_XFORM_SCANNER_ANAT`.
+        """
         header = self.header
         if header is not None:
             _, scode = header.get_sform(coded=True)
@@ -296,14 +253,12 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         **overrides,
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the ITK NIfTI image of an `(*shape, ndim)` array of LPS
-        vectors, given the grid's homogeneous voxel-to-LPS affine.
+        Build an ITK NIfTI image from LPS vectors and a voxel-to-LPS affine.
 
-        The vectors are written unconverted under the `VECTOR` (1007)
-        intent, in ITK's `(X, Y, Z, 1, 3)` or `(X, Y, 1, 1, 2)` layout,
-        and the voxel-to-LPS affine becomes the voxel-to-RAS affine that
-        NIfTI stores, with the identity on the axes a 2-D grid does not
-        have -- which is what ITK writes for a vector image by default.
+        The vectors are written unconverted under the `VECTOR` intent (1007),
+        in the five-dimensional ITK layout. The affine becomes the voxel-to-RAS
+        affine of the header, with an identity on the axes that a 2-D grid
+        lacks.
         """
         backend = get_array_backend(vectors)
         vectors = backend.asarray(vectors)
@@ -336,13 +291,12 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 @register_format
 class ItkNiftiDisplacementField(ItkNiftiField):
     """
-    ITK displacement field, stored as a NIfTI vector image.
+    Dense nonlinear ITK or ANTs warp stored as a NIfTI vector image.
 
-    This is how ITK, and ANTs through it, store a dense nonlinear warp,
-    such as `antsRegistration`'s `<prefix>1Warp.nii.gz`. The field maps
-    LPS to LPS, as `x_lps -> x_lps + u_lps(x_lps)`, and is the
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] of three
-    named slots that the ITK warp blocks use too:
+    Such a field, for example the `<prefix>1Warp.nii.gz` file of
+    `antsRegistration`, maps LPS to LPS as `x -> x + u(x)`, or (L, P) to (L, P)
+    in 2-D. It is a [`Sequence`][brainhops.datamodel.transformations.Sequence]
+    of three named slots:
 
     | Slot           | Transformation                              |
     | -------------- | ------------------------------------------- |
@@ -350,20 +304,14 @@ class ItkNiftiDisplacementField(ItkNiftiField):
     | `displacement` | the displacement field, in voxel units      |
     | `voxel2lps`    | the field's voxels back to LPS world        |
 
-    The field may be 3-D, stored as `(X, Y, Z, 1, 3)` and mapping LPS to
-    LPS, or 2-D, stored as `(X, Y, 1, 1, 2)` and mapping (L, P) to
-    (L, P).
+    The displacements are interpolated linearly and extrapolated with the
+    nearest value, as by the default interpolator of ITK's
+    `DisplacementFieldTransform`.
 
-    The displacements are interpolated linearly and extended with the
-    nearest value outside the grid, which is the default interpolator of
-    ITK's `DisplacementFieldTransform`
-    (`VectorLinearInterpolateNearestNeighborExtrapolateImageFunction`).
-
-    A `VECTOR` (1007) file with ITK's layout is claimed with certainty,
-    but so is it by the RAS NIfTI field reader: the header alone cannot
-    tell the two apart, so loading one without a hint is ambiguous. An
-    explicit `hint="itk"` (or `hint="ants"`) decides, and also reaches a
-    file in ITK's layout with any other intent code.
+    The RAS NIfTI field reader also claims a `VECTOR` file (1007) in the ITK
+    layout with certainty, and the header cannot tell the two apart. Such a
+    file is therefore read with `hint="itk"` or `hint="ants"`, which also
+    reaches a file in the ITK layout with any other intent code.
     """
 
     HINTS = ("displacements",)
@@ -371,21 +319,14 @@ class ItkNiftiDisplacementField(ItkNiftiField):
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
         """
-        Score a NIfTI header as an ITK displacement field.
+        Score a header as an ITK displacement field.
 
-        `VECTOR` (1007), in ITK's layout, is exactly what ITK writes, so
-        it scores `CERTAIN` -- the same as the RAS reader gives it, on
-        purpose: nothing in the header says which frame the vectors are
-        in, so neither reader may outrank the other on content. Any other
-        intent code is not ITK's default and is not claimed; a hint still
-        reaches such a file, through its `.nii`/`.nii.gz` extension.
-
-        A `VECTOR` file whose intent name is `"Mapping"` is not claimed
-        either. SPM12 writes its `y_` deformations that way, and so does
-        brainhops' RAS coordinates writer, while ITK's `NiftiImageIO`
-        never writes an intent name, and ANTs writes through it: the name
-        is evidence of a RAS map, not of an ITK one. Nor is one named
-        `"NREG_TRANS"`, which NiftyReg writes on its (RAS) fields.
+        A `VECTOR` image in the ITK layout scores `Confidence.CERTAIN`,
+        deliberately equal to the RAS reader, since neither frame may outrank
+        the other. Other intent codes are left to a hint. The intent name
+        `"Mapping"`, which SPM12 and the brainhops coordinates writer use but
+        ITK never writes, is not claimed, and neither is the NiftyReg name
+        `"NREG_TRANS"`.
         """
         if _itk_ndim(_nifti_shape(header)) is None:
             return Confidence.NO
@@ -399,28 +340,26 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         return Confidence.CERTAIN
 
     degree: tx.ClassVar[int] = 1
-    """The spline degree used to interpolate the field."""
+    """Spline degree of the interpolation."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
-    """The boundary condition used outside of the field of view."""
-
-    # --- chain --------------------------------------------------------
+    """Boundary condition outside the field of view."""
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """
         The chain of transformations that the field encodes.
 
-        It is built from the NIfTI header and data on first access, and
-        cached. Assigning to it overrides the derived chain, which is how
-        a field that was not read from a file is built.
+        The chain is built lazily from the header and the data, and then
+        cached. Assigning a chain overrides the derived one, which is how
+        fields that do not come from a file are built.
         """
         ndim, vox2lps = self._grid()
         world, voxel = self._spaces(ndim)
-        # The stored vectors are world-space displacements, and a
-        # `DisplacementField` adds its values in the units of its own
-        # grid, so they are rotated into voxel units. Only the linear
-        # part of the world-to-voxel affine acts on a displacement.
+        # A DisplacementField adds its values in the units of its grid, so the
+        # world-space vectors are rotated into voxel units by the linear part
+        # of the
+        # world-to-voxel affine.
         vectors = self._lps_vectors(ndim)
         backend = get_array_backend(vectors)
         lps2vox = np.linalg.inv(vox2lps[:, :ndim])
@@ -442,15 +381,15 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 
     @property
     def displacement(self) -> tx.Optional[_xforms.Transformation]:
-        """The displacement field, in the voxel units of its grid."""
+        """The displacement field, in voxel units."""
         return self.transformations[1]
 
     @property
     def voxel2lps(self) -> tx.Optional[_xforms.Transformation]:
-        """The affine from the field's voxels back to LPS world."""
+        """
+        The affine from the voxels of the field back to LPS world coordinates.
+        """
         return self.transformations[2]
-
-    # --- writing ------------------------------------------------------
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
@@ -458,14 +397,10 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         """
         Build the `nibabel` image that ITK would write for this field.
 
-        The displacements are rotated from voxel units back into LPS
-        millimetres and written, unconverted, as a `VECTOR` (1007)
-        image of shape `(X, Y, Z, 1, 3)`, or `(X, Y, 1, 1, 2)` in 2-D.
-        The grid's voxel-to-LPS affine becomes a voxel-to-RAS sform and
-        qform.
-
-        When `like` is given, non-encoding header fields are copied from
-        it. Keyword arguments override header fields last.
+        The displacements are rotated back to LPS millimetres and written
+        unconverted under the `VECTOR` intent. The voxel-to-LPS affine becomes
+        the voxel-to-RAS sform and qform. Non-encoding header fields are copied
+        from `like`, and `overrides` are applied last.
         """
         chain = tuple(self.transformations or ())
         if len(chain) != 3 or not isinstance(
@@ -476,7 +411,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
                 "three transformations: LPS to voxel, a displacement "
                 "field, and voxel to LPS."
             )
-        # ITK stores sampled displacements: a velocity is integrated.
+        # ITK stores sampled displacements, so a velocity field is integrated.
         displacement = chain[1].to(log=False, store="values")
         if displacement.data is None:
             raise WriterError(
@@ -496,55 +431,46 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 @register_format
 class ItkNiftiCoordinatesField(ItkNiftiField):
     """
-    Field of LPS coordinates, stored as an ITK NIfTI vector image.
+    Field of absolute LPS coordinates stored as an ITK NIfTI vector image.
 
-    Each voxel holds the absolute LPS position it maps to. The field maps
-    LPS to LPS (or (L, P) to (L, P) in 2-D), as the
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] of two
-    named slots:
+    Each voxel holds the LPS position that it maps to. The field is a
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] of two named
+    slots:
 
     | Slot          | Transformation                                 |
     | ------------- | ---------------------------------------------- |
     | `lps2voxel`   | LPS world coordinates to the field's voxels    |
     | `coordinates` | the field of LPS coordinates, on that grid     |
 
-    ITK and ANTs only write displacement fields, and a NIfTI header
-    cannot say whether its vectors are displacements or positions, so
-    this reader never claims a file from its content. Ask for it with
-    `hint="itk.coordinates"`, or use the class directly.
+    ITK and ANTs only write displacement fields, and a header cannot say
+    whether it holds displacements or positions. This reader is therefore never
+    chosen from the content of a file, only with `hint="itk.coordinates"` or by
+    using the class directly.
     """
 
     HINTS = ("coordinates",)
 
     PRIORITY: tx.ClassVar[int] = -1
     """
-    Under `hint="itk"`, a file in ITK's layout with another intent than
-    `VECTOR` is claimed by neither ITK reader, and both match its
-    extension, so the two genuinely tie. ITK and ANTs mean a
-    displacement, so this reader yields to that one.
+    Priority below the displacement reader.
+
+    Under `hint="itk"`, a file in the ITK layout without the `VECTOR` intent is
+    claimed by neither reader, and the tie is resolved in favour of
+    displacements, which is what ITK and ANTs write.
     """
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
-        """
-        Never claim a file from its content.
-
-        A field of positions and a field of displacements share ITK's
-        layout and intent code, and the content cannot separate them
-        without guessing from the values. Only a hint selects this
-        reader; it is still kept in the running by its extension then.
-        """
+        """Never claim a file, since only a hint can select this reader."""
         return Confidence.NO
-
-    # --- chain --------------------------------------------------------
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """
         The chain of transformations that the field encodes.
 
-        It is built from the NIfTI header and data on first access, and
-        cached. Assigning to it overrides the derived chain.
+        The chain is built lazily from the header and the data, and then
+        cached. Assigning a chain overrides the derived one.
         """
         ndim, vox2lps = self._grid()
         world, voxel = self._spaces(ndim)
@@ -559,24 +485,19 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
 
     @property
     def coordinates(self) -> tx.Optional[_xforms.Transformation]:
-        """The field of LPS coordinates, on the field's grid."""
+        """The field of LPS coordinates, on the grid of the field."""
         return self.transformations[1]
-
-    # --- writing ------------------------------------------------------
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the `nibabel` image of this field of LPS coordinates.
+        Build the `nibabel` image of the coordinates field.
 
-        The coordinates are written, unconverted, as a `VECTOR` (1007)
-        image of shape `(X, Y, Z, 1, 3)`, or `(X, Y, 1, 1, 2)` in 2-D,
-        and the inverse of the `lps2voxel` affine becomes a voxel-to-RAS
-        sform and qform.
-
-        When `like` is given, non-encoding header fields are copied from
-        it. Keyword arguments override header fields last.
+        The coordinates are written unconverted under the `VECTOR` intent, and
+        the inverse of the `lps2voxel` affine becomes the voxel-to-RAS sform
+        and qform. Non-encoding header fields are copied from `like`, and
+        `overrides` are applied last.
         """
         chain = tuple(self.transformations or ())
         if len(chain) != 2 or not isinstance(
