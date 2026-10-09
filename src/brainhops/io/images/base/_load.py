@@ -17,9 +17,9 @@ def load(
     ----------
     filelike : file, content or ImageSpec
         File to read, its content, or a structured image source.
-    brute : bool
+    brute : bool, default=False
         If no format recognizes the input, try every registered reader.
-    **kwargs
+    **kwargs : Any
         Format-specific options.
 
     Returns
@@ -40,7 +40,7 @@ def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
     ----------
     filelike : file or content
         File to inspect, or its content.
-    **kwargs
+    **kwargs : Any
         Format-specific options.
 
     Returns

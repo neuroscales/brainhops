@@ -585,7 +585,7 @@ class _TiffMixin:
         bigtiff : bool, optional
             Whether to write BigTIFF. By default, only when the data is too
             large for a classic TIFF (4 GiB).
-        **options
+        **options : Any
             Passed to `TiffWriter.write` of tifffile, such as
             `compression="zlib"` or `tile=(256, 256)`.
 
@@ -974,8 +974,7 @@ class TiffImage(
         unit : str or Unit, optional
             The unit of `pixel_size`, or the unit to which the sizes of the
             file are converted.
-        origin : bool or float or Sequence[float] or Mapping[str, float],
-        optional
+        origin : bool, float, Sequence[float] or Mapping[str, float], optional
             The position of the first pixel, in the unit of the pixel size,
             overriding the OME plane positions. `False` ignores those
             positions.

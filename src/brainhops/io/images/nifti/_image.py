@@ -109,7 +109,7 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose description and intent are copied. The geometry
             always comes from this image.
-        **overrides
+        **overrides : Any
             Values of `dtype`, `intent` and `descrip`, which take
             precedence over the derived values and `like`.
 

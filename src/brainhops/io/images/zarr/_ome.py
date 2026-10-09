@@ -273,8 +273,10 @@ def level_transformation(
     store_axes : sequence of Axis, optional
         Image axes in stored order, used to lay out fields that have no OME
         metadata.
-    input, output : CoordinateSystem, optional
-        Coordinate systems attached to the result.
+    input : CoordinateSystem, optional
+        Input coordinate system attached to the result.
+    output : CoordinateSystem, optional
+        Output coordinate system attached to the result.
 
     Raises
     ------
@@ -316,7 +318,13 @@ def common_transformations(
     ----------
     multiscale : Multiscale
         Normalized multiscale metadata.
-    perm, ndim, node, store_axes
+    perm : sequence of int
+        As in [`level_transformation`][].
+    ndim : int
+        As in [`level_transformation`][].
+    node : ZarrGroup, optional
+        As in [`level_transformation`][].
+    store_axes : sequence of Axis, optional
         As in [`level_transformation`][].
     input : CoordinateSystem, optional
         Intrinsic coordinate system, from which the walk starts.
