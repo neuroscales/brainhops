@@ -24,8 +24,8 @@ _AXIS_TYPES = {
 
 def _to_axis(ome_axis: tx.Any) -> Axis:
     # The OME axis is a mapping or an object with attributes. A known OME type
-    # selects the matching Axis subclass, which fixes the type; an unknown type
-    # is carried by a plain Axis.
+    # selects the matching Axis subclass, which fixes the axis type. An
+    # unknown type is stored in the `type` field of a plain Axis.
     if isinstance(ome_axis, Mapping):
         type_ = ome_axis.get("type")
         name = ome_axis.get("name")

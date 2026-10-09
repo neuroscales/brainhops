@@ -7,8 +7,9 @@
 | binary MATLAB (`.mat`)   | `mat`   | `MatTransform`              | yes    |
 | NIfTI warp (`.nii[.gz]`) | `nifti` | `ItkNiftiDisplacementField` | yes    |
 
-The blocks of a `CompositeTransform` are read in application order, which is
-the reverse of the file order.
+The blocks of a `CompositeTransform` are read in the order in which they apply
+to points. This order is the reverse of their order in the file, because ITK
+applies the last block of a composite first.
 
 ## ANTs
 
@@ -19,13 +20,16 @@ ANTs writes its transforms with the ITK writers, so every reader accepts
   displacement fields, in 2-D or 3-D;
 - composites (`<prefix>Composite.h5`, `<prefix>InverseComposite.h5`) are HDF5
   files;
-- B-splines (`BSpline.txt`) and `ConvertTransformFile` output are text files;
+- B-spline transforms (`BSpline.txt`) and the text output of
+  `ConvertTransformFile` are text files;
 - linear transforms (`<prefix><n>GenericAffine.mat` and the other `.mat`
   outputs) are binary MATLAB files.
 
 [`brainhops.io.transformations.itk.mat`][] explains how an ANTs transform list
-maps to a sequence. Velocity fields (`VelocityField.nii.gz`), which need
-integration, and MINC output (`--minc`) are not supported.
+maps to a sequence. Time-varying velocity fields (`VelocityField.nii.gz`) are
+not supported, because they must be integrated rather than read as
+displacement fields. The MINC files that ANTs writes with `--minc` are not
+supported either.
 """
 
 __all__ = [

@@ -1,14 +1,16 @@
 """Reading and writing of the parameter maps of elastix parameter files.
 
-A parameter map is a flat map from names to values, spelled in one of two
-syntaxes (`itkParameterFileParser.cxx`): classic text (`.txt`), one
-`(Name value ...)` per line with `//` comments, or TOML (`.toml`), one
-`Name = value` or `Name = [value, ...]` per line with `#` comments.
+A parameter map is a flat map from parameter names to values. elastix
+knows two syntaxes for it (see `itkParameterFileParser.cxx`). The classic
+text syntax (`.txt`) has one `(Name value ...)` entry per line, and `//`
+starts a comment. The TOML syntax (`.toml`) has one `Name = value` or
+`Name = [value, ...]` entry per line, and `#` starts a comment.
 
-Both are parsed into a dictionary from names to tuples, in which a quoted
-value is a `str` and an unquoted one is an `int` or `float` when it reads
-as a number. Transform parameters, millions of values for B-splines, are
-parsed directly into a float64 array.
+Both syntaxes are parsed into a dictionary that maps each name to a tuple
+of values. A quoted value becomes a `str`. An unquoted value becomes an
+`int` or a `float` when it reads as a number, and a `str` otherwise. The
+transform parameters, which can run to millions of values for a B-spline,
+are parsed directly into a float64 array.
 """
 
 import math
@@ -23,7 +25,7 @@ from brainhops.io.base.parsers import ParserContentError
 _ARRAYS = ("TransformParameters", "ITKTransformParameters")
 
 #: Parameters that mark a transform. Registration parameter files also
-#: name a `Transform`, but have none of these.
+#: name a `Transform`, but they have none of these parameters.
 _TRANSFORM_KEYS = (
     "TransformParameters",
     "ITKTransformParameters",
@@ -52,14 +54,19 @@ def _number(token: str) -> tx.Union[int, float, str]:
         value = float(token)
     except ValueError:
         return token
-    # elastix `IsNumber` refuses "nan" and "inf", so they stay words.
+    # The elastix function `IsNumber` refuses "nan" and "inf", so these
+    # tokens stay words.
     if math.isfinite(value):
         return value
     return token
 
 
 def _values(name: str, values: tx.List[tx.Any]) -> tx.Any:
-    """Store a parameter's values, as an array for transform parameters."""
+    """Return the values of a parameter in the form in which they are kept.
+
+    Transform parameters become a float64 array, and the values of any other
+    parameter become a tuple.
+    """
     if name in _ARRAYS:
         try:
             return np.asarray(values, dtype=np.float64)
@@ -243,7 +250,8 @@ def _toml_scalar(text: str, line: str) -> tx.Any:
     if len(text) >= 2 and text[0] == text[-1] == "'":
         return text[1:-1]
     if text in ("true", "false"):
-        # elastix stores a boolean as the text it writes for it.
+        # A boolean is kept as the word that elastix writes for it, as in
+        # the text syntax, so that both syntaxes give the same map.
         return text
     value = _number(text.replace("_", ""))
     if isinstance(value, str):

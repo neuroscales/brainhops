@@ -23,25 +23,32 @@ class FlirtTransform(
 ):
     """Linear transformation stored in an FSL FLIRT `.mat` file.
 
-    The FLIRT matrix maps moving to reference scaled millimetres. Its `matrix`
-    is exposed in the direction the data model uses for resampling, from
-    reference RAS to moving RAS. Since the file carries no geometry, the
-    reference and moving images must be passed as `reference=` and `moving=`
-    when loading, or set before `matrix` is read.
+    The FLIRT matrix maps the scaled millimetre coordinates of the moving image
+    to those of the reference image. This class exposes it as an affine whose
+    `matrix` maps reference world (RAS) coordinates to moving world (RAS)
+    coordinates, which is the direction the data model uses to resample a
+    moving image onto a reference.
+
+    Because the file carries no image geometry, the reference and moving
+    images must be supplied. They can be passed as the `reference=` and
+    `moving=` keyword arguments when the file is loaded, or set on the object
+    before its `matrix` is read.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS = ("flirt",)
-    # Name the raw matrix: `matrix` is derived from the images (costly, may
-    # raise), and this keeps the identity check of `inverse()` off that path.
+    # The data field is the raw FLIRT matrix. The `matrix` view is derived
+    # from the raw matrix and the two images, so computing it is costly and
+    # may raise. Naming the raw matrix here keeps the identity check of
+    # `inverse()` from computing the affine.
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ("flirt_matrix",)
 
     _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
-    # The affine is computed on demand. A ClassVar `_data` overrides the init
-    # field inherited from `Affine`, keeping `data` out of `__init__` and
-    # `fields()`.
+    # The affine is computed on demand, so it is not a constructor field.
+    # Declaring `_data` as a ClassVar overrides the init field inherited from
+    # `Affine` and keeps `data` out of `__init__` and `fields()`.
     _data: tx.ClassVar[tx.Optional[tx.Any]]
     _matrix: Deactivated[None]
 
@@ -82,7 +89,8 @@ class FlirtTransform(
             )
 
     def inverse(self, compute: bool = False, **kwargs) -> _xforms.Affine:
-        # The raw matrix and the images do not survive inversion.
+        # The inverse is a plain affine, because the raw matrix and the two
+        # images of a FLIRT transform have no meaning after inversion.
         return _xforms.Affine(
             matrix=self.matrix, input=self.input, output=self.output
         ).inverse(compute=compute, **kwargs)

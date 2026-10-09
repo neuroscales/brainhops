@@ -47,7 +47,8 @@ def _name(struct: LtaStruct.VolumeInfo) -> tx.Dict[str, str]:
     return {"name": name} if name else {}
 
 
-# Voxel space counts samples, while scaled and physical spaces are in mm.
+# Voxel coordinates count samples, whereas scaled and physical coordinates
+# are in millimetres.
 _INDEX = "index"
 _MM = "mm"
 

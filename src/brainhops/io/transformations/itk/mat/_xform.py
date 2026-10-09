@@ -15,8 +15,9 @@ class MatTransform(
 ):
     """Transformation stored in an ITK binary MATLAB (`.mat`) file.
 
-    ANTs writes every linear transform in this format. FLIRT `.mat` files are
-    plain text, and the two are told apart by their content.
+    ANTs writes every linear transform in this format. FSL FLIRT also writes
+    `.mat` files, but as plain text, so the two formats are told apart by their
+    content.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)

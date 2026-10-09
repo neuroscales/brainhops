@@ -9,7 +9,10 @@ class FslCoordinateSystem(SpatialCoordinateSystem3D):
 
     Coordinates are voxel indices multiplied by the voxel sizes, with the
     x-axis flipped when the voxel-to-world affine has a positive determinant.
-    Since both depend on the image, every image has its own FSL system.
+    FLIRT and FNIRT express their transformations in this coordinate system.
+    Because the scaling and the flip depend on the voxel sizes, the shape and
+    the orientation of the image, every image has its own FSL coordinate
+    system.
     """
 
     name: str = "fsl"

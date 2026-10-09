@@ -33,7 +33,7 @@ class X5TransformParser(
     Hdf5ParserWriter,
     repr=HIDE_IF_NONE,
 ):
-    """Parser that reads and writes the raw content of a BIDS X5 file."""
+    """A parser that reads and writes the raw content of a BIDS X5 file."""
 
     header: X5Header = Factory(X5Header, repr=False)
     """The root attributes and chains."""
@@ -196,8 +196,9 @@ class X5Transform(
         4. Otherwise the file's single node.
         5. Otherwise, in a file with several nodes and no chain, the first
            node, as nitransforms' `Affine.from_filename` and
-           `DenseFieldTransform.from_filename` do, with a warning: the
-           draft says nothing of how unchained nodes relate.
+           `DenseFieldTransform.from_filename` do. A warning is issued in
+           this case, because the draft does not say how nodes that no
+           chain lists relate to each other.
         """
         chains = self.header.chains
         if self.chain is not None:
