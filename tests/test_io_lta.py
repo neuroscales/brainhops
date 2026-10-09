@@ -81,3 +81,22 @@ def test_an_lta_transform_reads_its_systems_from_its_volumes(
         "src.nii",
         "dst.nii",
     )
+
+
+@pytest.mark.parametrize(
+    "name", ["_get_vox2vox", "_get_phys2phys", "_get_ras2ras"]
+)
+def test_an_unsupported_lta_type_names_the_type(name: str) -> None:
+    """A non-linear LTA type is reported by name in every helper (#370)."""
+    from brainhops.io.transformations.freesurfer.lta import _matrix_utils
+
+    struct = LtaStruct(
+        type=LtaType.MNI_TRANSFORM_TYPE,
+        affine=LtaStruct.Affine(
+            matrix=[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        ),
+        src=LtaStruct.SrcVolumeInfo(),
+        dst=LtaStruct.DstVolumeInfo(),
+    )
+    with pytest.raises(AssertionError, match="MNI_TRANSFORM_TYPE"):
+        getattr(_matrix_utils, name)(struct)

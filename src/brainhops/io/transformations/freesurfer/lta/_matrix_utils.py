@@ -55,7 +55,8 @@ def _get_ras2ras(lta: LtaStruct) -> np.ndarray:
     if lta.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
         src_phys2ras = _get_phys2ras(lta.src)
         dst_phys2ras = _get_phys2ras(lta.dst)
-    return dst_phys2ras @ matrix @ np.linalg.inv(src_phys2ras)
+        return dst_phys2ras @ matrix @ np.linalg.inv(src_phys2ras)
+    raise AssertionError(f"unsupported LTA type: {lta.type}")
 
 
 def _get_phys2phys(lta: LtaStruct) -> np.ndarray:
