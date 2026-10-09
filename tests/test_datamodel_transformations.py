@@ -41,7 +41,7 @@ def test_flatten_removes_nesting_and_keeps_endpoints() -> None:
         input=inp,
         output=out,
     )
-    flat = outer._flattened()
+    flat = outer.flatten()
     assert isinstance(flat, Sequence)
     assert flat.input is inp
     assert flat.output is out
@@ -55,9 +55,42 @@ def test_flatten_propagates_endpoints_to_first_and_last() -> None:
     first = Translation(translation=[1.0, 2.0])
     last = Translation(translation=[3.0, 4.0])
     seq = Sequence(transformations=[first, last], input=inp, output=out)
-    flat = seq._flattened()
+    flat = seq.flatten()
     assert flat.transformations[0].input is inp
     assert flat.transformations[-1].output is out
+
+
+def test_flatten_without_endpoints_unwinds_and_keeps_every_leaf() -> None:
+    inp = CoordinateSystem(name="in")
+    out = CoordinateSystem(name="out")
+    first = Translation(translation=[1.0, 2.0])
+    last = Translation(translation=[3.0, 4.0])
+    seq = Sequence(
+        transformations=[Sequence([Sequence([first])]), last],
+        input=inp,
+        output=out,
+    )
+    flat = seq.flatten(endpoints=False)
+    # Nesting is unwound all the way down, and no leaf is rebuilt, so each
+    # one stays the same object and its endpoints are untouched.
+    assert list(flat.transformations) == [first, last]
+    assert flat.transformations[0] is first
+    assert flat.transformations[0].input is None
+    assert flat.transformations[-1].output is None
+    # The chain keeps its own endpoints; it just does not push them down.
+    assert flat.input is inp
+    assert flat.output is out
+
+
+def test_flatten_without_endpoints_normalizes_a_generic_inverse() -> None:
+    forward = Translation(translation=[1.0, 2.0])
+    flat = Sequence([Inverse(forward=forward)]).flatten(endpoints=False)
+    # The generic inverse becomes the typed inverse of its forward, which
+    # the engine can compute and cancellation can recognize.
+    inverse = flat.transformations[0]
+    assert type(inverse) is not Inverse
+    assert inverse._resultof is Translation
+    assert inverse.forward is forward
 
 
 def test_same_type_conversion_applies_field_override() -> None:

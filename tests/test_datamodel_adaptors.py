@@ -1563,3 +1563,46 @@ def test_non_si_unit_difference_is_a_scaling(
     result = bridge(source, target)
     assert isinstance(result, Scaling)
     np.testing.assert_allclose(result.scale, [factor], rtol=1e-12)
+
+
+# ----------------------------------------------------------------------
+#   Sequence.bridge()
+# ----------------------------------------------------------------------
+
+
+def test_bridge_method_inserts_the_flip_and_keeps_both_leaves() -> None:
+    a, b = _ras_affine(), _lps_affine()
+    bridged = Sequence([a, b]).bridge()
+    first, flip, last = bridged.transformations
+    # Nothing is composed, and neither leaf is rebuilt.
+    assert first is a
+    assert last is b
+    np.testing.assert_array_equal(np.diag(_homogeneous(flip)), [-1, -1, 1, 1])
+
+
+def test_bridge_method_leaves_matching_systems_alone() -> None:
+    a, b = _ras_affine(), _ras_affine()
+    bridged = Sequence([a, b]).bridge()
+    assert list(bridged.transformations) == [a, b]
+
+
+def test_bridge_method_keeps_nesting_and_bridges_inside_it() -> None:
+    a, b = _ras_affine(), _lps_affine()
+    bridged = Sequence([Sequence([a, b])]).bridge()
+    (inner,) = bridged.transformations
+    assert isinstance(inner, Sequence)
+    assert len(inner) == 3
+    # Flattening afterwards gives the chain that composition works on.
+    assert len(bridged.flatten(endpoints=False)) == 3
+
+
+def test_bridge_method_raises_when_a_boundary_cannot_be_bridged() -> None:
+    # A sampled axis has no bridge to a physical one.
+    sampled = CoordinateSystem(
+        axes=[SpaceAxis(name="x", unit="index", orientation=LeftToRight())]
+    )
+    world = CoordinateSystem(axes=[LeftToRightAxis(name="x", unit="mm")])
+    a = Affine(matrix=np.eye(1, 2), input=sampled, output=sampled)
+    b = Affine(matrix=np.eye(1, 2), input=world, output=world)
+    with pytest.raises(AdaptationError, match="sampled.*millimeter"):
+        Sequence([a, b]).bridge()
