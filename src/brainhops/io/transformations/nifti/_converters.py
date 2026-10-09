@@ -1,5 +1,5 @@
 """
-Converters into the NIfTI transformation formats.
+Private converters into the NIfTI transformation formats.
 
 `t.to(NiftiVoxelToRAS)`, `NiftiVoxelToRAS.from_any(t)` and
 `io.save(t, "affine.nii.gz")` all run these converters. Each one either

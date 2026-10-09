@@ -4,12 +4,9 @@ SPM deformation fields, stored in NIfTI files prefixed with `y_` or `iy_`.
 
 # externals
 import nibabel as nb
-import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
 
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.io.base._base import register_format
 from brainhops.io.common.nifti._header import (
     _apply_like,
@@ -20,9 +17,6 @@ from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.conversions import (
     convert_instance,
     converts_to,
-    format_options,
-    split_field_chain,
-    unrepresentable,
 )
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -30,14 +24,9 @@ from brainhops.io.transformations.base.fields import (
 )
 from brainhops.io.transformations.nifti.affines import NiftiRASToVoxel
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
-from brainhops.io.transformations.nifti.converters import (
-    RAS,
-    check_coordinates,
-    ras_coordinate_values,
-)
 from brainhops.io.transformations.nifti.fields import (
     NiftiRASCoordinatesField,
-    ras_coordinates_nifti,
+    _ras_coordinates_nifti,
 )
 
 
@@ -57,7 +46,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     It is written as SPM writes it: the RAS coordinates, as values, in a
     NIfTI file whose voxel-to-RAS affine is the inverse of `ras2voxel`.
     Another transformation is converted to it exactly, or not at all (see
-    [`brainhops.io.transformations.nifti.converters`][]).
+    [`brainhops.io.transformations.spm._converters`][]).
     """
 
     HINTS = ("spm",)
@@ -178,78 +167,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         # header's affine itself, rather than an inverse of its inverse.
         vox2ras = homogeneous_matrix(self.ras2voxel.inverse(), what, ndim=3)
         # SPM stores sampled coordinates.
-        image = ras_coordinates_nifti(
-            self.rasfield.to(store="values").data, vox2ras
-        )
+        image = _ras_coordinates_nifti(self.rasfield.values, vox2ras)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
-
-
-# ----------------------------------------------------------------------
-#   CONVERTERS
-# ----------------------------------------------------------------------
-
-
-@converter(_xforms.DisplacementField, SpmCoordinatesField)
-@converter(_xforms.Sequence, SpmCoordinatesField)
-@converter
-def _(
-    t: _xforms.CoordinatesField,
-    cls: tx.Type[SpmCoordinatesField],
-    **kwargs,
-) -> SpmCoordinatesField:
-    # Exactly, or raise: an affine from RAS to a grid, then one field of
-    # coordinates on that grid, sampled as NIfTI stores it, followed by an
-    # affine into RAS. A field of displacements is refused there, with the
-    # reason.
-    cls = SpmCoordinatesField
-    format_options(t, cls, kwargs)
-    ras2voxel, field, voxel2ras = _spm_coordinates(t)
-    coordinates = ras_coordinate_values(t, field, voxel2ras, cls)
-    chain = (
-        RASToVoxel(matrix=ras2voxel[:-1]),
-        RASCoordinatesField(field=coordinates),
-    )
-    return cls(transformations=chain)
-
-
-@converter
-def _(
-    t: SpmCoordinatesField,
-    cls: tx.Type[SpmCoordinatesField],
-    **kwargs,
-) -> SpmCoordinatesField:
-    # Within its own format, a field is copied with the changes asked for.
-    return replace(t, **kwargs) if kwargs else t
-
-
-def _spm_coordinates(t: _xforms.Transformation) -> tuple:
-    """
-    `t` as an SPM deformation field, or the reason it is not.
-
-    Returns `(ras2voxel, field, voxel2ras)`: the homogeneous affine from
-    RAS to the grid of the field, the field of coordinates, and the affine
-    its coordinates are carried into RAS by.
-    """
-    cls = SpmCoordinatesField
-    ras2voxel, field, voxel2ras = split_field_chain(t, RAS, RAS, cls)
-    check_coordinates(field, t, cls)
-    if np.linalg.cond(ras2voxel) > _MAX_CONDITION:
-        raise unrepresentable(
-            t,
-            cls,
-            "the affine before its field is singular, or nearly so, and SPM "
-            "stores the grid of the field by its inverse.",
-        )
-    return ras2voxel, field, voxel2ras
-
-
-_MAX_CONDITION = 1e12
-"""
-The largest condition number of an affine whose inverse SPM is given.
-
-Inverting a matrix loses about as many digits as its condition number
-has, so beyond this one the grid affine written would keep fewer than
-four of the sixteen significant digits of a float64.
-"""

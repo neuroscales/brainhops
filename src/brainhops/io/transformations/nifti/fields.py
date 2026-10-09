@@ -174,7 +174,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
             affine = self.header.get_best_affine()
         else:
             affine = np.eye(4)
-        image = ras_coordinates_nifti(field, affine)
+        image = _ras_coordinates_nifti(field, affine)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
@@ -433,7 +433,7 @@ transformations.StationaryVelocityField].
         return image
 
 
-def ras_coordinates_nifti(
+def _ras_coordinates_nifti(
     field: tx.Optional[ArrayProtocol], vox2ras: np.ndarray
 ) -> nb.Nifti1Image:
     """
