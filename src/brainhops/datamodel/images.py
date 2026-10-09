@@ -156,7 +156,7 @@ class SingleScaleImage(Image):
         bound: str = "reflect",
         coeff: bool = False,
         copy: bool = False,
-    ) -> tx.Self:
+    ) -> "SingleScaleImage":
         """Resample the data onto another geometry.
 
         Parameters
@@ -361,7 +361,7 @@ class MultiScaleImage(Image):
         bound: str = "reflect",
         coeff: bool = False,
         copy: bool = False,
-    ) -> tx.Self:
+    ) -> "SingleScaleImage":
         """Reslice the level whose voxel size best matches the target grid.
 
         The method always returns a single-scale image.
@@ -406,7 +406,7 @@ class MultiScaleImage(Image):
         )
         return self.to_singlescale(level).reslice(geometry, **opt)
 
-    def __call__(self, transform: Transformation) -> tx.Self:
+    def __call__(self, transform: Transformation) -> "MultiScaleImage":
         """Apply a transformation to the pyramid lazily, without reslicing.
 
         The transformation is handled as in [`SingleScaleImage.__call__`][].

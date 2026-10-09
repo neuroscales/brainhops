@@ -13,6 +13,13 @@ if tx.TYPE_CHECKING:
     from .operators import Operation
     from .sequence import Sequence
 
+# Type variables used by the registration decorators, so that a decorated
+# name keeps its exact class or signature for a static type checker.
+_OpT = tx.TypeVar("_OpT", bound="Operation")
+_SeqT = tx.TypeVar("_SeqT", bound="Sequence")
+_TrfT = tx.TypeVar("_TrfT", bound="Transformation")
+_AdaptT = tx.TypeVar("_AdaptT", bound=tx.Callable[..., "Sequence"])
+
 
 # --- operators --------------------------------------------------------
 
@@ -31,7 +38,9 @@ transformation.
 """
 
 
-def register_operator(name: str) -> tx.Callable[[type], type]:
+def register_operator(
+    name: str,
+) -> tx.Callable[[tx.Type[_OpT]], tx.Type[_OpT]]:
     """Return a class decorator that registers a front door in [`OPERATORS`][].
 
     Parameters
@@ -47,7 +56,7 @@ def register_operator(name: str) -> tx.Callable[[type], type]:
         unchanged.
     """
 
-    def decorate(cls: tx.Type["Operation"]) -> tx.Type["Operation"]:
+    def decorate(cls: tx.Type[_OpT]) -> tx.Type[_OpT]:
         OPERATORS[name] = cls
         return cls
 
@@ -72,7 +81,7 @@ an import cycle. The value is `None` until then.
 """
 
 
-def register_adapt(func: tx.Callable[..., "Sequence"]) -> None:
+def register_adapt(func: _AdaptT) -> _AdaptT:
     """Register the routine stored in [`ADAPT`][] and return it.
 
     Because the routine is returned, the function can be used as a decorator.
@@ -88,7 +97,12 @@ SEQUENCE: tx.Optional[tx.Type["Sequence"]] = None
 """The registered [`Sequence`][] class, or `None` until it is registered."""
 
 
-def register_sequence(cls: tx.Type["Sequence"]) -> None:
+def register_sequence(cls: tx.Type[_SeqT]) -> tx.Type[_SeqT]:
+    """Register the class stored in [`SEQUENCE`][] and return it.
+
+    Because the class is returned, the function can be used as a class
+    decorator.
+    """
     global SEQUENCE
     SEQUENCE = cls
     return cls
@@ -102,7 +116,7 @@ def register_sequence(cls: tx.Type["Sequence"]) -> None:
 TRANSFORMATION: tx.Optional[tx.Type["Transformation"]] = None
 
 
-def register_transformation(cls: tx.Type["Transformation"]) -> None:
+def register_transformation(cls: tx.Type[_TrfT]) -> tx.Type[_TrfT]:
     """Register the root class of the concrete hierarchy and return it."""
     global TRANSFORMATION
     TRANSFORMATION = cls
