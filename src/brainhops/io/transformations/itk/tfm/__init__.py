@@ -102,8 +102,8 @@ affine ones. The classes below are the most common.
 # ruff: enable[E501]
 __all__ = [
     "TfmTransform",
-    "TfmTransformParser",
+    "TfmTransformReader",
 ]
 
-from ._parser import TfmTransformParser
+from ._parser import TfmTransformReader
 from ._xform import TfmTransform

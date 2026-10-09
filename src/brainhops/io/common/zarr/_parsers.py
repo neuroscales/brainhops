@@ -12,8 +12,8 @@ from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base.parsers import (
     Confidence,
-    FileParser,
-    FileParserWriter,
+    FileReader,
+    FileWriter,
     ParserExistsError,
     ParserTypeError,
     WriterError,
@@ -23,7 +23,7 @@ from brainhops.io.base.parsers import (
 StoreLike = tx.Union[str, path.PathLike, tx.Any]
 
 
-class ZarrParser(DataModelBase, FileParser):
+class ZarrReader(DataModelBase, FileReader):
     """Base class for parsers that read a Zarr store.
 
     A concrete parser lists this class before its file-based bases and
@@ -120,7 +120,7 @@ class ZarrParser(DataModelBase, FileParser):
         """Read an object from a Zarr store location.
 
         The keyword arguments `mode` and `driver` are passed to `abczarr.open`,
-        and the remaining ones to [`from_node`][ZarrParser.from_node].
+        and the remaining ones to [`from_node`][ZarrReader.from_node].
 
         Raises
         ------
@@ -171,7 +171,7 @@ class ZarrParser(DataModelBase, FileParser):
         raise NotImplementedError
 
 
-class ZarrParserWriter(ZarrParser, FileParserWriter):
+class ZarrReaderWriter(ZarrReader, FileWriter):
     def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:
         """Copy the stored object into an opened Zarr array or group.
 

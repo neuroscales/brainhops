@@ -4,14 +4,14 @@ import typing_extensions as tx
 
 from brainhops._core.path import FileOrContentLike
 
-from ._base import FileBasedObject
+from ._base import Format
 
 
 def load(
     filelike: FileOrContentLike,
     brute: bool = False,
     **kwargs,
-) -> FileBasedObject:
+) -> Format:
     """Read an object from a file, whatever its kind and format.
 
     The file is read by the registered format that best matches its content.
@@ -31,7 +31,7 @@ def load(
         Whether to try every registered reader when no format recognizes the
         input.
     """
-    return FileBasedObject.load(filelike, brute=brute, **kwargs)
+    return Format.load(filelike, brute=brute, **kwargs)
 
 
 def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
@@ -43,4 +43,4 @@ def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
         The best match among all registered formats, or `None` if no single
         format stands out.
     """
-    return FileBasedObject.sniff(filelike, **kwargs)
+    return Format.sniff(filelike, **kwargs)

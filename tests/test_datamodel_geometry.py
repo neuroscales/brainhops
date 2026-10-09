@@ -57,7 +57,7 @@ def test_geometry_flatten_preserves_the_pair_and_the_grid() -> None:
     )
     geom = Geometry((_grid(), inner))
 
-    flat = geom._flattened()
+    flat = geom.flatten()
 
     assert isinstance(flat, Geometry)
     assert len(flat.transformations) == 2
@@ -73,7 +73,7 @@ def test_geometry_flatten_propagates_endpoints() -> None:
     nested = Sequence(transformations=[_affine()])
     geom = Geometry((_grid(), nested), input=voxel, output=ras)
 
-    flat = geom._flattened()
+    flat = geom.flatten()
 
     assert flat.grid.input is voxel
     assert flat.transformation.output is ras

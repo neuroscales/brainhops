@@ -142,13 +142,13 @@ __all__ = [
     "M3zFormat",
     "M3zGeometry",
     "M3zMorph",
-    "M3zParser",
+    "M3zReaderWriter",
     "M3zStruct",
     "M3zXform",
 ]
 
 from ._struct import GCAM_RAS, GCAM_VOX, M3zGeometry, M3zStruct, M3zXform
-from ._xform import M3zFormat, M3zMorph, M3zParser
+from ._xform import M3zFormat, M3zMorph, M3zReaderWriter
 
 # The converters into these formats register themselves when this module
 # is imported, here, so that `t.to(Format)` refuses rather than relabels.

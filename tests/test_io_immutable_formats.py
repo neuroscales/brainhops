@@ -254,7 +254,7 @@ def test_replace_rebuilds_a_new_object(loaded) -> None:  # noqa: ANN001
 
 def test_the_flattened_chain_keeps_the_format(loaded) -> None:  # noqa: ANN001
     _, cls, obj = loaded
-    flat = obj._flattened()
+    flat = obj.flatten()
     assert isinstance(flat, cls)
     assert isinstance(flat.transformations, tuple)
     assert len(flat) == len(obj)

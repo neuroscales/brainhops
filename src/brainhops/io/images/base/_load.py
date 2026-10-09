@@ -3,14 +3,14 @@ import typing_extensions as tx
 from brainhops._core.path import FileOrContentLike
 from brainhops.io.base.specs import ImageSpec
 
-from ._base import FileBasedImage
+from ._base import ImageFormat
 
 
 def load(
     filelike: tx.Union[FileOrContentLike, ImageSpec],
     brute: bool = False,
     **kwargs,
-) -> FileBasedImage:
+) -> ImageFormat:
     """Read an image from a file, whatever its format.
 
     Parameters
@@ -25,10 +25,10 @@ def load(
 
     Returns
     -------
-    FileBasedImage
+    ImageFormat
         The image that was read.
     """
-    return FileBasedImage.load(filelike, brute=brute, **kwargs)
+    return ImageFormat.load(filelike, brute=brute, **kwargs)
 
 
 def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
@@ -50,4 +50,4 @@ def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
         The best-matching registered format, or `None` if no single
         format stands out.
     """
-    return FileBasedImage.sniff(filelike, **kwargs)
+    return ImageFormat.sniff(filelike, **kwargs)

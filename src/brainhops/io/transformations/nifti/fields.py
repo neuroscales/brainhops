@@ -25,7 +25,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.nifti import NiftiParser
+from brainhops.io.common.nifti import NiftiReaderWriter
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
@@ -66,7 +66,7 @@ def _store_through_the_parser(
     self: tx.Any, value: tx.Optional[ArrayProtocol]
 ) -> None:
     """Store the data where the parser keeps it, which the getter reads."""
-    NiftiParser.data.fset(self, value)
+    NiftiReaderWriter.data.fset(self, value)
 
 
 @register_format
@@ -138,7 +138,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         """
         # The parser keeps its image in _data, which is also the value of this
         # field, so the data is read through the parser.
-        data = NiftiParser.data.fget(self)
+        data = NiftiReaderWriter.data.fget(self)
         if data is None:
             return None
         return _nifti_vector_field(data)

@@ -96,10 +96,6 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel.geometry": {
         "Geometry": ("transformations", "shape", "grid", "transformation"),
     },
-    "brainhops.io.transformations.base._base": {
-        "FileBasedTransformation": (),
-        "WritableFileBasedTransformation": (),
-    },
     "brainhops.io.transformations.base.affines": {
         "LPSToVoxel": ("data",),
         "RASToRAS": ("data",),

@@ -124,7 +124,7 @@ The first one is read by default, with a warning, and another one can be
 selected with `position=`, as in `MatTransform.from_file(path, position=1)`.
 """
 
-__all__ = ["MatTransform", "MatTransformParser"]
+__all__ = ["MatTransform", "MatTransformReaderWriter"]
 
-from ._parser import MatTransformParser
+from ._parser import MatTransformReaderWriter
 from ._xform import MatTransform

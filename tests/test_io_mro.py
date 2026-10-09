@@ -11,19 +11,17 @@ import inspect
 import pytest
 
 from brainhops.io.base._base import (
-    FileBasedObject,
-    FormatDispatcher,
+    Format,
     format_registry,
 )
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
-    FileParser,
-    FileSniffer,
+    BinaryFileReader,
+    FileReader,
 )
 
 nb = pytest.importorskip("nibabel")
 
-from brainhops.io.common.nifti import NiftiParser  # noqa: E402
+from brainhops.io.common.nifti import NiftiReaderWriter  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,
@@ -40,7 +38,7 @@ NIFTI_FORMATS = [
     SpmCoordinatesField,
 ]
 
-# Methods that NiftiParser specializes; the generic ladder re-dispatches
+# Methods that NiftiReaderWriter specializes; the generic ladder re-dispatches
 # into them.
 SPECIALIZED = [
     "from_file",
@@ -58,12 +56,12 @@ def _owner(cls: type, name: str) -> type:
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
 @pytest.mark.parametrize("method", SPECIALIZED)
 def test_the_format_specific_reader_wins(cls: type, method: str) -> None:
-    assert _owner(cls, method) is NiftiParser
+    assert _owner(cls, method) is NiftiReaderWriter
 
 
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
 def test_binary_read_mode_survives_the_diamond(cls: type) -> None:
-    """With the text read mode of FileSniffer, NIfTI sniffing would fail."""
+    """With the text read mode of FileReader, NIfTI sniffing would fail."""
     assert cls._READ_MODE == "rb"
 
 
@@ -74,26 +72,26 @@ def test_concrete_formats_are_not_dispatchers(cls: type) -> None:
 
 
 def test_dispatcher_overrides_are_pass_throughs_for_concrete_formats() -> None:
-    """For non-dispatchers, FormatDispatcher overrides defer to super()."""
+    """For non-dispatchers, Format overrides defer to super()."""
     overridden = [
         name
-        for name, value in vars(FormatDispatcher).items()
+        for name, value in vars(Format).items()
         if (name.startswith(("from_", "sniff")) or name == "load")
         and isinstance(value, classmethod)
     ]
     assert overridden, "no reading methods found to check"
     for name in overridden:
-        source = inspect.getsource(getattr(FormatDispatcher, name).__func__)
+        source = inspect.getsource(getattr(Format, name).__func__)
         assert "_is_dispatcher()" in source, name
         assert "super()." + name in source, name
 
 
 def test_resolution_does_not_depend_on_base_order() -> None:
     @format_registry
-    class Root(FileBasedObject):
+    class Root(Format):
         pass
 
-    class Special(BinaryFileParser):
+    class Special(BinaryFileReader):
         @classmethod
         def from_file(cls, file, **kwargs):  # noqa: ANN001, ANN206
             return "special-reader"
@@ -105,7 +103,7 @@ def test_resolution_does_not_depend_on_base_order() -> None:
         pass
 
     assert _owner(SpecialFirst, "from_file") is Special
-    assert _owner(RootFirst, "from_file") is FormatDispatcher
+    assert _owner(RootFirst, "from_file") is Format
     assert SpecialFirst.from_file("x") == "special-reader"
     assert RootFirst.from_file("x") == "special-reader"
 
@@ -113,14 +111,14 @@ def test_resolution_does_not_depend_on_base_order() -> None:
 def test_the_generic_ladder_redispatches_through_cls() -> None:
     """Ladder rungs call cls.<next>, so subclass overrides are honoured."""
     rungs = {
-        (FileSniffer, "sniff_file"): "sniff_fileobj",
-        (FileSniffer, "sniff_fileobj"): "sniff_content",
-        (FileSniffer, "sniff_text"): "sniff_lines",
-        (FileSniffer, "sniff_lines"): "sniff_line",
-        (FileParser, "from_file"): "from_fileobj",
-        (FileParser, "from_fileobj"): "from_content",
-        (FileParser, "from_text"): "from_lines",
-        (FileParser, "from_lines"): "from_line",
+        (FileReader, "sniff_file"): "sniff_fileobj",
+        (FileReader, "sniff_fileobj"): "sniff_content",
+        (FileReader, "sniff_text"): "sniff_lines",
+        (FileReader, "sniff_lines"): "sniff_line",
+        (FileReader, "from_file"): "from_fileobj",
+        (FileReader, "from_fileobj"): "from_content",
+        (FileReader, "from_text"): "from_lines",
+        (FileReader, "from_lines"): "from_line",
     }
     for (owner, name), nxt in rungs.items():
         source = inspect.getsource(getattr(owner, name).__func__)
@@ -129,7 +127,7 @@ def test_the_generic_ladder_redispatches_through_cls() -> None:
 
 
 def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noqa: ANN001
-    """NiftiParser.from_file keeps the nibabel handle and lazy voxels."""
+    """NiftiReaderWriter.from_file keeps the nibabel handle and lazy voxels."""
     import numpy as np
 
     img = nb.Nifti1Image(np.zeros((3, 4, 5), "float32"), np.eye(4))

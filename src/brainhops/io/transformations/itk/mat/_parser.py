@@ -9,7 +9,8 @@ from brainhops._core import path
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     ParserContentError,
     SnifferContentError,
@@ -61,9 +62,10 @@ class _Variable(tx.NamedTuple):
     """The offset of the first value in the content."""
 
 
-class MatTransformParser(
+class MatTransformReaderWriter(
     Magic,
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     convert=True,
     repr=HIDE_IF_NONE,
 ):

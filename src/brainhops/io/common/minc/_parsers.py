@@ -15,7 +15,7 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     Confidence,
     ParserContentError,
     ParserExistsError,
@@ -40,7 +40,7 @@ from ._utils import (
 )
 
 
-class MincParser(DataModelBase, BinaryFileParser):
+class MincReader(DataModelBase, BinaryFileReader):
     """
     The base class of objects encoded as MINC1 or MINC2 files.
 

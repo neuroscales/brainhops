@@ -155,6 +155,16 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
             output=self.input,
         )
 
+    def flatten(self, endpoints: bool = True) -> Sequence:
+        """Return the finest scale, flattened, as a plain sequence.
+
+        A multiscale field behaves as its finest scale, so a field spliced
+        into a surrounding chain contributes the elements of that scale.
+        """
+        # A multiscale field spliced into a surrounding sequence contributes
+        # the elements of its finest scale.
+        return self._finest.flatten(endpoints)
+
     # --- helpers ------------------------------------------------------
 
     def _as_sequence(self) -> Sequence:
@@ -167,11 +177,6 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
             input=self.input,
             output=self.output,
         )
-
-    def _flattened(self) -> Sequence:
-        # A multiscale field spliced into a surrounding sequence contributes
-        # the elements of its finest scale.
-        return self._finest._flattened()
 
     def _level_resolution(self, index: int) -> tx.Optional[ArrayProtocol]:
         # The resolution of a scale is read from its leading world-to-voxel

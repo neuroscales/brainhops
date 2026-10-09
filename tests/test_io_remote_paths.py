@@ -15,12 +15,15 @@ import typing_extensions as tx
 import brainhops.io as io
 from brainhops._core.dependencies import has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
+from brainhops.io.base import Format
 from brainhops.io.base._base import (
-    WritableTextFileBasedObject,
     register_format,
 )
 from brainhops.io.base._dispatch import Source, _to_filename
-from brainhops.io.base.parsers import ParserError
+from brainhops.io.base.parsers import (
+    ParserError,
+    TextFileWriter,
+)
 
 
 class RemotePath(os.PathLike):
@@ -146,7 +149,7 @@ def note_formats() -> tx.Iterator[tx.Tuple[type, type]]:
             yield f"{name}:{self.text}"
 
         namespace = {"to_lines": to_lines, "EXTENSIONS": extensions}
-        bases = (Note, WritableTextFileBasedObject)
+        bases = (Note, Format, TextFileWriter)
         return register_format(type(name, bases, namespace))
 
     made = (make("Short", (".n",)), make("Long", (".long.n",)))
@@ -166,11 +169,11 @@ def test_save_chooses_the_format_from_the_url_path(note_formats) -> None:  # noq
 
 
 def test_from_other_reads_a_remote_path_rather_than_building() -> None:
-    from brainhops.io.images import FileBasedImage
+    from brainhops.io.images import ImageFormat
 
     # Reading fails, but the path is neither made local nor taken as data.
     with pytest.raises(ParserError):
-        FileBasedImage.from_any(RemotePath("s3://bucket/missing.nii.gz"))
+        ImageFormat.from_any(RemotePath("s3://bucket/missing.nii.gz"))
     assert RemotePath.fspath_calls == 0
 
 
@@ -186,6 +189,6 @@ def test_a_zarr_store_round_trips_through_in_memory_storage() -> None:
     data = np.arange(8, dtype="float32").reshape(2, 2, 2)
     store = Path("memory://brainhops-tests/remote.zarr")
     io.save(SingleScaleImage(data=data), store)
-    back = io.images.FileBasedImage.from_any(store)
+    back = io.images.ImageFormat.from_any(store)
     assert isinstance(back, ZarrImage)
     assert np.array_equal(np.asarray(back.data), data)

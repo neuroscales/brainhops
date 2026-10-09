@@ -45,6 +45,11 @@ def _field(x: Transformation) -> np.ndarray:
     return np.asarray(x.compute().field)
 
 
+def _engine_factored(seq: Sequence) -> Transformation:
+    """Factor as the compute loop does, composing inside each group."""
+    return fac.factor_sequence(seq, compute=True, simplify="analytic")
+
+
 def _factors(result: Transformation) -> list:
     return [
         t
@@ -534,7 +539,7 @@ def test_cap_raises_on_non_identity_preserving_pass(
 
     def broken(
         seq: object,
-        mode: object,
+        compute: object = False,
         simplify: object = None,
         cache: object = None,
     ) -> object:
@@ -590,7 +595,7 @@ def test_unrestrictable_element_leaves_the_chain_unfactored(
     seq = Sequence(
         [CartesianField(shape=(4, 5)), Scaling(scale=np.array([2.0, 3.0]))]
     )
-    assert fac.factor_sequence(seq) is seq
+    assert _engine_factored(seq) is seq
 
 
 def test_subspace_without_inner_is_read_as_the_identity() -> None:
@@ -598,7 +603,7 @@ def test_subspace_without_inner_is_read_as_the_identity() -> None:
     grid = CartesianField(shape=(4, 5, 6))
     scale = Scaling(scale=np.array([0.5, 0.75, 0.9]))
     seq = Sequence([grid, _sub(None, [1]), scale])
-    result = fac.factor_sequence(seq)
+    result = _engine_factored(seq)
     assert _factor_axes(result) == [(0,), (1,), (2,)]
     assert np.allclose(_field(result), _field(Sequence([grid, scale])))
 
@@ -649,7 +654,7 @@ def test_subspace_without_inner_over_different_axes_is_a_reindex() -> None:
         output=_XYZ,
     )
     seq = Sequence([_grid_xyz(), _reindex([0, 1], [1, 0]), scale])
-    assert fac.factor_sequence(seq) is not seq
+    assert _engine_factored(seq) is not seq
     nf = seq.compute(factor=True)
     assert _factor_axes(nf) == [(2,)]
     assert list(nf.transformations[-1].permutation) == [1, 0, 2]
@@ -734,7 +739,7 @@ def test_group_of_systemless_subspace_and_affine_pieces_is_factored(
         head = Permutation(permutation=np.array([0, 3, 1, 2]))
     grid = CartesianField(shape=(3, 3, 5, 4))
     seq = Sequence([grid, head, *_systemless_subspace_then_linear()])
-    assert fac.factor_sequence(seq) is not seq
+    assert _engine_factored(seq) is not seq
     assert np.allclose(_field(seq.compute(factor=True)), _field(seq))
 
 
@@ -780,7 +785,7 @@ def test_uncomposable_affine_then_subspace_is_left_unfactored() -> None:
             _sub(Scaling(scale=np.array([1.5, 1.8, 1.65, 1.7])), [0, 1, 2, 3]),
         ]
     )
-    assert fac.factor_sequence(seq) is seq
+    assert _engine_factored(seq) is seq
     assert np.allclose(_field(seq.compute(factor=True)), _field(seq))
 
 
@@ -841,3 +846,88 @@ def test_leaf_factor_delegates_to_sequence() -> None:
     grid = CartesianField(shape=(4, 5, 6))
     nf = Sequence([grid, diag]).compute(factor=True)
     assert _factor_axes(nf) == [(0,), (1,), (2,)]
+
+
+def _diagonal() -> Affine:
+    return Affine(
+        matrix=np.array(
+            [
+                [2.0, 0.0, 0.0, 0.0],
+                [0.0, 3.0, 0.0, 0.0],
+                [0.0, 0.0, 4.0, 0.0],
+            ]
+        )
+    )
+
+
+def test_leaf_factor_method_splits_a_diagonal_affine() -> None:
+    # A leaf factors as a chain of one element, with one factor per axis.
+    leaf = _diagonal()
+    nf = leaf.factor()
+    assert _factor_axes(nf) == [(0,), (1,), (2,)]
+    grid = CartesianField(shape=(4, 5, 6))
+    assert np.allclose(
+        _field(Sequence([grid, nf])), _field(Sequence([grid, leaf]))
+    )
+
+
+def test_leaf_factor_method_returns_self_when_it_does_not_factor() -> None:
+    # A shear couples both axes into one group, so there is nothing to
+    # split and the chain of one is dropped rather than handed back.
+    shear = Affine(
+        matrix=np.array([[1.0, 0.5, 0.0], [0.0, 1.0, 0.0]]),
+    )
+    assert shear.factor() is shear
+
+
+# ----------------------------------------------------------------------
+#   Sequence.factor()
+# ----------------------------------------------------------------------
+
+
+def _scaled_and_swapped() -> Sequence:
+    return Sequence(
+        [
+            CartesianField(shape=(4, 5, 6)),
+            Scaling(scale=np.array([2.0, 3.0, 1.0])),
+            Permutation(permutation=np.array([1, 0, 2])),
+        ]
+    )
+
+
+def test_factor_method_is_structural_by_default() -> None:
+    # Nothing is composed, so each factor holds the sub-chain of its group.
+    seq = _scaled_and_swapped()
+    nf = seq.factor()
+    assert _factor_axes(nf) == [(0,), (1,), (2,)]
+    assert all(isinstance(f.transformation, Sequence) for f in _factors(nf))
+    assert isinstance(nf.transformations[0], CartesianField)
+    assert isinstance(nf.transformations[-1], Permutation)
+    assert np.allclose(_field(nf), _field(seq))
+
+
+def test_factor_method_with_compute_folds_each_group_into_one() -> None:
+    seq = _scaled_and_swapped()
+    nf = seq.factor(compute=True)
+    # The unit scale on the last axis leaves an identity, whose factor is
+    # dropped once the group is composed.
+    assert _factor_axes(nf) == [(0,), (1,)]
+    assert not any(
+        isinstance(f.transformation, Sequence) for f in _factors(nf)
+    )
+    assert np.allclose(_field(nf), _field(seq))
+
+
+@pytest.mark.parametrize("compute", [False, True])
+def test_factor_method_is_one_idempotent_pass(compute: bool) -> None:
+    nf = _scaled_and_swapped().factor(compute=compute)
+    assert nf.factor(compute=compute) is nf
+
+
+def test_factor_method_returns_self_when_the_chain_does_not_factor() -> None:
+    # A tall affine creates an axis, so the chain is left unfactored.
+    tall = Affine(
+        matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 5.0]])
+    )
+    seq = Sequence([CartesianField(shape=(4, 5)), tall])
+    assert seq.factor() is seq

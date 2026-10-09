@@ -125,12 +125,12 @@ __all__ = [
     "X5Header",
     "X5Node",
     "X5Transform",
-    "X5TransformParser",
+    "X5TransformReaderWriter",
 ]
 
 from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
 from ._struct import X5Domain, X5Header, X5Node
-from ._xform import X5Transform, X5TransformParser
+from ._xform import X5Transform, X5TransformReaderWriter
 
 # The converters into these formats register themselves when this module
 # is imported, here, so that `t.to(Format)` refuses rather than relabels.

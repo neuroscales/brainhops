@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
+from brainhops.io.base.parsers import TextFileReader
+
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
@@ -18,8 +20,7 @@ from brainhops.cli._errors import CliError  # noqa: E402
 from brainhops.cli._io import load_image, load_transform  # noqa: E402
 from brainhops.io.base import ImageSpec  # noqa: E402
 from brainhops.io.base._base import (  # noqa: E402
-    FileBasedObject,
-    TextFileBasedObject,
+    Format,
     format_registry,
     register_format,
 )
@@ -29,14 +30,13 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
     ParserExistsError,
     SnifferExistsError,
-    TextFileParser,
 )
-from brainhops.io.images import FileBasedImage  # noqa: E402
+from brainhops.io.images import ImageFormat  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
-from brainhops.io.transformations import FileBasedTransformation  # noqa: E402
+from brainhops.io.transformations import TransformationFormat  # noqa: E402
 
 
-class Greeting(TextFileParser):
+class Greeting(TextFileReader):
     """A one-line text format that can also be read from memory."""
 
     EXTENSIONS = (".greet",)
@@ -118,7 +118,7 @@ def test_dispatched_load_of_a_missing_file(missing, entry) -> None:  # noqa: ANN
 
 
 @pytest.mark.parametrize(
-    "dispatcher", [FileBasedObject, FileBasedImage, FileBasedTransformation]
+    "dispatcher", [Format, ImageFormat, TransformationFormat]
 )
 def test_dispatched_from_file_of_a_missing_file(missing, dispatcher) -> None:  # noqa: ANN001
     for source in _spellings(missing):
@@ -171,7 +171,7 @@ def test_concrete_sniff_of_a_missing_file(missing, as_str) -> None:  # noqa: ANN
 
 @pytest.mark.parametrize(
     "entry",
-    [FileBasedObject.sniff, FileBasedObject.sniff_file],
+    [Format.sniff, Format.sniff_file],
     ids=["sniff", "sniff_file"],
 )
 def test_dispatched_sniff_of_a_missing_file(tmp_path, entry) -> None:  # noqa: ANN001
@@ -197,7 +197,7 @@ def test_dispatched_sniff_still_predicts_from_the_name(missing) -> None:  # noqa
 @pytest.fixture
 def greeting_root() -> tx.Iterator[type]:
     @format_registry
-    class Root(TextFileBasedObject):
+    class Root(Format, TextFileReader):
         pass
 
     fmt = register_format(
@@ -214,8 +214,7 @@ def greeting_root() -> tx.Iterator[type]:
     try:
         yield Root
     finally:
-        FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
+        Format._REGISTRY.discard(fmt)
 
 
 def test_dispatched_text_is_content_not_a_path(greeting_root) -> None:  # noqa: ANN001

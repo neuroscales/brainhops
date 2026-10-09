@@ -16,11 +16,12 @@ from bagof.magic import fields
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base._base import WritableFileBasedObject
+from brainhops.io.base._base import Format
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
-    FileSniffer,
+    FileReader,
+    FileWriter,
     WriterError,
 )
 
@@ -98,7 +99,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     """
     name = _to_filename(file)
     if name is None:
-        if isinstance(obj, WritableFileBasedObject):
+        if isinstance(obj, Format) and isinstance(obj, FileWriter):
             obj.save(file, **kwargs)
             return
         raise WriterError(
@@ -107,7 +108,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             f"file, or build the format you want and save that."
         )
 
-    registry = WritableFileBasedObject._REGISTRY
+    registry = (fmt for fmt in Format._REGISTRY if issubclass(fmt, FileWriter))
     matches = ((fmt, _match_name(name, fmt)) for fmt in registry)
     claimed = [(fmt, match) for fmt, match in matches if match is not None]
     if not claimed:
@@ -198,12 +199,12 @@ def _first_writer(
 def _model(cls: type) -> tx.Optional[type]:
     """Return the data model that `cls` instantiates, or `None`.
 
-    This is the first class in the MRO that is a data model but not a sniffer,
+    This is the first class in the MRO that is a data model but not I/O,
     such as `SingleScaleImage` for `NiftiImage`.
     """
     for base in cls.__mro__:
         if issubclass(base, DataModelBase) and not issubclass(
-            base, FileSniffer
+            base, (Format, FileReader, FileWriter)
         ):
             return base
     return None
