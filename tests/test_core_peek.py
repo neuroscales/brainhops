@@ -4,7 +4,7 @@ from brainhops._core.peek import EMPTY, peekable
 
 
 def test_a_plain_peekable_yields_the_items_unchanged() -> None:
-    """The default `preproc` hook returns each item as it is (#365)."""
+    """The default `preproc` hook returns each item as it is."""
     assert list(peekable(iter([1, 2, 3]))) == [1, 2, 3]
 
 
