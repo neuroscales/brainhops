@@ -826,3 +826,67 @@ def test_from_nibabel_keeps_the_header() -> None:
     back = image.to_nibabel()
     assert np.allclose(back.affine, AFFINE, atol=1e-5)
     assert MghImage.from_nibabel(nibabel_image.header).raw is None
+
+
+class _CountedReads:
+    """Count the reads of the voxels of every nibabel proxy."""
+
+    def __init__(self, monkeypatch) -> None:  # noqa: ANN001
+        from nibabel.arrayproxy import ArrayProxy
+
+        self.count = 0
+        unscaled = ArrayProxy._get_unscaled
+        array = ArrayProxy.__array__
+
+        def counted_unscaled(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return unscaled(proxy, *args, **kwargs)
+
+        def counted_array(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return array(proxy, *args, **kwargs)
+
+        monkeypatch.setattr(ArrayProxy, "_get_unscaled", counted_unscaled)
+        monkeypatch.setattr(ArrayProxy, "__array__", counted_array)
+
+
+@pytest.mark.parametrize("name", ["vol.mgh", "vol.mgz", "vol.nii.gz"])
+def test_the_shape_is_read_without_the_voxels(
+    tmp_path,  # noqa: ANN001
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from brainhops.io.transformations.fsl._affines import _shape
+
+    data = _data((3, 4, 5, 2))
+    if name.endswith(".nii.gz"):
+        source = tmp_path / name
+        nb.save(nb.Nifti1Image(data, AFFINE), str(source))
+    else:
+        source = _write(tmp_path, name, data)
+    reads = _CountedReads(monkeypatch)
+    image = io.load(source)
+    assert image.shape == (3, 4, 5, 2)
+    assert image.ndim == 4
+    assert _shape(image) == (3, 4, 5, 2)
+    assert reads.count == 0
+    assert "_cache_data" not in vars(image)
+    # Assigned data gives its own shape, and an image without data raises
+    # as before.
+    image.data = _data((2, 3, 4))
+    assert image.shape == (2, 3, 4)
+    with pytest.raises(AttributeError):
+        _ = type(image)().shape
+
+
+@pytest.mark.parametrize("field", ["dims", "type"])
+def test_the_layout_of_the_voxels_cannot_be_overridden(
+    tmp_path,  # noqa: ANN001
+    field: str,
+) -> None:
+    image = MghImage.load(_write(tmp_path, "vol.mgh", _data()))
+    value = (9, 9, 9, 1) if field == "dims" else 0
+    with pytest.raises(WriterError, match="dtype="):
+        image.to_bytes(**{field: value})
+    with pytest.raises(WriterError):
+        MghImage(data=_data()).to_raw(**{field: value})

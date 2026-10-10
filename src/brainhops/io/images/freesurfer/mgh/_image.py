@@ -164,6 +164,18 @@ class MghImage(
         return _mgh_to_transformations(self.metadata.raw)
 
     @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the data, read from `raw` without reading the voxels.
+
+        The data is `raw` as the file stores it, so the two have the same
+        shape, and a proxy knows its shape from the header. An image
+        without data raises as [`SingleScaleImage`][] does.
+        """
+        if self.raw is None:
+            return self.data.shape
+        return tuple(int(d) for d in self.raw.shape)
+
+    @property
     def system(self) -> tx.Optional[CoordinateSystem]:
         """The voxel coordinate system described by the record.
 
@@ -302,7 +314,9 @@ class MghImage(
         **overrides : Any
             Header fields set last. `dtype` sets the stored voxel type,
             which by default is the type of the data if MGH can store it
-            (uint8, int16, int32, float32), or else the nearest one.
+            (uint8, int16, int32, float32), or else the nearest one. The
+            fields `dims` and `type` are refused, because the dimensions
+            follow the data and the voxel type is set by `dtype`.
 
         Returns
         -------
@@ -313,7 +327,8 @@ class MghImage(
         ------
         WriterError
             If there is no data, the data have more than four dimensions,
-            or the voxel type cannot be stored.
+            the voxel type cannot be stored, or `dims` or `type` is
+            overridden.
         UnrepresentableTransformationError
             If the transformation has no affine form, has a second
             non-spatial axis, or shifts or scales frames in a way that MGH
@@ -332,10 +347,12 @@ class MghImage(
         [`plan_axes`][brainhops.io.common._geometry.plan_axes]). The TR of
         a time axis is stored in milliseconds.
 
-        The header of the nibabel image is the header of [`to_raw`][]. A
-        nibabel image has no place for the trailing tags, which are left
-        out, and nibabel gives a header whose `goodRASFlag` is 0 its own
-        default geometry.
+        The header of the nibabel image starts from the header of
+        [`to_raw`][], and nibabel encodes the geometry again from
+        `MghRaw.vox2ras`. The geometry is therefore the one that
+        FreeSurfer reads, with the FreeSurfer defaults for a record whose
+        `goodRASFlag` is not positive, and the flag is set. A nibabel image
+        has no place for the trailing tags, which are left out.
 
         Parameters
         ----------
@@ -462,6 +479,10 @@ def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
 # ----------------------------------------------------------------------
 
 
+_LAYOUT_FIELDS = frozenset({"dims", "type"})
+"""Header fields that describe the stored voxels, which the data sets."""
+
+
 def _encoded(
     image: MghImage, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
 ) -> tx.Tuple[MghRaw, ArrayProtocol]:
@@ -476,6 +497,13 @@ def _encoded(
             "This image has no data, so there is nothing to write."
         )
     overrides = dict(overrides)
+    refused = sorted(_LAYOUT_FIELDS.intersection(overrides))
+    if refused:
+        raise WriterError(
+            f"The header fields {refused} cannot be overridden: the "
+            f"dimensions come from the data, and the voxel type is set "
+            f"with dtype=."
+        )
     dtype = overrides.pop("dtype", None)
     vox2ras, layout, tr = _scanner_geometry(image.transformations, image.raw)
     data = image.raw if layout is None else layout.apply(image.data)
