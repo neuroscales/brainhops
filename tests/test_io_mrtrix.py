@@ -7,12 +7,15 @@ at the byte offset MRtrix computes (core/stride.h).
 import gzip
 import io as _io
 import math
+import pickle
 import struct
 
 import numpy as np
 import pytest
+from bagof.magic import replace
 
 import brainhops.io as io
+from brainhops.backends import backend
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine
@@ -22,13 +25,15 @@ from brainhops.io.base.parsers import (
     FileWriter,
     ParserContentError,
     ParserError,
+    WriterError,
 )
-from brainhops.io.common.mrtrix import MrtrixHeader
+from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
 from brainhops.io.common.mrtrix._codecs import (
     dtype_to_mrtrix,
     mrtrix_dtype,
     parse_layout,
 )
+from brainhops.io.common.mrtrix._data import _MrtrixProxy
 from brainhops.io.images import ImageFormat
 from brainhops.io.images.mrtrix import MrtrixImage
 
@@ -146,7 +151,7 @@ def test_the_header_keys_are_decoded() -> None:
         "END\n"
         "garbage after the end: ignored\n"
     )
-    header = MrtrixHeader.from_text(text)
+    header = MrtrixRaw.from_text(text)
     assert header.dim == (4, 5, 6, 7)
     assert header.vox[:3] == (1.5, 2.0, 2.5)
     assert math.isnan(header.vox[3])
@@ -179,9 +184,9 @@ def test_the_header_writes_back_as_it_was_read() -> None:
         "file: . 512\n"
         "END\n"
     )
-    header = MrtrixHeader.from_text(text)
+    header = MrtrixRaw.from_text(text)
     assert header.to_text() == text
-    assert MrtrixHeader.from_text(header.to_text()) == header
+    assert MrtrixRaw.from_text(header.to_text()) == header
 
 
 @pytest.mark.parametrize(
@@ -212,7 +217,7 @@ def test_the_header_writes_back_as_it_was_read() -> None:
 )
 def test_a_malformed_header_is_refused(text) -> None:  # noqa: ANN001
     with pytest.raises(ParserContentError):
-        MrtrixHeader.from_text(text)
+        MrtrixRaw.from_text(text)
 
 
 @pytest.mark.parametrize(
@@ -281,12 +286,13 @@ def test_a_layout_is_undone_on_read(tmp_path, layout) -> None:  # noqa: ANN001
 
     image = io.images.load(source)
     assert isinstance(image, MrtrixImage)
-    assert image.data.shape == DATA.shape
-    assert np.array_equal(np.asarray(image.data), DATA)
-    # The data is a view of a memory map, not a copy.
-    assert isinstance(image.data, np.memmap) or isinstance(
-        image.data.base, np.memmap
-    )
+    assert image.shape == DATA.shape
+    with backend("numpy"):
+        data = image.data
+    assert np.array_equal(data, DATA)
+    # The data is a read-only view of a memory map, not a copy.
+    assert isinstance(data, np.memmap) or isinstance(data.base, np.memmap)
+    assert not data.flags.writeable
 
 
 def test_a_4d_volume_fastest_layout(tmp_path) -> None:  # noqa: ANN001
@@ -360,7 +366,8 @@ def test_intensity_scaling(tmp_path) -> None:  # noqa: ANN001
     )
     source = _write(tmp_path / "a.mif", _single_file(head, payload))
     image = MrtrixImage.load(source)
-    assert np.array_equal(np.asarray(image.dataobj), stored)
+    assert np.array_equal(image.raw.get_unscaled(), stored)
+    assert image.raw.dtype == np.float32
     assert np.allclose(np.asarray(image.data), -1 + 0.5 * stored)
 
 
@@ -512,7 +519,7 @@ def test_a_nan_volume_size(tmp_path) -> None:  # noqa: ANN001
     assert np.allclose(np.asarray(image.transformations[0].scale), 1)
     target = tmp_path / "out.mif"
     image.save(target)
-    assert math.isnan(MrtrixImage.load(target).header.vox[3])
+    assert math.isnan(MrtrixImage.load(target).metadata.raw.vox[3])
 
 
 # ----------------------------------------------------------------------
@@ -551,7 +558,7 @@ def test_an_image_round_trips(tmp_path, name) -> None:  # noqa: ANN001
         reloaded.transformation.homogeneous_matrix,
         image.transformation.homogeneous_matrix,
     )
-    before, after = image.header, reloaded.header
+    before, after = image.metadata.raw, reloaded.metadata.raw
     assert after.layout == before.layout
     assert after.datatype == before.datatype
     assert after.vox == before.vox
@@ -567,7 +574,7 @@ def test_the_written_bytes_follow_the_layout(tmp_path) -> None:  # noqa: ANN001
     target = tmp_path / "out.mif"
     image.save(target, layout="+2,-0,+1", datatype="Int16BE")
     content = target.read_bytes()
-    header, _ = MrtrixHeader.from_fileobj(_io.BytesIO(content))
+    header = MrtrixRaw.from_fileobj(_io.BytesIO(content))
     assert header.datatype == "Int16BE"
     assert header.file[1] % 4 == 0
     expected = _reference_bytes(DATA.astype("i2"), "+2,-0,+1", ">h")
@@ -592,7 +599,7 @@ def test_header_keys_can_be_changed_when_writing(tmp_path) -> None:  # noqa: ANN
     image = io.images.load(_source(tmp_path))
     target = tmp_path / "out.mif"
     image.save(target, keyval={"dw_scheme": None, "comments": "a\nb"})
-    keyval = MrtrixImage.load(target).header.keyval
+    keyval = MrtrixImage.load(target).metadata.raw.keyval
     assert "dw_scheme" not in keyval
     assert keyval["comments"] == "a\nb"
     assert keyval["command_history"] == "mrconvert in.nii out.mif"
@@ -625,9 +632,9 @@ def test_an_lps_world_is_written_as_ras(tmp_path) -> None:  # noqa: ANN001
         [matrix, [0, 0, 0, 1]]
     )
     assert np.allclose(image.transformation.homogeneous_matrix, expected)
-    assert image.header.vox == (2.0, 3.0, 4.0)
+    assert image.metadata.raw.vox == (2.0, 3.0, 4.0)
     assert np.allclose(
-        image.header.transform[:, :3], np.diag([-1.0, -1.0, 1.0])
+        image.metadata.raw.transform[:, :3], np.diag([-1.0, -1.0, 1.0])
     )
 
 
@@ -647,3 +654,229 @@ def test_an_image_round_trips_through_nifti(tmp_path) -> None:  # noqa: ANN001
         reloaded.transformation.homogeneous_matrix,
         image.transformation.homogeneous_matrix,
     )
+
+
+# ----------------------------------------------------------------------
+#   RECORD AND WRITE PRECEDENCE
+# ----------------------------------------------------------------------
+
+
+def _content(path) -> bytes:  # noqa: ANN001
+    raw = path.read_bytes()
+    return gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw
+
+
+def _scaled_source(tmp_path, name="source.mif"):  # noqa: ANN001, ANN202
+    """Write a file spelled as MRtrix spells it, with padding and scaling."""
+    stored = np.arange(DATA.size, dtype="<u2").reshape(DATA.shape)
+    head = (
+        "mrtrix image\n"
+        "dim: 2,3,4\n"
+        "vox: 2,3,4\n"
+        "layout: -0,+2,+1\n"
+        "datatype: UInt16LE\n"
+        "transform: 0,-1,0,10\n"
+        "transform: 1,0,0,-20\n"
+        "transform: 0,0,1,5\n"
+        "scaling: -1,0.5\n"
+        "# a comment that the writer would drop\n"
+        "command_history: mrconvert in.nii out.mif\n"
+    )
+    payload = _reference_bytes(stored, "-0,+2,+1", "<H")
+    content = _single_file(head, payload, pad=5)
+    if name.endswith(".gz"):
+        content = gzip.compress(content)
+    return _write(tmp_path / name, content)
+
+
+@pytest.mark.parametrize("name", ["source.mif", "source.mif.gz"])
+def test_an_untouched_image_keeps_its_bytes(tmp_path, name) -> None:  # noqa: ANN001
+    source = _scaled_source(tmp_path, name)
+    loaded = MrtrixImage.load(source)
+    assert loaded.to_raw() is loaded.metadata.raw
+    suffix = name[len("source") :]
+    writers = {
+        "save": lambda target: loaded.save(target),
+        "io.save": lambda target: io.save(MrtrixImage.load(source), target),
+        "from_instance": lambda target: MrtrixImage.from_instance(loaded).save(
+            target
+        ),
+    }
+    for label, write in writers.items():
+        target = tmp_path / (label + suffix)
+        write(target)
+        assert _content(target) == _content(source), label
+    # A copy made with `replace` holds the decoded data, which is stored
+    # again without the scaling, but with the header keys of the source.
+    target = tmp_path / ("replace" + suffix)
+    replace(loaded).save(target)
+    assert MrtrixImage.load(target).metadata.raw.keyval == (
+        loaded.metadata.raw.keyval
+    )
+    assert MrtrixImage.from_bytes(source.read_bytes()).to_bytes() == _content(
+        source
+    )
+
+
+def test_an_untouched_mih_keeps_its_data_and_names_its_new_data_file(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    head = _header_text(DATA.shape, "+0,+1,+2", "Float32LE", file="a.dat 0")
+    source = _write(tmp_path / "a.mih", (head + "END\n").encode())
+    (tmp_path / "a.dat").write_bytes(_reference_bytes(DATA, "+0,+1,+2", "<f"))
+    loaded = MrtrixImage.load(source)
+    (tmp_path / "same").mkdir()
+    loaded.save(tmp_path / "same" / "a.mih")
+    assert (tmp_path / "same" / "a.mih").read_bytes() == source.read_bytes()
+    assert (tmp_path / "same" / "a.dat").read_bytes() == (
+        tmp_path / "a.dat"
+    ).read_bytes()
+    loaded.save(tmp_path / "b.mih")
+    assert (tmp_path / "b.dat").read_bytes() == (
+        tmp_path / "a.dat"
+    ).read_bytes()
+    assert MrtrixImage.load(tmp_path / "b.mih").metadata.raw.file == (
+        "b.dat",
+        0,
+    )
+
+
+def test_an_image_saved_over_itself_keeps_its_voxels(tmp_path) -> None:  # noqa: ANN001
+    source = _scaled_source(tmp_path)
+    before = source.read_bytes()
+    MrtrixImage.load(source).save(source)
+    assert source.read_bytes() == before
+
+
+def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
+    """Each public knob is either written or leaves the record as read."""
+    source = _scaled_source(tmp_path)
+
+    def loaded():  # noqa: ANN202
+        return MrtrixImage.load(source)
+
+    image = loaded()
+    record = image.metadata.raw
+    assert image.to_raw() is record
+    # Options that name what the file stores keep the record and the
+    # stored voxels.
+    same = dict(layout="-0,+2,+1", datatype="UInt16LE", scaling=(-1, 0.5))
+    assert image.to_raw(**same) is record
+    assert image.to_bytes(**same) == source.read_bytes()
+
+    # New voxels are stored with their own type and without scaling.
+    image.data = np.asarray(image.data) * 2
+    written = image.to_raw()
+    assert written is not record
+    assert written.datatype == "Float32LE" and written.scaling is None
+    assert written.layout == record.layout
+    assert written.vox == record.vox
+    assert np.array_equal(written.transform, record.transform)
+    assert written.keyval == record.keyval
+
+    # Other options decode the voxels and store them again.
+    image = loaded()
+    written = image.to_raw(datatype="Int16BE", layout="+0,+1,+2")
+    assert written.datatype == "Int16BE" and written.layout == (1, 2, 3)
+    back = MrtrixImage.from_bytes(image.to_bytes(scaling=(0, 0.25)))
+    assert back.metadata.raw.scaling == (0.0, 0.25)
+    assert np.allclose(np.asarray(back.data), np.asarray(image.data))
+
+    # Assigned transformations give the geometry.
+    image = loaded()
+    image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+    written = image.to_raw()
+    assert written.vox == (2.0, 3.0, 4.0)
+    assert np.array_equal(written.transform, np.eye(3, 4))
+
+    # Other metadata gives its record.
+    image = loaded()
+    edited = record.copy()
+    edited.keyval["comments"] = "edited"
+    image.metadata = MrtrixMetadata.from_raw(edited)
+    assert image.to_raw() is edited
+
+    # The keys are merged last, and those that the other options, the data
+    # and the geometry decide are refused.
+    image = loaded()
+    written = image.to_raw(keyval={"command_history": None, "x": "y"})
+    assert written.keyval == {"x": "y"}
+    for key in ("dim", "Vox", "transform", "scaling", "file"):
+        with pytest.raises(WriterError, match="keyval="):
+            image.to_raw(keyval={key: "1"})
+
+    # The record of the metadata is never changed.
+    assert record == MrtrixImage.load(source).metadata.raw
+    assert record.stored == MrtrixImage.load(source).metadata.raw.stored
+
+    # The voxel system is derived from the record and cannot be assigned.
+    with pytest.raises(AttributeError):
+        image.system = None
+
+
+def test_metadata_reads_and_writes_the_header(tmp_path) -> None:  # noqa: ANN001
+    source = _scaled_source(tmp_path, "source.mif.gz")
+    metadata = MrtrixMetadata.load(source)
+    assert metadata.raw.keyval["command_history"] == "mrconvert in.nii out.mif"
+    assert pickle.loads(pickle.dumps(metadata)).raw == metadata.raw
+    assert metadata.to_raw() == metadata.raw
+    assert metadata.to_raw() is not metadata.raw
+    offset = metadata.raw.file[1]
+    assert metadata.to_bytes() == _content(source)[:offset]
+    # A stale copy of the bytes is not written.
+    edited = metadata.to_raw()
+    edited.keyval["x"] = "y"
+    assert b"x: y" in edited.to_bytes()
+    assert b"a comment" not in edited.to_bytes()
+
+
+class _CountedReads:
+    """Count the reads of the voxels of every MRtrix image."""
+
+    def __init__(self, monkeypatch) -> None:  # noqa: ANN001
+        self.count = 0
+        unscaled = _MrtrixProxy.get_unscaled
+        stored = _MrtrixProxy.read_stored
+
+        def counted_unscaled(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return unscaled(proxy, *args, **kwargs)
+
+        def counted_stored(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return stored(proxy, *args, **kwargs)
+
+        monkeypatch.setattr(_MrtrixProxy, "get_unscaled", counted_unscaled)
+        monkeypatch.setattr(_MrtrixProxy, "read_stored", counted_stored)
+
+
+@pytest.mark.parametrize("name", ["source.mif", "source.mif.gz"])
+def test_nothing_but_the_data_reads_the_voxels(
+    tmp_path,  # noqa: ANN001
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _scaled_source(tmp_path, name)
+    reads = _CountedReads(monkeypatch)
+    image = io.load(source)
+    assert image.shape == DATA.shape
+    assert image.ndim == 3
+    assert image.raw.dtype == np.float32
+    repr(image)
+    assert image.transformations
+    assert image.system is not None
+    assert image.to_raw() is image.metadata.raw
+    pickle.loads(pickle.dumps(image))
+    MrtrixImage.from_bytes(source.read_bytes())
+    assert reads.count == 0
+    assert "_cache_data" not in vars(image)
+    with backend("numpy"):
+        data = image.data
+    assert data.dtype == np.float32 and not data.flags.writeable
+    stored = np.arange(DATA.size).reshape(DATA.shape)
+    assert np.allclose(data, -1 + 0.5 * stored)
+    assert reads.count >= 1
+    image.data = np.zeros((2, 3))
+    assert image.shape == (2, 3)
+    with pytest.raises(AttributeError):
+        _ = MrtrixImage().shape

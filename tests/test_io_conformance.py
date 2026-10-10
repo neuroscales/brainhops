@@ -65,8 +65,16 @@ from brainhops.io.common.afni._views import (
 from brainhops.io.common.afni._views import (
     _image_to_model as _afni_to_model,
 )
+from brainhops.io.common.mrtrix._data import _MrtrixProxy
+from brainhops.io.common.mrtrix._views import (
+    _image_to_disk as _mrtrix_to_disk,
+)
+from brainhops.io.common.mrtrix._views import (
+    _image_to_model as _mrtrix_to_model,
+)
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
@@ -1031,10 +1039,36 @@ _AFNI = Exemplar(
 )
 EXEMPLARS[AfniImage] = _AFNI
 
+# An MRtrix image is checked as a `.mif` file, which holds the header and
+# the voxels, and as a gzipped `.mif.gz` file. A `.mih` header names its
+# data file, so a copy under another name differs in that line, and the
+# check of an untouched save cannot apply to it. The metadata writes the
+# header up to the first voxel, padding included.
+
+
+def _mrtrix_edit_record(record: tx.Any) -> tx.Any:
+    record.keyval["comments"] = "edited"
+    return record
+
+
+_MRTRIX = Exemplar(
+    metadata=MrtrixMetadata,
+    suffix=".mif",
+    proxies=(_MrtrixProxy,),
+    to_model=_mrtrix_to_model,
+    to_disk=_mrtrix_to_disk,
+    sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+    edit_record=_mrtrix_edit_record,
+    record_edited=lambda record: record.keyval.get("comments") == "edited",
+    geometry=_nifti_geometry,
+    change_geometry=_nifti_change_geometry,
+    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+)
+EXEMPLARS[MrtrixImage] = _MRTRIX
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.minc.Minc1Image",
     "brainhops.io.images.minc.Minc2Image",
-    "brainhops.io.images.mrtrix.MrtrixImage",
     "brainhops.io.images.nrrd.AttachedNrrdImage",
     "brainhops.io.images.nrrd.DetachedNrrdImage",
     "brainhops.io.images.openslide.AperioImage",
@@ -1171,6 +1205,10 @@ if nb is not None:
 VARIANTS.append(("AfniImage-BRIK", AfniImage, _AFNI._replace(suffix=".BRIK")))
 VARIANTS.append(
     ("AfniImage-BRIK-gz", AfniImage, _AFNI._replace(suffix=".BRIK.gz"))
+)
+
+VARIANTS.append(
+    ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
 )
 
 CASES = [
