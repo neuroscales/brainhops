@@ -16,7 +16,11 @@ from bagof.magic import KwOnly, NoRepr, fields, replace
 # internals
 from brainhops._core import path
 from brainhops._core.enum import enum_name
-from brainhops._core.properties import InvalidatorInAttribute, smartproperty
+from brainhops._core.properties import (
+    InvalidatorInAttribute,
+    always_unset,
+    smartproperty,
+)
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -329,7 +333,12 @@ class LtaTransformation(
         record = _record(self)
         return _typed_system(record, None if record is None else record.dst)
 
-    @smartproperty(cache=True, fset=_set_data, invalidates=_FORGET_VIEWS)
+    @smartproperty(
+        cache=True,
+        unset=always_unset,
+        fset=_set_data,
+        invalidates=_FORGET_VIEWS,
+    )
     def data(self) -> tx.Optional[np.ndarray]:
         """The `(3, 4)` affine matrix, which the `matrix` view reads.
 
@@ -474,7 +483,10 @@ class LtaTransformationVoxToVox(LtaTransformation):
         return _system(LtaVoxelSystem, record.dst)
 
     @smartproperty(
-        cache=True, fset=_set_vox_to_vox_data, invalidates=_FORGET_VIEWS
+        cache=True,
+        unset=always_unset,
+        fset=_set_vox_to_vox_data,
+        invalidates=_FORGET_VIEWS,
     )
     def data(self) -> tx.Optional[np.ndarray]:
         """The voxel-to-voxel matrix derived from the record.
@@ -511,7 +523,10 @@ class LtaTransformationPhysToPhys(LtaTransformation):
         return _system(LtaPhysicalSystem, record.dst)
 
     @smartproperty(
-        cache=True, fset=_set_phys_to_phys_data, invalidates=_FORGET_VIEWS
+        cache=True,
+        unset=always_unset,
+        fset=_set_phys_to_phys_data,
+        invalidates=_FORGET_VIEWS,
     )
     def data(self) -> tx.Optional[np.ndarray]:
         """The physical-to-physical matrix derived from the record.
@@ -540,7 +555,10 @@ class LtaTransformationRASToRAS(LtaTransformation):
         return _systems.RASmm()
 
     @smartproperty(
-        cache=True, fset=_set_ras_to_ras_data, invalidates=_FORGET_VIEWS
+        cache=True,
+        unset=always_unset,
+        fset=_set_ras_to_ras_data,
+        invalidates=_FORGET_VIEWS,
     )
     def data(self) -> tx.Optional[np.ndarray]:
         """The RAS-to-RAS matrix derived from the record.
