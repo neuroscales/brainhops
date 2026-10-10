@@ -1645,7 +1645,11 @@ def test_07_metadata_pickles(
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
     clone = pickle.loads(pickle.dumps(loaded.metadata))
     assert type(clone) is type(loaded.metadata)
-    assert _header(exemplar, clone) == _header(exemplar, loaded.metadata)
+    if exemplar.source is None:
+        assert clone.to_bytes() == loaded.metadata.to_bytes()
+    else:
+        # Metadata that cannot be written is compared through its summary.
+        assert _header(exemplar, clone) == _header(exemplar, loaded.metadata)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)

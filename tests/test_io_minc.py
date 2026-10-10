@@ -81,6 +81,7 @@ def write_minc1(
     dtype: str = "h",
     geometry: bool = True,
     scaled: bool = True,
+    signtype: bool = True,
 ) -> None:
     raw = _raw(dims)
     f = netcdf_file(fileobj, "w", version=1)
@@ -96,7 +97,8 @@ def write_minc1(
     image = f.createVariable("image", dtype, dims)
     if dtype == "h":
         image[:] = raw
-        image.signtype = b"signed__"
+        if signtype:
+            image.signtype = b"signed__"
         image.valid_range = np.array([0.0, float(raw.max())])
     else:
         image[:] = raw.astype(np.float32)
@@ -653,3 +655,34 @@ def test_a_file_written_again_with_another_shape_is_refused(
     write_minc2(filename, dims=("time", "zspace", "yspace", "xspace"))
     with pytest.raises(ParserContentError, match="shape"):
         np.asarray(image.raw)
+
+
+def test_an_integer_image_needs_a_signtype(tmp_path) -> None:  # noqa: ANN001
+    filename = str(tmp_path / "unsigned.mnc")
+    write_minc1(filename, signtype=False)
+    with pytest.raises(ParserContentError, match="signtype"):
+        MincMetadata.load(filename)
+    with pytest.raises(ParserContentError, match="signtype"):
+        Minc1Image.load(filename)
+
+
+def test_text_attributes_lose_their_padding(tmp_path) -> None:  # noqa: ANN001
+    filename = str(tmp_path / "padded.mnc")
+    write_minc1(filename)
+    f = netcdf_file(filename, "a")
+    f.variables["xspace"].units = b"mm\0"
+    f.close()
+    record = MincMetadata.load(filename).raw
+    assert [d.units for d in record.dimensions] == ["mm", "mm", "mm"]
+
+
+def test_unknown_reader_options_are_refused(anyminc) -> None:  # noqa: ANN001
+    _, filename = anyminc
+    for option in ({"foo": 1}, {"transformations": []}, {"mmap": False}):
+        with pytest.raises(TypeError, match="option"):
+            MincImage.load(filename, **option)
+        with pytest.raises(TypeError, match="option"):
+            MincMetadata.load(filename, **option)
+    with open(filename, "rb") as f:
+        with pytest.raises(TypeError, match="option"):
+            MincImage.from_fileobj(f, foo=1)

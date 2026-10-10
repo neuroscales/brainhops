@@ -1034,3 +1034,40 @@ def test_a_stream_stays_the_source_of_the_samples(tmp_path) -> None:  # noqa: AN
     detached, _ = _detached(tmp_path)
     with pytest.raises(ParserContentError, match="no file name"):
         DetachedNrrdImage.from_bytes(detached.read_bytes())
+
+
+def test_a_space_is_refused_for_a_world_without_orientation(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    (tmp_path / "a.nrrd").write_bytes(
+        _header(
+            "type: uint8",
+            "dimension: 3",
+            "space dimension: 3",
+            "sizes: 2 2 2",
+            "space directions: (1,0,0) (0,1,0) (0,0,1)",
+            "encoding: raw",
+        )
+        + b"\n"
+        + bytes(8)
+    )
+    image = io.load(tmp_path / "a.nrrd")
+    assert image.to_raw() is image.metadata.raw
+    with pytest.raises(WriterError, match="anatomical orientation"):
+        image.to_raw(space="LPS")
+    with pytest.raises(WriterError, match="anatomical orientation"):
+        AttachedNrrdImage(np.zeros((2, 2, 2))).to_raw(space="RAS")
+
+
+def test_unknown_types_and_missing_directories_are_reported(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    source, _ = _foreign(tmp_path)
+    image = AttachedNrrdImage.load(source)
+    with pytest.raises(WriterError, match="type"):
+        image.to_raw(datatype="no such type")
+    with pytest.raises(FileNotFoundError) as error:
+        image.save(tmp_path / "a.nhdr", data_file="missing/a.raw")
+    assert error.value.filename == str(tmp_path / "missing" / "a.raw")
+    # A new encoding keeps the spelling of the type of the source.
+    assert image.to_raw(encoding="gzip").fields["type"] == "short"

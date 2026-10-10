@@ -171,7 +171,10 @@ def _dtype(code: int) -> np.dtype:
 
 
 def _attributes(reader: _Reader) -> tx.Dict[str, tx.Any]:
-    """Read a list of attributes: text as strings, numbers as arrays."""
+    """Read a list of attributes: text as strings, numbers as arrays.
+
+    Trailing NUL characters are removed from text.
+    """
     attributes: tx.Dict[str, tx.Any] = {}
     for _ in range(_count(reader, _NC_ATTRIBUTE)):
         name = reader.name()
@@ -180,7 +183,8 @@ def _attributes(reader: _Reader) -> tx.Dict[str, tx.Any]:
         count = reader.int()
         content = reader.padded(count * dtype.itemsize)
         if code == _NC_CHAR:
-            attributes[name] = content.decode("latin-1")
+            # Text is often padded with a NUL, which is not part of it.
+            attributes[name] = content.decode("latin-1").rstrip("\0")
         else:
             values = np.frombuffer(content, dtype=dtype, count=count)
             attributes[name] = values.astype(dtype.newbyteorder("="))
