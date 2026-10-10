@@ -24,7 +24,9 @@ from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.freesurfer.m3z import (
     GCAM_RAS,
     GCAM_VOX,
+    M3zMetadata,
     M3zMorph,
+    M3zRaw,
 )
 
 SHAPE = (4, 3, 5)
@@ -182,7 +184,7 @@ def test_read_nodes_in_freesurfer_order(tmp_path: Path) -> None:
     positions = _positions()
     morph = io.load(_write(tmp_path, _encode(positions)))
     assert isinstance(morph, M3zMorph)
-    s = morph.struct
+    s = morph.metadata.raw
     assert s.shape == SHAPE
     assert s.spacing == SPACING
     assert s.exp_k == 20.0 and s.version == 1.0
@@ -197,11 +199,11 @@ def test_read_nodes_in_freesurfer_order(tmp_path: Path) -> None:
 
 def test_read_geometries(tmp_path: Path) -> None:
     morph = io.load(_write(tmp_path, _encode(_positions())))
-    image, atlas = morph.struct.image, morph.struct.atlas
+    image, atlas = morph.metadata.raw.image, morph.metadata.raw.atlas
     assert image.shape == IMAGE["shape"] and atlas.shape == ATLAS["shape"]
     assert image.filename == "/subjects/bert/mri/norm.mgz"
     assert atlas.filename.endswith("RB_all.gca")
-    s = morph.struct
+    s = morph.metadata.raw
     np.testing.assert_allclose(s.image_geometry.vox2ras, _vox2ras(IMAGE))
     np.testing.assert_allclose(s.atlas_geometry.vox2ras, _vox2ras(ATLAS))
     node = _vox2ras(ATLAS) @ np.diag([SPACING] * 3 + [1])
@@ -212,8 +214,8 @@ def test_read_geometries(tmp_path: Path) -> None:
 def test_read_linear_transform(tmp_path: Path, tag: int, keyword: str) -> None:
     content = _encode(_positions(), xform_tag=tag, keyword=keyword)
     morph = io.load(_write(tmp_path, content))
-    assert morph.struct.xform.tag == tag
-    np.testing.assert_allclose(morph.struct.xform.matrix, LINEAR, atol=1e-6)
+    assert morph.metadata.raw.xform.tag == tag
+    np.testing.assert_allclose(morph.metadata.raw.xform.matrix, LINEAR, atol=1e-6)
 
 
 def test_read_without_tags(tmp_path: Path) -> None:
@@ -221,7 +223,7 @@ def test_read_without_tags(tmp_path: Path) -> None:
         _positions(), geometry=False, gtype=None, labels=False, matrix=None
     )
     morph = io.load(_write(tmp_path, content))
-    s = morph.struct
+    s = morph.metadata.raw
     assert s.tags == () and s.image is None and s.labels is None
     assert s.coordinates == GCAM_VOX and s.xform is None
     # The default FreeSurfer geometry is a centred 256^3 grid of 1 mm LIA
@@ -245,7 +247,7 @@ def test_read_uncompressed(tmp_path: Path) -> None:
     path = _write(tmp_path, _encode(positions, gz=False), "t.m3d")
     morph = io.load(path)
     assert isinstance(morph, M3zMorph)
-    np.testing.assert_array_equal(morph.struct.positions, positions)
+    np.testing.assert_array_equal(morph.metadata.raw.positions, positions)
 
 
 def test_invalid_nodes(tmp_path: Path) -> None:
@@ -254,7 +256,7 @@ def test_invalid_nodes(tmp_path: Path) -> None:
     positions[1, 2, 3] = original[1, 2, 3] = 0
     content = _encode(positions, original=original)
     morph = io.load(_write(tmp_path, content))
-    invalid = morph.struct.invalid
+    invalid = morph.metadata.raw.invalid
     assert invalid.sum() == 1 and invalid[1, 2, 3]
 
 
@@ -287,12 +289,15 @@ def test_sniff(tmp_path: Path) -> None:
         assert M3zMorph.sniff(f) == 1.0 and f.tell() == 0
 
 
-def test_struct_is_the_interface() -> None:
+def test_the_record_is_the_interface() -> None:
     from brainhops.io.transformations.freesurfer import m3z
 
-    assert "M3zStruct" in m3z.__all__
-    for name in ("spacing", "image_vox2ras", "atlas_vox2ras", "affine"):
+    assert {"M3zMetadata", "M3zRaw"} <= set(m3z.__all__)
+    names = ("spacing", "image_vox2ras", "atlas_vox2ras", "affine", "struct")
+    for name in names + ("to_struct", "from_struct"):
         assert not hasattr(M3zMorph, name)
+    for name in ("M3zStruct", "M3zReaderWriter"):
+        assert not hasattr(m3z, name)
 
 
 @pytest.mark.parametrize("hint", ["m3z", "freesurfer", "freesurfer.m3z"])
@@ -404,17 +409,17 @@ def test_write_edited_field(tmp_path: Path) -> None:
     ]
     morph.save(tmp_path / "out.m3z")
     back = io.load(tmp_path / "out.m3z")
-    np.testing.assert_allclose(back.struct.positions, moved)
+    np.testing.assert_allclose(back.metadata.raw.positions, moved)
     # What the chain does not say is kept.
-    np.testing.assert_array_equal(back.struct.original, morph.struct.original)
-    np.testing.assert_array_equal(back.struct.labels, morph.struct.labels)
-    np.testing.assert_allclose(back.struct.xform.matrix, LINEAR, atol=1e-6)
-    assert back.struct.image.filename == IMAGE["fname"].decode()
+    np.testing.assert_array_equal(back.metadata.raw.original, morph.metadata.raw.original)
+    np.testing.assert_array_equal(back.metadata.raw.labels, morph.metadata.raw.labels)
+    np.testing.assert_allclose(back.metadata.raw.xform.matrix, LINEAR, atol=1e-6)
+    assert back.metadata.raw.image.filename == IMAGE["fname"].decode()
     np.testing.assert_allclose(
-        back.struct.image_geometry.vox2ras, _vox2ras(IMAGE), atol=1e-5
+        back.metadata.raw.image_geometry.vox2ras, _vox2ras(IMAGE), atol=1e-5
     )
     np.testing.assert_allclose(
-        back.struct.atlas_geometry.vox2ras, _vox2ras(ATLAS), atol=1e-5
+        back.metadata.raw.atlas_geometry.vox2ras, _vox2ras(ATLAS), atol=1e-5
     )
 
 
@@ -428,7 +433,7 @@ def test_write_coefficients_as_positions(tmp_path: Path) -> None:
     morph.transformations = [ras2node, coefficients, vox2ras]
     morph.save(tmp_path / "out.m3z")
     back = io.load(tmp_path / "out.m3z")
-    np.testing.assert_allclose(back.struct.positions, moved, atol=1e-4)
+    np.testing.assert_allclose(back.metadata.raw.positions, moved, atol=1e-4)
 
 
 def test_write_from_scratch(tmp_path: Path) -> None:
@@ -448,13 +453,13 @@ def test_write_from_scratch(tmp_path: Path) -> None:
         tmp_path / "out.m3z", spacing=SPACING, image_shape=IMAGE["shape"]
     )
     back = io.load(tmp_path / "out.m3z")
-    assert back.struct.spacing == SPACING
-    assert back.struct.atlas.shape == ATLAS["shape"]
+    assert back.metadata.raw.spacing == SPACING
+    assert back.metadata.raw.atlas.shape == ATLAS["shape"]
     np.testing.assert_allclose(
-        back.struct.atlas_geometry.vox2ras, _vox2ras(ATLAS), atol=1e-5
+        back.metadata.raw.atlas_geometry.vox2ras, _vox2ras(ATLAS), atol=1e-5
     )
     np.testing.assert_allclose(
-        back.struct.image_geometry.vox2ras, _vox2ras(IMAGE), atol=1e-5
+        back.metadata.raw.image_geometry.vox2ras, _vox2ras(IMAGE), atol=1e-5
     )
     nodes = np.array([[1, 2, 3], [3, 0, 4]])
     points = _atlas_ras(nodes * SPACING + 0.5)
@@ -469,8 +474,8 @@ def test_write_ras_chain(tmp_path: Path) -> None:
     morph.transformations = list(morph)
     morph.save(tmp_path / "out.m3z")
     back = io.load(tmp_path / "out.m3z")
-    assert back.struct.type == GCAM_RAS
-    np.testing.assert_allclose(back.struct.positions, positions)
+    assert back.metadata.raw.type == GCAM_RAS
+    np.testing.assert_allclose(back.metadata.raw.positions, positions)
 
 
 def test_write_refuses_other_chains(tmp_path: Path) -> None:
@@ -485,11 +490,6 @@ def test_write_refuses_other_chains(tmp_path: Path) -> None:
 
 
 def test_a_morph_compares_by_identity() -> None:
-    # Identity comparison holds although the parser base comes first.
-    from brainhops.io.transformations.freesurfer.m3z._xform import (
-        M3zReaderWriter,
-    )
-
     def make() -> M3zMorph:
         return M3zMorph(transformations=[xforms.Affine(matrix=np.eye(4)[:3])])
 
@@ -497,4 +497,5 @@ def test_a_morph_compares_by_identity() -> None:
     assert morph == morph
     assert morph != make()
     assert {morph: 1}[morph] == 1
-    assert M3zReaderWriter.__eq__ is object.__eq__
+    assert M3zMorph.__eq__ is object.__eq__
+    assert M3zRaw.__eq__ is object.__eq__
