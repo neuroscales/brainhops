@@ -8,7 +8,8 @@ an image, holds a metadata object and a `raw` array, which is the data as
 stored in the file and usually a lazy proxy. The `data` of a format object
 is a cached view of `raw`, decoded by a pair of pure functions of the
 format. A small format may keep its data in the record instead, as an LTA
-file keeps its matrix, and such a format has no `raw` field.
+file keeps its matrix, and so may a format that is parsed in one pass, as
+a FreeSurfer morph keeps its nodes. Such a format has no `raw` field.
 
 Each format that follows the design is listed in `EXEMPLARS`, with what
 the checks need to know about it, and every other registered format is
@@ -56,6 +57,8 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata import MetadataFormat
+from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
+from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.freesurfer.lta import (
     LtaMetadata,
     LtaPhysicalSystem,
@@ -69,6 +72,14 @@ from brainhops.io.transformations.freesurfer.lta import (
 from brainhops.io.transformations.freesurfer.lta._xforms import (
     _matrix_to_disk,
     _matrix_to_model,
+)
+from brainhops.io.transformations.freesurfer.m3z import (
+    M3zMetadata,
+    M3zMorph,
+)
+from brainhops.io.transformations.freesurfer.m3z._xform import (
+    _positions_to_disk,
+    _positions_to_model,
 )
 
 try:
@@ -87,11 +98,6 @@ try:
         _itk_field_to_model,
     )
     from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
-    from brainhops.io.transformations.base.affines import (
-        RASToVoxel,
-        VoxelToRAS,
-    )
-    from brainhops.io.transformations.base.fields import RASCoordinatesField
     from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
     from brainhops.io.transformations.itk.nifti import (
         ItkNiftiCoordinatesField,
@@ -876,6 +882,65 @@ if h5py is not None:
         header=_x5_header,
     )
 
+# The model of a morph is a chain, whose field holds the positions of the
+# nodes. A morph is a single gzip stream in which the nodes follow the
+# header directly, so it is parsed in one pass and its positions live in
+# the record. The exemplar is a chain of RAS coordinates, which a morph
+# built from a chain can write without the shape of a source image.
+
+
+def _m3z_chain(data: tx.Any) -> tx.Tuple[tx.Any, ...]:
+    return (RASToVoxel(matrix=np.eye(4)[:-1]), RASCoordinatesField(field=data))
+
+
+def _m3z_data(xform: tx.Any) -> tx.Any:
+    return xform.transformations[1].data
+
+
+def _m3z_set_data(xform: tx.Any, value: tx.Any) -> None:
+    chain = list(xform.transformations)
+    chain[1] = RASCoordinatesField(field=value)
+    xform.transformations = tuple(chain)
+
+
+def _m3z_stored(xform: tx.Any) -> tx.Any:
+    # The positions of a morph live in the record, and a chain that was
+    # assigned is encoded into a new record.
+    return xform.to_raw().positions
+
+
+def _m3z_edit_record(record: tx.Any) -> tx.Any:
+    # A record is frozen, so the edit is made with `replace`.
+    return replace(record, exp_k=7.5)
+
+
+_M3Z = Exemplar(
+    metadata=M3zMetadata,
+    suffix=".m3z",
+    # A morph is parsed in one pass and has no lazy data, so the positions
+    # are an array of the record just after a read.
+    proxies=(np.ndarray,),
+    to_model=_positions_to_model,
+    to_disk=_positions_to_disk,
+    sample=_vectors,
+    edit_record=_m3z_edit_record,
+    record_edited=lambda raw: raw.exp_k == 7.5,
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    foreign=lambda data: Sequence(list(_m3z_chain(data))),
+    build=lambda data: M3zMorph(_m3z_chain(data)),
+    stored=_m3z_stored,
+    view="transformations",
+    data=_m3z_data,
+    set_data=_m3z_set_data,
+    # The metadata reads the whole file, because the nodes sit inside the
+    # gzip stream, right after the header. The bytes that the metadata
+    # writes are therefore the whole file, and the check that metadata
+    # never reads data compares a full copy of the file: it only shows
+    # that `M3zMetadata` and the dispatcher read the file alone.
+)
+EXEMPLARS[M3zMorph] = _M3Z
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.afni.AfniImage",
     "brainhops.io.images.freesurfer.mgh.MghImage",
@@ -913,7 +978,6 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.zarr.ZarrImage",
     "brainhops.io.transformations.elastix.ElastixParameterTransform",
     "brainhops.io.transformations.elastix.ElastixTomlTransform",
-    "brainhops.io.transformations.freesurfer.m3z.M3zMorph",
     "brainhops.io.transformations.fsl.flirt.FlirtTransform",
     "brainhops.io.transformations.itk.h5.H5Transform",
     "brainhops.io.transformations.itk.mat.MatTransform",
@@ -1002,6 +1066,9 @@ VARIANTS.append(
     )
 )
 
+# A morph whose name ends in `.m3d` is written without compression.
+VARIANTS.append(("M3zMorph-m3d", M3zMorph, _M3Z._replace(suffix=".m3d")))
+
 CASES = [
     pytest.param(cls, exemplar, id=cls.__name__)
     for cls, exemplar in {**EXEMPLARS, **TEST_EXEMPLARS}.items()
@@ -1027,9 +1094,11 @@ def _resolve(name: str) -> tx.Optional[type]:
 
 
 def _decompressed(path: tx.Any) -> bytes:
+    # A gzipped file, such as a `.nii.gz` or a `.m3z` file, is compared
+    # after decompression, since only its content must be kept.
     with open(path, "rb") as file:
         content = file.read()
-    if str(path).endswith(".gz"):
+    if content[:2] == b"\x1f\x8b":
         content = gzip.decompress(content)
     return content
 
