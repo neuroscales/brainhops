@@ -870,6 +870,15 @@ def test_nothing_but_the_data_reads_the_voxels(
     MrtrixImage.from_bytes(source.read_bytes())
     assert reads.count == 0
     assert "_cache_data" not in vars(image)
+    # Dask keeps the voxels lazy until they are computed.
+    with backend("dask"):
+        lazy = MrtrixImage.load(source).data
+    assert reads.count == 0
+    assert np.asarray(lazy).shape == DATA.shape
+    # A read of the voxels reads the file once, which a gzipped file
+    # counts twice, as the stored bytes are read to be decoded.
+    assert reads.count == (2 if name.endswith(".gz") else 1)
+    reads.count = 0
     with backend("numpy"):
         data = image.data
     assert data.dtype == np.float32 and not data.flags.writeable

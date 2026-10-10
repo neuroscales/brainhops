@@ -15,6 +15,7 @@ import struct
 
 import numpy as np
 import pytest
+import typing_extensions as tx
 from bagof.magic import replace
 
 import brainhops.io as io
@@ -436,8 +437,8 @@ def test_sub_bricks_of_different_types(tmp_path) -> None:  # noqa: ANN001
     path = _dataset(tmp_path, head, _brik([a, b], ["<h", "<f"]))
     image = AfniImage.load(path)
     assert image.data.shape == SHAPE + (2,)
-    assert np.array_equal(image.data[..., 0], a)
-    assert np.array_equal(image.data[..., 1], b)
+    assert np.array_equal(np.asarray(image.data)[..., 0], a)
+    assert np.array_equal(np.asarray(image.data)[..., 1], b)
 
 
 def test_brick_scaling_factors(tmp_path) -> None:  # noqa: ANN001
@@ -534,7 +535,9 @@ def test_dataset_file_names(tmp_path) -> None:  # noqa: ANN001
 )
 def test_every_name_of_a_dataset_loads(tmp_path, name) -> None:  # noqa: ANN001
     _source(tmp_path)
-    assert np.array_equal(io.load(tmp_path / name, hint="afni").data, DATA)
+    assert np.array_equal(
+        np.asarray(io.load(tmp_path / name, hint="afni").data), DATA
+    )
     assert np.array_equal(
         np.asarray(AfniImage.load(tmp_path / name).data), DATA
     )
@@ -1105,14 +1108,85 @@ def test_nothing_but_the_data_reads_the_voxels(
         AfniImage.load(f)
     assert reads.count == 0
     assert "_cache_data" not in vars(image)
+    # Dask keeps the voxels lazy until they are computed.
+    with backend("dask"):
+        lazy = AfniImage.load(path).data
+    assert reads.count == 0
+    assert np.asarray(lazy).shape == expected
+    assert reads.count == 1
     with backend("numpy"):
         data = image.data
     assert data.shape == expected and data.dtype == np.float32
     assert np.allclose(data[..., 0] if nvals > 1 else data, 2 * DATA)
-    assert reads.count == 1
+    assert reads.count == 2
     # Assigned data gives its own shape, and an image without data raises
     # as before.
     image.data = np.zeros((2, 3, 4))
     assert image.shape == (2, 3, 4)
     with pytest.raises(AttributeError):
         _ = AfniImage().shape
+
+
+@pytest.mark.parametrize(
+    "source_suffix, target",
+    [(".BRIK", "out+orig.BRIK.gz"), (".BRIK.gz", "out+orig.HEAD")],
+)
+@pytest.mark.parametrize("datatype", [None, "short"])
+def test_a_save_that_removes_the_read_brik_keeps_the_image_readable(
+    tmp_path,  # noqa: ANN001
+    source_suffix: str,
+    target: str,
+    datatype: tx.Any,
+) -> None:
+    # The new BRIK replaces the BRIK that the image reads, which the save
+    # removes, so the image reads the new BRIK or the array it wrote.
+    _dataset(
+        tmp_path,
+        _header(),
+        _brik([DATA], ["<f"]),
+        name="out+orig",
+        suffix=source_suffix.replace(".BRIK", ""),
+    )
+    image = AfniImage.load(tmp_path / ("out+orig" + source_suffix))
+    image.save(tmp_path / target, datatype=datatype)
+    assert not (tmp_path / ("out+orig" + source_suffix)).exists()
+    expected = DATA if datatype is None else np.round(DATA)
+    assert np.allclose(np.asarray(image.data), expected)
+    image.save(tmp_path / "again+orig.HEAD")
+    again = AfniImage.load(tmp_path / "again+orig.HEAD")
+    assert np.allclose(np.asarray(again.data), expected)
+
+
+def test_an_untouched_dataset_with_a_nan_attribute_keeps_its_bytes(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = _source(tmp_path, MARKS_XYZ=(float("nan"), 1.0, 2.0))
+    image = AfniImage.load(path)
+    assert image.to_raw() is image.metadata.raw
+    image.save(tmp_path / "copy+orig.HEAD")
+    assert (tmp_path / "copy+orig.HEAD").read_bytes() == path.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "ORIGIN",
+        "DELTA",
+        "ORIENT_SPECIFIC",
+        "IJK_TO_DICOM",
+        "IJK_TO_DICOM_REAL",
+        "SCENE_DATA",
+    ],
+)
+def test_the_geometry_attributes_cannot_be_set(tmp_path, name) -> None:  # noqa: ANN001
+    image = AfniImage.load(_source(tmp_path))
+    with pytest.raises(WriterError, match="transformations"):
+        image.to_raw(attributes={name: (1.0, 2.0, 3.0)})
+
+
+def test_an_attribute_must_be_latin1_text(tmp_path) -> None:  # noqa: ANN001
+    image = AfniImage.load(_source(tmp_path))
+    with pytest.raises(WriterError, match="Latin-1"):
+        image.save(
+            tmp_path / "out+orig.HEAD", attributes={"HISTORY_NOTE": "\u2713"}
+        )
