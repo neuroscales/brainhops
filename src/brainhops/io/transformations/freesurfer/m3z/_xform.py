@@ -101,6 +101,34 @@ def _decode(record: M3zRaw) -> tx.Tuple[_xforms.Transformation, ...]:
     )
 
 
+def _system_name(system: tx.Optional[_systems.CoordinateSystem]) -> str:
+    """Return the name of a coordinate system for an error message."""
+    name = getattr(system, "name", None)
+    if name:
+        return name
+    if system is not None:
+        return type(system).__name__
+    return "an unspecified system"
+
+
+def _check_ras(xform: "M3zMorph") -> None:
+    """Refuse a morph whose assigned systems are not RAS.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the input or the output of the morph is not `RASmm`.
+    """
+    src, dst = xform.input, xform.output
+    if isinstance(src, _systems.RASmm) and isinstance(dst, _systems.RASmm):
+        return
+    raise UnrepresentableTransformationError(
+        f"A FreeSurfer morph maps RAS to RAS world coordinates, and this "
+        f"morph maps {_system_name(src)} to {_system_name(dst)}. Set its "
+        f"input and output to RASmm to say that it is one."
+    )
+
+
 def _set_transformations(
     self: "M3zMorph",
     value: tx.Optional[tx.Sequence[_xforms.Transformation]],
@@ -262,14 +290,17 @@ class M3zMorph(
     ) -> M3zRaw:
         """Return the [`M3zRaw`][] that encodes this morph.
 
-        When no chain has been assigned, the record that the metadata
-        holds is returned as it is, without a copy, and the arguments
-        are not used. An assigned chain is encoded into a new record,
-        and it must have one of the two shapes that the reader builds.
-        The first shape has three transformations: atlas RAS to node
-        voxels, a field of source voxel coordinates, and source voxels
-        to RAS. The second shape has two: the same first affine,
-        followed by a field of source RAS coordinates.
+        Systems that were assigned to `input` or `output` must be
+        `RASmm`, since a morph always maps atlas RAS to source RAS. When
+        no chain has been assigned, the record that the metadata holds
+        is then returned as it is, without a copy, so that it is written
+        as read, and the arguments are not used. An assigned chain is
+        encoded into a new record, and it must have one of the two
+        shapes that the reader builds. The first shape has three
+        transformations: atlas RAS to node voxels, a field of source
+        voxel coordinates, and source voxels to RAS. The second shape
+        has two: the same first affine, followed by a field of source
+        RAS coordinates.
 
         The atlas geometry is rebuilt from the first affine, and with
         three transformations, the source geometry is rebuilt from the
@@ -303,14 +334,19 @@ class M3zMorph(
         Raises
         ------
         UnrepresentableTransformationError
-            If the chain has neither of the two shapes, or if its field is
-            not a 3-D grid of 3-vectors.
+            If the chain has neither of the two shapes, if its field is
+            not a 3-D grid of 3-vectors, or if a system that was assigned
+            to `input` or `output` is not `RASmm`.
         WriterError
             If the morph has neither a record nor a chain, or if the
             shape of the source image is needed but unknown.
         """
         record = _record(self)
-        if getattr(self, "_transformations", None) is None:
+        assigned = getattr(self, "_transformations", None) is not None
+        declared = self._input is not None or self._output is not None
+        if declared:
+            _check_ras(self)
+        if not assigned:
             if record is None:
                 raise WriterError("This morph has no content to write.")
             return record
@@ -400,7 +436,7 @@ def _encode(
 
     if len(chain) == 3:
         coordinates = GCAM_VOX
-        if image_shape is None and old is not None and old.image:
+        if image_shape is None and old is not None and old.image is not None:
             image_shape = old.image.shape
         if image_shape is None:
             raise WriterError(

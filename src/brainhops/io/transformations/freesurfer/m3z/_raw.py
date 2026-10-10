@@ -60,9 +60,6 @@ TAG_GCAMORPH_TYPE = 11
 TAG_GCAMORPH_LABELS = 12
 TAG_MGH_XFORM = 31
 
-_TAGS = (TAG_GCAMORPH_GEOM, TAG_GCAMORPH_TYPE, TAG_GCAMORPH_LABELS)
-"""The tags that this module decodes, besides `TAG_MGH_XFORM`."""
-
 MATRIX_STRLEN = 4 * 4 * 100
 """Length of the text buffer into which FreeSurfer writes a matrix."""
 

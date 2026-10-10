@@ -16,6 +16,7 @@ import typing_extensions as tx
 
 from brainhops import io
 from brainhops.datamodel import transformations as xforms
+from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.io.base.parsers import (
     ParserContentError,
     UnrepresentableTransformationError,
@@ -355,6 +356,18 @@ def test_a_morph_reads_a_record_a_stream_and_bytes(tmp_path: Path) -> None:
     np.testing.assert_array_equal(morph[1].data, _positions())
     morph = M3zMorph.from_bytes(content)
     np.testing.assert_array_equal(morph[1].data, _positions())
+
+
+def test_assigned_systems_must_be_ras(tmp_path: Path) -> None:
+    morph = io.load(_write(tmp_path, _encode(_positions())))
+    record = morph.metadata.raw
+    # A morph maps RAS to RAS, so declaring it keeps the record.
+    morph.input = RASmm()
+    assert morph.to_raw() is record
+    morph.output = LPSmm()
+    with pytest.raises(UnrepresentableTransformationError, match="RAS"):
+        morph.save(tmp_path / "out.m3z")
+    assert not (tmp_path / "out.m3z").exists()
 
 
 def test_a_morph_without_a_record_or_a_chain_is_not_written(
