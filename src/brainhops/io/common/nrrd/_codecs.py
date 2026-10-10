@@ -53,7 +53,10 @@ def dtype_to_nrrd(dtype: tx.Any) -> str:
     """
     if isinstance(dtype, str) and " ".join(dtype.split()).lower() in _TYPES:
         return _TYPE_NAMES[_TYPES[" ".join(dtype.split()).lower()]]
-    dtype = np.dtype(dtype)
+    try:
+        dtype = np.dtype(dtype)
+    except TypeError as error:
+        raise WriterError(f"NRRD has no type for {dtype!r}.") from error
     if dtype.kind == "b":
         return "uint8"
     if dtype.kind == "f" and dtype.itemsize < 4:

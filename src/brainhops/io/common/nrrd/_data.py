@@ -5,7 +5,6 @@ that reads them."""
 import bz2
 import gzip
 import os
-import uuid
 import zlib
 
 # dependencies
@@ -28,9 +27,6 @@ from brainhops.io.base.parsers import (
 from ._codecs import _format_float
 from ._layout import image_order
 from ._raw import NrrdRaw
-
-_LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
-"""The protocols of paths on the local file system."""
 
 # ----------------------------------------------------------------------
 #   DATA
@@ -463,32 +459,3 @@ def _check_size(
             f"The NRRD data file {local} holds {size} bytes, but the header "
             f"asks for at least {needed}."
         )
-
-
-def write_file(filename: tx.Any, content: bytes) -> None:
-    """Write the bytes of a file, replacing a local file at once.
-
-    A local file is written next to its target and then moved over it,
-    following a symbolic link to the file that it names. A memory map of
-    the old file therefore keeps the old content, even when an image is
-    written over the file that it was read from, and the new file gets
-    the permissions that the umask gives a new file. Other paths are
-    written in place.
-    """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    if path.Path(filename).protocol.lower() not in _LOCAL_PROTOCOLS:
-        with filename.open("wb") as f:
-            f.write(content)
-        return
-    target = os.path.realpath(os.fspath(filename))
-    directory, name = os.path.split(target)
-    temporary = os.path.join(directory, f".{name}.{uuid.uuid4().hex}.part")
-    try:
-        with open(temporary, "xb") as f:
-            f.write(content)
-        os.replace(temporary, target)
-    except BaseException:
-        if os.path.exists(temporary):
-            os.remove(temporary)
-        raise

@@ -2,7 +2,6 @@
 
 # stdlib
 import math
-import os
 import re
 from io import BytesIO
 
@@ -26,7 +25,9 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import Unit, is_indexunit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._utils_files import same_file as _same_file
 from brainhops.io.base._utils_files import sibling as _sibling
+from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -51,11 +52,9 @@ from brainhops.io.common.nrrd._constants import (
     SPACES,
 )
 from brainhops.io.common.nrrd._data import (
-    _LOCAL_PROTOCOLS,
     _NrrdProxy,
     encode_data,
     read_nrrd,
-    write_file,
 )
 from brainhops.io.common.nrrd._layout import axis_roles, image_order
 from brainhops.io.common.nrrd._raw import _declined, _sniffed_raw
@@ -646,7 +645,7 @@ class NrrdImage(
         an image can be written over the files that it was read from.
         When the lazy array of the image reads a file that is written,
         `raw` is then pointed at the new file, which holds the same
-        samples.
+        samples, and the cached data is dropped.
 
         Raises
         ------
@@ -662,7 +661,7 @@ class NrrdImage(
             stale = _reads_from(self.raw, [filename])
             write_file(filename, self.to_bytes(**options))
             if stale:
-                self.raw = read_nrrd(filename, mmap=self.raw.mmap)[1]
+                _reread(self, filename)
             return
         if data_file is None:
             held = None if self.metadata is None else self.metadata.raw
@@ -676,7 +675,7 @@ class NrrdImage(
         write_file(target, data)
         write_file(filename, header)
         if stale:
-            self.raw = read_nrrd(filename, mmap=self.raw.mmap)[1]
+            _reread(self, filename)
 
 
 # ----------------------------------------------------------------------
@@ -784,17 +783,18 @@ def _encoded(
         nrrd_type = dtype_to_nrrd(datatype)
         if endian is None:
             endian = (held.endian if held is not None else None) or "little"
-        if matched and _same_storage(held, nrrd_type, encoding, endian):
-            # The base spells the same storage, so its text is kept.
-            for name in ("type", "dimension", "sizes", "endian", "encoding"):
+        fields["type"] = nrrd_type
+        fields["dimension"] = str(ndim)
+        fields["sizes"] = " ".join(str(n) for n in sizes)
+        fields["encoding"] = encoding
+        fields["endian"] = endian
+        if matched:
+            # The base keeps its spelling of what it stores alike.
+            for name in _same_storage(held, nrrd_type, encoding, endian):
                 if name in held.fields:
                     fields[name] = held.fields[name]
-        else:
-            fields["type"] = nrrd_type
-            fields["dimension"] = str(ndim)
-            fields["sizes"] = " ".join(str(n) for n in sizes)
-            fields["encoding"] = encoding
-            fields["endian"] = endian
+                else:
+                    fields.pop(name, None)
 
     # --- kinds and other fields of the base -----------------------
     if matched:
@@ -905,14 +905,24 @@ def _copies_samples(
 
 def _same_storage(
     held: NrrdRaw, nrrd_type: str, encoding: str, endian: str
-) -> bool:
-    """Tell whether the base stores samples of a type as the writer would.
+) -> tx.List[str]:
+    """Return the storage fields of the base that the writer would store
+    alike.
 
-    The byte order matters only for types of more than one byte.
+    The base has the shape of the image, so its `dimension` and `sizes`
+    are alike. Its `type` is alike when it names the same type, its
+    `encoding` when it names the same encoding, and its `endian` when it
+    names the same byte order or the type has a single byte, for which
+    the byte order does not matter.
     """
-    if dtype_to_nrrd(held.dtype) != nrrd_type or held.encoding != encoding:
-        return False
-    return held.dtype.itemsize == 1 or held.endian == endian
+    names = ["dimension", "sizes"]
+    if dtype_to_nrrd(held.dtype) == nrrd_type:
+        names.append("type")
+        if held.dtype.itemsize == 1 or held.endian == endian:
+            names.append("endian")
+    if held.encoding == encoding:
+        names.append("encoding")
+    return names
 
 
 def _keeps_geometry(
@@ -1075,32 +1085,35 @@ def _payload(
     """
     if copied:
         return image.raw.read_stored()
-    values = image.data if isinstance(image.raw, _NrrdProxy) else image.raw
-    return encode_data(record, np.asarray(values).transpose(np.argsort(order)))
+    # A lazy array is read here rather than through `data`, so that no
+    # cached view of the old file outlives a write over that file.
+    if isinstance(image.raw, _NrrdProxy):
+        values = image.raw.read_samples()
+    else:
+        values = np.asarray(image.raw)
+    return encode_data(record, values.transpose(np.argsort(order)))
+
+
+def _reread(image: NrrdImage, filename: tx.Any) -> None:
+    """Point the lazy array of an image at the file that it was written to.
+
+    The image was written over a file that its lazy array reads, so the
+    lazy array reads the new file, which holds the same samples, and the
+    cached data, which may be a lazy view of the old file, is dropped.
+    """
+    image.raw = read_nrrd(filename, mmap=image.raw.mmap)[1]
+    image.__dict__.pop("_cache_data", None)
 
 
 def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
-    """Tell whether a lazy array reads one of the files just written.
-
-    Paths are compared once resolved, and a stream is never one of them.
-    """
+    """Tell whether a lazy array reads one of the files just written."""
     if not isinstance(raw, _NrrdProxy):
         return False
-    read = [raw.source, *raw.files]
-    resolved = {_resolved(file) for file in read} - {None}
-    return any(_resolved(file) in resolved for file in written)
-
-
-def _resolved(file: tx.Any) -> tx.Optional[str]:
-    """Return the resolved name of a local path, or `None`."""
-    if not isinstance(file, (str, os.PathLike)):
-        return None
-    try:
-        if path.Path(file).protocol.lower() not in _LOCAL_PROTOCOLS:
-            return None
-        return os.path.realpath(os.fspath(file))
-    except Exception:  # noqa: BLE001
-        return None
+    return any(
+        _same_file(read, file)
+        for read in (raw.source, *raw.files)
+        for file in written
+    )
 
 
 def _split_quoted(value: str) -> tx.List[str]:
@@ -1186,13 +1199,21 @@ def _geometry(
     The result is `None` when there is nothing to write, `("space", ...)`
     for space fields, or `("spacings", (spacings, positions, units))` for
     a scaling onto unoriented axes when the source had no space either.
+
+    Raises
+    ------
+    WriterError
+        If `space` is given and the image has no world with an anatomical
+        orientation, or the transformation maps too few spatial axes.
     """
     nspace = list(roles).count("space")
     if not image.transformations or not nspace:
+        _refuse_space(space)
         return None
     affine = reduce_to_affine(image.transformation, "NRRD", "world")
     matrix = affine.homogeneous_matrix
     if matrix is None:
+        _refuse_space(space)
         return None
     matrix = np.asarray(matrix, dtype=float)
     n_out, n_in = matrix.shape[0] - 1, matrix.shape[1] - 1
@@ -1233,6 +1254,7 @@ def _geometry(
         directions = list((convert @ linear).T)
         return "space", {"fields": fields, "directions": directions}
 
+    _refuse_space(space)
     units = [_unit_symbol(a) for a in world_axes]
     no_space = source is None or (
         "space" not in source.fields and "space dimension" not in source.fields
@@ -1255,6 +1277,22 @@ def _geometry(
     if all(units):
         fields["space units"] = _format_strings(units)
     return "space", {"fields": fields, "directions": list(linear.T)}
+
+
+def _refuse_space(space: tx.Optional[str]) -> None:
+    """Refuse a requested space for a world without anatomical axes.
+
+    Raises
+    ------
+    WriterError
+        If a space is requested.
+    """
+    if space is not None:
+        raise WriterError(
+            f"The image has no world whose axes have an anatomical "
+            f"orientation, so its geometry cannot be written in the space "
+            f"{space!r}."
+        )
 
 
 def _measurement_frame(
