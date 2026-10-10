@@ -7,7 +7,8 @@ record and reads and writes the header alone. Its format object, such as
 an image, holds a metadata object and a `raw` array, which is the data as
 stored in the file and usually a lazy proxy. The `data` of a format object
 is a cached view of `raw`, decoded by a pair of pure functions of the
-format.
+format. A small format may keep its data in the record instead, as an LTA
+file keeps its matrix, and such a format has no `raw` field.
 
 Each format that follows the design is listed in `EXEMPLARS`, with what
 the checks need to know about it, and every other registered format is
@@ -35,6 +36,7 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import Metadata
+from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
     Affine,
     Identity,
@@ -53,6 +55,20 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata import MetadataFormat
+from brainhops.io.transformations.freesurfer.lta import (
+    LtaMetadata,
+    LtaPhysicalSystem,
+    LtaRaw,
+    LtaTransformation,
+    LtaTransformationPhysToPhys,
+    LtaTransformationRASToRAS,
+    LtaTransformationVoxToVox,
+    LtaVoxelSystem,
+)
+from brainhops.io.transformations.freesurfer.lta._xforms import (
+    _matrix_to_disk,
+    _matrix_to_model,
+)
 
 try:
     import nibabel as nb
@@ -448,13 +464,30 @@ class Exemplar(tx.NamedTuple):
     """Cached views that setting `data` must delete, besides `data`."""
 
     binary: bool = True
-    """Whether the format is read in binary mode."""
+    """Whether the format is read in binary mode.
+
+    A text format decodes its bytes before it parses them, so it reads
+    bytes as text rather than through a stream, and the check of a real
+    `from_fileobj` applies to binary formats only.
+    """
 
     prefix: str = ""
     """Prefix of the names of the files that the checks write.
 
     A format that is told from others by the names of its files, such as
     SPM by `y_`, needs it so that the generic writer chooses it.
+    """
+
+    stored: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+    """Function that returns the stored data of a format without `raw`.
+
+    The data of a small format may live in the record of its metadata, as
+    the matrix of an LTA file does, and such a format has no `raw` field.
+    The checks then read the stored data with this function, `proxies`
+    are the types that it returns just after a file is read, and an object
+    built from data holds metadata with a new record instead of no
+    metadata. The function is `None` for a format that stores its data in
+    `raw`.
     """
 
 
@@ -626,6 +659,48 @@ if nb is not None:
         options=frozenset({"moving", "reference", "deformation_type"}),
     )
 
+
+def _lta_stored(xform: tx.Any) -> tx.Any:
+    # The matrix of an LTA file lives in the record, which is parsed in one
+    # pass, so it is a tuple of rows just after a read.
+    return xform.metadata.raw.affine.matrix
+
+
+def _lta_edit_record(record: tx.Any) -> tx.Any:
+    record.sigma = 2.5
+    return record
+
+
+def _lta_volumes(cls: type) -> tx.Dict[str, tx.Any]:
+    """Return the systems of two anonymous volumes, as keyword arguments."""
+    return {
+        "input": cls.from_raw(LtaRaw.SrcVolumeInfo()),
+        "output": cls.from_raw(LtaRaw.DstVolumeInfo()),
+    }
+
+
+_LTA = Exemplar(
+    metadata=LtaMetadata,
+    suffix=".lta",
+    # An LTA file is parsed in one pass and has no lazy data, so the checks
+    # read the matrix that the record holds, and the metadata, which holds
+    # the whole file, never reads data because the file has none beside it.
+    proxies=(tuple,),
+    to_model=_matrix_to_model,
+    to_disk=_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_lta_edit_record,
+    record_edited=lambda raw: raw.sigma == 2.5,
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=RASmm(), output=RASmm()),
+    build=lambda data: LtaTransformation(data, input=RASmm(), output=RASmm()),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_lta_stored,
+)
+EXEMPLARS[LtaTransformation] = _LTA
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.afni.AfniImage",
     "brainhops.io.images.freesurfer.mgh.MghImage",
@@ -663,7 +738,6 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.zarr.ZarrImage",
     "brainhops.io.transformations.elastix.ElastixParameterTransform",
     "brainhops.io.transformations.elastix.ElastixTomlTransform",
-    "brainhops.io.transformations.freesurfer.lta.LtaTransformation",
     "brainhops.io.transformations.freesurfer.m3z.M3zMorph",
     "brainhops.io.transformations.fsl.flirt.FlirtTransform",
     "brainhops.io.transformations.itk.h5.H5Transform",
@@ -722,6 +796,38 @@ if nb is not None:
         )
     )
 
+# The views of an LTA file read any LTA file, so they are not registered,
+# and each writes its own type once its matrix is set.
+VARIANTS.append(
+    (
+        "LtaTransformationVoxToVox",
+        LtaTransformationVoxToVox,
+        _LTA._replace(
+            foreign=lambda data: Affine(data, **_lta_volumes(LtaVoxelSystem)),
+            build=LtaTransformationVoxToVox,
+        ),
+    )
+)
+VARIANTS.append(
+    (
+        "LtaTransformationPhysToPhys",
+        LtaTransformationPhysToPhys,
+        _LTA._replace(
+            foreign=lambda data: Affine(
+                data, **_lta_volumes(LtaPhysicalSystem)
+            ),
+            build=LtaTransformationPhysToPhys,
+        ),
+    )
+)
+VARIANTS.append(
+    (
+        "LtaTransformationRASToRAS",
+        LtaTransformationRASToRAS,
+        _LTA._replace(build=LtaTransformationRASToRAS),
+    )
+)
+
 CASES = [
     pytest.param(cls, exemplar, id=cls.__name__)
     for cls, exemplar in {**EXEMPLARS, **TEST_EXEMPLARS}.items()
@@ -764,6 +870,25 @@ def _write_header(path: tx.Any, header: bytes) -> None:
 def _path(tmp_path: tx.Any, exemplar: Exemplar, name: str) -> tx.Any:
     """Return the path of a file that a check writes."""
     return tmp_path / (exemplar.prefix + name + exemplar.suffix)
+
+
+def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
+    """Return the data of an object as the file stores it."""
+    if exemplar.stored is None:
+        return obj.raw
+    return exemplar.stored(obj)
+
+
+def _no_metadata_unless_stored(exemplar: Exemplar, obj: tx.Any) -> bool:
+    """Tell whether an object built from data has the metadata it should.
+
+    An object of a format that stores its data in `raw` has no metadata,
+    and an object of a format whose data lives in the record holds a new
+    record.
+    """
+    if exemplar.stored is None:
+        return obj.metadata is None
+    return isinstance(obj.metadata, exemplar.metadata)
 
 
 def _built(cls: type, exemplar: Exemplar, data: tx.Any) -> tx.Any:
@@ -831,7 +956,9 @@ def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # noqa: ANN001
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
-    assert isinstance(loaded.raw, exemplar.proxies)
+    assert isinstance(_stored(exemplar, loaded), exemplar.proxies)
+    if exemplar.stored is not None:
+        assert "raw" not in _init_names(cls)
     repr(loaded)
     assert "_cache_data" not in vars(loaded)
     assert isinstance(loaded.metadata, exemplar.metadata)
@@ -839,7 +966,7 @@ def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # no
     assert np.array_equal(np.asarray(data), exemplar.sample())
     # The view is decoded once, and reading it leaves the proxy in place.
     assert loaded.data is data
-    assert isinstance(loaded.raw, exemplar.proxies)
+    assert isinstance(_stored(exemplar, loaded), exemplar.proxies)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -856,7 +983,8 @@ def test_03_setting_data_stores_raw(
     loaded.data = value
     for name in ("data",) + exemplar.derived:
         assert "_cache_" + name not in vars(loaded)
-    assert np.array_equal(np.asarray(loaded.raw), exemplar.to_disk(value))
+    stored = np.asarray(_stored(exemplar, loaded))
+    assert np.array_equal(stored, exemplar.to_disk(value))
     assert np.array_equal(np.asarray(loaded.data), value)
 
 
@@ -921,8 +1049,9 @@ def test_08_an_object_built_from_data_saves(
 ) -> None:
     value = exemplar.sample()
     built = _built(cls, exemplar, value)
-    assert built.metadata is None
-    assert np.array_equal(np.asarray(built.raw), exemplar.to_disk(value))
+    assert _no_metadata_unless_stored(exemplar, built)
+    stored = np.asarray(_stored(exemplar, built))
+    assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "built")
     built.save(path)
     assert np.array_equal(np.asarray(cls.load(path).data), value)
@@ -938,14 +1067,15 @@ def test_09_copies_keep_raw_and_metadata(
     # Within the format, `from_instance` copies the lazy `raw` and does not
     # read the data.
     copy = cls.from_instance(loaded)
-    assert copy.raw is loaded.raw
+    assert _stored(exemplar, copy) is _stored(exemplar, loaded)
     assert copy.metadata is loaded.metadata
     assert "_cache_data" not in vars(loaded)
     # `replace` passes the data, which takes precedence over `raw`, so the
     # copy holds a decoded array with the same content.
     copy = replace(loaded)
     assert copy.metadata is loaded.metadata
-    assert np.array_equal(np.asarray(copy.raw), np.asarray(loaded.raw))
+    stored = np.asarray(_stored(exemplar, copy))
+    assert np.array_equal(stored, np.asarray(_stored(exemplar, loaded)))
     # The record and the stored array of another format mean nothing to
     # this format, so they are reset. A model that holds data stores it
     # again, and a model that holds a chain keeps the chain, which the
@@ -954,10 +1084,11 @@ def test_09_copies_keep_raw_and_metadata(
         return
     value = exemplar.sample()
     converted = cls.from_instance(exemplar.foreign(value))
-    assert converted.metadata is None
+    assert _no_metadata_unless_stored(exemplar, converted)
     if "data" in _init_names(_model(cls)):
         expected = exemplar.to_disk(value)
-        assert np.array_equal(np.asarray(converted.raw), expected)
+        stored = np.asarray(_stored(exemplar, converted))
+        assert np.array_equal(stored, expected)
         assert np.array_equal(np.asarray(converted.data), value)
     path = _path(tmp_path, exemplar, "converted")
     converted.save(path)
@@ -1007,10 +1138,12 @@ def test_12_adapter_contract(
 ) -> None:
     for klass in (cls, exemplar.metadata):
         assert not klass._is_dispatcher()
-        # `from_bytes` reads through a real `from_fileobj` only.
-        assert _overrides_from_fileobj(klass)
         if exemplar.binary:
+            # `from_bytes` reads through a real `from_fileobj` only.
+            assert _overrides_from_fileobj(klass)
             assert klass._READ_MODE == "rb"
+        else:
+            assert klass._READ_MODE == "rt"
     content = _saved(cls, exemplar, tmp_path).read_bytes()
     data = cls.from_bytes(content).data
     assert np.array_equal(np.asarray(data), exemplar.sample())
