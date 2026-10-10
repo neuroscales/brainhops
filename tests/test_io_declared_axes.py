@@ -182,7 +182,7 @@ def test_mrtrix_places_the_volumes_by_type(  # noqa: D103
     reloaded = MrtrixImage.load(target)
     assert np.array_equal(np.asarray(reloaded.data), values)
     # The MRtrix time axis is spaced by the TR in seconds.
-    assert reloaded.header.vox == pytest.approx((1.5, 2.0, 2.5, 2.0))
+    assert reloaded.metadata.raw.vox == pytest.approx((1.5, 2.0, 2.5, 2.0))
     assert np.allclose(
         reloaded.transformation.homogeneous_matrix[:, [0, 1, 2, -1]],
         _vox2ras(),
@@ -197,7 +197,7 @@ def test_mrtrix_places_the_volumes_by_type(  # noqa: D103
 def test_mrtrix_states_times_in_seconds(tmp_path) -> None:  # noqa: ANN001
     image, _ = _image(MrtrixImage, "txyz", "numpy", time="ms")
     image.save(tmp_path / "bold.mif")
-    assert MrtrixImage.load(tmp_path / "bold.mif").header.vox[3] == 0.002
+    assert MrtrixImage.load(tmp_path / "bold.mif").metadata.raw.vox[3] == 0.002
 
 
 def test_mrtrix_orders_the_axes_after_the_spatial_ones(tmp_path) -> None:  # noqa: ANN001
@@ -211,9 +211,11 @@ def test_mrtrix_orders_the_axes_after_the_spatial_ones(tmp_path) -> None:  # noq
     image.save(tmp_path / "slice.mif")
 
     reloaded = MrtrixImage.load(tmp_path / "slice.mif")
-    assert reloaded.header.dim == (4, 5, 1, 3, 2)
+    assert reloaded.metadata.raw.dim == (4, 5, 1, 3, 2)
     assert np.array_equal(np.asarray(reloaded.data)[:, :, 0], values)
-    assert reloaded.header.vox == pytest.approx((2.0, 4.0, 1.0, 3.0, 1.0))
+    assert reloaded.metadata.raw.vox == pytest.approx(
+        (2.0, 4.0, 1.0, 3.0, 1.0)
+    )
 
 
 def test_mrtrix_refuses_an_origin_on_the_volumes() -> None:  # noqa: D103

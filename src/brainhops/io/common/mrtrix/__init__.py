@@ -1,12 +1,12 @@
 """
 Reading and writing of MRtrix images.
 
-This module holds what the MRtrix image and transformation formats
-share: the header, and the decoding and encoding of voxel data. An
-MRtrix image is a text header followed by raw voxel values, either in
-one file (`.mif`, or `.mif.gz` gzipped) or in two (a `.mih` header and
-the data file it names). The header is a list of `key: value` lines
-between `mrtrix image` and `END`, where `#` starts a comment:
+This module holds what the MRtrix formats share: the header, and the
+decoding and encoding of voxel data. An MRtrix image is a text header
+followed by raw voxel values, either in one file (`.mif`, or `.mif.gz`
+gzipped) or in two (a `.mih` header and the data file it names). The
+header is a list of `key: value` lines between `mrtrix image` and `END`,
+where `#` starts a comment:
 
 ```text
 mrtrix image
@@ -32,12 +32,19 @@ assuming the identity. `scaling` gives `offset,scale`, by which a
 stored value `v` means `offset + scale * v`. `file` names the data file
 and an offset, where `.` means the header file itself. The conventions
 follow the MRtrix3 sources.
+
+The header is held as an [`MrtrixRaw`][] record, and [`MrtrixMetadata`][]
+reads and writes that record without the voxels.
+[`MrtrixImage`][brainhops.io.images.mrtrix.MrtrixImage] holds such
+metadata and a lazy array of the voxels. The record keeps the bytes of
+the header as well as its keys, so that an image that is read and
+written again without changes keeps its bytes.
 """
 
 __all__ = [
-    "MrtrixReaderWriter",
-    "MrtrixHeader",
+    "MrtrixMetadata",
+    "MrtrixRaw",
 ]
 
-from ._header import MrtrixHeader
-from ._parsers import MrtrixReaderWriter
+from ._metadata import MrtrixMetadata
+from ._raw import MrtrixRaw

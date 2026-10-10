@@ -1,17 +1,28 @@
-"""The AFNI `.HEAD` header: its attributes, read and written."""
+"""The record of an AFNI dataset: the attributes of its `.HEAD` file."""
 
 # stdlib
+import os
 import re
 from collections import OrderedDict
+from io import BytesIO
 
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic
+from bagof.magic import Magic, NoRepr
 
 # internals
+from brainhops._core import path
+from brainhops._core.streams import preserve_position
 from brainhops.io.base._utils_files import open_path as _open_path
-from brainhops.io.base.parsers import ParserContentError
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    BinaryFileWriter,
+    Confidence,
+    ParserContentError,
+    ParserExistsError,
+    SnifferContentError,
+)
 
 # this format
 from ._constants import (
@@ -21,6 +32,7 @@ from ._constants import (
     _TAXIS_UNITS,
     AFNI_VIEWS,
 )
+from ._files import afni_dataset_files
 from ._geometry import (
     afni_cardinal_matrix,
     afni_geometry_from_matrix,
@@ -36,7 +48,7 @@ _Value = tx.Union[str, tx.Tuple[int, ...], tx.Tuple[float, ...]]
 
 
 # ----------------------------------------------------------------------
-#   HEADER
+#   ATTRIBUTES
 # ----------------------------------------------------------------------
 
 
@@ -155,18 +167,67 @@ def _format_attribute(name: str, value: _Value) -> str:
     )
 
 
-class AfniHeader(Magic, frozen=True, eq=False):
-    """
-    The attributes of an AFNI `.HEAD` file.
+def _format_attributes(attributes: tx.Mapping[str, _Value]) -> str:
+    """Format the attributes of a `.HEAD` file as the writer spells them."""
+    return "".join(
+        _format_attribute(name, value) for name, value in attributes.items()
+    )
 
-    String attributes are strings, with substrings separated by NUL, and
-    numeric attributes are tuples. The properties decode the attributes
-    that describe the data and the geometry. All others, such as
-    `HISTORY_NOTE` or `BRICK_LABS`, are written back unchanged.
+
+# ----------------------------------------------------------------------
+#   RECORD
+# ----------------------------------------------------------------------
+
+
+class AfniRaw(
+    Magic, BinaryFileReader, BinaryFileWriter, frozen=True, eq=False
+):
+    """The attributes of an AFNI `.HEAD` file, as the file stores them.
+
+    An AFNI dataset is a text header, the `.HEAD` file, and a file of
+    voxel values, the `.BRIK` file. The record holds the whole header:
+    every attribute by name, and the text that it was read from. String
+    attributes are strings, with substrings separated by NUL, and numeric
+    attributes are tuples. The properties decode the attributes that
+    describe the voxels and the geometry, and the other attributes, such
+    as `HISTORY_NOTE` or `BRICK_LABS`, are written back unchanged.
+
+    The record knows where the voxels lie and how they are stored, but
+    it never reads them. It is held by
+    [`AfniMetadata`][brainhops.io.common.afni.AfniMetadata], which never
+    changes it in place: a writer works on the copy that [`copy`][]
+    returns, or builds a new record with [`replace`][].
+
+    A record compares by identity. Two records hold the same header when
+    their `attributes` are equal.
     """
 
     attributes: tx.Dict[str, _Value]
     """All attributes by name, in file order."""
+
+    text: NoRepr[tx.Optional[str]] = None
+    """The text of the `.HEAD` file that the attributes were read from.
+
+    The text is written back as it is while it still describes the
+    attributes, so that a header that is read and written again keeps
+    its bytes, whichever program wrote it. Otherwise, and for a record
+    built from attributes alone, the attributes are formatted as AFNI
+    writes them. The text is `None` for a record built from attributes.
+    """
+
+    def copy(self) -> "AfniRaw":
+        """Return a copy of the record that can be changed freely.
+
+        The attributes are copied into a new dictionary, and the text is
+        kept, since [`to_text`][] writes it only while it still describes
+        the attributes.
+
+        Returns
+        -------
+        AfniRaw
+            The copy.
+        """
+        return AfniRaw(attributes=OrderedDict(self.attributes), text=self.text)
 
     def __getitem__(self, name: str) -> _Value:
         return self.attributes[name]
@@ -348,7 +409,7 @@ class AfniHeader(Magic, frozen=True, eq=False):
         unit = _TAXIS_UNITS.get(int(nums[2])) if len(nums) > 2 else None
         return float(floats[1]), unit
 
-    def validate(self) -> "AfniHeader":
+    def validate(self) -> "AfniRaw":
         """
         Check that the header describes a readable, non-empty dataset.
 
@@ -368,25 +429,12 @@ class AfniHeader(Magic, frozen=True, eq=False):
         _ = self.dtypes, self.cardinal_matrix
         return self
 
-    @classmethod
-    def from_text(cls, text: str) -> "AfniHeader":
-        """Parse the text of a `.HEAD` file."""
-        return cls(attributes=_parse_attributes(text))
+    def replace(self, **attributes: tx.Optional[_Value]) -> "AfniRaw":
+        """Return a record with attributes set, or removed when given `None`.
 
-    @classmethod
-    def from_bytes(cls, content: bytes) -> "AfniHeader":
-        """Parse the content of a `.HEAD` file."""
-        return cls.from_text(bytes(content).decode("latin-1"))
-
-    def to_text(self) -> str:
-        """Format the `.HEAD` file as AFNI writes it."""
-        return "".join(
-            _format_attribute(name, value)
-            for name, value in self.attributes.items()
-        )
-
-    def replace(self, **attributes: tx.Optional[_Value]) -> "AfniHeader":
-        """Return a copy with attributes set, or removed when given `None`."""
+        The new record has no text, so it is formatted from its
+        attributes when it is written.
+        """
         merged = OrderedDict(self.attributes)
         for name, value in attributes.items():
             if value is None:
@@ -395,21 +443,177 @@ class AfniHeader(Magic, frozen=True, eq=False):
                 merged[name] = value
         return type(self)(attributes=merged)
 
+    # --- reading ------------------------------------------------------
+
+    @classmethod
+    def from_text(cls, text: str, **kwargs) -> "AfniRaw":
+        """Parse the text of a `.HEAD` file, which the record keeps.
+
+        The keyword arguments are ignored.
+
+        Raises
+        ------
+        ParserContentError
+            If the text is not an AFNI header.
+        """
+        return cls(attributes=_parse_attributes(text), text=text)
+
+    @classmethod
+    def from_bytes(cls, content: bytes, **kwargs) -> "AfniRaw":
+        """Parse the content of a `.HEAD` file.
+
+        The content is decoded as Latin-1, as AFNI reads it, and the
+        keyword arguments are ignored.
+        """
+        return cls.from_text(bytes(content).decode("latin-1"))
+
+    @classmethod
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "AfniRaw":
+        """Read the record from an open `.HEAD` or `.BRIK` file.
+
+        A `.HEAD` stream is read whole. A stream of any other content is
+        taken to be the BRIK of a dataset, which is not read beyond its
+        start, and the header is found from the name of the stream. The
+        position of the stream is restored, and the keyword arguments are
+        ignored.
+
+        Raises
+        ------
+        ParserContentError
+            If the stream is not a header and has no file name.
+        """
+        with preserve_position(file):
+            start = file.read(256)
+            if isinstance(start, str):
+                start = start.encode("latin-1")
+            head = _looks_like_head(bytes(start).decode("latin-1"))
+            rest = file.read() if head else b""
+        if head:
+            if isinstance(rest, str):
+                rest = rest.encode("latin-1")
+            return cls.from_bytes(bytes(start) + bytes(rest))
+        name = getattr(file, "name", None)
+        if isinstance(name, (str, bytes, os.PathLike)):
+            return cls.from_filename(os.fsdecode(name))
+        raise ParserContentError(
+            "This stream is not an AFNI header, and has no file name to "
+            "find one from."
+        )
+
+    @classmethod
+    def from_filename(cls, filename: path.FilenameLike, **kwargs) -> "AfniRaw":
+        """Read the record from the path of a dataset.
+
+        The path may name the `.HEAD` file, the `.BRIK` file or the bare
+        dataset, and only the `.HEAD` file is read. The keyword arguments
+        are ignored.
+
+        Raises
+        ------
+        ParserExistsError
+            If the `.HEAD` file does not exist.
+        """
+        head, _, _ = afni_dataset_files(filename)
+        if not path.exists(head):
+            raise ParserExistsError(f"No such file: {head}")
+        with _open_path(head) as f:
+            return cls.from_bytes(f.read())
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a stream holds a valid AFNI header.
+
+        Only the start of a stream that does not look like a header is
+        read, and the position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream to test, open in binary mode.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no valid
+            header. With `True`, the error is a `SnifferContentError`, and
+            an exception class is raised instead when one is given.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            `Confidence.LIKELY` or `Confidence.NO`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the stream holds no valid header and `error` is `True`.
+        """
+        raw, failure = _sniffed_raw(file)
+        if raw is not None:
+            return Confidence.LIKELY
+        return _declined(error, failure)
+
+    @classmethod
+    def sniff_filename(
+        cls,
+        filename: path.FilenameLike,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a path names an AFNI dataset.
+
+        The `.HEAD` file of the dataset is tested, whichever file of the
+        dataset the path names.
+        """
+        raw, failure = _sniffed_raw_at(filename)
+        if raw is not None:
+            return Confidence.LIKELY
+        return _declined(error, failure)
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that bytes hold a valid AFNI header."""
+        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
+
+    # --- writing ------------------------------------------------------
+
+    def to_text(self, **kwargs) -> str:
+        """Return the text of the `.HEAD` file.
+
+        The text that the record was read from is returned while it still
+        describes the attributes. Otherwise, the attributes are formatted
+        as AFNI writes them. The keyword arguments are ignored.
+        """
+        formatted = _format_attributes(self.attributes)
+        if self.text is not None:
+            stored = _format_attributes(_parse_attributes(self.text))
+            if stored == formatted:
+                return self.text
+        return formatted
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Return the content of the `.HEAD` file, encoded as Latin-1."""
+        return self.to_text().encode("latin-1")
+
 
 def _looks_like_head(head: str) -> bool:
     """Tell whether a text starts like a `.HEAD` file."""
     return re.match(r"\s*type\s*=\s*\S+-attribute\s", head) is not None
 
 
-def _read_head(file: tx.Any) -> AfniHeader:
-    with _open_path(file) as f:
-        return AfniHeader.from_bytes(f.read())
-
-
-def _read_header_stream(file: tx.IO) -> AfniHeader:
+def _read_header_stream(file: tx.IO) -> AfniRaw:
     """
-    Read a header from a stream, giving up early on content that does not
-    start like one.
+    Read a record from a stream, giving up early on content that does not
+    start like a header.
     """
     start = file.read(256)
     if isinstance(start, bytes):
@@ -419,4 +623,42 @@ def _read_header_stream(file: tx.IO) -> AfniHeader:
     rest = file.read()
     if isinstance(rest, bytes):
         rest = rest.decode("latin-1")
-    return AfniHeader.from_text(start + rest)
+    return AfniRaw.from_text(start + rest)
+
+
+def _sniffed_raw(
+    file: tx.IO,
+) -> tx.Tuple[tx.Optional[AfniRaw], tx.Optional[Exception]]:
+    """Read and validate the record of a stream for sniffing.
+
+    The position of the stream is restored. The result is the record, or
+    `None` with the error that refused it.
+    """
+    try:
+        with preserve_position(file):
+            return _read_header_stream(file).validate(), None
+    except Exception as e:  # noqa: BLE001
+        return None, e
+
+
+def _sniffed_raw_at(
+    filename: path.FilenameLike,
+) -> tx.Tuple[tx.Optional[AfniRaw], tx.Optional[Exception]]:
+    """Read and validate the record of the dataset that a path names."""
+    head, _, _ = afni_dataset_files(filename)
+    if not path.exists(head):
+        return None, ParserExistsError(f"No such file: {head}")
+    with _open_path(head) as f:
+        return _sniffed_raw(f)
+
+
+def _declined(
+    error: tx.Union[bool, tx.Type[Exception]],
+    failure: tx.Optional[Exception],
+) -> float:
+    """Decline a sniffed input, raising the requested error if any."""
+    if error:
+        if error is True:
+            error = SnifferContentError
+        raise error("Content is not an AFNI dataset") from failure
+    return Confidence.NO
