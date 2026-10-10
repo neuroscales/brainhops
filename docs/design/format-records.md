@@ -851,8 +851,8 @@ its status.
     in the same way as item 76. Status: accepted in the pass 3b review
     (c7e2a4e).
 93. `attributes=` of AFNI first accepted the attributes of the geometry,
-    which the writer encodes from the model, so a value given there was
-    silently ignored. Status: resolved in the pass 3b review (c7e2a4e),
+    which the writer encodes from the model, and applied them after the
+    encoding, so the header could contradict the model. Status: resolved in the pass 3b review (c7e2a4e),
     where `attributes=` refuses them with `WriterError`.
 94. An attribute of AFNI with a string that is not Latin-1 failed with an
     encoding error that is not a `WriterError`. Status: resolved in the
@@ -860,8 +860,9 @@ its status.
 95. Pass 3b removes the names `AfniReaderWriter`, `AfniHeader`,
     `MrtrixReaderWriter` and `MrtrixHeader`, and the attributes `header`,
     `_header` and `dataobj`, without aliases. Loading a compressed
-    AFNI file no longer reads its voxels. They are listed with the other
-    changes of item 13. Status: open, as for item 13.
+    AFNI or MRtrix file no longer reads its voxels. They are to be
+    announced with the other changes of item 13. Status: open, as for
+    item 13.
 96. For MRtrix, a `#` inside the value of a key truncates the value,
     because it starts a comment. The problem is older than this work.
     Status: open.
