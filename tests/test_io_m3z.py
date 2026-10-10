@@ -269,6 +269,111 @@ def test_truncated(tmp_path: Path) -> None:
 
 
 # ----------------------------------------------------------------------
+#   RECORD AND METADATA
+# ----------------------------------------------------------------------
+
+
+def test_the_field_is_a_view_of_the_record(tmp_path: Path) -> None:
+    morph = io.load(_write(tmp_path, _encode(_positions())))
+    assert isinstance(morph.metadata, M3zMetadata)
+    record = morph.metadata.raw
+    assert isinstance(record, M3zRaw)
+    # The chain is decoded once, and its field holds the array of the
+    # record, which cannot be changed in place.
+    assert morph.transformations is morph.transformations
+    assert morph[1].data is record.positions
+    for array in (record.positions, record.original, record.index):
+        assert not array.flags.writeable
+    assert not record.labels.flags.writeable
+    with pytest.raises(ValueError):
+        record.positions[0, 0, 0, 0] = 1.0
+
+
+def test_a_copy_of_the_record_shares_its_arrays(tmp_path: Path) -> None:
+    morph = io.load(_write(tmp_path, _encode(_positions())))
+    record = morph.metadata.raw
+    copy = morph.metadata.to_raw()
+    assert copy is not record
+    assert copy.positions is record.positions
+    assert copy.labels is record.labels
+    assert copy.xform is record.xform
+    # The record of an untouched morph is written as it is.
+    assert morph.to_raw() is record
+
+
+def test_the_metadata_reads_and_writes_the_whole_file(tmp_path: Path) -> None:
+    content = _encode(_positions(), gz=False)
+    path = _write(tmp_path, gzip.compress(content))
+    metadata = M3zMetadata.load(path)
+    assert isinstance(io.metadata.MetadataFormat.load(path), M3zMetadata)
+    np.testing.assert_array_equal(metadata.raw.positions, _positions())
+    assert gzip.decompress(metadata.to_bytes()) == content
+    assert metadata.to_bytes(compress=False) == content
+    metadata.save(tmp_path / "copy.m3d")
+    assert (tmp_path / "copy.m3d").read_bytes() == content
+    with open(path, "rb") as f:
+        assert M3zMetadata.from_fileobj(f).raw.shape == SHAPE
+    with pytest.raises(WriterError):
+        M3zMetadata().save(tmp_path / "empty.m3z")
+    assert not (tmp_path / "empty.m3z").exists()
+
+
+def test_other_metadata_gives_another_chain(tmp_path: Path) -> None:
+    morph = io.load(_write(tmp_path, _encode(_positions())))
+    chain = morph.transformations
+    other = M3zMetadata.load(_write(tmp_path, _encode(_positions() * 2)))
+    morph.metadata = other
+    assert morph.transformations is not chain
+    np.testing.assert_array_equal(morph[1].data, _positions() * 2)
+    # An assigned chain is kept when the metadata changes.
+    morph.transformations = list(chain)
+    morph.metadata = M3zMetadata.from_raw(other.raw)
+    assert morph.transformations == chain
+
+
+def test_a_morph_reads_a_record_a_stream_and_bytes(tmp_path: Path) -> None:
+    content = _encode(_positions())
+    path = _write(tmp_path, content)
+    record = M3zRaw.load(path)
+    assert M3zMorph.from_raw(record).metadata.raw is record
+    assert M3zMorph.from_any(record).metadata.raw is record
+    with open(path, "rb") as f:
+        morph = M3zMorph.load(f)
+    np.testing.assert_array_equal(morph[1].data, _positions())
+    morph = M3zMorph.from_bytes(content)
+    np.testing.assert_array_equal(morph[1].data, _positions())
+
+
+def test_a_morph_without_a_record_or_a_chain_is_not_written(
+    tmp_path: Path,
+) -> None:
+    morph = M3zMorph()
+    assert morph.metadata is None and morph.transformations == ()
+    with pytest.raises(WriterError):
+        morph.save(tmp_path / "out.m3z")
+    assert not (tmp_path / "out.m3z").exists()
+
+
+def test_writing_a_chain_leaves_the_record_alone(tmp_path: Path) -> None:
+    morph = io.load(_write(tmp_path, _encode(_positions())))
+    record = morph.metadata.raw
+    ras2node, field, vox2ras = morph
+    morph.transformations = [
+        ras2node,
+        xforms.CoordinatesField(field=_positions(SHAPE[::-1])),
+        vox2ras,
+    ]
+    encoded = morph.to_raw()
+    assert morph.metadata.raw is record
+    np.testing.assert_array_equal(record.positions, _positions())
+    # A new grid gets new arrays, which are read-only as well.
+    assert encoded.shape == SHAPE[::-1]
+    for array in (encoded.positions, encoded.index, encoded.labels):
+        assert not array.flags.writeable
+    assert not encoded.labels.any()
+
+
+# ----------------------------------------------------------------------
 #   SNIFFING AND HINTS
 # ----------------------------------------------------------------------
 
