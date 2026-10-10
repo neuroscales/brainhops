@@ -74,7 +74,19 @@ from brainhops.io.common.mrtrix._views import (
 )
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.common.nrrd._data import _NrrdProxy
+from brainhops.io.common.nrrd._views import (
+    _image_to_disk as _nrrd_to_disk,
+)
+from brainhops.io.common.nrrd._views import (
+    _image_to_model as _nrrd_to_model,
+)
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
+from brainhops.io.images.nrrd import (
+    AttachedNrrdImage,
+    DetachedNrrdImage,
+    NrrdMetadata,
+)
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
@@ -579,6 +591,14 @@ class Exemplar(tx.NamedTuple):
     the file, which the checks then compare.
     """
 
+    renamed: bool = True
+    """Whether a copy of a file under another name keeps its bytes.
+
+    A header that names its data file, such as a detached NRRD header,
+    changes in that line when it is written under another name, so only
+    its copies under the same name, in another directory, are compared.
+    """
+
     header_file: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
     """Function that returns the header file of an object of several files.
 
@@ -1066,11 +1086,43 @@ _MRTRIX = Exemplar(
 )
 EXEMPLARS[MrtrixImage] = _MRTRIX
 
+# A NRRD image is checked as an attached `.nrrd` file and as a detached
+# `.nhdr` header with its `.raw.gz` data file, both gzipped by default.
+# The samples of both stay compressed in the file, and an untouched copy
+# keeps the compressed bytes. A detached header names its data file, so
+# its copies are compared under the same name, in another directory,
+# where both files must be identical. The data file named by the copy of
+# a detached header that the metadata check writes is the data file of
+# the source, which exists, so that check only shows that the metadata
+# reads the header alone, as for M3Z.
+
+
+def _nrrd_edit_record(record: tx.Any) -> tx.Any:
+    record.keyvalue["comment"] = "edited"
+    return record
+
+
+_NRRD = Exemplar(
+    metadata=NrrdMetadata,
+    suffix=".nrrd",
+    proxies=(_NrrdProxy,),
+    to_model=_nrrd_to_model,
+    to_disk=_nrrd_to_disk,
+    sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+    edit_record=_nrrd_edit_record,
+    record_edited=lambda record: record.keyvalue.get("comment") == "edited",
+    geometry=_nifti_geometry,
+    change_geometry=_nifti_change_geometry,
+    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+)
+EXEMPLARS[AttachedNrrdImage] = _NRRD
+EXEMPLARS[DetachedNrrdImage] = _NRRD._replace(
+    suffix=".nhdr", renamed=False, header_file=lambda path: path
+)
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.minc.Minc1Image",
     "brainhops.io.images.minc.Minc2Image",
-    "brainhops.io.images.nrrd.AttachedNrrdImage",
-    "brainhops.io.images.nrrd.DetachedNrrdImage",
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
     "brainhops.io.images.openslide.DicomWsiImage",
@@ -1414,13 +1466,26 @@ def test_05_untouched_save_is_byte_identical(
     tmp_path,  # noqa: ANN001
 ) -> None:
     source = _saved(cls, exemplar, tmp_path)
-    target = _path(tmp_path, exemplar, "copy")
-    cls.load(source).save(target)
-    assert _decompressed(target) == _decompressed(source)
-    # The generic writer copies the object with `from_instance` first.
-    target = _path(tmp_path, exemplar, "generic")
-    io.save(cls.load(source), target)
-    assert _decompressed(target) == _decompressed(source)
+    if exemplar.renamed:
+        target = _path(tmp_path, exemplar, "copy")
+        cls.load(source).save(target)
+        assert _decompressed(target) == _decompressed(source)
+        # The generic writer copies the object with `from_instance` first.
+        target = _path(tmp_path, exemplar, "generic")
+        io.save(cls.load(source), target)
+        assert _decompressed(target) == _decompressed(source)
+    # Every file of a copy under the same name, in another directory, is
+    # the file of the same name beside the source.
+    for name, write in (("same", cls.load(source).save), ("io", None)):
+        directory = tmp_path / name
+        directory.mkdir()
+        if write is None:
+            io.save(cls.load(source), directory / source.name)
+        else:
+            write(directory / source.name)
+        for copied in directory.iterdir():
+            original = tmp_path / copied.name
+            assert _decompressed(copied) == _decompressed(original), copied
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1451,7 +1516,7 @@ def test_07_metadata_pickles(
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
     clone = pickle.loads(pickle.dumps(loaded.metadata))
     assert type(clone) is type(loaded.metadata)
-    assert clone.to_bytes() == loaded.metadata.to_bytes()
+    assert _header(exemplar, clone) == _header(exemplar, loaded.metadata)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)

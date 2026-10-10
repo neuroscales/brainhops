@@ -774,13 +774,20 @@ def _encoded(
         datatype = options["datatype"]
         if datatype is None:
             datatype = getattr(raw, "dtype", np.float32)
-        fields["type"] = dtype_to_nrrd(datatype)
-        fields["dimension"] = str(ndim)
-        fields["sizes"] = " ".join(str(n) for n in sizes)
-        fields["encoding"] = encoding
+        nrrd_type = dtype_to_nrrd(datatype)
         if endian is None:
             endian = (held.endian if held is not None else None) or "little"
-        fields["endian"] = endian
+        if matched and _same_storage(held, nrrd_type, encoding, endian):
+            # The base spells the same storage, so its text is kept.
+            for name in ("type", "dimension", "sizes", "endian", "encoding"):
+                if name in held.fields:
+                    fields[name] = held.fields[name]
+        else:
+            fields["type"] = nrrd_type
+            fields["dimension"] = str(ndim)
+            fields["sizes"] = " ".join(str(n) for n in sizes)
+            fields["encoding"] = encoding
+            fields["endian"] = endian
 
     # --- kinds and other fields of the base -----------------------
     if matched:
@@ -887,6 +894,18 @@ def _copies_samples(
     ):
         return False
     return True
+
+
+def _same_storage(
+    held: NrrdRaw, nrrd_type: str, encoding: str, endian: str
+) -> bool:
+    """Tell whether the base stores samples of a type as the writer would.
+
+    The byte order matters only for types of more than one byte.
+    """
+    if dtype_to_nrrd(held.dtype) != nrrd_type or held.encoding != encoding:
+        return False
+    return held.dtype.itemsize == 1 or held.endian == endian
 
 
 def _keeps_geometry(
