@@ -1,7 +1,8 @@
 # Format records and their layering
 
-This memo is agreed and is not implemented yet. It is tracked in
-#415, and the work is done in the passes described at the end.
+This memo is agreed and is being implemented. It is tracked in #415,
+and the work is done in the passes described at the end. The first
+pass, which moves the NIfTI formats, is written and under review.
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides
@@ -19,15 +20,17 @@ they are built on 13 parser bases. Because the parser is a base class,
 its fields and methods become part of the format class. They appear in
 its constructor, its `repr`, its `replace` method and its attributes.
 
-NIfTI shows the problem most clearly. `NiftiReaderWriter`
-(`io/common/nifti/_parsers.py:46`) is a base of `NiftiImage` and of
-about 16 transformation classes. It declares `image` and `_header` as
-constructor fields, and it caches the voxel array in `_data`. The name
+NIfTI showed the problem most clearly before the first pass, which
+deleted the classes and workarounds described in this paragraph and the
+next two. `NiftiReaderWriter` (`io/common/nifti/_parsers.py:46`) was a
+base of `NiftiImage` and of about 16 transformation classes. It declared
+`image` and `_header` as constructor fields, and it cached the voxel
+array in `_data`. The name
 `_data` is also where the transformation data models store their data,
 for example `TransformationField._data`
 (`datamodel/_transformations/concrete.py:271`) and `Affine._data`
 (`concrete.py:706`). The two meanings of the same attribute collided in
-#342, and three workarounds exist because of it.
+#342, and three workarounds were added because of it.
 
 1. `NiftiRASCoordinatesField` uses a custom `data` setter,
    `_store_through_the_parser`, which writes through the parser
@@ -40,10 +43,11 @@ for example `TransformationField._data`
    keep the constructor's positional parameters in a usable order.
 
 The order of the base classes is also constrained. `NiftiImage`
-(`io/images/nifti/_image.py:37`) must list `NiftiReaderWriter` before
+(`io/images/nifti/_image.py:37`) had to list `NiftiReaderWriter` before
 `SingleScaleImage`, because the fields are collected in reverse method
 resolution order and the parser's fields have defaults. LTA and elastix
-pass `reverse=False` to their class declarations for a similar reason.
+still pass `reverse=False` to their class declarations for a similar
+reason.
 
 Other parsers leak their state in the same way. `MghReaderWriter` adds
 four fields and eight properties. `X5TransformReaderWriter` adds
@@ -201,6 +205,9 @@ the new package `brainhops.io.metadata`. After the first pass,
 `NiftiUnitWarning`. The NIfTI image and transformation packages export
 their format classes and also export `NiftiRaw` and `NiftiMetadata`
 again, so that a user finds them next to the classes that use them.
+The modules of the NIfTI transformation package are private, and the
+SPM package exports `SpmCoordinatesField` from its private `_fields`
+module instead of the public module `spm.y`.
 
 ## Relation to #233 and the #306 memo
 
@@ -247,9 +254,8 @@ second adds `NiftiRaw`, `NiftiMetadata` and the views of NIfTI data,
 and moves `NiftiImage` to them. The third moves the NIfTI
 transformations, including the SPM, NiftyReg, ITK and FNIRT fields, and
 deletes `NiftiReaderWriter`, `_explicit_matrix`,
-`_store_through_the_parser` and `_WritableNifti`. If the third pull
-request grows too large, it stops after SPM, and a fourth one moves
-NiftyReg, ITK and FNIRT.
+`_store_through_the_parser` and `_WritableNifti`. It also renames the
+`header=` option of the NIfTI converters to `metadata=`.
 
 The conformance test runs twelve checks on every migrated format.
 
@@ -307,7 +313,9 @@ its status.
 
 1. The constructor assigns fields in their declared order, so the
    default `raw=None` overwrites a value given as `data=`. A
-   `__post_init__` applies `data=` again, and when both `raw=` and
+   `__post_init__` applies `data=` again, and for the NIfTI
+   transformations it is written once, in `NiftiBasedTransformation`
+   (`io/transformations/nifti/_base.py:84`). When both `raw=` and
    `data=` are given, `data=` wins. Status: open.
 2. A `smartproperty` whose setter was added later with `@data.setter`
    lost its `invalidates=` option, because the invalidator was wrapped
@@ -326,7 +334,9 @@ its status.
    Status: open.
 5. A NIfTI affine has two sources, a matrix in `raw` or the `sform` of
    the record, and the inverse of an affine that comes from the header
-   must also come from the header. Status: open.
+   must also come from the header. Status: decided in pass 1c, where a
+   matrix in `raw` takes precedence over the `sform`, and the inverse of
+   an affine read from the header still reads the header.
 6. Reading `data` turns the proxy into an array with the array backend,
    which copies with NumPy but stays lazy with Dask. An edit made in
    place on the decoded array would then be lost, because an untouched
@@ -342,7 +352,8 @@ its status.
    The fix is a private `_metadata` field behind a public `metadata`
    `smartproperty` with `invalidates=("transformations",)`, because
    bagof does not allow a field and a property with the same name in
-   one class. Status: open.
+   one class. Status: resolved in pass 1c, where every NIfTI
+   transformation class applies this fix.
 9. A proxy built over a stream that the caller passed in must keep that
    stream alive for as long as the proxy is used. For the same reason,
    a format whose `raw` is a proxy must override `from_filename` or
@@ -356,18 +367,26 @@ its status.
     is set in the fourth pass. Status: open.
 11. Reader options fall into two groups. Some describe the object, such
     as `moving`, `reference`, `log` and `steps`, and others describe
-    the reading, such as `mmap` and `keep_file_open`. The two groups
-    have to be split. Status: open.
+    the reading, such as `mmap` and `keep_file_open`. Until the two
+    groups are split, the NIfTI transformations remove the first group
+    from the options before they call nibabel, and set those values on
+    the object after it is read. Status: open.
 12. The NiftyReg writer replaces the extensions of the record instead
-    of appending to them. Status: open.
-13. Several public names break and must be announced. They include
-    `NiftiReaderWriter`, `sniff_nibabel`, the `image` and `header`
-    attributes, the `header=` argument of `from_nibabel`, `LtaStruct`,
-    the modules `nifti.affines`, `nifti.base` and `nifti.fields`, the
-    positional parameters recorded in the constructor signature test,
-    and `NiftiImage.system`, which pass 1b makes read-only so that
-    setting it raises an error. `NiftiReaderWriter` is still exported
-    until pass 1c. Status: open.
+    of appending to them (`io/transformations/niftyreg/_fields.py:473`),
+    so that a field that is saved again does not accumulate copies of
+    its extension affines. Status: decided in pass 1c.
+13. Several public names and behaviors break and must be announced.
+    The names are `NiftiReaderWriter`, which pass 1c removes,
+    `sniff_nibabel`, the `image` and `header` attributes and arguments,
+    the `header=` argument of `from_nibabel`, the `header=` option of
+    the NIfTI converters, which becomes `metadata=`, `LtaStruct`, the
+    modules `nifti.affines`, `nifti.base`, `nifti.fields` and `spm.y`,
+    which become private, and the positional parameters recorded in the
+    constructor signature test. The behaviors are `NiftiImage.system`,
+    which becomes read-only, the `data` of a NiftyReg field, whose shape
+    loses its singleton axis and becomes `(X, Y, Z, 3)`, and a
+    displacement field loaded with `log=True`, which is written back as
+    a velocity unless it is saved with `log=False`. Status: open.
 14. The design needs `bagof-magic` 0.3.dev2 or later, which is not on
     PyPI yet, so the checks before each pull request need it installed
     from another source. Status: open.
@@ -385,20 +404,26 @@ its status.
     an untouched object is still saved byte for byte.
 18. `replace` reads `data` through the property, so a copy made with
     `replace` turns the proxy into an array and is no longer saved byte
-    for byte. Status: still open after pass 1b.
+    for byte. The setters of the NIfTI transformations empty the
+    private `_data` of the model
+    (`io/transformations/nifti/_affines.py:55` and `_fields.py:87`), so
+    that `replace` passes `data=None` and the copy keeps `raw`. Status: resolved in pass 1c for the
+    transformations, and open for `NiftiImage`, which has no `_data`.
 19. The `repr` of an image decoded the whole proxy to show `data`.
     Status: resolved in pass 1a, where `SingleScaleImage.data` is
     hidden from `repr`, which changes the public `repr`.
 20. A cached `smartproperty` that is set through a hand-written setter
     keeps its own cache, unless the setter deletes it or names it in
     `invalidates`. Doing this automatically would break the setters
-    that fill the cache on purpose (`concrete.py:396-421`). The NIfTI
-    field setters must therefore clear `_cache_data` themselves, since
-    `_FORGET_VIEWS` clears only the attributes listed in
+    that fill the cache on purpose (`concrete.py:396-421`), so every
+    NIfTI setter declares `unset=_always` and removes `_cache_data` by
+    hand, since `_FORGET_VIEWS` clears only the attributes listed in
     `derived_fields`. Status: open.
 21. The test that compares the registry with the table of formats sees
     only registered classes, so a concrete format that is not
-    registered escapes it. Status: open.
+    registered escapes it. `NiftiRASToVoxel` is not registered, so a
+    separate test checks that it is saved byte for byte. Status: open,
+    and partly addressed in pass 1c.
 22. `MetadataFormat` also inherits `_FileBasedModelMixin`, which is
     needed for `from_any(file)` and for the reset of fields when
     copying from another format. The base list of the plan did not
@@ -408,11 +433,14 @@ its status.
     file, such as detached NRRD and MINC, need a hook in their exemplar
     in the third pass. Status: open.
 24. An untouched save is identical byte for byte only when the geometry
-    is encoded back exactly. A `qform` or `sform` whose code is 0 is
-    written back with code 2, and the padding before `vox_offset` is
-    lost. A possible fix is to treat the geometry as unchanged while
-    `_transformations` is unset, and to keep the form fields of the
-    record in that case. Status: open.
+    is encoded back exactly. A `qform` or `sform` whose code is 0 used
+    to be written back with code 2, and the padding before `vox_offset`
+    was lost. Status: decided in pass 1c for the fields, which treat the
+    geometry as unchanged while `_transformations` is unset and then
+    write `raw` under the record with its forms kept, and open for the
+    affines, which write the `sform` and the `qform` under the single
+    code that `_xform_code` chooses
+    (`io/transformations/nifti/_affines.py:185`).
 25. Encoding a model in millimeters over a record whose spatial unit
     is unknown could replace that unit. Status: decided in pass 1b,
     where the unknown unit of the record is kept.
@@ -423,10 +451,13 @@ its status.
 27. `_new_nifti` builds the nibabel image twice, so that nibabel
     validates the data type and applies its policy on 64-bit integers.
     The array is not copied. Status: accepted.
-28. Code in the FSL formats and in `_files._like_header` still reaches
-    the record through attributes, as in `metadata.raw.header`. A
-    helper `_header(obj)` replaces these lookups. Status: open until
-    pass 1c.
+28. Code in the FSL formats and in `_like_header` reached the record
+    through attributes, as in `metadata.raw.header`. Status: resolved
+    in pass 1c, where the helper `_header(obj)`
+    (`io/common/nifti/_header.py:174`) replaces these lookups in the
+    FSL, ITK, NiftyReg and FNIRT formats. The helper still falls back on
+    the `header` attribute for nibabel images and MGH images, which is
+    accepted until the third pass.
 29. The base adapter has no fallback from `sniff_bytes` to
     `sniff_fileobj`, so each class writes `sniff_bytes` once. Status:
     accepted.
@@ -441,3 +472,28 @@ its status.
 32. `read_nifti` parses the header twice when it reads a local path,
     once for the record and once for the nibabel image. Status:
     accepted.
+33. `_reset_structural_fields` also resets `xyzt_units`, so a field
+    written from a new chain of transformations declares unknown units,
+    as it did before pass 1c when the header was built from scratch.
+    Status: accepted.
+34. The NiftyReg and ITK fields check the shape and the layout of their
+    header in `__post_init__`, so a wrong header is refused when the
+    object is built instead of in `from_nibabel`. Status: decided in
+    pass 1c.
+35. `_copy_map` reads `other.data` only when no data is given
+    (`datamodel/_transformations/concrete.py:1217-1234`), and the
+    laziness of `from_instance` depends on that. Status: accepted.
+36. `FnirtWarpField.transformations` keeps a hand-written cache,
+    `_chain_cache`, that it looks up by the identity of the objects
+    (`io/transformations/fsl/fnirt/_base.py:408-443`), and the bases of
+    the class list the model last. Status: open, and older than pass
+    1c.
+37. In the conformance tests, check 9 does not convert NiftyReg, ITK
+    and FNIRT fields to another format, because they have no converter
+    until #312, and it compares `raw` and `data` only for models that
+    have `data`. Status: accepted.
+38. Private helpers such as `_always`, `_record_image`,
+    `_set_field_data` and `_set_coordinates_intent` were imported by
+    other packages from `io/transformations/nifti`. Status: resolved in
+    pass 1c, where they move to `io/common/nifti/_header.py` and
+    `_core/properties.py`.
