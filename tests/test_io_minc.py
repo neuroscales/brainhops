@@ -209,7 +209,8 @@ def test_vox2world_matches_nibabel(anyminc) -> None:  # noqa: ANN001
     flip = np.eye(4)[[2, 1, 0, 3]]
     np.testing.assert_allclose(image.metadata.raw.vox2world, reference @ flip)
     np.testing.assert_allclose(
-        image.metadata.raw.vox2world, expected_vox2world(("zspace", "yspace", "xspace"))
+        image.metadata.raw.vox2world,
+        expected_vox2world(("zspace", "yspace", "xspace")),
     )
 
 
@@ -256,7 +257,9 @@ def test_permuted_dimensions(tmp_path, version) -> None:  # noqa: ANN001
     reference = nb.load(filename).affine
     flip = np.eye(4)[[2, 1, 0, 3]]
     np.testing.assert_allclose(image.metadata.raw.vox2world, reference @ flip)
-    np.testing.assert_allclose(image.metadata.raw.vox2world, expected_vox2world(dims))
+    np.testing.assert_allclose(
+        image.metadata.raw.vox2world, expected_vox2world(dims)
+    )
 
 
 @pytest.mark.parametrize("version", [1, 2])
@@ -371,7 +374,9 @@ def test_convert_to_nifti(tmp_path, anyminc) -> None:  # noqa: ANN001
         np.asarray(nifti.data), np.asarray(image.data), rtol=1e-6
     )
     np.testing.assert_allclose(
-        nifti.transformation.matrix, image.metadata.raw.vox2world[:3], atol=1e-5
+        nifti.transformation.matrix,
+        image.metadata.raw.vox2world[:3],
+        atol=1e-5,
     )
 
 

@@ -25,6 +25,7 @@ import importlib
 import os
 import pickle
 import struct
+from io import BytesIO
 
 import numpy as np
 import pytest
@@ -157,6 +158,23 @@ try:
     from brainhops.io.transformations.spm import SpmCoordinatesField
 except ImportError:
     nb = None
+
+try:
+    from scipy.io import netcdf_file
+
+    from brainhops.io.common.minc._data import _MincProxy
+    from brainhops.io.common.minc._netcdf import read_netcdf_header
+    from brainhops.io.common.minc._views import (
+        _image_to_disk as _minc_to_disk,
+    )
+    from brainhops.io.common.minc._views import (
+        _image_to_model as _minc_to_model,
+    )
+    from brainhops.io.images.minc import Minc1Image, Minc2Image, MincMetadata
+
+    minc_needs = netcdf_file
+except ImportError:
+    minc_needs = None
 
 try:
     import h5py
@@ -591,6 +609,15 @@ class Exemplar(tx.NamedTuple):
     the file, which the checks then compare.
     """
 
+    source: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
+    """Function that writes a file of a format that cannot write itself.
+
+    The function receives a path and data. It is `None` for a format that
+    writes its own files. MINC cannot be written, so the checks write its
+    files with this function, and the checks of writing make sure that
+    the format refuses to write instead of checking what it writes.
+    """
+
     renamed: bool = True
     """Whether a copy of a file under another name keeps its bytes.
 
@@ -885,8 +912,8 @@ def _x5_header(metadata: tx.Any) -> tx.Any:
     return metadata.raw.header, nodes
 
 
-def _x5_cut(source: tx.Any, target: tx.Any) -> None:
-    """Copy an X5 file whose fields cannot be read.
+def _hdf5_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy an HDF5 file, such as an X5 file, whose arrays cannot be read.
 
     Every group and attribute is copied, and so is every dataset of at
     most two dimensions. A larger dataset is declared in an external file
@@ -935,7 +962,7 @@ if h5py is not None:
         view="transformations",
         data=_x5_data,
         set_data=_x5_set_data,
-        cut=_x5_cut,
+        cut=_hdf5_cut,
         header=_x5_header,
     )
 
@@ -1120,9 +1147,92 @@ EXEMPLARS[DetachedNrrdImage] = _NRRD._replace(
     suffix=".nhdr", renamed=False, header_file=lambda path: path
 )
 
+# MINC files cannot be written, so the checks write them as the MINC
+# specification describes, with h5py for MINC2 and with the NetCDF writer
+# of scipy for MINC1, which may be gzipped. The voxels are stored as
+# floats, which nibabel does not scale. The checks of writing make sure
+# that MINC refuses to write. A MINC1 copy that the metadata check reads
+# is the file cut after its NetCDF header, and a MINC2 copy keeps every
+# group and attribute of the file but not its image. The record is
+# compared as it is, since the metadata cannot write bytes.
+
+
+def _minc_dimensions(data: tx.Any) -> tx.Tuple[str, ...]:
+    """Name the dimensions of data in Fortran order, slowest first."""
+    return ("zspace", "yspace", "xspace")[3 - np.ndim(data) :]
+
+
+def _write_minc1(path: tx.Any, data: tx.Any) -> None:
+    stored = np.asarray(data, dtype="float32").T
+    names = _minc_dimensions(data)
+    plain = str(path)[: -len(".gz")] if str(path).endswith(".gz") else path
+    f = netcdf_file(str(plain), "w", version=1)
+    for name, length in zip(names, stored.shape):
+        f.createDimension(name, length)
+    for name in names:
+        variable = f.createVariable(name, "i", ())
+        variable.spacing = b"regular__"
+        variable.step = 2.0
+    f.createVariable("image", "f", names)[:] = stored
+    for name in ("image-min", "image-max"):
+        f.createVariable(name, "d", (names[0],))[:] = 0.0
+    f.close()
+    if plain != path:
+        with open(plain, "rb") as file:
+            content = file.read()
+        os.remove(plain)
+        with open(path, "wb") as file:
+            file.write(gzip.compress(content))
+
+
+def _write_minc2(path: tx.Any, data: tx.Any) -> None:
+    stored = np.asarray(data, dtype="float32").T
+    names = _minc_dimensions(data)
+    with h5py.File(path, "w") as f:
+        root = f.create_group("minc-2.0")
+        group = root.create_group("dimensions")
+        for name, length in zip(names, stored.shape):
+            dataset = group.create_dataset(name, data=np.int32(0))
+            dataset.attrs["length"] = np.int32(length)
+            dataset.attrs["step"] = 2.0
+        image = root.create_group("image/0")
+        dataset = image.create_dataset("image", data=stored)
+        dataset.attrs["dimorder"] = np.bytes_(",".join(names).encode())
+        for name in ("image-min", "image-max"):
+            image.create_dataset(name, data=np.zeros(stored.shape[0]))
+
+
+def _minc1_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy a MINC1 file cut after its NetCDF header."""
+    content = _decompressed(source)
+    size = read_netcdf_header(BytesIO(content)).size
+    _write_header(target, content[:size])
+
+
+if minc_needs is not None:
+    _MINC = Exemplar(
+        metadata=MincMetadata,
+        suffix=".mnc",
+        proxies=(_MincProxy,),
+        to_model=_minc_to_model,
+        to_disk=_minc_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=lambda record: replace(record, datatype="<f8"),
+        record_edited=lambda record: record.datatype == "<f8",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        cut=_minc1_cut,
+        header=lambda metadata: metadata.raw,
+        source=_write_minc1,
+    )
+    EXEMPLARS[Minc1Image] = _MINC
+    if h5py is not None:
+        EXEMPLARS[Minc2Image] = _MINC._replace(
+            cut=_hdf5_cut, source=_write_minc2
+        )
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
-    "brainhops.io.images.minc.Minc1Image",
-    "brainhops.io.images.minc.Minc2Image",
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
     "brainhops.io.images.openslide.DicomWsiImage",
@@ -1263,6 +1373,12 @@ VARIANTS.append(
     ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
 )
 
+# A MINC1 file may be gzipped.
+if minc_needs is not None:
+    VARIANTS.append(
+        ("Minc1Image-gz", Minc1Image, _MINC._replace(suffix=".mnc.gz"))
+    )
+
 CASES = [
     pytest.param(cls, exemplar, id=cls.__name__)
     for cls, exemplar in {**EXEMPLARS, **TEST_EXEMPLARS}.items()
@@ -1365,8 +1481,18 @@ def _saved(
 ) -> tx.Any:
     """Write a new object of the format and return the path of its file."""
     path = _path(tmp_path, exemplar, name)
-    _built(cls, exemplar, exemplar.sample()).save(path)
+    if exemplar.source is not None:
+        exemplar.source(path, exemplar.sample())
+    else:
+        _built(cls, exemplar, exemplar.sample()).save(path)
     return path
+
+
+def _refuses_writing(obj: tx.Any, target: tx.Any) -> None:
+    """Check that a format that cannot write refuses to write an object."""
+    assert not hasattr(obj, "save")
+    with pytest.raises(WriterError):
+        io.save(obj, target)
 
 
 # ----------------------------------------------------------------------
@@ -1466,6 +1592,9 @@ def test_05_untouched_save_is_byte_identical(
     tmp_path,  # noqa: ANN001
 ) -> None:
     source = _saved(cls, exemplar, tmp_path)
+    if exemplar.source is not None:
+        _refuses_writing(cls.load(source), _path(tmp_path, exemplar, "copy"))
+        return
     if exemplar.renamed:
         target = _path(tmp_path, exemplar, "copy")
         cls.load(source).save(target)
@@ -1531,6 +1660,9 @@ def test_08_an_object_built_from_data_saves(
     stored = np.asarray(_stored(exemplar, built))
     assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "built")
+    if exemplar.source is not None:
+        _refuses_writing(built, path)
+        return
     built.save(path)
     assert np.array_equal(np.asarray(_data(exemplar, cls.load(path))), value)
 
@@ -1569,6 +1701,9 @@ def test_09_copies_keep_raw_and_metadata(
         assert np.array_equal(stored, expected)
         assert np.array_equal(np.asarray(converted.data), value)
     path = _path(tmp_path, exemplar, "converted")
+    if exemplar.source is not None:
+        _refuses_writing(converted, path)
+        return
     converted.save(path)
     assert np.array_equal(np.asarray(_data(exemplar, cls.load(path))), value)
 
@@ -1584,8 +1719,12 @@ def test_10_record_edits_survive_and_geometry_wins(
     edited = exemplar.edit_record(loaded.metadata.to_raw())
     loaded.metadata = exemplar.metadata.from_raw(edited)
     exemplar.change_geometry(loaded)
-    header = loaded.metadata.to_bytes()
     target = _path(tmp_path, exemplar, "edited")
+    if exemplar.source is not None:
+        assert exemplar.record_edited(loaded.metadata.raw)
+        _refuses_writing(loaded, target)
+        return
+    header = loaded.metadata.to_bytes()
     loaded.save(target)
     # Writing encodes into a copy of the record, never into the record.
     assert loaded.metadata.to_bytes() == header
