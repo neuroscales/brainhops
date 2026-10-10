@@ -39,6 +39,7 @@ from brainhops.io.common.afni import AfniFormat, AfniMetadata, AfniRaw
 from brainhops.io.common.afni._constants import _BRIK_SUFFIXES, AFNI_VIEWS
 from brainhops.io.common.afni._data import (
     _BrikProxy,
+    _same_file,
     brick_code,
     brick_dtype,
     brik_proxy,
@@ -55,6 +56,7 @@ from brainhops.io.common.afni._geometry import (
 )
 from brainhops.io.common.afni._raw import (
     _declined,
+    _format_attributes,
     _looks_like_head,
     _sniffed_raw,
     _sniffed_raw_at,
@@ -480,8 +482,10 @@ class AfniImage(
             Values are never rescaled.
         attributes : mapping, optional
             Attributes set last. A value of `None` removes an attribute.
-            The attributes that describe how the BRIK stores the voxels
-            are refused, because the data and `datatype` decide them.
+            The attributes that describe how the BRIK stores the voxels,
+            the grid and the view (`SCENE_DATA`) are refused, because the
+            data, `datatype`, the transformations and `view` decide them.
+            A string must be Latin-1 text.
 
         Returns
         -------
@@ -493,8 +497,9 @@ class AfniImage(
         WriterError
             If there is no data, the data have no dimension or more than
             four, the type cannot be stored, the geometry is degenerate,
-            the view is unknown, or `attributes` sets an attribute of the
-            BRIK layout.
+            the view is unknown, or `attributes` sets an attribute that the
+            data, the geometry or the view decide, or a string that is not
+            Latin-1 text.
         UnrepresentableTransformationError
             If the preferred transformation is not affine.
         """
@@ -516,6 +521,12 @@ class AfniImage(
         file name. The BRIK is written first, then the header. As AFNI
         does, a sibling BRIK with another suffix is removed, so that it
         cannot shadow the new one.
+
+        The lazy array of an image may read the BRIK that is removed, for
+        example when an image read from `x+orig.BRIK` is saved as
+        `x+orig.BRIK.gz`. The image then reads the new BRIK instead, and
+        its data is decoded again from that file when it is next read. The
+        values are the same unless `datatype` changed how they are stored.
 
         Raises
         ------
@@ -544,6 +555,7 @@ class AfniImage(
             if other != suffix and path.exists(stale):
                 local = _local_path(stale)
                 if local is not None:
+                    _leave_brik(self, stale, record, brik)
                     os.remove(local)
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
@@ -611,6 +623,19 @@ def _encoded(
             f"how the BRIK stores the voxels, which the data and "
             f"datatype= decide."
         )
+    refused = sorted(set(_GEOMETRY + ("SCENE_DATA",)).intersection(overrides))
+    if refused:
+        raise WriterError(
+            f"The AFNI attributes {refused} cannot be set: they describe "
+            f"the grid and the view, which the transformations and view= "
+            f"decide."
+        )
+    for name, value in overrides.items():
+        if isinstance(value, str) and not _is_latin1(value):
+            raise WriterError(
+                f"The AFNI attribute {name} holds characters that a "
+                f"header, which is Latin-1 text, cannot store."
+            )
     held = None if image.metadata is None else image.metadata.raw
     data = _stored_data(image, datatype)
     shape = tuple(int(d) for d in data.shape)
@@ -666,8 +691,11 @@ def _encoded(
         else:
             attrs[name] = value
 
+    # The attributes are compared as they are written, so that a NaN, which
+    # differs from itself, still compares equal, and the order of the
+    # attributes does not matter.
     record = _record(attrs)
-    if held is not None and dict(record.attributes) == dict(held.attributes):
+    if held is not None and _written(record) == _written(held):
         return held, data
     if "IDCODE_STRING" not in overrides:
         attrs["IDCODE_STRING"] = "AFN_" + uuid.uuid4().hex[:22]
@@ -787,6 +815,37 @@ def _geometry(
     geometry["IJK_TO_DICOM"] = tuple(float(v) for v in cardinal[:3].ravel())
     geometry["IJK_TO_DICOM_REAL"] = tuple(float(v) for v in matrix[:3].ravel())
     return geometry, same_grid
+
+
+def _written(record: AfniRaw) -> str:
+    """Return the attributes of a record as written, sorted by name."""
+    return _format_attributes(OrderedDict(sorted(record.attributes.items())))
+
+
+def _is_latin1(value: str) -> bool:
+    """Tell whether a string can be written in Latin-1 text."""
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _leave_brik(
+    image: AfniImage, stale: tx.Any, record: AfniRaw, brik: tx.Any
+) -> None:
+    """Stop an image from reading a BRIK that is about to be removed.
+
+    When the lazy array of the image reads that BRIK, it is replaced by a
+    lazy array of the new BRIK, which the new record describes, and the
+    cached data is dropped, since a lazy Dask array may still read the
+    old file.
+    """
+    raw = image.raw
+    if not isinstance(raw, _BrikProxy) or not _same_file(raw.brik, stale):
+        return
+    image.raw = brik_proxy(record, brik, raw.mmap)
+    image.__dict__.pop("_cache_data", None)
 
 
 def _record(attrs: tx.Mapping[str, tx.Any]) -> AfniRaw:

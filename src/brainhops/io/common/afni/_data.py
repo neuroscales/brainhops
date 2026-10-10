@@ -295,6 +295,11 @@ class _BrikProxy:
         return values if dtype is None else values.astype(dtype)
 
     def __getitem__(self, index: tx.Any) -> np.ndarray:
+        # An empty selection, such as the one that Dask reads to learn the
+        # type of an array, is answered without reading the file.
+        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
+        if selected.size == 0:
+            return np.empty(selected.shape, self.dtype)
         return np.asarray(self)[index]
 
     def __repr__(self) -> str:
