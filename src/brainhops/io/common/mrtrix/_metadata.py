@@ -77,7 +77,7 @@ class MrtrixMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Read the metadata from an MRtrix stream, gzipped or not.
 
         The record is read with [`MrtrixRaw.from_fileobj`][], which
-        receives the keyword arguments.
+        receives the keyword arguments and refuses them.
         """
         return cls.from_raw(MrtrixRaw.from_fileobj(file, **kwargs))
 

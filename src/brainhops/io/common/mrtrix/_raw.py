@@ -327,8 +327,12 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
     def from_text(cls, text: str, **kwargs) -> "MrtrixRaw":
         """Parse a header from text.
 
-        The keyword arguments are ignored.
+        Raises
+        ------
+        TypeError
+            If an option is given, since the record has none.
         """
+        _no_options(kwargs)
         return cls.from_lines(text.splitlines())
 
     @classmethod
@@ -337,14 +341,16 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
 
         The voxels are not read. The header of a single-file image is
         read up to the first voxel, so that its padding is kept, and the
-        position of the stream is restored. The keyword arguments are
-        ignored.
+        position of the stream is restored. The record has no options.
 
         Raises
         ------
+        TypeError
+            If an option is given.
         ParserContentError
             If the stream does not hold an MRtrix header.
         """
+        _no_options(kwargs)
         with preserve_position(file):
             return _read_header(open_compressed(file))
 
@@ -497,6 +503,20 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         return self.to_text() == other.to_text()
 
     __hash__ = None
+
+
+def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+    """Refuse the options of a reader that takes none.
+
+    Raises
+    ------
+    TypeError
+        If an option is given.
+    """
+    if kwargs:
+        raise TypeError(
+            f"Unknown MRtrix reader option(s): {', '.join(kwargs)}"
+        )
 
 
 def _read_header(file: tx.BinaryIO) -> MrtrixRaw:

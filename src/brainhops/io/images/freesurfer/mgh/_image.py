@@ -221,10 +221,12 @@ class MghImage(
         by name, so that nibabel opens it whenever the voxels are read and
         can memory-map them. Any other file is read into memory. The
         keyword arguments `mmap` and `keep_file_open` are passed to the
-        nibabel proxy, and the others are ignored.
+        nibabel proxy.
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserExistsError
             If the path does not exist.
         """
@@ -242,7 +244,13 @@ class MghImage(
         The record is read at once, and the proxy reads the voxels from
         the stream when they are needed, so the stream must stay open
         while the data may be read. A stream that cannot seek is first
-        read into memory.
+        read into memory. The keyword arguments `mmap` and
+        `keep_file_open` are passed to the nibabel proxy.
+
+        Raises
+        ------
+        TypeError
+            If another option is given.
         """
         raw, proxy = read_mgh(file, **kwargs)
         return cls(raw=proxy, metadata=MghMetadata.from_raw(raw))

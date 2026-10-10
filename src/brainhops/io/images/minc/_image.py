@@ -28,7 +28,7 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileReader, ParserContentError
 from brainhops.io.common.minc import MincDimension, MincMetadata, MincRaw
 from brainhops.io.common.minc._data import read_minc
-from brainhops.io.common.minc._raw import sniff_minc
+from brainhops.io.common.minc._raw import _no_options, sniff_minc
 from brainhops.io.common.minc._utils import (
     _axis,
     _score,
@@ -254,16 +254,19 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
         The lazy array reads the voxels from the file, by name, when they
         are needed. A file that is not local, or that is gzipped, is then
-        read into memory. The keyword arguments are ignored.
+        read into memory. MINC has no reader option.
 
         Raises
         ------
+        TypeError
+            If an option is given.
         ParserExistsError
             If the file does not exist.
         ParserContentError
             If the file is not a MINC file of a version that this class
             reads, or nibabel cannot read its voxels.
         """
+        _no_options(kwargs)
         raw, proxy = read_minc(filename)
         klass = cls._variant(raw.version)
         return klass(raw=proxy, metadata=MincMetadata.from_raw(raw))
@@ -274,15 +277,18 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
         A stream has no name to open again, so its content is read into
         memory, where the lazy array decodes the voxels when they are
-        needed. The position of the stream is restored, and the keyword
-        arguments are ignored.
+        needed. The position of the stream is restored. MINC has no reader
+        option.
 
         Raises
         ------
+        TypeError
+            If an option is given.
         ParserContentError
             If the stream is not a MINC file of a version that this class
             reads, or nibabel cannot read its voxels.
         """
+        _no_options(kwargs)
         raw, proxy = read_minc(file)
         klass = cls._variant(raw.version)
         return klass(raw=proxy, metadata=MincMetadata.from_raw(raw))

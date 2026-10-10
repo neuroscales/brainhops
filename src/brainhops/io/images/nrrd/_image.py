@@ -57,7 +57,11 @@ from brainhops.io.common.nrrd._data import (
     read_nrrd,
 )
 from brainhops.io.common.nrrd._layout import axis_roles, image_order
-from brainhops.io.common.nrrd._raw import _declined, _sniffed_raw
+from brainhops.io.common.nrrd._raw import (
+    _declined,
+    _no_options,
+    _sniffed_raw,
+)
 from brainhops.io.common.nrrd._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
 
@@ -481,7 +485,7 @@ class NrrdImage(
         """Read an image from the path of a `.nrrd` or `.nhdr` file.
 
         The record is read from the header, and the lazy array reads the
-        samples when they are needed. Other keyword arguments are ignored.
+        samples when they are needed.
 
         Parameters
         ----------
@@ -491,10 +495,12 @@ class NrrdImage(
             Whether the lazy array memory-maps raw samples that lie in a
             single local file.
         **kwargs : Any
-            Ignored.
+            Refused, since NRRD has no other option.
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserExistsError
             If the file or a data file that its header names does not
             exist.
@@ -502,25 +508,41 @@ class NrrdImage(
             If the file is not a NRRD image, or a local file of raw
             samples is too short.
         """
+        _no_options(kwargs)
         raw, proxy = read_nrrd(filename, mmap=mmap)
         return cls(raw=proxy, metadata=NrrdMetadata.from_raw(raw))
 
     @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NrrdImage":
+    def from_fileobj(
+        cls, file: tx.BinaryIO, mmap: bool = False, **kwargs
+    ) -> "NrrdImage":
         """Read an image from an open NRRD file, without memory mapping.
 
         The record is read at once, and the lazy array reads the samples
         from the stream when they are needed, so the stream must stay open
         while the data may be read. The data files that a detached header
         names are found from the name of the stream. The position of the
-        stream is restored, and the keyword arguments are ignored.
+        stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream of the file, open in binary mode.
+        mmap : bool, default=False
+            Accepted for the readers of paths, and without effect: the
+            samples of a stream are never memory-mapped.
+        **kwargs : Any
+            Refused, since NRRD has no other option.
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserContentError
             If the stream is not a NRRD image, or its header names data
             files and the stream has no name.
         """
+        _no_options(kwargs)
         raw, proxy = read_nrrd(file, mmap=False)
         return cls(raw=proxy, metadata=NrrdMetadata.from_raw(raw))
 

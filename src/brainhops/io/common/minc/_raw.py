@@ -114,15 +114,17 @@ class MincRaw(Magic, BinaryFileReader, frozen=True):
         """Read the header of a MINC stream, gzipped or not.
 
         The voxels are not read, and the position of the stream is
-        restored. A MINC2 stream needs `h5py`. The keyword arguments are
-        ignored.
+        restored. A MINC2 stream needs `h5py`. The record has no options.
 
         Raises
         ------
+        TypeError
+            If an option is given.
         ParserContentError
             If the stream is not a MINC file, or a file that nibabel
             cannot read the voxels of.
         """
+        _no_options(kwargs)
         with preserve_position(file):
             start = file.tell()
             version = minc_version(open_compressed(file).read(8))
@@ -180,6 +182,18 @@ def sniff_minc(file: tx.IO, versions: tx.Collection[int]) -> float:
         return Confidence.NO
 
 
+def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+    """Refuse the options of a reader that takes none.
+
+    Raises
+    ------
+    TypeError
+        If an option is given.
+    """
+    if kwargs:
+        raise TypeError(f"Unknown MINC reader option(s): {', '.join(kwargs)}")
+
+
 def _unsupported(version: int, reason: str) -> ParserContentError:
     """Return the error for a file whose voxels nibabel cannot read."""
     return ParserContentError(
@@ -222,15 +236,24 @@ def _read_minc1(file: tx.BinaryIO) -> MincRaw:
 def _minc1_datatype(header: NetcdfHeader, stored: np.dtype) -> np.dtype:
     """Return the type of the voxels of a MINC1 image.
 
-    Integers are signed unless `signtype` says otherwise, except bytes,
-    which are unsigned by default, as MINC1 reads them.
+    Integers are signed or unsigned as the `signtype` of the image says,
+    and nibabel refuses integers without a `signtype`, so they are
+    refused here as well.
+
+    Raises
+    ------
+    ParserContentError
+        If the image holds integers without a valid `signtype`.
     """
     if stored.kind != "i":
         return stored
     attributes = header.variables["image"].attributes
     signtype = _string(attributes.get("signtype"))
-    signed = _SIGNED.get(signtype, stored.itemsize > 1)
-    return stored if signed else np.dtype(f">u{stored.itemsize}")
+    if signtype not in _SIGNED:
+        raise _unsupported(1, "the integer image has no valid signtype")
+    if _SIGNED[signtype]:
+        return stored
+    return np.dtype(f">u{stored.itemsize}")
 
 
 def _read_minc2(file: tx.BinaryIO) -> MincRaw:

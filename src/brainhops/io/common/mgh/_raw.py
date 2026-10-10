@@ -219,14 +219,20 @@ class MghRaw(Magic, BinaryFileReader, BinaryFileWriter):
         The stream may be compressed with gzip, and a stream that cannot
         seek is first read into memory. The voxels are skipped, and a
         stream that ends before the footer, such as a file cut after its
-        header, gives a footer of zeros and no tags. The keyword arguments
-        are ignored.
+        header, gives a footer of zeros and no tags. The record has no
+        options.
 
         Raises
         ------
+        TypeError
+            If an option is given.
         ParserContentError
             If the stream does not start with an MGH header.
         """
+        if kwargs:
+            raise TypeError(
+                f"Unknown MGH header option(s): {', '.join(kwargs)}"
+            )
         if not _seekable(file):
             file = BytesIO(file.read())
         stream = open_compressed(file)
@@ -358,7 +364,7 @@ def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, ArrayProxy]:
         The MGH or MGZ file.
     **kwargs : Any
         Options of the nibabel array proxy, which are `mmap` and
-        `keep_file_open`. Other options are ignored.
+        `keep_file_open`. Other options are refused.
 
     Returns
     -------
@@ -367,6 +373,9 @@ def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, ArrayProxy]:
     proxy : nibabel.arrayproxy.ArrayProxy
         The lazy array of the voxels, in Fortran order.
     """
+    unknown = [name for name in kwargs if name not in _PROXY_OPTIONS]
+    if unknown:
+        raise TypeError(f"Unknown MGH reader option(s): {', '.join(unknown)}")
     options = {k: kwargs[k] for k in _PROXY_OPTIONS if k in kwargs}
     if isinstance(file, str):
         file = path.Path(file)

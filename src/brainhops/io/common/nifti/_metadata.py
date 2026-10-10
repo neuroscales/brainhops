@@ -77,7 +77,7 @@ class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Read the metadata from the header at the start of a stream.
 
         The header is read with [`NiftiRaw.from_fileobj`][], which receives
-        the keyword arguments.
+        the keyword arguments and accepts `check` alone.
         """
         return cls.from_raw(NiftiRaw.from_fileobj(file, **kwargs))
 

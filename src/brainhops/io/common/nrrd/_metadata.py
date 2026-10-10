@@ -77,7 +77,7 @@ class NrrdMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Read the metadata from a NRRD stream.
 
         The record is read with [`NrrdRaw.from_fileobj`][], which receives
-        the keyword arguments.
+        the keyword arguments and refuses them.
         """
         return cls.from_raw(NrrdRaw.from_fileobj(file, **kwargs))
 

@@ -58,6 +58,7 @@ from brainhops.io.common.afni._raw import (
     _declined,
     _format_attributes,
     _looks_like_head,
+    _no_options,
     _sniffed_raw,
     _sniffed_raw_at,
 )
@@ -354,7 +355,6 @@ class AfniImage(
 
         The record is read from the `.HEAD` file, and the BRIK is checked
         but not read: the lazy array reads it when the voxels are needed.
-        Other keyword arguments are ignored.
 
         Parameters
         ----------
@@ -364,34 +364,51 @@ class AfniImage(
             Whether the lazy array memory-maps a local BRIK that is not
             compressed and whose sub-bricks share a type.
         **kwargs : Any
-            Ignored.
+            Refused, since AFNI has no other option.
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserExistsError
             If the `.HEAD` or the `.BRIK` file does not exist.
         ParserContentError
             If the header is invalid, or the BRIK cannot be read.
         """
+        _no_options(kwargs)
         raw, proxy = read_afni(filename, mmap=mmap)
         return cls(raw=proxy, metadata=AfniMetadata.from_raw(raw))
 
     @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "AfniImage":
+    def from_fileobj(
+        cls, file: tx.BinaryIO, mmap: bool = False, **kwargs
+    ) -> "AfniImage":
         """Read an image from an open `.HEAD` or `.BRIK` file.
 
         The other file of the dataset is found from the name of the
         stream, which must have one, and the BRIK is opened by name when
         the voxels are needed, without memory mapping. A stream that does
         not start like a header is taken to be the BRIK, which is not
-        read. The position of the stream is restored, and the keyword
-        arguments are ignored.
+        read. The position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream of the `.HEAD` or the `.BRIK` file.
+        mmap : bool, default=False
+            Accepted for the readers of paths, and without effect: the
+            BRIK of a stream is never memory-mapped.
+        **kwargs : Any
+            Refused, since AFNI has no other option.
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserContentError
             If the stream has no file name.
         """
+        _no_options(kwargs)
         name = getattr(file, "name", None)
         named = isinstance(name, (str, bytes, os.PathLike))
         with preserve_position(file):

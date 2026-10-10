@@ -379,14 +379,16 @@ class NrrdRaw(
 
         The samples are not read, and the position of the stream is
         restored. The record keeps the bytes of the header, whose length
-        is where attached samples begin. The keyword arguments are
-        ignored.
+        is where attached samples begin. The record has no options.
 
         Raises
         ------
+        TypeError
+            If an option is given.
         ParserContentError
             If the stream does not hold a NRRD header.
         """
+        _no_options(kwargs)
         with preserve_position(file):
             return _read_header(file)
 
@@ -490,6 +492,18 @@ class NrrdRaw(
         return self.to_text() == other.to_text()
 
     __hash__ = None
+
+
+def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+    """Refuse the options of a reader that takes none.
+
+    Raises
+    ------
+    TypeError
+        If an option is given.
+    """
+    if kwargs:
+        raise TypeError(f"Unknown NRRD reader option(s): {', '.join(kwargs)}")
 
 
 def _read_header(file: tx.BinaryIO) -> NrrdRaw:

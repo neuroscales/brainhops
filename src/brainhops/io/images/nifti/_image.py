@@ -54,6 +54,24 @@ from brainhops.io.common.nifti._units import nifti_to_unit
 from brainhops.io.common.nifti._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
 
+_NIBABEL_OPTIONS = ("mmap", "keep_file_open")
+"""The options of the nibabel readers that a NIfTI image accepts."""
+
+
+def _nibabel_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+    """Refuse the reader options that nibabel does not take.
+
+    Raises
+    ------
+    TypeError
+        If another option is given.
+    """
+    unknown = [name for name in kwargs if name not in _NIBABEL_OPTIONS]
+    if unknown:
+        raise TypeError(
+            f"Unknown NIfTI reader option(s): {', '.join(unknown)}"
+        )
+
 
 @register_format
 class NiftiImage(
@@ -227,14 +245,17 @@ class NiftiImage(
 
         A local file is handed to nibabel by name, so that nibabel opens
         it whenever the voxels are read and can memory-map them. A remote
-        file is read into memory instead. The keyword arguments are passed
-        to nibabel.
+        file is read into memory instead. The keyword arguments `mmap` and
+        `keep_file_open` are passed to nibabel.
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserExistsError
             If the path does not exist.
         """
+        _nibabel_options(kwargs)
         if isinstance(filename, str):
             filename = path.Path(filename)
         if not path.exists(filename):
@@ -248,8 +269,15 @@ class NiftiImage(
 
         The proxy reads the voxels from the stream when they are needed,
         so the stream must stay open while the data may be read. The
-        keyword arguments are passed to nibabel.
+        keyword arguments `mmap` and `keep_file_open` are passed to
+        nibabel, which ignores them for a stream.
+
+        Raises
+        ------
+        TypeError
+            If another option is given.
         """
+        _nibabel_options(kwargs)
         raw, proxy = read_nifti(file, **kwargs)
         return cls(raw=proxy, metadata=NiftiMetadata.from_raw(raw))
 

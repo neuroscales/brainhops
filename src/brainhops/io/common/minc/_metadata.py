@@ -74,6 +74,6 @@ class MincMetadata(MetadataFormat, BinaryFileReader):
         """Read the metadata from a MINC stream, gzipped or not.
 
         The record is read with [`MincRaw.from_fileobj`][], which
-        receives the keyword arguments.
+        receives the keyword arguments and refuses them.
         """
         return cls.from_raw(MincRaw.from_fileobj(file, **kwargs))

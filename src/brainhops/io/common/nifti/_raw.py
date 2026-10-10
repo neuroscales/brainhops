@@ -142,17 +142,34 @@ class NiftiRaw(Magic, BinaryFileReader, BinaryFileWriter):
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NiftiRaw":
+    def from_fileobj(
+        cls, file: tx.BinaryIO, check: bool = True, **kwargs
+    ) -> "NiftiRaw":
         """Read the header at the start of a NIfTI stream.
 
         The stream may be compressed with gzip. Only the header and its
-        extensions are read, so the stream may end before the voxels. The
-        keyword arguments that the nibabel reader of headers accepts, such
-        as `check`, are passed to it, and the others are ignored.
+        extensions are read, so the stream may end before the voxels.
+
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        check : bool, default=True
+            Whether nibabel checks the header.
+        **kwargs : Any
+            Refused, since the record has no other option.
+
+        Raises
+        ------
+        TypeError
+            If another option is given.
         """
+        if kwargs:
+            raise TypeError(
+                f"Unknown NIfTI header option(s): {', '.join(kwargs)}"
+            )
         read = _NIFTI_HEADERS[_nifti_version(file)].from_fileobj
-        header = read(open_compressed(file), **_accepted(read, kwargs))
-        return cls(header=header)
+        return cls(header=read(open_compressed(file), check=check))
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header and its extensions as a NIfTI file stores them.
@@ -251,7 +268,7 @@ def read_nifti(
             return _read_nifti_stream(BytesIO(stream.read()), **kwargs)
     filename = str(file)
     with open(filename, "rb") as stream:
-        raw = NiftiRaw.from_fileobj(stream, **kwargs)
+        raw = NiftiRaw.from_fileobj(stream)
     version = 2 if isinstance(raw.header, nb.Nifti2Header) else 1
     read = _NIFTI_IMAGES[version].from_filename
     image = read(filename, **_accepted(read, kwargs))
@@ -267,7 +284,7 @@ def _read_nifti_stream(
     so that nibabel reads the same header before it builds the proxy.
     """
     with preserve_position(fileobj):
-        raw = NiftiRaw.from_fileobj(fileobj, **kwargs)
+        raw = NiftiRaw.from_fileobj(fileobj)
     return raw, _nifti_from_stream(fileobj, **kwargs).dataobj
 
 

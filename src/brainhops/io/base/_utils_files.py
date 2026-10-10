@@ -80,9 +80,7 @@ def same_file(first: tx.Any, second: tx.Any) -> bool:
     return names[0] == names[1]
 
 
-def replace_file(
-    filename: tx.Any, write: tx.Callable[[str], None]
-) -> None:
+def replace_file(filename: tx.Any, write: tx.Callable[[str], None]) -> None:
     """Write a local file next to its target, then move it over the target.
 
     The function `write` receives the name of a new file in the directory
