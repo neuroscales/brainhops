@@ -240,6 +240,10 @@ def test_untouched_file_is_written_back_unchanged(
         assert f.attrs["Format"] == "X5"
         assert f.attrs["Version"] == 1
         assert f["TransformChain/1"][()] == b"1/0"
+    # The fixture is written by h5py in the order that the writer uses,
+    # with contiguous datasets, so the copy has the same bytes. A file
+    # with chunked or compressed datasets is written back contiguous.
+    assert out.read_bytes() == chain_x5.read_bytes()
 
 
 def test_bytes_and_file_objects_round_trip(linear_x5: Path) -> None:
@@ -1037,3 +1041,29 @@ def test_nitransforms_bsplines_match(tmp_path: Path) -> None:
     )
     back = BSplineFieldTransform.from_filename(out)
     np.testing.assert_allclose(back.map(points), expected, atol=1e-5)
+
+
+def test_assigned_systems_are_encoded(chain_x5: Path) -> None:
+    # Systems that were assigned override the record, so the chain is
+    # encoded, and X5 only stores maps from RAS to RAS.
+    xform = io.load(chain_x5)
+    xform.input = systems.RASmm()
+    record = xform.to_raw()
+    assert record is not xform.metadata.raw
+    assert record.header.chains == [(0, 1)]
+    assert record.nodes[0] is xform.metadata.raw.nodes[0]
+    xform.input = systems.LPSmm()
+    with pytest.raises(UnrepresentableTransformationError, match="RAS"):
+        xform.to_raw()
+    # The options only select what is decoded.
+    selected = X5Transform.from_file(chain_x5, chain=1)
+    assert selected.to_raw() is selected.metadata.raw
+
+
+def test_decoded_fields_are_read_only(field_x5: Path) -> None:
+    from brainhops.backends import backend
+
+    with backend("numpy"):
+        vectors = io.load(field_x5)[0].displacement.data
+    assert isinstance(vectors, np.ndarray)
+    assert not vectors.flags.writeable

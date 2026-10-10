@@ -308,7 +308,7 @@ def _decode_nonlinear(node: X5Node) -> _xforms.Transformation:
         )
     representation = (node.representation or "").lower()
     if representation in DISPLACEMENTS:
-        return X5DisplacementField.from_ras(field, vox2ras)
+        return _read_only_field(X5DisplacementField.from_ras(field, vox2ras))
     if representation in COORDINATES:
         return X5CoordinatesField.from_ras(field, vox2ras)
     raise ParserContentError(
@@ -356,7 +356,20 @@ def _decode_bspline(node: X5Node) -> X5BSplineField:
             f"A 3-D X5 B-spline holds one 3-vector per knot, not an array "
             f"of shape {shape}."
         )
-    return X5BSplineField.from_ras(field, knots)
+    return _read_only_field(X5BSplineField.from_ras(field, knots))
+
+
+def _read_only_field(xform: _X5RASDisplacements) -> _X5RASDisplacements:
+    """Make the vectors that a field computed from its node read-only.
+
+    The vectors in voxel units are a new array rather than a view of the
+    record, but the writer writes the node, so an edit in place would
+    still be lost.
+    """
+    vectors = xform.displacement.data
+    if isinstance(vectors, np.ndarray):
+        vectors.flags.writeable = False
+    return xform
 
 
 def _field_to_model(

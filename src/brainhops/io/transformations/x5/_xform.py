@@ -16,7 +16,11 @@ from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
 from brainhops.io.transformations.base import TransformationFormat
 
-from ._blocks import node_to_transformation, transformation_to_nodes
+from ._blocks import (
+    _check_ras,
+    node_to_transformation,
+    transformation_to_nodes,
+)
 from ._metadata import X5Metadata
 from ._raw import X5_VERSION, X5Header, X5Node, X5Raw
 
@@ -311,22 +315,30 @@ class X5Transform(
     def to_raw(self) -> X5Raw:
         """Return the [`X5Raw`][] that encodes this transformation.
 
-        If `transformations` was never assigned, the record that the
-        metadata holds is returned as it is, without a copy, so that the
-        file is written back as it was read. Otherwise, a new record is
-        built from the chain, whose header keeps the root attributes of
-        the current record.
+        If neither `transformations` nor the `input` and `output` systems
+        were assigned, the record that the metadata holds is returned as it
+        is, without a copy, so that the file is written back as it was
+        read, with every node and chain. The options `chain` and `position`
+        only select what is decoded, so they do not change the record.
+        Otherwise, a new record is built from the chain, whose header keeps
+        the root attributes of the current record. A transformation without
+        a record and without a chain gives an empty record.
 
         Raises
         ------
         UnrepresentableTransformationError
-            If an element cannot be encoded in X5.
+            If an element cannot be encoded in X5, or if the systems that
+            were assigned are not `RASmm`.
         """
         record = _record(self)
-        if getattr(self, "_transformations", None) is None:
+        assigned = getattr(self, "_transformations", None) is not None
+        declared = self._input is not None or self._output is not None
+        if not assigned and not declared:
             return X5Raw() if record is None else record
+        if declared:
+            _check_ras(self, "chain")
         decoded = self.__dict__.get("_decoded_nodes", {})
-        return _encode(self._transformations, record, decoded)
+        return _encode(self.transformations, record, decoded)
 
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the transformation into an empty HDF5 file.
