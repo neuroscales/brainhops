@@ -1,4 +1,4 @@
-"""The raw content of an X5 file, before it is interpreted.
+"""The record of an X5 file, which holds the file as it is stored.
 
 The structures mirror the HDF5 layout one to one, so that reading and
 writing a file keeps all of its content, including JSON metadata, even when
@@ -9,21 +9,25 @@ __all__ = [
     "X5Domain",
     "X5Header",
     "X5Node",
-    "read_x5",
-    "write_x5",
+    "X5Raw",
 ]
 
 import json
+import os.path as op
 
 import h5py
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Factory, Magic
+from bagof.magic import HIDE_IF_NONE, Factory, Magic, replace
 
-from brainhops.io.base.parsers import ParserContentError
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserContentError,
+    SnifferContentError,
+)
 
 # io
-from brainhops.io.common.hdf5._delayed import delayed_dataset
+from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5ReaderWriter
 from brainhops.io.common.hdf5._parsers import read_string
 
 X5_FORMAT = "X5"
@@ -63,8 +67,9 @@ class X5Node(Magic, repr=HIDE_IF_NONE):
     """One numbered group `/TransformGroup/<i>`.
 
     The fields mirror the group's attributes and datasets. The large datasets
-    (`Transform`, `Inverse` and `Jacobian`) are loaded lazily when the file is
-    read with `load=False`.
+    (`Transform`, `Inverse` and `Jacobian` of more than two dimensions) are
+    held as a [`DelayedH5Array`][], which reads them from the file when they
+    are used, unless the file is read with `load=True`.
     """
 
     type: str = "linear"
@@ -138,6 +143,112 @@ class X5Header(Magic, repr=HIDE_IF_NONE):
     """Whether the file uses the earlier fslpy layout."""
 
 
+class X5Raw(Magic, Hdf5ReaderWriter, repr=HIDE_IF_NONE):
+    """Record of an X5 file, which holds the root and the transforms as stored.
+
+    An X5 file is an HDF5 file whose root says `Format = "X5"`. Its record
+    holds the root attributes and the chains in `header`, and each group of
+    `/TransformGroup` in `nodes`, including the JSON metadata of the groups
+    and the datasets that brainhops does not interpret. The matrices are
+    read at once. The fields, which are large, are held as a
+    [`DelayedH5Array`][], which opens the file again by its name when the
+    values are needed, so the record never keeps an open file.
+
+    The metadata of an X5 file,
+    [`X5Metadata`][brainhops.io.transformations.x5.X5Metadata], holds a
+    record, and an
+    [`X5Transform`][brainhops.io.transformations.x5.X5Transform] decodes
+    its chain of transformations from the record of its metadata. A record
+    is never changed in place, so that several objects can share it, and
+    [`copy`][] returns a record that the caller is free to change.
+    """
+
+    header: X5Header = Factory(X5Header)
+    """The root attributes and the chains of the file."""
+
+    nodes: tx.List[X5Node] = Factory(list)
+    """Every transform of `/TransformGroup`, in the order of the file."""
+
+    def copy(self) -> "X5Raw":
+        """Return a copy that can be changed without changing this record.
+
+        The header, the nodes, their domains and their attributes are
+        copied. The arrays are shared, because a record never changes
+        them in place.
+        """
+        header = replace(
+            self.header,
+            attrs=dict(self.header.attrs),
+            chains=list(self.header.chains),
+        )
+        nodes = [_copy_node(node) for node in self.nodes]
+        return X5Raw(header=header, nodes=nodes)
+
+    # --- sniff --------------------------------------------------------
+
+    @classmethod
+    def sniff_h5(
+        cls,
+        h5file: h5py.File,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+    ) -> float:
+        """Score an open HDF5 file by its root `Format` attribute."""
+        if is_x5(h5file):
+            return Confidence.CERTAIN
+        if error:
+            if error is True:
+                error = SnifferContentError
+            raise error("HDF5 file is not an X5 file: no Format='X5'.")
+        return Confidence.NO
+
+    # --- from ---------------------------------------------------------
+
+    @classmethod
+    def from_h5(cls, h5file: h5py.File, load: bool = False) -> "X5Raw":
+        """Read the record of an open X5 file.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        load : bool, default=False
+            Whether to read the fields into memory at once, rather than
+            when they are used. The fields of a file opened from a stream
+            are always read at once, because the file cannot be opened
+            again by name.
+
+        Returns
+        -------
+        X5Raw
+            The record.
+
+        Raises
+        ------
+        ParserContentError
+            If the file is not a valid X5 file.
+        """
+        header, nodes = read_x5(h5file, load=load)
+        return cls(header=header, nodes=nodes)
+
+    # --- to -----------------------------------------------------------
+
+    def to_h5(self, h5file: h5py.File, **kwargs) -> None:
+        """Write the record into an empty HDF5 file open for writing.
+
+        The fields that are still held by a [`DelayedH5Array`][] are read
+        from their file and written as they are, without being decoded.
+        """
+        write_x5(h5file, self.header, self.nodes)
+
+
+def _copy_node(node: X5Node) -> X5Node:
+    """Return a copy of a node that shares its arrays."""
+    domain = node.domain
+    if domain is not None:
+        domain = replace(domain)
+    return replace(node, attrs=dict(node.attrs), domain=domain)
+
+
 # ----------------------------------------------------------------------
 #   READING
 # ----------------------------------------------------------------------
@@ -152,9 +263,15 @@ def is_x5(h5file: h5py.File) -> bool:
 
 
 def read_x5(
-    h5file: h5py.File, load: bool = True, keep_open: bool = False
+    h5file: h5py.File, load: bool = False
 ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
-    """Read the header and nodes of an open X5 file."""
+    """Read the header and nodes of an open X5 file.
+
+    The matrices and the other small datasets are read at once. The
+    fields, which are large, are read later through a [`DelayedH5Array`][]
+    that opens the file again by its name, unless `load` is true or the
+    file has no name because it was opened from a stream.
+    """
     if not is_x5(h5file):
         raise ParserContentError("Not an X5 file: no root Format='X5'.")
     if TRANSFORM_GROUP not in h5file and "Transform" in h5file:
@@ -178,15 +295,25 @@ def read_x5(
             f"The groups of /TransformGroup must be numbered 0, 1, ...; "
             f"found {keys}."
         )
-    nodes = [
-        _read_node(group[key], load=load, keep_open=keep_open) for key in keys
-    ]
+    source = None if load else _source(h5file)
+    nodes = [_read_node(group[key], source) for key in keys]
 
     chains = h5file.get(TRANSFORM_CHAIN)
     if chains is not None:
         for key in sorted(chains.keys(), key=_index):
             header.chains.append(_read_chain(chains[key], len(nodes)))
     return header, nodes
+
+
+def _source(h5file: h5py.File) -> tx.Optional[str]:
+    """Return the path by which the datasets of a file can be read again.
+
+    A file opened from a stream has no path, and `None` is returned, so
+    that its datasets are read at once. No open file is ever kept.
+    """
+    if h5file.driver == "fileobj":
+        return None
+    return op.abspath(h5file.filename)
 
 
 def _index(key: str) -> int:
@@ -216,17 +343,23 @@ def _read_chain(dataset: h5py.Dataset, count: int) -> tx.Tuple[int, ...]:
 
 
 def _read_dataset(
-    group: h5py.Group, key: str, load: bool, keep_open: bool
+    group: h5py.Group, key: str, source: tx.Optional[str]
 ) -> tx.Any:
+    """Return a dataset of a node, as an array or as a lazy proxy.
+
+    A dataset of at most two dimensions, such as a matrix, is read at once.
+    A larger one is read later from the file at `source`, and at once when
+    `source` is `None`.
+    """
     if key not in group:
         return None
     dataset = group[key]
-    if load or dataset.ndim <= 2:  # matrices are always loaded
+    if source is None or dataset.ndim <= 2:
         return dataset[()]
-    return delayed_dataset(group.file, dataset.name, keep_open)
+    return DelayedH5Array(source, dataset.name)
 
 
-def _read_node(group: h5py.Group, load: bool, keep_open: bool) -> X5Node:
+def _read_node(group: h5py.Group, source: tx.Optional[str]) -> X5Node:
     attrs = group.attrs
     if "Type" not in attrs:
         raise ParserContentError(f"X5 group {group.name} has no Type.")
@@ -239,15 +372,15 @@ def _read_node(group: h5py.Group, load: bool, keep_open: bool) -> X5Node:
         xtype = "linear"
     node = X5Node(
         type=xtype,
-        transform=_read_dataset(group, "Transform", load, keep_open),
+        transform=_read_dataset(group, "Transform", source),
         subtype=read_string(attrs.get("SubType")),
         representation=read_string(attrs.get("Representation")),
         metadata=_read_metadata(attrs.get("Metadata")),
         array_length=int(attrs.get("ArrayLength", 1)),
-        inverse=_read_dataset(group, "Inverse", load, keep_open),
-        jacobian=_read_dataset(group, "Jacobian", load, keep_open),
+        inverse=_read_dataset(group, "Inverse", source),
+        jacobian=_read_dataset(group, "Jacobian", source),
         additional_parameters=_read_dataset(
-            group, "AdditionalParameters", True, keep_open
+            group, "AdditionalParameters", None
         ),
         attrs={k: v for k, v in attrs.items() if k not in _NODE_ATTRS},
     )

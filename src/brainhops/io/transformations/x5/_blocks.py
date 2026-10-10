@@ -21,6 +21,7 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
+from brainhops.io.common.hdf5 import DelayedH5Array
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserNotImplementedError,
@@ -34,7 +35,7 @@ from brainhops.io.transformations.base.fields import (
     split_ras_displacement_chain,
 )
 
-from ._struct import X5Domain, X5Node
+from ._raw import X5Domain, X5Node
 
 _NDIM = 3
 """The number of spatial dimensions, which is 3 because X5 worlds are RAS."""
@@ -187,6 +188,29 @@ class X5CoordinatesField(_xforms.ImmutableSequence):
 # ----------------------------------------------------------------------
 #   DECODING
 # ----------------------------------------------------------------------
+# A node is decoded from the arrays of the record without changing them,
+# and the arrays that a transformation receives are read-only. The writer
+# writes the nodes of the record, not the decoded transformations, so an
+# edit in place would be lost, and it would also change the record, which
+# other objects may share. A new chain is assigned instead.
+
+
+def _read(stored: tx.Any) -> ArrayProtocol:
+    """Return an array of a node, read from the file if it is a proxy.
+
+    A [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] is read
+    with the array backend, which loads it with NumPy and keeps it lazy
+    with Dask. A NumPy array is returned as a read-only view.
+    """
+    if isinstance(stored, DelayedH5Array):
+        array = get_array_backend().asarray(stored)
+    else:
+        array = get_array_backend(stored).asarray(stored)
+    if isinstance(array, np.ndarray):
+        array = array.view()
+        array.flags.writeable = False
+    return array
+
 
 
 def node_to_transformation(node: X5Node) -> _xforms.Transformation:
@@ -216,7 +240,7 @@ def node_to_transformation(node: X5Node) -> _xforms.Transformation:
 
 
 def _decode_linear(node: X5Node) -> _xforms.Affine:
-    matrix = np.asarray(node.transform, dtype=np.float64)
+    matrix = np.asarray(_read(node.transform), dtype=np.float64)
     if int(node.array_length) != 1 or matrix.ndim != 2:
         raise ParserNotImplementedError(
             f"This X5 node stacks {node.array_length} affines (one per "
@@ -265,7 +289,7 @@ def _decode_nonlinear(node: X5Node) -> _xforms.Transformation:
             f"Only cartesian X5 domains are supported, not "
             f"{domain.coordinates!r}."
         )
-    vox2ras = np.asarray(domain.mapping, dtype=np.float64)
+    vox2ras = np.asarray(_read(domain.mapping), dtype=np.float64)
     if vox2ras.shape != (_NDIM + 1, _NDIM + 1):
         raise ParserNotImplementedError(
             f"Only 3-D X5 domains, mapped by a 4x4 affine, are supported, "
@@ -314,7 +338,7 @@ def _decode_bspline(node: X5Node) -> X5BSplineField:
             "An X5 B-spline must store the voxel-to-RAS affine of its "
             "grid of knots as AdditionalParameters."
         )
-    knots = np.asarray(node.additional_parameters, dtype=np.float64)
+    knots = np.asarray(_read(node.additional_parameters), dtype=np.float64)
     if knots.shape != (_NDIM + 1, _NDIM + 1):
         raise ParserNotImplementedError(
             f"Only 3-D X5 B-splines, whose knots are placed by a 4x4 "
@@ -338,9 +362,8 @@ def _decode_bspline(node: X5Node) -> X5BSplineField:
 
 def _vector_last(node: X5Node) -> ArrayProtocol:
     """Return the node's field with its `vector` axis moved last."""
-    field = node.transform
+    field = _read(node.transform)
     backend = get_array_backend(field)
-    field = backend.asarray(field)
     kinds = node.dimension_kinds
     if kinds and len(kinds) == field.ndim and "vector" in kinds:
         axis = list(kinds).index("vector")

@@ -138,63 +138,50 @@ class Hdf5Reader(BinaryFileReader):
         return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
 
     @classmethod
-    def from_file(
-        cls,
-        file: H5Like,
-        keep_open: bool = False,
-        load: bool = True,
-        **kwargs,
-    ) -> tx.Self:
+    def from_file(cls, file: H5Like, **kwargs) -> tx.Self:
         """
         Build an object from a path, a binary stream or an open HDF5 file.
 
-        With `load`, large datasets are read into memory; otherwise they stay
-        on disk. With `keep_open`, the file stays open after loading; otherwise
-        it is closed, and a lazy dataset reopens it on each access.
+        The keyword arguments are the options of the format, which
+        `from_h5` receives. A file that this method opens is closed once
+        it is read, unless the option `keep_open` is true, which only the
+        formats that keep the file accept.
         """
         if isinstance(file, h5py.File):
-            return cls.from_h5(file, keep_open=keep_open, load=load, **kwargs)
+            return cls.from_h5(file, **kwargs)
         if isinstance(file, (str, path.PathLike)):
-            return cls.from_filename(
-                file, keep_open=keep_open, load=load, **kwargs
-            )
-        return cls.from_fileobj(file, keep_open=keep_open, load=load, **kwargs)
+            return cls.from_filename(file, **kwargs)
+        return cls.from_fileobj(file, **kwargs)
 
     @classmethod
     def from_filename(
-        cls,
-        filename: tx.Union[str, PathLike],
-        keep_open: bool = False,
-        load: bool = True,
-        **kwargs,
+        cls, filename: tx.Union[str, PathLike], **kwargs
     ) -> tx.Self:
-        """Build an object from the HDF5 file at a path."""
+        """Build an object from the HDF5 file at a path.
+
+        The file is opened by name, so that a dataset that is read later
+        can open the file again by the same name.
+        """
         if isinstance(filename, str):
             filename = path.Path(filename)
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         f = h5py.File(str(filename), "r")
         try:
-            return cls.from_h5(f, keep_open=keep_open, load=load, **kwargs)
+            return cls.from_h5(f, **kwargs)
         finally:
-            if not keep_open:
+            if not kwargs.get("keep_open", False):
                 f.close()
 
     @classmethod
-    def from_fileobj(
-        cls,
-        file: tx.IO,
-        keep_open: bool = False,
-        load: bool = True,
-        **kwargs,
-    ) -> tx.Self:
+    def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
         """Build an object from an open, seekable binary stream."""
         with preserve_position(file):
             f = h5py.File(file, "r")
             try:
-                return cls.from_h5(f, keep_open=keep_open, load=load, **kwargs)
+                return cls.from_h5(f, **kwargs)
             finally:
-                if not keep_open:
+                if not kwargs.get("keep_open", False):
                     f.close()
 
 
