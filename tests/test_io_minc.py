@@ -6,6 +6,7 @@ MINC1 with scipy's netcdf_file and MINC2 with h5py.
 
 import gzip
 import io as _io
+import pickle
 import warnings
 
 import numpy as np
@@ -16,6 +17,7 @@ h5py = pytest.importorskip("h5py")
 netcdf_file = pytest.importorskip("scipy.io").netcdf_file
 
 import brainhops.io as io  # noqa: E402
+from brainhops.backends import backend  # noqa: E402
 from brainhops.datamodel.transformations import Affine, Scaling  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
@@ -23,8 +25,13 @@ from brainhops.io.base.parsers import (  # noqa: E402
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.common.minc import MincDimension  # noqa: E402
+from brainhops.io.common.minc import (  # noqa: E402
+    MincDimension,
+    MincMetadata,
+    MincRaw,
+)
 from brainhops.io.common.minc._data import _MincProxy  # noqa: E402
+from brainhops.io.common.minc._netcdf import read_netcdf_header  # noqa: E402
 from brainhops.io.common.minc._utils import minc_version  # noqa: E402
 from brainhops.io.images.minc import (  # noqa: E402
     Minc1Image,
@@ -32,6 +39,7 @@ from brainhops.io.images.minc import (  # noqa: E402
     MincImage,
 )
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
+from brainhops.io.metadata import MetadataFormat  # noqa: E402
 
 _C, _S = np.cos(0.3), np.sin(0.3)
 STEPS = {"xspace": 1.5, "yspace": -2.0, "zspace": 3.0, "time": 2.5}
@@ -484,3 +492,164 @@ def test_unsupported_vector_dimension(tmp_path) -> None:  # noqa: ANN001
     f.close()
     with pytest.raises(ParserContentError, match="vector_dimension"):
         Minc1Image.load(filename)
+
+
+# ----------------------------------------------------------------------
+#   RECORD, METADATA AND LAZY ARRAY
+# ----------------------------------------------------------------------
+
+
+def test_the_netcdf_header_matches_scipy(minc1) -> None:  # noqa: ANN001
+    header = read_netcdf_header(_io.BytesIO(minc1.read_bytes()))
+    reference = netcdf_file(str(minc1), "r", mmap=False)
+    try:
+        assert header.dimensions == {
+            name: int(length) for name, length in reference.dimensions.items()
+        }
+        assert list(header.variables) == list(reference.variables)
+        image = header.variables["image"]
+        assert image.dimensions == reference.variables["image"].dimensions
+        assert image.dtype == np.dtype(">i2")
+        assert image.attributes["signtype"] == "signed__"
+        np.testing.assert_array_equal(
+            image.attributes["valid_range"],
+            reference.variables["image"].valid_range,
+        )
+        y = header.variables["yspace"].attributes
+        assert y["units"] == "mm" and float(y["step"][0]) == -2.0
+    finally:
+        reference.close()
+    # The values start after the header.
+    assert header.size <= min(v.begin for v in header.variables.values())
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_the_record_holds_the_header(tmp_path, version) -> None:  # noqa: ANN001
+    filename = tmp_path / "t.mnc"
+    dims = ("time", "zspace", "yspace", "xspace")
+    (write_minc1 if version == 1 else write_minc2)(str(filename), dims=dims)
+    record = MincMetadata.load(filename).raw
+    assert isinstance(record, MincRaw)
+    assert record.version == version
+    assert [d.name for d in record.dimensions] == list(dims)
+    assert record.shape == (3, 4, 5, 6)
+    assert record.dtype == np.dtype(">i2" if version == 1 else "<i2")
+    assert record.scaled_dtype == np.float64
+    np.testing.assert_allclose(record.vox2world, expected_vox2world(dims))
+    assert pickle.loads(pickle.dumps(record)) == record
+    metadata = MincMetadata.from_raw(record)
+    assert metadata.to_raw() == record
+    assert not hasattr(metadata, "save")
+
+
+# nibabel warns when it fails to map the values of a cut file.
+@pytest.mark.filterwarnings("ignore:Cannot close a netcdf_file")
+def test_the_metadata_of_a_cut_minc1_file(tmp_path, minc1) -> None:  # noqa: ANN001
+    content = minc1.read_bytes()
+    size = read_netcdf_header(_io.BytesIO(content)).size
+    for name, cut in (
+        ("cut.mnc", content[:size]),
+        ("cut.mnc.gz", gzip.compress(content[:size])),
+    ):
+        (tmp_path / name).write_bytes(cut)
+        assert MincMetadata.load(tmp_path / name).raw == (
+            MincMetadata.load(minc1).raw
+        )
+        assert isinstance(MetadataFormat.load(tmp_path / name), MincMetadata)
+        with pytest.raises(ParserContentError):
+            np.asarray(Minc1Image.load(tmp_path / name).data)
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_unsupported_files_have_no_record(tmp_path, version) -> None:  # noqa: ANN001
+    filename = str(tmp_path / "unscaled.mnc")
+    (write_minc1 if version == 1 else write_minc2)(filename, scaled=False)
+    with pytest.raises(ParserContentError, match="image-max"):
+        MincMetadata.load(filename)
+
+
+class _CountedReads:
+    """Count the reads of the voxels of every MINC image."""
+
+    def __init__(self, monkeypatch) -> None:  # noqa: ANN001
+        self.count = 0
+        read = _MincProxy.read_voxels
+
+        def counted(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return read(proxy, *args, **kwargs)
+
+        monkeypatch.setattr(_MincProxy, "read_voxels", counted)
+
+
+@pytest.mark.parametrize("gzipped", [False, True])
+def test_nothing_but_the_data_reads_the_voxels(
+    tmp_path,  # noqa: ANN001
+    anyminc,  # noqa: ANN001
+    gzipped: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    version, filename = anyminc
+    if gzipped:
+        if version == 2:
+            pytest.skip("A MINC2 file is not gzipped.")
+        filename = tmp_path / "t1.mnc.gz"
+        filename.write_bytes(gzip.compress((tmp_path / "t1.mnc").read_bytes()))
+    reads = _CountedReads(monkeypatch)
+    image = io.load(filename)
+    assert image.shape == (6, 5, 4)
+    assert image.ndim == 3
+    assert image.raw.dtype == np.float64
+    repr(image)
+    assert image.transformations
+    assert image.system is not None
+    assert image.metadata.to_raw() == image.metadata.raw
+    pickle.loads(pickle.dumps(image))
+    MincImage.from_bytes(filename.read_bytes())
+    assert reads.count == 0
+    assert "_cache_data" not in vars(image)
+    with backend("numpy"):
+        data = image.data
+    assert not data.flags.writeable
+    expected = expected_voxels(("zspace", "yspace", "xspace")).T
+    np.testing.assert_allclose(data, expected)
+    assert reads.count == 1
+    image.data = np.zeros((2, 3))
+    assert image.shape == (2, 3)
+    assert image.raw.shape == (3, 2)
+    with pytest.raises(AttributeError):
+        _ = MincImage().shape
+    with pytest.raises(AttributeError):
+        image.system = None
+
+
+def test_dask_reads_the_voxels_once(anyminc, monkeypatch) -> None:  # noqa: ANN001
+    pytest.importorskip("dask")
+    _, filename = anyminc
+    reads = _CountedReads(monkeypatch)
+    with backend("dask"):
+        data = io.load(filename).data
+    assert reads.count == 0
+    expected = expected_voxels(("zspace", "yspace", "xspace")).T
+    np.testing.assert_allclose(np.asarray(data), expected)
+    assert reads.count == 1
+
+
+def test_a_stream_is_read_into_memory(anyminc) -> None:  # noqa: ANN001
+    _, filename = anyminc
+    with open(filename, "rb") as f:
+        image = MincImage.from_fileobj(f)
+        assert f.tell() == 0
+    expected = expected_voxels(("zspace", "yspace", "xspace")).T
+    np.testing.assert_allclose(np.asarray(image.data), expected)
+
+
+def test_a_file_written_again_with_another_shape_is_refused(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    filename = str(tmp_path / "t.mnc")
+    write_minc2(filename)
+    image = io.load(filename)
+    write_minc2(filename, dims=("time", "zspace", "yspace", "xspace"))
+    with pytest.raises(ParserContentError, match="shape"):
+        np.asarray(image.raw)
