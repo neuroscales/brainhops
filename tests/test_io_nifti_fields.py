@@ -20,7 +20,7 @@ from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,
     NiftiRASDisplacementField,
 )
-from brainhops.io.transformations.spm.y import (  # noqa: E402
+from brainhops.io.transformations.spm import (  # noqa: E402
     SpmCoordinatesField,
 )
 

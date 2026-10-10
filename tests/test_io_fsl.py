@@ -414,7 +414,7 @@ def test_both_fnirt_fixtures_dispatch_to_one_reader() -> None:
 
 def test_generic_reader_does_not_claim_fsl_intents() -> None:
     """The generic RAS coordinates reader does not claim FSL intents."""
-    from brainhops.io.transformations.nifti.fields import (
+    from brainhops.io.transformations.nifti import (
         NiftiRASCoordinatesField,
     )
 

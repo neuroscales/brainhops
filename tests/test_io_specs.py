@@ -256,7 +256,7 @@ def test_builtin_formats_expose_semantic_hint_namespaces() -> None:
 
     from brainhops.io.transformations.fsl.flirt import FlirtTransform
     from brainhops.io.transformations.itk.tfm import TfmTransform
-    from brainhops.io.transformations.nifti.affines import NiftiVoxelToRAS
+    from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
     assert {"flirt", "fsl.flirt", "affine.flirt"} <= format_hints(
         FlirtTransform

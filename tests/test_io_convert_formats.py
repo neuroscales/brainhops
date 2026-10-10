@@ -43,12 +43,14 @@ from brainhops.io.transformations.fsl.fnirt import (  # noqa: E402
     FnirtWarpField,
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
+    NiftiMetadata,
     NiftiRASCoordinatesField,
     NiftiRASDisplacementField,
     NiftiRASToVoxel,
+    NiftiRaw,
     NiftiVoxelToRAS,
 )
-from brainhops.io.transformations.spm.y import (  # noqa: E402
+from brainhops.io.transformations.spm import (  # noqa: E402
     SpmCoordinatesField,
 )
 
@@ -409,7 +411,9 @@ def test_an_lps_deformation_is_written_as_spm(tmp_path) -> None:  # noqa: ANN001
     back = io.transformations.load(tmp_path / "y_deformation.nii")
     assert isinstance(back, SpmCoordinatesField)
     np.testing.assert_allclose(_apply(back, _flip(lps)), expected, atol=1e-10)
-    np.testing.assert_array_equal(back.header.get_best_affine(), VOX2WORLD)
+    np.testing.assert_array_equal(
+        back.metadata.raw.header.get_best_affine(), VOX2WORLD
+    )
 
 
 def test_an_spm_file_round_trips(tmp_path) -> None:  # noqa: ANN001
@@ -422,11 +426,13 @@ def test_an_spm_file_round_trips(tmp_path) -> None:  # noqa: ANN001
     io.save(spm, tmp_path / "y_copy.nii")
     back = io.transformations.load(tmp_path / "y_copy.nii")
     assert isinstance(back, SpmCoordinatesField)
-    np.testing.assert_array_equal(back.header.get_best_affine(), VOX2WORLD)
+    np.testing.assert_array_equal(
+        back.metadata.raw.header.get_best_affine(), VOX2WORLD
+    )
     np.testing.assert_array_equal(
         np.asarray(back.rasfield.field), _coordinates()
     )
-    assert back.header.get_intent() == ("vector", (), "Mapping")
+    assert back.metadata.raw.header.get_intent() == ("vector", (), "Mapping")
 
 
 def test_a_displacement_field_is_not_an_spm_deformation() -> None:
@@ -542,10 +548,14 @@ def test_a_conversion_does_not_replace_the_map() -> None:
 def test_the_format_options_are_passed_on() -> None:
     header = nb.Nifti1Header()
     header.set_sform(np.eye(4), code=4)
+    header["descrip"] = b"kept"
+    metadata = NiftiMetadata.from_raw(NiftiRaw(header=header))
     affine = xforms.Affine(VOX2WORLD[:-1])
-    nifti = NiftiVoxelToRAS.from_any(affine, header=header)
+    nifti = NiftiVoxelToRAS.from_any(affine, metadata=metadata)
     np.testing.assert_array_equal(nifti.matrix, VOX2WORLD[:-1])
-    assert nifti.to_nibabel().header.get_sform(coded=True)[1] == 4
+    written = nifti.to_nibabel().header
+    assert written.get_sform(coded=True)[1] == 4
+    assert written["descrip"].item() == b"kept"
 
 
 def test_log_is_refused_for_a_field_that_holds_a_displacement() -> None:

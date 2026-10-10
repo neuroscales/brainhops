@@ -9,7 +9,7 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import always_unset, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
@@ -31,13 +31,14 @@ from brainhops.io.common.nifti._constants import (
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
-    _new_nifti,
+    _header,
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
-    _nifti_vector_field,
     _NiftiObject,
+    _record_image,
 )
+from brainhops.io.common.nifti._views import _field_to_disk, _field_to_model
 from brainhops.io.transformations.base._conversions import no_exact_conversion
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
@@ -46,7 +47,7 @@ from brainhops.io.transformations.base.fields import (
     split_ras_displacement_chain,
     voxel_grid_coordinates,
 )
-from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
+from brainhops.io.transformations.nifti import NiftiBasedTransformation
 
 from ._formats import NiftyRegTransformationFormat
 
@@ -145,12 +146,44 @@ def _extension_affines(header: _NiftiObject) -> tx.List[np.ndarray]:
     return affines
 
 
+def _check_shape(header: _NiftiObject) -> None:
+    """Refuse a header whose array is not a 3-D NiftyReg field.
+
+    A NiftyReg field is stored with shape (X, Y, Z, 1, 3). Any other shape,
+    in particular that of a 2-D field, is refused.
+
+    Raises
+    ------
+    ParserContentError
+        If the shape is not that of a 3-D NiftyReg field.
+    """
+    shape = _nifti_shape(header)
+    if shape is None or len(shape) != 5 or shape[3] != 1 or shape[4] != _NDIM:
+        raise ParserContentError(
+            f"A three-dimensional NiftyReg field is stored as a "
+            f"(X, Y, Z, 1, 3) array, not as an array of shape {shape}. "
+            f"Two-dimensional NiftyReg fields are not supported."
+        )
+
+
 def _extension(matrix: np.ndarray) -> nb.nifti1.Nifti1Extension:
     """
     Build an extension that holds a `mat44`, padded as NiftyReg writes it.
     """
     content = np.asarray(matrix, dtype="<f4").reshape(16).tobytes()
     return nb.nifti1.Nifti1Extension(_NIFTI_ECODE_IGNORE, content + bytes(8))
+
+
+def _set_field_data(
+    self: "NiftyRegSequence", value: tx.Optional[ArrayProtocol]
+) -> None:
+    """Store the array of a NiftyReg field in `raw`, as NIfTI stores it.
+
+    The cached data is dropped, and the chain decoded from it is dropped
+    by the invalidation of the property.
+    """
+    self.raw = None if value is None else _field_to_disk(value)
+    self.__dict__.pop("_cache_data", None)
 
 
 # ----------------------------------------------------------------------
@@ -182,21 +215,26 @@ class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
 
     @property
     def niftyreg_type(self) -> tx.Optional[int]:
-        """The NiftyReg transformation type of the file."""
-        return None if self.header is None else _niftyreg_type(self.header)
+        """The NiftyReg transformation type that the header records."""
+        header = _header(self)
+        return None if header is None else _niftyreg_type(header)
 
     @property
     def extension_affines(self) -> tx.List[np.ndarray]:
-        """The (4, 4) affines stored in the header extensions."""
-        return [] if self.header is None else _extension_affines(self.header)
+        """The (4, 4) affines stored in the extensions of the header."""
+        header = _header(self)
+        return [] if header is None else _extension_affines(header)
 
     def _vox2world(self) -> np.ndarray:
-        """Return the (4, 4) voxel-to-world affine of the grid of the file."""
-        if self.header is None:
-            raise ParserContentError(
-                "This field has no NIfTI header to read its grid from."
-            )
-        return _vox2world(self.header)
+        """Return the (4, 4) voxel-to-world affine of the grid of the file.
+
+        A field without metadata has no grid of its own, and its grid is
+        placed by the identity.
+        """
+        header = _header(self)
+        if header is None:
+            return np.eye(4)
+        return _vox2world(header)
 
 
 class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
@@ -241,30 +279,40 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         """The squaring steps of a velocity, which this field does not have."""
         return None
 
-    # --- reading ------------------------------------------------------
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        # A field read from a file is refused from its header alone, before
+        # its data is read.
+        header = _header(self)
+        if header is not None:
+            _check_shape(header)
 
-    @classmethod
-    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
+    @smartproperty(
+        cache=True,
+        unset=always_unset,
+        fset=_set_field_data,
+        invalidates=("transformations",),
+    )
+    def data(self) -> tx.Optional[ArrayProtocol]:
         """
-        Build a field from a `nibabel` image or header.
+        The stored vectors as an (X, Y, Z, 3) array, decoded from `raw`.
 
-        Any shape other than (X, Y, Z, 1, 3), in particular a 2-D field, is
-        refused from the header alone.
+        NiftyReg stores a field with shape (X, Y, Z, 1, 3), and the
+        singleton axis is dropped. The vectors are positions or
+        displacements, as the type of the file says. Setting the data
+        stores it in `raw` and drops the chain decoded from the previous
+        data.
         """
-        header = nifti.header if isinstance(nifti, nb.Nifti1Image) else nifti
-        shape = _nifti_shape(header)
-        if (
-            shape is None
-            or len(shape) != 5
-            or shape[3] != 1
-            or shape[4] != _NDIM
-        ):
-            raise ParserContentError(
-                f"A three-dimensional NiftyReg field is stored as a "
-                f"(X, Y, Z, 1, 3) array, not as an array of shape {shape}. "
-                f"Two-dimensional NiftyReg fields are not supported."
-            )
-        return super().from_nibabel(nifti, **kwargs)
+        if self.raw is None:
+            return None
+        return _field_to_model(self.raw)
+
+    metadata = smartproperty("metadata", invalidates=("transformations",))
+    """The metadata of the file, which holds its header, or `None`.
+
+    Assigning other metadata drops the chain decoded from the previous
+    header.
+    """
 
     # --- copies -------------------------------------------------------
 
@@ -305,11 +353,8 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         data = self.data
         if data is None:
             raise ParserContentError("This field has no data to read.")
-        backend = get_array_backend(data)
-        data = backend.asarray(data)
-        shape = tuple(int(d) for d in data.shape)
-        data = _nifti_vector_field(data)
-        if data.ndim != _NDIM + 1 or int(data.shape[-1]) != _NDIM:
+        if len(data.shape) != _NDIM + 1 or int(data.shape[-1]) != _NDIM:
+            shape = tuple(int(d) for d in self.raw.shape)
             raise ParserContentError(
                 f"A three-dimensional NiftyReg field is stored as a "
                 f"(X, Y, Z, 1, 3) array, not as an array of shape {shape}."
@@ -389,6 +434,26 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             log=self.log,
         )
 
+    def _read_back(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Optional[tx.Union[nb.Nifti1Image, nb.Nifti2Image]]:
+        """
+        Return the NIfTI image of the field as it was read, or `None`.
+
+        A field whose chain is decoded from a NiftyReg file of its own type
+        is written back as it is stored, under a copy of the header of its
+        metadata, extensions included. `None` is returned when the field
+        was not read from such a file, or when its chain was assigned.
+        """
+        if self.raw is None or self.niftyreg_type not in type(self).TYPES:
+            return None
+        if getattr(self, "_transformations", None) is not None:
+            return None
+        image = _record_image(self.raw, self._record(), overrides=overrides)
+        _apply_like(image, like)
+        _apply_overrides(image, overrides)
+        return image
+
     def _write(
         self,
         vectors: ArrayProtocol,
@@ -402,17 +467,21 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         Build a NiftyReg NIfTI image from an (X, Y, Z, 3) array.
 
         The image is a `VECTOR` image of shape (X, Y, Z, 1, 3) named
-        `"NREG_TRANS"`, with its type in `intent_p1` and the given affines in
-        its extensions.
+        `"NREG_TRANS"`, with its type in `intent_p1`. A copy of the header of
+        the metadata is the base of the new header, and its fields that
+        describe the layout and the geometry are encoded again. The given
+        affines replace the extensions of that header, because NiftyReg
+        reads its affines from the first extensions.
         """
         backend = get_array_backend(vectors)
-        vectors = backend.expand_dims(backend.asarray(vectors), axis=3)
-        image = _new_nifti(vectors, vox2world)
+        vectors = _field_to_disk(backend.asarray(vectors))
+        image = _record_image(vectors, self._record(), vox2world, overrides)
         header = image.header
         header.set_intent(
             _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_NIFTYREG
         )
         header["intent_p1"] = kind
+        del header.extensions[:]
         for matrix in extensions:
             header.extensions.append(_extension(matrix))
         _apply_like(image, like)
@@ -442,7 +511,14 @@ class NiftyRegDisplacementField(NiftyRegSequence):
     def to_nibabel(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """Build the NIfTI image that NiftyReg would write for this field."""
+        """Build the NIfTI image that NiftyReg would write for this field.
+
+        A field read from a file is written back as read. Otherwise, the
+        displacements of the chain are written.
+        """
+        image = self._read_back(like, **overrides)
+        if image is not None:
+            return image
         vox2world, vectors = self._split(self.transformations)
         return self._write(vectors, vox2world, DISP_FIELD, like, **overrides)
 
@@ -475,7 +551,12 @@ class NiftyRegDeformationField(NiftyRegSequence):
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
         Build the NIfTI image of this field, with displacements as positions.
+
+        A field read from a file is written back as read.
         """
+        image = self._read_back(like, **overrides)
+        if image is not None:
+            return image
         vox2world, vectors = self._split(self.transformations)
         backend = get_array_backend(vectors)
         grid = voxel_grid_coordinates(
@@ -529,10 +610,9 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
     @property
     def degree(self) -> int:
         """The B-spline degree of the grid: 3 if cubic, 1 if linear."""
-        if self.header is not None:
-            kind = _niftyreg_type(self.header)
-            if kind in _GRID_DEGREE:
-                return _GRID_DEGREE[kind]
+        kind = self.niftyreg_type
+        if kind in _GRID_DEGREE:
+            return _GRID_DEGREE[kind]
         chain = getattr(self, "_transformations", None)
         if chain:
             return int(chain[-2].degree)
@@ -570,9 +650,13 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         """
         Build the NIfTI image of this grid, with coefficients as positions.
 
-        A leading affine is written to the header extension that NiftyReg
+        A grid read from a file is written back as read. Otherwise, a
+        leading affine is written to the header extension that NiftyReg
         reads.
         """
+        image = self._read_back(like, **overrides)
+        if image is not None:
+            return image
         chain = tuple(self.transformations or ())
         extensions = []
         if len(chain) == 4:
@@ -635,9 +719,10 @@ class NiftyRegVelocity(NiftyRegSequence):
     @property
     def squaring_steps(self) -> tx.Optional[int]:
         """The stored squaring steps, negative for a backward field."""
-        if self.header is None:
+        header = _header(self)
+        if header is None:
             return None
-        return int(round(float(self.header["intent_p2"])))
+        return int(round(float(header["intent_p2"])))
 
     @property
     def steps(self) -> tx.Optional[int]:
@@ -668,32 +753,6 @@ class NiftyRegVelocity(NiftyRegSequence):
             # A backward field integrates the negated velocity.
             velocity = -velocity
         return velocity
-
-    def _read_back(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Optional[tx.Union[nb.Nifti1Image, nb.Nifti2Image]]:
-        """
-        Return the NIfTI image as it was read, or `None`.
-
-        `None` is returned when the velocity was not read from a NiftyReg file
-        of its own type, or when its chain was assigned.
-        """
-        if self.niftyreg_type not in type(self).TYPES:
-            return None
-        if getattr(self, "_transformations", None) is not None:
-            return None
-        if self.header is None or self.data is None:
-            return None
-        header = self.header.copy()
-        image_cls = (
-            nb.Nifti2Image
-            if isinstance(header, nb.Nifti2Header)
-            else nb.Nifti1Image
-        )
-        image = image_cls(self.data, None, header=header)
-        _apply_like(image, like)
-        _apply_overrides(image, overrides)
-        return image
 
 
 def _written_steps(chain: tx.Sequence[_xforms.Transformation]) -> int:

@@ -36,7 +36,7 @@ grid, so they are not the same map there.
 Each converter makes the decision "exactly, or raise" in one place: the
 helper it calls first (`_ras_displacement`, `_ras_coordinates`, or
 `affine_between`). Nothing is resampled or approximated. The options a
-converter is given are the format's own (`header=`, and `log=` and
+converter is given are the format's own (`metadata=`, and `log=` and
 `steps=` for a displacement field); one that would change the map, such
 as `input=` or `matrix=`, is refused by `format_options`.
 """
@@ -68,8 +68,8 @@ from brainhops.io.transformations.base._conversions import (
 )
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
-from .affines import NiftiRASToVoxel, NiftiVoxelToRAS
-from .fields import NiftiRASCoordinatesField, NiftiRASDisplacementField
+from ._affines import NiftiRASToVoxel, NiftiVoxelToRAS
+from ._fields import NiftiRASCoordinatesField, NiftiRASDisplacementField
 
 VOXEL = _systems.VoxelCoordinateSystem()
 """The voxels of the grid a NIfTI file describes."""
@@ -77,16 +77,17 @@ VOXEL = _systems.VoxelCoordinateSystem()
 RAS = _systems.RASmm()
 """The RAS world, in millimetres, that a NIfTI file maps its grid to."""
 
-AFFINE_OPTIONS = ("header",)
-"""What a conversion to a NIfTI affine may set: the header it writes."""
+AFFINE_OPTIONS = ("metadata",)
+"""What a conversion to a NIfTI affine may set: the metadata, whose
+header is the base of the header it writes."""
 
-DISPLACEMENT_OPTIONS = ("header", "log", "steps")
-"""What a conversion to a NIfTI displacement field may set: the header,
+DISPLACEMENT_OPTIONS = ("metadata", "log", "steps")
+"""What a conversion to a NIfTI displacement field may set: the metadata,
 and whether a velocity is written as one (`log`, `steps`)."""
 
-COORDINATES_OPTIONS = ("header",)
-"""What a conversion to a NIfTI field of coordinates may set: the header,
-whose affine places the grid without changing the map."""
+COORDINATES_OPTIONS = ("metadata",)
+"""What a conversion to a NIfTI field of coordinates may set: the metadata,
+whose header places the grid without changing the map."""
 
 
 # ----------------------------------------------------------------------

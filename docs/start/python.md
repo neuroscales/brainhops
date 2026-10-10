@@ -29,7 +29,7 @@ The format classes can also be used directly:
 from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.transformations.freesurfer.lta import LtaTransformation
 from brainhops.io.transformations.nifti import NiftiRASDisplacementField
-from brainhops.io.transformations.spm.y import SpmCoordinatesField
+from brainhops.io.transformations.spm import SpmCoordinatesField
 
 src = NiftiImage.load("source.nii.gz")
 dst = NiftiImage.load("dest.nii.gz")

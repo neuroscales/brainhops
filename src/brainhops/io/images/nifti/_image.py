@@ -325,7 +325,7 @@ class NiftiImage(
             self.raw,
             self.transformation,
             self.transformations,
-            base=base,
+            header=None if base is None else base.header,
             like=like,
             overrides=overrides,
         )

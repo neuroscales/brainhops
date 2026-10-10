@@ -1217,17 +1217,21 @@ def _copy_map(
     turned back into a tangent with a logarithm.
     """
     out_tangent = bool(kwargs.get("log", _is_tangent(cls)))
+    # The map is read only when the caller did not give it, because reading
+    # it may decode a whole file.
     if out_tangent == bool(getattr(other, "log", False)):
-        kwargs.setdefault("data", other.data)
+        if "data" not in kwargs:
+            kwargs["data"] = other.data
     elif out_tangent:
         # The output class holds the tangent and `other` holds the map. The
         # map is passed through the view, and the output class stores its
         # logarithm.
-        kwargs.setdefault(view, getattr(other, view))
-    else:
+        if view not in kwargs:
+            kwargs[view] = getattr(other, view)
+    elif "data" not in kwargs:
         # The output class holds the map, which the view of a tangent
         # already gives.
-        kwargs.setdefault("data", getattr(other, view))
+        kwargs["data"] = getattr(other, view)
     if "log" in cls.metadata_fields:
         kwargs.setdefault("log", out_tangent)
 

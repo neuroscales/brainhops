@@ -16,7 +16,7 @@ from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASDisplacementField,
     NiftiVoxelToRAS,
 )
-from brainhops.io.transformations.spm.y import (  # noqa: E402
+from brainhops.io.transformations.spm import (  # noqa: E402
     SpmCoordinatesField,
 )
 
@@ -145,13 +145,14 @@ def test_dispatch_is_the_same_compressed_or_not(tmp_path, suffix) -> None:  # no
 
 def test_a_compressed_file_is_actually_decompressed(tmp_path) -> None:  # noqa: ANN001
     """The image data is decompressed, not only the header."""
-    data = np.arange(4 * 5 * 6, dtype="float32").reshape(4, 5, 6)
+    data = np.arange(4 * 5 * 6 * 3, dtype="float32").reshape(4, 5, 6, 1, 3)
     img = nb.Nifti1Image(data, np.eye(4))
-    target = tmp_path / "scan.nii.gz"
+    img.header.set_intent(VECTOR)
+    target = tmp_path / "field.nii.gz"
     nb.save(img, str(target))
-    obj = NiftiVoxelToRAS.from_file(target)
-    assert obj.image is not None
-    assert np.asarray(obj.image.dataobj).sum() == pytest.approx(data.sum())
+    obj = NiftiRASCoordinatesField.from_file(target)
+    assert obj.raw is not None
+    assert np.asarray(obj.raw).sum() == pytest.approx(data.sum())
 
 
 # ----------------------------------------------------------------------
