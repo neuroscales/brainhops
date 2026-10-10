@@ -226,24 +226,26 @@ class M3zRaw(
     """Record of a morph file, which holds the whole file as it is parsed.
 
     A morph is a single gzip stream in which the node arrays follow the
-    header directly, so the file is read in one pass and the record holds
-    all of it: the header, the original positions, the positions and the
-    GCA node indices of the nodes, and the tags that follow them. The
-    metadata of a morph,
+    header directly, so the file is read in one pass and the record
+    holds all of it: the header, the original positions, the positions
+    and the GCA node indices of the nodes, and the tags that follow
+    them. The metadata of a morph,
     [`M3zMetadata`][brainhops.io.transformations.freesurfer.m3z.M3zMetadata],
     holds a record, and an
     [`M3zMorph`][brainhops.io.transformations.freesurfer.m3z.M3zMorph]
-    decodes its chain of transformations from the record of its metadata.
+    decodes its chain of transformations from the record of its
+    metadata.
 
-    A record is never changed in place, so that several objects can share
-    it. The class is frozen, and the arrays that a file was read into are
-    read-only. A changed record is made with
-    [`replace`][bagof.magic.replace], which shares the arrays that it does
-    not replace, and [`copy`][] does the same without changing anything.
+    A record is never changed in place, so that several objects can
+    share it. The class is frozen, and the arrays that a file was read
+    into are read-only. A changed record is made with
+    [`replace`][bagof.magic.replace], which shares the arrays that it
+    does not replace, and [`copy`][] does the same without changing
+    anything.
 
-    Node arrays are indexed `[x, y, z]` with x slowest, the Fortran order of
-    the node grid. Records compare by identity, because the arrays are
-    large.
+    Node arrays are indexed `[x, y, z]` with x slowest, the Fortran
+    order of the node grid. Records compare by identity, because the
+    arrays are large.
 
     Attributes
     ----------
@@ -265,7 +267,8 @@ class M3zRaw(
     atlas : M3zGeometry or None
         Target geometry from `TAG_GCAMORPH_GEOM`, or `None`.
     type : int or None
-        `GCAM_VOX` or `GCAM_RAS` from `TAG_GCAMORPH_TYPE`. `None` means voxels.
+        `GCAM_VOX` or `GCAM_RAS` from `TAG_GCAMORPH_TYPE`. `None` means
+        voxels.
     labels : (W, H, D) int32 array or None
         Node labels, from `TAG_GCAMORPH_LABELS`.
     xform : M3zXform or None
@@ -293,9 +296,9 @@ class M3zRaw(
     def copy(self) -> "M3zRaw":
         """Return a copy of the record that shares its arrays.
 
-        The record is frozen and its arrays are never changed in place, so
-        the copy does not duplicate the arrays, which take up most of a
-        morph.
+        The record is frozen and its arrays are never changed in place,
+        so the copy does not duplicate the arrays, which take up most of
+        a morph.
         """
         return replace(self)
 
@@ -343,8 +346,8 @@ class M3zRaw(
         """Score an open binary file from its first bytes only.
 
         A morph takes up tens of megabytes, but its header takes only 24
-        bytes, so only the start of the file is read, and the position of
-        the stream is restored.
+        bytes, so only the start of the file is read, and the position
+        of the stream is restored.
         """
         with preserve_position(file):
             head = file.read(_SNIFF_SIZE)
@@ -359,8 +362,8 @@ class M3zRaw(
     ) -> float:
         """Score bytes, gzipped or not.
 
-        A morph starts with the version `1.0`, followed by a positive shape
-        and spacing (see `read_header`).
+        A morph starts with the version `1.0`, followed by a positive
+        shape and spacing (see `read_header`).
         """
         head = bytes(content)
         if is_gzip(head):
@@ -379,8 +382,9 @@ class M3zRaw(
     def from_fileobj(cls, file: tx.IO) -> "M3zRaw":
         """Read a record from the rest of an open binary file.
 
-        The stream is read to its end, because the node arrays sit inside
-        the gzip stream, right after the header, and the tags follow them.
+        The stream is read to its end, because the node arrays sit
+        inside the gzip stream, right after the header, and the tags
+        follow them.
         """
         return cls.from_bytes(file.read())
 
@@ -400,7 +404,8 @@ class M3zRaw(
     def to_bytes(self, compress: bool = True) -> bytes:
         """Return the content of the morph file that the record holds.
 
-        The content is gzipped (`.m3z`) unless `compress=False` (`.m3d`).
+        The content is gzipped (`.m3z`) unless `compress=False`
+        (`.m3d`).
         """
         return write_m3z(self, compress=compress)
 
@@ -411,8 +416,9 @@ class M3zRaw(
     ) -> None:
         """Write the record to a file.
 
-        By default, the file is gzipped unless its name ends in `.m3d`, as
-        in FreeSurfer. The content is encoded before the file is opened.
+        By default, the file is gzipped unless its name ends in `.m3d`,
+        as in FreeSurfer. The content is encoded before the file is
+        opened.
         """
         filename = path.Path(filename)
         if compress is None:
@@ -444,10 +450,10 @@ def _gunzip_head(content: bytes) -> bytes:
 def _read_only(array: np.ndarray) -> np.ndarray:
     """Make an array that a record holds read-only, and return it.
 
-    The array must be one that the reader has just made, because the flag
-    is set on the array itself. A record is never changed in place, and a
-    read-only array makes an edit in place fail instead of changing every
-    object that shares the record.
+    The array must be one that the reader has just made, because the
+    flag is set on the array itself. A record is never changed in place,
+    and a read-only array makes an edit in place fail instead of
+    changing every object that shares the record.
     """
     array.flags.writeable = False
     return array
@@ -598,8 +604,9 @@ def _write_geometry(geom: M3zGeometry) -> bytes:
 def write_m3z(raw: M3zRaw, compress: bool = True) -> bytes:
     """Encode a morph as FreeSurfer's `__m3zWrite` does.
 
-    Tags are written in the order of `raw.tags`, followed by any tag whose
-    content the record holds but does not list, in FreeSurfer's order.
+    Tags are written in the order of `raw.tags`, followed by any tag
+    whose content the record holds but does not list, in FreeSurfer's
+    order.
     """
     positions = np.asarray(raw.positions)
     shape = tuple(positions.shape[:3])
@@ -617,15 +624,12 @@ def write_m3z(raw: M3zRaw, compress: bool = True) -> bytes:
     else:
         nodes["index"] = np.asarray(raw.index)
     chunks = [
-        _HEADER.pack(
-            raw.version, *shape, int(raw.spacing), raw.exp_k
-        ),
+        _HEADER.pack(raw.version, *shape, int(raw.spacing), raw.exp_k),
         nodes.tobytes(),
     ]
 
     present = {
-        TAG_GCAMORPH_GEOM: raw.image is not None
-        or raw.atlas is not None,
+        TAG_GCAMORPH_GEOM: raw.image is not None or raw.atlas is not None,
         TAG_GCAMORPH_TYPE: raw.type is not None,
         TAG_GCAMORPH_LABELS: raw.labels is not None,
         TAG_MGH_XFORM: raw.xform is not None,

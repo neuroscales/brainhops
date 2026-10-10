@@ -25,11 +25,12 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     """Metadata of a morph file, which holds the file as an [`M3zRaw`][].
 
     A morph is a single gzip stream in which the node arrays follow the
-    header directly, so the file is read in one pass, and its record holds
-    the whole file, including the positions of the nodes. The chain of an
-    [`M3zMorph`][brainhops.io.transformations.freesurfer.m3z.M3zMorph] is
-    therefore decoded from the record of its metadata, and reading the
-    metadata of a file reads the same content as reading the morph.
+    header directly, so the file is read in one pass, and its record
+    holds the whole file, including the positions of the nodes. The
+    chain of an
+    [`M3zMorph`][brainhops.io.transformations.freesurfer.m3z.M3zMorph]
+    is therefore decoded from the record of its metadata, and reading
+    the metadata of a file reads the same content as reading the morph.
 
     The file is read and written by the record: [`from_fileobj`][] reads
     an [`M3zRaw`][] and wraps it, and [`to_bytes`][] encodes the record.
@@ -48,9 +49,9 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Return a copy of the record that the caller is free to replace.
 
         The record is frozen, so a caller changes it with
-        [`replace`][bagof.magic.replace]. The copy shares the arrays of the
-        record, which are never changed in place, so that copying a record
-        does not duplicate the nodes.
+        [`replace`][bagof.magic.replace]. The copy shares the arrays of
+        the record, which are never changed in place, so that copying a
+        record does not duplicate the nodes.
 
         Returns
         -------
@@ -103,7 +104,8 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     def to_bytes(self, compress: bool = True) -> bytes:
         """Return the content of the morph file that the record holds.
 
-        The content is gzipped (`.m3z`) unless `compress=False` (`.m3d`).
+        The content is gzipped (`.m3z`) unless `compress=False`
+        (`.m3d`).
 
         Raises
         ------
@@ -120,8 +122,8 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     ) -> None:
         """Write the record to a file.
 
-        By default, the file is gzipped unless its name ends in `.m3d`, as
-        in FreeSurfer.
+        By default, the file is gzipped unless its name ends in `.m3d`,
+        as in FreeSurfer.
 
         Raises
         ------
@@ -137,9 +139,9 @@ def _record(metadata: M3zMetadata) -> M3zRaw:
     Raises
     ------
     WriterError
-        If the metadata holds no record. Unlike the record of a header, an
-        empty record would make up a morph without nodes, which FreeSurfer
-        cannot read.
+        If the metadata holds no record. Unlike the record of a header,
+        an empty record would make up a morph without nodes, which
+        FreeSurfer cannot read.
     """
     if metadata.raw is None:
         raise WriterError("This metadata holds no morph to write.")

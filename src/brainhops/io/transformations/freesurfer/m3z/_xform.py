@@ -36,12 +36,13 @@ from ._raw import GCAM_RAS, GCAM_VOX, M3zGeometry, M3zRaw
 # ----------------------------------------------------------------------
 #   READING THE RECORD
 # ----------------------------------------------------------------------
-# A morph is parsed in one pass, so the positions of its nodes live in the
-# record of its metadata. The field of the decoded chain holds the array
-# of the record itself, which is read-only, so the chain is a view of the
-# record and decoding it copies nothing. A chain that is assigned is held
-# by the data model, and it is encoded into a new record only when the
-# morph is written, because encoding needs the options of the writer.
+# A morph is parsed in one pass, so the positions of its nodes live in
+# the record of its metadata. The field of the decoded chain holds the
+# array of the record itself, which is read-only, so the chain is a view
+# of the record and decoding it copies nothing. A chain that is assigned
+# is held by the data model, and it is encoded into a new record only
+# when the morph is written, because encoding needs the options of the
+# writer.
 
 
 def _record(xform: "M3zMorph") -> tx.Optional[M3zRaw]:
@@ -62,8 +63,8 @@ def _positions_to_model(positions: np.ndarray) -> np.ndarray:
 def _positions_to_disk(data: ArrayProtocol) -> np.ndarray:
     """Return the positions that a record stores for the data of a field.
 
-    The record stores single-precision floats. The array is a new one, and
-    it is read-only, as the arrays of a record that was read are.
+    The record stores single-precision floats. The array is a new one,
+    and it is read-only, as the arrays of a record that was read are.
     """
     positions = np.array(data, dtype=np.float32)
     positions.flags.writeable = False
@@ -73,8 +74,8 @@ def _positions_to_disk(data: ArrayProtocol) -> np.ndarray:
 def _decode(record: M3zRaw) -> tx.Tuple[_xforms.Transformation, ...]:
     """Return the chain of transformations that a record describes.
 
-    The chain is described in [`M3zMorph`][]. Its field holds the positions
-    of the record, without a copy.
+    The chain is described in [`M3zMorph`][]. Its field holds the
+    positions of the record, without a copy.
     """
     # Node n is atlas voxel n * spacing (GCAMsampleMorph).
     scale = np.diag([float(record.spacing)] * 3 + [1.0])
@@ -143,20 +144,20 @@ class M3zMorph(
     step.
 
     A morph file is read in one pass, so the whole file is held as an
-    [`M3zRaw`][] record by the [`M3zMetadata`][] of the morph. The record
-    includes the spacing, the geometries, the positions, the original
-    positions, the GCA node indices, the labels and the linear transform.
-    The chain is decoded from the record when it is first used, and it is
-    then cached. Its field holds the positions of the record, which are
-    read-only. For example, the voxel-to-RAS matrix of the atlas is
-    `morph.metadata.raw.atlas_geometry.vox2ras`. A morph built from a
-    chain has no metadata.
+    [`M3zRaw`][] record by the [`M3zMetadata`][] of the morph. The
+    record includes the spacing, the geometries, the positions, the
+    original positions, the GCA node indices, the labels and the linear
+    transform. The chain is decoded from the record when it is first
+    used, and it is then cached. Its field holds the positions of the
+    record, which are read-only. For example, the voxel-to-RAS matrix of
+    the atlas is `morph.metadata.raw.atlas_geometry.vox2ras`. A morph
+    built from a chain has no metadata.
 
     !!! note "What is written"
-        A morph whose chain was not assigned is written back as the record
-        that it read. A morph whose `transformations` were assigned,
-        including a morph built from a chain, is written from the assigned
-        chain, as described in [`to_raw`][].
+        A morph whose chain was not assigned is written back as the
+        record that it read. A morph whose `transformations` were
+        assigned, including a morph built from a chain, is written from
+        the assigned chain, as described in [`to_raw`][].
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
@@ -175,10 +176,11 @@ class M3zMorph(
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain, in the order of application.
 
-        The chain is decoded from the record when it is first used, and it
-        is then cached. A morph without a record and without an assigned
-        chain has an empty chain. Assigning a chain replaces the decoded
-        one, and the assigned chain is what the writer encodes.
+        The chain is decoded from the record when it is first used, and
+        it is then cached. A morph without a record and without an
+        assigned chain has an empty chain. Assigning a chain replaces
+        the decoded one, and the assigned chain is what the writer
+        encodes.
         """
         record = _record(self)
         if record is None:
@@ -220,8 +222,8 @@ class M3zMorph(
         """Read a morph from the rest of an open binary file.
 
         The record is read by [`M3zMetadata.from_fileobj`][], and the
-        chain is decoded from it when it is first used. Keyword arguments
-        go to the constructor.
+        chain is decoded from it when it is first used. Keyword
+        arguments go to the constructor.
         """
         return cls(metadata=M3zMetadata.from_fileobj(file), **kwargs)
 
@@ -238,8 +240,8 @@ class M3zMorph(
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """Build a morph from a record, a file or a data model.
 
-        An [`M3zRaw`][] is read with [`from_raw`][], and any other value as
-        the bases read it.
+        An [`M3zRaw`][] is read with [`from_raw`][], and any other value
+        as the bases read it.
         """
         if isinstance(other, M3zRaw) and not args:
             return cls.from_raw(other, **kwargs)
@@ -255,37 +257,38 @@ class M3zMorph(
     ) -> M3zRaw:
         """Return the [`M3zRaw`][] that encodes this morph.
 
-        When no chain has been assigned, the record that the metadata holds
-        is returned as it is, without a copy, and the arguments are not
-        used. An assigned chain is encoded into a new record, and it must
-        have one of the two shapes that the reader builds. The first shape
-        has three transformations: atlas RAS to node voxels, a field of
-        source voxel coordinates, and source voxels to RAS. The second
-        shape has two: the same first affine, followed by a field of source
-        RAS coordinates.
+        When no chain has been assigned, the record that the metadata
+        holds is returned as it is, without a copy, and the arguments
+        are not used. An assigned chain is encoded into a new record,
+        and it must have one of the two shapes that the reader builds.
+        The first shape has three transformations: atlas RAS to node
+        voxels, a field of source voxel coordinates, and source voxels
+        to RAS. The second shape has two: the same first affine,
+        followed by a field of source RAS coordinates.
 
-        The atlas geometry is rebuilt from the first affine, and with three
-        transformations, the source geometry is rebuilt from the last one.
-        Whatever the chain does not describe is taken from the arguments,
-        then from the current record if there is one, and otherwise from
-        defaults. The original positions, the GCA node indices and the
-        labels of the current record are kept when the node grid keeps its
-        shape, and they are shared with the current record.
+        The atlas geometry is rebuilt from the first affine, and with
+        three transformations, the source geometry is rebuilt from the
+        last one. Whatever the chain does not describe is taken from the
+        arguments, then from the current record if there is one, and
+        otherwise from defaults. The original positions, the GCA node
+        indices and the labels of the current record are kept when the
+        node grid keeps its shape, and they are shared with the current
+        record.
 
         Parameters
         ----------
         spacing : int, optional
-            Number of atlas voxels between nodes. The default is the spacing
-            of the current record, or 1 when there is no record.
+            Number of atlas voxels between nodes. The default is the
+            spacing of the current record, or 1 when there is no record.
         image_shape : (int, int, int), optional
-            Shape of the source image, on which the RAS centre of the image
-            depends. The default is the shape that the current record
-            records. The argument is required for a field of voxel
-            coordinates when no source geometry is recorded.
+            Shape of the source image, on which the RAS centre of the
+            image depends. The default is the shape that the current
+            record records. The argument is required for a field of
+            voxel coordinates when no source geometry is recorded.
         atlas_shape : (int, int, int), optional
-            Shape of the atlas. The default is the shape that the current
-            record records, or else the shape of the node grid multiplied
-            by `spacing`.
+            Shape of the atlas. The default is the shape that the
+            current record records, or else the shape of the node grid
+            multiplied by `spacing`.
 
         Returns
         -------
@@ -298,8 +301,8 @@ class M3zMorph(
             If the chain has neither of the two shapes, or if its field is
             not a 3-D grid of 3-vectors.
         WriterError
-            If the morph has neither a record nor a chain, or if the shape
-            of the source image is needed but unknown.
+            If the morph has neither a record nor a chain, or if the
+            shape of the source image is needed but unknown.
         """
         record = _record(self)
         if getattr(self, "_transformations", None) is None:
@@ -313,8 +316,8 @@ class M3zMorph(
     def to_bytes(self, compress: bool = True, **kwargs) -> bytes:
         """Return the content of the morph file that encodes this morph.
 
-        The content is gzipped (`.m3z`) unless `compress=False` (`.m3d`).
-        Other keyword arguments go to [`to_raw`][].
+        The content is gzipped (`.m3z`) unless `compress=False`
+        (`.m3d`). Other keyword arguments go to [`to_raw`][].
         """
         return self.to_raw(**kwargs).to_bytes(compress=compress)
 
@@ -326,10 +329,10 @@ class M3zMorph(
     ) -> None:
         """Write the morph to a file.
 
-        By default, the file is gzipped unless its name ends in `.m3d`, as
-        in FreeSurfer. Other keyword arguments go to [`to_raw`][]. The
-        record is built first, so a morph that cannot be encoded leaves the
-        file untouched.
+        By default, the file is gzipped unless its name ends in `.m3d`,
+        as in FreeSurfer. Other keyword arguments go to [`to_raw`][].
+        The record is built first, so a morph that cannot be encoded
+        leaves the file untouched.
         """
         self.to_raw(**kwargs).to_filename(filename, compress=compress)
 
@@ -348,9 +351,9 @@ def _encode(
 ) -> M3zRaw:
     """Encode a chain of transformations as a new record.
 
-    The rules are described in [`M3zMorph.to_raw`][]. The current record,
-    `old`, is never changed: the new record replaces its fields, and it
-    shares the arrays that it keeps.
+    The rules are described in [`M3zMorph.to_raw`][]. The current
+    record, `old`, is never changed: the new record replaces its fields,
+    and it shares the arrays that it keeps.
     """
     chain = tuple(chain)
     field = chain[1] if len(chain) in (2, 3) else None

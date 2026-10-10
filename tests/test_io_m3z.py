@@ -214,8 +214,9 @@ def test_read_geometries(tmp_path: Path) -> None:
 def test_read_linear_transform(tmp_path: Path, tag: int, keyword: str) -> None:
     content = _encode(_positions(), xform_tag=tag, keyword=keyword)
     morph = io.load(_write(tmp_path, content))
-    assert morph.metadata.raw.xform.tag == tag
-    np.testing.assert_allclose(morph.metadata.raw.xform.matrix, LINEAR, atol=1e-6)
+    xform = morph.metadata.raw.xform
+    assert xform.tag == tag
+    np.testing.assert_allclose(xform.matrix, LINEAR, atol=1e-6)
 
 
 def test_read_without_tags(tmp_path: Path) -> None:
@@ -513,18 +514,19 @@ def test_write_edited_field(tmp_path: Path) -> None:
         vox2ras,
     ]
     morph.save(tmp_path / "out.m3z")
-    back = io.load(tmp_path / "out.m3z")
-    np.testing.assert_allclose(back.metadata.raw.positions, moved)
+    old = morph.metadata.raw
+    new = io.load(tmp_path / "out.m3z").metadata.raw
+    np.testing.assert_allclose(new.positions, moved)
     # What the chain does not say is kept.
-    np.testing.assert_array_equal(back.metadata.raw.original, morph.metadata.raw.original)
-    np.testing.assert_array_equal(back.metadata.raw.labels, morph.metadata.raw.labels)
-    np.testing.assert_allclose(back.metadata.raw.xform.matrix, LINEAR, atol=1e-6)
-    assert back.metadata.raw.image.filename == IMAGE["fname"].decode()
+    np.testing.assert_array_equal(new.original, old.original)
+    np.testing.assert_array_equal(new.labels, old.labels)
+    np.testing.assert_allclose(new.xform.matrix, LINEAR, atol=1e-6)
+    assert new.image.filename == IMAGE["fname"].decode()
     np.testing.assert_allclose(
-        back.metadata.raw.image_geometry.vox2ras, _vox2ras(IMAGE), atol=1e-5
+        new.image_geometry.vox2ras, _vox2ras(IMAGE), atol=1e-5
     )
     np.testing.assert_allclose(
-        back.metadata.raw.atlas_geometry.vox2ras, _vox2ras(ATLAS), atol=1e-5
+        new.atlas_geometry.vox2ras, _vox2ras(ATLAS), atol=1e-5
     )
 
 
