@@ -6,6 +6,7 @@ utils/gcamorph.cpp that is independent of the reader.
 """
 
 import gzip
+import pickle
 import struct
 from pathlib import Path
 
@@ -279,15 +280,26 @@ def test_the_field_is_a_view_of_the_record(tmp_path: Path) -> None:
     assert isinstance(morph.metadata, M3zMetadata)
     record = morph.metadata.raw
     assert isinstance(record, M3zRaw)
-    # The chain is decoded once, and its field holds the array of the
-    # record, which cannot be changed in place.
+    # The chain is decoded once, and its field holds a view of the array
+    # of the record, which cannot be changed in place.
     assert morph.transformations is morph.transformations
-    assert morph[1].data is record.positions
+    assert morph[1].data.base is record.positions
+    assert not morph[1].data.flags.writeable
     for array in (record.positions, record.original, record.index):
         assert not array.flags.writeable
     assert not record.labels.flags.writeable
     with pytest.raises(ValueError):
         record.positions[0, 0, 0, 0] = 1.0
+
+
+def test_an_unpickled_record_still_gives_a_read_only_field(
+    tmp_path: Path,
+) -> None:
+    morph = io.load(_write(tmp_path, _encode(_positions())))
+    metadata = pickle.loads(pickle.dumps(morph.metadata))
+    morph = M3zMorph(metadata=metadata)
+    assert not morph[1].data.flags.writeable
+    np.testing.assert_array_equal(morph[1].data, _positions())
 
 
 def test_a_copy_of_the_record_shares_its_arrays(tmp_path: Path) -> None:

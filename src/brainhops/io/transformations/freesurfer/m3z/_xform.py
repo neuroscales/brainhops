@@ -37,9 +37,9 @@ from ._raw import GCAM_RAS, GCAM_VOX, M3zGeometry, M3zRaw
 #   READING THE RECORD
 # ----------------------------------------------------------------------
 # A morph is parsed in one pass, so the positions of its nodes live in
-# the record of its metadata. The field of the decoded chain holds the
-# array of the record itself, which is read-only, so the chain is a view
-# of the record and decoding it copies nothing. A chain that is assigned
+# the record of its metadata. The field of the decoded chain holds a
+# read-only view of the array of the record, so the chain is a view of
+# the record and decoding it copies nothing. A chain that is assigned
 # is held by the data model, and it is encoded into a new record only
 # when the morph is written, because encoding needs the options of the
 # writer.
@@ -55,9 +55,14 @@ def _positions_to_model(positions: np.ndarray) -> np.ndarray:
     """Return the data of the field of a chain from the positions of a record.
 
     The field holds the positions in the layout of the record, indexed
-    `[x, y, z]`, so the array of the record is returned as it is.
+    `[x, y, z]`, so the result is a view of the array of the record,
+    without a copy. The view is read-only even when the array of the
+    record is not, as after the record was unpickled, because an edit in
+    place would change the record.
     """
-    return positions
+    view = positions.view()
+    view.flags.writeable = False
+    return view
 
 
 def _positions_to_disk(data: ArrayProtocol) -> np.ndarray:
@@ -74,8 +79,8 @@ def _positions_to_disk(data: ArrayProtocol) -> np.ndarray:
 def _decode(record: M3zRaw) -> tx.Tuple[_xforms.Transformation, ...]:
     """Return the chain of transformations that a record describes.
 
-    The chain is described in [`M3zMorph`][]. Its field holds the
-    positions of the record, without a copy.
+    The chain is described in [`M3zMorph`][]. Its field holds a
+    read-only view of the positions of the record, without a copy.
     """
     # Node n is atlas voxel n * spacing (GCAMsampleMorph).
     scale = np.diag([float(record.spacing)] * 3 + [1.0])
@@ -148,8 +153,8 @@ class M3zMorph(
     record includes the spacing, the geometries, the positions, the
     original positions, the GCA node indices, the labels and the linear
     transform. The chain is decoded from the record when it is first
-    used, and it is then cached. Its field holds the positions of the
-    record, which are read-only. For example, the voxel-to-RAS matrix of
+    used, and it is then cached. Its field holds a read-only view of the
+    positions of the record. For example, the voxel-to-RAS matrix of
     the atlas is `morph.metadata.raw.atlas_geometry.vox2ras`. A morph
     built from a chain has no metadata.
 
