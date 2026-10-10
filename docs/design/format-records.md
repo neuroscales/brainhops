@@ -739,10 +739,10 @@ its status.
     because `shape` and `ndim` came from the data model
     (`datamodel/images.py`). This was a regression from
     `MghReaderWriter`, and `NiftiImage` has had the same gap since pass
-    1b. Status: resolved for MGH in the pass 3a review (4411bec), where
-    `MghImage` gives an explicit `shape` read from `raw.shape`, and open
-    for `NiftiImage`.
-74. `io/images/freesurfer/mgh/_views.py` repeats about ten lines of
+    1b. Status: resolved in the pass 3a review (4411bec), where
+    `MghImage` and `NiftiImage` each give an explicit `shape` read from
+    `raw.shape`.
+74. `io/common/mgh/_views.py` repeats about ten lines of
     `_read` from the NIfTI views, as explicit code in each format.
     Status: accepted in the pass 3a review (4411bec).
 75. `MghImage.to_nibabel` drops the tags. The geometry of a flag-0 file
