@@ -48,6 +48,7 @@ from brainhops.io.common.nifti._header import (
 from brainhops.io.common.nifti._raw import (
     _sniffed_header,
     read_nifti,
+    reads_file,
     write_nifti,
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
@@ -373,9 +374,17 @@ class NiftiImage(
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image to a path, compressed if its name ends with `.gz`.
 
-        The keyword arguments are those of [`to_nibabel`][].
+        The keyword arguments are those of [`to_nibabel`][]. A local file
+        is replaced at once, so an image can be written over the file that
+        it was read from. Its lazy array then reads the new file, which
+        holds the same voxels, and the cached data is dropped.
         """
+        stale = reads_file(self.raw, filename)
         write_nifti(self.to_nibabel(**kwargs), filename)
+        if stale:
+            # The cached data may be a lazy view of the old file.
+            self.raw = read_nifti(filename)[1]
+            self.__dict__.pop("_cache_data", None)
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
         """Write the image to a stream as an uncompressed NIfTI file.

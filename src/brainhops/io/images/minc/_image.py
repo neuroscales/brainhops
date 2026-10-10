@@ -25,6 +25,7 @@ from brainhops.datamodel.units import (
     is_physicalunit,
 )
 from brainhops.io.base._base import register_format
+from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import BinaryFileReader, ParserContentError
 from brainhops.io.common.minc import MincDimension, MincMetadata, MincRaw
 from brainhops.io.common.minc._data import read_minc
@@ -36,7 +37,6 @@ from brainhops.io.common.minc._utils import (
     minc_version,
 )
 from brainhops.io.common.minc._views import _image_to_disk, _image_to_model
-from brainhops.io.common.nifti._files import _is_local
 from brainhops.io.images.base import ImageFormat
 
 _PHYSICAL = "physical"
@@ -212,7 +212,7 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
-        if _is_local(filename) and path.exists(filename):
+        if is_local(filename) and path.exists(filename):
             with filename.open("rb") as f:
                 version = minc_version(f.read(8))
             if version == 2 and 2 in cls._versions():

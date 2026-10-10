@@ -26,6 +26,7 @@ from brainhops.io.common.nifti._header import (
 from brainhops.io.common.nifti._raw import (
     _sniffed_header,
     read_nifti,
+    reads_file,
     write_nifti,
 )
 from brainhops.io.transformations.base import TransformationFormat
@@ -223,9 +224,18 @@ class NiftiBasedTransformation(
         """Write the transformation to a path.
 
         The file is compressed when its name ends with `.gz`. The keyword
-        arguments are those of [`to_nibabel`][].
+        arguments are those of [`to_nibabel`][]. A local file is replaced
+        at once, so a transformation can be written over the file that it
+        was read from. Its lazy array then reads the new file, which holds
+        the same values, and the cached views are dropped.
         """
+        stale = reads_file(self.raw, filename)
         write_nifti(self.to_nibabel(**kwargs), filename)
+        if stale:
+            # The cached views may be lazy views of the old file.
+            self.raw = read_nifti(filename)[1]
+            for name in ("data", *getattr(self, "derived_fields", ())):
+                self.__dict__.pop("_cache_" + name, None)
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
         """Write the transformation to a stream as an uncompressed file.

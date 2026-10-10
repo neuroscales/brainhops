@@ -14,6 +14,7 @@ import typing_extensions as tx
 # internals
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
+from brainhops.io.base._utils_files import is_local, replace_file
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base.parsers import (
@@ -397,10 +398,12 @@ def _read_bricks(header: AfniRaw, brik: tx.Any, mmap: bool) -> np.ndarray:
 def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
     """Write a BRIK, compressed according to its suffix.
 
-    A [`_BrikProxy`][] is copied as the file stores it. When the proxy
-    reads the file that is written, its bytes are read into memory first,
-    since opening the file for writing empties it. Any other array is
-    encoded with the types and the scale factors of the header.
+    A [`_BrikProxy`][] is copied as the file stores it. A local BRIK is
+    written beside its target and moved over it, so that a proxy that
+    reads the target copies the old file. When the proxy reads a remote
+    file that is written, its bytes are read into memory first, since
+    opening the file for writing empties it. Any other array is encoded
+    with the types and the scale factors of the header.
 
     Raises
     ------
@@ -413,11 +416,8 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
             f"Cannot write an AFNI BRIK compressed with {suffix!r}: "
             f"use '.BRIK', '.BRIK.gz' or '.BRIK.bz2'."
         )
-    if isinstance(data, _BrikProxy) and _same_file(data.brik, brik):
-        copied = BytesIO()
-        data.copy_to(copied)
-        data = copied.getvalue()
-    with brik.open("wb") as f:
+
+    def write(f: tx.BinaryIO) -> None:
         if suffix == ".gz":
             out = gzip.GzipFile(fileobj=f, mode="wb")
         elif suffix == ".bz2":
@@ -435,6 +435,20 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
         finally:
             if out is not f:
                 out.close()
+
+    def write_named(name: str) -> None:
+        with open(name, "xb") as f:
+            write(f)
+
+    if is_local(brik):
+        replace_file(brik, write_named)
+        return
+    if isinstance(data, _BrikProxy) and _same_file(data.brik, brik):
+        copied = BytesIO()
+        data.copy_to(copied)
+        data = copied.getvalue()
+    with brik.open("wb") as f:
+        write(f)
 
 
 def _same_file(first: tx.Any, second: tx.Any) -> bool:

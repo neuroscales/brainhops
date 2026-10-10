@@ -11,6 +11,7 @@ import typing_extensions as tx
 
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
+from brainhops.io.base._utils_files import is_local, replace_file
 
 # ----------------------------------------------------------------------
 #   READING AND WRITING THROUGH A PATH
@@ -23,15 +24,6 @@ from brainhops._core.streams import open_compressed
 # path goes to `nibabel` by name, so the voxels are memory-mapped as
 # before. A remote path is opened through its own backend, and `nibabel`
 # is handed the open file.
-
-# Protocols that bagof.paths reports for local files.
-_LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
-
-
-def _is_local(file: path.FilenameLike) -> bool:
-    """Return whether nibabel can open a path by name."""
-    return path.Path(file).protocol.lower() in _LOCAL_PROTOCOLS
-
 
 _NIFTI_IMAGES = {1: nb.Nifti1Image, 2: nb.Nifti2Image}
 _NIFTI_HEADERS = {1: nb.Nifti1Header, 2: nb.Nifti2Header}
@@ -162,8 +154,11 @@ def _save_nifti(
 
     The file is compressed when its name ends with `.gz`.
     """
-    if _is_local(file):
-        image.to_filename(str(path.Path(file)))
+    if is_local(file):
+        # The file is written beside the target and moved over it, because
+        # nibabel reads the voxels of a lazy image while it writes, and the
+        # lazy image may read the target itself.
+        replace_file(path.Path(file), image.to_filename)
         return
     # The name is taken from the URL, because the backend may not know it and a
     # query is not part of it. `open_compressed` only reads, so gzip compresses

@@ -28,6 +28,7 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import local_path as _local_path
+from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -539,11 +540,13 @@ class AfniImage(
         does, a sibling BRIK with another suffix is removed, so that it
         cannot shadow the new one.
 
-        The lazy array of an image may read the BRIK that is removed, for
-        example when an image read from `x+orig.BRIK` is saved as
-        `x+orig.BRIK.gz`. The image then reads the new BRIK instead, and
-        its data is decoded again from that file when it is next read. The
-        values are the same unless `datatype` changed how they are stored.
+        Each local file is written beside its target and moved over it.
+        The lazy array of an image may read the BRIK that is written over
+        or removed, for example when an image read from `x+orig.BRIK` is
+        saved as `x+orig.BRIK.gz`. The image then reads the new BRIK
+        instead, and its data is decoded again from that file when it is
+        next read. The values are the same unless `datatype` changed how
+        they are stored.
 
         Raises
         ------
@@ -565,8 +568,8 @@ class AfniImage(
         view = view or afni_view(filename)
         record, data = _encoded(self, view, datatype, attributes)
         write_brik(record, data, brik)
-        with head.open("wb") as f:
-            f.write(record.to_bytes())
+        write_file(head, record.to_bytes())
+        _leave_brik(self, brik, record, brik)
         for other in _BRIK_SUFFIXES:
             stale = filename.parent / (stem + brik_ext + other)
             if other != suffix and path.exists(stale):
@@ -744,7 +747,9 @@ def _stored_data(
         native = [dtype.newbyteorder("=") for dtype in raw.record.dtypes]
         if all(dtype == stored for dtype in native):
             return raw
-        raw = image.data
+        # The lazy array is read here rather than through `data`, so that
+        # no cached view of the old file outlives a write over that file.
+        raw = np.asarray(raw)
     ndim = len(np.shape(raw))
     if ndim == 0 or ndim > 4:
         raise WriterError(
@@ -851,7 +856,7 @@ def _is_latin1(value: str) -> bool:
 def _leave_brik(
     image: AfniImage, stale: tx.Any, record: AfniRaw, brik: tx.Any
 ) -> None:
-    """Stop an image from reading a BRIK that is about to be removed.
+    """Stop an image from reading a BRIK that is replaced or removed.
 
     When the lazy array of the image reads that BRIK, it is replaced by a
     lazy array of the new BRIK, which the new record describes, and the

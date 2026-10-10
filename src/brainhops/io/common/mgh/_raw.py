@@ -17,6 +17,7 @@ from nibabel.volumeutils import array_to_file
 from brainhops._core import path
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import ArrayProtocol
+from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -31,7 +32,6 @@ from brainhops.io.common.freesurfer._geometry import (
     fs_vox2ras,
     fs_vox2tkr,
 )
-from brainhops.io.common.nifti._files import _is_local
 
 # this format
 from ._constants import (
@@ -382,7 +382,7 @@ def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, ArrayProxy]:
     if not isinstance(file, path.PathLike):
         return _read_mgh_stream(file, options)
     with file.open("rb") as stream:
-        if not (_is_local(file) and _named_as_stored(file, stream)):
+        if not (is_local(file) and _named_as_stored(file, stream)):
             return _read_mgh_stream(BytesIO(stream.read()), options)
         raw = MghRaw.from_fileobj(stream)
     return raw, ArrayProxy(str(file), raw.header, **options)

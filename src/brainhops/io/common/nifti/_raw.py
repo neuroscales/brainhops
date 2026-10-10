@@ -15,6 +15,7 @@ from nibabel.arrayproxy import ArrayProxy
 # internals
 from brainhops._core import path
 from brainhops._core.streams import open_compressed, preserve_position
+from brainhops.io.base._utils_files import is_local, same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -30,7 +31,6 @@ from ._files import (
     _accepted,
     _has_nifti_magic,
     _image_to_stream,
-    _is_local,
     _nifti_from_stream,
     _nifti_version,
     _save_nifti,
@@ -263,7 +263,7 @@ def read_nifti(
         file = path.Path(file)
     if not isinstance(file, path.PathLike):
         return _read_nifti_stream(file, **kwargs)
-    if not _is_local(file):
+    if not is_local(file):
         with file.open("rb") as stream:
             return _read_nifti_stream(BytesIO(stream.read()), **kwargs)
     filename = str(file)
@@ -288,12 +288,23 @@ def _read_nifti_stream(
     return raw, _nifti_from_stream(fileobj, **kwargs).dataobj
 
 
+def reads_file(raw: tx.Any, file: tx.Any) -> bool:
+    """Tell whether a lazy array of voxels reads a file by its name.
+
+    An image written over that file must then read the new file, since
+    nibabel opens the file by name each time it reads the voxels.
+    """
+    return isinstance(raw, ArrayProxy) and same_file(raw.file_like, file)
+
+
 def write_nifti(image: _NibabelImage, file: path.FileLike) -> None:
     """Write a nibabel image to a path or a stream.
 
     nibabel writes the header first and the voxels after it. A path is
     compressed when its name ends with `.gz`, and a stream receives an
-    uncompressed file.
+    uncompressed file. A local file is written beside the target and
+    moved over it, so that the voxels of a lazy image are read from the
+    old file even when the image is written over the file that it reads.
 
     Parameters
     ----------

@@ -8,6 +8,7 @@ from io import BytesIO
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import KwOnly, NoRepr, replace
+from nibabel.arrayproxy import ArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
@@ -20,6 +21,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._utils_files import same_file, write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -415,14 +417,22 @@ class MghImage(
 
         The file is gzipped when its name ends with `.mgz` or `.gz`, unless
         `compress` says otherwise. The other keyword arguments are those of
-        [`to_raw`][].
+        [`to_raw`][]. The content is encoded before the file is written,
+        and a local file is replaced at once, so an image can be written
+        over the file that it was read from. Its lazy array then reads the
+        new file, which holds the same voxels, and the cached data is
+        dropped.
         """
         kwargs.setdefault("compress", _compressed_name(filename))
         content = self.to_bytes(**kwargs)
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        with filename.open("wb") as f:
-            f.write(content)
+        stale = isinstance(self.raw, ArrayProxy) and same_file(
+            self.raw.file_like, filename
+        )
+        write_file(filename, content)
+        if stale:
+            # The cached data may be a lazy view of the old file.
+            self.raw = read_mgh(filename)[1]
+            self.__dict__.pop("_cache_data", None)
 
 
 # ----------------------------------------------------------------------
