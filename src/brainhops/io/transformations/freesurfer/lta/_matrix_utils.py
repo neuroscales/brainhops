@@ -12,20 +12,20 @@ from brainhops.io.common.freesurfer._geometry import (
 )
 
 from ._enums import LtaType
-from ._struct import LtaStruct
+from ._raw import LtaRaw
 
 
-def _get_vox2phys(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
+def _get_vox2phys(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
     return fs_vox2phys(vol_info.volume, vol_info.voxelsize)
 
 
-def _get_phys2ras(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
+def _get_phys2ras(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
     return fs_phys2ras(
         vol_info.xras, vol_info.yras, vol_info.zras, vol_info.cras
     )
 
 
-def _get_vox2ras(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
+def _get_vox2ras(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
     return _get_phys2ras(vol_info) @ _get_vox2phys(vol_info)
 
 
@@ -40,7 +40,7 @@ def _rsa2ras(matrix: np.ndarray) -> np.ndarray:
     return matrix[_RAS_RSA, :][:, _RAS_RSA]
 
 
-def _get_ras2ras(lta: LtaStruct) -> np.ndarray:
+def _get_ras2ras(lta: LtaRaw) -> np.ndarray:
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_RAS_TO_RAS:
         return matrix
@@ -61,7 +61,7 @@ def _get_ras2ras(lta: LtaStruct) -> np.ndarray:
     raise AssertionError(f"unsupported LTA type: {enum_name(lta.type)}")
 
 
-def _get_phys2phys(lta: LtaStruct) -> np.ndarray:
+def _get_phys2phys(lta: LtaRaw) -> np.ndarray:
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
         return matrix
@@ -82,7 +82,7 @@ def _get_phys2phys(lta: LtaStruct) -> np.ndarray:
     raise AssertionError(f"unsupported LTA type: {enum_name(lta.type)}")
 
 
-def _get_vox2vox(lta: LtaStruct) -> np.ndarray:
+def _get_vox2vox(lta: LtaRaw) -> np.ndarray:
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_VOX_TO_VOX:
         return matrix
@@ -108,6 +108,6 @@ _code2orient = code2orient
 _mat2orient = mat2orient
 
 
-def _get_orient(vol_info: LtaStruct.VolumeInfo) -> str:
+def _get_orient(vol_info: LtaRaw.VolumeInfo) -> str:
     vox2ras = _get_vox2ras(vol_info)
     return _mat2orient(vox2ras)

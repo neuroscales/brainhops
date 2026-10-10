@@ -10,7 +10,7 @@ from brainhops.io.transformations.freesurfer.lta import (
     LtaVoxelSystem,
 )
 from brainhops.io.transformations.freesurfer.lta._enums import LtaType
-from brainhops.io.transformations.freesurfer.lta._struct import LtaStruct
+from brainhops.io.transformations.freesurfer.lta._raw import LtaRaw
 from brainhops.io.transformations.freesurfer.lta._xforms import (
     LtaTransformation,
 )
@@ -29,10 +29,10 @@ def test_default_axes_carry_their_unit(cls: type, unit: object) -> None:
 
 
 @pytest.mark.parametrize("cls, unit", _SYSTEMS)
-def test_from_struct_gives_axes_their_unit(cls: type, unit: object) -> None:
+def test_from_raw_gives_axes_their_unit(cls: type, unit: object) -> None:
     # Regression: the unit was passed under a wrong keyword (TypeError).
-    struct = LtaStruct.SrcVolumeInfo(filename="a.nii")
-    system = cls.from_struct(struct)
+    raw = LtaRaw.SrcVolumeInfo(filename="a.nii")
+    system = cls.from_raw(raw)
     assert type(system) is cls
     assert system.name == "a.nii"
     assert all(axis.unit is unit for axis in system.axes)
@@ -45,14 +45,12 @@ def test_from_struct_gives_axes_their_unit(cls: type, unit: object) -> None:
 
 
 @pytest.mark.parametrize("cls, unit", _SYSTEMS)
-def test_from_struct_names_an_anonymous_volume(
-    cls: type, unit: object
-) -> None:
+def test_from_raw_names_an_anonymous_volume(cls: type, unit: object) -> None:
     # A volume without a file name is named after its role.
-    assert cls.from_struct(LtaStruct.SrcVolumeInfo()).name == "src"
-    assert cls.from_struct(LtaStruct.DstVolumeInfo()).name == "dst"
+    assert cls.from_raw(LtaRaw.SrcVolumeInfo()).name == "src"
+    assert cls.from_raw(LtaRaw.DstVolumeInfo()).name == "dst"
     # A bare volume has no role, so the system keeps its default name.
-    assert cls.from_struct(LtaStruct.VolumeInfo()).name == cls().name
+    assert cls.from_raw(LtaRaw.VolumeInfo()).name == cls().name
 
 
 def test_the_voxel_system_is_a_voxel_system() -> None:
@@ -69,12 +67,12 @@ def test_the_voxel_system_is_a_voxel_system() -> None:
 def test_an_lta_transform_reads_its_systems_from_its_volumes(
     type: LtaType, cls: type
 ) -> None:
-    struct = LtaStruct(
+    raw = LtaRaw(
         type=type,
-        src=LtaStruct.SrcVolumeInfo(filename="src.nii"),
-        dst=LtaStruct.DstVolumeInfo(filename="dst.nii"),
+        src=LtaRaw.SrcVolumeInfo(filename="src.nii"),
+        dst=LtaRaw.DstVolumeInfo(filename="dst.nii"),
     )
-    transform = LtaTransformation(struct=struct)
+    transform = LtaTransformation.from_raw(raw)
     assert isinstance(transform.input, cls)
     assert isinstance(transform.output, cls)
     assert (transform.input.name, transform.output.name) == (
@@ -90,13 +88,13 @@ def test_an_unsupported_lta_type_names_the_type(name: str) -> None:
     """A non-linear LTA type is reported by name in every helper."""
     from brainhops.io.transformations.freesurfer.lta import _matrix_utils
 
-    struct = LtaStruct(
+    raw = LtaRaw(
         type=LtaType.MNI_TRANSFORM_TYPE,
-        affine=LtaStruct.Affine(
+        affine=LtaRaw.Affine(
             matrix=[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
         ),
-        src=LtaStruct.SrcVolumeInfo(),
-        dst=LtaStruct.DstVolumeInfo(),
+        src=LtaRaw.SrcVolumeInfo(),
+        dst=LtaRaw.DstVolumeInfo(),
     )
     with pytest.raises(AssertionError, match="MNI_TRANSFORM_TYPE"):
-        getattr(_matrix_utils, name)(struct)
+        getattr(_matrix_utils, name)(raw)

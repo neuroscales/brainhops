@@ -6,13 +6,14 @@ __all__ = [
 ]
 
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
 from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import orientations as _orientation
 from brainhops.datamodel import systems as _systems
 
 from ._matrix_utils import _get_orient
-from ._struct import LtaStruct
+from ._raw import LtaRaw
 
 _3SpatialAxes = tx.Tuple[
     _axes.SpaceAxis,
@@ -36,14 +37,14 @@ def _make_axes(
     )
 
 
-def _name(struct: LtaStruct.VolumeInfo) -> tx.Dict[str, str]:
+def _name(raw: LtaRaw.VolumeInfo) -> tx.Dict[str, str]:
     """Return the name that a volume gives its system, as keyword arguments.
 
     The name is the file name of the volume, or else its role (`"src"` or
     `"dst"`). A bare `VolumeInfo` with neither gives nothing, and the system
     keeps the default name of its class.
     """
-    name = struct.filename or getattr(struct, "NAME", None)
+    name = raw.filename or getattr(raw, "NAME", None)
     return {"name": name} if name else {}
 
 
@@ -53,10 +54,7 @@ _INDEX = "index"
 _MM = "mm"
 
 
-class LtaCoordinateSystem(
-    _systems.SpatialCoordinateSystem3D,
-    reverse=False,  # `struct` must be the last field
-):
+class LtaCoordinateSystem(_systems.SpatialCoordinateSystem3D):
     """Base class of the coordinate systems specific to LTA files.
 
     There are three concrete systems, which all have axes that follow the
@@ -66,6 +64,10 @@ class LtaCoordinateSystem(
     voxel space scaled to millimetres, with the same origin.
     [`LtaPhysicalSystem`][] is the physical space of the source or
     destination volume, whose origin is the center of the volume.
+
+    A system built from the geometry block of an LTA file keeps that block
+    in `raw`, so that a transformation between two such systems can write
+    the block back to a file.
     """
 
     ...
@@ -76,21 +78,20 @@ class LtaVoxelSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
 
     name: tx.Optional[str] = "voxel"
     axes: _3SpatialAxes = _make_axes(("i", "j", "k"), unit=_INDEX)
-    struct: tx.Optional[LtaStruct.VolumeInfo] = None
+    raw: KwOnly[tx.Optional[LtaRaw.VolumeInfo]] = None
+    """The geometry block of the volume, or `None` without one."""
 
     @classmethod
-    def from_struct(
+    def from_raw(
         cls,
-        struct: LtaStruct.VolumeInfo,
+        raw: LtaRaw.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("i", "j", "k"),
     ) -> tx.Self:
-        """Return the voxel system of the volume described by `struct`."""
+        """Return the voxel system of the volume described by `raw`."""
         return cls(
-            **_name(struct),
-            axes=_make_axes(
-                names, unit=_INDEX, orientation=_get_orient(struct)
-            ),
-            struct=struct,
+            **_name(raw),
+            axes=_make_axes(names, unit=_INDEX, orientation=_get_orient(raw)),
+            raw=raw,
         )
 
 
@@ -99,19 +100,20 @@ class LtaScaledSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
 
     name: tx.Optional[str] = "scaled"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
-    struct: tx.Optional[LtaStruct.VolumeInfo] = None
+    raw: KwOnly[tx.Optional[LtaRaw.VolumeInfo]] = None
+    """The geometry block of the volume, or `None` without one."""
 
     @classmethod
-    def from_struct(
+    def from_raw(
         cls,
-        struct: LtaStruct.VolumeInfo,
+        raw: LtaRaw.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
-        """Return the scaled system of the volume described by `struct`."""
+        """Return the scaled system of the volume described by `raw`."""
         return cls(
-            **_name(struct),
-            axes=_make_axes(names, unit=_MM, orientation=_get_orient(struct)),
-            struct=struct,
+            **_name(raw),
+            axes=_make_axes(names, unit=_MM, orientation=_get_orient(raw)),
+            raw=raw,
         )
 
 
@@ -124,17 +126,18 @@ class LtaPhysicalSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
 
     name: tx.Optional[str] = "physical"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
-    struct: tx.Optional[LtaStruct.VolumeInfo] = None
+    raw: KwOnly[tx.Optional[LtaRaw.VolumeInfo]] = None
+    """The geometry block of the volume, or `None` without one."""
 
     @classmethod
-    def from_struct(
+    def from_raw(
         cls,
-        struct: LtaStruct.VolumeInfo,
+        raw: LtaRaw.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
-        """Return the physical system of the volume described by `struct`."""
+        """Return the physical system of the volume described by `raw`."""
         return cls(
-            **_name(struct),
-            axes=_make_axes(names, unit=_MM, orientation=_get_orient(struct)),
-            struct=struct,
+            **_name(raw),
+            axes=_make_axes(names, unit=_MM, orientation=_get_orient(raw)),
+            raw=raw,
         )

@@ -14,7 +14,7 @@ When implementing its own I/O, it can inherit a reader and a writer
 independently:
 
 ```python
-class LtaStruct(TextFileReader, TextFileWriter):
+class LtaRaw(TextFileReader, TextFileWriter):
     # Native fields and implementations of from_lines / to_lines.
     ...
 ```
