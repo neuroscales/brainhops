@@ -23,20 +23,25 @@ image = io.images.load("t1.mnc")   # a Minc1Image or a Minc2Image
 image.data.shape                   # F order: (x, y, z) for z,y,x files
 image.transformation               # voxel -> MINC world (RAS, mm)
 image.transformations[0]           # voxel -> physical (|step|, mm)
-image.dimensions                   # the raw MINC dimensions, file order
-image.vox2world                    # the (4, 4) matrix of the world affine
+image.metadata.raw.dimensions      # the raw MINC dimensions, file order
+image.metadata.raw.vox2world       # the (4, 4) matrix of the world affine
 ```
 
-The voxels are in Fortran order, which reverses the file dimensions, and
-the axes are named after the dimensions (`xspace` gives `x`, `time` gives
-`t`). The world is the RAS world of MINC. The layout is described in
+An image holds the header of its file as [`MincMetadata`][], whose
+record is a [`MincRaw`][], and its voxels in `raw`, a lazy array that
+reads them only when `data` is first needed. The voxels are in Fortran
+order, which reverses the file dimensions, and the axes are named after
+the dimensions (`xspace` gives `x`, `time` gives `t`). The world is the
+RAS world of MINC. The layout is described in
 [`brainhops.io.common.minc`][brainhops.io.common.minc]. Since nibabel
 cannot write MINC, an image is saved to another format, such as NIfTI.
 Attributes other than the
-[`dimensions`][brainhops.io.common.minc.MincReader.dimensions] are not
-read.
+[`dimensions`][brainhops.io.common.minc.MincRaw.dimensions] and the type
+of the voxels are not read.
 """
 
-__all__ = ["MincImage", "Minc1Image", "Minc2Image"]
+__all__ = ["MincImage", "Minc1Image", "Minc2Image", "MincMetadata", "MincRaw"]
+
+from brainhops.io.common.minc import MincMetadata, MincRaw
 
 from ._image import Minc1Image, Minc2Image, MincImage

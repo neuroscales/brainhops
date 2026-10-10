@@ -4,14 +4,13 @@
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
-from nibabel import minc1 as _minc1
 
 # this format
 from ._constants import (
     _DEFAULT_COSINES,
-    _MINC2_ROOT,
     SPATIAL_DIMENSIONS,
 )
+from ._netcdf import NetcdfHeader
 
 
 class MincDimension(Magic, frozen=True):
@@ -62,39 +61,47 @@ class MincDimension(Magic, frozen=True):
         return _DEFAULT_COSINES.get(self.name, (0.0, 0.0, 0.0))
 
 
-def _read_dimensions(
-    container: tx.Any, mfile: _minc1.Minc1File, version: int
+def minc1_dimensions(
+    header: NetcdfHeader, names: tx.Sequence[str]
 ) -> tx.Tuple[MincDimension, ...]:
-    """Read the dimensions of the image of an open file, slowest first."""
-    if version == 1:
-        image = container.variables["image"]
-        names = list(image.dimensions)
-        describe = [container.variables[name] for name in names]
+    """Return the dimensions of a MINC1 header, slowest first.
 
-        def attr(var: tx.Any, key: str) -> tx.Any:
-            return getattr(var, key, None)
+    Each dimension is described by the variable of the same name, and a
+    record dimension has the length of the records.
+    """
+    dimensions = []
+    for name in names:
+        length = header.dimensions[name] or header.records
+        attributes = header.variables[name].attributes
+        dimensions.append(_dimension(name, length, attributes.get))
+    return tuple(dimensions)
 
-    else:
-        image = container[_MINC2_ROOT]["image"]["0"]["image"]
-        dimorder = _string(image.attrs.get("dimorder")) or ""
-        names = dimorder.split(",")[: len(image.shape)]
-        group = container[_MINC2_ROOT]["dimensions"]
-        describe = [group[name] for name in names]
 
-        def attr(var: tx.Any, key: str) -> tx.Any:
-            return var.attrs.get(key, None)
+def minc2_dimensions(
+    image: tx.Any, group: tx.Any, names: tx.Sequence[str]
+) -> tx.Tuple[MincDimension, ...]:
+    """Return the dimensions of a MINC2 image dataset, slowest first.
 
-    shape = tuple(int(n) for n in image.shape)
+    Each dimension is described by the dataset of the same name in the
+    `dimensions` group of the file.
+    """
     return tuple(
-        MincDimension(
-            name=name,
-            length=length,
-            start=_float(attr(var, "start")),
-            step=_float(attr(var, "step")),
-            direction_cosines=_floats(attr(var, "direction_cosines")),
-            units=_string(attr(var, "units")),
-        )
-        for name, length, var in zip(names, shape, describe)
+        _dimension(name, int(length), group[name].attrs.get)
+        for name, length in zip(names, image.shape)
+    )
+
+
+def _dimension(
+    name: str, length: int, attribute: tx.Callable[[str], tx.Any]
+) -> MincDimension:
+    """Build a dimension from a function that reads its attributes."""
+    return MincDimension(
+        name=name,
+        length=int(length),
+        start=_float(attribute("start")),
+        step=_float(attribute("step")),
+        direction_cosines=_floats(attribute("direction_cosines")),
+        units=_string(attribute("units")),
     )
 
 

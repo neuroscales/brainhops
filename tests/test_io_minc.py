@@ -24,6 +24,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     WriterError,
 )
 from brainhops.io.common.minc import MincDimension  # noqa: E402
+from brainhops.io.common.minc._data import _MincProxy  # noqa: E402
 from brainhops.io.common.minc._utils import minc_version  # noqa: E402
 from brainhops.io.images.minc import (  # noqa: E402
     Minc1Image,
@@ -179,7 +180,7 @@ def test_class_by_version(anyminc) -> None:  # noqa: ANN001
     version, filename = anyminc
     image = io.images.load(filename)
     assert type(image) is (Minc1Image if version == 1 else Minc2Image)
-    assert image.version == version
+    assert image.metadata.raw.version == version
 
 
 def test_voxels_match_nibabel(anyminc) -> None:  # noqa: ANN001
@@ -206,9 +207,9 @@ def test_vox2world_matches_nibabel(anyminc) -> None:  # noqa: ANN001
     reference = nb.load(str(filename)).affine
     # nibabel's affine indexes the C-ordered array; ours is F-ordered.
     flip = np.eye(4)[[2, 1, 0, 3]]
-    np.testing.assert_allclose(image.vox2world, reference @ flip)
+    np.testing.assert_allclose(image.metadata.raw.vox2world, reference @ flip)
     np.testing.assert_allclose(
-        image.vox2world, expected_vox2world(("zspace", "yspace", "xspace"))
+        image.metadata.raw.vox2world, expected_vox2world(("zspace", "yspace", "xspace"))
     )
 
 
@@ -225,7 +226,7 @@ def test_transformations(anyminc) -> None:  # noqa: ANN001
     assert [a.name for a in world.output.axes] == ["x", "y", "z"]
     assert image.transformation is not None
     np.testing.assert_allclose(
-        image.transformation.matrix, image.vox2world[:3]
+        image.transformation.matrix, image.metadata.raw.vox2world[:3]
     )
     assert image.system.order == "F"
     assert [a.name for a in image.system.axes] == ["x", "y", "z"]
@@ -234,9 +235,9 @@ def test_transformations(anyminc) -> None:  # noqa: ANN001
 def test_dimensions_are_kept(anyminc) -> None:  # noqa: ANN001
     _, filename = anyminc
     image = io.images.load(filename)
-    names = [d.name for d in image.dimensions]
+    names = [d.name for d in image.metadata.raw.dimensions]
     assert names == ["zspace", "yspace", "xspace"]
-    y = image.dimensions[1]
+    y = image.metadata.raw.dimensions[1]
     assert isinstance(y, MincDimension)
     assert y.step == -2.0 and y.start == 20.0 and y.units == "mm"
     np.testing.assert_allclose(y.direction_cosines, COSINES["yspace"])
@@ -254,8 +255,8 @@ def test_permuted_dimensions(tmp_path, version) -> None:  # noqa: ANN001
     np.testing.assert_allclose(np.asarray(image.data), expected_voxels(dims).T)
     reference = nb.load(filename).affine
     flip = np.eye(4)[[2, 1, 0, 3]]
-    np.testing.assert_allclose(image.vox2world, reference @ flip)
-    np.testing.assert_allclose(image.vox2world, expected_vox2world(dims))
+    np.testing.assert_allclose(image.metadata.raw.vox2world, reference @ flip)
+    np.testing.assert_allclose(image.metadata.raw.vox2world, expected_vox2world(dims))
 
 
 @pytest.mark.parametrize("version", [1, 2])
@@ -283,7 +284,7 @@ def test_default_geometry(tmp_path, version) -> None:  # noqa: ANN001
     filename = str(tmp_path / "plain.mnc")
     (write_minc1 if version == 1 else write_minc2)(filename, geometry=False)
     image = io.images.load(filename)
-    np.testing.assert_allclose(image.vox2world, np.eye(4))
+    np.testing.assert_allclose(image.metadata.raw.vox2world, np.eye(4))
     np.testing.assert_allclose(image.transformations[0].scale, [1, 1, 1])
     units = [str(a.unit) for a in image.transformations[0].output.axes]
     assert units == ["millimeter"] * 3
@@ -352,10 +353,11 @@ def test_header_only_until_data(anyminc) -> None:  # noqa: ANN001
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         image = io.images.load(filename)
-        assert getattr(image, "_data", None) is None
+        assert isinstance(image.raw, _MincProxy)
+        assert "_cache_data" not in vars(image)
         assert image.shape == (6, 5, 4)
         image.data  # noqa: B018
-        assert getattr(image, "_data", None) is not None
+        assert "_cache_data" in vars(image)
 
 
 def test_convert_to_nifti(tmp_path, anyminc) -> None:  # noqa: ANN001
@@ -369,7 +371,7 @@ def test_convert_to_nifti(tmp_path, anyminc) -> None:  # noqa: ANN001
         np.asarray(nifti.data), np.asarray(image.data), rtol=1e-6
     )
     np.testing.assert_allclose(
-        nifti.transformation.matrix, image.vox2world[:3], atol=1e-5
+        nifti.transformation.matrix, image.metadata.raw.vox2world[:3], atol=1e-5
     )
 
 

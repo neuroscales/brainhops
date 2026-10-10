@@ -1,8 +1,18 @@
+"""The MINC image formats, which are read only."""
+
+# stdlib
+from io import BytesIO
+
+# dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import KwOnly, NoRepr, replace
 
+# internals
+from brainhops._core import path
 from brainhops._core.dependencies import HAS_H5PY
+from brainhops._core.properties import smartproperty
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
@@ -15,7 +25,18 @@ from brainhops.datamodel.units import (
     is_physicalunit,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.common.minc import MincDimension, MincReader
+from brainhops.io.base.parsers import BinaryFileReader, ParserContentError
+from brainhops.io.common.minc import MincDimension, MincMetadata, MincRaw
+from brainhops.io.common.minc._data import read_minc
+from brainhops.io.common.minc._raw import sniff_minc
+from brainhops.io.common.minc._utils import (
+    _axis,
+    _score,
+    _sniff_minc2,
+    minc_version,
+)
+from brainhops.io.common.minc._views import _image_to_disk, _image_to_model
+from brainhops.io.common.nifti._files import _is_local
 from brainhops.io.images.base import ImageFormat
 
 _PHYSICAL = "physical"
@@ -33,46 +54,238 @@ _RAS_ORIENTATION = {
 _UNIT_TYPES = {"space": SpaceUnit, "time": TimeUnit}
 
 
-class MincImage(MincReader, ImageFormat, SingleScaleImage):
+class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     """An image stored in a MINC file, of version 1 or 2.
 
     This class answers to the format hint `"minc"` and reads both
     versions. It hands the file to [`Minc1Image`][] or [`Minc2Image`][],
-    which are the classes registered as formats. The voxels are read with
-    nibabel and scaled to real values. They are in Fortran order, so a
-    file with dimensions `zspace, yspace, xspace` gives data indexed
-    `(x, y, z)`.
+    which are the classes registered as formats. A MINC image holds the
+    header of its file as [`MincMetadata`][], whose record is a
+    [`MincRaw`][], and the voxels in `raw`, a lazy array that reads them
+    with nibabel, scaled to real values, only when `data` is first
+    needed. The lazy array presents the voxels in the order of the file,
+    and the data reverse it into Fortran order, so a file with
+    dimensions `zspace, yspace, xspace` gives data indexed `(x, y, z)`.
 
-    The transformations are, in order, a [`Scaling`][] to `"physical"` by
-    the absolute step of each dimension, in its unit (millimeters by
-    default for spatial dimensions), and the preferred [`Affine`][] to the
-    RAS space `"world"`, which moves along the direction cosines of each
-    spatial dimension by its signed step from `start`. The affine is
-    recorded only for volumes with three spatial dimensions. MINC files
-    cannot be written.
+    The transformations are decoded from the record, unless other
+    transformations are assigned. They are, in order, a [`Scaling`][] to
+    `"physical"` by the absolute step of each dimension, in its unit
+    (millimeters by default for spatial dimensions), and the preferred
+    [`Affine`][] to the RAS space `"world"`, which moves along the
+    direction cosines of each spatial dimension by its signed step from
+    `start`. The affine is recorded only for volumes with three spatial
+    dimensions.
 
-    !!! note "Why the bases are in this order"
-        As for [`NiftiImage`][brainhops.io.images.nifti.NiftiImage],
-        [`SingleScaleImage`][] comes last because its `data` field has no
-        default, and [`MincReader`][] comes first so that its lazy
-        properties take precedence.
+    MINC files cannot be written, so the class has no writer and no
+    `to_raw`: an image is saved to another format, such as NIfTI, and
+    [`brainhops.io.save`][] refuses to write it as MINC. The record is
+    `metadata.raw`.
     """
 
-    @property
-    def transformations(self) -> tx.List[Transformation]:
-        """Voxel-to-world transformations, decoded from the dimensions.
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc",)
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc",)
 
-        Transformations that were set explicitly are returned as they are.
+    VERSION: tx.ClassVar[tx.Optional[int]] = None
+    """The MINC version this class reads, or `None` for both."""
+
+    VARIANTS: tx.ClassVar[tx.Tuple[type, ...]] = ()
+    """The classes to which a versionless class hands files."""
+
+    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    """The voxels in the order of the file, or `None` without data.
+
+    After a read, `raw` is a lazy array, which reads the voxels and
+    scales them when it is read. Setting `data` stores the new array
+    here, with its axes reversed.
+    """
+
+    _metadata: KwOnly[NoRepr[tx.Optional[MincMetadata]]] = None
+
+    metadata = smartproperty("metadata", invalidates=("transformations",))
+    """The metadata of the file, which holds its record, or `None`.
+
+    An image built from data has no metadata. Assigning other metadata
+    drops the transformations decoded from the previous record.
+    """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # The constructor assigns the fields in order, so the default of
+        # `raw`, assigned after `data`, erases the array stored by `data=`.
+        # The array is therefore stored again. When both are given, `data`
+        # takes precedence over `raw`.
+        if arguments.get("data") is not None:
+            self.data = arguments["data"]
+
+    @smartproperty(cache=True, invalidates=("data",))
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The voxels in Fortran order, decoded from `raw` and cached.
+
+        Data decoded from a file is read-only. To change the voxels,
+        assign `data`: setting it stores the new array in `raw` and drops
+        the cached value.
         """
-        if getattr(self, "_transformations", None):
-            return self._transformations
-        if not self.dimensions:
-            return list(getattr(self, "_transformations", None) or [])
-        return _minc_to_transformations(self)
+        if self.raw is None:
+            return None
+        return _image_to_model(self.raw)
 
-    @transformations.setter
-    def transformations(self, value: tx.List[Transformation]) -> None:
-        self._transformations = value
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _image_to_disk(value)
+
+    @smartproperty(cache=True, unset=(None, "empty"))
+    def transformations(self) -> tx.List[Transformation]:
+        """Voxel-to-world transformations, decoded from the record.
+
+        The decoded list is cached, so `img.transformation is
+        img.transformation`. Assigning a list replaces the decoded one, and
+        assigning other metadata drops it. An image without metadata has
+        no transformations.
+        """
+        if self.metadata is None or self.metadata.raw is None:
+            return []
+        return _minc_to_transformations(self.metadata.raw)
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the data, read from `raw` without reading the voxels.
+
+        The data reverse the axes of `raw`, and the lazy array knows its
+        shape from the record. An image without data raises as
+        [`SingleScaleImage`][] does.
+        """
+        if self.raw is None:
+            return self.data.shape
+        return tuple(int(d) for d in reversed(self.raw.shape))
+
+    @property
+    def system(self) -> tx.Optional[CoordinateSystem]:
+        """The voxel coordinate system described by the record.
+
+        The axes are named after the dimensions (`xspace` gives `x`,
+        `time` gives `t`) and are in Fortran order. An image without
+        metadata has no system.
+        """
+        if self.metadata is None or self.metadata.raw is None:
+            return None
+        return _minc_system(self.metadata.raw)
+
+    # --- reading ------------------------------------------------------
+
+    @classmethod
+    def _variant(cls, version: tx.Optional[int]) -> type:
+        """Return the class that reads a file of a given version.
+
+        Raises
+        ------
+        ParserContentError
+            If neither this class nor its variants read that version.
+        """
+        if cls.VERSION is not None:
+            if cls.VERSION == version:
+                return cls
+        else:
+            for variant in cls.VARIANTS:
+                if variant.VERSION == version:
+                    return variant
+        raise ParserContentError(
+            f"{cls.__name__} does not read MINC{version or ''} files."
+        )
+
+    @classmethod
+    def _versions(cls) -> tx.Tuple[int, ...]:
+        """Return the versions that this class or its variants read."""
+        if cls.VERSION is not None:
+            return (cls.VERSION,)
+        return tuple(v.VERSION for v in cls.VARIANTS)
+
+    @classmethod
+    def sniff_filename(
+        cls,
+        filename: path.FilenameLike,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Score a file from its content.
+
+        A local MINC2 file is opened by name, so that only its header is
+        read.
+        """
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+        if _is_local(filename) and path.exists(filename):
+            with filename.open("rb") as f:
+                version = minc_version(f.read(8))
+            if version == 2 and 2 in cls._versions():
+                return _score(_sniff_minc2(str(filename)), error)
+        return super().sniff_filename(filename, error=error, **kwargs)
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a stream holds a MINC file that this
+        class reads.
+
+        A NetCDF file, gzipped or not, is certainly MINC1 when its header
+        names a spatial dimension and an `image` variable, and weakly
+        accepted otherwise. An HDF5 file is MINC2 when it has a
+        `/minc-2.0` group.
+        """
+        return _score(sniff_minc(file, cls._versions()), error)
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that bytes hold a MINC file."""
+        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
+
+    @classmethod
+    def from_filename(
+        cls, filename: path.FilenameLike, **kwargs
+    ) -> "MincImage":
+        """Read an image from a MINC file, reading only its header.
+
+        The lazy array reads the voxels from the file, by name, when they
+        are needed. A file that is not local, or that is gzipped, is then
+        read into memory. The keyword arguments are ignored.
+
+        Raises
+        ------
+        ParserExistsError
+            If the file does not exist.
+        ParserContentError
+            If the file is not a MINC file of a version that this class
+            reads, or nibabel cannot read its voxels.
+        """
+        raw, proxy = read_minc(filename)
+        klass = cls._variant(raw.version)
+        return klass(raw=proxy, metadata=MincMetadata.from_raw(raw))
+
+    @classmethod
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MincImage":
+        """Read an image from an open MINC file, gzipped or not.
+
+        A stream has no name to open again, so its content is read into
+        memory, where the lazy array decodes the voxels when they are
+        needed. The position of the stream is restored, and the keyword
+        arguments are ignored.
+
+        Raises
+        ------
+        ParserContentError
+            If the stream is not a MINC file of a version that this class
+            reads, or nibabel cannot read its voxels.
+        """
+        raw, proxy = read_minc(file)
+        klass = cls._variant(raw.version)
+        return klass(raw=proxy, metadata=MincMetadata.from_raw(raw))
 
 
 @register_format
@@ -83,7 +296,7 @@ class Minc1Image(MincImage):
     hints `"minc1"` and `"minc.1"`. See [`MincImage`][].
     """
 
-    HINTS = ("minc1", "1")
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc1", "1")
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc", ".mnc.gz")
     VERSION: tx.ClassVar[int] = 1
 
@@ -95,7 +308,7 @@ class Minc2Image(MincImage):
     `"minc.2"`. See [`MincImage`][].
     """
 
-    HINTS = ("minc2", "2")
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc2", "2")
     VERSION: tx.ClassVar[int] = 2
 
 
@@ -137,11 +350,17 @@ def _unit(dimension: MincDimension, axis_type: tx.Optional[str]) -> tx.Any:
     return unit
 
 
-def _minc_to_transformations(image: MincReader) -> tx.List[Transformation]:
+def _minc_system(record: MincRaw) -> CoordinateSystem:
+    """Return the voxel system of a record, in Fortran order."""
+    axes = [_axis(d.name) for d in reversed(record.dimensions)]
+    return CoordinateSystem(name="voxel", axes=axes, order="F")
+
+
+def _minc_to_transformations(record: MincRaw) -> tx.List[Transformation]:
     """Return the voxel-to-physical and voxel-to-world transformations."""
-    voxel_space = image.system
+    voxel_space = _minc_system(record)
     axes = list(voxel_space.axes)
-    dimensions = list(reversed(image.dimensions))
+    dimensions = list(reversed(record.dimensions))
 
     phys_axes = [
         replace(axis, unit=_unit(dim, axis.type))
@@ -151,7 +370,7 @@ def _minc_to_transformations(image: MincReader) -> tx.List[Transformation]:
     scale = [abs(dim.spacing) for dim in dimensions]
     xforms = [Scaling(input=voxel_space, output=phys_space, scale=scale)]
 
-    vox2world = image.vox2world
+    vox2world = record.vox2world
     if vox2world is None:
         return xforms
     keep = [i for i, dim in enumerate(dimensions) if dim.is_spatial]

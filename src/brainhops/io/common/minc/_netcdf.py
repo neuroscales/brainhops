@@ -148,7 +148,9 @@ def read_netcdf_header(file: tx.BinaryIO) -> NetcdfHeader:
         variables[name] = NetcdfVariable(
             name, dims, var_attributes, dtype, begin
         )
-    return NetcdfHeader(dimensions, records, attributes, variables, reader.count)
+    return NetcdfHeader(
+        dimensions, records, attributes, variables, reader.count
+    )
 
 
 def _count(reader: _Reader, tag: int) -> int:
