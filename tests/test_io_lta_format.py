@@ -396,7 +396,7 @@ def test_every_type_round_trips_once_rebuilt(
     rebuilt = LtaTransformation(
         matrix=xform.matrix, input=xform.input, output=xform.output
     )
-    assert rebuilt.to_raw() is not rebuilt.metadata.raw
+    assert rebuilt.metadata is None
     io.save(rebuilt, tmp_path / "rebuilt.lta")
     back = io.load(tmp_path / "rebuilt.lta")
     assert back.metadata.raw.type is lta_type
@@ -443,6 +443,35 @@ def test_a_view_round_trips(
         LtaTransformationRASToRAS.load(file).matrix,
         atol=1e-12,
     )
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        LtaTransformation,
+        LtaTransformationVoxToVox,
+        LtaTransformationPhysToPhys,
+    ],
+    ids=["base", "vox", "phys"],
+)
+@pytest.mark.parametrize(
+    "lta_type",
+    [LtaType.LINEAR_VOX_TO_VOX, LtaType.LINEAR_PHYSVOX_TO_PHYSVOX],
+    ids=["vox", "physvox"],
+)
+def test_a_file_without_geometry_round_trips_untouched(
+    tmp_path,  # noqa: ANN001
+    cls: type,
+    lta_type: LtaType,
+) -> None:
+    # Regression: a voxel or physical file without geometry blocks does
+    # not define its systems, and saving it untouched raised instead of
+    # writing the record that was read.
+    raw = LtaRaw(type=lta_type, affine=LtaRaw.Affine(matrix=MATRIX))
+    file = _write(tmp_path, raw)
+    xform = cls.load(file)
+    io.save(xform, tmp_path / "same.lta")
+    assert (tmp_path / "same.lta").read_bytes() == file.read_bytes()
 
 
 def test_the_ras_view_of_a_ras_file_is_its_matrix(tmp_path) -> None:  # noqa: ANN001
