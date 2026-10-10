@@ -205,8 +205,14 @@ construction, and do not rely on the flags of the arrays in the record.
 Each image class gives an explicit `shape` read from `raw` without
 reading the voxels; `ndim` follows from it.
 
+A lazy array answers an empty selection without reading the file, so
+that Dask's metadata probe reads nothing.
+
 Header fields that the data or `dtype=` decide (dimensions, voxel type)
 cannot be overridden; the writer refuses them with `WriterError`.
+
+A save never removes or overwrites a file that a live proxy reads; when
+it replaces that file, the image is pointed at the new one.
 
 A conformance check that is vacuous for a format is logged in the comment
 of the exemplar of that format and in the list of tensions, instead of
@@ -337,14 +343,17 @@ The third pass moves MGH, AFNI, MRtrix, NRRD and MINC. MGH gets a
 record with its header and its tags, and uses nibabel's proxy. For the
 others, the private `_header` becomes the record, `dataobj` becomes
 `raw`, and the existing transpositions become `to_model` and `to_disk`.
-The intensity scaling of MRtrix stays out of the view. For these image
+The transpositions that depend on the record live in the lazy array
+instead, and `to_model` and `to_disk` are the identity for them. The
+intensity scaling of MRtrix stays out of the view. For these image
 formats, the pass also decides which header fields the record keeps
 and which ones the geometry encoding replaces, and whether `replace` and
 `from_instance` keep the proxy. Its tests compare compressed variants of
 a file after decompression.
 
 The move of MGH, called pass 3a, is pull request #424. The move of AFNI
-and MRtrix, called pass 3b, is in progress.
+and MRtrix, called pass 3b, is pull request #425. The move of NRRD and
+MINC, called pass 3c, is in progress.
 
 The fourth pass moves Zarr, with one record per resolution level, and
 FLIRT. The class variable workaround of FLIRT is removed once it is
@@ -771,3 +780,96 @@ its status.
     proxy, as for `NiftiImage` (item 18). Status: open.
 82. `Metadata.__eq__` is based on identity, not on content. This is a
     matter of the base class and not of MGH. Status: open.
+83. The axis changes that depend on the record live in the lazy arrays
+    of AFNI and MRtrix, and not in `to_model` and `to_disk`, which are
+    the identity. For AFNI this is the squeeze of a single sub-brick
+    (`io/common/afni/_data.py`). For MRtrix it is the permutation and
+    the flips of the layout (`io/common/mrtrix/_data.py`). The
+    transposition needs the record, and the lazy array is the object
+    that holds it. The third-pass paragraph above and the rules are
+    amended to say so. Status: accepted in the pass 3b review (c7e2a4e).
+84. The AFNI and MRtrix records keep the text or the bytes that they were
+    read from (`AfniRaw.text` and `MrtrixRaw.stored`), and the writer
+    reuses them only after it parses them again and finds the same
+    attributes (`io/common/afni/_raw.py` and `io/common/mrtrix/_raw.py`).
+    An attribute whose value is NaN never compared equal to itself, so
+    the stored text was discarded and the header was rewritten. Status:
+    accepted in the pass 3b review (c7e2a4e), and the NaN case is
+    resolved there, where the comparison of the records in
+    `_format_attributes` treats NaN as equal to NaN.
+85. The conformance harness has a new field, `Exemplar.header_file`, for
+    the formats that keep their header in a separate file
+    (`tests/test_io_conformance.py`). AFNI uses it, because its header is
+    the `.HEAD` file and its voxels are in the `.BRIK` file. `from_bytes`
+    of AFNI is refused, because one buffer cannot hold two files. The
+    field also answers item 23 for the formats of this pass. Status:
+    accepted in the pass 3b review (c7e2a4e), and open for NRRD and MINC
+    (item 23).
+86. `replace` on an `AfniImage` or a `MrtrixImage` reads `data` and so
+    materializes the lazy array, as for `NiftiImage` (item 18) and
+    `MghImage` (item 81). The copy then recomputes `BRICK_STATS` and
+    receives a new `IDCODE` for AFNI, and a scaled MRtrix image is stored
+    as floating point. The problem is shared by every image format and is
+    to be fixed once in the base, as in item 18, and not once per format.
+    Status: open.
+87. Saving an AFNI image with a different compression of the BRIK file
+    removed the old BRIK file, which the lazy array of the loaded image
+    still read, so the image lost its data (`_BrikProxy` in
+    `io/common/afni/_data.py`, and `io/images/afni/_image.py`). This was
+    a loss of data, and the rule that a save never removes a file that a
+    live proxy reads comes from it. Status: resolved in the pass 3b
+    review (c7e2a4e), where `raw` points to the new BRIK file after the
+    old one is removed.
+88. The `__getitem__` of the proxies of AFNI and MRtrix decoded the whole
+    file when Dask asked for an empty selection to find the metadata of
+    the array, so a Dask array read the file twice. Status: resolved in
+    the pass 3b review (c7e2a4e), where an empty selection is answered
+    without reading, and the tests no longer raise the warnings of
+    `array_equal` on Dask arrays.
+89. Two older knobs are neither honored nor refused. A TR given through a
+    `Scaling` in `transformations` is ignored by AFNI when the number of
+    sub-bricks does not change (`io/images/afni/_image.py`), and the
+    voxel sizes of MRtrix beyond the third axis are taken from the
+    record and not from the model (`io/images/mrtrix/_image.py`). Both
+    break the rule on overrides, in the same way as the time scaling of
+    `_frame_tr` for MGH (item 78). The problems are older than this work.
+    Status: open.
+90. The layout of an MRtrix image is never `None`, even when it is the
+    identity, so the writer asks the layout whether it is trivial
+    (`layout.trivial`) instead of comparing it with `None`
+    (`io/images/mrtrix/_image.py`). Status: accepted in the pass 3b
+    review (c7e2a4e).
+91. A `.mih` file cannot be a variant of the untouched save, because its
+    header names its data file and so cannot be moved to another name
+    without a change. Status: accepted in the pass 3b review (c7e2a4e).
+92. AFNI keeps the `IDCODE` of an untouched file, and writes a new one
+    only for an image that changed. The option `attributes=` of AFNI
+    refuses the attributes that describe the storage, and the option
+    `keyval=` of MRtrix refuses the keys for the dimensions, the voxel
+    sizes, the layout, the data type, the transformation, the scaling and
+    the data file. These values are decided by the data or by the model,
+    in the same way as item 76. Status: accepted in the pass 3b review
+    (c7e2a4e).
+93. `attributes=` of AFNI first accepted the attributes of the geometry,
+    which the writer encodes from the model, so a value given there was
+    silently ignored. Status: resolved in the pass 3b review (c7e2a4e),
+    where `attributes=` refuses them with `WriterError`.
+94. An attribute of AFNI with a string that is not Latin-1 failed with an
+    encoding error that is not a `WriterError`. Status: resolved in the
+    pass 3b review (c7e2a4e), where the writer raises `WriterError`.
+95. Pass 3b removes the names `AfniReaderWriter`, `AfniHeader`,
+    `MrtrixReaderWriter` and `MrtrixHeader`, and the attributes `header`,
+    `_header` and `dataobj`, without aliases. Loading a compressed
+    AFNI file no longer reads its voxels. They are listed with the other
+    changes of item 13. Status: open, as for item 13.
+96. For MRtrix, a `#` inside the value of a key truncates the value,
+    because it starts a comment. The problem is older than this work.
+    Status: open.
+97. An AFNI image that is read from a `.BRIK.gz` file and saved to a
+    `.HEAD` name writes an uncompressed BRIK file. Status: open.
+98. The helpers `_declined` and `_sniffed_raw` are repeated in
+    `io/common/afni/_raw.py` and `io/common/mrtrix/_raw.py`. Status:
+    open, and a shared helper in `io/base/parsers.py` is a candidate.
+99. `_views.py` now exists in three copies, for MGH, AFNI and MRtrix, in
+    line with the rule of explicit code in each format (item 74).
+    Status: accepted in the pass 3b review (c7e2a4e).
