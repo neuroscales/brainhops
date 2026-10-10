@@ -2,7 +2,7 @@
 
 This memo is agreed and is being implemented. It is tracked in #415,
 and the work is done in the passes described at the end. The first
-pass, which moves the NIfTI formats, is written and under review.
+two passes are written and under review, and the third has started.
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides
@@ -322,7 +322,8 @@ X5, whose record holds the header and the nodes while `chain` and
 the record because the file is parsed in one pass.
 
 The move of LTA, called pass 2a, is pull request #421. The move of X5,
-called pass 2b, is under review. ITK-H5 is deferred. It shares
+called pass 2b, is pull request #422. The move of M3Z, called pass 2c,
+is under review. ITK-H5 is deferred. It shares
 `ItkStruct` with the ITK text and MAT formats and has no writer, so it
 moves with them.
 
