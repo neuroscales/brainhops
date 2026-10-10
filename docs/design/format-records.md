@@ -176,6 +176,17 @@ written.
 A raw record is never changed in place. Encoding copies the record
 first, so a record can be shared between objects safely.
 
+A record is never made up to hold data. An object that was read from a
+file has a record, and its data may live there. An object that was
+built without a record holds its data in the model, and its format
+writes a record only when it is saved. A record made up for an object
+built from scratch would claim header fields that the object never
+had.
+
+A format object's `to_raw()` may return the record that the object
+holds, because the writer only reads it. `MetadataFormat.to_raw()`
+returns a copy of the record, because the caller may change it.
+
 `<X>Metadata` holds no file handle. The format object builds the data
 proxy from the source and from the record, which says where the data
 is. Metadata therefore stays cheap to copy and can be pickled, which
@@ -291,6 +302,11 @@ X5, whose record holds the header and the nodes while `chain` and
 `position` stay options of the format, and M3Z, whose arrays stay in
 the record because the file is parsed in one pass.
 
+The move of LTA, called pass 2a, is pull request #421. The move of X5,
+called pass 2b, is under review. ITK-H5 is deferred. It shares
+`ItkStruct` with the ITK text and MAT formats and has no writer, so it
+moves with them.
+
 The third pass moves MGH, AFNI, MRtrix, NRRD and MINC. MGH gets a
 record with its header and its tags, and uses nibabel's proxy. For the
 others, the private `_header` becomes the record, `dataobj` becomes
@@ -358,8 +374,10 @@ its status.
    stream alive for as long as the proxy is used. For the same reason,
    a format whose `raw` is a proxy must override `from_filename` or
    `from_file`, because the adapter's `from_filename` closes the stream
-   when it returns. Status: open, and the second part is a rule for
-   every pass.
+   when it returns. X5 has no name to reopen when its file is read from
+   a stream or from bytes, so it reads all its fields at once in that
+   case, while NIfTI keeps the stream of the caller. Status: open, and
+   the second part is a rule for every pass.
 10. `_holds` (`io/base/_save.py:220`) refuses a format that does not
     take every constructor field of its model. A format must therefore
     keep `data` in its constructor even though `data` becomes a view,
@@ -386,7 +404,13 @@ its status.
     which becomes read-only, the `data` of a NiftyReg field, whose shape
     loses its singleton axis and becomes `(X, Y, Z, 3)`, and a
     displacement field loaded with `log=True`, which is written back as
-    a velocity unless it is saved with `log=False`. Status: open.
+    a velocity unless it is saved with `log=False`. Pass 2b adds the X5
+    changes. The fields of an X5 file are read lazily by default
+    (`load=False`), `keep_open=` raises `TypeError`, `chain` and
+    `position` become keyword-only, the `header`, `nodes` and `file`
+    attributes are removed in favor of `metadata.raw`,
+    `X5TransformReaderWriter` is removed, and `to_struct` becomes
+    `to_raw`. Status: open.
 14. The design needs `bagof-magic` 0.3.dev2 or later, which is not on
     PyPI yet, so the checks before each pull request need it installed
     from another source. Status: open.
@@ -402,6 +426,11 @@ its status.
     Status: resolved in pass 1a, where `from_instance` keeps `raw` and
     leaves `data` unset within a format, so that copies stay lazy and
     an untouched object is still saved byte for byte.
+    `_FileBasedModelMixin` passes `data=None` only when `raw` is set,
+    so `LtaTransformation` overrides `from_instance` to pass
+    `data=None` when the source holds no matrix of its own
+    (`io/transformations/freesurfer/lta/_xforms.py:398`). This
+    override is accepted in pass 2a as explicit code in one class.
 18. `replace` reads `data` through the property, so a copy made with
     `replace` turns the proxy into an array and is no longer saved byte
     for byte. The setters of the NIfTI transformations empty the
@@ -431,7 +460,9 @@ its status.
 23. The conformance check that reads only the header assumes that the
     header is a prefix of the file. Formats with a separate header
     file, such as detached NRRD and MINC, need a hook in their exemplar
-    in the third pass. Status: open.
+    in the third pass. HDF5 has no header before its data, so X5 needed
+    `cut` and `header` hooks for this check in pass 2b. Status: accepted
+    in pass 2b for HDF5, and open for NRRD and MINC.
 24. An untouched save is identical byte for byte only when the geometry
     is encoded back exactly. A `qform` or `sform` whose code is 0 used
     to be written back with code 2, and the padding before `vox_offset`
@@ -486,8 +517,13 @@ its status.
 36. `FnirtWarpField.transformations` keeps a hand-written cache,
     `_chain_cache`, that it looks up by the identity of the objects
     (`io/transformations/fsl/fnirt/_base.py:408-443`), and the bases of
-    the class list the model last. Status: open, and older than pass
-    1c.
+    the class list the model last. X5 follows the same pattern in pass
+    2b. It keeps a cache from nodes to transformations by hand in
+    `__dict__["_decoded_nodes"]` (`io/transformations/x5/_xform.py`),
+    because the writer recognizes the decoded nodes by their identity
+    after the `transformations` setter has dropped
+    `_cache_transformations`. Status: open for both formats, and the
+    FNIRT cache is older than pass 1c.
 37. In the conformance tests, check 9 does not convert NiftyReg, ITK
     and FNIRT fields to another format, because they have no converter
     until #312, and it compares `raw` and `data` only for models that
@@ -497,3 +533,64 @@ its status.
     other packages from `io/transformations/nifti`. Status: resolved in
     pass 1c, where they move to `io/common/nifti/_header.py` and
     `_core/properties.py`.
+39. Setting the data of a fresh LTA transformation used to build a
+    record for it, and that record broke the untouched VOX and PHYS
+    files that have no geometry blocks. Status: resolved in pass 2a.
+    Without a record, the model holds its matrix, and `to_raw` returns
+    the record only when `_data`, `_input` and `_output` are all unset.
+    The rules above now forbid making up a record to hold data.
+40. Two contracts exist for `to_raw`. A format object returns the record
+    that it holds, and `MetadataFormat.to_raw()` returns a copy. Status:
+    decided in pass 2a, and a rule for every format.
+41. Setting `data` on an LTA transformation that has a record replaces
+    its metadata object, so that
+    `LtaTransformation(metadata=md, matrix=m).metadata is not md`. A
+    record is never changed in place and the matrix lives in the record,
+    so the record must be replaced. Status: accepted.
+42. Without a record, the views of an LTA transformation read an
+    anonymous volume block that was built again on each access. Status:
+    resolved in pass 2a.
+43. Copying one LTA view into another shares the record and reads it
+    again in the coordinate systems of the target, because the views
+    are views of one file. Status: accepted and documented.
+44. The LTA writer keeps only 16 significant digits. The problem is
+    older than this work and is filed as #420. Status: open.
+45. The conformance tests needed new hooks. `Exemplar.stored` reads data
+    that lives in the record. The stream contract of check 12 applies
+    to binary formats only, and a text format is checked for the read
+    mode `"rt"`. Formats that hold a chain of transformations needed
+    `view`, `data` and `set_data` hooks. Status: accepted in passes 2a
+    and 2b.
+46. The X5 record holds the lazy `DelayedH5Array` proxies, so the data
+    lives in the metadata rather than on the format object
+    (`io/transformations/x5/_raw.py`). The nodes and their arrays form
+    one record, which is why this is accepted for now. A proxy holds
+    only a file name, so the metadata can still be pickled, but copied
+    metadata refers to the source file by its name. Status: open for
+    review.
+47. The shared HDF5 adapter still reads the `keep_open` option
+    (`io/common/hdf5/_parsers.py`), because ITK-H5 is not migrated yet.
+    Status: open until ITK-H5 is migrated.
+48. An untouched HDF5 file is saved byte for byte only when h5py wrote
+    it with the attribute and creation order of brainhops and with
+    contiguous datasets, which includes a fixture in the layout of
+    nitransforms. Chunked or compressed datasets and other attribute
+    orders are written back as contiguous datasets with the same
+    decoded content. Files written by fslpy 0.1.0 are rewritten in the
+    current layout. h5py writes different bytes to a `BytesIO` than to
+    a file, so the checks compare files with files and buffers with
+    buffers. Status: accepted.
+49. The X5 options `chain` and `position` select what is decoded, but
+    they do not count as overrides, so a file read with `chain=1` is
+    written back whole. An assigned `input` or `output` does count.
+    Status: open, and a decision is needed on whether options should
+    count as overrides.
+50. `_read_only_field` (`io/transformations/x5/_blocks.py:362`) makes
+    read-only the vectors in voxel units that are computed afresh and
+    are not a view of the record. An edit made in place would still be
+    lost, because the writer writes the node that it recognizes by
+    identity. Status: open.
+51. Saving a plain `Affine`, or a lazy NIfTI displacement field, to an
+    `.x5` file with `io.save` either has no converter and raises
+    `ConversionError`, or writes an empty chain. The problem is older
+    than this work and out of its scope. Status: open.
