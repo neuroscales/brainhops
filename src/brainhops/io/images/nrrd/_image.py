@@ -755,7 +755,13 @@ def _encoded(
     sizes = [0] * ndim
     for j, i in enumerate(order):
         sizes[i] = shape[j]
-    matched = held is not None and tuple(held.sizes) == tuple(sizes)
+    # The shape is that of the base when the axes are stored in its order
+    # and with its sizes.
+    matched = (
+        held is not None
+        and list(image_order(held)) == list(order)
+        and tuple(held.sizes) == tuple(sizes)
+    )
     encoding = _target_encoding(held, options["encoding"])
     endian = options["endian"]
     if endian is not None and endian not in ("little", "big"):
@@ -801,7 +807,7 @@ def _encoded(
         fields["kinds"] = " ".join(_kinds(roles, order))
 
     # --- geometry -------------------------------------------------
-    if matched and _keeps_geometry(image, held, order, options["space"]):
+    if matched and _keeps_geometry(image, held, options["space"]):
         for name in _GEOMETRY + _PER_AXIS:
             if name in held.fields:
                 fields[name] = held.fields[name]
@@ -909,21 +915,16 @@ def _same_storage(
 
 
 def _keeps_geometry(
-    image: NrrdImage,
-    held: NrrdRaw,
-    order: tx.Sequence[int],
-    space: tx.Optional[str],
+    image: NrrdImage, held: NrrdRaw, space: tx.Optional[str]
 ) -> bool:
     """Tell whether the geometry fields of the base are written as stored.
 
-    They are when the axes are stored in the order of the base, `space`
-    names the space of the base or is not given, and the preferred
-    transformation is the one that the base decodes to, exactly. The
-    test cannot be whether `transformations` was assigned, because
-    `from_instance` and `replace` assign the decoded list.
+    The image must have the shape of the base. The fields are kept when
+    `space` names the space of the base or is not given, and the
+    preferred transformation is the one that the base decodes to,
+    exactly. The test cannot be whether `transformations` was assigned,
+    because `from_instance` and `replace` assign the decoded list.
     """
-    if list(image_order(held)) != list(order):
-        return False
     if space is not None:
         key = str(space).lower()
         if _SPACE_NAMES.get(key, key) != held.space:
