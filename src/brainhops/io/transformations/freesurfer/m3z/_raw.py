@@ -1,16 +1,16 @@
-"""Raw content of a FreeSurfer morph (`.m3z`), as it is stored.
+"""The record of a FreeSurfer morph (`.m3z`), which holds the whole file.
 
-The structs mirror the file one to one, so that reading and writing a
-file reproduces it. The layout follows `__m3zRead` and `__m3zWrite` in
-FreeSurfer's `utils/gcamorph.cpp`; the package documentation gives the
-full specification.
+The classes of this module mirror the file one to one, so that reading
+and writing a file reproduces it. The layout follows `__m3zRead` and
+`__m3zWrite` in FreeSurfer's `utils/gcamorph.cpp`, and the package
+documentation gives the full specification.
 """
 
 __all__ = [
     "GCAM_RAS",
     "GCAM_VOX",
     "M3zGeometry",
-    "M3zStruct",
+    "M3zRaw",
     "M3zXform",
     "read_m3z",
     "write_m3z",
@@ -18,12 +18,21 @@ __all__ = [
 
 import gzip
 import struct as _struct
+import zlib
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Magic, field
+from bagof.magic import HIDE_IF_NONE, Magic, field, replace
 
-from brainhops.io.base.parsers import ParserContentError
+from brainhops._core import path
+from brainhops._core.streams import preserve_position
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    BinaryFileWriter,
+    Confidence,
+    ParserContentError,
+    SnifferContentError,
+)
 
 # io
 from brainhops.io.common.freesurfer._geometry import (
@@ -51,9 +60,6 @@ TAG_GCAMORPH_TYPE = 11
 TAG_GCAMORPH_LABELS = 12
 TAG_MGH_XFORM = 31
 
-_TAGS = (TAG_GCAMORPH_GEOM, TAG_GCAMORPH_TYPE, TAG_GCAMORPH_LABELS)
-"""The tags that this module decodes, besides `TAG_MGH_XFORM`."""
-
 MATRIX_STRLEN = 4 * 4 * 100
 """Length of the text buffer into which FreeSurfer writes a matrix."""
 
@@ -79,9 +85,13 @@ _GEOM_SIZE = _GEOM.size + _FNAME_LEN
 
 _GZIP_MAGIC = b"\x1f\x8b"
 
+# This many compressed bytes are enough to hold the 24-byte header once
+# they are decompressed.
+_SNIFF_SIZE = 1024
+
 
 # ----------------------------------------------------------------------
-#   STRUCTS
+#   RECORD
 # ----------------------------------------------------------------------
 
 
@@ -202,11 +212,37 @@ class M3zXform(Magic, frozen=True, repr=HIDE_IF_NONE):
         return cls(buffer=buffer.ljust(MATRIX_STRLEN, b"\0"))
 
 
-class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
-    """Content of a morph file, as `M3zMorph.struct` holds it.
+class M3zRaw(
+    Magic,
+    BinaryFileReader,
+    BinaryFileWriter,
+    frozen=True,
+    eq=False,
+    repr=HIDE_IF_NONE,
+):
+    """Record of a morph file, which holds the whole file as it is parsed.
 
-    Node arrays are indexed `[x, y, z]` with x slowest, the Fortran order of
-    the node grid. Structs compare by identity, because the arrays are large.
+    A morph is a single gzip stream in which the node arrays follow the
+    header directly, so the file is read in one pass and the record
+    holds all of it: the header, the original positions, the positions
+    and the GCA node indices of the nodes, and the tags that follow
+    them. The metadata of a morph,
+    [`M3zMetadata`][brainhops.io.transformations.freesurfer.m3z.M3zMetadata],
+    holds a record, and an
+    [`M3zMorph`][brainhops.io.transformations.freesurfer.m3z.M3zMorph]
+    decodes its chain of transformations from the record of its
+    metadata.
+
+    A record is never changed in place, so that several objects can
+    share it. The class is frozen, and the arrays that a file was read
+    into are read-only. A changed record is made with
+    [`replace`][bagof.magic.replace], which shares the arrays that it
+    does not replace, and [`copy`][] does the same without changing
+    anything.
+
+    Node arrays are indexed `[x, y, z]` with x slowest, the Fortran
+    order of the node grid. Records compare by identity, because the
+    arrays are large.
 
     Attributes
     ----------
@@ -228,7 +264,8 @@ class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
     atlas : M3zGeometry or None
         Target geometry from `TAG_GCAMORPH_GEOM`, or `None`.
     type : int or None
-        `GCAM_VOX` or `GCAM_RAS` from `TAG_GCAMORPH_TYPE`. `None` means voxels.
+        `GCAM_VOX` or `GCAM_RAS` from `TAG_GCAMORPH_TYPE`. `None` means
+        voxels.
     labels : (W, H, D) int32 array or None
         Node labels, from `TAG_GCAMORPH_LABELS`.
     xform : M3zXform or None
@@ -252,6 +289,15 @@ class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
     xform: tx.Optional[M3zXform] = None
     tags: tx.Tuple[int, ...] = ()
     trailing: bytes = field(default=b"", repr=False)
+
+    def copy(self) -> "M3zRaw":
+        """Return a copy of the record that shares its arrays.
+
+        The record is frozen and its arrays are never changed in place,
+        so the copy does not duplicate the arrays, which take up most of
+        a morph.
+        """
+        return replace(self)
 
     @property
     def shape(self) -> _3Ints:
@@ -285,6 +331,99 @@ class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
         zero = (self.original == 0).all(-1) & (self.positions == 0).all(-1)
         return np.asarray(zero)
 
+    # --- sniff --------------------------------------------------------
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Score an open binary file from its first bytes only.
+
+        A morph takes up tens of megabytes, but its header takes only 24
+        bytes, so only the start of the file is read, and the position
+        of the stream is restored.
+        """
+        with preserve_position(file):
+            head = file.read(_SNIFF_SIZE)
+        return cls.sniff_bytes(head, error=error, **kwargs)
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Score bytes, gzipped or not.
+
+        A morph starts with the version `1.0`, followed by a positive
+        shape and spacing (see `read_header`).
+        """
+        head = bytes(content)
+        if is_gzip(head):
+            head = _gunzip_head(head)
+        if read_header(head) is not None:
+            return Confidence.CERTAIN
+        if error:
+            if error is True:
+                error = SnifferContentError
+            raise error("Not a FreeSurfer morph (m3z) file.")
+        return Confidence.NO
+
+    # --- from ---------------------------------------------------------
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO) -> "M3zRaw":
+        """Read a record from the rest of an open binary file.
+
+        The stream is read to its end, because the node arrays sit
+        inside the gzip stream, right after the header, and the tags
+        follow them.
+        """
+        return cls.from_bytes(file.read())
+
+    @classmethod
+    def from_bytes(cls, content: bytes) -> "M3zRaw":
+        """Read a record from the bytes of a `.m3z` or `.m3d` file.
+
+        Raises
+        ------
+        ParserContentError
+            If the bytes are not a morph.
+        """
+        return read_m3z(content)
+
+    # --- to -----------------------------------------------------------
+
+    def to_bytes(self, compress: bool = True) -> bytes:
+        """Return the content of the morph file that the record holds.
+
+        The content is gzipped (`.m3z`) unless `compress=False`
+        (`.m3d`).
+        """
+        return write_m3z(self, compress=compress)
+
+    def to_filename(
+        self,
+        filename: path.FilenameLike,
+        compress: tx.Optional[bool] = None,
+    ) -> None:
+        """Write the record to a file.
+
+        By default, the file is gzipped unless its name ends in `.m3d`,
+        as in FreeSurfer. The content is encoded before the file is
+        opened.
+        """
+        filename = path.Path(filename)
+        if compress is None:
+            compress = not str(filename).endswith(".m3d")
+        content = self.to_bytes(compress=compress)
+        with filename.open(self._WRITE_MODE) as f:
+            f.write(content)
+
 
 # ----------------------------------------------------------------------
 #   READING
@@ -294,6 +433,27 @@ class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
 def is_gzip(content: bytes) -> bool:
     """Return whether bytes are gzip-compressed."""
     return bytes(content[:2]) == _GZIP_MAGIC
+
+
+def _gunzip_head(content: bytes) -> bytes:
+    """Decompress the start of a gzip stream, up to `_SNIFF_SIZE` bytes."""
+    try:
+        stream = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        return stream.decompress(content, _SNIFF_SIZE)
+    except zlib.error:
+        return b""
+
+
+def _read_only(array: np.ndarray) -> np.ndarray:
+    """Make an array that a record holds read-only, and return it.
+
+    The array must be one that the reader has just made, because the
+    flag is set on the array itself. A record is never changed in place,
+    and a read-only array makes an edit in place fail instead of
+    changing every object that shares the record.
+    """
+    array.flags.writeable = False
+    return array
 
 
 def read_header(content: bytes) -> tx.Optional[tx.Tuple]:
@@ -334,7 +494,7 @@ def _need(content: bytes, offset: int, size: int, what: str) -> None:
         raise ParserContentError(f"The morph file is truncated in {what}.")
 
 
-def read_m3z(content: bytes) -> M3zStruct:
+def read_m3z(content: bytes) -> M3zRaw:
     """Decode the bytes of a morph, gzipped (`.m3z`) or not (`.m3d`).
 
     Raises
@@ -385,7 +545,8 @@ def read_m3z(content: bytes) -> M3zStruct:
             labels = np.frombuffer(
                 content, dtype=">i4", count=count, offset=offset + 4
             )
-            fields["labels"] = labels.reshape(shape).astype(np.int32)
+            labels = labels.reshape(shape).astype(np.int32)
+            fields["labels"] = _read_only(labels)
             size = 4 * count
         elif tag == TAG_MGH_XFORM:
             _need(content, offset + 4, 12 + MATRIX_STRLEN, "its matrix")
@@ -405,13 +566,13 @@ def read_m3z(content: bytes) -> M3zStruct:
     else:
         trailing = content[offset:]
 
-    return M3zStruct(
+    return M3zRaw(
         version=version,
         spacing=spacing,
         exp_k=exp_k,
-        original=nodes["orig"].astype(np.float32),
-        positions=nodes["pos"].astype(np.float32),
-        index=nodes["index"].astype(np.int32),
+        original=_read_only(nodes["orig"].astype(np.float32)),
+        positions=_read_only(nodes["pos"].astype(np.float32)),
+        index=_read_only(nodes["index"].astype(np.int32)),
         tags=tuple(tags),
         trailing=bytes(trailing),
         **fields,
@@ -437,13 +598,14 @@ def _write_geometry(geom: M3zGeometry) -> bytes:
     return _GEOM.pack(*values) + fname
 
 
-def write_m3z(struct: M3zStruct, compress: bool = True) -> bytes:
+def write_m3z(raw: M3zRaw, compress: bool = True) -> bytes:
     """Encode a morph as FreeSurfer's `__m3zWrite` does.
 
-    Tags are written in the order of `struct.tags`, followed by any tag whose
-    content the struct holds but does not list, in FreeSurfer's order.
+    Tags are written in the order of `raw.tags`, followed by any tag
+    whose content the record holds but does not list, in FreeSurfer's
+    order.
     """
-    positions = np.asarray(struct.positions)
+    positions = np.asarray(raw.positions)
     shape = tuple(positions.shape[:3])
     if positions.ndim != 4 or positions.shape[-1] != 3:
         raise ValueError(
@@ -452,44 +614,41 @@ def write_m3z(struct: M3zStruct, compress: bool = True) -> bytes:
         )
     nodes = np.empty(shape, dtype=_NODE)
     nodes["pos"] = positions
-    original = positions if struct.original is None else struct.original
+    original = positions if raw.original is None else raw.original
     nodes["orig"] = np.asarray(original)
-    if struct.index is None:
+    if raw.index is None:
         nodes["index"] = 0
     else:
-        nodes["index"] = np.asarray(struct.index)
+        nodes["index"] = np.asarray(raw.index)
     chunks = [
-        _HEADER.pack(
-            struct.version, *shape, int(struct.spacing), struct.exp_k
-        ),
+        _HEADER.pack(raw.version, *shape, int(raw.spacing), raw.exp_k),
         nodes.tobytes(),
     ]
 
     present = {
-        TAG_GCAMORPH_GEOM: struct.image is not None
-        or struct.atlas is not None,
-        TAG_GCAMORPH_TYPE: struct.type is not None,
-        TAG_GCAMORPH_LABELS: struct.labels is not None,
-        TAG_MGH_XFORM: struct.xform is not None,
+        TAG_GCAMORPH_GEOM: raw.image is not None or raw.atlas is not None,
+        TAG_GCAMORPH_TYPE: raw.type is not None,
+        TAG_GCAMORPH_LABELS: raw.labels is not None,
+        TAG_MGH_XFORM: raw.xform is not None,
     }
-    order = [t for t in struct.tags if present.get(t)]
+    order = [t for t in raw.tags if present.get(t)]
     order += [t for t, p in present.items() if p and t not in order]
     for tag in order:
         chunks.append(_struct.pack(">i", tag))
         if tag == TAG_GCAMORPH_GEOM:
-            chunks.append(_write_geometry(struct.image_geometry))
-            chunks.append(_write_geometry(struct.atlas_geometry))
+            chunks.append(_write_geometry(raw.image_geometry))
+            chunks.append(_write_geometry(raw.atlas_geometry))
         elif tag == TAG_GCAMORPH_TYPE:
-            chunks.append(_struct.pack(">i", int(struct.type)))
+            chunks.append(_struct.pack(">i", int(raw.type)))
         elif tag == TAG_GCAMORPH_LABELS:
-            labels = np.asarray(struct.labels).reshape(shape)
+            labels = np.asarray(raw.labels).reshape(shape)
             chunks.append(labels.astype(">i4").tobytes())
         elif tag == TAG_MGH_XFORM:
-            xform = struct.xform
+            xform = raw.xform
             buffer = bytes(xform.buffer)[:MATRIX_STRLEN]
             chunks.append(_struct.pack(">iq", xform.tag, xform.length))
             chunks.append(buffer.ljust(MATRIX_STRLEN, b"\0"))
-    chunks.append(bytes(struct.trailing))
+    chunks.append(bytes(raw.trailing))
     content = b"".join(chunks)
     if compress:
         content = gzip.compress(content, mtime=0)

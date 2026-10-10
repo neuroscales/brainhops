@@ -103,6 +103,20 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.transformations.freesurfer.m3z": Package(
+        names=frozenset(
+            {
+                "GCAM_RAS",
+                "GCAM_VOX",
+                "M3zFormat",
+                "M3zGeometry",
+                "M3zMetadata",
+                "M3zMorph",
+                "M3zRaw",
+                "M3zXform",
+            }
+        ),
+    ),
     "brainhops.io.transformations.x5": Package(
         names=frozenset(
             {

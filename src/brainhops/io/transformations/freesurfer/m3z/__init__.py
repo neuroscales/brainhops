@@ -108,26 +108,33 @@ atlas RAS --(node vox2ras)^-1--> node voxels --positions--> source voxels
   applies in the last half-cell, and it extends the field beyond the
   grid.
 
-The attribute `M3zMorph.struct`, an [`M3zStruct`][], keeps the content of
-the file:
+The file is read in one pass, and its whole content is held as an
+[`M3zRaw`][] record by the [`M3zMetadata`][] of the morph. The chain of
+the morph is decoded from that record, and its field holds the positions
+of the record without a copy:
 
 ```python
-morph.struct.spacing                  # distance between nodes
-morph.struct.atlas_geometry.vox2ras   # atlas voxel-to-RAS
-morph.struct.image_geometry.vox2ras   # source voxel-to-RAS
-morph.struct.xform.matrix             # the linear transform, if any
+record = morph.metadata.raw
+record.spacing                  # distance between nodes
+record.atlas_geometry.vox2ras   # atlas voxel-to-RAS
+record.image_geometry.vox2ras   # source voxel-to-RAS
+record.xform.matrix             # the linear transform, if any
 ```
+
+[`M3zMetadata`][] reads the same file without decoding a chain. A morph
+has no header that can be read without its nodes, so reading the
+metadata reads the whole file.
 
 ## Writing
 
 A morph that has not been modified is written back byte for byte, apart
 from differences in the gzip compression. A morph whose chain was
-assigned, either to change its field or to build a morph from scratch, is
-written from the chain, as described in [`M3zMorph.to_struct`][]. The atlas
-geometry is then rebuilt from the first affine of the chain, and the
-source geometry from the last affine when the positions are voxel
+assigned, either to change its field or to build a morph from scratch,
+is written from the chain, as described in [`M3zMorph.to_raw`][]. The
+atlas geometry is then rebuilt from the first affine of the chain, and
+the source geometry from the last affine when the positions are voxel
 coordinates. Whatever the chain does not describe, such as the original
-positions and the labels, is kept from the struct when the node grid is
+positions and the labels, is kept from the record when the node grid is
 unchanged.
 
 !!! note "Out of scope"
@@ -141,14 +148,15 @@ __all__ = [
     "GCAM_VOX",
     "M3zFormat",
     "M3zGeometry",
+    "M3zMetadata",
     "M3zMorph",
-    "M3zReaderWriter",
-    "M3zStruct",
+    "M3zRaw",
     "M3zXform",
 ]
 
-from ._struct import GCAM_RAS, GCAM_VOX, M3zGeometry, M3zStruct, M3zXform
-from ._xform import M3zFormat, M3zMorph, M3zReaderWriter
+from ._metadata import M3zMetadata
+from ._raw import GCAM_RAS, GCAM_VOX, M3zGeometry, M3zRaw, M3zXform
+from ._xform import M3zFormat, M3zMorph
 
 # Importing the private converters registers them with the data model,
 # so that a conversion into one of these formats, such as
