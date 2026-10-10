@@ -187,6 +187,25 @@ A format object's `to_raw()` may return the record that the object
 holds, because the writer only reads it. `MetadataFormat.to_raw()`
 returns a copy of the record, because the caller may change it.
 
+For chain formats (X5, M3Z), assigned `input`/`output` systems count as
+overrides: `to_raw()` re-encodes and the writer checks they are
+RAS-compatible, raising `UnrepresentableTransformationError` otherwise.
+
+Each class states its rule for overrides in `to_raw()` explicitly, and a
+test probes it by assigning each public attribute and checking whether
+`to_raw()` still returns the held record. An attribute that is neither
+honored on write nor refused is the bug that recurred in the LTA data,
+the X5 systems and the M3Z systems. Where nothing was assigned, a class
+returns the held record after a cheap check, and does not encode it
+again.
+
+The views that a class decodes from the record are read-only by
+construction, and do not rely on the flags of the arrays in the record.
+
+A conformance check that is vacuous for a format is logged in the comment
+of the exemplar of that format and in the list of tensions, instead of
+getting a generic hook.
+
 `<X>Metadata` holds no file handle. The format object builds the data
 proxy from the source and from the record, which says where the data
 is. Metadata therefore stays cheap to copy and can be pickled, which
@@ -311,7 +330,11 @@ The third pass moves MGH, AFNI, MRtrix, NRRD and MINC. MGH gets a
 record with its header and its tags, and uses nibabel's proxy. For the
 others, the private `_header` becomes the record, `dataobj` becomes
 `raw`, and the existing transpositions become `to_model` and `to_disk`.
-The intensity scaling of MRtrix stays out of the view.
+The intensity scaling of MRtrix stays out of the view. For these image
+formats, the pass also decides which header fields the record keeps
+and which ones the geometry encoding replaces, and whether `replace` and
+`from_instance` keep the proxy. Its tests compare compressed variants of
+a file after decompression.
 
 The fourth pass moves Zarr, with one record per resolution level, and
 FLIRT. The class variable workaround of FLIRT is removed once it is
@@ -376,8 +399,9 @@ its status.
    `from_file`, because the adapter's `from_filename` closes the stream
    when it returns. X5 has no name to reopen when its file is read from
    a stream or from bytes, so it reads all its fields at once in that
-   case, while NIfTI keeps the stream of the caller. Status: open, and
-   the second part is a rule for every pass.
+   case, while NIfTI keeps the stream of the caller. Status: the first
+   part is a rule for every pass, and the second part is accepted in
+   the pass 2b review (146c69b), because there is no name to reopen.
 10. `_holds` (`io/base/_save.py:220`) refuses a format that does not
     take every constructor field of its model. A format must therefore
     keep `data` in its constructor even though `data` becomes a view,
@@ -462,7 +486,9 @@ its status.
     file, such as detached NRRD and MINC, need a hook in their exemplar
     in the third pass. HDF5 has no header before its data, so X5 needed
     `cut` and `header` hooks for this check in pass 2b. Status: accepted
-    in pass 2b for HDF5, and open for NRRD and MINC.
+    in pass 2b for HDF5 (146c69b), where no check is weakened, because a
+    file that the `cut` hook truncates raises `OSError` on any read of a
+    field, and open for NRRD and MINC.
 24. An untouched save is identical byte for byte only when the geometry
     is encoded back exactly. A `qform` or `sform` whose code is 0 used
     to be written back with code 2, and the padding before `vox_offset`
@@ -522,8 +548,15 @@ its status.
     `__dict__["_decoded_nodes"]` (`io/transformations/x5/_xform.py`),
     because the writer recognizes the decoded nodes by their identity
     after the `transformations` setter has dropped
-    `_cache_transformations`. Status: open for both formats, and the
-    FNIRT cache is older than pass 1c.
+    `_cache_transformations`. An element is written as its node only if
+    this transformation decoded it from its own record. An element taken
+    from another object, or a copy made with `replace`, is encoded again
+    and loses the extra content of the node, which is its metadata, its
+    inverse and its Jacobian. A cleaner design would need an
+    `X5Affine(Affine)` subclass that carries its node, and that is left
+    to the maintainer. Status: accepted for X5 in the pass 2b review
+    (146c69b), which follows FNIRT, and open for FNIRT, whose cache is
+    older than pass 1c.
 37. In the conformance tests, check 9 does not convert NiftyReg, ITK
     and FNIRT fields to another format, because they have no converter
     until #312, and it compares `raw` and `data` only for models that
@@ -564,13 +597,14 @@ its status.
 46. The X5 record holds the lazy `DelayedH5Array` proxies, so the data
     lives in the metadata rather than on the format object
     (`io/transformations/x5/_raw.py`). The nodes and their arrays form
-    one record, which is why this is accepted for now. A proxy holds
-    only a file name, so the metadata can still be pickled, but copied
-    metadata refers to the source file by its name. Status: open for
-    review.
+    one record, and HDF5 has no split between a header and its data. A
+    proxy holds only a file name, so the metadata can still be pickled,
+    but copied metadata refers to the source file by its name. Status:
+    accepted in the pass 2b review (146c69b).
 47. The shared HDF5 adapter still reads the `keep_open` option
     (`io/common/hdf5/_parsers.py`), because ITK-H5 is not migrated yet.
-    Status: open until ITK-H5 is migrated.
+    The `TypeError` that X5 raises for `keep_open=` comes from its
+    constructor. Status: accepted until ITK-H5 is migrated.
 48. An untouched HDF5 file is saved byte for byte only when h5py wrote
     it with the attribute and creation order of brainhops and with
     contiguous datasets, which includes a fixture in the layout of
@@ -579,18 +613,81 @@ its status.
     decoded content. Files written by fslpy 0.1.0 are rewritten in the
     current layout. h5py writes different bytes to a `BytesIO` than to
     a file, so the checks compare files with files and buffers with
-    buffers. Status: accepted.
+    buffers. A file that was opened with h5py in `r+` mode is rewritten
+    differently, while a contiguous file that h5py wrote is identical.
+    Status: accepted in the pass 2b review (146c69b).
 49. The X5 options `chain` and `position` select what is decoded, but
     they do not count as overrides, so a file read with `chain=1` is
     written back whole. An assigned `input` or `output` does count.
-    Status: open, and a decision is needed on whether options should
-    count as overrides.
+    Read options never change the record, as for the `log=` option of
+    NIfTI, and writing only the selection would silently drop nodes.
+    The idiom to write only the selected chain is
+    `xform.transformations = list(xform)`. Status: decided in the pass
+    2b review (146c69b), where options do not count as overrides.
 50. `_read_only_field` (`io/transformations/x5/_blocks.py:362`) makes
     read-only the vectors in voxel units that are computed afresh and
     are not a view of the record. An edit made in place would still be
     lost, because the writer writes the node that it recognizes by
-    identity. Status: open.
+    identity. Status: accepted in the pass 2b review (146c69b), which
+    is consistent with the read-only views of NIfTI and LTA.
 51. Saving a plain `Affine`, or a lazy NIfTI displacement field, to an
     `.x5` file with `io.save` either has no converter and raises
     `ConversionError`, or writes an empty chain. The problem is older
     than this work and out of its scope. Status: open.
+52. `X5Raw.copy()` shared the metadata dictionaries of the nodes between
+    the copy and the source. Status: resolved in the pass 2b review
+    (146c69b), where the dictionaries are copied deeply.
+53. The legacy deformation fields written by fslpy were read eagerly.
+    Status: resolved in the pass 2b review (146c69b), where they are
+    read lazily or the eager read is documented.
+54. `X5Raw.from_raw` did not check `chain` and `position` when it was
+    called, unlike `from_h5`. Status: resolved in the pass 2b review
+    (146c69b), where it checks them eagerly.
+55. Two minor costs of X5 are logged without a fix. The `selection`
+    warns on every read of a multi-node file that is read without a
+    chain, although in practice it warns once because the decoded result
+    is cached, and the writer reads each lazy field whole to copy it.
+    Status: accepted.
+56. `M3zMorph` has no `raw` field. The positions live in the record, and
+    the field is a read-only view of `record.positions`
+    (`io/transformations/freesurfer/m3z/_xform.py`). Status: accepted in
+    pass 2c, in the same category as the matrix of LTA.
+57. `M3zMetadata.to_raw()` shares the arrays of the record instead of
+    copying them, and pickling the metadata serializes the whole morph
+    (`io/transformations/freesurfer/m3z/_metadata.py`). Dropping the
+    arrays would make the record unwritable, and sharing them keeps
+    copies free. Status: accepted in pass 2c.
+58. Assigning a chain to an M3Z transformation does not build a record
+    until the file is written, because the encoding needs the writer
+    options and may refuse. X5 behaves in the same way. Status: accepted
+    in pass 2c.
+59. `M3zMorph.to_raw(spacing, image_shape, atlas_shape)` takes writer
+    options, unlike `to_raw` of LTA and X5, because a chain cannot say
+    the shape of an image. Status: accepted in pass 2c.
+60. Assigned `input` and `output` systems were not counted as overrides
+    by M3Z, so a changed system was silently ignored on write. Status:
+    resolved in pass 2c (730ef86), as a rule for every chain format, and
+    the writer checks that the file can express the systems, which are
+    RASmm for X5 and M3Z, and refuses otherwise.
+61. `M3zMetadata().save` raises `WriterError` for metadata without a
+    record, while LTA and X5 write an empty record. FreeSurfer cannot
+    read a morph that has no nodes. Status: accepted in pass 2c.
+62. The read-only protection is a flag on the arrays that the reader
+    builds. Arrays that are unpickled come back writable, and the arrays
+    of an `M3zRaw` that a user builds are not protected, while the
+    decoded field is always a read-only view. Status: accepted in pass
+    2c. The lesson is to make the decoded views read-only by
+    construction, and not to trust the flags of the record.
+63. Only `M3zRaw` implements `from_bytes`. The other classes go through
+    the `BytesIO` adapter, which has no measurable copy. Status:
+    accepted in pass 2c.
+64. The helper `_decompressed` of the conformance harness recognizes a
+    compressed file by the gzip magic number and not by a `.gz` suffix.
+    Status: accepted in pass 2c.
+65. `M3zMorph.from_instance` given a sequence of transformations
+    relabels any chain, and the writer refuses it later. X5 behaves in
+    the same way (item 51), and the problem is older than this work.
+    Status: open.
+66. Check 6 of the conformance test is vacuous for the formats that are
+    parsed in one pass, which are LTA and M3Z, because the truncated
+    copy is the whole file. Status: accepted in pass 2c.
