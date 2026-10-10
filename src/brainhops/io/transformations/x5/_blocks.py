@@ -21,12 +21,12 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
-from brainhops.io.common.hdf5 import DelayedH5Array
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserNotImplementedError,
     UnrepresentableTransformationError,
 )
+from brainhops.io.common.hdf5 import DelayedH5Array
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -212,7 +212,6 @@ def _read(stored: tx.Any) -> ArrayProtocol:
     return array
 
 
-
 def node_to_transformation(node: X5Node) -> _xforms.Transformation:
     """Decode an X5 node into a transformation from RAS to RAS.
 
@@ -360,16 +359,37 @@ def _decode_bspline(node: X5Node) -> X5BSplineField:
     return X5BSplineField.from_ras(field, knots)
 
 
-def _vector_last(node: X5Node) -> ArrayProtocol:
-    """Return the node's field with its `vector` axis moved last."""
-    field = _read(node.transform)
-    backend = get_array_backend(field)
-    kinds = node.dimension_kinds
+def _field_to_model(
+    stored: tx.Any, kinds: tx.Optional[tx.Sequence[str]]
+) -> ArrayProtocol:
+    """Return a field with its `vector` axis last, from the stored array.
+
+    `kinds` is the `DimensionKinds` dataset of the node, which says what
+    each axis of the stored array holds. When it places the vector axis
+    elsewhere, that axis is moved last. The stored array is read with
+    `_read`.
+    """
+    field = _read(stored)
     if kinds and len(kinds) == field.ndim and "vector" in kinds:
         axis = list(kinds).index("vector")
         if axis != field.ndim - 1:
-            field = backend.moveaxis(field, axis, -1)
+            field = get_array_backend(field).moveaxis(field, axis, -1)
     return field
+
+
+def _field_to_disk(field: ArrayProtocol) -> ArrayProtocol:
+    """Return the array that a node stores for a field.
+
+    The writer declares the vector axis last in `DimensionKinds`, so the
+    field, whose vector axis is last, is stored as it is. With these
+    kinds, `_field_to_model` returns the field unchanged.
+    """
+    return field
+
+
+def _vector_last(node: X5Node) -> ArrayProtocol:
+    """Return the node's field with its `vector` axis moved last."""
+    return _field_to_model(node.transform, node.dimension_kinds)
 
 
 # ----------------------------------------------------------------------
@@ -540,7 +560,7 @@ def _field_node(
         type="nonlinear",
         subtype="densefield",
         representation=representation,
-        transform=field,
+        transform=_field_to_disk(field),
         dimension_kinds=_KINDS,
         domain=X5Domain(
             grid=True,

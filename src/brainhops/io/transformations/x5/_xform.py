@@ -61,9 +61,7 @@ def _check_selection(
         )
 
 
-def _set_metadata(
-    self: "X5Transform", value: tx.Optional[X5Metadata]
-) -> None:
+def _set_metadata(self: "X5Transform", value: tx.Optional[X5Metadata]) -> None:
     """Store the metadata and forget the nodes decoded from the old record.
 
     The chain decoded from the old record is deleted by the property, which

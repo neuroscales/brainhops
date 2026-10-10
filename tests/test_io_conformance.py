@@ -41,6 +41,7 @@ from brainhops.datamodel.transformations import (
     Affine,
     Identity,
     Scaling,
+    Sequence,
     Transformation,
 )
 from brainhops.io.base._base import Format, register_format
@@ -74,10 +75,7 @@ try:
     import nibabel as nb
     from nibabel.arrayproxy import ArrayProxy
 
-    from brainhops.datamodel.transformations import (
-        DisplacementField,
-        Sequence,
-    )
+    from brainhops.datamodel.transformations import DisplacementField
     from brainhops.io.common.nifti._views import (
         _affine_to_disk,
         _affine_to_model,
@@ -115,6 +113,30 @@ try:
     from brainhops.io.transformations.spm import SpmCoordinatesField
 except ImportError:
     nb = None
+
+try:
+    import h5py
+
+    from brainhops.io.common.hdf5 import DelayedH5Array
+    from brainhops.io.transformations.base.fields import (
+        ras_displacement_chain,
+    )
+    from brainhops.io.transformations.x5 import (
+        X5DisplacementField,
+        X5Metadata,
+        X5Transform,
+    )
+    from brainhops.io.transformations.x5._blocks import (
+        _KINDS as _X5_KINDS,
+    )
+    from brainhops.io.transformations.x5._blocks import (
+        _field_to_disk as _x5_field_to_disk,
+    )
+    from brainhops.io.transformations.x5._blocks import (
+        _field_to_model as _x5_field_to_model,
+    )
+except ImportError:
+    h5py = None
 
 # ----------------------------------------------------------------------
 #   TOY FORMAT
@@ -483,11 +505,50 @@ class Exemplar(tx.NamedTuple):
 
     The data of a small format may live in the record of its metadata, as
     the matrix of an LTA file does, and such a format has no `raw` field.
-    The checks then read the stored data with this function, `proxies`
-    are the types that it returns just after a file is read, and an object
-    built from data holds metadata with a new record instead of no
-    metadata. The function is `None` for a format that stores its data in
-    `raw`.
+    The checks then read the stored data with this function, and `proxies`
+    are the types that it returns just after a file is read. The function
+    is `None` for a format that stores its data in `raw`.
+    """
+
+    built_record: bool = False
+    """Whether an object built from data holds metadata with a new record.
+
+    Setting the matrix of an LTA file stores it in a new record. An object
+    of any other format built from data has no metadata.
+    """
+
+    view: str = "data"
+    """Name of the cached view that is decoded from the stored data.
+
+    A format whose model is a chain, such as X5, decodes and caches its
+    `transformations` instead of a `data` array.
+    """
+
+    data: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+    """Function that returns the data of an object, or `None` for `data`.
+
+    A format whose model is a chain has no `data`, so the checks read the
+    array of one of its elements instead.
+    """
+
+    set_data: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
+    """Function that gives an object new data, or `None` to set `data`."""
+
+    cut: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
+    """Function that copies a file without its data, or `None` to cut it.
+
+    The function receives the path of a file and the path of the copy. By
+    default the copy holds the bytes that the metadata writes, which are
+    the header of the file. An HDF5 file has no header before its data,
+    so an X5 copy keeps every group and attribute and stores its fields
+    in an external file that does not exist.
+    """
+
+    header: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+    """Function that summarizes metadata without reading the data.
+
+    It is `None` when the bytes that the metadata writes are the header of
+    the file, which the checks then compare.
     """
 
 
@@ -698,8 +759,125 @@ _LTA = Exemplar(
     derived=("homogeneous_matrix",),
     binary=False,
     stored=_lta_stored,
+    built_record=True,
 )
 EXEMPLARS[LtaTransformation] = _LTA
+
+
+# The model of an X5 file is a chain, whose first element here is a field
+# of displacements on an identity grid, so that its displacements in voxel
+# units are the stored RAS displacements.
+
+
+def _x5_field(data: tx.Any) -> tx.Any:
+    return X5DisplacementField.from_ras(data, np.eye(4))
+
+
+def _x5_data(xform: tx.Any) -> tx.Any:
+    return xform.transformations[0].displacement.data
+
+
+def _x5_set_data(xform: tx.Any, value: tx.Any) -> None:
+    xform.transformations = (_x5_field(value),)
+
+
+def _x5_stored(xform: tx.Any) -> tx.Any:
+    # The field of an X5 file lives in the record, and a chain that was
+    # assigned is encoded into a new record.
+    return xform.to_raw().nodes[0].transform
+
+
+def _x5_edit_record(record: tx.Any) -> tx.Any:
+    record.header.attrs["Edited"] = "yes"
+    return record
+
+
+def _x5_geometry(xform: tx.Any) -> np.ndarray:
+    return _chain_geometry(xform.transformations[0])
+
+
+def _x5_change_geometry(xform: tx.Any) -> None:
+    grid = np.diag([2.0, 3.0, 4.0, 1.0])
+    field = X5DisplacementField.from_ras(np.asarray(_x5_data(xform)), grid)
+    xform.transformations = (field,)
+
+
+def _x5_header(metadata: tx.Any) -> tx.Any:
+    """Return the record of X5 metadata without the values of its fields.
+
+    The shape of a lazy field is read from the file, but its values are
+    not.
+    """
+    nodes = [
+        (
+            node.type,
+            node.subtype,
+            node.representation,
+            node.metadata,
+            node.dimension_kinds,
+            type(node.transform),
+            tuple(node.transform.shape),
+            np.asarray(node.domain.mapping).tolist(),
+            node.domain.size,
+        )
+        for node in metadata.raw.nodes
+    ]
+    return metadata.raw.header, nodes
+
+
+def _x5_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy an X5 file whose fields cannot be read.
+
+    Every group and attribute is copied, and so is every dataset of at
+    most two dimensions. A larger dataset is declared in an external file
+    that is never written, so that its shape is known but reading its
+    values fails.
+    """
+    missing = str(target) + ".missing"
+    with h5py.File(source, "r") as old, h5py.File(target, "w") as new:
+        new.attrs.update(old.attrs)
+
+        def copy(name: str, item: tx.Any) -> None:
+            if isinstance(item, h5py.Group):
+                copied = new.require_group(name)
+            elif item.ndim > 2:
+                copied = new.create_dataset(
+                    name,
+                    shape=item.shape,
+                    dtype=item.dtype,
+                    external=[(missing, 0, h5py.h5f.UNLIMITED)],
+                )
+            else:
+                copied = new.create_dataset(name, data=item[()])
+            copied.attrs.update(item.attrs)
+
+        old.visititems(copy)
+
+
+if h5py is not None:
+    EXEMPLARS[X5Transform] = Exemplar(
+        metadata=X5Metadata,
+        suffix=".x5",
+        proxies=(DelayedH5Array,),
+        to_model=lambda raw: _x5_field_to_model(raw, _X5_KINDS),
+        to_disk=_x5_field_to_disk,
+        sample=_vectors,
+        edit_record=_x5_edit_record,
+        record_edited=lambda raw: raw.header.attrs.get("Edited") == "yes",
+        geometry=_x5_geometry,
+        change_geometry=_x5_change_geometry,
+        foreign=lambda data: Sequence(
+            [Sequence(ras_displacement_chain(data, np.eye(4)))]
+        ),
+        build=lambda data: X5Transform([_x5_field(data)]),
+        options=frozenset({"chain", "position"}),
+        stored=_x5_stored,
+        view="transformations",
+        data=_x5_data,
+        set_data=_x5_set_data,
+        cut=_x5_cut,
+        header=_x5_header,
+    )
 
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.afni.AfniImage",
@@ -751,7 +929,6 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.transformations.matrix.TsvMatrixAffine",
     "brainhops.io.transformations.matrix.TxtMatrixAffine",
     "brainhops.io.transformations.niftyreg.NiftyRegAffine",
-    "brainhops.io.transformations.x5.X5Transform",
     "brainhops.io.transformations.zarr.OmeZarrField",
 )
 """The registered formats that do not follow the design yet."""
@@ -879,16 +1056,47 @@ def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
     return exemplar.stored(obj)
 
 
-def _no_metadata_unless_stored(exemplar: Exemplar, obj: tx.Any) -> bool:
+def _has_the_metadata_of_new_data(exemplar: Exemplar, obj: tx.Any) -> bool:
     """Tell whether an object built from data has the metadata it should.
 
-    An object of a format that stores its data in `raw` has no metadata,
-    and an object of a format whose data lives in the record holds a new
-    record.
+    An object of a format whose data lives in the record holds a new
+    record, and an object of any other format has no metadata.
     """
-    if exemplar.stored is None:
-        return obj.metadata is None
-    return isinstance(obj.metadata, exemplar.metadata)
+    if exemplar.built_record:
+        return isinstance(obj.metadata, exemplar.metadata)
+    return obj.metadata is None
+
+
+def _data(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
+    """Return the data of an object."""
+    if exemplar.data is None:
+        return obj.data
+    return exemplar.data(obj)
+
+
+def _set_data(exemplar: Exemplar, obj: tx.Any, value: tx.Any) -> None:
+    """Give an object new data."""
+    if exemplar.set_data is None:
+        obj.data = value
+    else:
+        exemplar.set_data(obj, value)
+
+
+def _header(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
+    """Return what the metadata knows about a file, without its data."""
+    if exemplar.header is None:
+        return metadata.to_bytes()
+    return exemplar.header(metadata)
+
+
+def _cut(
+    exemplar: Exemplar, source: tx.Any, metadata: tx.Any, target: tx.Any
+) -> None:
+    """Write a copy of a file whose data cannot be read."""
+    if exemplar.cut is None:
+        _write_header(target, metadata.to_bytes())
+    else:
+        exemplar.cut(source, target)
 
 
 def _built(cls: type, exemplar: Exemplar, data: tx.Any) -> tx.Any:
@@ -960,12 +1168,12 @@ def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # no
     if exemplar.stored is not None:
         assert "raw" not in _init_names(cls)
     repr(loaded)
-    assert "_cache_data" not in vars(loaded)
+    assert "_cache_" + exemplar.view not in vars(loaded)
     assert isinstance(loaded.metadata, exemplar.metadata)
-    data = loaded.data
+    data = _data(exemplar, loaded)
     assert np.array_equal(np.asarray(data), exemplar.sample())
     # The view is decoded once, and reading it leaves the proxy in place.
-    assert loaded.data is data
+    assert _data(exemplar, loaded) is data
     assert isinstance(_stored(exemplar, loaded), exemplar.proxies)
 
 
@@ -976,16 +1184,17 @@ def test_03_setting_data_stores_raw(
     tmp_path,  # noqa: ANN001
 ) -> None:
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
-    for name in ("data",) + exemplar.derived:
+    views = (exemplar.view,) + exemplar.derived
+    for name in views:
         getattr(loaded, name)
         assert "_cache_" + name in vars(loaded)
     value = exemplar.sample() + 1
-    loaded.data = value
-    for name in ("data",) + exemplar.derived:
+    _set_data(exemplar, loaded, value)
+    for name in views:
         assert "_cache_" + name not in vars(loaded)
     stored = np.asarray(_stored(exemplar, loaded))
     assert np.array_equal(stored, exemplar.to_disk(value))
-    assert np.array_equal(np.asarray(loaded.data), value)
+    assert np.array_equal(np.asarray(_data(exemplar, loaded)), value)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1018,15 +1227,17 @@ def test_06_metadata_never_reads_data(
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    metadata = exemplar.metadata.load(_saved(cls, exemplar, tmp_path))
-    header = metadata.to_bytes()
-    # The file is cut after its header, so reading any data would fail.
+    source = _saved(cls, exemplar, tmp_path)
+    metadata = exemplar.metadata.load(source)
+    header = _header(exemplar, metadata)
+    # The data of the copy cannot be read, so reading any data would fail.
+    # The copy of most formats is the file cut after its header.
     truncated = _path(tmp_path, exemplar, "header")
-    _write_header(truncated, header)
-    assert exemplar.metadata.load(truncated).to_bytes() == header
+    _cut(exemplar, source, metadata, truncated)
+    assert _header(exemplar, exemplar.metadata.load(truncated)) == header
     dispatched = MetadataFormat.load(truncated)
     assert isinstance(dispatched, exemplar.metadata)
-    assert dispatched.to_bytes() == header
+    assert _header(exemplar, dispatched) == header
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1049,12 +1260,12 @@ def test_08_an_object_built_from_data_saves(
 ) -> None:
     value = exemplar.sample()
     built = _built(cls, exemplar, value)
-    assert _no_metadata_unless_stored(exemplar, built)
+    assert _has_the_metadata_of_new_data(exemplar, built)
     stored = np.asarray(_stored(exemplar, built))
     assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "built")
     built.save(path)
-    assert np.array_equal(np.asarray(cls.load(path).data), value)
+    assert np.array_equal(np.asarray(_data(exemplar, cls.load(path))), value)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1069,7 +1280,7 @@ def test_09_copies_keep_raw_and_metadata(
     copy = cls.from_instance(loaded)
     assert _stored(exemplar, copy) is _stored(exemplar, loaded)
     assert copy.metadata is loaded.metadata
-    assert "_cache_data" not in vars(loaded)
+    assert "_cache_" + exemplar.view not in vars(loaded)
     # `replace` passes the data, which takes precedence over `raw`, so the
     # copy holds a decoded array with the same content.
     copy = replace(loaded)
@@ -1084,7 +1295,7 @@ def test_09_copies_keep_raw_and_metadata(
         return
     value = exemplar.sample()
     converted = cls.from_instance(exemplar.foreign(value))
-    assert _no_metadata_unless_stored(exemplar, converted)
+    assert _has_the_metadata_of_new_data(exemplar, converted)
     if "data" in _init_names(_model(cls)):
         expected = exemplar.to_disk(value)
         stored = np.asarray(_stored(exemplar, converted))
@@ -1092,7 +1303,7 @@ def test_09_copies_keep_raw_and_metadata(
         assert np.array_equal(np.asarray(converted.data), value)
     path = _path(tmp_path, exemplar, "converted")
     converted.save(path)
-    assert np.array_equal(np.asarray(cls.load(path).data), value)
+    assert np.array_equal(np.asarray(_data(exemplar, cls.load(path))), value)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1145,7 +1356,7 @@ def test_12_adapter_contract(
         else:
             assert klass._READ_MODE == "rt"
     content = _saved(cls, exemplar, tmp_path).read_bytes()
-    data = cls.from_bytes(content).data
+    data = _data(exemplar, cls.from_bytes(content))
     assert np.array_equal(np.asarray(data), exemplar.sample())
     metadata = exemplar.metadata.from_bytes(content)
     assert isinstance(metadata, exemplar.metadata)

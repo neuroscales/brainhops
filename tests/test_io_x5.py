@@ -23,10 +23,13 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserNotImplementedError,
     UnrepresentableTransformationError,
 )
+from brainhops.io.common.hdf5 import DelayedH5Array  # noqa: E402
 from brainhops.io.transformations.x5 import (  # noqa: E402
     X5BSplineField,
     X5CoordinatesField,
     X5DisplacementField,
+    X5Metadata,
+    X5Raw,
     X5Transform,
 )
 
@@ -206,7 +209,7 @@ def test_linear_is_a_ras_to_ras_affine(linear_x5: Path) -> None:
 
 def test_linear_keeps_its_raw_node(linear_x5: Path) -> None:
     xform = io.load(linear_x5)
-    node = xform.nodes[0]
+    node = xform.metadata.raw.nodes[0]
     assert node.metadata == {"WrittenBy": "NiTransforms 25.1.0"}
     assert node.subtype == "affine"
     assert node.representation == "matrix"
@@ -215,7 +218,7 @@ def test_linear_keeps_its_raw_node(linear_x5: Path) -> None:
     assert node.domain.coordinates == "cartesian"
     np.testing.assert_allclose(node.domain.mapping, VOX2RAS)
     np.testing.assert_allclose(node.inverse, np.eye(4))
-    assert xform.header.version == 1
+    assert xform.metadata.raw.header.version == 1
 
 
 def test_untouched_file_is_written_back_unchanged(
@@ -225,9 +228,9 @@ def test_untouched_file_is_written_back_unchanged(
     out = tmp_path / "out.x5"
     xform.save(out)
     again = io.load(out)
-    assert again.header.chains == [(0, 1), (1, 0)]
-    assert len(again.nodes) == 2
-    for a, b in zip(again.nodes, xform.nodes):
+    assert again.metadata.raw.header.chains == [(0, 1), (1, 0)]
+    assert len(again.metadata.raw.nodes) == 2
+    for a, b in zip(again.metadata.raw.nodes, xform.metadata.raw.nodes):
         assert a.type == b.type
         assert a.metadata == b.metadata
         assert a.dimension_kinds == b.dimension_kinds
@@ -249,7 +252,8 @@ def test_bytes_and_file_objects_round_trip(linear_x5: Path) -> None:
     buffer.seek(0)
     again = io.transformations.load(buffer)
     assert type(again) is X5Transform
-    assert again.nodes[0].metadata == xform.nodes[0].metadata
+    node = again.metadata.raw.nodes[0]
+    assert node.metadata == xform.metadata.raw.nodes[0].metadata
 
 
 # ----------------------------------------------------------------------
@@ -294,13 +298,96 @@ def test_vector_axis_is_found_by_its_dimension_kind(tmp_path: Path) -> None:
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
 
 
-def test_field_can_be_read_lazily(field_x5: Path) -> None:
-    pytest.importorskip("dask")
-    xform = X5Transform.from_file(field_x5, load=False)
-    assert not isinstance(xform.nodes[0].transform, np.ndarray)
+def test_fields_are_read_lazily(field_x5: Path) -> None:
+    xform = X5Transform.from_file(field_x5)
+    node = xform.metadata.raw.nodes[0]
+    # The field is read from the file when it is used, and the small
+    # datasets are read at once.
+    assert isinstance(node.transform, DelayedH5Array)
+    assert isinstance(node.domain.mapping, np.ndarray)
+    assert "_cache_transformations" not in vars(xform)
     points = _ras(IJK)
     expected = points + _ramp()[tuple(IJK.T)]
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
+    # Decoding the chain leaves the record as it was read.
+    assert xform.metadata.raw.nodes[0] is node
+    assert isinstance(node.transform, DelayedH5Array)
+
+
+def test_fields_can_be_read_at_once(field_x5: Path) -> None:
+    xform = X5Transform.from_file(field_x5, load=True)
+    assert isinstance(xform.metadata.raw.nodes[0].transform, np.ndarray)
+    # A stream cannot be opened again by name, so its fields are read at
+    # once, and no open file is kept.
+    with open(field_x5, "rb") as stream:
+        xform = X5Transform.from_file(stream)
+    assert isinstance(xform.metadata.raw.nodes[0].transform, np.ndarray)
+    points = _ras(IJK)
+    expected = points + _ramp()[tuple(IJK.T)]
+    np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
+
+
+def test_no_open_file_is_kept(field_x5: Path) -> None:
+    with pytest.raises(TypeError, match="keep_open"):
+        X5Transform.from_file(field_x5, keep_open=True)
+    xform = X5Transform.from_file(field_x5)
+    assert not [
+        value for value in vars(xform).values() if isinstance(value, h5py.File)
+    ]
+
+
+def test_decoded_matrices_are_read_only(linear_x5: Path) -> None:
+    # The writer writes the record, not the decoded chain, so an edit in
+    # place would be lost. A new chain is assigned instead.
+    xform = io.load(linear_x5)
+    with pytest.raises(ValueError, match="read-only"):
+        xform[0].matrix[0, 0] = 2.0
+    np.testing.assert_allclose(xform.metadata.raw.nodes[0].transform, AFFINE)
+
+
+def test_a_record_is_never_changed_in_place(
+    chain_x5: Path, tmp_path: Path
+) -> None:
+    xform = io.load(chain_x5)
+    record = xform.metadata.raw
+    copy = xform.metadata.to_raw()
+    assert copy is not record and copy.nodes[0] is not record.nodes[0]
+    copy.header.attrs["Edited"] = "yes"
+    copy.nodes[0].metadata = {"edited": True}
+    assert "Edited" not in record.header.attrs
+    assert record.nodes[0].metadata == {"WrittenBy": "NiTransforms 25.1.0"}
+    # Encoding a new chain builds a new record.
+    xform.transformations = [xform[1]]
+    xform.save(tmp_path / "out.x5")
+    assert record.header.chains == [(0, 1), (1, 0)]
+    assert len(record.nodes) == 2
+
+
+def test_other_metadata_gives_another_chain(chain_x5: Path) -> None:
+    xform = io.load(chain_x5)
+    first = xform.transformations
+    assert isinstance(first[0], xforms.Affine)
+    record = xform.metadata.to_raw()
+    record.header.chains = [(1,)]
+    xform.metadata = X5Metadata.from_raw(record)
+    assert isinstance(xform[0], X5DisplacementField)
+    assert xform.transformations is not first
+    # Selecting another chain also drops the decoded chain.
+    xform.chain = 0
+    assert isinstance(xform[0], X5DisplacementField)
+    xform.metadata = io.load(chain_x5).metadata
+    xform.chain = 1
+    assert xform.selection == (1, 0)
+    assert isinstance(xform[0], X5DisplacementField)
+
+
+def test_a_record_is_read_as_a_transformation(chain_x5: Path) -> None:
+    record = X5Metadata.load(chain_x5).raw
+    assert isinstance(record, X5Raw)
+    xform = X5Transform.from_raw(record, chain=1)
+    assert xform.metadata.raw is record
+    assert xform.selection == (1, 0)
+    assert X5Transform.from_any(record).selection == (0, 1)
 
 
 @pytest.mark.parametrize(
@@ -453,8 +540,9 @@ def test_bspline_read_is_written_back_with_its_domain(
     out = tmp_path / "out.x5"
     xform.save(out)
     again = io.load(out)
-    assert again.nodes[0].domain.size == (20, 20, 20)
-    assert again.nodes[0].metadata == {"WrittenBy": "NiTransforms 25.1.0"}
+    node = again.metadata.raw.nodes[0]
+    assert node.domain.size == (20, 20, 20)
+    assert node.metadata == {"WrittenBy": "NiTransforms 25.1.0"}
     assert isinstance(again[0], X5BSplineField)
 
 
@@ -647,9 +735,10 @@ def test_reused_nodes_keep_their_metadata(
     out = tmp_path / "field.x5"
     xform.save(out)
     again = io.load(out)
-    assert len(again.nodes) == 1
-    assert again.header.chains == []
-    assert again.nodes[0].metadata == {"WrittenBy": "NiTransforms 25.1.0"}
+    assert len(again.metadata.raw.nodes) == 1
+    assert again.metadata.raw.header.chains == []
+    node = again.metadata.raw.nodes[0]
+    assert node.metadata == {"WrittenBy": "NiTransforms 25.1.0"}
     assert isinstance(again[0], X5DisplacementField)
 
 
@@ -732,8 +821,9 @@ def test_unsupported_nodes_are_refused_but_round_trip(
     out = tmp_path / "out.x5"
     xform.save(out)
     again = io.load(out)
-    assert again.nodes[0].type == node["type"]
-    np.testing.assert_allclose(again.nodes[0].transform, node["transform"])
+    written = again.metadata.raw.nodes[0]
+    assert written.type == node["type"]
+    np.testing.assert_allclose(written.transform, node["transform"])
 
 
 # ----------------------------------------------------------------------
@@ -777,10 +867,11 @@ def _write_fslpy(path: Path, kind: str) -> Path:
 
 def test_fslpy_linear_is_read(tmp_path: Path) -> None:
     xform = io.load(_write_fslpy(tmp_path / "fsl.x5", "linear"))
-    assert xform.header.legacy
-    assert xform.nodes[0].metadata == {"fslpy": "3.29.1"}
+    assert xform.metadata.raw.header.legacy
+    node = xform.metadata.raw.nodes[0]
+    assert node.metadata == {"fslpy": "3.29.1"}
     np.testing.assert_allclose(xform[0].matrix, AFFINE[:3])
-    np.testing.assert_allclose(xform.nodes[0].inverse, np.linalg.inv(AFFINE))
+    np.testing.assert_allclose(node.inverse, np.linalg.inv(AFFINE))
 
 
 @pytest.mark.parametrize("kind", ["relative", "absolute"])
