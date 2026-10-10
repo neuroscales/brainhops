@@ -52,9 +52,20 @@ from brainhops.io.base.parsers import (
     BinaryFileWriter,
     Confidence,
     ParserContentError,
+    ParserError,
     WriterError,
     _overrides_from_fileobj,
 )
+from brainhops.io.common.afni._data import _BrikProxy
+from brainhops.io.common.afni._files import afni_dataset_files
+from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
+from brainhops.io.common.afni._views import (
+    _image_to_disk as _afni_to_disk,
+)
+from brainhops.io.common.afni._views import (
+    _image_to_model as _afni_to_model,
+)
+from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
@@ -560,6 +571,17 @@ class Exemplar(tx.NamedTuple):
     the file, which the checks then compare.
     """
 
+    header_file: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+    """Function that returns the header file of an object of several files.
+
+    It is `None` for a format whose objects are stored in one file. An
+    AFNI dataset is a `.HEAD` file and a `.BRIK` file, and the checks may
+    name either one. The bytes of one file cannot hold such an object, so
+    the format must refuse them, and the metadata is read from the bytes
+    of the header file. A copy of a file whose data cannot be read is
+    then the header file, beside an empty file of data.
+    """
+
 
 def _nifti_edit_record(record: tx.Any) -> tx.Any:
     record.header["descrip"] = b"edited"
@@ -976,8 +998,40 @@ if nb is not None:
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
     )
 
+# An AFNI dataset is a `.HEAD` file and a `.BRIK` file. The exemplar
+# names the header, so the check of an untouched save compares headers,
+# and the variants name the BRIK, so that the same check compares the
+# BRIKs, after decompression for a gzipped one. The world of AFNI is LPS,
+# so the geometry is compared as the voxel-to-DICOM matrix, whatever the
+# world space of an assigned transformation. A record is frozen, so the
+# edit is made with `AfniRaw.replace`.
+
+
+def _afni_header_file(path: tx.Any) -> tx.Any:
+    return afni_dataset_files(path)[0]
+
+
+def _afni_geometry(image: tx.Any) -> np.ndarray:
+    return afni_voxel_to_dicom(image.transformation)
+
+
+_AFNI = Exemplar(
+    metadata=AfniMetadata,
+    suffix=".HEAD",
+    proxies=(_BrikProxy,),
+    to_model=_afni_to_model,
+    to_disk=_afni_to_disk,
+    sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+    edit_record=lambda record: record.replace(HISTORY_NOTE="edited"),
+    record_edited=lambda record: record.get("HISTORY_NOTE") == "edited",
+    geometry=_afni_geometry,
+    change_geometry=_nifti_change_geometry,
+    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    header_file=_afni_header_file,
+)
+EXEMPLARS[AfniImage] = _AFNI
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
-    "brainhops.io.images.afni.AfniImage",
     "brainhops.io.images.minc.Minc1Image",
     "brainhops.io.images.minc.Minc2Image",
     "brainhops.io.images.mrtrix.MrtrixImage",
@@ -1113,6 +1167,12 @@ if nb is not None:
         )
     )
 
+# The BRIK of an AFNI dataset may be gzipped.
+VARIANTS.append(("AfniImage-BRIK", AfniImage, _AFNI._replace(suffix=".BRIK")))
+VARIANTS.append(
+    ("AfniImage-BRIK-gz", AfniImage, _AFNI._replace(suffix=".BRIK.gz"))
+)
+
 CASES = [
     pytest.param(cls, exemplar, id=cls.__name__)
     for cls, exemplar in {**EXEMPLARS, **TEST_EXEMPLARS}.items()
@@ -1192,10 +1252,15 @@ def _cut(
     exemplar: Exemplar, source: tx.Any, metadata: tx.Any, target: tx.Any
 ) -> None:
     """Write a copy of a file whose data cannot be read."""
-    if exemplar.cut is None:
-        _write_header(target, metadata.to_bytes())
-    else:
+    if exemplar.cut is not None:
         exemplar.cut(source, target)
+    elif exemplar.header_file is not None:
+        header = exemplar.header_file(target)
+        _write_header(header, metadata.to_bytes())
+        if header != target:
+            _write_header(target, b"")
+    else:
+        _write_header(target, metadata.to_bytes())
 
 
 def _built(cls: type, exemplar: Exemplar, data: tx.Any) -> tx.Any:
@@ -1454,10 +1519,16 @@ def test_12_adapter_contract(
             assert klass._READ_MODE == "rb"
         else:
             assert klass._READ_MODE == "rt"
-    content = _saved(cls, exemplar, tmp_path).read_bytes()
-    data = _data(exemplar, cls.from_bytes(content))
-    assert np.array_equal(np.asarray(data), exemplar.sample())
-    metadata = exemplar.metadata.from_bytes(content)
+    path = _saved(cls, exemplar, tmp_path)
+    if exemplar.header_file is None:
+        data = _data(exemplar, cls.from_bytes(path.read_bytes()))
+        assert np.array_equal(np.asarray(data), exemplar.sample())
+    else:
+        # The bytes of one file cannot hold an object of several files.
+        with pytest.raises(ParserError):
+            cls.from_bytes(path.read_bytes())
+        path = exemplar.header_file(path)
+    metadata = exemplar.metadata.from_bytes(path.read_bytes())
     assert isinstance(metadata, exemplar.metadata)
 
 

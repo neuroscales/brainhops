@@ -10,10 +10,12 @@ import gzip
 import io as _io
 import itertools
 import os
+import pickle
 import struct
 
 import numpy as np
 import pytest
+from bagof.magic import replace
 
 import brainhops.io as io
 from brainhops.backends import backend
@@ -33,7 +35,7 @@ from brainhops.io.base.parsers import (
 from brainhops.io.base.specs import format_hints
 from brainhops.io.common.afni import AfniMetadata, AfniRaw
 from brainhops.io.common.afni._constants import DICOM_TO_RAS
-from brainhops.io.common.afni._data import brick_dtype
+from brainhops.io.common.afni._data import _BrikProxy, brick_dtype
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import (
     afni_cardinal_matrix,
@@ -873,3 +875,244 @@ def test_a_dataset_cannot_be_written_to_a_stream(tmp_path) -> None:  # noqa: ANN
         image.to_bytes()
     with pytest.raises(WriterError):
         image.save(_io.BytesIO())
+
+
+# ----------------------------------------------------------------------
+#   RECORD AND WRITE PRECEDENCE
+# ----------------------------------------------------------------------
+
+
+def _brik_content(path) -> bytes:  # noqa: ANN001
+    raw = path.read_bytes()
+    return gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw
+
+
+@pytest.mark.parametrize(
+    "name, brik",
+    [
+        ("example4d+orig.HEAD", "example4d+orig.BRIK.gz"),
+        ("scaled+tlrc.HEAD", "scaled+tlrc.BRIK"),
+    ],
+)
+@pytest.mark.parametrize("suffix", [".BRIK", ".BRIK.gz"])
+def test_an_untouched_dataset_keeps_the_bytes_of_both_files(
+    tmp_path,  # noqa: ANN001
+    name: str,
+    brik: str,
+    suffix: str,
+) -> None:
+    # The headers that AFNI writes are spelled differently from those that
+    # the writer formats, so they are kept as text.
+    import pathlib
+
+    source = pathlib.Path(_nibabel_data(name))
+    stored = pathlib.Path(_nibabel_data(brik))
+    view = name.split("+")[1].split(".")[0]
+    loaded = AfniImage.load(source)
+    assert loaded.to_raw() is loaded.metadata.raw
+    writers = {
+        "save": lambda target: loaded.save(target),
+        "io.save": lambda target: io.save(AfniImage.load(source), target),
+        "from_instance": lambda target: AfniImage.from_instance(loaded).save(
+            target
+        ),
+    }
+    for label, write in writers.items():
+        target = tmp_path / f"{label}+{view}{suffix}"
+        write(target)
+        head = tmp_path / f"{label}+{view}.HEAD"
+        assert head.read_bytes() == source.read_bytes(), label
+        assert _brik_content(target) == _brik_content(stored), label
+    assert "_cache_data" not in vars(loaded)
+
+
+def test_a_dataset_saved_over_itself_keeps_its_voxels(tmp_path) -> None:  # noqa: ANN001
+    # The BRIK is copied from the file that is written, which opening it
+    # for writing would empty.
+    path = _source(tmp_path)
+    brik = tmp_path / "dset+orig.BRIK"
+    before = brik.read_bytes()
+    AfniImage.load(path).save(path)
+    assert brik.read_bytes() == before
+    assert np.array_equal(np.asarray(AfniImage.load(path).data), DATA)
+
+
+def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
+    """Each public knob is either written or leaves the record as read."""
+    real = np.array(
+        [
+            [1.9, 0.6, 0.0, -9.0],
+            [-0.6, 2.9, 0.0, -21.0],
+            [0.0, 0.0, 4.0, -30.0],
+        ]
+    )
+    source = _source(
+        tmp_path,
+        IJK_TO_DICOM_REAL=tuple(real.ravel()),
+        HISTORY_NOTE="kept",
+        IDCODE_STRING="XYZ_original",
+    )
+
+    def loaded():  # noqa: ANN202
+        return AfniImage.load(source)
+
+    image = loaded()
+    record = image.metadata.raw
+    assert image.to_raw() is record
+    # Options that change nothing keep the record.
+    assert image.to_raw(view="orig", datatype="float") is record
+    assert image.to_raw(attributes={"HISTORY_NOTE": "kept"}) is record
+
+    # New voxels are written with their own layout and a new identity.
+    image.data = np.asarray(image.data) + 1
+    written = image.to_raw()
+    assert written is not record
+    assert written["BRICK_STATS"] == (
+        float(DATA.min() + 1),
+        float(DATA.max() + 1),
+    )
+    assert written["IDCODE_STRING"] != "XYZ_original"
+    assert written["IJK_TO_DICOM_REAL"] == record["IJK_TO_DICOM_REAL"]
+    assert written["HISTORY_NOTE"] == "kept"
+
+    # Another stored type decodes the voxels and stores them again.
+    image = loaded()
+    written = image.to_raw(datatype="short")
+    assert written.brick_types == (1,)
+    assert written["ORIGIN"] == record["ORIGIN"]
+
+    # Assigned transformations give the geometry.
+    image = loaded()
+    image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+    written = image.to_raw()
+    assert np.allclose(written.voxel_to_dicom, np.diag([-2.0, -3.0, 4.0, 1.0]))
+    assert written["HISTORY_NOTE"] == "kept"
+
+    # Other metadata gives its record.
+    image = loaded()
+    edited = record.replace(HISTORY_NOTE="edited")
+    image.metadata = AfniMetadata.from_raw(edited)
+    assert image.to_raw() is edited
+
+    # The view and the attributes are written, the attributes last.
+    image = loaded()
+    assert image.to_raw(view="tlrc").view == "tlrc"
+    written = image.to_raw(attributes={"HISTORY_NOTE": None, "X": "y"})
+    assert "HISTORY_NOTE" not in written and written["X"] == "y"
+    assert written["IDCODE_STRING"] != "XYZ_original"
+    kept = image.to_raw(attributes={"IDCODE_STRING": "mine", "X": "y"})
+    assert kept["IDCODE_STRING"] == "mine"
+    image.save(tmp_path / "out+tlrc.HEAD")
+    assert (
+        AfniImage.load(tmp_path / "out+tlrc.HEAD").metadata.raw.view == "tlrc"
+    )
+
+    # The attributes of the BRIK layout follow the data and are refused.
+    for name in ("DATASET_DIMENSIONS", "BRICK_TYPES", "BRICK_FLOAT_FACS"):
+        with pytest.raises(WriterError, match="datatype="):
+            image.to_raw(attributes={name: None})
+
+    # The record of the metadata is never changed.
+    assert record.attributes == AfniImage.load(source).metadata.raw.attributes
+
+    # The voxel system is derived from the record and cannot be assigned.
+    with pytest.raises(AttributeError):
+        image.system = None
+
+
+def test_decoded_data_is_read_only(tmp_path) -> None:  # noqa: ANN001
+    # An edit in place would not reach `raw`, which is what is written.
+    head = _header(nvals=2, types=(1, 3))
+    a = (np.arange(24).reshape(SHAPE) % 7).astype(np.int16)
+    path = _dataset(tmp_path, head, _brik([a, DATA], ["<h", "<f"]))
+    for source in (_source(tmp_path, name="one+orig"), path):
+        with backend("numpy"):
+            data = AfniImage.load(source).data
+        assert not data.flags.writeable
+
+
+def test_metadata_reads_and_writes_the_header(tmp_path) -> None:  # noqa: ANN001
+    path = _source(tmp_path, HISTORY_NOTE="kept")
+    for name in ("dset+orig.HEAD", "dset+orig.BRIK", "dset+orig"):
+        metadata = AfniMetadata.load(tmp_path / name)
+        assert metadata.raw["HISTORY_NOTE"] == "kept"
+    assert pickle.loads(pickle.dumps(metadata)).raw.text == metadata.raw.text
+    copy = metadata.to_raw()
+    assert copy is not metadata.raw
+    assert copy.attributes == metadata.raw.attributes
+    # The header alone is written, and no BRIK.
+    metadata.save(tmp_path / "header+orig.BRIK")
+    assert (tmp_path / "header+orig.HEAD").read_bytes() == path.read_bytes()
+    assert not (tmp_path / "header+orig.BRIK").exists()
+    # A BRIK stream is not read to find its header.
+    with open(tmp_path / "dset+orig.BRIK", "rb") as f:
+        assert AfniMetadata.load(f).raw["HISTORY_NOTE"] == "kept"
+        assert f.tell() == 0
+
+
+def test_a_stale_text_is_not_written(tmp_path) -> None:  # noqa: ANN001
+    record = AfniMetadata.load(_source(tmp_path)).raw
+    assert record.to_text() == record.text
+    changed = replace(record, attributes={**record.attributes, "X": "y"})
+    assert changed.text == record.text
+    assert changed.to_text() != record.text
+    assert AfniRaw.from_text(changed.to_text())["X"] == "y"
+
+
+class _CountedReads:
+    """Count the reads of the voxels of every BRIK."""
+
+    def __init__(self, monkeypatch) -> None:  # noqa: ANN001
+        self.count = 0
+        unscaled = _BrikProxy.get_unscaled
+        copy_to = _BrikProxy.copy_to
+
+        def counted_unscaled(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return unscaled(proxy, *args, **kwargs)
+
+        def counted_copy(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return copy_to(proxy, *args, **kwargs)
+
+        monkeypatch.setattr(_BrikProxy, "get_unscaled", counted_unscaled)
+        monkeypatch.setattr(_BrikProxy, "copy_to", counted_copy)
+
+
+@pytest.mark.parametrize("nvals", [1, 2])
+def test_nothing_but_the_data_reads_the_voxels(
+    tmp_path,  # noqa: ANN001
+    nvals: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _dataset(
+        tmp_path,
+        _header(nvals=nvals, BRICK_FLOAT_FACS=(2.0,) * nvals),
+        _brik([DATA] * nvals, ["<f"] * nvals),
+    )
+    reads = _CountedReads(monkeypatch)
+    image = io.load(path)
+    expected = SHAPE + ((nvals,) if nvals > 1 else ())
+    assert image.shape == expected
+    assert image.ndim == len(expected)
+    assert image.raw.dtype == np.float32
+    repr(image)
+    assert image.transformations
+    assert image.system is not None
+    image.to_raw()
+    pickle.loads(pickle.dumps(image))
+    with open(tmp_path / "dset+orig.BRIK", "rb") as f:
+        AfniImage.load(f)
+    assert reads.count == 0
+    assert "_cache_data" not in vars(image)
+    with backend("numpy"):
+        data = image.data
+    assert data.shape == expected and data.dtype == np.float32
+    assert np.allclose(data[..., 0] if nvals > 1 else data, 2 * DATA)
+    assert reads.count == 1
+    # Assigned data gives its own shape, and an image without data raises
+    # as before.
+    image.data = np.zeros((2, 3, 4))
+    assert image.shape == (2, 3, 4)
+    with pytest.raises(AttributeError):
+        _ = AfniImage().shape

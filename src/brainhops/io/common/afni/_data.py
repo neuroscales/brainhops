@@ -5,6 +5,7 @@ encoding, and the lazy array that reads a BRIK."""
 import bz2
 import gzip
 import os
+from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -391,8 +392,10 @@ def _read_bricks(header: AfniRaw, brik: tx.Any, mmap: bool) -> np.ndarray:
 def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
     """Write a BRIK, compressed according to its suffix.
 
-    A [`_BrikProxy`][] is copied as the file stores it. Any other array
-    is encoded with the types and the scale factors of the header.
+    A [`_BrikProxy`][] is copied as the file stores it. When the proxy
+    reads the file that is written, its bytes are read into memory first,
+    since opening the file for writing empties it. Any other array is
+    encoded with the types and the scale factors of the header.
 
     Raises
     ------
@@ -405,6 +408,10 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
             f"Cannot write an AFNI BRIK compressed with {suffix!r}: "
             f"use '.BRIK', '.BRIK.gz' or '.BRIK.bz2'."
         )
+    if isinstance(data, _BrikProxy) and _same_file(data.brik, brik):
+        copied = BytesIO()
+        data.copy_to(copied)
+        data = copied.getvalue()
     with brik.open("wb") as f:
         if suffix == ".gz":
             out = gzip.GzipFile(fileobj=f, mode="wb")
@@ -415,9 +422,19 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
         try:
             if isinstance(data, _BrikProxy):
                 data.copy_to(out)
+            elif isinstance(data, bytes):
+                out.write(data)
             else:
                 for chunk in encode_bricks(header, data):
                     out.write(chunk)
         finally:
             if out is not f:
                 out.close()
+
+
+def _same_file(first: tx.Any, second: tx.Any) -> bool:
+    """Tell whether two paths name the same existing local file."""
+    first, second = _local_path(first), _local_path(second)
+    if first is None or second is None:
+        return False
+    return os.path.samefile(first, second)

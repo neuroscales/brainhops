@@ -42,6 +42,12 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.common.afni": Package(
+        names=frozenset({"AfniFormat", "AfniMetadata", "AfniRaw"}),
+    ),
+    "brainhops.io.images.afni": Package(
+        names=frozenset({"AfniImage", "AfniMetadata", "AfniRaw"}),
+    ),
     "brainhops.io.common.mgh": Package(
         names=frozenset({"MghMetadata", "MghRaw"}),
         needs=("nibabel",),
