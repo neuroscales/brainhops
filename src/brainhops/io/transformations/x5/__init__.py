@@ -94,12 +94,20 @@ nitransforms stores a chain as a string such as `"0/1/2"` in
 chain is read as `Sequence([t0, t1, t2])`.
 [`X5Transform.selection`][] describes which nodes are read.
 
-## Metadata
+## Records and metadata
 
-The datamodel holds no metadata, so the reader keeps each node's JSON
-`Metadata`, `Domain`, `Inverse`, `Jacobian` and other attributes as read, in
-[`X5Transform.nodes`][] and [`X5Transform.header`][], and writes them back.
-A transformation built from scratch is written without metadata.
+The datamodel holds no metadata, so the whole file is kept as an
+[`X5Raw`][] record, which [`X5Metadata`][] holds and which an
+[`X5Transform`][] reads through its `metadata`. The record keeps the root
+attributes and chains in an [`X5Header`][], and each transform, with its
+JSON `Metadata`, `Domain`, `Inverse`, `Jacobian` and other attributes, in
+an [`X5Node`][], and it is written back as read. The matrices are read at
+once, and the fields are kept as a
+[`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array], which opens
+the file again by its name when the values are needed, so no object keeps
+an open file. `X5Metadata.load` therefore reads the transforms of a file
+without reading its fields. A transformation built from scratch is written
+without metadata.
 
 ## Not supported
 
@@ -123,11 +131,13 @@ __all__ = [
     "X5DisplacementField",
     "X5Domain",
     "X5Header",
+    "X5Metadata",
     "X5Node",
+    "X5Raw",
     "X5Transform",
-    "X5TransformReaderWriter",
 ]
 
 from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
-from ._struct import X5Domain, X5Header, X5Node
-from ._xform import X5Transform, X5TransformReaderWriter
+from ._metadata import X5Metadata
+from ._raw import X5Domain, X5Header, X5Node, X5Raw
+from ._xform import X5Transform

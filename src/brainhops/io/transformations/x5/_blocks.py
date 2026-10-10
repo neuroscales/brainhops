@@ -26,6 +26,7 @@ from brainhops.io.base.parsers import (
     ParserNotImplementedError,
     UnrepresentableTransformationError,
 )
+from brainhops.io.common.hdf5 import DelayedH5Array
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -34,7 +35,7 @@ from brainhops.io.transformations.base.fields import (
     split_ras_displacement_chain,
 )
 
-from ._struct import X5Domain, X5Node
+from ._raw import X5Domain, X5Node
 
 _NDIM = 3
 """The number of spatial dimensions, which is 3 because X5 worlds are RAS."""
@@ -187,6 +188,28 @@ class X5CoordinatesField(_xforms.ImmutableSequence):
 # ----------------------------------------------------------------------
 #   DECODING
 # ----------------------------------------------------------------------
+# A node is decoded from the arrays of the record without changing them,
+# and the arrays that a transformation receives are read-only. The writer
+# writes the nodes of the record, not the decoded transformations, so an
+# edit in place would be lost, and it would also change the record, which
+# other objects may share. A new chain is assigned instead.
+
+
+def _read(stored: tx.Any) -> ArrayProtocol:
+    """Return an array of a node, read from the file if it is a proxy.
+
+    A [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] is read
+    with the array backend, which loads it with NumPy and keeps it lazy
+    with Dask. A NumPy array is returned as a read-only view.
+    """
+    if isinstance(stored, DelayedH5Array):
+        array = get_array_backend().asarray(stored)
+    else:
+        array = get_array_backend(stored).asarray(stored)
+    if isinstance(array, np.ndarray):
+        array = array.view()
+        array.flags.writeable = False
+    return array
 
 
 def node_to_transformation(node: X5Node) -> _xforms.Transformation:
@@ -216,7 +239,7 @@ def node_to_transformation(node: X5Node) -> _xforms.Transformation:
 
 
 def _decode_linear(node: X5Node) -> _xforms.Affine:
-    matrix = np.asarray(node.transform, dtype=np.float64)
+    matrix = np.asarray(_read(node.transform), dtype=np.float64)
     if int(node.array_length) != 1 or matrix.ndim != 2:
         raise ParserNotImplementedError(
             f"This X5 node stacks {node.array_length} affines (one per "
@@ -265,7 +288,7 @@ def _decode_nonlinear(node: X5Node) -> _xforms.Transformation:
             f"Only cartesian X5 domains are supported, not "
             f"{domain.coordinates!r}."
         )
-    vox2ras = np.asarray(domain.mapping, dtype=np.float64)
+    vox2ras = np.asarray(_read(domain.mapping), dtype=np.float64)
     if vox2ras.shape != (_NDIM + 1, _NDIM + 1):
         raise ParserNotImplementedError(
             f"Only 3-D X5 domains, mapped by a 4x4 affine, are supported, "
@@ -285,7 +308,7 @@ def _decode_nonlinear(node: X5Node) -> _xforms.Transformation:
         )
     representation = (node.representation or "").lower()
     if representation in DISPLACEMENTS:
-        return X5DisplacementField.from_ras(field, vox2ras)
+        return _read_only_field(X5DisplacementField.from_ras(field, vox2ras))
     if representation in COORDINATES:
         return X5CoordinatesField.from_ras(field, vox2ras)
     raise ParserContentError(
@@ -314,7 +337,7 @@ def _decode_bspline(node: X5Node) -> X5BSplineField:
             "An X5 B-spline must store the voxel-to-RAS affine of its "
             "grid of knots as AdditionalParameters."
         )
-    knots = np.asarray(node.additional_parameters, dtype=np.float64)
+    knots = np.asarray(_read(node.additional_parameters), dtype=np.float64)
     if knots.shape != (_NDIM + 1, _NDIM + 1):
         raise ParserNotImplementedError(
             f"Only 3-D X5 B-splines, whose knots are placed by a 4x4 "
@@ -333,20 +356,53 @@ def _decode_bspline(node: X5Node) -> X5BSplineField:
             f"A 3-D X5 B-spline holds one 3-vector per knot, not an array "
             f"of shape {shape}."
         )
-    return X5BSplineField.from_ras(field, knots)
+    return _read_only_field(X5BSplineField.from_ras(field, knots))
+
+
+def _read_only_field(xform: _X5RASDisplacements) -> _X5RASDisplacements:
+    """Make the vectors that a field computed from its node read-only.
+
+    The vectors in voxel units are a new array rather than a view of the
+    record, but the writer writes the node, so an edit in place would
+    still be lost.
+    """
+    vectors = xform.displacement.data
+    if isinstance(vectors, np.ndarray):
+        vectors.flags.writeable = False
+    return xform
+
+
+def _field_to_model(
+    stored: tx.Any, kinds: tx.Optional[tx.Sequence[str]]
+) -> ArrayProtocol:
+    """Return a field with its `vector` axis last, from the stored array.
+
+    `kinds` is the `DimensionKinds` dataset of the node, which says what
+    each axis of the stored array holds. When it places the vector axis
+    elsewhere, that axis is moved last. The stored array is read with
+    `_read`.
+    """
+    field = _read(stored)
+    if kinds and len(kinds) == field.ndim and "vector" in kinds:
+        axis = list(kinds).index("vector")
+        if axis != field.ndim - 1:
+            field = get_array_backend(field).moveaxis(field, axis, -1)
+    return field
+
+
+def _field_to_disk(field: ArrayProtocol) -> ArrayProtocol:
+    """Return the array that a node stores for a field.
+
+    The writer declares the vector axis last in `DimensionKinds`, so the
+    field, whose vector axis is last, is stored as it is. With these
+    kinds, `_field_to_model` returns the field unchanged.
+    """
+    return field
 
 
 def _vector_last(node: X5Node) -> ArrayProtocol:
     """Return the node's field with its `vector` axis moved last."""
-    field = node.transform
-    backend = get_array_backend(field)
-    field = backend.asarray(field)
-    kinds = node.dimension_kinds
-    if kinds and len(kinds) == field.ndim and "vector" in kinds:
-        axis = list(kinds).index("vector")
-        if axis != field.ndim - 1:
-            field = backend.moveaxis(field, axis, -1)
-    return field
+    return _field_to_model(node.transform, node.dimension_kinds)
 
 
 # ----------------------------------------------------------------------
@@ -517,7 +573,7 @@ def _field_node(
         type="nonlinear",
         subtype="densefield",
         representation=representation,
-        transform=field,
+        transform=_field_to_disk(field),
         dimension_kinds=_KINDS,
         domain=X5Domain(
             grid=True,

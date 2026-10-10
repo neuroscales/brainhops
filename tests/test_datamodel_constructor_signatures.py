@@ -222,14 +222,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "X5DisplacementField": ("transformations",),
     },
     "brainhops.io.transformations.x5._xform": {
-        "X5Transform": (
-            "transformations",
-            "header",
-            "nodes",
-            "chain",
-            "position",
-            "file",
-        ),
+        "X5Transform": ("transformations",),
     },
     "brainhops.io.transformations.zarr._xforms": {
         "OmeZarrField": (
