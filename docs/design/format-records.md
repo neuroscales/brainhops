@@ -2,7 +2,7 @@
 
 This memo is agreed and is being implemented. It is tracked in #415,
 and the work is done in the passes described at the end. The first
-two passes are written and under review, and the third has started.
+two passes are written and under review, and the third is in progress.
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides
@@ -202,6 +202,12 @@ again.
 The views that a class decodes from the record are read-only by
 construction, and do not rely on the flags of the arrays in the record.
 
+Each image class gives an explicit `shape` read from `raw` without
+reading the voxels; `ndim` follows from it.
+
+Header fields that the data or `dtype=` decide (dimensions, voxel type)
+cannot be overridden; the writer refuses them with `WriterError`.
+
 A conformance check that is vacuous for a format is logged in the comment
 of the exemplar of that format and in the list of tensions, instead of
 getting a generic hook.
@@ -336,6 +342,9 @@ formats, the pass also decides which header fields the record keeps
 and which ones the geometry encoding replaces, and whether `replace` and
 `from_instance` keep the proxy. Its tests compare compressed variants of
 a file after decompression.
+
+The move of MGH, called pass 3a, is pull request #424. The move of AFNI
+and MRtrix, called pass 3b, is in progress.
 
 The fourth pass moves Zarr, with one record per resolution level, and
 FLIRT. The class variable workaround of FLIRT is removed once it is
@@ -692,3 +701,73 @@ its status.
 66. Check 6 of the conformance test is vacuous for the formats that are
     parsed in one pass, which are LTA and M3Z, because the truncated
     copy is the whole file. Status: accepted in pass 2c.
+67. The record of an MGH image keeps the geometry of a file whose
+    `goodRASFlag` is 0 as it is stored, although the reader ignores it.
+    nibabel overwrites that geometry when it builds or copies a header,
+    so `_stored_header` and `copy` restore it
+    (`io/common/mgh/_raw.py`). The geometry methods of nibabel on the
+    record therefore see the ignored geometry, which is the path that
+    the FSL formats use (item 77), and `MghRaw.vox2ras` is the right
+    source. Status: accepted in the pass 3a review (4411bec).
+68. `MghMetadata.save` writes only the fixed header of 284 bytes, because
+    the footer and the tags lie after the voxels
+    (`io/common/mgh/_raw.py`). Check 6 of the conformance test is
+    therefore weak for MGH. Status: accepted in the pass 3a review
+    (4411bec).
+69. The geometry of an MGH image counts as unchanged when its spatial
+    dimensions equal those of the record and the `vox2scanner` matrix of
+    the model equals `record.vox2ras` exactly
+    (`io/images/freesurfer/mgh/_image.py`). The test cannot be whether
+    `transformations` was assigned, because `from_instance` and
+    `replace` assign the decoded list. Re-encoding the geometry does not
+    drift: none of 300 random oblique geometries changed when it was
+    encoded again. Status: accepted in the pass 3a review (4411bec).
+70. `MghImage.to_raw` returns the held record after it compares the
+    record with an encoded copy, and not after it checks that nothing
+    was assigned (`io/images/freesurfer/mgh/_image.py`). Status:
+    accepted in the pass 3a review (4411bec).
+71. An untouched MGH file is saved byte for byte only for canonical
+    layouts, where bytes 90 to 283 of the header are zero. A file
+    without a footer gains a footer of 20 zero bytes
+    (`io/common/mgh/_raw.py`). Status: accepted in the pass 3a review
+    (4411bec).
+72. A proxy that is built over a stream passed by the caller keeps that
+    stream open (`io/common/mgh/_raw.py`), as NIfTI does (item 9).
+    Status: accepted in the pass 3a review (4411bec).
+73. The FSL helper `_shape(obj)` (`io/transformations/fsl/_affines.py`)
+    reads `obj.shape`, and for an MGH image that decoded the voxels,
+    because `shape` and `ndim` came from the data model
+    (`datamodel/images.py`). This was a regression from
+    `MghReaderWriter`, and `NiftiImage` has had the same gap since pass
+    1b. Status: resolved for MGH in the pass 3a review (4411bec), where
+    `MghImage` gives an explicit `shape` read from `raw.shape`, and open
+    for `NiftiImage`.
+74. `io/images/freesurfer/mgh/_views.py` repeats about ten lines of
+    `_read` from the NIfTI views, as explicit code in each format.
+    Status: accepted in the pass 3a review (4411bec).
+75. `MghImage.to_nibabel` drops the tags. The geometry of a flag-0 file
+    is encoded again as the default LIA orientation with flag 1
+    (`io/images/freesurfer/mgh/_image.py`). Status: accepted in the pass
+    3a review (4411bec).
+76. The writer options `dims=` and `type=` of MGH wrote a header that
+    disagreed with the voxels. Status: resolved in the pass 3a review
+    (4411bec), as a rule for every image format: a header field that the
+    data or `dtype=` decide cannot be overridden, and the writer refuses
+    it with `WriterError`.
+77. The FSL helper `_best_affine`, for an `MghImage`, goes through
+    `MGHHeader.get_best_affine()`. For a flag-0 file that gives the
+    stored geometry that the reader ignores, which was already wrong
+    before pass 3a. The fix is to prefer `record.vox2ras` when the
+    record is an `MghRaw`. Status: open.
+78. `_frame_tr` ignores a changed time scaling in `transformations[0]`,
+    so a knob is neither honored nor refused, which breaks the rule on
+    overrides. The problem is older than this work. Status: open.
+79. The option `like=` is silently ignored when its value is not an MGH
+    image. The problem is older than this work. Status: open.
+80. MGH imports `_is_local` from the private module
+    `io/common/nifti/_files.py`. The function should move to
+    `io/common/_files.py`. Status: open.
+81. `replace` on an `MghImage` reads `data` and so materializes the
+    proxy, as for `NiftiImage` (item 18). Status: open.
+82. `Metadata.__eq__` is based on identity, not on content. This is a
+    matter of the base class and not of MGH. Status: open.
