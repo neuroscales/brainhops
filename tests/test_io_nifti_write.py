@@ -261,6 +261,35 @@ def test_an_affine_round_trips_through_save(tmp_path) -> None:  # noqa: ANN001
     assert nb.load(str(target)).shape == (1, 1, 1)
 
 
+@pytest.mark.parametrize(
+    ("scode", "qcode", "expected"),
+    [(1, 0, (1, 0)), (2, 1, (2, 1)), (0, 1, (1, 1)), (0, 0, (2, 2))],
+)
+def test_an_affine_keeps_the_code_of_each_form(
+    tmp_path,  # noqa: ANN001
+    scode: int,
+    qcode: int,
+    expected: tuple,
+) -> None:
+    """Each form keeps its code, and the sform always holds the matrix."""
+    # Without an affine given to the image, nibabel saves the codes as
+    # they are set, including a code of zero.
+    img = nb.Nifti1Image(np.zeros((4, 5, 6), dtype="float32"), None)
+    img.header.set_sform(AFFINE, code=scode)
+    img.header.set_qform(AFFINE, code=qcode)
+    source = tmp_path / "source.nii"
+    nb.save(img, str(source))
+
+    affine = NiftiVoxelToRAS.from_file(source)
+    target = tmp_path / "affine.nii"
+    affine.save(target)
+
+    header = nb.load(str(target)).header
+    codes = (int(header["sform_code"]), int(header["qform_code"]))
+    assert codes == expected
+    np.testing.assert_allclose(header.get_sform()[:3], affine.matrix)
+
+
 def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: ANN001
     """A coordinates field is written as VECTOR and reads back as such."""
     field = np.zeros((4, 5, 6, 1, 3), dtype="float32")
