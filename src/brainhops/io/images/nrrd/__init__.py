@@ -21,17 +21,20 @@ is written, the file name decides which kind is produced.
 import brainhops.io as io
 
 image = io.load("dwi.nhdr")            # a DetachedNrrdImage
-image.data                             # [x, y, z, c], F order, a view
+image.data                             # [x, y, z, c], F order
 image.transformation                   # index -> LPS mm (Affine)
-image.header.keyvalue["DWMRI_b-value"] # key/value pairs, as text
-image.save("dwi.nrrd")                 # attached, gzip by default
+image.metadata.raw.keyvalue["DWMRI_b-value"]  # key/value pairs, as text
+image.save("dwi.nrrd")                 # attached, in the source encoding
 io.save(image, "dwi.nii.gz")           # or any other image format
 ```
 
-The first NRRD axis varies fastest, so the data are in Fortran order. The
-image axes are a transposed view of the stored values (`dataobj`), with
-spatial axes (`x`, `y`, `z`) first, then time (`t`), channels (`c`) and
-other axes (`dim<i>`), each group in file order. An axis is spatial if it
+An image holds the header of its file as [`NrrdMetadata`][], whose
+record is an [`NrrdRaw`][], and its samples in `raw`, a lazy array that
+reads them only when `data` is first needed. The first NRRD axis varies
+fastest, so the data are in Fortran order. The lazy array presents the
+axes of the file with spatial axes (`x`, `y`, `z`) first, then time
+(`t`), channels (`c`) and other axes (`dim<i>`), each group in file
+order. An axis is spatial if it
 has a `space direction`. In a header without directions, an axis is
 spatial if its kind is `domain` or `space`, or, when there are no `kinds`
 at all, if it is one of the first three. Vector, colour, complex,
@@ -47,16 +50,27 @@ whatever the axis `centers`. The world follows `space`: RAS, LAS and LPS
 add a time axis. Without a world space, a single transformation to
 `"physical"` is built from `spacings`, `axis mins` and `axis maxs`.
 
-When an image is written, the preferred transformation becomes the
-`space directions` and `space origin`. These fields are expressed in the
-`space` of the source header, or else in the anatomical space that the
-transformation maps to, and in RAS by default. The
-`encoding`, `endian`, `datatype`, `space`, `keyvalue` and `data_file`
-options control the output. Key/value pairs and other descriptive fields
-of the source header, such as `content` and the `measurement frame`, are
-written back.
+When an image is written, the record of its metadata is the base of the
+new header. The preferred transformation becomes the `space directions`
+and `space origin`, unless it is the geometry that the record already
+stores. These fields are expressed in the `space` of the source header,
+or else in the anatomical space that the transformation maps to, and in
+RAS by default. The `encoding`, `endian`, `datatype`, `space`,
+`keyvalue` and `data_file` options control the output. Key/value pairs
+and other descriptive fields of the source header, such as `content` and
+the `measurement frame`, are written back. An image that is read and
+written again without changes keeps its bytes, and both files of a
+detached image are kept when it is written under the same name.
 """
 
-__all__ = ["AttachedNrrdImage", "DetachedNrrdImage", "NrrdImage"]
+__all__ = [
+    "AttachedNrrdImage",
+    "DetachedNrrdImage",
+    "NrrdImage",
+    "NrrdMetadata",
+    "NrrdRaw",
+]
+
+from brainhops.io.common.nrrd import NrrdMetadata, NrrdRaw
 
 from ._image import AttachedNrrdImage, DetachedNrrdImage, NrrdImage

@@ -1,10 +1,20 @@
-import math
-import re
+"""The NRRD image formats."""
 
+# stdlib
+import math
+import os
+import re
+from io import BytesIO
+
+# dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import KwOnly, NoRepr, replace
 
+# internals
+from brainhops._core import path
+from brainhops._core.properties import smartproperty
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
@@ -16,12 +26,18 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import Unit, is_indexunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.base._utils_files import sibling as _sibling
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    BinaryFileWriter,
+    Confidence,
+    WriterError,
+)
 from brainhops.io.common._geometry import (
     RAS_FROM_ORIENTATION,
     reduce_to_affine,
 )
-from brainhops.io.common.nrrd import NrrdHeader, NrrdReaderWriter
+from brainhops.io.common.nrrd import NrrdMetadata, NrrdRaw
 from brainhops.io.common.nrrd._codecs import (
     _format_float,
     _format_strings,
@@ -29,45 +45,23 @@ from brainhops.io.common.nrrd._codecs import (
     dtype_to_nrrd,
 )
 from brainhops.io.common.nrrd._constants import (
+    _DATA_EXTENSIONS,
     _ENCODINGS,
     _SPACE_NAMES,
     SPACES,
 )
+from brainhops.io.common.nrrd._data import (
+    _NrrdProxy,
+    encode_data,
+    read_nrrd,
+    write_file,
+)
+from brainhops.io.common.nrrd._layout import axis_roles, image_order
+from brainhops.io.common.nrrd._raw import _declined, _sniffed_raw
+from brainhops.io.common.nrrd._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
 
 _INDEX = "index"
-
-_CHANNEL_KINDS = frozenset(
-    (
-        "vector",
-        "list",
-        "point",
-        "covariant-vector",
-        "normal",
-        "2-vector",
-        "3-vector",
-        "4-vector",
-        "3-gradient",
-        "3-normal",
-        "rgb-color",
-        "hsv-color",
-        "xyz-color",
-        "rgba-color",
-        "complex",
-        "quaternion",
-        "2d-symmetric-matrix",
-        "2d-masked-symmetric-matrix",
-        "2d-matrix",
-        "2d-masked-matrix",
-        "3d-symmetric-matrix",
-        "3d-masked-symmetric-matrix",
-        "3d-matrix",
-        "3d-masked-matrix",
-    )
-)
-"""Kinds whose samples are the components of one value, read as channels."""
-
-_ROLES = ("space", "time", "channel", "other")
 
 _ANATOMICAL = {
     "right-anterior-superior": ("R", "A", "S"),
@@ -91,6 +85,29 @@ _FLIPS = {
 }
 """Sign of each axis of an anatomical space relative to RAS."""
 
+_STORAGE = (
+    "type",
+    "block size",
+    "dimension",
+    "sizes",
+    "endian",
+    "encoding",
+    "line skip",
+    "byte skip",
+    "data file",
+)
+"""Fields that describe how the samples are stored."""
+
+_GEOMETRY = (
+    "space",
+    "space dimension",
+    "space directions",
+    "space origin",
+    "space units",
+    "measurement frame",
+)
+"""Fields that describe the world space and the geometry."""
+
 _PER_AXIS = (
     "spacings",
     "thicknesses",
@@ -100,9 +117,10 @@ _PER_AXIS = (
     "labels",
     "units",
 )
+"""Fields that hold one value per axis, other than `kinds`."""
 
-_KEPT = ("content", "sample units", "old min", "old max")
-"""Fields of the source header that are written back unchanged."""
+_VALUES = ("min", "max")
+"""Fields that describe the samples, which new samples make stale."""
 
 
 # ----------------------------------------------------------------------
@@ -115,43 +133,14 @@ def _space_name(space: str) -> str:
     return SPACES[space][0]
 
 
-def _roles(header: NrrdHeader) -> tx.List[str]:
-    """Return the role of each NRRD axis, fastest first.
-
-    An axis with a space direction is spatial. In a header without
-    directions, an axis of kind `domain` or `space`, or one of the first
-    three if there are no `kinds`, is spatial too. Other axes are time,
-    channel or other according to their kind.
-    """
-    dirs = header.space_directions
-    kinds = header.kinds
-    has_kinds = "kinds" in header.fields
-    roles = []
-    for i, kind in enumerate(kinds):
-        if dirs is not None and dirs[i] is not None:
-            roles.append("space")
-        elif kind == "time":
-            roles.append("time")
-        elif kind in _CHANNEL_KINDS:
-            roles.append("channel")
-        elif dirs is None and (
-            kind in ("domain", "space") or (not has_kinds and i < 3)
-        ):
-            roles.append("space")
-        else:
-            roles.append("other")
-    return roles
-
-
-def _layout(header: NrrdHeader) -> tx.Tuple[tx.List[int], tx.List[Axis]]:
+def _layout(header: NrrdRaw) -> tx.Tuple[tx.List[int], tx.List[Axis]]:
     """Return the axis order of the image and its axes.
 
-    The roles are sorted in the order space, time, channel and other, each
-    in file order. Element `j` of the permutation is the file axis that
-    becomes image axis `j`.
+    Element `j` of the order is the file axis that becomes image axis `j`
+    (see [`image_order`][brainhops.io.common.nrrd._layout.image_order]).
     """
-    roles = _roles(header)
-    perm = [i for role in _ROLES for i, r in enumerate(roles) if r == role]
+    roles = axis_roles(header)
+    perm = image_order(header)
     return perm, _axes([roles[i] for i in perm], perm)
 
 
@@ -211,7 +200,7 @@ def _unit_symbol(axis: tx.Any) -> str:
 # ----------------------------------------------------------------------
 
 
-def _world(header: NrrdHeader, sdim: int) -> CoordinateSystem:
+def _world(header: NrrdRaw, sdim: int) -> CoordinateSystem:
     """Return the world space of the header.
 
     Only anatomical spaces have oriented axes, and a `-time` space adds an
@@ -243,7 +232,7 @@ def _world(header: NrrdHeader, sdim: int) -> CoordinateSystem:
     return CoordinateSystem(name=name, axes=axes)
 
 
-def _nrrd_to_transformations(header: NrrdHeader) -> tx.List[Transformation]:
+def _nrrd_to_transformations(header: NrrdRaw) -> tx.List[Transformation]:
     """Convert a NRRD header to transformations.
 
     With a world space (`space` or `space dimension`, and
@@ -331,256 +320,766 @@ def _nrrd_to_transformations(header: NrrdHeader) -> tx.List[Transformation]:
 # ----------------------------------------------------------------------
 
 
-class NrrdImage(NrrdReaderWriter, ImageFormat, SingleScaleImage):
+class NrrdImage(
+    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+):
     """An image stored in a NRRD file, attached or detached.
 
     This class is the unregistered base of [`AttachedNrrdImage`][] and
-    [`DetachedNrrdImage`][], which answer to its hint `"nrrd"`. The data
-    are a view of `dataobj` indexed `[x, y, z, t, c, ...]` in Fortran
-    order. The transformations are a [`Scaling`][] to `"physical"` and,
-    with a world space, the preferred [`Affine`][] to the world, named
-    after `space`. Other header fields are kept in `header` and written
-    back.
+    [`DetachedNrrdImage`][], which answer to its hint `"nrrd"`. A NRRD
+    image holds the header of its file as [`NrrdMetadata`][], whose
+    record is an [`NrrdRaw`][], and the samples in `raw`. When the image
+    is read from a file, `raw` is a lazy array that reads the samples
+    only when they are needed, and `data` is decoded from it on first
+    access. The data are indexed `[x, y, z, t, c, ...]` in Fortran order,
+    whatever the order of the axes in the file.
 
-    !!! note "Why the bases are in this order"
-        As for `NiftiImage`, [`SingleScaleImage`][] comes last so that its
-        `data` field follows the defaulted fields of the parser, and so
-        that the lazy properties of this class take precedence.
+    The transformations are decoded from the record, unless other
+    transformations are assigned. They are a [`Scaling`][] to
+    `"physical"` and, with a world space, the preferred [`Affine`][] to
+    the world, named after `space`.
+
+    When the image is written, the record of its metadata is the base of
+    the new header, as [`to_raw`][] describes, so the fields and the
+    key/value pairs that the data model has no place for, such as the
+    `measurement frame` or `DWMRI_b-value`, are kept. An image that is
+    read and written again without changes gives the same bytes, and a
+    detached image keeps both of its files when it is written under the
+    same name in another directory. A detached header names its data
+    file, so a copy under another name differs in that line only.
     """
 
-    # --- data model ---------------------------------------------------
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nrrd",)
 
-    @property
-    def data(self) -> tx.Optional[tx.Any]:
-        """Image data, a transposed view of `dataobj` unless set."""
-        if getattr(self, "_data", None) is not None:
-            return self._data
-        raw = getattr(self, "dataobj", None)
-        if raw is None or self.header is None:
-            return raw
-        perm, _ = _layout(self.header)
-        return raw.transpose(perm)
+    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    """The samples as the file stores them, or `None` without data.
+
+    After a read, `raw` is a lazy array, which presents the samples in
+    the axis order of the image. Setting `data` stores the new array
+    here.
+    """
+
+    _metadata: KwOnly[NoRepr[tx.Optional[NrrdMetadata]]] = None
+
+    metadata = smartproperty("metadata", invalidates=("transformations",))
+    """The metadata of the file, which holds its record, or `None`.
+
+    An image built from data has no metadata. Assigning other metadata
+    drops the transformations decoded from the previous record.
+    """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # The constructor assigns the fields in order, so the default of
+        # `raw`, assigned after `data`, erases the array stored by `data=`.
+        # The array is therefore stored again. When both are given, `data`
+        # takes precedence over `raw`.
+        if arguments.get("data") is not None:
+            self.data = arguments["data"]
+
+    @smartproperty(cache=True, invalidates=("data",))
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The image data, decoded from `raw` on first access and cached.
+
+        Data decoded from a file is read-only, because changing it in
+        place would not change `raw`, which is what the image writes. To
+        change the samples, assign `data`: setting it stores the new array
+        in `raw` and drops the cached value.
+        """
+        if self.raw is None:
+            return None
+        return _image_to_model(self.raw)
 
     @data.setter
-    def data(self, value: tx.Optional[tx.Any]) -> None:
-        self._data = value
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _image_to_disk(value)
+
+    @smartproperty(cache=True, unset=(None, "empty"))
+    def transformations(self) -> tx.List[Transformation]:
+        """Index-to-world transformations, decoded from the record.
+
+        The decoded list is cached, so `img.transformation is
+        img.transformation`. Assigning a list replaces the decoded one, and
+        assigning other metadata drops it. An image without metadata has
+        no transformations.
+        """
+        if self.metadata is None or self.metadata.raw is None:
+            return []
+        return _nrrd_to_transformations(self.metadata.raw)
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the data, read from `raw` without reading the samples.
+
+        The data is `raw` as the lazy array presents it, so the two have
+        the same shape, and the lazy array knows its shape from the
+        record. An image without data raises as [`SingleScaleImage`][]
+        does.
+        """
+        if self.raw is None:
+            return self.data.shape
+        return tuple(int(d) for d in self.raw.shape)
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
-        """Index coordinate system, derived from the header unless set."""
-        if getattr(self, "_system", None) is not None:
-            return self._system
-        if self.header is None:
+        """The index coordinate system described by the record.
+
+        The spatial axes come first, named `x`, `y` and `z`, then time
+        (`t`), channels (`c`) and other axes (`dim<i>`, after their index
+        in the file), in Fortran order. An image without metadata has no
+        system.
+        """
+        if self.metadata is None or self.metadata.raw is None:
             return None
-        _, axes = _layout(self.header)
+        _, axes = _layout(self.metadata.raw)
         return CoordinateSystem(name="voxel", axes=axes, order="F")
 
-    @system.setter
-    def system(self, value: tx.Optional[CoordinateSystem]) -> None:
-        self._system = value
+    # --- reading ------------------------------------------------------
 
-    @property
-    def transformations(self) -> tx.List[Transformation]:
-        """Index-to-world transformations, decoded from the header."""
-        if getattr(self, "_transformations", None):
-            return self._transformations
-        if self.header is None:
-            return list(getattr(self, "_transformations", None) or [])
-        return _nrrd_to_transformations(self.header)
+    @classmethod
+    def _score_header(cls, header: NrrdRaw) -> float:
+        """Return how well a valid header matches this class.
 
-    @transformations.setter
-    def transformations(self, value: tx.List[Transformation]) -> None:
-        self._transformations = value
+        The subclasses score the kind of file, attached or detached, and
+        this base class accepts both as a weak match.
+        """
+        return Confidence.MAYBE
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a stream holds this kind of NRRD file.
+
+        The header is parsed and scored with [`_score_header`][], and the
+        position of the stream is restored.
+        """
+        raw, failure = _sniffed_raw(file)
+        if raw is None:
+            return _declined(error, failure)
+        score = cls._score_header(raw)
+        if score:
+            return score
+        return _declined(error, None)
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that bytes hold this kind of NRRD file."""
+        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
+
+    @classmethod
+    def from_filename(
+        cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
+    ) -> "NrrdImage":
+        """Read an image from the path of a `.nrrd` or `.nhdr` file.
+
+        The record is read from the header, and the lazy array reads the
+        samples when they are needed. Other keyword arguments are ignored.
+
+        Parameters
+        ----------
+        filename : path
+            The file of the image, or of its header.
+        mmap : bool, default=True
+            Whether the lazy array memory-maps raw samples that lie in a
+            single local file.
+        **kwargs : Any
+            Ignored.
+
+        Raises
+        ------
+        ParserExistsError
+            If the file or a data file that its header names does not
+            exist.
+        ParserContentError
+            If the file is not a NRRD image, or a local file of raw
+            samples is too short.
+        """
+        raw, proxy = read_nrrd(filename, mmap=mmap)
+        return cls(raw=proxy, metadata=NrrdMetadata.from_raw(raw))
+
+    @classmethod
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NrrdImage":
+        """Read an image from an open NRRD file, without memory mapping.
+
+        The record is read at once, and the lazy array reads the samples
+        from the stream when they are needed, so the stream must stay open
+        while the data may be read. The data files that a detached header
+        names are found from the name of the stream. The position of the
+        stream is restored, and the keyword arguments are ignored.
+
+        Raises
+        ------
+        ParserContentError
+            If the stream is not a NRRD image, or its header names data
+            files and the stream has no name.
+        """
+        raw, proxy = read_nrrd(file, mmap=False)
+        return cls(raw=proxy, metadata=NrrdMetadata.from_raw(raw))
 
     # --- writing ------------------------------------------------------
 
-    def _storage(
-        self,
-    ) -> tx.Tuple[tx.List[int], tx.List[str], tx.List[str]]:
-        """Return the storage order, the image roles and the file kinds.
-
-        An image read from NRRD with an unchanged shape keeps the order and
-        kinds of the file; any other image keeps its own order.
-        """
-        data = self.data
-        if data is None:
-            raise WriterError(
-                "This image has no data, so there is nothing to write."
-            )
-        shape = tuple(int(n) for n in np.shape(data))
-        ndim = len(shape)
-        system = self.system
-        if system is None and self.transformations:
-            system = getattr(self.transformation, "input", None)
-        try:
-            axes = list(getattr(system, "axes", None) or [])
-        except TypeError:
-            axes = []
-        if len(axes) == ndim and not any(a is ... for a in axes):
-            roles = [_role(a) for a in axes]
-        else:
-            roles = ["space"] * min(3, ndim) + ["other"] * (ndim - 3)
-        source = self.header
-        if source is not None and source.dimension == ndim:
-            perm, _ = _layout(source)
-            if tuple(source.sizes[i] for i in perm) == shape:
-                kinds = source.fields.get("kinds", "").split()
-                if len(kinds) != ndim:
-                    kinds = _kinds(roles, perm)
-                return perm, roles, kinds
-        perm = list(range(ndim))
-        return perm, roles, _kinds(roles, perm)
-
-    def _nrrd_data(self, header: NrrdHeader) -> tx.Any:
-        perm, _, _ = self._storage()
-        return np.asarray(self.data).transpose(np.argsort(perm))
-
-    def _nrrd_header(
+    def to_raw(
         self,
         encoding: tx.Optional[str] = None,
         endian: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         space: tx.Optional[str] = None,
         keyvalue: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        **kwargs,
-    ) -> NrrdHeader:
-        """Build a header that encodes this image.
+    ) -> NrrdRaw:
+        """Return the [`NrrdRaw`][] record that writing the image stores.
+
+        The record is encoded in a fixed order. The base is the record of
+        the metadata, or a new header for an image without metadata.
+
+        1. The fields that describe how the samples are stored (`type`,
+           `dimension`, `sizes`, `endian`, `encoding` and the skips)
+           follow `raw`. A lazy array that the options do not change, and
+           whose samples lie in one file, is copied as the file stores
+           it, so these fields are those of its own record. Any other
+           array is stored with the options, or else with the encoding
+           and the byte order of the base, gzip and little-endian by
+           default, and with the type of the data. An image whose shape
+           is that of the base keeps the order of the axes in the file
+           and their `kinds`, and the axes of any other image are stored
+           in the order of the data.
+        2. The geometry comes from the preferred transformation. The
+           geometry fields of the base (`space`, `space directions`,
+           `space origin`, `space units`, `measurement frame` and the
+           fields of one value per axis) are kept as they are stored when
+           the shape and the preferred transformation are those of the
+           base, exactly, and `space` does not ask for another space.
+           Otherwise, the transformation becomes the `space directions`
+           and the `space origin`, in `space`, or else in the space of
+           the base, or in the anatomical space that the transformation
+           maps to, and in RAS by default. A scaling onto unoriented axes
+           of a base without a space becomes `spacings` and `axis mins`.
+        3. The other fields of the base, such as `content`, are kept when
+           the shape is that of the base, except `min` and `max` when the
+           samples are new. The key/value pairs of the base are kept, and
+           `keyvalue` is merged into them last.
+
+        The data files of the base are kept. When this encoding gives the
+        header of the base, the record of the metadata is returned as it
+        is, without a copy, so that an image that was read and not changed
+        writes the header that it read.
 
         Parameters
         ----------
         encoding : {"raw", "gzip", "bzip2", "ascii", "hex"}, optional
-            Defaults to the source encoding, or gzip.
+            The encoding of the samples.
         endian : {"little", "big"}, optional
-            Defaults to the source byte order, or little-endian.
+            The byte order of the samples.
         datatype : str or dtype, optional
-            NRRD or numpy type, by default that of the data.
+            NRRD or NumPy type of the stored samples, to which the data
+            are converted.
         space : str, optional
-            Space of an anatomical geometry, such as `"LPS"`. Defaults to
-            the source space, then to the space the transformation maps
-            to, then to RAS.
+            The anatomical space of the geometry, such as `"LPS"`.
         keyvalue : mapping, optional
-            Pairs merged into those of the source. `None` removes a key.
+            Key/value pairs merged into those of the base. A value of
+            `None` removes a key.
 
         Returns
         -------
-        NrrdHeader
-            The header.
+        NrrdRaw
+            The record of the file.
+
+        Raises
+        ------
+        WriterError
+            If there is no data, the data are zero-dimensional, the type,
+            the encoding, the byte order or the space is unknown, or the
+            geometry cannot be written.
+        UnrepresentableTransformationError
+            If the preferred transformation has no affine form.
+        """
+        options = dict(
+            encoding=encoding,
+            endian=endian,
+            datatype=datatype,
+            space=space,
+            keyvalue=keyvalue,
+        )
+        return _encoded(self, options, None)[0]
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Return the bytes of a NRRD file with attached samples.
+
+        The header is the record of [`to_raw`][], which receives the
+        keyword arguments. A lazy array that reaches the writer unchanged
+        is written as the file stores it.
 
         Raises
         ------
         TypeError
             If an unknown option is given.
-        WriterError
-            If the data, an option or the geometry cannot be written.
         """
-        if kwargs:
-            raise TypeError(
-                f"Unknown NRRD writer option(s): {', '.join(kwargs)}"
-            )
-        perm, roles, kinds = self._storage()
-        data = self.data
-        shape = tuple(int(n) for n in np.shape(data))
-        ndim = len(shape)
-        if ndim == 0:
-            raise WriterError("NRRD cannot store a zero-dimensional array.")
-        source = self.header
-        fields: tx.Dict[str, str] = {}
+        record, copied, order = _encoded(self, _options(kwargs), ())
+        return record.to_bytes() + _payload(self, record, copied, order)
 
-        # --- storage --------------------------------------------------
-        sizes = [0] * ndim
-        for j, i in enumerate(perm):
-            sizes[i] = shape[j]
+    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
+        """Write a NRRD file with attached samples to a stream."""
+        file.write(self.to_bytes(**kwargs))
+
+    def to_filename(
+        self,
+        filename: path.FilenameLike,
+        data_file: tx.Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Write to a path, attached or detached as the name says.
+
+        The samples are written to a separate data file when the name ends
+        with `.nhdr` or `data_file` is given. The data file is named after
+        the header, with the extension of its encoding, such as
+        `.raw.gz`, unless `data_file` names it. The other keyword
+        arguments are those of [`to_raw`][]. The content is encoded before
+        any file is written, and each local file is replaced at once, so
+        an image can be written over the files that it was read from.
+        When the lazy array of the image reads a file that is written,
+        `raw` is then pointed at the new file, which holds the same
+        samples.
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
+        """
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+        options = _options(kwargs)
+        name = filename.name
+        nhdr = name.lower().endswith(".nhdr")
+        if not nhdr and data_file is None:
+            stale = _reads_from(self.raw, [filename])
+            write_file(filename, self.to_bytes(**options))
+            if stale:
+                self.raw = read_nrrd(filename, mmap=self.raw.mmap)[1]
+            return
+        if data_file is None:
+            held = None if self.metadata is None else self.metadata.raw
+            encoding = _target_encoding(held, options["encoding"])
+            data_file = name[: -len(".nhdr")] + _DATA_EXTENSIONS[encoding]
+        record, copied, order = _encoded(self, options, (data_file,))
+        header = record.to_bytes()
+        data = _payload(self, record, copied, order)
+        target = _sibling(filename, data_file)
+        stale = _reads_from(self.raw, [filename, target])
+        write_file(target, data)
+        write_file(filename, header)
+        if stale:
+            self.raw = read_nrrd(filename, mmap=self.raw.mmap)[1]
+
+
+# ----------------------------------------------------------------------
+#   WRITING
+# ----------------------------------------------------------------------
+
+
+_OPTIONS = ("encoding", "endian", "datatype", "space", "keyvalue")
+"""The options of the NRRD writer, besides the `data_file` of a path."""
+
+
+def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
+    """Return the writer options, refusing unknown ones.
+
+    Raises
+    ------
+    TypeError
+        If an unknown option is given.
+    """
+    unknown = [name for name in kwargs if name not in _OPTIONS]
+    if unknown:
+        raise TypeError(f"Unknown NRRD writer option(s): {', '.join(unknown)}")
+    return {name: kwargs.get(name) for name in _OPTIONS}
+
+
+def _target_encoding(
+    held: tx.Optional[NrrdRaw], encoding: tx.Optional[str]
+) -> str:
+    """Return the encoding of the samples to write.
+
+    The option wins, then the encoding of the base, and gzip by default.
+
+    Raises
+    ------
+    WriterError
+        If the encoding is unknown.
+    """
+    if encoding is None:
+        return held.encoding if held is not None else "gzip"
+    key = str(encoding).lower()
+    if key not in _ENCODINGS:
+        raise WriterError(f"Unknown NRRD encoding: {encoding!r}")
+    return _ENCODINGS[key]
+
+
+def _encoded(
+    image: NrrdImage,
+    options: tx.Mapping[str, tx.Any],
+    data_files: tx.Optional[tx.Tuple[str, ...]],
+) -> tx.Tuple[NrrdRaw, bool, tx.List[int]]:
+    """Return the record that writing an image stores, and how to store it.
+
+    The record is encoded as [`NrrdImage.to_raw`][] describes. The result
+    also tells whether `raw` is a lazy array whose samples are copied as
+    the file stores them, and gives the order of the image axes in the
+    file. The `data_files` are those of the header: an empty tuple for
+    attached samples, one name for a detached header, or `None` to keep
+    those of the base.
+
+    Raises
+    ------
+    WriterError
+        If there is no data, or an option or the geometry cannot be
+        written.
+    """
+    raw = image.raw
+    if raw is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    shape = tuple(int(n) for n in raw.shape)
+    ndim = len(shape)
+    if ndim == 0:
+        raise WriterError("NRRD cannot store a zero-dimensional array.")
+    held = None if image.metadata is None else image.metadata.raw
+    order, roles = _storage_order(image, held, shape)
+    sizes = [0] * ndim
+    for j, i in enumerate(order):
+        sizes[i] = shape[j]
+    matched = held is not None and tuple(held.sizes) == tuple(sizes)
+    encoding = _target_encoding(held, options["encoding"])
+    endian = options["endian"]
+    if endian is not None and endian not in ("little", "big"):
+        raise WriterError(f"Unknown NRRD endian: {endian!r}")
+    copied = _copies_samples(raw, order, encoding, options)
+    fields: tx.Dict[str, str] = {}
+
+    # --- storage --------------------------------------------------
+    if copied:
+        for name in _STORAGE:
+            if name in raw.record.fields and name != "data file":
+                fields[name] = raw.record.fields[name]
+        if endian is not None:
+            fields["endian"] = endian
+    else:
+        datatype = options["datatype"]
         if datatype is None:
-            datatype = getattr(data, "dtype", np.float32)
+            datatype = getattr(raw, "dtype", np.float32)
         fields["type"] = dtype_to_nrrd(datatype)
         fields["dimension"] = str(ndim)
         fields["sizes"] = " ".join(str(n) for n in sizes)
-        fields["kinds"] = " ".join(kinds)
-        if encoding is None:
-            encoding = source.encoding if source is not None else "gzip"
-        if str(encoding).lower() not in _ENCODINGS:
-            raise WriterError(f"Unknown NRRD encoding: {encoding!r}")
-        fields["encoding"] = _ENCODINGS[str(encoding).lower()]
+        fields["encoding"] = encoding
         if endian is None:
-            endian = (source.endian if source is not None else None) or (
-                "little"
-            )
-        if endian not in ("little", "big"):
-            raise WriterError(f"Unknown NRRD endian: {endian!r}")
+            endian = (held.endian if held is not None else None) or "little"
         fields["endian"] = endian
 
-        # --- per-axis fields of the source ----------------------------
-        matched = (
-            source is not None
-            and len(kinds) == ndim
-            and (
-                source.dimension == ndim
-                and tuple(source.sizes) == tuple(sizes)
+    # --- kinds and other fields of the base -----------------------
+    if matched:
+        for name, value in held.fields.items():
+            if name in _STORAGE or name in _GEOMETRY or name in _PER_AXIS:
+                continue
+            if name in _VALUES and not copied:
+                continue
+            fields[name] = value
+    else:
+        fields["kinds"] = " ".join(_kinds(roles, order))
+
+    # --- geometry -------------------------------------------------
+    if matched and _keeps_geometry(image, held, order, options["space"]):
+        for name in _GEOMETRY + _PER_AXIS:
+            if name in held.fields:
+                fields[name] = held.fields[name]
+    else:
+        fields.update(
+            _geometry_fields(
+                image, held, matched, roles, order, options["space"]
             )
         )
-        per_axis: tx.Dict[str, tx.List[str]] = {}
-        if matched:
-            for name in _PER_AXIS:
-                value = source.fields.get(name)
-                if value is None:
-                    continue
-                if name in ("labels", "units"):
-                    values = ['"' + v + '"' for v in _split_quoted(value)]
-                else:
-                    values = value.split()
-                if len(values) == ndim:
-                    per_axis[name] = values
-            for name in _KEPT:
-                if name in source.fields:
-                    fields[name] = source.fields[name]
+    if "space directions" not in fields:
+        fields.pop("measurement frame", None)
 
-        # --- geometry -------------------------------------------------
-        spatial = [perm[j] for j, r in enumerate(roles) if r == "space"]
-        geometry = _geometry(self, roles, space, source)
-        if geometry is not None:
-            kind, values = geometry
-            if kind == "space":
-                fields.update(values["fields"])
-                directions = [None] * ndim
-                for i, v in zip(spatial, values["directions"]):
-                    directions[i] = v
-                fields["space directions"] = _format_vectors(directions)
-                # Spatial axes are described by their directions alone.
-                for name in ("spacings", "axis mins", "axis maxs", "units"):
-                    if name in per_axis:
-                        empty = '""' if name == "units" else "nan"
-                        for i in spatial:
-                            per_axis[name][i] = empty
-            else:
-                spacings = per_axis.setdefault("spacings", ["nan"] * ndim)
-                mins = per_axis.get("axis mins", ["nan"] * ndim)
-                centers = per_axis.get("centers", ["???"] * ndim)
-                units = per_axis.get("units", ['""'] * ndim)
-                for i, s, t, u in zip(spatial, *values):
-                    spacings[i] = _format_float(s)
-                    cell = centers[i].lower() != "node"
-                    mins[i] = _format_float(t - s / 2 if cell else t)
-                    units[i] = _format_strings([u])
-                if any(m != "nan" for m in mins):
-                    per_axis["axis mins"] = mins
-                    per_axis.pop("axis maxs", None)
-                if any(u != '""' for u in units):
-                    per_axis["units"] = units
-        for name, values in per_axis.items():
-            fields[name] = " ".join(values)
-        if "space directions" not in fields:
-            fields.pop("measurement frame", None)
+    merged = _merged_keyvalue(held, options["keyvalue"])
+    if data_files is None:
+        data_files = held.data_files if held is not None else ()
+    version = held.version if held is not None else 4
+    record = NrrdRaw(
+        version=version,
+        fields=fields,
+        keyvalue=merged,
+        data_files=tuple(data_files),
+    )
+    if held is not None and record == held:
+        return held, copied, order
+    if version < 4:
+        record = replace(record, version=4)
+    return record, copied, order
 
-        # --- key/value pairs ------------------------------------------
-        merged = dict(source.keyvalue) if source is not None else {}
-        for key, value in (keyvalue or {}).items():
+
+def _storage_order(
+    image: NrrdImage, held: tx.Optional[NrrdRaw], shape: tx.Tuple[int, ...]
+) -> tx.Tuple[tx.List[int], tx.List[str]]:
+    """Return the file axis of each image axis, and the role of each.
+
+    An image whose shape is that of the base keeps the order of the axes
+    in the file of the base. Any other image stores its axes in the order
+    of the data. The roles come from the axes of the voxel system, or of
+    the input of the preferred transformation, and otherwise the first
+    three axes are spatial.
+    """
+    ndim = len(shape)
+    system = image.system
+    if system is None and image.transformations:
+        system = getattr(image.transformation, "input", None)
+    try:
+        axes = list(getattr(system, "axes", None) or [])
+    except TypeError:
+        axes = []
+    if len(axes) == ndim and not any(a is ... for a in axes):
+        roles = [_role(a) for a in axes]
+    else:
+        roles = ["space"] * min(3, ndim) + ["other"] * (ndim - 3)
+    if held is not None and held.dimension == ndim:
+        order = image_order(held)
+        if tuple(held.sizes[i] for i in order) == shape:
+            return order, roles
+    return list(range(ndim)), roles
+
+
+def _copies_samples(
+    raw: ArrayProtocol,
+    order: tx.Sequence[int],
+    encoding: str,
+    options: tx.Mapping[str, tx.Any],
+) -> bool:
+    """Tell whether the samples of `raw` are copied as the file stores them.
+
+    They are when `raw` is a lazy array whose samples lie in one file,
+    stored in the order that the writer chose, and the options name the
+    encoding, the type and the byte order that its record stores, or are
+    not given.
+    """
+    if not isinstance(raw, _NrrdProxy) or not raw.copyable:
+        return False
+    record = raw.record
+    if list(image_order(record)) != list(order):
+        return False
+    if encoding != record.encoding:
+        return False
+    datatype = options["datatype"]
+    if datatype is not None and dtype_to_nrrd(datatype) != dtype_to_nrrd(
+        record.dtype
+    ):
+        return False
+    endian = options["endian"]
+    if (
+        endian is not None
+        and record.dtype.itemsize > 1
+        and endian != record.endian
+    ):
+        return False
+    return True
+
+
+def _keeps_geometry(
+    image: NrrdImage,
+    held: NrrdRaw,
+    order: tx.Sequence[int],
+    space: tx.Optional[str],
+) -> bool:
+    """Tell whether the geometry fields of the base are written as stored.
+
+    They are when the axes are stored in the order of the base, `space`
+    names the space of the base or is not given, and the preferred
+    transformation is the one that the base decodes to, exactly. The
+    test cannot be whether `transformations` was assigned, because
+    `from_instance` and `replace` assign the decoded list.
+    """
+    if list(image_order(held)) != list(order):
+        return False
+    if space is not None:
+        key = str(space).lower()
+        if _SPACE_NAMES.get(key, key) != held.space:
+            return False
+    decoded = _nrrd_to_transformations(held)
+    current = list(image.transformations)
+    if not decoded or not current:
+        return len(decoded) == len(current)
+    return _same_transformation(current[-1], decoded[-1])
+
+
+def _same_transformation(first: tx.Any, second: tx.Any) -> bool:
+    """Tell whether two transformations are the same map between the same
+    spaces, exactly.
+
+    The parameters are compared with NaN equal to NaN, so that a geometry
+    that holds NaN is still recognized.
+    """
+    if type(first) is not type(second):
+        return False
+    if first.input != second.input or first.output != second.output:
+        return False
+    a = np.asarray(first.data, dtype=float)
+    b = np.asarray(second.data, dtype=float)
+    return a.shape == b.shape and bool(np.array_equal(a, b, equal_nan=True))
+
+
+def _geometry_fields(
+    image: NrrdImage,
+    held: tx.Optional[NrrdRaw],
+    matched: bool,
+    roles: tx.Sequence[str],
+    order: tx.Sequence[int],
+    space: tx.Optional[str],
+) -> tx.Dict[str, str]:
+    """Encode the preferred transformation into the geometry fields.
+
+    The fields of one value per axis are taken from the base when the
+    shape is that of the base, and the spatial axes are then described by
+    their geometry alone. The base also gives the space and the
+    measurement frame of the result, whatever its shape.
+
+    Raises
+    ------
+    WriterError
+        If the space is unknown, or the transformation maps too few axes.
+    """
+    ndim = len(order)
+    fields: tx.Dict[str, str] = {}
+    per_axis: tx.Dict[str, tx.List[str]] = {}
+    if matched:
+        for name in _PER_AXIS:
+            value = held.fields.get(name)
             if value is None:
-                merged.pop(key, None)
+                continue
+            if name in ("labels", "units"):
+                values = ['"' + v + '"' for v in _split_quoted(value)]
             else:
-                merged[key] = str(value)
+                values = value.split()
+            if len(values) == ndim:
+                per_axis[name] = values
+    spatial = [order[j] for j, r in enumerate(roles) if r == "space"]
+    geometry = _geometry(image, roles, space, held)
+    if geometry is not None:
+        kind, values = geometry
+        if kind == "space":
+            fields.update(values["fields"])
+            directions = [None] * ndim
+            for i, v in zip(spatial, values["directions"]):
+                directions[i] = v
+            fields["space directions"] = _format_vectors(directions)
+            # Spatial axes are described by their directions alone.
+            for name in ("spacings", "axis mins", "axis maxs", "units"):
+                if name in per_axis:
+                    empty = '""' if name == "units" else "nan"
+                    for i in spatial:
+                        per_axis[name][i] = empty
+        else:
+            spacings = per_axis.setdefault("spacings", ["nan"] * ndim)
+            mins = per_axis.get("axis mins", ["nan"] * ndim)
+            centers = per_axis.get("centers", ["???"] * ndim)
+            units = per_axis.get("units", ['""'] * ndim)
+            for i, s, t, u in zip(spatial, *values):
+                spacings[i] = _format_float(s)
+                cell = centers[i].lower() != "node"
+                mins[i] = _format_float(t - s / 2 if cell else t)
+                units[i] = _format_strings([u])
+            if any(m != "nan" for m in mins):
+                per_axis["axis mins"] = mins
+                per_axis.pop("axis maxs", None)
+            if any(u != '""' for u in units):
+                per_axis["units"] = units
+    for name, values in per_axis.items():
+        fields[name] = " ".join(values)
+    return fields
 
-        version = max(4, source.version if source is not None else 4)
-        return NrrdHeader(version=version, fields=fields, keyvalue=merged)
+
+def _merged_keyvalue(
+    held: tx.Optional[NrrdRaw],
+    keyvalue: tx.Optional[tx.Mapping[str, tx.Optional[str]]],
+) -> tx.Dict[str, str]:
+    """Merge key/value pairs into those of the base.
+
+    A value of `None` removes a key.
+
+    Raises
+    ------
+    WriterError
+        If a key is empty, starts with `#`, holds `:=`, or a key or a
+        value cannot be written as UTF-8. A header would then read back
+        other pairs.
+    """
+    merged = dict(held.keyvalue) if held is not None else {}
+    for key, value in (keyvalue or {}).items():
+        key = str(key)
+        if not key or key.startswith("#") or ":=" in key:
+            raise WriterError(
+                f"The NRRD key {key!r} cannot be written: a key must not be "
+                f"empty, start with '#' or hold ':='."
+            )
+        if value is None:
+            merged.pop(key, None)
+            continue
+        value = str(value)
+        try:
+            (key + value).encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise WriterError(
+                f"The NRRD key/value pair {key!r} cannot be written as "
+                f"UTF-8: {error}"
+            ) from error
+        merged[key] = value
+    return merged
+
+
+def _payload(
+    image: NrrdImage,
+    record: NrrdRaw,
+    copied: bool,
+    order: tx.Sequence[int],
+) -> bytes:
+    """Return the bytes of the samples that a header describes.
+
+    A lazy array that is copied gives the bytes that the file stores, from
+    the start of its samples. Any other array is put in the order of the
+    file and encoded.
+    """
+    if copied:
+        return image.raw.read_stored()
+    values = image.data if isinstance(image.raw, _NrrdProxy) else image.raw
+    return encode_data(record, np.asarray(values).transpose(np.argsort(order)))
+
+
+def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
+    """Tell whether a lazy array reads one of the files just written.
+
+    Paths are compared once resolved, and a stream is never one of them.
+    """
+    if not isinstance(raw, _NrrdProxy):
+        return False
+    read = [raw.source, *raw.files]
+    resolved = {_resolved(file) for file in read} - {None}
+    return any(_resolved(file) in resolved for file in written)
+
+
+def _resolved(file: tx.Any) -> tx.Optional[str]:
+    """Return the resolved name of a local path, or `None`."""
+    if not isinstance(file, (str, os.PathLike)):
+        return None
+    try:
+        if path.Path(file).protocol.lower() not in ("", "file", "local"):
+            return None
+        return os.path.realpath(os.fspath(file))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _split_quoted(value: str) -> tx.List[str]:
@@ -620,7 +1119,7 @@ def _orientation_matrix(axes: tx.Sequence[tx.Any]) -> tx.Optional[np.ndarray]:
 
 def _target_space(
     requested: tx.Optional[str],
-    source: tx.Optional[NrrdHeader],
+    source: tx.Optional[NrrdRaw],
     to_ras: np.ndarray,
 ) -> str:
     """Return the anatomical `space` in which to write the geometry.
@@ -659,7 +1158,7 @@ def _geometry(
     image: NrrdImage,
     roles: tx.Sequence[str],
     space: tx.Optional[str],
-    source: tx.Optional[NrrdHeader],
+    source: tx.Optional[NrrdRaw],
 ) -> tx.Optional[tx.Tuple[str, tx.Any]]:
     """Return the geometry fields of the preferred transformation.
 
@@ -738,7 +1237,7 @@ def _geometry(
 
 
 def _measurement_frame(
-    source: tx.Optional[NrrdHeader], target: str
+    source: tx.Optional[NrrdRaw], target: str
 ) -> tx.Optional[str]:
     """Return the source measurement frame expressed in the `target` space.
 
@@ -760,6 +1259,7 @@ def _measurement_frame(
     return _format_vectors(list((flips[:, None] * frame).T))
 
 
+
 # ----------------------------------------------------------------------
 #   FORMATS
 # ----------------------------------------------------------------------
@@ -767,16 +1267,17 @@ def _measurement_frame(
 
 @register_format
 class AttachedNrrdImage(NrrdImage):
-    """An image whose header and data share one `.nrrd` file.
+    """An image whose header and samples share one `.nrrd` file.
 
     See [`NrrdImage`][].
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nrrd",)
-    HINTS = ("attached",)
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("attached",)
 
     @classmethod
-    def _score_header(cls, header: NrrdHeader) -> float:
+    def _score_header(cls, header: NrrdRaw) -> float:
+        """Score a header whose samples follow it in the same file."""
         return Confidence.NO if header.data_files else Confidence.LIKELY
 
 
@@ -788,8 +1289,9 @@ class DetachedNrrdImage(NrrdImage):
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nhdr",)
-    HINTS = ("nhdr", "detached")
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nhdr", "detached")
 
     @classmethod
-    def _score_header(cls, header: NrrdHeader) -> float:
+    def _score_header(cls, header: NrrdRaw) -> float:
+        """Score a header that names separate data files."""
         return Confidence.LIKELY if header.data_files else Confidence.NO

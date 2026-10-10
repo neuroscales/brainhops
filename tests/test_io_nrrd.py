@@ -21,8 +21,9 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     ParserError,
 )
-from brainhops.io.common.nrrd import NrrdHeader
+from brainhops.io.common.nrrd import NrrdRaw
 from brainhops.io.common.nrrd._codecs import dtype_to_nrrd, nrrd_dtype
+from brainhops.io.common.nrrd._data import _NrrdProxy
 from brainhops.io.images import ImageFormat
 from brainhops.io.images.nrrd import (
     AttachedNrrdImage,
@@ -108,7 +109,7 @@ def test_header_parse() -> None:
         "content: name: with:=colon",
         "a key:=a value",
     ]
-    header = NrrdHeader.from_lines(lines)
+    header = NrrdRaw.from_lines(lines)
     assert header.space == "right-anterior-superior"
     assert header.space_dimension == 3
     assert header.sizes == (3, 2, 2, 2)
@@ -128,14 +129,14 @@ def test_header_parse() -> None:
 
 def test_header_errors() -> None:
     with pytest.raises(ParserContentError):
-        NrrdHeader.from_lines(["type: short", "dimension: 1"])
-    header = NrrdHeader.from_lines(
+        NrrdRaw.from_lines(["type: short", "dimension: 1"])
+    header = NrrdRaw.from_lines(
         ["type: short", "dimension: 2", "sizes: 1 2", "encoding: raw"]
     )
     with pytest.raises(ParserContentError, match="endian"):
         _ = header.dtype
     with pytest.raises(ParserContentError):
-        NrrdHeader.from_fileobj(_io.BytesIO(b"NOTNRRD\n"))
+        NrrdRaw.from_fileobj(_io.BytesIO(b"NOTNRRD\n"))
 
 
 # ----------------------------------------------------------------------
@@ -147,7 +148,8 @@ def test_read_attached_lps(lps_file) -> None:  # noqa: ANN001
     name, values = lps_file
     image = io.load(name)
     assert type(image) is AttachedNrrdImage
-    assert isinstance(image.dataobj, np.memmap)
+    assert isinstance(image.raw, _NrrdProxy) and image.raw.mmap
+    assert isinstance(image.raw.read_samples().base, np.memmap)
     np.testing.assert_array_equal(image.data, values)
     assert [a.name for a in image.system.axes] == ["x", "y", "z"]
     physical, world = image.transformations
@@ -163,14 +165,14 @@ def test_read_attached_lps(lps_file) -> None:  # noqa: ANN001
     np.testing.assert_allclose(
         world.matrix, [[2, 0, 0, 10], [0, 3, 0, 20], [0, 0, 4, 30]]
     )
-    assert image.header.keyvalue["DWMRI_b-value"] == "1000"
-    assert image.header.keyvalue["note"] == "two\nlines"
+    assert image.metadata.raw.keyvalue["DWMRI_b-value"] == "1000"
+    assert image.metadata.raw.keyvalue["note"] == "two\nlines"
 
 
 def test_read_no_mmap(lps_file) -> None:  # noqa: ANN001
     name, values = lps_file
     image = AttachedNrrdImage.load(name, mmap=False)
-    assert not isinstance(image.dataobj, np.memmap)
+    assert not image.raw.mmap
     np.testing.assert_array_equal(image.data, values)
 
 
@@ -455,9 +457,9 @@ def test_round_trip_attached(lps_file, tmp_path) -> None:  # noqa: ANN001
     image.save(out)
     back = io.load(out)
     np.testing.assert_array_equal(back.data, values)
-    assert back.header.space == "left-posterior-superior"
-    assert back.header.encoding == "raw"
-    assert back.header.keyvalue == image.header.keyvalue
+    assert back.metadata.raw.space == "left-posterior-superior"
+    assert back.metadata.raw.encoding == "raw"
+    assert back.metadata.raw.keyvalue == image.metadata.raw.keyvalue
     np.testing.assert_allclose(
         back.transformation.matrix, image.transformation.matrix
     )
@@ -485,10 +487,10 @@ def test_round_trip_detached(tmp_path, encoding) -> None:  # noqa: ANN001
     image.save(tmp_path / "b.nhdr", encoding=encoding)
     back = io.load(tmp_path / "b.nhdr")
     assert type(back) is DetachedNrrdImage
-    assert back.header.data_files[0].startswith("b.")
+    assert back.metadata.raw.data_files[0].startswith("b.")
     np.testing.assert_array_equal(back.data, image.data)
-    assert back.header.fields["kinds"] == "vector domain domain domain"
-    assert back.header.fields["measurement frame"] == (
+    assert back.metadata.raw.fields["kinds"] == "vector domain domain domain"
+    assert back.metadata.raw.fields["measurement frame"] == (
         "(1,0,0) (0,1,0) (0,0,1)"
     )
 
@@ -498,7 +500,7 @@ def test_write_space_conversion(lps_file, tmp_path) -> None:  # noqa: ANN001
     image = io.load(name)
     image.save(tmp_path / "ras.nrrd", space="RAS")
     back = io.load(tmp_path / "ras.nrrd")
-    assert back.header.space == "right-anterior-superior"
+    assert back.metadata.raw.space == "right-anterior-superior"
     np.testing.assert_allclose(
         back.transformation.matrix,
         [[-2, 0, 0, -10], [0, -3, 0, -20], [0, 0, 4, 30]],
@@ -515,10 +517,10 @@ def test_write_options(lps_file, tmp_path) -> None:  # noqa: ANN001
         keyvalue={"DWMRI_b-value": None, "new": "1"},
     )
     back = io.load(tmp_path / "o.nrrd")
-    assert back.dataobj.dtype == np.dtype(">f4")
+    assert back.raw.dtype == np.dtype(">f4")
     np.testing.assert_array_equal(back.data, values)
-    assert "DWMRI_b-value" not in back.header.keyvalue
-    assert back.header.keyvalue["new"] == "1"
+    assert "DWMRI_b-value" not in back.metadata.raw.keyvalue
+    assert back.metadata.raw.keyvalue["new"] == "1"
     with pytest.raises(TypeError):
         image.save(tmp_path / "x.nrrd", bogus=1)
 
@@ -533,7 +535,7 @@ def test_nifti_to_nrrd_and_back(tmp_path) -> None:  # noqa: ANN001
     image = io.images.load(tmp_path / "a.nii.gz")
     io.save(image, tmp_path / "a.nrrd")
     nrrd_image = io.load(tmp_path / "a.nrrd")
-    assert nrrd_image.header.space == "right-anterior-superior"
+    assert nrrd_image.metadata.raw.space == "right-anterior-superior"
     np.testing.assert_allclose(
         nrrd_image.transformation.homogeneous_matrix, affine
     )
@@ -560,8 +562,8 @@ def test_write_no_space_round_trip(tmp_path) -> None:  # noqa: ANN001
     image = io.load(tmp_path / "a.nrrd")
     image.save(tmp_path / "b.nrrd")
     back = io.load(tmp_path / "b.nrrd")
-    assert "space" not in back.header.fields
-    assert "space dimension" not in back.header.fields
+    assert "space" not in back.metadata.raw.fields
+    assert "space dimension" not in back.metadata.raw.fields
     np.testing.assert_allclose(
         back.transformation.matrix, image.transformation.matrix
     )
@@ -596,7 +598,7 @@ def test_pynrrd_cross_check(tmp_path, detached, encoding) -> None:  # noqa: ANN0
         image.transformation.matrix,
         [[0, 1, 0, 1], [2, 0, 0, -2], [0, 0, 3, 3]],
     )
-    assert image.header.keyvalue["DWMRI_b-value"] == "1000"
+    assert image.metadata.raw.keyvalue["DWMRI_b-value"] == "1000"
 
     out = str(tmp_path / ("b" + ext))
     image.save(out)
@@ -628,6 +630,6 @@ def test_write_measurement_frame_follows_space(tmp_path) -> None:  # noqa: ANN00
     io.load(tmp_path / "a.nrrd").save(tmp_path / "b.nrrd", space="RAS")
     back = io.load(tmp_path / "b.nrrd")
     np.testing.assert_array_equal(
-        back.header.measurement_frame,
+        back.metadata.raw.measurement_frame,
         [[0, -1, 0], [-1, 0, 0], [0, 0, 1]],
     )
