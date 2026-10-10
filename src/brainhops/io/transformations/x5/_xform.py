@@ -112,11 +112,18 @@ class X5Transform(
     !!! note "What is written"
         A transformation read from a file, whose `transformations` were never
         assigned, is written back as read, with every node and chain, in the
-        current layout. Otherwise, the nodes that encode `transformations` are
-        written, with one `/TransformChain` that applies them in order when
-        there are several. An element that was decoded from a node is written
-        as that node, so its metadata survives. The package documentation lists
-        what can be encoded.
+        current layout. The options `chain` and `position` only select what
+        is read, so they never change what is written. To write only the
+        selected chain, assign it with `xform.transformations = list(xform)`.
+
+        Otherwise, the nodes that encode `transformations` are written, with
+        one `/TransformChain` that applies them in order when there are
+        several. An element that this transformation decoded from its own
+        record is written as that node, so its JSON metadata, `Inverse`,
+        `Jacobian` and other content survive. An element taken from another
+        object, or from a copy made with `replace`, is encoded again and
+        loses that content. The package documentation lists what can be
+        encoded.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
@@ -139,7 +146,10 @@ class X5Transform(
     """The index of the chain of `/TransformChain` that is read.
 
     See [`X5Transform.selection`][]. Assigning another index drops the
-    chain decoded from the record.
+    chain decoded from the record, and the index is checked when
+    `selection` is next read. The index only selects what is read: the
+    file is still written with every chain, unless the chain is assigned
+    with `xform.transformations = list(xform)`.
     """
 
     _position: KwOnly[tx.Optional[int]] = None
@@ -148,7 +158,9 @@ class X5Transform(
     """The index of the single node of `/TransformGroup` that is read.
 
     See [`X5Transform.selection`][]. Assigning another index drops the
-    chain decoded from the record.
+    chain decoded from the record, and the index is checked when
+    `selection` is next read. As with `chain`, the index does not change
+    what is written.
     """
 
     # --- chain --------------------------------------------------------
@@ -296,7 +308,15 @@ class X5Transform(
 
         The record is held by new metadata, without a copy. Keyword
         arguments such as `chain` or `position` go to the constructor.
+
+        Raises
+        ------
+        ValueError
+            If both `chain` and `position` are given.
+        ParserContentError
+            If `chain` or `position` is out of range.
         """
+        _check_selection(raw, kwargs.get("chain"), kwargs.get("position"))
         return cls(metadata=X5Metadata.from_raw(raw), **kwargs)
 
     @classmethod
@@ -321,7 +341,11 @@ class X5Transform(
         read, with every node and chain. The options `chain` and `position`
         only select what is decoded, so they do not change the record.
         Otherwise, a new record is built from the chain, whose header keeps
-        the root attributes of the current record. A transformation without
+        the root attributes of the current record. An element that this
+        transformation decoded from its own record is written as that node.
+        An element taken from another object, or from a copy made with
+        `replace`, is encoded again and loses the JSON metadata, `Inverse`,
+        `Jacobian` and other content of its node. A transformation without
         a record and without a chain gives an empty record.
 
         Raises
@@ -372,9 +396,12 @@ def _encode(
 ) -> X5Raw:
     """Encode a chain of transformations as a new record.
 
-    An element that was decoded from a node of `record`, which `decoded`
-    lists by node index, is written as that node, so its metadata survives.
-    Any other element is encoded by `transformation_to_nodes`. Several
+    An element that this transformation decoded from a node of `record`,
+    which `decoded` lists by node index, is recognised by its identity and
+    written as that node, so the content of the node survives. Any other
+    element, including one taken from another object or from a copy made
+    with `replace`, is encoded again by `transformation_to_nodes` and loses
+    the extra content of its node. Several
     nodes are chained by one `/TransformChain`. The root attributes of
     `record` are kept, and the header is written in the current layout.
     """

@@ -12,6 +12,7 @@ __all__ = [
     "X5Raw",
 ]
 
+import copy
 import json
 import os.path as op
 
@@ -172,9 +173,9 @@ class X5Raw(Magic, Hdf5ReaderWriter, repr=HIDE_IF_NONE):
     def copy(self) -> "X5Raw":
         """Return a copy that can be changed without changing this record.
 
-        The header, the nodes, their domains and their attributes are
-        copied. The arrays are shared, because a record never changes
-        them in place.
+        The header, the nodes, their domains, their attributes and their
+        JSON metadata are copied, the metadata in depth. The arrays are
+        shared, because a record never changes them in place.
         """
         header = replace(
             self.header,
@@ -242,11 +243,20 @@ class X5Raw(Magic, Hdf5ReaderWriter, repr=HIDE_IF_NONE):
 
 
 def _copy_node(node: X5Node) -> X5Node:
-    """Return a copy of a node that shares its arrays."""
+    """Return a copy of a node that shares its arrays.
+
+    The JSON metadata is copied in depth, because it is a tree of
+    dictionaries and lists that a caller may edit in place.
+    """
     domain = node.domain
     if domain is not None:
         domain = replace(domain)
-    return replace(node, attrs=dict(node.attrs), domain=domain)
+    return replace(
+        node,
+        metadata=copy.deepcopy(node.metadata),
+        attrs=dict(node.attrs),
+        domain=domain,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -274,8 +284,9 @@ def read_x5(
     """
     if not is_x5(h5file):
         raise ParserContentError("Not an X5 file: no root Format='X5'.")
+    source = None if load else _source(h5file)
     if TRANSFORM_GROUP not in h5file and "Transform" in h5file:
-        return _read_legacy(h5file)
+        return _read_legacy(h5file, source)
 
     header = X5Header(
         format=X5_FORMAT,
@@ -295,7 +306,6 @@ def read_x5(
             f"The groups of /TransformGroup must be numbered 0, 1, ...; "
             f"found {keys}."
         )
-    source = None if load else _source(h5file)
     nodes = [_read_node(group[key], source) for key in keys]
 
     chains = h5file.get(TRANSFORM_CHAIN)
@@ -424,7 +434,14 @@ def _read_domain(group: h5py.Group) -> X5Domain:
 # or absolute (coordinates).
 
 
-def _read_legacy(h5file: h5py.File) -> tx.Tuple[X5Header, tx.List[X5Node]]:
+def _read_legacy(
+    h5file: h5py.File, source: tx.Optional[str]
+) -> tx.Tuple[X5Header, tx.List[X5Node]]:
+    """Read the single transform of a file in the earlier fslpy layout.
+
+    A deformation is read later from the file at `source`, as the fields
+    of the current layout are, and at once when `source` is `None`.
+    """
     header = X5Header(
         format=X5_FORMAT,
         version=h5file.attrs.get("Version"),
@@ -440,9 +457,9 @@ def _read_legacy(h5file: h5py.File) -> tx.Tuple[X5Header, tx.List[X5Node]]:
     group = h5file["Transform"]
     if "Matrix" not in group:
         raise ParserContentError("An fslpy X5 /Transform has no Matrix.")
-    matrix = np.asarray(group["Matrix"][()])
+    matrix = _read_dataset(group, "Matrix", source)
     if xtype == "linear":
-        inverse = group["Inverse"][()] if "Inverse" in group else None
+        inverse = _read_dataset(group, "Inverse", source)
         node = X5Node(
             type="linear",
             subtype="affine",
