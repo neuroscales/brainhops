@@ -25,13 +25,21 @@ is recomputed on read rather than taken from `IJK_TO_DICOM`. An oblique
 dataset also stores its true matrix in `IJK_TO_DICOM_REAL`. AFNI
 programs compute on the cardinal grid, while `3dAFNItoNIFTI` stores the
 true matrix as the NIfTI sform.
+
+The header of a dataset is held as an [`AfniRaw`][] record, and
+[`AfniMetadata`][] reads and writes that record without the voxels.
+[`AfniImage`][brainhops.io.images.afni.AfniImage] holds such metadata
+and a lazy array of the voxels. The record keeps the text of the header
+as well as its attributes, so that a dataset that is read and written
+again without changes keeps the bytes of both of its files.
 """
 
 __all__ = [
     "AfniFormat",
-    "AfniReaderWriter",
-    "AfniHeader",
+    "AfniMetadata",
+    "AfniRaw",
 ]
 
-from ._header import AfniHeader
-from ._parsers import AfniFormat, AfniReaderWriter
+from ._format import AfniFormat
+from ._metadata import AfniMetadata
+from ._raw import AfniRaw

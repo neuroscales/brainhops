@@ -1,11 +1,10 @@
 """AFNI `.BRIK` data: sub-brick types, decoding, scaling and
-encoding, and the files of a dataset."""
+encoding, and the lazy array that reads a BRIK."""
 
 # stdlib
 import bz2
 import gzip
 import os
-import re
 
 # dependencies
 import numpy as np
@@ -27,10 +26,10 @@ from ._constants import (
     _BRICK_CODES,
     _BRICK_DTYPES,
     _BRICK_NAMES,
-    _BRIK_SUFFIXES,
     _READABLE_SUFFIXES,
 )
-from ._header import AfniHeader
+from ._files import _brik_suffix, afni_dataset_files
+from ._raw import AfniRaw
 
 # ----------------------------------------------------------------------
 #   DATA
@@ -76,7 +75,7 @@ def brick_code(dtype: tx.Any) -> int:
     return _BRICK_CODES[np.dtype(dtype).newbyteorder("=")]
 
 
-def decode_bricks(header: AfniHeader, buffer: tx.Any) -> np.ndarray:
+def decode_bricks(header: AfniRaw, buffer: tx.Any) -> np.ndarray:
     """
     Decode an uncompressed BRIK into an `(nx, ny, nz, nvals)` array.
 
@@ -123,7 +122,26 @@ def decode_bricks(header: AfniHeader, buffer: tx.Any) -> np.ndarray:
     return out
 
 
-def scale_bricks(header: AfniHeader, stored: tx.Any) -> tx.Any:
+def _is_scaled(header: AfniRaw) -> bool:
+    """Tell whether a scale factor of `BRICK_FLOAT_FACS` changes values."""
+    facs = np.asarray(header.float_facs, dtype=np.float64)
+    return bool(np.any(facs) and not np.all((facs == 0) | (facs == 1)))
+
+
+def _stored_dtype(header: AfniRaw) -> np.dtype:
+    """Return the type of the stored values once the sub-bricks are joined.
+
+    Sub-bricks of one type keep it, with its byte order, and sub-bricks
+    of several types are joined in their common type, as
+    [`decode_bricks`][] does.
+    """
+    dtypes = header.dtypes
+    if len(set(dtypes)) == 1:
+        return dtypes[0]
+    return np.result_type(*dtypes)
+
+
+def scale_bricks(header: AfniRaw, stored: tx.Any) -> tx.Any:
     """
     Apply the `BRICK_FLOAT_FACS` scale factors to stored values.
 
@@ -131,9 +149,9 @@ def scale_bricks(header: AfniHeader, stored: tx.Any) -> tx.Any:
     a memory map stays one. Otherwise they are scaled in at least single
     precision.
     """
-    facs = np.asarray(header.float_facs, dtype=np.float64)
-    if not np.any(facs) or np.all((facs == 0) | (facs == 1)):
+    if not _is_scaled(header):
         return stored
+    facs = np.asarray(header.float_facs, dtype=np.float64)
     facs = np.where(facs == 0, 1.0, facs)
     stored = np.asarray(stored)
     dtype = np.result_type(stored.dtype, np.float32)
@@ -142,7 +160,7 @@ def scale_bricks(header: AfniHeader, stored: tx.Any) -> tx.Any:
     return stored.astype(dtype) * facs.astype(dtype)
 
 
-def encode_bricks(header: AfniHeader, data: tx.Any) -> tx.Iterator[bytes]:
+def encode_bricks(header: AfniRaw, data: tx.Any) -> tx.Iterator[bytes]:
     """
     Encode an `(nx, ny, nz, nvals)` array into BRIK content, sub-brick by
     sub-brick.
@@ -187,64 +205,139 @@ def encode_bricks(header: AfniHeader, data: tx.Any) -> tx.Iterator[bytes]:
 
 
 # ----------------------------------------------------------------------
-#   FILES
+#   LAZY ARRAY
 # ----------------------------------------------------------------------
 
+_CHUNK = 1 << 20
+"""The number of bytes copied at a time from one BRIK to another."""
 
-def afni_dataset_files(
-    filename: path.FilenameLike,
-) -> tx.Tuple[tx.Any, tx.Any, str]:
+
+class _BrikProxy:
+    """A lazy array of the voxels that a BRIK file stores.
+
+    The proxy holds the path of the BRIK and the record of the dataset,
+    which says how many sub-bricks the BRIK holds and how each one is
+    stored. It opens the file each time its values are needed and keeps
+    no open file, so it can be pickled. Its shape is that of the image:
+    `(x, y, z)` for a single sub-brick and `(x, y, z, sub-brick)`
+    otherwise. The scale factors of `BRICK_FLOAT_FACS` are applied when
+    the values are read, as nibabel's proxy applies the scaling of a
+    NIfTI header.
+
+    A local BRIK that is not compressed and whose sub-bricks share a
+    type is memory-mapped when `mmap` is true, so that reading the values
+    gives a read-only view of the file.
     """
-    Find the `.HEAD` and `.BRIK` files of the dataset that a path names.
 
-    The path may name the `.HEAD` file, the `.BRIK` file with any
-    compression, or the bare dataset (`anat+orig`). The BRIK is the first
-    existing file among the compression suffixes AFNI tries, or else the
-    uncompressed name.
+    def __init__(self, brik: tx.Any, record: AfniRaw, mmap: bool) -> None:
+        self.brik = brik
+        """The path of the BRIK file."""
+        self.record = record
+        """The record of the dataset, which describes the BRIK."""
+        self.mmap = bool(mmap)
+        """Whether a local, uncompressed BRIK is memory-mapped."""
 
-    Returns
-    -------
-    head : Path
-        The `.HEAD` file.
-    brik : Path
-        The `.BRIK` file, which may not exist.
-    stem : str
-        The dataset name, without directory or extension.
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the image, read from the record."""
+        nvals = self.record.nvals
+        return self.record.shape + ((nvals,) if nvals > 1 else ())
+
+    @property
+    def ndim(self) -> int:
+        """The number of dimensions of the image."""
+        return len(self.shape)
+
+    @property
+    def dtype(self) -> np.dtype:
+        """The type of the values once they are scaled."""
+        stored = _stored_dtype(self.record)
+        if _is_scaled(self.record):
+            return np.result_type(stored, np.float32)
+        return stored
+
+    def get_unscaled(self) -> np.ndarray:
+        """Return the stored values as a `(x, y, z, sub-brick)` array."""
+        return _read_bricks(self.record, self.brik, self.mmap)
+
+    def copy_to(self, out: tx.BinaryIO) -> None:
+        """Write the stored bytes of the BRIK, decompressed, to a stream.
+
+        The values are copied without being decoded, so that a dataset
+        that is read and written again keeps the bytes of its BRIK.
+
+        Raises
+        ------
+        ParserContentError
+            If the BRIK holds fewer bytes than the record says.
+        """
+        remaining = self.record.nbytes
+        with _open_path(self.brik) as f:
+            stream = open_compressed(f)
+            while remaining > 0:
+                chunk = stream.read(min(remaining, _CHUNK))
+                if not chunk:
+                    raise ParserContentError(
+                        f"The AFNI BRIK {self.brik} ends before the "
+                        f"{self.record.nbytes} bytes that its header asks "
+                        f"for."
+                    )
+                out.write(chunk)
+                remaining -= len(chunk)
+
+    def __array__(
+        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
+    ) -> np.ndarray:
+        values = scale_bricks(self.record, self.get_unscaled())
+        if self.record.nvals == 1:
+            values = values[..., 0]
+        return values if dtype is None else values.astype(dtype)
+
+    def __getitem__(self, index: tx.Any) -> np.ndarray:
+        return np.asarray(self)[index]
+
+    def __repr__(self) -> str:
+        return f"_BrikProxy({str(self.brik)!r}, shape={self.shape})"
+
+
+def read_afni(
+    filename: path.FilenameLike, mmap: bool = True
+) -> tx.Tuple[AfniRaw, _BrikProxy]:
+    """Read the record and a lazy array of the voxels of a dataset.
+
+    The path may name the `.HEAD` file, the `.BRIK` file or the bare
+    dataset. The record is read from the `.HEAD` file and validated, and
+    the BRIK is checked, but its values are not read.
+
+    Raises
+    ------
+    ParserExistsError
+        If the `.HEAD` or the `.BRIK` file does not exist.
+    ParserContentError
+        If the header is invalid, or the BRIK is compressed in a way
+        that cannot be read or is too short.
     """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    name = filename.name
-    stem, head_ext, brik_ext = name, ".HEAD", ".BRIK"
-    match = re.search(r"\.(HEAD|head|BRIK|brik)(\.[A-Za-z0-9]+)?$", name)
-    if match and match.group(2) in (None,) + _BRIK_SUFFIXES[1:]:
-        stem = name[: match.start()]
-        if match.group(1).islower():
-            head_ext, brik_ext = ".head", ".brik"
-    parent = filename.parent
-    head = parent / (stem + head_ext)
-    brik = None
-    for suffix in _BRIK_SUFFIXES:
-        candidate = parent / (stem + brik_ext + suffix)
-        if path.exists(candidate):
-            brik = candidate
-            break
-    if brik is None:
-        brik = parent / (stem + brik_ext)
-    return head, brik, stem
+    head, brik, _ = afni_dataset_files(filename)
+    if not path.exists(head):
+        raise ParserExistsError(f"No such file: {head}")
+    record = AfniRaw.from_filename(head).validate()
+    return record, brik_proxy(record, brik, mmap)
 
 
-def _brik_suffix(brik: tx.Any) -> str:
-    name = str(brik.name if hasattr(brik, "name") else brik)
-    for suffix in _BRIK_SUFFIXES[1:]:
-        if name.endswith(suffix):
-            return suffix
-    return ""
+def brik_proxy(record: AfniRaw, brik: tx.Any, mmap: bool) -> _BrikProxy:
+    """Return the lazy array of a BRIK, after checking that it can be read.
 
+    The checks need no voxel: the BRIK must exist, be compressed with
+    gzip or bzip2 or not at all, and, when it is a local file that is not
+    compressed, hold the bytes that the record asks for.
 
-def _read_brik(header: AfniHeader, brik: tx.Any, mmap: bool) -> np.ndarray:
-    """
-    Read a BRIK, memory-mapping it when it is local, uncompressed, of a
-    single type, and `mmap` is true.
+    Raises
+    ------
+    ParserExistsError
+        If the BRIK does not exist.
+    ParserContentError
+        If the BRIK is compressed in a way that cannot be read, or is too
+        short.
     """
     if not path.exists(brik):
         raise ParserExistsError(
@@ -259,6 +352,22 @@ def _read_brik(header: AfniHeader, brik: tx.Any, mmap: bool) -> np.ndarray:
             f"cannot be read here. Decompress it, or recompress it with "
             f"gzip."
         )
+    local = _local_path(brik)
+    if local is not None and not suffix:
+        size = os.path.getsize(local)
+        if size < record.nbytes:
+            raise ParserContentError(
+                f"The AFNI BRIK {brik} holds {size} bytes, but the header "
+                f"asks for {record.nbytes}."
+            )
+    return _BrikProxy(brik, record, mmap)
+
+
+def _read_bricks(header: AfniRaw, brik: tx.Any, mmap: bool) -> np.ndarray:
+    """
+    Read the sub-bricks of a BRIK, memory-mapping the file when it is
+    local, uncompressed, of a single type, and `mmap` is true.
+    """
     nbytes = header.nbytes
     local = _local_path(brik)
     with _open_path(brik) as f:
@@ -271,12 +380,6 @@ def _read_brik(header: AfniHeader, brik: tx.Any, mmap: bool) -> np.ndarray:
             and nbytes > 0
             and len(set(header.dtypes)) == 1
         ):
-            size = os.path.getsize(local)
-            if size < nbytes:
-                raise ParserContentError(
-                    f"The AFNI BRIK {brik} holds {size} bytes, but the "
-                    f"header asks for {nbytes}."
-                )
             buffer = np.memmap(
                 local, dtype=np.uint8, mode="r", offset=0, shape=(nbytes,)
             )
@@ -285,24 +388,36 @@ def _read_brik(header: AfniHeader, brik: tx.Any, mmap: bool) -> np.ndarray:
     return decode_bricks(header, buffer)
 
 
-def _write_brik(header: AfniHeader, data: tx.Any, brik: tx.Any) -> None:
-    """Write a BRIK, compressed according to its suffix."""
+def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
+    """Write a BRIK, compressed according to its suffix.
+
+    A [`_BrikProxy`][] is copied as the file stores it. Any other array
+    is encoded with the types and the scale factors of the header.
+
+    Raises
+    ------
+    WriterError
+        If the suffix asks for a compression that cannot be written.
+    """
     suffix = _brik_suffix(brik)
+    if suffix not in ("", ".gz", ".bz2"):
+        raise WriterError(
+            f"Cannot write an AFNI BRIK compressed with {suffix!r}: "
+            f"use '.BRIK', '.BRIK.gz' or '.BRIK.bz2'."
+        )
     with brik.open("wb") as f:
         if suffix == ".gz":
             out = gzip.GzipFile(fileobj=f, mode="wb")
         elif suffix == ".bz2":
             out = bz2.BZ2File(f, mode="wb")
-        elif suffix:
-            raise WriterError(
-                f"Cannot write an AFNI BRIK compressed with {suffix!r}: "
-                f"use '.BRIK', '.BRIK.gz' or '.BRIK.bz2'."
-            )
         else:
             out = f
         try:
-            for chunk in encode_bricks(header, data):
-                out.write(chunk)
+            if isinstance(data, _BrikProxy):
+                data.copy_to(out)
+            else:
+                for chunk in encode_bricks(header, data):
+                    out.write(chunk)
         finally:
             if out is not f:
                 out.close()
