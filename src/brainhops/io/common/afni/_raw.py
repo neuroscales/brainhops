@@ -472,9 +472,10 @@ class AfniRaw(
         """Read the record from an open `.HEAD` or `.BRIK` file.
 
         A `.HEAD` stream is read whole. A stream of any other content is
-        taken to be the BRIK of a dataset, whose header is found from the
-        name of the stream. The position of the stream is restored, and
-        the keyword arguments are ignored.
+        taken to be the BRIK of a dataset, which is not read beyond its
+        start, and the header is found from the name of the stream. The
+        position of the stream is restored, and the keyword arguments are
+        ignored.
 
         Raises
         ------
@@ -482,11 +483,15 @@ class AfniRaw(
             If the stream is not a header and has no file name.
         """
         with preserve_position(file):
-            content = file.read()
-        if isinstance(content, str):
-            content = content.encode("latin-1")
-        if _looks_like_head(bytes(content[:256]).decode("latin-1")):
-            return cls.from_bytes(content)
+            start = file.read(256)
+            if isinstance(start, str):
+                start = start.encode("latin-1")
+            head = _looks_like_head(bytes(start).decode("latin-1"))
+            rest = file.read() if head else b""
+        if head:
+            if isinstance(rest, str):
+                rest = rest.encode("latin-1")
+            return cls.from_bytes(bytes(start) + bytes(rest))
         name = getattr(file, "name", None)
         if isinstance(name, (str, bytes, os.PathLike)):
             return cls.from_filename(os.fsdecode(name))
