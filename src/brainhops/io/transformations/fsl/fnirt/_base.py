@@ -2,7 +2,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Alias
 
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import always_unset, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
@@ -16,6 +16,7 @@ from brainhops.io.common.nifti._header import (
     _header,
     _nifti_intent,
     _NiftiObject,
+    _record_image,
 )
 from brainhops.io.common.nifti._views import (
     _field_to_model,
@@ -24,7 +25,6 @@ from brainhops.io.common.nifti._views import (
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _always, _record_image
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
@@ -137,7 +137,7 @@ class FnirtWarpField(
     infer it from the data. Coefficient fields ignore it.
     """
 
-    @smartproperty(cache=True, unset=_always, fset=_set_fnirt_data)
+    @smartproperty(cache=True, unset=always_unset, fset=_set_fnirt_data)
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The array of the file, as FSL stores it, decoded from `raw`.
 
@@ -212,7 +212,7 @@ class FnirtWarpField(
             raise WriterError(
                 "A FNIRT file needs its field data to be written."
             )
-        image = _record_image(self.raw, self.metadata, overrides=overrides)
+        image = _record_image(self.raw, self._record(), overrides=overrides)
         if _header(self) is None:
             image.header.set_intent(FSL_FNIRT_DISPLACEMENT_FIELD)
         _apply_like(image, like)

@@ -8,7 +8,11 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import InvalidatorInAttribute, smartproperty
+from brainhops._core.properties import (
+    InvalidatorInAttribute,
+    always_unset,
+    smartproperty,
+)
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserExistsError
@@ -19,6 +23,7 @@ from brainhops.io.common.nifti._header import (
     _apply_overrides,
     _header,
     _NiftiObject,
+    _record_image,
 )
 from brainhops.io.common.nifti._views import (
     _affine_to_disk,
@@ -32,12 +37,7 @@ from brainhops.io.transformations.base._conversions import (
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 # this format
-from ._base import (
-    NiftiBasedTransformation,
-    _always,
-    _nibabel_parts,
-    _record_image,
-)
+from ._base import NiftiBasedTransformation, _nibabel_parts
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -151,23 +151,24 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         """
         Build a `nibabel` image whose affine is this transformation.
 
-        NIfTI stores an affine only as the geometry of a data array, so a
-        single-voxel placeholder volume carries it. A copy of the header of
-        the metadata is the base of the new header, and its fields that
-        describe the layout and the geometry are encoded again. The
-        voxel-to-RAS matrix becomes both the sform and the qform, under the
-        code recorded by the header, the sform code first, or 2 without a
-        code. Header fields are copied from `like`, and `overrides` are
-        applied last, but the geometry always comes from this
-        transformation.
+        NIfTI stores an affine only as the geometry of a data array, so
+        a single-voxel placeholder volume carries it. A copy of the
+        header of the metadata is the base of the new header, and its
+        fields that describe the layout and the geometry are encoded
+        again. The voxel-to-RAS matrix becomes both the sform and the
+        qform, and each form keeps the code that the header records. The
+        sform takes the qform code when its own code is zero, and both
+        forms take the code 2 when the header records none. Header
+        fields are copied from `like`, and `overrides` are applied last,
+        but the geometry always comes from this transformation.
         """
         matrix = self._voxel_to_ras_matrix()
-        code = _xform_code(_header(self))
+        scode, qcode = _xform_codes(_header(self))
         data = np.zeros((1, 1, 1), dtype="float32")
-        image = _record_image(data, self.metadata, matrix, overrides)
+        image = _record_image(data, self._record(), matrix, overrides)
         _apply_like(image, like)
-        image.header.set_sform(matrix, code=code)
-        image.header.set_qform(matrix, code=code)
+        image.header.set_sform(matrix, code=scode)
+        image.header.set_qform(matrix, code=qcode)
         _apply_overrides(image, overrides)
         return image
 
@@ -182,16 +183,21 @@ def _read_only(matrix: np.ndarray) -> np.ndarray:
     return matrix
 
 
-def _xform_code(header: tx.Optional[nb.Nifti1Header]) -> int:
-    """Return the xform code of a header, the sform code first, or 2."""
+def _xform_codes(header: tx.Optional[nb.Nifti1Header]) -> tx.Tuple[int, int]:
+    """Return the sform and qform codes to write over a header.
+
+    Each form keeps the code that the header records, so that the codes
+    of a file read and written again do not change. The sform always
+    holds the matrix, so it takes the qform code when its own code is
+    zero. A header that records no code, or no header, gives the code 2
+    to both forms.
+    """
     if header is not None:
-        _, code = header.get_sform(coded=True)
-        if code:
-            return int(code)
-        _, code = header.get_qform(coded=True)
-        if code:
-            return int(code)
-    return 2
+        _, scode = header.get_sform(coded=True)
+        _, qcode = header.get_qform(coded=True)
+        if scode or qcode:
+            return int(scode or qcode), int(qcode)
+    return 2, 2
 
 
 class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
@@ -206,18 +212,9 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
         reached through `NiftiVoxelToRAS.inverse()`.
     """
 
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        # The constructor stores `data=` in the private field of the data
-        # model, which the view does not read, and the default of `raw`
-        # comes after it. The matrix is therefore stored again, in `raw`.
-        # When both are given, `data` takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
-
     @smartproperty(
         cache=True,
-        unset=_always,
+        unset=always_unset,
         fset=_set_affine_data,
         invalidates=_FORGET_VIEWS,
     )
@@ -291,18 +288,9 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
     HINTS = ("nifti",)
 
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        # The constructor stores `data=` in the private field of the data
-        # model, which the view does not read, and the default of `raw`
-        # comes after it. The matrix is therefore stored again, in `raw`.
-        # When both are given, `data` takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
-
     @smartproperty(
         cache=True,
-        unset=_always,
+        unset=always_unset,
         fset=_set_affine_data,
         invalidates=_FORGET_VIEWS,
     )

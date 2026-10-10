@@ -21,6 +21,8 @@ from brainhops.io.base.parsers import (
 from ._constants import (
     _NIFTI1_MAX_DIM,
     _NIFTI_AXES,
+    _NIFTI_INTENT_NAME_MAPPING,
+    _NIFTI_INTENT_VECTOR,
     _NIFTI_SPECIFIC_AXES,
 )
 from ._raw import NiftiRaw
@@ -270,6 +272,69 @@ def _stored_scaling(
             # A field of a header is a view, which a reset would change.
             return header["scl_slope"].item(), header["scl_inter"].item()
     return proxy.slope, proxy.inter
+
+
+def _record_image(
+    raw: ArrayProtocol,
+    record: tx.Optional[NiftiRaw],
+    affine: tx.Optional[np.ndarray] = None,
+    overrides: tx.Optional[tx.Mapping[str, tx.Any]] = None,
+) -> _NiftiObject:
+    """Build the nibabel image that writes an array over a record.
+
+    The header of the record is the base of the new header, so that its
+    description, its intent and its extensions are kept. That header is
+    changed, so the caller passes a copy of the record, such as the one
+    that `NiftiMetadata.to_raw` returns. When the geometry is given as
+    the voxel-to-world `affine`, the fields that describe the layout of
+    the array and the geometry are reset and encoded again, and the
+    caller then sets the codes and the intent that its format writes.
+    Without `affine`, the geometry was not changed, so the sform and the
+    qform of the record are kept with their codes, and only the shape
+    and the data type follow the array. Without a record, the header is
+    new, and its affine is `affine` or the identity.
+
+    A nibabel proxy is written unscaled, with the data type and the scaling
+    that the file stored, so that an untouched file is written byte for
+    byte. When the `overrides`, which the caller applies afterwards, change
+    the data type or the scaling, the proxy is read and scaled again
+    instead.
+    """
+    header = None if record is None else record.header
+    scaling = None
+    if isinstance(raw, ArrayProxy) and not (
+        _STORAGE_OVERRIDES.intersection(overrides or {})
+    ):
+        scaling = _stored_scaling(header, raw)
+        raw = raw.get_unscaled()
+    if header is None:
+        affine = np.eye(4) if affine is None else affine
+        image = _new_nifti(raw, affine)
+    elif affine is None:
+        # The scaling of the record describes the array that the file
+        # stored. Another array is scaled again by nibabel.
+        header.set_slope_inter(None, None)
+        image = _new_nifti(raw, None, header)
+    else:
+        _reset_structural_fields(header)
+        image = _new_nifti(raw, affine, header)
+    if scaling is not None:
+        image.header["scl_slope"], image.header["scl_inter"] = scaling
+    return image
+
+
+def _set_coordinates_intent(header: nb.Nifti1Header) -> None:
+    """Give a header the intent of a field of coordinates.
+
+    The intent is `VECTOR` (1007) with the intent name `"Mapping"`. A
+    header that already has this intent is left as it is, so that its
+    intent parameters are kept.
+    """
+    intent = (_nifti_intent(header), _nifti_intent_name(header))
+    if intent != (_NIFTI_INTENT_VECTOR, _NIFTI_INTENT_NAME_MAPPING):
+        header.set_intent(
+            _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_MAPPING
+        )
 
 
 def _apply_like(image: _NiftiObject, like: tx.Any) -> _NiftiObject:

@@ -5,7 +5,7 @@ the value when nothing is stored. A [`lazyproperty`][] computes its value
 on first access and caches it.
 """
 
-__all__ = ["lazyproperty", "smartproperty", "UnsetLike"]
+__all__ = ["always_unset", "lazyproperty", "smartproperty", "UnsetLike"]
 
 import typing_extensions as tx
 
@@ -26,6 +26,19 @@ The value decides when a stored value reads as unset. It is `None`,
 # are empty. Arrays are not listed, because the truth value of an array is
 # ambiguous and testing it would raise an error.
 _EMPTY_TYPES = (list, tuple, dict, set, frozenset)
+
+
+def always_unset(value: tx.Any) -> bool:
+    """Treat every stored value as unset, so that a value is always computed.
+
+    This predicate is passed as `unset=` to [`smartproperty`][] by a
+    property that must never read the private attribute in which a
+    constructor stored a value. A NIfTI format, for example, decodes its
+    `data` from its stored array, and the private field in which the data
+    model stores its data is never read.
+    """
+    return True
+
 
 _Names: tx.TypeAlias = tx.Union[str, tx.Iterable[str]]
 
@@ -210,6 +223,9 @@ def smartproperty(
         an inherited field whose default is an empty container needs
         `unset=(None, "empty")`, because the constructor writes that
         default through the setter.
+        A property that is always computed, or read from its cache, and
+        never read from the private attribute takes
+        `unset=always_unset` (see [`always_unset`][]).
     cache
         Whether to cache the computed value.
     invalidates
