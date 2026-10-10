@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from bagof.magic import replace
 
 h5py = pytest.importorskip("h5py")
 
@@ -357,14 +358,59 @@ def test_a_record_is_never_changed_in_place(
     copy = xform.metadata.to_raw()
     assert copy is not record and copy.nodes[0] is not record.nodes[0]
     copy.header.attrs["Edited"] = "yes"
-    copy.nodes[0].metadata = {"edited": True}
+    copy.nodes[0].metadata["Edited"] = True
+    copy.nodes[1].metadata = {"edited": True}
     assert "Edited" not in record.header.attrs
+    assert record.nodes[1].metadata == {"WrittenBy": "NiTransforms 25.1.0"}
     assert record.nodes[0].metadata == {"WrittenBy": "NiTransforms 25.1.0"}
     # Encoding a new chain builds a new record.
     xform.transformations = [xform[1]]
     xform.save(tmp_path / "out.x5")
     assert record.header.chains == [(0, 1), (1, 0)]
     assert len(record.nodes) == 2
+
+
+def test_a_copy_made_with_replace_encodes_its_elements_again(
+    chain_x5: Path, tmp_path: Path
+) -> None:
+    # Only the elements that a transformation decoded from its own record
+    # are written as their nodes. The copy decodes its own elements, so an
+    # element of the original is encoded again and loses its node metadata.
+    xform = io.load(chain_x5)
+    copy = replace(xform, transformations=[xform[1]])
+    copy.save(tmp_path / "copy.x5")
+    assert io.load(tmp_path / "copy.x5").metadata.raw.nodes[0].metadata is None
+    xform.transformations = [xform[1]]
+    xform.save(tmp_path / "same.x5")
+    node = io.load(tmp_path / "same.x5").metadata.raw.nodes[0]
+    assert node.metadata == {"WrittenBy": "NiTransforms 25.1.0"}
+
+
+def test_a_selection_is_checked_against_a_record(chain_x5: Path) -> None:
+    record = X5Metadata.load(chain_x5).raw
+    with pytest.raises(ParserContentError, match="no chain 2"):
+        X5Transform.from_raw(record, chain=2)
+    with pytest.raises(ValueError, match="not both"):
+        X5Transform.from_raw(record, chain=0, position=0)
+    # An index assigned later is checked when the selection is read.
+    xform = X5Transform.from_raw(record)
+    xform.position = 5
+    with pytest.raises(ParserContentError, match="no transform 5"):
+        _ = xform.selection
+
+
+def test_only_the_selected_chain_is_written_when_assigned(
+    chain_x5: Path, tmp_path: Path
+) -> None:
+    xform = X5Transform.from_file(chain_x5, chain=1)
+    xform.save(tmp_path / "whole.x5")
+    whole = io.load(tmp_path / "whole.x5").metadata.raw
+    assert whole.header.chains == [(0, 1), (1, 0)]
+    xform.transformations = list(xform)
+    xform.save(tmp_path / "selected.x5")
+    selected = io.load(tmp_path / "selected.x5").metadata.raw
+    assert selected.header.chains == [(0, 1)]
+    assert [node.type for node in selected.nodes] == ["nonlinear", "linear"]
 
 
 def test_other_metadata_gives_another_chain(chain_x5: Path) -> None:
@@ -881,6 +927,8 @@ def test_fslpy_linear_is_read(tmp_path: Path) -> None:
 @pytest.mark.parametrize("kind", ["relative", "absolute"])
 def test_fslpy_nonlinear_is_read(tmp_path: Path, kind: str) -> None:
     xform = io.load(_write_fslpy(tmp_path / "fsl.x5", kind))
+    # The deformation is read when it is used, as in the current layout.
+    assert isinstance(xform.metadata.raw.nodes[0].transform, DelayedH5Array)
     points = _ras(IJK)
     expected = _ramp()[tuple(IJK.T)] + (points if kind == "relative" else 0)
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
