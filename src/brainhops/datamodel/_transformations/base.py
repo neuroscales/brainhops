@@ -95,6 +95,13 @@ class Transformation(
             )
         _mutually_exclusive(self, arguments, mutex)
         self._set_derived_fields(arguments)
+        # A concrete file format lists the data model before its format
+        # class, so the format class comes after this class in the method
+        # resolution order. It finishes the construction here, when it
+        # defines `__post_init__`.
+        post_init = getattr(super(), "__post_init__", None)
+        if post_init is not None:
+            post_init(arguments)
 
     def _set_derived_fields(self, arguments: tx.Any) -> None:
         for name in self.derived_fields:

@@ -15,6 +15,7 @@ from bagof.magic import KwOnly, replace
 # internals
 from brainhops._core.properties import (
     InvalidatorInAttribute,
+    always_unset,
     smartproperty,
 )
 from brainhops.datamodel import systems as _systems
@@ -28,7 +29,6 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
-    _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
 )
@@ -40,6 +40,8 @@ from brainhops.io.common.nifti._header import (
     _nifti_intent_name,
     _nifti_shape,
     _NiftiObject,
+    _record_image,
+    _set_coordinates_intent,
 )
 from brainhops.io.common.nifti._views import _field_to_disk, _field_to_model
 from brainhops.io.transformations.base._conversions import (
@@ -53,7 +55,7 @@ from brainhops.io.transformations.base.fields import (
 )
 
 # this format
-from ._base import NiftiBasedTransformation, _always, _record_image
+from ._base import NiftiBasedTransformation
 
 _NDIM = 3
 """Spatial dimension supported by the displacement reader."""
@@ -143,18 +145,9 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
             kwargs.setdefault("data", None)
         return super().from_instance(other, *args, **kwargs)
 
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        # The constructor stores `data=` in the private field of the data
-        # model, which the view does not read, and the default of `raw`
-        # comes after it. The array is therefore stored again, in `raw`.
-        # When both are given, `data` takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
-
     @smartproperty(
         cache=True,
-        unset=_always,
+        unset=always_unset,
         fset=_set_coordinates_data,
         invalidates=_FORGET_VIEWS,
     )
@@ -198,7 +191,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."
             )
-        image = _record_image(raw, self.metadata, overrides=overrides)
+        image = _record_image(raw, self._record(), overrides=overrides)
         _set_coordinates_intent(image.header)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
@@ -285,7 +278,7 @@ transformations.StationaryVelocityField].
 
     @smartproperty(
         cache=True,
-        unset=_always,
+        unset=always_unset,
         fset=_set_field_data,
         invalidates=("transformations",),
     )
@@ -494,7 +487,9 @@ transformations.StationaryVelocityField].
             and log == self.log
         )
         if stored:
-            image = _record_image(self.raw, self.metadata, overrides=overrides)
+            image = _record_image(
+                self.raw, self._record(), overrides=overrides
+            )
             if _nifti_intent(image.header) != _NIFTI_INTENT_DISPVECT:
                 image.header.set_intent(_NIFTI_INTENT_DISPVECT)
         else:
@@ -502,25 +497,11 @@ transformations.StationaryVelocityField].
                 self.transformations, what, ndim=_NDIM, log=log
             )
             vectors = _field_to_disk(vectors)
-            image = _record_image(vectors, self.metadata, vox2ras, overrides)
+            image = _record_image(vectors, self._record(), vox2ras, overrides)
             image.header.set_intent(_NIFTI_INTENT_DISPVECT)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
-
-
-def _set_coordinates_intent(header: nb.Nifti1Header) -> None:
-    """Give a header the intent of a field of coordinates.
-
-    The intent is `VECTOR` (1007) with the intent name `"Mapping"`. A
-    header that already has this intent is left as it is, so that its
-    intent parameters are kept.
-    """
-    intent = (_nifti_intent(header), _nifti_intent_name(header))
-    if intent != (_NIFTI_INTENT_VECTOR, _NIFTI_INTENT_NAME_MAPPING):
-        header.set_intent(
-            _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_MAPPING
-        )
 
 
 def _pop_encoding(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:

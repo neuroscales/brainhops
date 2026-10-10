@@ -5,10 +5,8 @@ from io import BytesIO
 
 # dependencies
 import nibabel as nb
-import numpy as np
 import typing_extensions as tx
 from bagof.magic import KwOnly, NoRepr
-from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core import path
@@ -23,11 +21,7 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._header import (
-    _STORAGE_OVERRIDES,
-    _new_nifti,
     _NiftiObject,
-    _reset_structural_fields,
-    _stored_scaling,
 )
 from brainhops.io.common.nifti._raw import (
     _sniffed_header,
@@ -80,6 +74,21 @@ class NiftiBasedTransformation(
     that caches what it decodes from the header drops those values when
     other metadata is assigned.
     """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # The data model may come before or after this class in the method
+        # resolution order, so a later `__post_init__` may not exist.
+        post_init = getattr(super(), "__post_init__", None)
+        if post_init is not None:
+            post_init(arguments)
+        # The constructor stores `data=` in the private field of the data
+        # model, which the view of a concrete format does not read, and
+        # the default of `raw` comes after it. The array is therefore
+        # stored again, through the setter of `data`, which writes `raw`.
+        # When both are given, `data` takes precedence over `raw`. A
+        # format that takes no `data=` is not affected.
+        if arguments.get("data") is not None:
+            self.data = arguments["data"]
 
     # --- reading ------------------------------------------------------
 
@@ -186,6 +195,14 @@ class NiftiBasedTransformation(
 
     # --- writing ------------------------------------------------------
 
+    def _record(self) -> tx.Optional[NiftiRaw]:
+        """Return a copy of the record of the metadata, or `None`.
+
+        The writers build the new header over this copy, so they are free
+        to change it.
+        """
+        return None if self.metadata is None else self.metadata.to_raw()
+
     def to_nibabel(self, like: tx.Any = None, **overrides) -> _NibabelImage:
         """Build the nibabel image that encodes this transformation.
 
@@ -230,15 +247,6 @@ class NiftiBasedTransformation(
 # ----------------------------------------------------------------------
 
 
-def _always(value: tx.Any) -> bool:
-    """Treat every stored value as unset, so that a view is always decoded.
-
-    The data model stores its data under a private name, which a format
-    that decodes its data from `raw` never fills.
-    """
-    return True
-
-
 def _nibabel_parts(
     nifti: _NiftiObject,
 ) -> tx.Tuple[tx.Optional[ArrayProtocol], _NiftiHeader]:
@@ -256,51 +264,3 @@ def _nibabel_parts(
     if isinstance(nifti, nb.Nifti1Header):
         return None, nifti
     raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")
-
-
-def _record_image(
-    raw: ArrayProtocol,
-    metadata: tx.Optional[NiftiMetadata],
-    affine: tx.Optional[np.ndarray] = None,
-    overrides: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-) -> _NibabelImage:
-    """Build the nibabel image that writes an array over a record.
-
-    A copy of the header of the record of the metadata is the base of the
-    new header, so that its description, its intent and its extensions are
-    kept. When the geometry is given as the voxel-to-world `affine`, the
-    fields that describe the layout of the array and the geometry are reset
-    and encoded again, and the caller then sets the codes and the intent
-    that its format writes. Without `affine`, the geometry was not changed,
-    so the sform and the qform of the record are kept with their codes, and
-    only the shape and the data type follow the array. Without a record, the
-    header is new, and its affine is `affine` or the identity.
-
-    A nibabel proxy is written unscaled, with the data type and the scaling
-    that the file stored, so that an untouched file is written byte for
-    byte. When the `overrides`, which the caller applies afterwards, change
-    the data type or the scaling, the proxy is read and scaled again
-    instead.
-    """
-    record = None if metadata is None else metadata.to_raw()
-    header = None if record is None else record.header
-    scaling = None
-    if isinstance(raw, ArrayProxy) and not (
-        _STORAGE_OVERRIDES.intersection(overrides or {})
-    ):
-        scaling = _stored_scaling(header, raw)
-        raw = raw.get_unscaled()
-    if header is None:
-        affine = np.eye(4) if affine is None else affine
-        image = _new_nifti(raw, affine)
-    elif affine is None:
-        # The scaling of the record describes the array that the file
-        # stored. Another array is scaled again by nibabel.
-        header.set_slope_inter(None, None)
-        image = _new_nifti(raw, None, header)
-    else:
-        _reset_structural_fields(header)
-        image = _new_nifti(raw, affine, header)
-    if scaling is not None:
-        image.header["scl_slope"], image.header["scl_inter"] = scaling
-    return image

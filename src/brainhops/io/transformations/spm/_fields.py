@@ -8,7 +8,7 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
 # internals
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import always_unset, smartproperty
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
@@ -17,6 +17,8 @@ from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _NiftiObject,
+    _record_image,
+    _set_coordinates_intent,
 )
 from brainhops.io.common.nifti._views import _field_to_disk, _field_to_model
 from brainhops.io.transformations.base._conversions import (
@@ -33,11 +35,18 @@ from brainhops.io.transformations.nifti import (
     NiftiRASCoordinatesField,
     NiftiRASToVoxel,
 )
-from brainhops.io.transformations.nifti._base import _always, _record_image
-from brainhops.io.transformations.nifti._fields import (
-    _set_coordinates_intent,
-    _set_field_data,
-)
+
+
+def _set_field_data(
+    self: "SpmCoordinatesField", value: tx.Optional[ArrayProtocol]
+) -> None:
+    """Store the array of an SPM field in `raw`, as NIfTI stores it.
+
+    The cached data is dropped, and the chain decoded from it is dropped
+    by the invalidation of the property.
+    """
+    self.raw = None if value is None else _field_to_disk(value)
+    self.__dict__.pop("_cache_data", None)
 
 
 @register_format
@@ -103,7 +112,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
     @smartproperty(
         cache=True,
-        unset=_always,
+        unset=always_unset,
         fset=_set_field_data,
         invalidates=("transformations",),
     )
@@ -210,7 +219,9 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             and getattr(self, "_transformations", None) is None
         )
         if stored:
-            image = _record_image(self.raw, self.metadata, overrides=overrides)
+            image = _record_image(
+                self.raw, self._record(), overrides=overrides
+            )
         else:
             what = "An SPM deformation field"
             # The inverse of a `NiftiRASToVoxel` read from a header is that
@@ -228,7 +239,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             backend = get_array_backend(coordinates)
             coordinates = _field_to_disk(backend.asarray(coordinates))
             image = _record_image(
-                coordinates, self.metadata, vox2ras, overrides
+                coordinates, self._record(), vox2ras, overrides
             )
         _set_coordinates_intent(image.header)
         _apply_like(image, like)

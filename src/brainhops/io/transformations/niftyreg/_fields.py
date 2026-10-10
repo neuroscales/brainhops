@@ -9,7 +9,7 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import always_unset, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
@@ -36,6 +36,7 @@ from brainhops.io.common.nifti._header import (
     _nifti_intent_name,
     _nifti_shape,
     _NiftiObject,
+    _record_image,
 )
 from brainhops.io.common.nifti._views import _field_to_disk, _field_to_model
 from brainhops.io.transformations.base._conversions import no_exact_conversion
@@ -47,8 +48,6 @@ from brainhops.io.transformations.base.fields import (
     voxel_grid_coordinates,
 )
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _always, _record_image
-from brainhops.io.transformations.nifti._fields import _set_field_data
 
 from ._formats import NiftyRegTransformationFormat
 
@@ -175,6 +174,18 @@ def _extension(matrix: np.ndarray) -> nb.nifti1.Nifti1Extension:
     return nb.nifti1.Nifti1Extension(_NIFTI_ECODE_IGNORE, content + bytes(8))
 
 
+def _set_field_data(
+    self: "NiftyRegSequence", value: tx.Optional[ArrayProtocol]
+) -> None:
+    """Store the array of a NiftyReg field in `raw`, as NIfTI stores it.
+
+    The cached data is dropped, and the chain decoded from it is dropped
+    by the invalidation of the property.
+    """
+    self.raw = None if value is None else _field_to_disk(value)
+    self.__dict__.pop("_cache_data", None)
+
+
 # ----------------------------------------------------------------------
 #   BASE
 # ----------------------------------------------------------------------
@@ -278,7 +289,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
 
     @smartproperty(
         cache=True,
-        unset=_always,
+        unset=always_unset,
         fset=_set_field_data,
         invalidates=("transformations",),
     )
@@ -438,7 +449,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             return None
         if getattr(self, "_transformations", None) is not None:
             return None
-        image = _record_image(self.raw, self.metadata, overrides=overrides)
+        image = _record_image(self.raw, self._record(), overrides=overrides)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
@@ -464,7 +475,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         """
         backend = get_array_backend(vectors)
         vectors = _field_to_disk(backend.asarray(vectors))
-        image = _record_image(vectors, self.metadata, vox2world, overrides)
+        image = _record_image(vectors, self._record(), vox2world, overrides)
         header = image.header
         header.set_intent(
             _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_NIFTYREG

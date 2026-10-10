@@ -10,7 +10,7 @@ import numpy as np
 import typing_extensions as tx
 
 from brainhops._core import affines as _affines
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import always_unset, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
@@ -38,6 +38,7 @@ from brainhops.io.common.nifti._header import (
     _nifti_intent_name,
     _nifti_shape,
     _NiftiObject,
+    _record_image,
 )
 from brainhops.io.common.nifti._views import (
     _itk_field_to_disk,
@@ -46,7 +47,6 @@ from brainhops.io.common.nifti._views import (
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.base.fields import LPSCoordinatesField
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _always, _record_image
 
 from .._systems import _make_system
 
@@ -175,7 +175,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
     @smartproperty(
         cache=True,
-        unset=_always,
+        unset=always_unset,
         fset=_set_itk_field_data,
         invalidates=("transformations",),
     )
@@ -329,7 +329,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             return None
         if getattr(self, "_transformations", None) is not None:
             return None
-        image = _record_image(self.raw, self.metadata, overrides=overrides)
+        image = _record_image(self.raw, self._record(), overrides=overrides)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
@@ -367,7 +367,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             )
         vox2ras = _RAS_LPS @ _embed_affine(vox2lps)
         vectors = _itk_field_to_disk(vectors)
-        image = _record_image(vectors, self.metadata, vox2ras, overrides)
+        image = _record_image(vectors, self._record(), vox2ras, overrides)
         image.header.set_intent(_NIFTI_INTENT_VECTOR)
         scode, qcode = self._xform_codes()
         image.header.set_sform(vox2ras, code=scode)

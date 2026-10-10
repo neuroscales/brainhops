@@ -8,7 +8,11 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import InvalidatorInAttribute, smartproperty
+from brainhops._core.properties import (
+    InvalidatorInAttribute,
+    always_unset,
+    smartproperty,
+)
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserExistsError
@@ -19,6 +23,7 @@ from brainhops.io.common.nifti._header import (
     _apply_overrides,
     _header,
     _NiftiObject,
+    _record_image,
 )
 from brainhops.io.common.nifti._views import (
     _affine_to_disk,
@@ -32,12 +37,7 @@ from brainhops.io.transformations.base._conversions import (
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 # this format
-from ._base import (
-    NiftiBasedTransformation,
-    _always,
-    _nibabel_parts,
-    _record_image,
-)
+from ._base import NiftiBasedTransformation, _nibabel_parts
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -164,7 +164,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         matrix = self._voxel_to_ras_matrix()
         code = _xform_code(_header(self))
         data = np.zeros((1, 1, 1), dtype="float32")
-        image = _record_image(data, self.metadata, matrix, overrides)
+        image = _record_image(data, self._record(), matrix, overrides)
         _apply_like(image, like)
         image.header.set_sform(matrix, code=code)
         image.header.set_qform(matrix, code=code)
@@ -206,18 +206,9 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
         reached through `NiftiVoxelToRAS.inverse()`.
     """
 
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        # The constructor stores `data=` in the private field of the data
-        # model, which the view does not read, and the default of `raw`
-        # comes after it. The matrix is therefore stored again, in `raw`.
-        # When both are given, `data` takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
-
     @smartproperty(
         cache=True,
-        unset=_always,
+        unset=always_unset,
         fset=_set_affine_data,
         invalidates=_FORGET_VIEWS,
     )
@@ -291,18 +282,9 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
     HINTS = ("nifti",)
 
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        # The constructor stores `data=` in the private field of the data
-        # model, which the view does not read, and the default of `raw`
-        # comes after it. The matrix is therefore stored again, in `raw`.
-        # When both are given, `data` takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
-
     @smartproperty(
         cache=True,
-        unset=_always,
+        unset=always_unset,
         fset=_set_affine_data,
         invalidates=_FORGET_VIEWS,
     )
