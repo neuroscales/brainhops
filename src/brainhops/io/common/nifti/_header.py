@@ -176,10 +176,9 @@ def _set_other_axes(
 def _header(obj: tx.Any) -> tx.Any:
     """Return the header of an object, or `None` when it has none.
 
-    The NIfTI formats, such as a `NiftiImage` or a `NiftiVoxelToRAS`, hold
-    their header in the record of their metadata. A nibabel image and the
-    formats that are still built on a parser, such as an MGH image, have a
-    `header` attribute instead.
+    The formats that hold a record, such as a `NiftiImage`, a
+    `NiftiVoxelToRAS` or an `MghImage`, hold their header in the record of
+    their metadata. A nibabel image has a `header` attribute instead.
     """
     record = getattr(getattr(obj, "metadata", None), "raw", None)
     header = getattr(record, "header", None)

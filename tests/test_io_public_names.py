@@ -42,6 +42,18 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.common.mgh": Package(
+        names=frozenset({"MghMetadata", "MghRaw"}),
+        needs=("nibabel",),
+    ),
+    "brainhops.io.images.freesurfer": Package(
+        names=frozenset({"MghImage", "mgh"}),
+        needs=("nibabel",),
+    ),
+    "brainhops.io.images.freesurfer.mgh": Package(
+        names=frozenset({"MghImage", "MghMetadata", "MghRaw"}),
+        needs=("nibabel",),
+    ),
     "brainhops.io.images.nifti": Package(
         names=frozenset({"NiftiImage", "NiftiMetadata", "NiftiRaw"}),
         needs=("nibabel",),

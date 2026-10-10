@@ -550,9 +550,10 @@ class _FileBasedModelMixin:
         """Copy an instance, resetting fields that belong to another format.
 
         The data model copies the fields of `other` by name. Fields declared by
-        a file format, such as the nibabel image and header of NIfTI and MGH,
-        are copied only from an object of the same format; otherwise the class
-        default is kept, because the same field name holds something different.
+        a file format, such as the `raw` array and the metadata of NIfTI and
+        MGH, are copied only from an object of the same format; otherwise the
+        class default is kept, because the same field name holds something
+        different.
         Converting NIfTI to MGH on save therefore converts the data model only,
         and the writer rebuilds the format state.
 
