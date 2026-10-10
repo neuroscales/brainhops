@@ -87,6 +87,12 @@ try:
     from nibabel.arrayproxy import ArrayProxy
 
     from brainhops.datamodel.transformations import DisplacementField
+    from brainhops.io.common.mgh._views import (
+        _image_to_disk as _mgh_to_disk,
+    )
+    from brainhops.io.common.mgh._views import (
+        _image_to_model as _mgh_to_model,
+    )
     from brainhops.io.common.nifti._views import (
         _affine_to_disk,
         _affine_to_model,
@@ -97,6 +103,7 @@ try:
         _itk_field_to_disk,
         _itk_field_to_model,
     )
+    from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
     from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
     from brainhops.io.transformations.itk.nifti import (
@@ -941,9 +948,36 @@ _M3Z = Exemplar(
 )
 EXEMPLARS[M3zMorph] = _M3Z
 
+# An MGH file keeps its footer of acquisition parameters and its tags
+# after the voxels, and both belong to the record. The edit of the record
+# changes one parameter of the footer and the tags. The metadata writes
+# the fixed header alone, so the check that metadata never reads data
+# compares fixed headers, and the footer of the exemplar is zero.
+
+
+def _mgh_edit_record(record: tx.Any) -> tx.Any:
+    record.header["te"] = 7.5
+    record.tags = b"edited"
+    return record
+
+
+def _mgh_record_edited(record: tx.Any) -> bool:
+    return float(record.header["te"]) == 7.5 and record.tags == b"edited"
+
+
+if nb is not None:
+    EXEMPLARS[MghImage] = _NIFTI._replace(
+        metadata=MghMetadata,
+        suffix=".mgh",
+        to_model=_mgh_to_model,
+        to_disk=_mgh_to_disk,
+        edit_record=_mgh_edit_record,
+        record_edited=_mgh_record_edited,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    )
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.afni.AfniImage",
-    "brainhops.io.images.freesurfer.mgh.MghImage",
     "brainhops.io.images.minc.Minc1Image",
     "brainhops.io.images.minc.Minc2Image",
     "brainhops.io.images.mrtrix.MrtrixImage",
@@ -1068,6 +1102,16 @@ VARIANTS.append(
 
 # A morph whose name ends in `.m3d` is written without compression.
 VARIANTS.append(("M3zMorph-m3d", M3zMorph, _M3Z._replace(suffix=".m3d")))
+
+# An MGZ file is an MGH file compressed as a single gzip stream.
+if nb is not None:
+    VARIANTS.append(
+        (
+            "MghImage-mgz",
+            MghImage,
+            EXEMPLARS[MghImage]._replace(suffix=".mgz"),
+        )
+    )
 
 CASES = [
     pytest.param(cls, exemplar, id=cls.__name__)

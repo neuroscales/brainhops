@@ -209,7 +209,7 @@ class MghImage(
         by name, so that nibabel opens it whenever the voxels are read and
         can memory-map them. Any other file is read into memory. The
         keyword arguments `mmap` and `keep_file_open` are passed to the
-        nibabel proxy (see [`read_mgh`][brainhops.io.common.mgh._raw.read_mgh]).
+        nibabel proxy, and the others are ignored.
 
         Raises
         ------

@@ -92,7 +92,8 @@ def test_mgh_places_the_frames_by_type(  # noqa: D103
     reloaded = io.images.load(target)
     assert [a.name for a in reloaded.system.axes] == list("xyzt")
     assert np.allclose(reloaded.transformations[0].scale[-1], 2000.0)
-    assert np.allclose(reloaded.vox2ras, _vox2ras(), atol=1e-5)
+    vox2ras = reloaded.metadata.raw.vox2ras
+    assert np.allclose(vox2ras, _vox2ras(), atol=1e-5)
 
     # Reading back and rewriting gives the same file.
     again = tmp_path / "again.mgz"
