@@ -72,8 +72,6 @@ from brainhops.io.common.mrtrix._views import (
 from brainhops.io.common.mrtrix._views import (
     _image_to_model as _mrtrix_to_model,
 )
-from brainhops.io.images.afni import AfniImage, AfniMetadata
-from brainhops.io.images.base import ImageFormat
 from brainhops.io.common.nrrd._data import _NrrdProxy
 from brainhops.io.common.nrrd._views import (
     _image_to_disk as _nrrd_to_disk,
@@ -81,6 +79,8 @@ from brainhops.io.common.nrrd._views import (
 from brainhops.io.common.nrrd._views import (
     _image_to_model as _nrrd_to_model,
 )
+from brainhops.io.images.afni import AfniImage, AfniMetadata
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
 from brainhops.io.images.nrrd import (
     AttachedNrrdImage,

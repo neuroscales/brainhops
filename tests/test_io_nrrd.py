@@ -9,19 +9,23 @@ installed.
 import bz2
 import gzip
 import io as _io
+import pickle
 import struct
 
 import numpy as np
 import pytest
+from bagof.magic import replace
 
 import brainhops.io as io
+from brainhops.backends import backend
 from brainhops.datamodel.transformations import Affine, Scaling
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     ParserError,
+    WriterError,
 )
-from brainhops.io.common.nrrd import NrrdRaw
+from brainhops.io.common.nrrd import NrrdMetadata, NrrdRaw
 from brainhops.io.common.nrrd._codecs import dtype_to_nrrd, nrrd_dtype
 from brainhops.io.common.nrrd._data import _NrrdProxy
 from brainhops.io.images import ImageFormat
@@ -30,6 +34,7 @@ from brainhops.io.images.nrrd import (
     DetachedNrrdImage,
     NrrdImage,
 )
+from brainhops.io.metadata import MetadataFormat
 
 # ----------------------------------------------------------------------
 #   FIXTURES
@@ -633,3 +638,399 @@ def test_write_measurement_frame_follows_space(tmp_path) -> None:  # noqa: ANN00
         back.metadata.raw.measurement_frame,
         [[0, -1, 0], [-1, 0, 0], [0, 0, 1]],
     )
+
+
+# ----------------------------------------------------------------------
+#   RECORD, METADATA AND LAZY ARRAY
+# ----------------------------------------------------------------------
+
+_ENCODERS = {
+    "raw": lambda b: b,
+    "gzip": gzip.compress,
+    "bzip2": bz2.compress,
+    "hex": lambda b: b.hex().encode() + b"\n",
+}
+
+# A header in version 3, with a comment, spellings that the writer would
+# change, and fields that the data model has no place for.
+_FOREIGN = (
+    b"NRRD0003\n"
+    b"# written by hand\n"
+    b"type: short\n"
+    b"dimension: 3\n"
+    b"space: LPS\n"
+    b"sizes: 2 3 4\n"
+    b"space directions: (2.0,0,0) (0,3,0) (0,0,4)\n"
+    b"kinds: domain domain domain\n"
+    b"endian: little\n"
+    b"encoding: %s\n"
+    b"space origin: (10,20,30)\n"
+    b"min: 0\n"
+    b"max: 23\n"
+    b"content: kept\n"
+    b"b:=1\n"
+)
+
+
+def _foreign(tmp_path, encoding="raw", name="source.nrrd"):  # noqa: ANN001, ANN202
+    values = _values((2, 3, 4))
+    payload = _ENCODERS[encoding](_pack(values, "<h"))
+    target = tmp_path / name
+    target.write_bytes(_FOREIGN % encoding.encode() + b"\n" + payload)
+    return target, values
+
+
+def _detached(tmp_path, name="source", encoding="gzip"):  # noqa: ANN001, ANN202
+    values = _values((2, 3, 4))
+    data = name + {"gzip": ".raw.gz", "raw": ".raw"}[encoding]
+    (tmp_path / data).write_bytes(_ENCODERS[encoding](_pack(values, "<h")))
+    header = (_FOREIGN % encoding.encode()) + f"data file: {data}\n".encode()
+    (tmp_path / (name + ".nhdr")).write_bytes(header)
+    return tmp_path / (name + ".nhdr"), values
+
+
+def test_the_record_keeps_its_bytes_and_compares_by_text() -> None:
+    stored = (_FOREIGN % b"raw") + b"\n"
+    record = NrrdRaw.from_bytes(stored + b"samples")
+    assert record.stored == stored
+    assert record.to_bytes() == stored
+    assert record.fields["content"] == "kept"
+    # A record formats to the same text whatever bytes it was read from.
+    plain = NrrdRaw.from_lines(stored.decode().splitlines()[1:-1], version=3)
+    assert plain == record and plain.stored is None
+    assert plain.to_bytes() != stored
+    # A changed copy is formatted, and the record is not changed.
+    copy = record.copy()
+    copy.keyvalue["x"] = "y"
+    assert copy != record and record.keyvalue == {"b": "1"}
+    assert b"x:=y" in copy.to_bytes() and b"# written" not in copy.to_bytes()
+
+
+@pytest.mark.parametrize("detached", [False, True])
+def test_metadata_reads_the_header_alone(tmp_path, detached) -> None:  # noqa: ANN001
+    if detached:
+        source, _ = _detached(tmp_path)
+        (tmp_path / "source.raw.gz").unlink()
+    else:
+        source, _ = _foreign(tmp_path)
+        cut = source.read_bytes()[: len(_FOREIGN % b"raw") + 1]
+        source.write_bytes(cut)
+    metadata = NrrdMetadata.load(source)
+    assert metadata.raw.fields["content"] == "kept"
+    assert metadata.to_bytes() == source.read_bytes()
+    assert pickle.loads(pickle.dumps(metadata)).raw == metadata.raw
+    assert metadata.to_raw() == metadata.raw
+    assert metadata.to_raw() is not metadata.raw
+    assert isinstance(MetadataFormat.load(source), NrrdMetadata)
+
+
+@pytest.mark.parametrize("encoding", sorted(_ENCODERS))
+def test_an_untouched_attached_image_keeps_its_bytes(
+    tmp_path,  # noqa: ANN001
+    encoding: str,
+) -> None:
+    source, values = _foreign(tmp_path, encoding)
+    loaded = AttachedNrrdImage.load(source)
+    assert loaded.to_raw() is loaded.metadata.raw
+    writers = {
+        "save": lambda target: loaded.save(target),
+        "io.save": lambda target: io.save(
+            AttachedNrrdImage.load(source), target
+        ),
+        "from_instance": lambda target: AttachedNrrdImage.from_instance(
+            loaded
+        ).save(target),
+    }
+    for label, write in writers.items():
+        target = tmp_path / (label + ".nrrd")
+        write(target)
+        assert target.read_bytes() == source.read_bytes(), label
+    assert AttachedNrrdImage.from_bytes(source.read_bytes()).to_bytes() == (
+        source.read_bytes()
+    )
+    # A copy made with `replace` holds the decoded samples, which are
+    # encoded again, with the fields of the source except `min` and `max`.
+    back = io.load(_saved_as(replace(loaded), tmp_path / "replace.nrrd"))
+    np.testing.assert_array_equal(back.data, values)
+    assert back.metadata.raw.fields["content"] == "kept"
+    assert "min" not in back.metadata.raw.fields
+
+
+def _saved_as(image, target):  # noqa: ANN001, ANN202
+    image.save(target)
+    return target
+
+
+@pytest.mark.parametrize("encoding", ["raw", "gzip"])
+def test_an_untouched_detached_image_keeps_both_files(
+    tmp_path,  # noqa: ANN001
+    encoding: str,
+) -> None:
+    source, values = _detached(tmp_path, encoding=encoding)
+    loaded = DetachedNrrdImage.load(source)
+    assert loaded.to_raw() is loaded.metadata.raw
+    (tmp_path / "same").mkdir()
+    loaded.save(tmp_path / "same" / source.name)
+    names = sorted(p.name for p in (tmp_path / "same").iterdir())
+    assert len(names) == 2
+    for name in names:
+        assert (tmp_path / "same" / name).read_bytes() == (
+            tmp_path / name
+        ).read_bytes(), name
+    # Under another name, the header names its own data file, which holds
+    # the same bytes.
+    loaded.save(tmp_path / "other.nhdr")
+    (data,) = loaded.metadata.raw.data_files
+    other = tmp_path / ("other" + data[len("source") :])
+    assert other.read_bytes() == (tmp_path / data).read_bytes()
+    back = DetachedNrrdImage.load(tmp_path / "other.nhdr")
+    assert back.metadata.raw.data_files == (other.name,)
+    np.testing.assert_array_equal(back.data, values)
+
+
+def test_skipped_bytes_are_copied_with_the_samples(tmp_path) -> None:  # noqa: ANN001
+    values = _values((2, 3), "int32")
+    payload = _pack(values, "<i")
+    (tmp_path / "z.raw.gz").write_bytes(
+        b"line\n" + gzip.compress(b"\x01\x02" + payload)
+    )
+    (tmp_path / "z.nhdr").write_bytes(
+        _header(
+            "type: int",
+            "dimension: 2",
+            "sizes: 2 3",
+            "endian: little",
+            "encoding: gzip",
+            "line skip: 1",
+            "byte skip: 2",
+            "data file: z.raw.gz",
+        )
+    )
+    loaded = DetachedNrrdImage.load(tmp_path / "z.nhdr")
+    (tmp_path / "copy").mkdir()
+    loaded.save(tmp_path / "copy" / "z.nhdr")
+    for name in ("z.nhdr", "z.raw.gz"):
+        assert (tmp_path / "copy" / name).read_bytes() == (
+            tmp_path / name
+        ).read_bytes()
+    # The skips stay with the samples in an attached copy, and go when the
+    # samples are encoded again.
+    loaded.save(tmp_path / "a.nrrd")
+    np.testing.assert_array_equal(io.load(tmp_path / "a.nrrd").data, values)
+    loaded.save(tmp_path / "b.nrrd", encoding="raw")
+    back = io.load(tmp_path / "b.nrrd")
+    assert "line skip" not in back.metadata.raw.fields
+    np.testing.assert_array_equal(back.data, values)
+
+
+def test_samples_in_several_files_are_written_in_one(tmp_path) -> None:  # noqa: ANN001
+    values = _values((2, 2, 3), "uint8")
+    for k in range(3):
+        (tmp_path / f"s{k + 1:02d}.raw").write_bytes(
+            values[:, :, k].ravel(order="F").tobytes()
+        )
+    (tmp_path / "p.nhdr").write_bytes(
+        _header(
+            "type: uchar",
+            "dimension: 3",
+            "sizes: 2 2 3",
+            "encoding: raw",
+            "data file: s%02d.raw 1 3 1 2",
+        )
+    )
+    loaded = DetachedNrrdImage.load(tmp_path / "p.nhdr")
+    assert not loaded.raw.copyable
+    loaded.save(tmp_path / "q.nhdr")
+    back = DetachedNrrdImage.load(tmp_path / "q.nhdr")
+    assert back.metadata.raw.data_files == ("q.raw",)
+    assert back.metadata.raw.fields["type"] == "uchar"
+    np.testing.assert_array_equal(back.data, values)
+
+
+def test_an_image_saved_over_itself_keeps_its_samples(tmp_path) -> None:  # noqa: ANN001
+    source, values = _foreign(tmp_path)
+    before = source.read_bytes()
+    AttachedNrrdImage.load(source).save(source)
+    assert source.read_bytes() == before
+    # A longer header moves the samples. A memory map of the old file
+    # keeps its content, and the lazy array reads the new file.
+    loaded = AttachedNrrdImage.load(source)
+    data = loaded.data
+    loaded.transformations = [Affine(matrix=np.diag([5.0, 6.0, 7.0, 1.0])[:3])]
+    loaded.save(source)
+    assert source.read_bytes() != before
+    np.testing.assert_array_equal(data, values)
+    np.testing.assert_array_equal(np.asarray(loaded.raw), values)
+    np.testing.assert_allclose(
+        io.load(source).transformation.matrix,
+        np.diag([5.0, 6.0, 7.0]) @ np.eye(3, 4),
+    )
+
+
+def test_a_detached_image_saved_over_itself_keeps_its_samples(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    source, values = _detached(tmp_path)
+    loaded = DetachedNrrdImage.load(source)
+    loaded.save(source, encoding="raw", datatype="int32")
+    # The old data file is kept, the header names the new one, and the
+    # lazy array reads the new files.
+    assert (tmp_path / "source.raw.gz").exists()
+    assert loaded.raw.record.data_files == ("source.raw",)
+    np.testing.assert_array_equal(np.asarray(loaded.raw), values)
+    assert np.asarray(loaded.raw).dtype == np.int32
+    np.testing.assert_array_equal(io.load(source).data, values)
+
+
+def test_a_file_written_again_elsewhere_is_refused(tmp_path) -> None:  # noqa: ANN001
+    source, values = _foreign(tmp_path)
+    loaded = AttachedNrrdImage.load(source)
+    AttachedNrrdImage(values.astype("float32")).save(source)
+    with pytest.raises(ParserContentError, match="no longer describes"):
+        np.asarray(loaded.raw)
+
+
+def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
+    """Each public knob is either written or leaves the record as read."""
+    source, values = _foreign(tmp_path, "gzip")
+
+    def loaded():  # noqa: ANN202
+        return AttachedNrrdImage.load(source)
+
+    image = loaded()
+    record = image.metadata.raw
+    assert image.to_raw() is record
+    # Options that name what the file stores keep the record and the
+    # stored samples.
+    same = dict(encoding="gz", endian="little", datatype="int16", space="LPS")
+    assert image.to_raw(**same) is record
+    assert image.to_bytes(**same) == source.read_bytes()
+    # Other options are written, and the samples are encoded again.
+    assert image.to_raw(encoding="raw").fields["encoding"] == "raw"
+    assert image.to_raw(endian="big").fields["endian"] == "big"
+    written = image.to_raw(datatype="float")
+    assert written.fields["type"] == "float" and "min" not in written.fields
+    written = image.to_raw(space="RAS")
+    assert written.fields["space"] == "right-anterior-superior"
+    assert written.fields["space origin"] == "(-10,-20,30)"
+    back = io.load(_saved_as(image, tmp_path / "be.nrrd"))
+    np.testing.assert_array_equal(back.data, values)
+    # Key/value pairs are merged last, and a pair that would read back as
+    # another is refused.
+    written = image.to_raw(keyvalue={"b": None, "x": "y"})
+    assert written.keyvalue == {"x": "y"}
+    for key in ("a:=b", "#a", ""):
+        with pytest.raises(WriterError, match="key"):
+            image.to_raw(keyvalue={key: "1"})
+    with pytest.raises(WriterError, match="UTF-8"):
+        image.to_raw(keyvalue={"a": "\ud800"})
+    with pytest.raises(WriterError):
+        image.to_raw(encoding="zip")
+    with pytest.raises(WriterError):
+        image.to_raw(endian="middle")
+    with pytest.raises(WriterError):
+        image.to_raw(space="scanner-xyz")
+    with pytest.raises(TypeError):
+        image.to_bytes(data_file="x.raw")
+
+    # New samples are stored with their own type, and keep the geometry.
+    image = loaded()
+    image.data = np.asarray(image.data, dtype="float32") * 2
+    written = image.to_raw()
+    assert written is not record and written.fields["type"] == "float"
+    assert (
+        written.fields["space directions"]
+        == (record.fields["space directions"])
+    )
+    # Assigned transformations give the geometry.
+    image = loaded()
+    image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+    written = image.to_raw()
+    assert written.fields["space directions"] == "(2,0,0) (0,3,0) (0,0,4)"
+    assert written.fields["content"] == "kept"
+    # Other metadata gives its record.
+    image = loaded()
+    edited = record.copy()
+    edited.keyvalue["x"] = "y"
+    image.metadata = NrrdMetadata.from_raw(edited)
+    assert image.to_raw() is edited
+    # The record of the metadata is never changed.
+    assert record == AttachedNrrdImage.load(source).metadata.raw
+    assert record.stored == AttachedNrrdImage.load(source).metadata.raw.stored
+    # The index system is derived from the record and cannot be assigned.
+    with pytest.raises(AttributeError):
+        image.system = None
+
+
+class _CountedReads:
+    """Count the reads of the samples of every NRRD image."""
+
+    def __init__(self, monkeypatch) -> None:  # noqa: ANN001
+        self.count = 0
+        samples = _NrrdProxy.read_samples
+        stored = _NrrdProxy.read_stored
+
+        def counted_samples(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return samples(proxy, *args, **kwargs)
+
+        def counted_stored(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return stored(proxy, *args, **kwargs)
+
+        monkeypatch.setattr(_NrrdProxy, "read_samples", counted_samples)
+        monkeypatch.setattr(_NrrdProxy, "read_stored", counted_stored)
+
+
+@pytest.mark.parametrize("encoding", ["raw", "gzip"])
+def test_nothing_but_the_data_reads_the_samples(
+    tmp_path,  # noqa: ANN001
+    encoding: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, values = _foreign(tmp_path, encoding)
+    reads = _CountedReads(monkeypatch)
+    image = io.load(source)
+    assert image.shape == values.shape
+    assert image.ndim == 3
+    assert image.raw.dtype == np.dtype("<i2")
+    repr(image)
+    assert image.transformations
+    assert image.system is not None
+    assert image.to_raw() is image.metadata.raw
+    pickle.loads(pickle.dumps(image))
+    AttachedNrrdImage.from_bytes(source.read_bytes())
+    assert reads.count == 0
+    assert "_cache_data" not in vars(image)
+    with backend("numpy"):
+        data = image.data
+    assert not data.flags.writeable
+    np.testing.assert_array_equal(data, values)
+    assert reads.count == 1
+    image.data = np.zeros((2, 3))
+    assert image.shape == (2, 3)
+    with pytest.raises(AttributeError):
+        _ = NrrdImage().shape
+
+
+def test_dask_reads_the_samples_once(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    pytest.importorskip("dask")
+    source, values = _foreign(tmp_path, "gzip")
+    reads = _CountedReads(monkeypatch)
+    with backend("dask"):
+        data = io.load(source).data
+    assert reads.count == 0
+    np.testing.assert_array_equal(np.asarray(data), values)
+    assert reads.count == 1
+
+
+def test_a_stream_stays_the_source_of_the_samples(tmp_path) -> None:  # noqa: ANN001
+    source, values = _foreign(tmp_path, "gzip")
+    with open(source, "rb") as f:
+        f.seek(0)
+        image = AttachedNrrdImage.from_fileobj(f)
+        assert f.tell() == 0
+        np.testing.assert_array_equal(image.data, values)
+    detached, _ = _detached(tmp_path)
+    with pytest.raises(ParserContentError, match="no file name"):
+        DetachedNrrdImage.from_bytes(detached.read_bytes())
