@@ -505,16 +505,12 @@ class Exemplar(tx.NamedTuple):
 
     The data of a small format may live in the record of its metadata, as
     the matrix of an LTA file does, and such a format has no `raw` field.
-    The checks then read the stored data with this function, and `proxies`
-    are the types that it returns just after a file is read. The function
-    is `None` for a format that stores its data in `raw`.
-    """
-
-    built_record: bool = False
-    """Whether an object built from data holds metadata with a new record.
-
-    Setting the matrix of an LTA file stores it in a new record. An object
-    of any other format built from data has no metadata.
+    The checks then read the stored data with this function, which returns
+    the data as the writer would store it, and `proxies` are the types
+    that it returns just after a file is read. An object built from data
+    still has no metadata, because it holds its data in the data model
+    until it is written. The function is `None` for a format that stores
+    its data in `raw`.
     """
 
     view: str = "data"
@@ -723,8 +719,9 @@ if nb is not None:
 
 def _lta_stored(xform: tx.Any) -> tx.Any:
     # The matrix of an LTA file lives in the record, which is parsed in one
-    # pass, so it is a tuple of rows just after a read.
-    return xform.metadata.raw.affine.matrix
+    # pass, so it is a tuple of rows just after a read. `to_raw` returns
+    # that record unless the transformation holds a matrix of its own.
+    return xform.to_raw().affine.matrix
 
 
 def _lta_edit_record(record: tx.Any) -> tx.Any:
@@ -744,7 +741,8 @@ _LTA = Exemplar(
     metadata=LtaMetadata,
     suffix=".lta",
     # An LTA file is parsed in one pass and has no lazy data, so the checks
-    # read the matrix that the record holds, and the metadata, which holds
+    # read the matrix of the record that would be written. After a read,
+    # that record is the one the metadata holds. The metadata, which holds
     # the whole file, never reads data because the file has none beside it.
     proxies=(tuple,),
     to_model=_matrix_to_model,
@@ -759,7 +757,6 @@ _LTA = Exemplar(
     derived=("homogeneous_matrix",),
     binary=False,
     stored=_lta_stored,
-    built_record=True,
 )
 EXEMPLARS[LtaTransformation] = _LTA
 
@@ -1056,17 +1053,6 @@ def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
     return exemplar.stored(obj)
 
 
-def _has_the_metadata_of_new_data(exemplar: Exemplar, obj: tx.Any) -> bool:
-    """Tell whether an object built from data has the metadata it should.
-
-    An object of a format whose data lives in the record holds a new
-    record, and an object of any other format has no metadata.
-    """
-    if exemplar.built_record:
-        return isinstance(obj.metadata, exemplar.metadata)
-    return obj.metadata is None
-
-
 def _data(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
     """Return the data of an object."""
     if exemplar.data is None:
@@ -1260,7 +1246,7 @@ def test_08_an_object_built_from_data_saves(
 ) -> None:
     value = exemplar.sample()
     built = _built(cls, exemplar, value)
-    assert _has_the_metadata_of_new_data(exemplar, built)
+    assert built.metadata is None
     stored = np.asarray(_stored(exemplar, built))
     assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "built")
@@ -1295,7 +1281,7 @@ def test_09_copies_keep_raw_and_metadata(
         return
     value = exemplar.sample()
     converted = cls.from_instance(exemplar.foreign(value))
-    assert _has_the_metadata_of_new_data(exemplar, converted)
+    assert converted.metadata is None
     if "data" in _init_names(_model(cls)):
         expected = exemplar.to_disk(value)
         stored = np.asarray(_stored(exemplar, converted))

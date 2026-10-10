@@ -18,7 +18,6 @@ from brainhops._core import path
 from brainhops._core.enum import enum_name
 from brainhops._core.properties import (
     InvalidatorInAttribute,
-    always_unset,
     smartproperty,
 )
 from brainhops._core.typing import ArrayProtocol
@@ -62,28 +61,6 @@ def _record(xform: "LtaTransformation") -> tx.Optional[LtaRaw]:
     return None if metadata is None else metadata.raw
 
 
-def _record_or_new(
-    xform: "LtaTransformation", lta_type: LtaType, volumes: bool
-) -> LtaRaw:
-    """Return the record of a transformation, or a new record without one.
-
-    The new record has the given type. With `volumes`, it also has an
-    empty geometry block for each volume, so that the voxel and physical
-    systems of a transformation built from data alone are known, as the
-    systems of anonymous volumes named `"src"` and `"dst"`.
-    """
-    record = _record(xform)
-    if record is not None:
-        return record
-    if volumes:
-        return LtaRaw(
-            type=lta_type,
-            src=LtaRaw.SrcVolumeInfo(),
-            dst=LtaRaw.DstVolumeInfo(),
-        )
-    return LtaRaw(type=lta_type)
-
-
 def _system(
     cls: tx.Type[LtaCoordinateSystem],
     info: tx.Optional[LtaRaw.VolumeInfo],
@@ -123,8 +100,9 @@ def _read_only(matrix: np.ndarray) -> np.ndarray:
     """Return a matrix decoded from a record, made read-only.
 
     The matrix is cached, but the writer reads the record and not the
-    cached matrix, so an edit in place would be lost. A new matrix is set
-    as data instead.
+    cached matrix, so an edit in place would be lost. To change the
+    matrix, a new matrix is set as data instead, which stores it in the
+    record.
     """
     matrix = np.array(matrix, dtype=np.float64)
     matrix.flags.writeable = False
@@ -135,10 +113,14 @@ def _read_only(matrix: np.ndarray) -> np.ndarray:
 #   STORING A MATRIX IN THE RECORD
 # ----------------------------------------------------------------------
 # The matrix of an LTA file is small and lives in the record, so the data
-# of a transformation is a view of the record. Setting the data stores the
-# matrix in a new record, which the metadata then holds, and empties the
-# private field in which the data model stores its data, so that a copy
-# made with `replace` carries the record instead of a decoded matrix.
+# of a transformation read from a file is a view of the record. Setting
+# the data stores the matrix in a copy of the record, which the metadata
+# then holds, and empties the private field in which the data model
+# stores its data, so that a copy made with `replace` carries the record
+# instead of a decoded matrix. A transformation without a record holds
+# its matrix in that private field, as any affine does. It is never given
+# a record that it did not read, because the type and the geometries of
+# such a record would be made up, and the writer would trust them.
 
 
 def _matrix_to_model(matrix: tx.Any) -> np.ndarray:
@@ -178,17 +160,32 @@ def _with_matrix(
     return replace(record, type=lta_type, affine=affine)
 
 
-def _store(xform: "LtaTransformation", record: LtaRaw) -> None:
-    """Make a transformation hold a record, which carries its new data.
+def _store(
+    xform: "LtaTransformation",
+    value: tx.Optional[ArrayProtocol],
+    lta_type: tx.Optional[LtaType],
+) -> None:
+    """Make a transformation hold new data.
 
-    The other metadata of the transformation is kept, and the private
-    field in which the data model stores its data is emptied.
+    With a record, the matrix is stored in a copy of the record, under
+    `lta_type`, or under the type of the record when `lta_type` is
+    `None`. The metadata is replaced by metadata that holds the copy, and
+    the private field in which the data model stores its data is emptied,
+    so that a copy made with `replace` carries the record. Without a
+    record, the data model holds the matrix, as for any affine, and the
+    writer builds the record from the matrix and the systems.
     """
-    if xform.metadata is None:
-        xform.metadata = LtaMetadata.from_raw(record)
+    record = _record(xform)
+    if record is None:
+        xform._data = value
     else:
-        xform.metadata = replace(xform.metadata, raw=record)
-    xform._data = None
+        if lta_type is None:
+            lta_type = record.type
+        xform.metadata = replace(
+            xform.metadata, raw=_with_matrix(record, lta_type, value)
+        )
+        xform._data = None
+    xform.__dict__.pop("_cache_data", None)
 
 
 def _set_metadata(
@@ -202,36 +199,29 @@ def _set_metadata(
 def _set_data(
     self: "LtaTransformation", value: tx.Optional[ArrayProtocol]
 ) -> None:
-    """Store the matrix in the record, under the type of the record."""
-    record = _record_or_new(self, LtaType.LINEAR_VOX_TO_VOX, volumes=False)
-    _store(self, _with_matrix(record, record.type, value))
+    """Store the matrix under the type of the record."""
+    _store(self, value, None)
 
 
 def _set_vox_to_vox_data(
     self: "LtaTransformationVoxToVox", value: tx.Optional[ArrayProtocol]
 ) -> None:
-    """Store the matrix in the record as a voxel-to-voxel matrix."""
-    lta_type = LtaType.LINEAR_VOX_TO_VOX
-    record = _record_or_new(self, lta_type, volumes=True)
-    _store(self, _with_matrix(record, lta_type, value))
+    """Store the matrix as a voxel-to-voxel matrix."""
+    _store(self, value, LtaType.LINEAR_VOX_TO_VOX)
 
 
 def _set_phys_to_phys_data(
     self: "LtaTransformationPhysToPhys", value: tx.Optional[ArrayProtocol]
 ) -> None:
-    """Store the matrix in the record as a physical-to-physical matrix."""
-    lta_type = LtaType.LINEAR_PHYSVOX_TO_PHYSVOX
-    record = _record_or_new(self, lta_type, volumes=True)
-    _store(self, _with_matrix(record, lta_type, value))
+    """Store the matrix as a physical-to-physical matrix."""
+    _store(self, value, LtaType.LINEAR_PHYSVOX_TO_PHYSVOX)
 
 
 def _set_ras_to_ras_data(
     self: "LtaTransformationRASToRAS", value: tx.Optional[ArrayProtocol]
 ) -> None:
-    """Store the matrix in the record as a RAS-to-RAS matrix."""
-    lta_type = LtaType.LINEAR_RAS_TO_RAS
-    record = _record_or_new(self, lta_type, volumes=False)
-    _store(self, _with_matrix(record, lta_type, value))
+    """Store the matrix as a RAS-to-RAS matrix."""
+    _store(self, value, LtaType.LINEAR_RAS_TO_RAS)
 
 
 # ----------------------------------------------------------------------
@@ -267,14 +257,17 @@ class LtaTransformation(
     held as an [`LtaRaw`][] record by the [`LtaMetadata`][] of the
     transformation. The matrix lives in that record, and the data and the
     coordinate systems of the transformation are read from it. Setting
-    the data stores the matrix in a new record, and setting `input` or
-    `output` overrides the system that the record defines.
+    the data stores the matrix in a copy of the record, and setting
+    `input` or `output` overrides the system that the record defines. A
+    transformation without a record, such as one built from data alone,
+    holds its matrix as any affine does and has no metadata.
 
     !!! note "What is written"
-        A transformation whose `input` and `output` were not set is written
-        as the record that its metadata holds, which also holds its matrix,
-        provided that the record defines both systems. Any other
-        transformation, including one converted from another affine, is
+        A transformation that holds a record, and whose `input` and
+        `output` were not set, is written as that record, which also holds
+        its matrix. The record is written as it was read, even when it
+        does not define both systems. Any other transformation, including
+        one built from data alone or converted from another affine, is
         written with the LTA type that matches its systems:
 
         | `input` and `output`  | LTA type                    |
@@ -296,17 +289,19 @@ class LtaTransformation(
     )
     """The metadata of the file, which holds the file as a record.
 
-    A transformation built without data has no metadata. Setting the data
-    gives the transformation metadata whose record holds the matrix, and
-    assigning other metadata drops the matrix decoded from the old record.
+    A transformation built from data alone has no metadata, and setting
+    its data does not create any. Assigning other metadata drops the
+    matrix decoded from the old record. A matrix that a transformation
+    without a record holds of its own is kept, and it wins over the
+    matrix of the new record until the data is set again.
     """
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
         # The constructor stores `data=` in the private field of the data
-        # model, which the view does not read. The matrix is therefore
-        # stored again, in the record. When both `data` and `metadata` are
-        # given, the matrix of `data` replaces the matrix of the record.
+        # model. When `metadata` is also given, the matrix is set again so
+        # that it moves into the record, where it replaces the matrix of
+        # the record. Without metadata, the matrix stays where it is.
         if arguments.get("data") is not None:
             self.data = arguments["data"]
 
@@ -335,7 +330,6 @@ class LtaTransformation(
 
     @smartproperty(
         cache=True,
-        unset=always_unset,
         fset=_set_data,
         invalidates=_FORGET_VIEWS,
     )
@@ -343,8 +337,9 @@ class LtaTransformation(
         """The `(3, 4)` affine matrix, which the `matrix` view reads.
 
         The matrix is the matrix of the record, without its last row, and
-        is read-only. Setting the matrix stores it in a new record under the
-        same LTA type. Without a record, the matrix is `None`.
+        is read-only. Setting the matrix stores it in a copy of the record,
+        under the same LTA type. A transformation without a record holds
+        the matrix that was set, or `None` when none was set.
         """
         record = _record(self)
         if record is None:
@@ -406,9 +401,11 @@ class LtaTransformation(
         Within the format, the record of the metadata carries the matrix,
         so the matrix is not decoded and passed on, and the copy holds the
         same metadata as `other`. A view copied from another view of the
-        format reads the same record in its own coordinate systems.
+        format reads the same record in its own coordinate systems. A
+        transformation of the format that holds a matrix of its own, such
+        as one built from data alone, is copied as any affine is.
         """
-        if isinstance(other, LtaTransformation):
+        if isinstance(other, LtaTransformation) and other._data is None:
             kwargs.setdefault("data", None)
         return super().from_instance(other, *args, **kwargs)
 
@@ -417,16 +414,16 @@ class LtaTransformation(
     def to_raw(self) -> LtaRaw:
         """Return the [`LtaRaw`][] that encodes the transformation.
 
-        If neither `input` nor `output` was set and the record that the
-        metadata holds defines both, that record is returned as it is,
-        without a copy, since it also holds the matrix. Otherwise, a new
-        record is built. Its type
-        follows from the systems, as described in [`LtaTransformation`][],
-        and its matrix is `matrix`. Its volume geometries come from the
-        systems for the voxel and physical types, and from the current
-        record for the RAS and RSA types. Its other fields are copied from
-        the current record. A transformation without a record is encoded in
-        the same way.
+        If the metadata holds a record, neither `input` nor `output` was
+        set, and the transformation does not hold a matrix of its own, that
+        record is returned as it is, without a copy, since it also holds
+        the matrix. Otherwise, a new record is built. Its type follows from
+        the systems, as described in [`LtaTransformation`][], and its
+        matrix is `matrix`. Its volume geometries come from the systems for
+        the voxel and physical types, and from the current record for the
+        RAS and RSA types. Its other fields are copied from the current
+        record. A transformation without a record is encoded in the same
+        way.
 
         Raises
         ------
@@ -434,12 +431,12 @@ class LtaTransformation(
             If the LTA format cannot encode the systems or the matrix.
         """
         record = _record(self)
-        overridden = self._input is not None or self._output is not None
-        # A record that does not define both systems, such as the record
-        # that setting the data of a new transformation creates, does not
-        # say what its matrix maps, so the systems decide.
-        undefined = self.input is None or self.output is None
-        if record is None or overridden or undefined:
+        overridden = (
+            self._data is not None
+            or self._input is not None
+            or self._output is not None
+        )
+        if record is None or overridden:
             record = _build_raw(self)
         _check_shape(record)
         return record
@@ -471,29 +468,29 @@ class LtaTransformationVoxToVox(LtaTransformation):
     @smartproperty
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The voxel system of the source volume, unless set explicitly."""
-        lta_type = LtaType.LINEAR_VOX_TO_VOX
-        record = _record_or_new(self, lta_type, volumes=True)
-        return _system(LtaVoxelSystem, record.src)
+        record = _record(self)
+        info = LtaRaw.SrcVolumeInfo() if record is None else record.src
+        return _system(LtaVoxelSystem, info)
 
     @smartproperty
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The voxel system of the destination volume, unless set."""
-        lta_type = LtaType.LINEAR_VOX_TO_VOX
-        record = _record_or_new(self, lta_type, volumes=True)
-        return _system(LtaVoxelSystem, record.dst)
+        record = _record(self)
+        info = LtaRaw.DstVolumeInfo() if record is None else record.dst
+        return _system(LtaVoxelSystem, info)
 
     @smartproperty(
         cache=True,
-        unset=always_unset,
         fset=_set_vox_to_vox_data,
         invalidates=_FORGET_VIEWS,
     )
     def data(self) -> tx.Optional[np.ndarray]:
         """The voxel-to-voxel matrix derived from the record.
 
-        The matrix is read-only. Setting the matrix stores it in a new
-        record of the voxel-to-voxel type. Without a record, the matrix is
-        `None`.
+        The matrix is read-only. Setting the matrix stores it in a copy of
+        the record, under the voxel-to-voxel type. A transformation without
+        a record holds the matrix that was set, or `None` when none was
+        set.
         """
         record = _record(self)
         if record is None:
@@ -511,29 +508,29 @@ class LtaTransformationPhysToPhys(LtaTransformation):
     @smartproperty
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The physical system of the source volume, unless set explicitly."""
-        lta_type = LtaType.LINEAR_PHYSVOX_TO_PHYSVOX
-        record = _record_or_new(self, lta_type, volumes=True)
-        return _system(LtaPhysicalSystem, record.src)
+        record = _record(self)
+        info = LtaRaw.SrcVolumeInfo() if record is None else record.src
+        return _system(LtaPhysicalSystem, info)
 
     @smartproperty
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The physical system of the destination volume, unless set."""
-        lta_type = LtaType.LINEAR_PHYSVOX_TO_PHYSVOX
-        record = _record_or_new(self, lta_type, volumes=True)
-        return _system(LtaPhysicalSystem, record.dst)
+        record = _record(self)
+        info = LtaRaw.DstVolumeInfo() if record is None else record.dst
+        return _system(LtaPhysicalSystem, info)
 
     @smartproperty(
         cache=True,
-        unset=always_unset,
         fset=_set_phys_to_phys_data,
         invalidates=_FORGET_VIEWS,
     )
     def data(self) -> tx.Optional[np.ndarray]:
         """The physical-to-physical matrix derived from the record.
 
-        The matrix is read-only. Setting the matrix stores it in a new
-        record of the physical-to-physical type. Without a record, the
-        matrix is `None`.
+        The matrix is read-only. Setting the matrix stores it in a copy of
+        the record, under the physical-to-physical type. A transformation
+        without a record holds the matrix that was set, or `None` when none
+        was set.
         """
         record = _record(self)
         if record is None:
@@ -556,16 +553,15 @@ class LtaTransformationRASToRAS(LtaTransformation):
 
     @smartproperty(
         cache=True,
-        unset=always_unset,
         fset=_set_ras_to_ras_data,
         invalidates=_FORGET_VIEWS,
     )
     def data(self) -> tx.Optional[np.ndarray]:
         """The RAS-to-RAS matrix derived from the record.
 
-        The matrix is read-only. Setting the matrix stores it in a new
-        record of the RAS-to-RAS type. Without a record, the matrix is
-        `None`.
+        The matrix is read-only. Setting the matrix stores it in a copy of
+        the record, under the RAS-to-RAS type. A transformation without a
+        record holds the matrix that was set, or `None` when none was set.
         """
         record = _record(self)
         if record is None:
@@ -588,9 +584,13 @@ def _check_shape(record: LtaRaw) -> None:
     """
     shape = record.affine.shape
     if shape != (4, 4):
+        # The record stores the homogeneous matrix, whose last row the
+        # data model drops. An empty matrix has no row to drop.
+        if shape[0] > 0:
+            shape = (shape[0] - 1, shape[1])
         raise UnrepresentableTransformationError(
             f"An LTA file encodes a 3D affine, of shape (3, 4), but the "
-            f"matrix has shape {(shape[0] - 1, shape[1])}."
+            f"matrix has shape {shape}."
         )
 
 
