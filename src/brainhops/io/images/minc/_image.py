@@ -78,7 +78,7 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
     MINC files cannot be written, so the class has no writer and no
     `to_raw`: an image is saved to another format, such as NIfTI, and
-    [`brainhops.io.save`][] refuses to write it as MINC. The record is
+    [`save`][brainhops.io.save] refuses to write it as MINC. The record is
     `metadata.raw`.
     """
 

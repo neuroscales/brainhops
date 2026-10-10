@@ -51,6 +51,7 @@ from brainhops.io.common.nrrd._constants import (
     SPACES,
 )
 from brainhops.io.common.nrrd._data import (
+    _LOCAL_PROTOCOLS,
     _NrrdProxy,
     encode_data,
     read_nrrd,
@@ -1095,7 +1096,7 @@ def _resolved(file: tx.Any) -> tx.Optional[str]:
     if not isinstance(file, (str, os.PathLike)):
         return None
     try:
-        if path.Path(file).protocol.lower() not in ("", "file", "local"):
+        if path.Path(file).protocol.lower() not in _LOCAL_PROTOCOLS:
             return None
         return os.path.realpath(os.fspath(file))
     except Exception:  # noqa: BLE001
