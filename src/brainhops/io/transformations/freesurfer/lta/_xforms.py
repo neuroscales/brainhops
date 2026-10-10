@@ -392,12 +392,12 @@ class LtaTransformation(
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy a transformation, keeping the record of another LTA one.
+        """Copy a transformation, sharing the record of an LTA transformation.
 
         Within the format, the record of the metadata carries the matrix,
         so the matrix is not decoded and passed on, and the copy holds the
-        same metadata as `other`. A view of the format copied from another
-        view reads the same record in its own coordinate systems.
+        same metadata as `other`. A view copied from another view of the
+        format reads the same record in its own coordinate systems.
         """
         if isinstance(other, LtaTransformation):
             kwargs.setdefault("data", None)
