@@ -17,6 +17,7 @@ from brainhops._core.dependencies import has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base import Format
 from brainhops.io.base._base import (
+    is_format_registry,
     register_format,
 )
 from brainhops.io.base._dispatch import Source, _to_filename
@@ -156,7 +157,7 @@ def note_formats() -> tx.Iterator[tx.Tuple[type, type]]:
     yield made
     for fmt in made:
         for base in fmt.__mro__:
-            if "_REGISTRY" in base.__dict__:
+            if is_format_registry(base):
                 base._REGISTRY.discard(fmt)
 
 

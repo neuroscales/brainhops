@@ -29,6 +29,7 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.base import Format
 from brainhops.io.base._base import (
+    is_format_registry,
     register_format,
 )
 from brainhops.io.base.parsers import (
@@ -97,7 +98,7 @@ def formats() -> tx.Iterator[tx.Callable[..., type]]:
     yield make
     for fmt in made:
         for base in fmt.__mro__:
-            if "_REGISTRY" in base.__dict__:
+            if is_format_registry(base):
                 base._REGISTRY.discard(fmt)
 
 

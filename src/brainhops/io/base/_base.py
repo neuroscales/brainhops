@@ -62,6 +62,28 @@ def format_registry(
     return cls
 
 
+def is_format_registry(cls: type) -> bool:
+    """Tell whether a class owns a format registry.
+
+    A class owns a registry when it is decorated with
+    [`format_registry`][], which makes it a dispatcher. A format registered
+    under that class inherits the registry attribute but does not own it,
+    so the test looks in the class's own `__dict__` rather than using
+    `hasattr`.
+
+    Parameters
+    ----------
+    cls : type
+        The class to test.
+
+    Returns
+    -------
+    bool
+        Whether `cls` was decorated with [`format_registry`][].
+    """
+    return "_REGISTRY" in cls.__dict__
+
+
 def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
     """Register a concrete format into ancestor registries up to isolation.
 
@@ -87,7 +109,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
     TypeError
         If `cls` owns a registry.
     """
-    if "_REGISTRY" in cls.__dict__:
+    if is_format_registry(cls):
         raise TypeError(
             f"{cls.__name__} owns a registry (@format_registry), so it "
             f"dispatches to formats rather than being one; it must not "
@@ -100,7 +122,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
         if base in visited:
             continue
         visited.add(base)
-        if "_REGISTRY" in base.__dict__:
+        if is_format_registry(base):
             base._REGISTRY.add(cls)
             if base.__dict__.get("_REGISTRY_ISOLATED", False):
                 continue
@@ -143,7 +165,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
 
     @classmethod
     def _is_dispatcher(cls) -> bool:
-        return "_REGISTRY" in cls.__dict__
+        return is_format_registry(cls)
 
     @classmethod
     def _reader_formats(cls) -> tx.Set[type]:
@@ -601,7 +623,7 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
     for klass in cls.__mro__:
         if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
             continue
-        if "_REGISTRY" in klass.__dict__:
+        if is_format_registry(klass):
             continue
         names = [field.name for field in fields(klass)]
         if issubclass(klass, (Format, FileReader, FileWriter)):
