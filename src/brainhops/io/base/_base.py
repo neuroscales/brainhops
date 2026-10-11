@@ -578,10 +578,9 @@ class _FileBasedModelMixin:
         Converting NIfTI to MGH on save therefore converts the data model only,
         and the writer rebuilds the format state.
 
-        Within one format, the `raw` array and the `metadata` record of an
-        object carry its data, so `data` is not copied when either is set.
-        The copy then holds the same `raw` as `other`, which stays lazy if
-        it is a proxy, and decodes its data from the same record.
+        Within one format, the `raw` field of an object carries its data, so
+        `data` is not copied when `raw` is set. The copy then holds the same
+        `raw` as `other`, which stays lazy if it is a proxy.
 
         Parameters
         ----------
@@ -608,15 +607,9 @@ class _FileBasedModelMixin:
         # Within a format, `raw` carries the data, so the view `data` is not
         # read. Passing it would decode the whole array, and since `data`
         # takes precedence over `raw`, the copy would lose the lazy proxy.
-        # Without `raw`, the record of the metadata carries the data, as the
-        # header of a NIfTI affine carries its matrix, so the copy decodes
-        # the data from the same record.
         if (
             isinstance(other, cls)
-            and (
-                getattr(other, "raw", None) is not None
-                or getattr(other, "metadata", None) is not None
-            )
+            and getattr(other, "raw", None) is not None
             and any(field.public_name == "data" for field in fields(cls))
         ):
             kwargs.setdefault("data", None)
