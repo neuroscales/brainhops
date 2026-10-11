@@ -34,9 +34,11 @@ class TransformationFormat(
     A format builds itself from another transformation by converting it,
     so that `Format.from_any(t)`, `Format.from_instance(t)` and
     `t.to(Format)` are one conversion. The conversion runs the exact
-    converter of the format when it has one, and the converter that
-    relabels a transformation as the format otherwise (see
-    [`relabel`][brainhops.io.transformations.base._converters.relabel]).
+    converter of the format when it has one. A format without one either
+    registers a converter that relabels a transformation as the format
+    (see
+    [`relabel`][brainhops.io.transformations.base._converters.relabel]),
+    or is rebuilt by the converters of the data model.
     A file, a mapping and an instance of the format itself are read or
     copied as the bases of this class read or copy them.
     """

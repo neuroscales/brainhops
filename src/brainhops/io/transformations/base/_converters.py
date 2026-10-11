@@ -1,17 +1,24 @@
 """
-Private converter that relabels a transformation as a file format.
+Private helpers that relabel a transformation as a file format.
 
 Most file formats have no exact converter yet (#312). Such a format holds
 another transformation only by being rebuilt from it with the same
-parameters, which is called relabelling. This module registers one
-converter, from any transformation to any file format, that relabels.
-It is chosen only when the format has no converter of its own for the
-transformation: an exact converter, such as those of NIfTI, names its
-format and the family it converts, so it is more specific, and the
-dispatcher always prefers it. The relabelling converter is registered
-with a priority so that it is preferred to the converters of the data
-model, which also match a request for a format but know nothing of its
-coordinate systems.
+parameters, which is called relabelling. This module holds the converter
+that relabels, [`relabelling`][], and the helper it calls,
+[`relabel`][]. The module registers nothing: each format that relabels
+registers the converter explicitly, once for each family it holds, in
+its own `_converters` module, for example
+
+```python
+converter(_xforms.Sequence, FnirtWarpField)(relabelling)
+```
+
+Such a registration names its format and a family, so it is as specific
+as an exact converter would be, and more specific than the converters
+of the data model, which also match a request for a format but know
+nothing of its coordinate systems. Since every format registers the same
+function, [`relabels`][] can tell a relabelling from an exact
+conversion.
 
 A relabelled transformation is the same map only if the format means
 the same coordinate systems. Each endpoint of the transformation that
@@ -26,14 +33,13 @@ that has no system of its own on a side accepts any endpoint there, and
 keeps it.
 """
 
-__all__ = ["relabel", "relabels"]
+__all__ = ["relabel", "relabelling", "relabels"]
 
 import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import (
     convert,
-    converter,
     find_converter,
 )
 from brainhops.errors import ConversionError, IncompatibleSystemError
@@ -43,14 +49,35 @@ from ._conversions import unrepresentable
 from .affines import _check_endpoint
 
 
-@converter(_xforms.Transformation, TransformationFormat, priority=1)
-def _relabelling(
-    t: _xforms.Transformation,
-    cls: tx.Type[TransformationFormat],
-    **kwargs,
+def relabelling(
+    t: _xforms.Transformation, cls: type, **kwargs
 ) -> TransformationFormat:
-    # A format without a converter of its own for `t` holds it only by
-    # relabelling, which is refused when the systems do not match.
+    """
+    Convert a transformation to a format without an exact converter.
+
+    This is the converter that a format registers, for each family that
+    it holds, until an exact converter is written for it (#312). It
+    relabels `t` as the format (see [`relabel`][]).
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation to convert.
+    cls : type
+        The format to convert it to.
+    **kwargs : Any
+        Options of the format, passed to its constructor.
+
+    Returns
+    -------
+    TransformationFormat
+        The format, holding the parameters of `t`.
+
+    Raises
+    ------
+    ConversionError
+        If the format cannot hold `t` by relabelling it.
+    """
     return relabel(t, cls, **kwargs)
 
 
@@ -58,8 +85,9 @@ def relabels(t: _xforms.Transformation, cls: type) -> bool:
     """
     Whether `t.to(cls)` relabels `t` rather than converting it exactly.
 
-    A format that has no converter of its own for `t` holds it only by
-    relabelling (see [`relabel`][]). `io.save` writes a transformation
+    A format without an exact converter for the family of `t` holds it
+    only by relabelling, through the converter [`relabelling`][] that it
+    registers. `io.save` writes a transformation
     in a format that it is not already of only by an exact conversion,
     or by a copy into a format of its own data model, so it asks this
     question before it converts.
@@ -74,9 +102,9 @@ def relabels(t: _xforms.Transformation, cls: type) -> bool:
     Returns
     -------
     bool
-        Whether the conversion is the relabelling of this module.
+        Whether the conversion runs [`relabelling`][].
     """
-    return find_converter(t, cls) is _relabelling
+    return find_converter(t, cls) is relabelling
 
 
 def relabel(
@@ -86,11 +114,13 @@ def relabel(
     Rebuild a transformation as a format, keeping its parameters.
 
     This is what a format without an exact converter for `t` does with
-    it (#312), and what `cls.from_any(t)`, `cls.from_instance(t)` and
-    `t.to(cls)` then return. The format is rebuilt from the data model
-    that it stores: a format built on `Affine` takes the affine that `t`
-    exactly is, which the converters of the data model compute, and a
-    format built on a `Sequence` takes the chain of `t`. The relabelled
+    it (#312), through [`relabelling`][], and what `cls.from_any(t)`,
+    `cls.from_instance(t)` and `t.to(cls)` then return. The converters
+    of a format also call it for another variant of the format. The
+    format is rebuilt from the data model that it stores: a format built
+    on `Affine` takes the affine that `t` exactly is, which the
+    converters of the data model compute, and a format built on a
+    `Sequence` takes the chain of `t`. The relabelled
     format is then built as the bases of
     [`TransformationFormat`][brainhops.io.transformations.base.TransformationFormat]
     copy an instance, so that the fields that belong to the format of

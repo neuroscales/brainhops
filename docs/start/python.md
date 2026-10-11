@@ -132,7 +132,8 @@ Every family with an affine form, such as a `Scaling` or a
 coordinate systems, such as `VoxelToRAS`, accepts only endpoints that
 are compatible with those systems. A transformation between other
 systems is therefore refused with a `ConversionError`, rather than given
-the class with its parameters unchanged. A format that has no exact
+the class with its parameters unchanged. A format that reads its
+coordinate systems from what it holds, such as LTA, and has no exact
 conversion yet (#312) is given the parameters of the transformation
 unchanged, which is called relabelling, but only when the coordinate
 systems of the transformation are not known or are compatible with
