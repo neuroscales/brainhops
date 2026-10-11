@@ -2,7 +2,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Alias
 
-from brainhops._core.properties import always_unset, smartproperty
+from brainhops._core.properties import lazyproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
@@ -18,13 +18,13 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _record_image,
 )
-from brainhops.io.common.nifti._views import (
-    _field_to_model,
+from brainhops.io.images.nifti._views import (
     _image_to_disk,
     _image_to_model,
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._views import _field_to_model
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
@@ -65,14 +65,6 @@ _SPLINE_DEGREE = {
 
 # A nibabel image or header, or a brainhops image.
 _ImageLike = tx.Union[_NiftiObject, Image]
-
-
-def _set_fnirt_data(
-    self: "FnirtWarpField", value: tx.Optional[ArrayProtocol]
-) -> None:
-    """Store the array of a FNIRT field in `raw`, as FSL stores it."""
-    self.raw = None if value is None else _image_to_disk(value)
-    self.__dict__.pop("_cache_data", None)
 
 
 @register_format
@@ -137,7 +129,7 @@ class FnirtWarpField(
     infer it from the data. Coefficient fields ignore it.
     """
 
-    @smartproperty(cache=True, unset=always_unset, fset=_set_fnirt_data)
+    @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The array of the file, as FSL stores it, decoded from `raw`.
 
@@ -148,6 +140,10 @@ class FnirtWarpField(
         if self.raw is None:
             return None
         return _image_to_model(self.raw)
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _image_to_disk(value)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -182,12 +178,42 @@ class FnirtWarpField(
 
     @classmethod
     def from_filename(cls, filename: tx.Any, **kwargs) -> tx.Self:
+        """Read a FNIRT field from the path of a NIfTI file.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            The `moving` and `reference` images, under any of their
+            aliases, and the options of the nibabel readers.
+
+        Returns
+        -------
+        FnirtWarpField
+            The field, whose array is read lazily.
+        """
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_filename(filename, **kwargs)
         return cls._with_images(obj, moving, reference)
 
     @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
+        """Read a FNIRT field from an open NIfTI stream.
+
+        Parameters
+        ----------
+        fileobj : BinaryIO
+            The stream, which must stay open while the data may be read.
+        **kwargs : Any
+            The `moving` and `reference` images, under any of their
+            aliases, and the options of the nibabel readers.
+
+        Returns
+        -------
+        FnirtWarpField
+            The field, whose array is read lazily.
+        """
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_fileobj(fileobj, **kwargs)
         return cls._with_images(obj, moving, reference)
@@ -202,6 +228,20 @@ class FnirtWarpField(
         deformation field (intent 2006) whose voxel-to-world affine is the
         identity. Non-encoding header fields are copied from `like`, and
         `overrides` are applied last.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
 
         Raises
         ------

@@ -257,7 +257,11 @@ def _registry_depth(cls: type) -> int:
     because the depth of the class hierarchy says nothing about how well a
     format matches.
     """
-    return sum(1 for base in cls.__mro__ if "_REGISTRY" in base.__dict__)
+    # The import is local because the module that defines the registries
+    # imports this one.
+    from brainhops.io.base._base import is_format_registry
+
+    return sum(1 for base in cls.__mro__ if is_format_registry(base))
 
 
 def _drop_base_classes(

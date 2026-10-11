@@ -47,6 +47,21 @@ class LtaMetadata(MetadataFormat, TextFileReader, TextFileWriter):
         """Score a line as the first line of an LTA file.
 
         The line is scored by [`LtaRaw.sniff_line`][].
+
+        Parameters
+        ----------
+        line : str
+            The first line of the file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the line is not the first line
+            of an LTA file.
+        **kwargs : Any
+            Options of the reader.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return LtaRaw.sniff_line(line, error=error, **kwargs)
 
@@ -54,8 +69,19 @@ class LtaMetadata(MetadataFormat, TextFileReader, TextFileWriter):
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> "LtaMetadata":
         """Read the metadata from the lines of an LTA file.
 
-        The lines are parsed by [`LtaRaw.from_lines`][], which receives the
-        keyword arguments.
+        The lines are parsed by [`LtaRaw.from_lines`][].
+
+        Parameters
+        ----------
+        lines : iterable of str
+            The lines of the file.
+        **kwargs : Any
+            Options of [`LtaRaw.from_lines`][].
+
+        Returns
+        -------
+        LtaMetadata
+            The metadata, which holds the record of the file.
         """
         return cls.from_raw(LtaRaw.from_lines(lines, **kwargs))
 
@@ -63,6 +89,16 @@ class LtaMetadata(MetadataFormat, TextFileReader, TextFileWriter):
         """Yield the lines of the LTA file that the record holds.
 
         Metadata without a record is written as a new, empty record.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer of the record.
+
+        Yields
+        ------
+        str
+            The lines of the file, without line endings.
         """
         raw = LtaRaw() if self.raw is None else self.raw
         return raw.to_lines(**kwargs)
@@ -72,6 +108,16 @@ class LtaMetadata(MetadataFormat, TextFileReader, TextFileWriter):
 
         The text is the text of the record, as [`LtaRaw.to_text`][] writes
         it, so that it matches the files that the transformation writes.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer of the record.
+
+        Returns
+        -------
+        str
+            The content of the file, ending with a newline.
         """
         raw = LtaRaw() if self.raw is None else self.raw
         return raw.to_text(**kwargs)

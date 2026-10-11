@@ -6,7 +6,7 @@ from warnings import warn
 
 import h5py
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import NoRepr, replace
 
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
@@ -65,16 +65,6 @@ def _check_selection(
         )
 
 
-def _set_metadata(self: "X5Transform", value: tx.Optional[X5Metadata]) -> None:
-    """Store the metadata and forget the nodes decoded from the old record.
-
-    The chain decoded from the old record is deleted by the property, which
-    names `transformations` among the values that it invalidates.
-    """
-    self._metadata = value
-    self.__dict__.pop("_decoded_nodes", None)
-
-
 # ----------------------------------------------------------------------
 #   FORMAT
 # ----------------------------------------------------------------------
@@ -129,20 +119,20 @@ class X5Transform(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
     HINTS = ("x5", "bids")
 
-    _metadata: KwOnly[NoRepr[tx.Optional[X5Metadata]]] = None
+    _metadata: NoRepr[tx.Optional[X5Metadata]] = None
 
     metadata = smartproperty(
-        "metadata", fset=_set_metadata, invalidates=("transformations",)
+        "metadata", invalidates=("transformations", "decoded_nodes")
     )
     """The metadata of the file, which holds the file as a record.
 
     A transformation built from a chain has no metadata. Assigning other
-    metadata drops the chain decoded from the old record.
+    metadata drops the chain and the nodes decoded from the old record.
     """
 
-    _chain: KwOnly[tx.Optional[int]] = None
+    _chain: tx.Optional[int] = None
 
-    chain = smartproperty("chain", invalidates=("transformations",))
+    chain = smartproperty("chain", invalidates="transformations")
     """The index of the chain of `/TransformChain` that is read.
 
     See [`X5Transform.selection`][]. Assigning another index drops the
@@ -152,9 +142,9 @@ class X5Transform(
     with `xform.transformations = list(xform)`.
     """
 
-    _position: KwOnly[tx.Optional[int]] = None
+    _position: tx.Optional[int] = None
 
-    position = smartproperty("position", invalidates=("transformations",))
+    position = smartproperty("position", invalidates="transformations")
     """The index of the single node of `/TransformGroup` that is read.
 
     See [`X5Transform.selection`][]. Assigning another index drops the
@@ -218,6 +208,16 @@ class X5Transform(
         so that the writer can recognise it by identity. Assigning other
         metadata forgets the decoded nodes.
 
+        Parameters
+        ----------
+        index : int
+            The index of the node in `/TransformGroup`.
+
+        Returns
+        -------
+        Transformation
+            The transformation that the node encodes.
+
         Raises
         ------
         ParserContentError
@@ -226,7 +226,7 @@ class X5Transform(
         record = _record(self)
         if record is None:
             raise ParserContentError("This X5 transformation has no record.")
-        decoded = self.__dict__.setdefault("_decoded_nodes", {})
+        decoded = self.__dict__.setdefault("_cache_decoded_nodes", {})
         if index not in decoded:
             decoded[index] = node_to_transformation(record.nodes[index])
         return decoded[index]
@@ -252,6 +252,18 @@ class X5Transform(
         """Score an open HDF5 file by its root `Format` attribute.
 
         The file is scored by [`X5Metadata.sniff_h5`][].
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the file is not an X5 file.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return X5Metadata.sniff_h5(h5file, error=error)
 
@@ -306,8 +318,20 @@ class X5Transform(
     def from_raw(cls, raw: X5Raw, **kwargs) -> tx.Self:
         """Build a transformation from an already read [`X5Raw`][].
 
-        The record is held by new metadata, without a copy. Keyword
-        arguments such as `chain` or `position` go to the constructor.
+        The record is held by new metadata, without a copy.
+
+        Parameters
+        ----------
+        raw : X5Raw
+            The record of the file.
+        **kwargs : Any
+            Field values, such as `chain` or `position`, which go to the
+            constructor.
+
+        Returns
+        -------
+        Self
+            The transformation.
 
         Raises
         ------
@@ -325,6 +349,22 @@ class X5Transform(
 
         An [`X5Raw`][] is read with [`from_raw`][], and any other value as
         the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping,
+            or an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
         """
         if isinstance(other, X5Raw) and not args:
             return cls.from_raw(other, **kwargs)
@@ -355,19 +395,32 @@ class X5Transform(
             were assigned are not `RASmm`.
         """
         record = _record(self)
-        assigned = getattr(self, "_transformations", None) is not None
+        assigned = self._transformations is not None
         declared = self._input is not None or self._output is not None
         if not assigned and not declared:
             return X5Raw() if record is None else record
         if declared:
             _check_ras(self, "chain")
-        decoded = self.__dict__.get("_decoded_nodes", {})
+        decoded = self.__dict__.get("_cache_decoded_nodes", {})
         return _encode(self.transformations, record, decoded)
 
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the transformation into an empty HDF5 file.
 
         The record is written by [`X5Raw.to_h5`][].
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The empty file, open for writing.
+        **kwargs : Any
+            Options of [`X5Raw.to_h5`][].
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If an element cannot be encoded in X5, or if the systems
+            that were assigned are not `RASmm`.
         """
         self.to_raw().to_h5(h5file, **kwargs)
 
@@ -376,11 +429,41 @@ class X5Transform(
 
         The record is built before the file is opened, so a transformation
         that cannot be encoded leaves the file untouched.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Options of the writer of the record.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If an element cannot be encoded in X5, or if the systems
+            that were assigned are not `RASmm`.
         """
         self.to_raw().to_filename(filename, **kwargs)
 
     def to_bytes(self, **kwargs) -> bytes:
-        """Return the bytes of the X5 file that encodes the transformation."""
+        """Return the bytes of the X5 file that encodes the transformation.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer of the record.
+
+        Returns
+        -------
+        bytes
+            The content of the file.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If an element cannot be encoded in X5, or if the systems
+            that were assigned are not `RASmm`.
+        """
         return self.to_raw().to_bytes(**kwargs)
 
 
