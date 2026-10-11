@@ -164,7 +164,20 @@ class X5CoordinatesField(_xforms.ImmutableSequence):
     def from_ras(
         cls, coordinates: ArrayProtocol, vox2ras: np.ndarray
     ) -> tx.Self:
-        """Build the chain from RAS coordinates and the grid's affine."""
+        """Build the chain from RAS coordinates and the grid's affine.
+
+        Parameters
+        ----------
+        coordinates : ArrayProtocol
+            The field of RAS coordinates, sampled on the grid.
+        vox2ras : np.ndarray
+            The (4, 4) voxel-to-RAS matrix of the grid.
+
+        Returns
+        -------
+        Self
+            The chain of the RAS-to-voxel affine and the coordinate field.
+        """
         vox2ras = np.asarray(vox2ras, dtype=np.float64)
         compact = vox2ras[:-1]
         return cls(
@@ -214,6 +227,16 @@ def _read(stored: tx.Any) -> ArrayProtocol:
 
 def node_to_transformation(node: X5Node) -> _xforms.Transformation:
     """Decode an X5 node into a transformation from RAS to RAS.
+
+    Parameters
+    ----------
+    node : X5Node
+        The node.
+
+    Returns
+    -------
+    Transformation
+        The transformation that the node encodes.
 
     Raises
     ------
@@ -449,6 +472,16 @@ def transformation_to_nodes(
       [`X5CoordinatesField`][] and an SPM `y_` field.
     - A transformation that converts to an affine becomes a linear node.
     - Any other sequence becomes the nodes of its elements.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The transformation to encode.
+
+    Returns
+    -------
+    list of X5Node
+        The nodes, in the order in which they are applied.
 
     Raises
     ------

@@ -11,7 +11,7 @@ __all__ = [
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, fields, replace
+from bagof.magic import NoRepr, fields, replace
 
 # internals
 from brainhops._core import path
@@ -23,7 +23,7 @@ from brainhops._core.properties import (
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import register_format, store_data_argument
 from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
@@ -185,15 +185,6 @@ def _store(
             xform.metadata, raw=_with_matrix(record, lta_type, value)
         )
         xform._data = None
-    xform.__dict__.pop("_cache_data", None)
-
-
-def _set_metadata(
-    self: "LtaTransformation", value: tx.Optional[LtaMetadata]
-) -> None:
-    """Store the metadata and drop the matrix decoded from its record."""
-    self._metadata = value
-    self.__dict__.pop("_cache_data", None)
 
 
 def _set_data(
@@ -282,11 +273,9 @@ class LtaTransformation(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".lta",)
 
-    _metadata: KwOnly[NoRepr[tx.Optional[LtaMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[LtaMetadata]] = None
 
-    metadata = smartproperty(
-        "metadata", fset=_set_metadata, invalidates=_FORGET_VIEWS
-    )
+    metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
 
     A transformation built from data alone has no metadata, and setting
@@ -302,8 +291,7 @@ class LtaTransformation(
         # model. When `metadata` is also given, the matrix is set again so
         # that it moves into the record, where it replaces the matrix of
         # the record. Without metadata, the matrix stays where it is.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
+        store_data_argument(self, arguments)
 
     @smartproperty
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
@@ -358,6 +346,21 @@ class LtaTransformation(
         """Score a line as the first line of an LTA file.
 
         The line is scored by [`LtaMetadata.sniff_line`][].
+
+        Parameters
+        ----------
+        line : str
+            The first line of the file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the line is not the first line
+            of an LTA file.
+        **kwargs : Any
+            Options of the reader.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return LtaMetadata.sniff_line(line, error=error, **kwargs)
 
@@ -367,9 +370,20 @@ class LtaTransformation(
     def from_raw(cls, raw: LtaRaw, **kwargs) -> tx.Self:
         """Build a transformation from an already parsed [`LtaRaw`][].
 
-        The record is held by new metadata, without a copy. Keyword
-        arguments such as `input`, `output` or `matrix` go to the
-        constructor and override the record.
+        The record is held by new metadata, without a copy.
+
+        Parameters
+        ----------
+        raw : LtaRaw
+            The record of the file.
+        **kwargs : Any
+            Field values, such as `input`, `output` or `matrix`, which go
+            to the constructor and override the record.
+
+        Returns
+        -------
+        Self
+            The transformation.
         """
         return cls(metadata=LtaMetadata.from_raw(raw), **kwargs)
 
@@ -377,9 +391,20 @@ class LtaTransformation(
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
         """Build a transformation from LTA lines.
 
-        The lines are read by [`LtaMetadata.from_lines`][]. Keyword
-        arguments such as `input`, `output` or `matrix` go to the
-        constructor and override the file.
+        The lines are read by [`LtaMetadata.from_lines`][].
+
+        Parameters
+        ----------
+        lines : iterable of str
+            The lines of the file.
+        **kwargs : Any
+            Field values, such as `input`, `output` or `matrix`, which go
+            to the constructor and override the file.
+
+        Returns
+        -------
+        Self
+            The transformation.
         """
         return cls(metadata=LtaMetadata.from_lines(lines), **kwargs)
 
@@ -389,6 +414,22 @@ class LtaTransformation(
 
         An [`LtaRaw`][] is read with [`from_raw`][], and any other value as
         the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
         """
         if isinstance(other, LtaRaw) and not args:
             return cls.from_raw(other, **kwargs)
@@ -404,6 +445,22 @@ class LtaTransformation(
         format reads the same record in its own coordinate systems. A
         transformation of the format that holds a matrix of its own, such
         as one built from data alone, is copied as any affine is.
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy.
+        *args : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+        **kwargs : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+
+        Returns
+        -------
+        Self
+            The copy.
         """
         if isinstance(other, LtaTransformation) and other._data is None:
             kwargs.setdefault("data", None)
@@ -424,6 +481,11 @@ class LtaTransformation(
         RAS and RSA types. Its other fields are copied from the current
         record. A transformation without a record is encoded in the same
         way.
+
+        Returns
+        -------
+        LtaRaw
+            The record that encodes the transformation.
 
         Raises
         ------
@@ -446,15 +508,59 @@ class LtaTransformation(
 
         The record is built first, so a transformation that cannot be
         encoded leaves the file untouched.
+
+        Parameters
+        ----------
+        file : path or file object
+            The path or the open text file.
+        **kwargs : Any
+            Options of the writer of the record.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the LTA format cannot encode the systems or the matrix.
         """
         return self.to_raw().to_file(file, **kwargs)
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
-        """Yield the lines of the LTA file that encodes the transformation."""
+        """Yield the lines of the LTA file that encodes the transformation.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer of the record.
+
+        Yields
+        ------
+        str
+            The lines of the file, without line endings.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the LTA format cannot encode the systems or the matrix.
+        """
         return self.to_raw().to_lines(**kwargs)
 
     def to_text(self, **kwargs) -> str:
-        """Return the LTA file content that encodes the transformation."""
+        """Return the LTA file content that encodes the transformation.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer of the record.
+
+        Returns
+        -------
+        str
+            The content of the file, ending with a newline.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the LTA format cannot encode the systems or the matrix.
+        """
         return self.to_raw().to_text(**kwargs)
 
 
