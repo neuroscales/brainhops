@@ -180,6 +180,29 @@ class NiftiImage(
         A stream that starts with a NIfTI header is scored with
         `_score_nibabel`. Any other stream is declined by
         [`NiftiRaw.sniff_fileobj`][], which raises the requested error.
+
+        Parameters
+        ----------
+        file : file object
+            The stream to test, open in binary mode. Its position is
+            restored.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no NIfTI
+            header. With `True`, the error is a `SnifferContentError`, and
+            an exception class is raised instead when one is given.
+        **kwargs : Any
+            The NIfTI `version` to look for, 1 or 2. Other options are
+            ignored.
+
+        Returns
+        -------
+        float
+            The confidence that the stream holds an image.
+
+        Raises
+        ------
+        SnifferContentError
+            If the stream holds no NIfTI header and `error` is `True`.
         """
         header = _sniffed_header(file, kwargs.get("version"))
         if header is None:
@@ -193,7 +216,31 @@ class NiftiImage(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold a NIfTI image."""
+        """Return the confidence that bytes hold a NIfTI image.
+
+        The bytes are scored as [`sniff_fileobj`][] scores a stream.
+
+        Parameters
+        ----------
+        data : bytes
+            The content to test, which may be compressed with gzip.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no NIfTI header,
+            as in [`sniff_fileobj`][].
+        **kwargs : Any
+            The NIfTI `version` to look for, 1 or 2. Other options are
+            ignored.
+
+        Returns
+        -------
+        float
+            The confidence that the bytes hold an image.
+
+        Raises
+        ------
+        SnifferContentError
+            If the bytes hold no NIfTI header and `error` is `True`.
+        """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
@@ -352,6 +399,19 @@ class NiftiImage(
         """Write the image to a stream as an uncompressed NIfTI file.
 
         The keyword arguments are those of [`to_nibabel`][].
+
+        Parameters
+        ----------
+        file : file object
+            The stream to write to, open in binary mode.
+        **kwargs : Any
+            The template `like` and the header overrides of
+            [`to_nibabel`][].
+
+        Raises
+        ------
+        WriterError
+            If the image cannot be encoded, as in [`to_nibabel`][].
         """
         write_nifti(self.to_nibabel(**kwargs), file)
 
@@ -359,6 +419,22 @@ class NiftiImage(
         """Return the uncompressed NIfTI encoding of the image.
 
         The keyword arguments are those of [`to_nibabel`][].
+
+        Parameters
+        ----------
+        **kwargs : Any
+            The template `like` and the header overrides of
+            [`to_nibabel`][].
+
+        Returns
+        -------
+        bytes
+            The content of an uncompressed NIfTI file.
+
+        Raises
+        ------
+        WriterError
+            If the image cannot be encoded, as in [`to_nibabel`][].
         """
         return self.to_nibabel(**kwargs).to_bytes()
 

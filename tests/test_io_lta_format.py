@@ -587,6 +587,21 @@ def test_a_copy_carries_the_record(tmp_path) -> None:  # noqa: ANN001
     assert view.metadata is xform.metadata
 
 
+def test_a_view_of_the_record_is_one_conversion(tmp_path) -> None:  # noqa: ANN001
+    # `to`, `from_any` and `from_instance` give the same view, which reads
+    # the record of the other view in its own coordinate systems.
+    xform = LtaTransformation.load(_write(tmp_path, _raw()))
+    views = [
+        xform.to(LtaTransformationVoxToVox),
+        LtaTransformationVoxToVox.from_any(xform),
+        LtaTransformationVoxToVox.from_instance(xform),
+    ]
+    for view in views:
+        assert type(view) is LtaTransformationVoxToVox
+        assert view.metadata is xform.metadata
+        np.testing.assert_allclose(view.matrix, views[0].matrix)
+
+
 def test_a_record_builds_a_transformation() -> None:
     raw = _raw()
     xform = LtaTransformation.from_any(raw)
