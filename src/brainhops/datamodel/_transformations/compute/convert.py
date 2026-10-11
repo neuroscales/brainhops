@@ -17,6 +17,16 @@ argument, `(x, cls, **kwargs)`, because the requested class may be a
 subclass of the output type that the converter is registered for. For
 example, the converter from `Affine` to `Affine` also answers a request
 for a subclass of `Affine`, and it builds its result as that subclass.
+
+Two converters can match a request equally well when neither is more
+specific than the other on both of its types. The converter from
+`Affine` to `Affine` and a converter from any `Transformation` to any
+file format both match a request for an affine file format, for
+example. Such a pair is told apart by the priority of each converter,
+which is given when it is registered (`@converter(inp, out,
+priority=1)`) and is `0` by default. The converter with the higher
+priority is chosen. A priority is never weighed against a converter
+that is more specific on both types, which is always chosen.
 """
 
 from functools import partial
@@ -48,32 +58,54 @@ def converter(func: Converter) -> Converter:
 
 @tx.overload
 def converter(
-    inp: TransformationType, out: TransformationType
+    inp: TransformationType, out: TransformationType, *, priority: int = 0
 ) -> tx.Callable[[Converter], Converter]:
     """Return a decorator that registers a converter from `inp` to `out`."""
     ...
 
 
-def converter(*args: tx.Any) -> tx.Any:
+def converter(*args: tx.Any, priority: int = 0) -> tx.Any:
     """Register a converter.
 
     In the bare form, `@converter`, the input type is read from the hint of
     the first parameter and the output type from the return hint. The
     explicit form, `@converter(Linear, Affine)`, is meant for generated
-    converters, which have no hints. Either type may also be given as a
-    type variable, which then stands for its bound. The original function
-    is returned, so decorators can be stacked.
+    converters, which have no hints, and for a converter that needs a
+    priority. Either type may also be given as a type variable, which then
+    stands for its bound. The original function is returned, so decorators
+    can be stacked.
+
+    Parameters
+    ----------
+    *args : Any
+        The function to register, or the input and the output types.
+    priority : int, default=0
+        The priority of the converter in the explicit form. Between two
+        converters that match a request equally well, the one with the
+        higher priority is chosen.
+
+    Returns
+    -------
+    Callable
+        The function itself in the bare form, and a decorator that
+        registers a function in the explicit form.
 
     Raises
     ------
     TypeError
-        If the arguments match neither form.
+        If the arguments match neither form, or if a priority is given
+        in the bare form.
     """
     if len(args) == 1 and callable(args[0]) and not _is_key(args[0]):
+        if priority:
+            raise TypeError(
+                "converter() takes a priority only with an (input, output) "
+                "pair of transformation types"
+            )
         func = args[0]
         return _register(*_key_from_func(func), func)
     if len(args) == 2 and all(map(_is_key, args)):
-        return partial(_register, *args)
+        return partial(_register, *args, priority=priority)
     raise TypeError(
         "converter() takes a function, or an (input, output) pair of "
         f"transformation types, not {args!r}"
@@ -133,6 +165,33 @@ def convert(x: FROM, cls: tx.Type[TO], **kwargs: tx.Any) -> TO:
     return result
 
 
+def find_converter(x: Transformation, cls: type) -> tx.Optional[Converter]:
+    """Return the converter that `convert(x, cls)` runs.
+
+    The converter is chosen as [`convert`][] chooses it, but it is not
+    run. A caller can thus tell which kind of conversion a request would
+    make, for example whether a file format has a converter of its own
+    for `x`.
+
+    Parameters
+    ----------
+    x : Transformation
+        Transformation to convert.
+    cls : type of Transformation
+        Requested transformation type.
+
+    Returns
+    -------
+    Converter or None
+        The converter, or `None` if no converter applies or several
+        apply equally.
+    """
+    try:
+        return _convert.dispatch(x, cls).function
+    except (NoMethodError, AmbiguousMethodError):
+        return None
+
+
 def _key_from_func(func: Converter) -> tx.Tuple[type, type]:
     """Read the input and output types from the hints of a converter.
 
@@ -146,16 +205,20 @@ def _key_from_func(func: Converter) -> tx.Tuple[type, type]:
     return inp, out
 
 
-def _register(inp: type, out: type, func: Converter) -> Converter:
+def _register(
+    inp: type, out: type, func: Converter, priority: int = 0
+) -> Converter:
     """Register `func` for the conversion `inp -> out`.
 
     The converter is registered for the argument types `(inp, type[out])`,
     so the dispatcher chooses it from the type of the transformation and
-    from the requested class. Every converter is defined under the name
-    `_`, so its qualified name is replaced with `convert[In -> Out]` to
-    make error messages readable. A converter registered for several pairs
-    keeps the name of the last pair.
+    from the requested class, and with its priority, which breaks a tie
+    between two converters that match a request equally well. Every
+    converter is defined under the name `_`, so its qualified name is
+    replaced with `convert[In -> Out]` to make error messages readable. A
+    converter registered for several pairs keeps the name of the last
+    pair.
     """
     func.__qualname__ = f"convert[{_name(inp)} -> {_name(out)}]"
-    _convert.register((inp, tx.Type[out]))(func)
+    _convert.register((inp, tx.Type[out]), priority=priority)(func)
     return func

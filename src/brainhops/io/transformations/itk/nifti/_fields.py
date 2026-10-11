@@ -203,7 +203,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         header = _header(self)
         if header is not None:
             return _itk_ndim(_nifti_shape(header))
-        chain = getattr(self, "_transformations", None)
+        chain = self._transformations
         if chain:
             # The first slot maps LPS to voxels, with one row per dimension.
             return int(np.asarray(chain[0].matrix).shape[0])
@@ -315,7 +315,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         """
         if self.metadata is None or self.raw is None:
             return None
-        if getattr(self, "_transformations", None) is not None:
+        if self._transformations is not None:
             return None
         image = _record_image(self.raw, self._record(), overrides=overrides)
         _apply_like(image, like)
