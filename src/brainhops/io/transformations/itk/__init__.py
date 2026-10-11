@@ -55,8 +55,6 @@ from ._common import (
 )
 from ._xform import ItkTransform
 
-from . import _converters  # noqa: E402, F401  isort: skip
-
 # The HDF5 reader needs the optional h5py.
 try:
     from . import h5

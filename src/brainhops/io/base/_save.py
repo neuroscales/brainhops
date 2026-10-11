@@ -166,10 +166,10 @@ def _copy(obj: tx.Any, fmt: type) -> tx.Any:
 def _convert(obj: Transformation, fmt: type) -> tx.Any:
     """`obj` converted exactly to `fmt`, as `obj.to(fmt)` converts it.
 
-    A format that has no converter of its own for `obj` would relabel it
-    (#312). Such a format is not chosen by this pass, so that a format
-    that converts `obj` exactly is not made ambiguous by the formats
-    that would only relabel it.
+    A format without an exact converter for `obj` may relabel it (#312).
+    Such a format is not chosen by this pass, so that a format that
+    converts `obj` exactly is not made ambiguous by the formats that
+    would only relabel it.
     """
     # The transformation formats import this package, so their helper is
     # imported when it is used.
