@@ -372,6 +372,11 @@ def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, ArrayProxy]:
         The record of the file.
     proxy : nibabel.arrayproxy.ArrayProxy
         The lazy array of the voxels, in Fortran order.
+
+    Raises
+    ------
+    TypeError
+        If another option is given.
     """
     unknown = [name for name in kwargs if name not in _PROXY_OPTIONS]
     if unknown:

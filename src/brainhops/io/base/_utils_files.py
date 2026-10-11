@@ -1,4 +1,10 @@
-"""Helpers for formats that store header and data in separate files."""
+"""Helpers for the files of formats: finding, opening and replacing them.
+
+The formats that store a header and data in separate files find one from
+the other with these helpers. A writer replaces a local file at once with
+[`write_file`][] or [`replace_file`][], so that a lazy array that reads
+the old file is never left reading a file that is half written.
+"""
 # TODO: the rest of the code uses Path objects; use them here as well and
 # move generic utilities to brainhops._core.path.
 
