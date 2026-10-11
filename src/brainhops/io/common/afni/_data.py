@@ -171,6 +171,19 @@ def encode_bricks(header: AfniRaw, data: tx.Any) -> tx.Iterator[bytes]:
     divided by its nonzero scale factor, rounded if it is stored as
     integers, and converted to the type and byte order of the header.
 
+    Parameters
+    ----------
+    header : AfniRaw
+        The record that gives the shape, the number of sub-bricks, their
+        types, their byte order and their scale factors.
+    data : array_like
+        The voxels, with shape `(nx, ny, nz, nvals)` or `(nx, ny, nz)`.
+
+    Yields
+    ------
+    bytes
+        The content of each sub-brick, in order.
+
     Raises
     ------
     WriterError
@@ -315,6 +328,21 @@ def read_afni(
     The path may name the `.HEAD` file, the `.BRIK` file or the bare
     dataset. The record is read from the `.HEAD` file and validated, and
     the BRIK is checked, but its values are not read.
+
+    Parameters
+    ----------
+    filename : path-like
+        The path of the `.HEAD` file, of the `.BRIK` file, or of the
+        dataset without an extension.
+    mmap : bool, default=True
+        Whether to memory-map a local BRIK that is not compressed.
+
+    Returns
+    -------
+    raw : AfniRaw
+        The validated record.
+    proxy : array
+        A lazy array of the voxels, with shape `(nx, ny, nz, nvals)`.
 
     Raises
     ------

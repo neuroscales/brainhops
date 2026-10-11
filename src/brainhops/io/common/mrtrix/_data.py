@@ -69,6 +69,19 @@ def encode_data(header: MrtrixRaw, data: tx.Any) -> bytes:
 
     Floats stored as integers are rounded.
 
+    Parameters
+    ----------
+    header : MrtrixRaw
+        The record that gives the shape, the type, the byte order and the
+        layout of the stored data.
+    data : array_like
+        The voxels, with one axis for each axis of the header.
+
+    Returns
+    -------
+    bytes
+        The stored data.
+
     Raises
     ------
     WriterError
@@ -278,6 +291,21 @@ def read_mrtrix(
     named by the header, is found next to the header file, so a stream
     must then have a name. The data file is checked to exist and, when it
     is a local file that is not compressed, to be long enough.
+
+    Parameters
+    ----------
+    file : path-like or file object
+        The path of the image, or a stream open in binary mode.
+    mmap : bool, default=True
+        Whether to memory-map a local data file that is not compressed.
+
+    Returns
+    -------
+    raw : MrtrixRaw
+        The record.
+    proxy : array
+        A lazy array of the voxels, with one axis for each axis of the
+        header.
 
     Raises
     ------

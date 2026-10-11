@@ -316,7 +316,7 @@ class ElastixTransform(
         UnrepresentableTransformationError
             If the chain cannot be written as a single elastix transform.
         """
-        if getattr(self, "_transformations", None) is None:
+        if self._transformations is None:
             if not self.parameter_map:
                 raise UnrepresentableTransformationError(
                     "This elastix transformation is empty."
