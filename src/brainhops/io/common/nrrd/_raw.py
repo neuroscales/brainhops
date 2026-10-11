@@ -324,6 +324,19 @@ class NrrdRaw(
         The record keeps no bytes, since lines do not say how the header
         was spelled.
 
+        Parameters
+        ----------
+        lines : iterable of str
+            The lines of the header after the magic line, without their
+            line breaks.
+        version : int, default=5
+            The version that the magic line states.
+
+        Returns
+        -------
+        NrrdRaw
+            The record.
+
         Raises
         ------
         ParserContentError
@@ -381,6 +394,18 @@ class NrrdRaw(
         restored. The record keeps the bytes of the header, whose length
         is where attached samples begin. The record has no options.
 
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        **kwargs : Any
+            Refused, since the record has no option.
+
+        Returns
+        -------
+        NrrdRaw
+            The record.
+
         Raises
         ------
         TypeError
@@ -436,11 +461,38 @@ class NrrdRaw(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes start with a NRRD header."""
+        """Return the confidence that bytes start with a NRRD header.
+
+        Parameters
+        ----------
+        content : bytes
+            The content to test.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content holds no header, as
+            in [`sniff_fileobj`][].
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            `Confidence.LIKELY` or `Confidence.NO`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the content holds no header and `error` is `True`.
+        """
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     def to_text(self) -> str:
-        """Return the header text, without the empty line that ends it."""
+        """Return the header text, without the empty line that ends it.
+
+        Returns
+        -------
+        str
+            The text, from the magic line to the last field.
+        """
         lines = [f"NRRD000{self.version}"]
         for name in _FIELDS:
             if name in self.fields and name != "data file":
@@ -461,7 +513,17 @@ class NrrdRaw(
         The bytes that the header was read from are returned while they
         still describe the record. Otherwise, the header is its text, and
         the header of attached samples ends with an empty line, after
-        which the samples begin. The keyword arguments are ignored.
+        which the samples begin.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        bytes
+            The header.
         """
         if self.stored is not None and _parsed(self.stored) == self:
             return self.stored
@@ -477,6 +539,11 @@ class NrrdRaw(
         dictionaries. The bytes that the header was read from are kept,
         since [`to_bytes`][] writes them only while they still describe
         the record.
+
+        Returns
+        -------
+        NrrdRaw
+            The copy.
         """
         return NrrdRaw(
             version=self.version,

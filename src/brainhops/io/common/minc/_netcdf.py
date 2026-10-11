@@ -113,6 +113,17 @@ def read_netcdf_header(file: tx.BinaryIO) -> NetcdfHeader:
     The stream is read in order from its current position, which must be
     the start of the file.
 
+    Parameters
+    ----------
+    file : file object
+        The stream, open in binary mode and not compressed.
+
+    Returns
+    -------
+    NetcdfHeader
+        The dimensions, the number of records, the global attributes
+        and the variables of the file.
+
     Raises
     ------
     ParserContentError

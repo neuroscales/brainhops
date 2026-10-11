@@ -106,6 +106,11 @@ class MincRaw(Magic, BinaryFileReader, frozen=True):
 
         The record is frozen and its fields are tuples, so the copy shares
         them.
+
+        Returns
+        -------
+        MincRaw
+            The copy.
         """
         return replace(self)
 
@@ -115,6 +120,18 @@ class MincRaw(Magic, BinaryFileReader, frozen=True):
 
         The voxels are not read, and the position of the stream is
         restored. A MINC2 stream needs `h5py`. The record has no options.
+
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        **kwargs : Any
+            Refused, since the record has no option.
+
+        Returns
+        -------
+        MincRaw
+            The record.
 
         Raises
         ------
@@ -148,6 +165,27 @@ class MincRaw(Magic, BinaryFileReader, frozen=True):
         names a spatial dimension and an `image` variable, and weakly
         accepted otherwise. An HDF5 file is MINC2 when it has a
         `/minc-2.0` group. The position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream to test, open in binary mode.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content is not a MINC file.
+            With `True`, the error is a `SnifferContentError`, and an
+            exception class is raised instead when one is given.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence that the stream holds a MINC file.
+
+        Raises
+        ------
+        SnifferContentError
+            If the stream is not a MINC file and `error` is `True`.
         """
         return _score(sniff_minc(file, (1, 2)), error)
 
@@ -158,14 +196,50 @@ class MincRaw(Magic, BinaryFileReader, frozen=True):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold a MINC file."""
+        """Return the confidence that bytes hold a MINC file.
+
+        Parameters
+        ----------
+        content : bytes
+            The content to test, which may be gzipped.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content is not a MINC file.
+            With `True`, the error is a `SnifferContentError`, and an
+            exception class is raised instead when one is given.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence that the bytes hold a MINC file.
+
+        Raises
+        ------
+        SnifferContentError
+            If the bytes are not a MINC file and `error` is `True`.
+        """
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
 
 def sniff_minc(file: tx.IO, versions: tx.Collection[int]) -> float:
     """Score a stream as a MINC file of one of the given versions.
 
-    The position of the stream is restored.
+    The position of the stream is restored, and a stream that cannot be
+    read scores `Confidence.NO`.
+
+    Parameters
+    ----------
+    file : file object
+        The stream to test, open in binary mode.
+    versions : collection of int
+        The MINC versions to accept, among 1 and 2.
+
+    Returns
+    -------
+    float
+        The confidence that the stream holds a MINC file of one of these
+        versions.
     """
     try:
         with preserve_position(file):

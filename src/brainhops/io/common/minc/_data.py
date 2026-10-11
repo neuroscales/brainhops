@@ -116,6 +116,18 @@ def read_minc(file: tx.Any) -> tx.Tuple[MincRaw, _MincProxy]:
     is read into memory, decompressed, and its voxels are decoded only
     when they are needed.
 
+    Parameters
+    ----------
+    file : path-like or file object
+        The path of the image, or a stream open in binary mode.
+
+    Returns
+    -------
+    raw : MincRaw
+        The record.
+    proxy : array
+        A lazy array of the voxels.
+
     Raises
     ------
     ParserExistsError

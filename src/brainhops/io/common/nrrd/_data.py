@@ -165,6 +165,19 @@ def _decode(
 def encode_data(header: NrrdRaw, data: tx.Any) -> bytes:
     """Encode an array of file axes as data-file bytes, as the header says.
 
+    Parameters
+    ----------
+    header : NrrdRaw
+        The record that gives the sizes, the type, the byte order and the
+        encoding of the samples.
+    data : array_like
+        The samples, with one axis for each axis of the file.
+
+    Returns
+    -------
+    bytes
+        The content of the data file, encoded as the header says.
+
     Raises
     ------
     WriterError
@@ -383,6 +396,21 @@ def read_nrrd(
     names are found next to the header file, so a stream must then have a
     name, and they are checked to exist. A single local file of raw
     samples is checked to be long enough.
+
+    Parameters
+    ----------
+    file : path-like or file object
+        The path of the header, or a stream open in binary mode.
+    mmap : bool, default=True
+        Whether to memory-map a single local file of raw samples.
+
+    Returns
+    -------
+    raw : NrrdRaw
+        The record.
+    proxy : array
+        A lazy array of the samples, with one axis for each axis of the
+        file.
 
     Raises
     ------
