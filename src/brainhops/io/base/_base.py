@@ -62,6 +62,28 @@ def format_registry(
     return cls
 
 
+def is_format_registry(cls: type) -> bool:
+    """Tell whether a class owns a format registry.
+
+    A class owns a registry when it is decorated with
+    [`format_registry`][], which makes it a dispatcher. A format registered
+    under that class inherits the registry attribute but does not own it,
+    so the test looks in the class's own `__dict__` rather than using
+    `hasattr`.
+
+    Parameters
+    ----------
+    cls : type
+        The class to test.
+
+    Returns
+    -------
+    bool
+        Whether `cls` was decorated with [`format_registry`][].
+    """
+    return "_REGISTRY" in cls.__dict__
+
+
 def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
     """Register a concrete format into ancestor registries up to isolation.
 
@@ -87,7 +109,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
     TypeError
         If `cls` owns a registry.
     """
-    if "_REGISTRY" in cls.__dict__:
+    if is_format_registry(cls):
         raise TypeError(
             f"{cls.__name__} owns a registry (@format_registry), so it "
             f"dispatches to formats rather than being one; it must not "
@@ -100,7 +122,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
         if base in visited:
             continue
         visited.add(base)
-        if "_REGISTRY" in base.__dict__:
+        if is_format_registry(base):
             base._REGISTRY.add(cls)
             if base.__dict__.get("_REGISTRY_ISOLATED", False):
                 continue
@@ -143,7 +165,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
 
     @classmethod
     def _is_dispatcher(cls) -> bool:
-        return "_REGISTRY" in cls.__dict__
+        return is_format_registry(cls)
 
     @classmethod
     def _reader_formats(cls) -> tx.Set[type]:
@@ -559,6 +581,22 @@ class _FileBasedModelMixin:
         Within one format, the `raw` field of an object carries its data, so
         `data` is not copied when `raw` is set. The copy then holds the same
         `raw` as `other`, which stays lazy if it is a proxy.
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy.
+        *args : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+        **kwargs : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+
+        Returns
+        -------
+        Self
+            The copy.
         """
         for field in _foreign_format_fields(cls, other):
             if field.factory is True:
@@ -576,6 +614,38 @@ class _FileBasedModelMixin:
         ):
             kwargs.setdefault("data", None)
         return super().from_instance(other, *args, **kwargs)
+
+
+def store_data_argument(obj: tx.Any, arguments: tx.Any) -> None:
+    """Store the `data` argument of a constructor through the `data` setter.
+
+    A format that keeps its data in a `raw` array calls this function in
+    its `__post_init__`. The generated constructor assigns the fields in
+    the order in which they are declared, and `raw` is declared after
+    `data`. The array that the `data` setter stores in `raw` is therefore
+    erased by the default value of `raw`, and a transformation format,
+    whose data model stores `data` in its private field `_data`, never runs
+    the setter at all. This function assigns the `data` argument again,
+    through the setter, once every field is set. When both `data` and
+    `raw` are given, `data` takes precedence.
+
+    ```python
+    def __post_init__(self, arguments):
+        super().__post_init__(arguments)
+        store_data_argument(self, arguments)
+    ```
+
+    Parameters
+    ----------
+    obj : object
+        The object that the constructor builds.
+    arguments : Any
+        The arguments of the constructor, as `__post_init__` receives
+        them. A `data` argument that is `None` or absent is ignored.
+    """
+    data = arguments.get("data")
+    if data is not None:
+        obj.data = data
 
 
 def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
@@ -601,7 +671,7 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
     for klass in cls.__mro__:
         if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
             continue
-        if "_REGISTRY" in klass.__dict__:
+        if is_format_registry(klass):
             continue
         names = [field.name for field in fields(klass)]
         if issubclass(klass, (Format, FileReader, FileWriter)):

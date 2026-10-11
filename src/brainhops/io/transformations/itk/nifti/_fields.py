@@ -10,7 +10,7 @@ import numpy as np
 import typing_extensions as tx
 
 from brainhops._core import affines as _affines
-from brainhops._core.properties import always_unset, smartproperty
+from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
@@ -40,15 +40,12 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _record_image,
 )
-from brainhops.io.common.nifti._views import (
-    _itk_field_to_disk,
-    _itk_field_to_model,
-)
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.base.fields import LPSCoordinatesField
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 
 from .._systems import _make_system
+from ._views import _itk_field_to_disk, _itk_field_to_model
 
 _NDIMS = (2, 3)
 """
@@ -111,14 +108,6 @@ def _check_layout(header: _NiftiObject) -> None:
         )
 
 
-def _set_itk_field_data(
-    self: "ItkNiftiField", value: tx.Optional[ArrayProtocol]
-) -> None:
-    """Store the vectors of an ITK field in `raw`, in the ITK layout."""
-    self.raw = None if value is None else _itk_field_to_disk(value)
-    self.__dict__.pop("_cache_data", None)
-
-
 def _voxel_system(ndim: int) -> _systems.CoordinateSystem:
     """Return a voxel space whose axes count samples in index units."""
     axes = [SpaceAxis(name=f"dim{i}", unit="index") for i in range(ndim)]
@@ -173,12 +162,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
     # --- data ---------------------------------------------------------
 
-    @smartproperty(
-        cache=True,
-        unset=always_unset,
-        fset=_set_itk_field_data,
-        invalidates=("transformations",),
-    )
+    @lazyproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The stored vectors, as an (X, Y, Z, 3) or (X, Y, 2) array.
@@ -191,6 +175,10 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         if self.raw is None:
             return None
         return _itk_field_to_model(self.raw)
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _itk_field_to_disk(value)
 
     metadata = smartproperty(
         "metadata", invalidates=("transformations", "input", "output")
@@ -495,6 +483,20 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         the voxel-to-RAS sform and qform. A field read from a file is written
         back as read. Non-encoding header fields are copied from `like`, and
         `overrides` are applied last.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         image = self._read_back(like, **overrides)
         if image is not None:
@@ -600,6 +602,20 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
         and qform. A field read from a file is written back as read.
         Non-encoding header fields are copied from `like`, and `overrides` are
         applied last.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         image = self._read_back(like, **overrides)
         if image is not None:
