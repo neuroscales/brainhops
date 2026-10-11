@@ -166,8 +166,11 @@ def _file_based_classes() -> list:
 def test_every_file_based_class_reads_files_in_from_any(cls: type) -> None:
     # The file branch must come before the data model's own `from_any`
     # in the MRO of every format, whatever the order of its bases. A format
-    # may define its own, which defers to its bases: the ones that other
-    # transformations convert to do, for everything but a transformation.
-    bases = cls.__mro__[1:]
+    # may define its own, which defers to its bases. So does
+    # `TransformationFormat`, which converts another transformation and
+    # defers everything else to the file branch.
+    bases = [
+        base for base in cls.__mro__[1:] if base is not TransformationFormat
+    ]
     owner = next(base for base in bases if "from_any" in vars(base))
     assert owner.__name__ == "_FileBasedModelMixin"

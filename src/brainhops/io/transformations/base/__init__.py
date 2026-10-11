@@ -13,3 +13,5 @@ from . import affines, fields
 from ._base import TransformationFormat
 from ._formats import AffineTransformationFormat
 from ._load import load, sniff
+
+from . import _converters  # noqa: E402, F401  isort: skip
