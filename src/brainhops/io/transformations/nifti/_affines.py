@@ -231,51 +231,18 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     """
 
     # --- conversions --------------------------------------------------
-    # Another transformation is converted, as `t.to(cls)` converts it;
-    # anything else is read or copied as the bases do.
-
-    @classmethod
-    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Build an object from a file, a transformation or any other value.
-
-        A transformation that this format can be converted from is
-        converted exactly as `other.to(cls)` converts it. Anything else is
-        read or built as [`Format.from_any`][brainhops.io.base.Format.from_any]
-        does.
-
-        Parameters
-        ----------
-        other : object
-            A file, its content, a transformation, a mapping, or an
-            instance of a similar class.
-        *args : Any
-            Constructor arguments. A file and a transformation that is
-            converted take keyword options only.
-        **kwargs : Any
-            Options of the reader or of the conversion, and field values
-            otherwise.
-
-        Returns
-        -------
-        Self
-            The new object.
-
-        Raises
-        ------
-        TypeError
-            If positional arguments accompany a file or a transformation
-            that is converted.
-        """
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        return super().from_any(other, *args, **kwargs)
+    # `TransformationFormat.from_any` converts another transformation, as
+    # `t.to(cls)` converts it. The data model comes before that class in
+    # the method resolution order, and its `from_instance` would copy the
+    # map of an affine first, so `from_instance` converts here, with the
+    # same helpers.
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """Copy an instance, or convert a transformation to this format.
 
-        A transformation that this format can be converted from is
-        converted exactly as `other.to(cls)` converts it. An instance of
+        A transformation that is not of this format is converted exactly
+        as `other.to(cls)` converts it. An instance of
         this format is copied with its `raw` array and its metadata, so
         the data is not read and a proxy stays lazy in the copy. Any other
         instance is copied as
@@ -302,6 +269,8 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
         TypeError
             If positional arguments accompany a transformation that is
             converted.
+        ConversionError
+            If the format cannot hold the transformation.
         """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
@@ -385,51 +354,18 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     """
 
     # --- conversions --------------------------------------------------
-    # Another transformation is converted, as `t.to(cls)` converts it;
-    # anything else is read or copied as the bases do.
-
-    @classmethod
-    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Build an object from a file, a transformation or any other value.
-
-        A transformation that this format can be converted from is
-        converted exactly as `other.to(cls)` converts it. Anything else is
-        read or built as [`Format.from_any`][brainhops.io.base.Format.from_any]
-        does.
-
-        Parameters
-        ----------
-        other : object
-            A file, its content, a transformation, a mapping, or an
-            instance of a similar class.
-        *args : Any
-            Constructor arguments. A file and a transformation that is
-            converted take keyword options only.
-        **kwargs : Any
-            Options of the reader or of the conversion, and field values
-            otherwise.
-
-        Returns
-        -------
-        Self
-            The new object.
-
-        Raises
-        ------
-        TypeError
-            If positional arguments accompany a file or a transformation
-            that is converted.
-        """
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        return super().from_any(other, *args, **kwargs)
+    # `TransformationFormat.from_any` converts another transformation, as
+    # `t.to(cls)` converts it. The data model comes before that class in
+    # the method resolution order, and its `from_instance` would copy the
+    # map of an affine first, so `from_instance` converts here, with the
+    # same helpers.
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """Copy an instance, or convert a transformation to this format.
 
-        A transformation that this format can be converted from is
-        converted exactly as `other.to(cls)` converts it. An instance of
+        A transformation that is not of this format is converted exactly
+        as `other.to(cls)` converts it. An instance of
         this format is copied with its `raw` array and its metadata, so
         the data is not read and a proxy stays lazy in the copy. Any other
         instance is copied as
@@ -456,6 +392,8 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
         TypeError
             If positional arguments accompany a transformation that is
             converted.
+        ConversionError
+            If the format cannot hold the transformation.
         """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
