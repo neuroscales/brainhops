@@ -38,7 +38,10 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _record_image,
 )
-from brainhops.io.transformations.base._converters import relabel
+from brainhops.io.transformations.base._converters import (
+    relabel,
+    relabelling,
+)
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
     homogeneous_matrix,
@@ -916,10 +919,10 @@ class NiftyRegVelocityField(NiftyRegVelocity):
 
 
 # NiftyReg stores a field on the grid of its file, in one of several
-# encodings, and no exact conversion into it is written yet (#312). Another
-# transformation is relabelled as the format by the converter of
-# `brainhops.io.transformations.base`, which carries its chain over rather
-# than letting this reader decode the header of another format.
+# encodings, and no exact conversion into it is written yet (#312). A chain
+# is relabelled as the format, which carries the chain over rather than
+# letting this reader decode the header of another format.
+converter(_xforms.Sequence, NiftyRegSequence)(relabelling)
 
 
 @converter

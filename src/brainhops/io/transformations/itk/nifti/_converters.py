@@ -1,10 +1,11 @@
 """
-Private converter of the ITK NIfTI field format to itself.
+Private converters into the ITK NIfTI field format.
 
 ITK stores a field in LPS on the grid of its file, and no exact
-conversion into it is written yet (#312). Another transformation is
-therefore relabelled as an `ItkNiftiField` by the converter of
-[`brainhops.io.transformations.base`][], which keeps its parameters only
+conversion into it is written yet (#312). A chain is therefore
+relabelled as an `ItkNiftiField` by the converter
+[`relabelling`][brainhops.io.transformations.base._converters.relabelling],
+which this module registers. It keeps the parameters of the chain only
 when its coordinate systems are not known or are compatible with those
 of the format. An `ItkNiftiField` that is converted to its own class is
 changed by the rules of its family, as any other transformation of that
@@ -13,13 +14,21 @@ family is, and another variant of the format is relabelled.
 
 import typing_extensions as tx
 
+from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
-from brainhops.io.transformations.base._converters import relabel
+from brainhops.io.transformations.base._converters import (
+    relabel,
+    relabelling,
+)
 
 from ._fields import ItkNiftiField
+
+# ITK stores a field in LPS on the grid of its file, and no exact
+# conversion into it is written yet, so a chain is relabelled.
+converter(_xforms.Sequence, ItkNiftiField)(relabelling)
 
 
 @converter
