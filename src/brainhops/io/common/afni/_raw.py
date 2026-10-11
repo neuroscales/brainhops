@@ -236,7 +236,20 @@ class AfniRaw(
         return name in self.attributes
 
     def get(self, name: str, default: tx.Any = None) -> tx.Any:
-        """Return the value of an attribute, or `default` if it is absent."""
+        """Return the value of an attribute, or `default` if it is absent.
+
+        Parameters
+        ----------
+        name : str
+            The name of the attribute, such as `"DATASET_RANK"`.
+        default : Any, optional
+            The value returned when the record has no such attribute.
+
+        Returns
+        -------
+        Any
+            The value of the attribute: a string, or a tuple of numbers.
+        """
         return self.attributes.get(name, default)
 
     def _ints(self, name: str, n: int) -> tx.Tuple[int, ...]:
@@ -413,6 +426,11 @@ class AfniRaw(
         """
         Check that the header describes a readable, non-empty dataset.
 
+        Returns
+        -------
+        AfniRaw
+            The record itself, so that the check can be chained.
+
         Raises
         ------
         ParserContentError
@@ -434,6 +452,17 @@ class AfniRaw(
 
         The new record has no text, so it is formatted from its
         attributes when it is written.
+
+        Parameters
+        ----------
+        **attributes : str or tuple of numbers, optional
+            The attributes to set, by name. An attribute given `None` is
+            removed.
+
+        Returns
+        -------
+        AfniRaw
+            The new record. This record is not changed.
         """
         merged = OrderedDict(self.attributes)
         for name, value in attributes.items():
@@ -449,7 +478,17 @@ class AfniRaw(
     def from_text(cls, text: str, **kwargs) -> "AfniRaw":
         """Parse the text of a `.HEAD` file, which the record keeps.
 
-        The keyword arguments are ignored.
+        Parameters
+        ----------
+        text : str
+            The text of the file.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        AfniRaw
+            The record.
 
         Raises
         ------
@@ -462,8 +501,24 @@ class AfniRaw(
     def from_bytes(cls, content: bytes, **kwargs) -> "AfniRaw":
         """Parse the content of a `.HEAD` file.
 
-        The content is decoded as Latin-1, as AFNI reads it, and the
-        keyword arguments are ignored.
+        The content is decoded as Latin-1, as AFNI reads it.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of the file.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        AfniRaw
+            The record.
+
+        Raises
+        ------
+        ParserContentError
+            If the content is not an AFNI header.
         """
         return cls.from_text(bytes(content).decode("latin-1"))
 
@@ -474,13 +529,25 @@ class AfniRaw(
         A `.HEAD` stream is read whole. A stream of any other content is
         taken to be the BRIK of a dataset, which is not read beyond its
         start, and the header is found from the name of the stream. The
-        position of the stream is restored, and the keyword arguments are
-        ignored.
+        position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        AfniRaw
+            The record.
 
         Raises
         ------
         ParserContentError
-            If the stream is not a header and has no file name.
+            If the stream is not a header and has no file name, or if the
+            header is not valid.
         """
         with preserve_position(file):
             start = file.read(256)
@@ -505,13 +572,27 @@ class AfniRaw(
         """Read the record from the path of a dataset.
 
         The path may name the `.HEAD` file, the `.BRIK` file or the bare
-        dataset, and only the `.HEAD` file is read. The keyword arguments
-        are ignored.
+        dataset, and only the `.HEAD` file is read.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the `.HEAD` file, of the `.BRIK` file, or of the
+            dataset without an extension.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        AfniRaw
+            The record.
 
         Raises
         ------
         ParserExistsError
             If the `.HEAD` file does not exist.
+        ParserContentError
+            If the file is not an AFNI header.
         """
         head, _, _ = afni_dataset_files(filename)
         if not path.exists(head):
@@ -568,6 +649,27 @@ class AfniRaw(
 
         The `.HEAD` file of the dataset is tested, whichever file of the
         dataset the path names.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the `.HEAD` file, of the `.BRIK` file, or of the
+            dataset without an extension.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the path names no valid
+            dataset, as in [`sniff_fileobj`][].
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            `Confidence.LIKELY` or `Confidence.NO`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the path names no valid dataset and `error` is `True`.
         """
         raw, failure = _sniffed_raw_at(filename)
         if raw is not None:
@@ -581,7 +683,28 @@ class AfniRaw(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold a valid AFNI header."""
+        """Return the confidence that bytes hold a valid AFNI header.
+
+        Parameters
+        ----------
+        content : bytes
+            The content to test.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content holds no valid
+            header, as in [`sniff_fileobj`][].
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            `Confidence.LIKELY` or `Confidence.NO`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the content holds no valid header and `error` is `True`.
+        """
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     # --- writing ------------------------------------------------------
@@ -591,7 +714,17 @@ class AfniRaw(
 
         The text that the record was read from is returned while it still
         describes the attributes. Otherwise, the attributes are formatted
-        as AFNI writes them. The keyword arguments are ignored.
+        as AFNI writes them.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        str
+            The text of the file.
         """
         formatted = _format_attributes(self.attributes)
         if self.text is not None:
@@ -601,7 +734,18 @@ class AfniRaw(
         return formatted
 
     def to_bytes(self, **kwargs) -> bytes:
-        """Return the content of the `.HEAD` file, encoded as Latin-1."""
+        """Return the content of the `.HEAD` file, encoded as Latin-1.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        bytes
+            The content of the file.
+        """
         return self.to_text().encode("latin-1")
 
 

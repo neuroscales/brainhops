@@ -180,6 +180,11 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
 
         The rotation is the identity, and the field of view is centred on the
         origin.
+
+        Returns
+        -------
+        array, shape `(3, 4)`
+            The rotation and the translation, in millimetres.
         """
         dim = list(self.dim[:3]) + [1] * (3 - min(3, self.ndim))
         vox = list(self.spacing[:3]) + [1.0] * (3 - min(3, self.ndim))
@@ -194,6 +199,11 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
 
         The matrix is `transform @ diag(vox[0], vox[1], vox[2], 1)`, with
         [`default_transform`][] replacing a missing or non-finite transform.
+
+        Returns
+        -------
+        array, shape `(4, 4)`
+            The homogeneous matrix.
         """
         transform = self.transform
         if transform is None or not np.all(np.isfinite(transform)):
@@ -209,6 +219,18 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         Parse the header lines from `mrtrix image` to `END`.
 
         Lines after `END` are ignored.
+
+        Parameters
+        ----------
+        lines : iterable of str
+            The lines of the header, without their line breaks.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        MrtrixRaw
+            The record.
 
         Raises
         ------
@@ -327,7 +349,22 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
     def from_text(cls, text: str, **kwargs) -> "MrtrixRaw":
         """Parse a header from text.
 
-        The keyword arguments are ignored.
+        Parameters
+        ----------
+        text : str
+            The text of the header.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        MrtrixRaw
+            The record.
+
+        Raises
+        ------
+        ParserContentError
+            If the text is not an MRtrix header.
         """
         return cls.from_lines(text.splitlines())
 
@@ -337,8 +374,19 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
 
         The voxels are not read. The header of a single-file image is
         read up to the first voxel, so that its padding is kept, and the
-        position of the stream is restored. The keyword arguments are
-        ignored.
+        position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        MrtrixRaw
+            The record.
 
         Raises
         ------
@@ -392,7 +440,28 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold an MRtrix header."""
+        """Return the confidence that bytes hold an MRtrix header.
+
+        Parameters
+        ----------
+        content : bytes
+            The content to test, which may be gzipped.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content holds no header, as
+            in [`sniff_fileobj`][].
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            `Confidence.LIKELY` or `Confidence.NO`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the content holds no header and `error` is `True`.
+        """
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     def to_bytes(self, **kwargs) -> bytes:
@@ -401,7 +470,17 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         The bytes that the header was read from are returned while they
         still describe the record. Otherwise, the header of a single-file
         image is padded up to its first voxel by [`embedded`][], and any
-        other header is its text. The keyword arguments are ignored.
+        other header is its text.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        bytes
+            The header.
         """
         embedded = self.file is not None and self.file[0] == "."
         if self.stored is not None and _parsed(self.stored) == self:
@@ -420,6 +499,16 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
 
         The `file` argument, which defaults to the `file` of the header, is the
         `(name, offset)` of the `file:` line; an offset of `None` is omitted.
+
+        Parameters
+        ----------
+        file : tuple of str and int, optional
+            The name of the data file and the offset of the data in it.
+
+        Returns
+        -------
+        list of str
+            The lines, without their line breaks.
         """
         lines = [MRTRIX_MAGIC]
         lines.append("dim: " + ",".join(str(d) for d in self.dim))
@@ -449,7 +538,20 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         return lines
 
     def to_text(self, *args, **kwargs) -> str:
-        """Return the header text, terminated by a newline."""
+        """Return the header text, terminated by a newline.
+
+        Parameters
+        ----------
+        *args : Any
+            The arguments of [`to_lines`][].
+        **kwargs : Any
+            The arguments of [`to_lines`][].
+
+        Returns
+        -------
+        str
+            The text of the header.
+        """
         return "\n".join(self.to_lines(*args, **kwargs)) + "\n"
 
     def embedded(self, align: int = 4) -> bytes:
@@ -458,6 +560,16 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
 
         The data offset is aligned on `align` bytes. Since the offset is part
         of the header it measures, it is found by iteration.
+
+        Parameters
+        ----------
+        align : int, default=4
+            The alignment of the data offset, in bytes.
+
+        Returns
+        -------
+        bytes
+            The header, padded with zeros up to the data offset.
         """
         offset = 0
         while True:
@@ -473,6 +585,11 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         The bytes that the header was read from are kept, since
         [`to_bytes`][] writes them only while they still describe the
         record.
+
+        Returns
+        -------
+        MrtrixRaw
+            The copy.
         """
         return MrtrixRaw(
             dim=self.dim,
