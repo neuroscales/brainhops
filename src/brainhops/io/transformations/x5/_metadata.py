@@ -61,6 +61,18 @@ class X5Metadata(MetadataFormat, Hdf5ReaderWriter):
         """Score an open HDF5 file by its root `Format` attribute.
 
         The file is scored by [`X5Raw.sniff_h5`][].
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the file is not an X5 file.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return X5Raw.sniff_h5(h5file, error=error)
 
@@ -90,6 +102,13 @@ class X5Metadata(MetadataFormat, Hdf5ReaderWriter):
 
         Metadata without a record is written as a new, empty record, which
         is an X5 file without transforms.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The empty file, open for writing.
+        **kwargs : Any
+            Options of [`X5Raw.to_h5`][].
         """
         raw = X5Raw() if self.raw is None else self.raw
         raw.to_h5(h5file, **kwargs)

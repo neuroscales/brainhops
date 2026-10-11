@@ -157,6 +157,23 @@ class M3zGeometry(Magic, frozen=True, repr=HIDE_IF_NONE):
         """Return the geometry of a volume of `shape` placed by `vox2ras`.
 
         See `fs_geometry_from_vox2ras`.
+
+        Parameters
+        ----------
+        vox2ras : np.ndarray
+            The (4, 4) voxel-to-RAS matrix of the volume.
+        shape : sequence of int
+            The shape of the volume.
+        valid : int, default=1
+            The flag that tells whether the geometry is valid.
+        filename : str or bytes, default=""
+            The name of the file of the volume, which is truncated to the
+            size of its field.
+
+        Returns
+        -------
+        Self
+            The geometry.
         """
         shape = tuple(int(s) for s in shape)
         size, xras, yras, zras, cras = fs_geometry_from_vox2ras(vox2ras, shape)
@@ -205,7 +222,18 @@ class M3zXform(Magic, frozen=True, repr=HIDE_IF_NONE):
 
     @classmethod
     def from_matrix(cls, matrix: np.ndarray) -> tx.Self:
-        """Encode a matrix as FreeSurfer's `znzWriteMatrix` does."""
+        """Encode a matrix as FreeSurfer's `znzWriteMatrix` does.
+
+        Parameters
+        ----------
+        matrix : np.ndarray
+            The (4, 4) matrix.
+
+        Returns
+        -------
+        Self
+            The tag, whose buffer holds the matrix as text.
+        """
         matrix = np.asarray(matrix, dtype=np.float64).reshape(4, 4)
         text = "Matrix " + " ".join(f"{v:10f}" for v in matrix.ravel())
         buffer = text.encode("ascii")[:MATRIX_STRLEN]
@@ -345,6 +373,20 @@ class M3zRaw(
         A morph takes up tens of megabytes, but its header takes only 24
         bytes, so only the start of the file is read, and the position
         of the stream is restored.
+
+        Parameters
+        ----------
+        file : IO
+            The open binary file, whose position is restored.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the file is not a morph.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         with preserve_position(file):
             head = file.read(_SNIFF_SIZE)
@@ -361,6 +403,20 @@ class M3zRaw(
 
         A morph starts with the version `1.0`, followed by a positive
         shape and spacing (see `read_header`).
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes are not a morph.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         head = bytes(content)
         if is_gzip(head):
@@ -382,12 +438,37 @@ class M3zRaw(
         The stream is read to its end, because the node arrays sit
         inside the gzip stream, right after the header, and the tags
         follow them.
+
+        Parameters
+        ----------
+        file : IO
+            The open binary file.
+
+        Returns
+        -------
+        M3zRaw
+            The record.
+
+        Raises
+        ------
+        ParserContentError
+            If the content is not a morph.
         """
         return cls.from_bytes(file.read())
 
     @classmethod
     def from_bytes(cls, content: bytes) -> "M3zRaw":
         """Read a record from the bytes of a `.m3z` or `.m3d` file.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of the file.
+
+        Returns
+        -------
+        M3zRaw
+            The record.
 
         Raises
         ------
@@ -403,6 +484,16 @@ class M3zRaw(
 
         The content is gzipped (`.m3z`) unless `compress=False`
         (`.m3d`).
+
+        Parameters
+        ----------
+        compress : bool, default=True
+            Whether to gzip the content.
+
+        Returns
+        -------
+        bytes
+            The content of the file.
         """
         return write_m3z(self, compress=compress)
 
@@ -416,6 +507,14 @@ class M3zRaw(
         By default, the file is gzipped unless its name ends in `.m3d`,
         as in FreeSurfer. The content is encoded before the file is
         opened.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        compress : bool, optional
+            Whether to gzip the file. By default, the file is gzipped unless
+            its name ends in `.m3d`.
         """
         filename = path.Path(filename)
         if compress is None:
@@ -431,7 +530,18 @@ class M3zRaw(
 
 
 def is_gzip(content: bytes) -> bool:
-    """Return whether bytes are gzip-compressed."""
+    """Return whether bytes are gzip-compressed.
+
+    Parameters
+    ----------
+    content : bytes
+        The content of a file, or its first bytes.
+
+    Returns
+    -------
+    bool
+        Whether the bytes start with the magic number of gzip.
+    """
     return bytes(content[:2]) == _GZIP_MAGIC
 
 
@@ -461,6 +571,16 @@ def read_header(content: bytes) -> tx.Optional[tx.Tuple]:
 
     The result is `(version, width, height, depth, spacing, exp_k)`, or `None`
     if the bytes do not start with a morph header.
+
+    Parameters
+    ----------
+    content : bytes
+        The decompressed content of a morph, or its first bytes.
+
+    Returns
+    -------
+    tuple or None
+        The fields of the header, or `None`.
     """
     if len(content) < _HEADER.size:
         return None
@@ -496,6 +616,16 @@ def _need(content: bytes, offset: int, size: int, what: str) -> None:
 
 def read_m3z(content: bytes) -> M3zRaw:
     """Decode the bytes of a morph, gzipped (`.m3z`) or not (`.m3d`).
+
+    Parameters
+    ----------
+    content : bytes
+        The content of the file.
+
+    Returns
+    -------
+    M3zRaw
+        The record.
 
     Raises
     ------
@@ -604,6 +734,23 @@ def write_m3z(raw: M3zRaw, compress: bool = True) -> bytes:
     Tags are written in the order of `raw.tags`, followed by any tag
     whose content the record holds but does not list, in FreeSurfer's
     order.
+
+    Parameters
+    ----------
+    raw : M3zRaw
+        The record.
+    compress : bool, default=True
+        Whether to gzip the content.
+
+    Returns
+    -------
+    bytes
+        The content of the file.
+
+    Raises
+    ------
+    ValueError
+        If the positions of the nodes are not of shape (W, H, D, 3).
     """
     positions = np.asarray(raw.positions)
     shape = tuple(positions.shape[:3])

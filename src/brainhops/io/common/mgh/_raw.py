@@ -209,6 +209,20 @@ class MghRaw(Magic, BinaryFileReader, BinaryFileWriter):
         """Return the confidence that bytes start with an MGH header.
 
         The bytes are read as a stream with [`sniff_fileobj`][].
+
+        Parameters
+        ----------
+        data : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no MGH header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
@@ -221,6 +235,18 @@ class MghRaw(Magic, BinaryFileReader, BinaryFileWriter):
         stream that ends before the footer, such as a file cut after its
         header, gives a footer of zeros and no tags. The keyword arguments
         are ignored.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream, which may be compressed with gzip.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        MghRaw
+            The record of the file.
 
         Raises
         ------
@@ -250,6 +276,16 @@ class MghRaw(Magic, BinaryFileReader, BinaryFileWriter):
         The header fields are followed by the unused bytes that complete
         the fixed header, as zeros. The footer and the tags are not
         written, because a file stores them after the voxels.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer, which are ignored.
+
+        Returns
+        -------
+        bytes
+            The fixed header.
         """
         buffer = BytesIO()
         self.header.writehdr_to(buffer)
@@ -261,6 +297,13 @@ class MghRaw(Magic, BinaryFileReader, BinaryFileWriter):
         The header is compressed with gzip when the name ends with `.mgz`
         or `.gz`. The name is read from the path of the URL, so that a
         query does not hide the suffix.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Options of the writer, which are ignored.
         """
         content = self.to_bytes(**kwargs)
         if _compressed_name(filename):

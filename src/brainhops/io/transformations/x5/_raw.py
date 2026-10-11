@@ -193,7 +193,20 @@ class X5Raw(Magic, Hdf5ReaderWriter, repr=HIDE_IF_NONE):
         h5file: h5py.File,
         error: tx.Union[bool, tx.Type[Exception]] = False,
     ) -> float:
-        """Score an open HDF5 file by its root `Format` attribute."""
+        """Score an open HDF5 file by its root `Format` attribute.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the file is not an X5 file.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
         if is_x5(h5file):
             return Confidence.CERTAIN
         if error:
@@ -238,6 +251,13 @@ class X5Raw(Magic, Hdf5ReaderWriter, repr=HIDE_IF_NONE):
 
         The fields that are still held by a [`DelayedH5Array`][] are read
         from their file and written as they are, without being decoded.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The empty file, open for writing.
+        **kwargs : Any
+            Options of the writer, which are ignored.
         """
         write_x5(h5file, self.header, self.nodes)
 
@@ -265,7 +285,18 @@ def _copy_node(node: X5Node) -> X5Node:
 
 
 def is_x5(h5file: h5py.File) -> bool:
-    """Return whether the root `Format` of an open HDF5 file says X5."""
+    """Return whether the root `Format` of an open HDF5 file says X5.
+
+    Parameters
+    ----------
+    h5file : h5py.File
+        The open file.
+
+    Returns
+    -------
+    bool
+        Whether the root attribute `Format` is `"X5"`.
+    """
     try:
         return read_string(h5file.attrs.get("Format")) == X5_FORMAT
     except (ValueError, UnicodeDecodeError):
@@ -281,6 +312,25 @@ def read_x5(
     fields, which are large, are read later through a [`DelayedH5Array`][]
     that opens the file again by its name, unless `load` is true or the
     file has no name because it was opened from a stream.
+
+    Parameters
+    ----------
+    h5file : h5py.File
+        The open file.
+    load : bool, default=False
+        Whether to read the fields into memory at once.
+
+    Returns
+    -------
+    header : X5Header
+        The root attributes and the chains of the file.
+    nodes : list of X5Node
+        The nodes of `/TransformGroup`, in order.
+
+    Raises
+    ------
+    ParserContentError
+        If the file is not a valid X5 file.
     """
     if not is_x5(h5file):
         raise ParserContentError("Not an X5 file: no root Format='X5'.")
@@ -510,7 +560,17 @@ def _read_legacy(
 def write_x5(
     h5file: h5py.File, header: X5Header, nodes: tx.Sequence[X5Node]
 ) -> None:
-    """Write a header and its nodes into an empty HDF5 file."""
+    """Write a header and its nodes into an empty HDF5 file.
+
+    Parameters
+    ----------
+    h5file : h5py.File
+        The empty file, open for writing.
+    header : X5Header
+        The root attributes and the chains of the file.
+    nodes : sequence of X5Node
+        The nodes of `/TransformGroup`, in order.
+    """
     h5file.attrs["Format"] = X5_FORMAT
     version = header.version
     if header.legacy or version is None:

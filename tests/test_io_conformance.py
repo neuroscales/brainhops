@@ -32,7 +32,7 @@ import typing_extensions as tx
 from bagof.magic import KwOnly, Magic, NoRepr, fields, replace
 
 import brainhops.io as io
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
@@ -45,7 +45,11 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base._base import Format, register_format
+from brainhops.io.base._base import (
+    Format,
+    register_format,
+    store_data_argument,
+)
 from brainhops.io.base._save import _model
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -106,34 +110,38 @@ try:
     from nibabel.arrayproxy import ArrayProxy
 
     from brainhops.datamodel.transformations import DisplacementField
-    from brainhops.io.common.mgh._views import (
+    from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
+    from brainhops.io.images.freesurfer.mgh._views import (
         _image_to_disk as _mgh_to_disk,
     )
-    from brainhops.io.common.mgh._views import (
+    from brainhops.io.images.freesurfer.mgh._views import (
         _image_to_model as _mgh_to_model,
     )
-    from brainhops.io.common.nifti._views import (
-        _affine_to_disk,
-        _affine_to_model,
-        _field_to_disk,
-        _field_to_model,
+    from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
+    from brainhops.io.images.nifti._views import (
         _image_to_disk,
         _image_to_model,
-        _itk_field_to_disk,
-        _itk_field_to_model,
     )
-    from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
-    from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
     from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
     from brainhops.io.transformations.itk.nifti import (
         ItkNiftiCoordinatesField,
         ItkNiftiDisplacementField,
+    )
+    from brainhops.io.transformations.itk.nifti._views import (
+        _itk_field_to_disk,
+        _itk_field_to_model,
     )
     from brainhops.io.transformations.nifti import (
         NiftiRASCoordinatesField,
         NiftiRASDisplacementField,
         NiftiRASToVoxel,
         NiftiVoxelToRAS,
+    )
+    from brainhops.io.transformations.nifti._views import (
+        _affine_to_disk,
+        _affine_to_model,
+        _field_to_disk,
+        _field_to_model,
     )
     from brainhops.io.transformations.niftyreg import (
         NiftyRegControlPointGrid,
@@ -346,14 +354,11 @@ class ToyImage(
     metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
 
     def __post_init__(self, arguments: tx.Any) -> None:
-        # The constructor assigns the fields in order, so the default of
-        # `raw`, assigned after `data`, erases the array stored by `data=`.
-        # The array is therefore stored again. When both are given, `data`
-        # takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
+        # The default of `raw`, assigned after `data`, erases the array
+        # stored by `data=`, so the array is stored again.
+        store_data_argument(self, arguments)
 
-    @smartproperty(cache=True, invalidates=("data",))
+    @lazyproperty
     def data(self) -> tx.Optional[np.ndarray]:
         if self.raw is None:
             return None
