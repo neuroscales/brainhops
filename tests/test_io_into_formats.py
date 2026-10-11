@@ -9,15 +9,17 @@ fields. Such a class checks that its endpoints are compatible with its
 systems, so a relabel between other systems fails with a
 `ConversionError` when the class is built. The exact converters of
 NIfTI and NiftyReg bridge the endpoints instead, so that an affine to
-LPS is flipped into RAS. A format without an exact converter (#312) is
-relabelled by one converter for all formats, and only when the systems
-of the transformation are not known or are compatible with those of the
+LPS is flipped into RAS. A format without an exact converter (#312),
+such as LTA or a NiftyReg field, registers for each family it holds one
+shared converter that relabels, and only when the systems of the
+transformation are not known or are compatible with those of the
 format. A format with no coordinate systems of its own, such as a bare
-matrix or an ITK chain, therefore holds the relabelled transformation
-with its original endpoints. `t.to(Format)`, `Format.from_any(t)` and
-`Format.from_instance(t)` are one conversion. A format that is
-converted to its own class is changed by the rules of its family, as
-any other transformation of that family is.
+matrix or an ITK chain, is rebuilt by the converters of the data
+model and holds the transformation with its original endpoints.
+`t.to(Format)`, `Format.from_any(t)` and `Format.from_instance(t)` are
+one conversion. A format that is converted to its own class is changed
+by the rules of its family, as any other transformation of that family
+is.
 """
 
 import numpy as np
@@ -162,10 +164,10 @@ FORMATS = [
 ]
 """The formats that are bound to RAS, to LPS or to their own spaces."""
 
-CHAIN_FORMATS = [FnirtWarpField, X5Transform, ElastixTransform]
+CHAIN_FORMATS = [FnirtWarpField]
 """
-The formats that hold a chain and read their coordinate systems from it,
-so that they have no systems of their own to refuse.
+The formats that relabel a chain and read their coordinate systems from
+it, so that they have no systems of their own to refuse.
 """
 
 AFFINE_FAMILIES = [
@@ -415,9 +417,7 @@ def test_a_chain_between_lps_spaces_is_not_relabelled_as_niftyreg() -> None:
             convert(t)
 
 
-@pytest.mark.parametrize(
-    "cls", [NiftyRegDisplacementField, FnirtWarpField, X5Transform]
-)
+@pytest.mark.parametrize("cls", [NiftyRegDisplacementField, FnirtWarpField])
 def test_a_chain_without_systems_is_relabelled(cls: type) -> None:
     # A chain whose systems are not known is taken to map the systems of
     # the format, as `from_any` always took it, and `to` now takes it so.
@@ -449,8 +449,12 @@ def test_an_exact_converter_is_chosen_over_relabelling(
 def test_a_format_without_an_exact_converter_is_relabelled() -> None:
     chain = _families(None, None)["sequence"]
     assert relabels(chain, NiftyRegDisplacementField)
-    assert relabels(chain, X5Transform)
+    assert relabels(chain, FnirtWarpField)
     assert not relabels(chain, NiftiRASDisplacementField)
+    # A format that registers no converter is rebuilt by the converters of
+    # the data model, or refused by them.
+    assert not relabels(chain, TfmTransform)
+    assert not relabels(chain, X5Transform)
 
 
 def test_a_format_family_is_not_relabelled() -> None:
@@ -713,23 +717,15 @@ def test_a_chain_format_is_converted_to_itself() -> None:
             LtaTransformationVoxToVox(matrix=MATRIX[:-1]),
             LtaTransformationRASToRAS,
         ),
+        (TfmTransform([xforms.Scaling([1.0, 2.0, 3.0])]), H5Transform),
     ],
-    ids=["lta"],
+    ids=["lta", "itk"],
 )
 def test_another_variant_of_a_format_is_not_relabelled(
     t: xforms.Transformation, cls: type
 ) -> None:
     with pytest.raises(ConversionError):
         t.to(cls)
-
-
-def test_another_container_of_an_itk_chain_holds_it() -> None:
-    # The chain has no systems, so it is relabelled into the other
-    # container, which holds the same chain.
-    tfm = TfmTransform([xforms.Scaling([1.0, 2.0, 3.0])])
-    for h5 in _entry_points(tfm, H5Transform):
-        assert type(h5) is H5Transform
-        assert list(h5.transformations) == list(tfm.transformations)
 
 
 def test_another_container_of_a_bare_matrix_holds_it() -> None:

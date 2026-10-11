@@ -141,5 +141,3 @@ from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
 from ._metadata import X5Metadata
 from ._raw import X5Domain, X5Header, X5Node, X5Raw
 from ._xform import X5Transform
-
-from . import _converters  # noqa: E402, F401  isort: skip
