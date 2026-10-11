@@ -91,13 +91,13 @@ try:
     from nibabel.arrayproxy import ArrayProxy
 
     from brainhops.datamodel.transformations import DisplacementField
-    from brainhops.io.common.mgh._views import (
+    from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
+    from brainhops.io.images.freesurfer.mgh._views import (
         _image_to_disk as _mgh_to_disk,
     )
-    from brainhops.io.common.mgh._views import (
+    from brainhops.io.images.freesurfer.mgh._views import (
         _image_to_model as _mgh_to_model,
     )
-    from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
     from brainhops.io.images.nifti._views import (
         _image_to_disk,
