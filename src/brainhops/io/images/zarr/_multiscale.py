@@ -59,8 +59,14 @@ class OmeZarrLevel(ZarrImage):
         return raw
 
 
+# `kw_only=True` is repeated here because bagof takes each class option
+# from the first base in the method resolution order that sets it. That
+# base is `ZarrReaderWriter`, which is not keyword-only, so the fields
+# declared by this class would otherwise be positional.
 @register_format
-class OmeZarrImage(ZarrReaderWriter, ImageFormat, MultiScaleImage):
+class OmeZarrImage(
+    ZarrReaderWriter, ImageFormat, MultiScaleImage, kw_only=True
+):
     """Multiscale image backed by an OME-Zarr pyramid.
 
     Each level is a single-scale image placed by the coordinate

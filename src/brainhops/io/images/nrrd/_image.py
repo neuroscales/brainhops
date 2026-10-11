@@ -331,7 +331,11 @@ def _nrrd_to_transformations(header: NrrdHeader) -> tx.List[Transformation]:
 # ----------------------------------------------------------------------
 
 
-class NrrdImage(NrrdReaderWriter, ImageFormat, SingleScaleImage):
+# `kw_only=True` is repeated here because bagof takes each class option
+# from the first base in the method resolution order that sets it. That
+# base is `NrrdReaderWriter`, which is not keyword-only, so the fields
+# declared by this class would otherwise be positional.
+class NrrdImage(NrrdReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
     """An image stored in a NRRD file, attached or detached.
 
     This class is the unregistered base of [`AttachedNrrdImage`][] and
