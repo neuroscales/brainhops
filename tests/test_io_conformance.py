@@ -62,17 +62,11 @@ try:
         DisplacementField,
         Sequence,
     )
-    from brainhops.io.common.nifti._views import (
-        _affine_to_disk,
-        _affine_to_model,
-        _field_to_disk,
-        _field_to_model,
+    from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
+    from brainhops.io.images.nifti._views import (
         _image_to_disk,
         _image_to_model,
-        _itk_field_to_disk,
-        _itk_field_to_model,
     )
-    from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
     from brainhops.io.transformations.base.affines import (
         RASToVoxel,
         VoxelToRAS,
@@ -83,11 +77,21 @@ try:
         ItkNiftiCoordinatesField,
         ItkNiftiDisplacementField,
     )
+    from brainhops.io.transformations.itk.nifti._views import (
+        _itk_field_to_disk,
+        _itk_field_to_model,
+    )
     from brainhops.io.transformations.nifti import (
         NiftiRASCoordinatesField,
         NiftiRASDisplacementField,
         NiftiRASToVoxel,
         NiftiVoxelToRAS,
+    )
+    from brainhops.io.transformations.nifti._views import (
+        _affine_to_disk,
+        _affine_to_model,
+        _field_to_disk,
+        _field_to_model,
     )
     from brainhops.io.transformations.niftyreg import (
         NiftyRegControlPointGrid,

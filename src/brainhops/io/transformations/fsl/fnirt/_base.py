@@ -18,13 +18,13 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _record_image,
 )
-from brainhops.io.common.nifti._views import (
-    _field_to_model,
+from brainhops.io.images.nifti._views import (
     _image_to_disk,
     _image_to_model,
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._views import _field_to_model
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
@@ -182,12 +182,42 @@ class FnirtWarpField(
 
     @classmethod
     def from_filename(cls, filename: tx.Any, **kwargs) -> tx.Self:
+        """Read a FNIRT field from the path of a NIfTI file.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            The `moving` and `reference` images, under any of their
+            aliases, and the options of the nibabel readers.
+
+        Returns
+        -------
+        FnirtWarpField
+            The field, whose array is read lazily.
+        """
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_filename(filename, **kwargs)
         return cls._with_images(obj, moving, reference)
 
     @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
+        """Read a FNIRT field from an open NIfTI stream.
+
+        Parameters
+        ----------
+        fileobj : BinaryIO
+            The stream, which must stay open while the data may be read.
+        **kwargs : Any
+            The `moving` and `reference` images, under any of their
+            aliases, and the options of the nibabel readers.
+
+        Returns
+        -------
+        FnirtWarpField
+            The field, whose array is read lazily.
+        """
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_fileobj(fileobj, **kwargs)
         return cls._with_images(obj, moving, reference)
@@ -202,6 +232,20 @@ class FnirtWarpField(
         deformation field (intent 2006) whose voxel-to-world affine is the
         identity. Non-encoding header fields are copied from `like`, and
         `overrides` are applied last.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
 
         Raises
         ------

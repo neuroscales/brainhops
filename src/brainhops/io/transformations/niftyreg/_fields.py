@@ -38,7 +38,6 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _record_image,
 )
-from brainhops.io.common.nifti._views import _field_to_disk, _field_to_model
 from brainhops.io.transformations.base._conversions import no_exact_conversion
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
@@ -48,6 +47,10 @@ from brainhops.io.transformations.base.fields import (
     voxel_grid_coordinates,
 )
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._views import (
+    _field_to_disk,
+    _field_to_model,
+)
 
 from ._formats import NiftyRegTransformationFormat
 
@@ -515,6 +518,20 @@ class NiftyRegDisplacementField(NiftyRegSequence):
 
         A field read from a file is written back as read. Otherwise, the
         displacements of the chain are written.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         image = self._read_back(like, **overrides)
         if image is not None:
@@ -553,6 +570,20 @@ class NiftyRegDeformationField(NiftyRegSequence):
         Build the NIfTI image of this field, with displacements as positions.
 
         A field read from a file is written back as read.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         image = self._read_back(like, **overrides)
         if image is not None:
@@ -653,6 +684,20 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         A grid read from a file is written back as read. Otherwise, a
         leading affine is written to the header extension that NiftyReg
         reads.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         image = self._read_back(like, **overrides)
         if image is not None:
@@ -796,6 +841,20 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
         A grid read from a file is written back as read. Otherwise, the
         coefficients are turned into positions, and the squaring steps are
         stored in `intent_p2`.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         image = self._read_back(like, **overrides)
         if image is not None:
@@ -847,6 +906,20 @@ class NiftyRegVelocityField(NiftyRegVelocity):
         A field read from a file is written back as read. Otherwise, it is
         written as positions, the type that NiftyReg integrates, with the
         squaring steps in `intent_p2`.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         image = self._read_back(like, **overrides)
         if image is not None:

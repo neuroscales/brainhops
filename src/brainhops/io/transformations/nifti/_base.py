@@ -104,6 +104,22 @@ class NiftiBasedTransformation(
         A stream that starts with a NIfTI header is scored with
         `_score_nibabel`. Any other stream is declined by
         [`NiftiRaw.sniff_fileobj`][], which raises the requested error.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, which is read from its current position.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no NIfTI
+            header.
+        **kwargs : Any
+            Options of the reader. The NIfTI version is read from
+            `version`.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         header = _sniffed_header(file, kwargs.get("version"))
         if header is None:
@@ -117,7 +133,22 @@ class NiftiBasedTransformation(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold this transformation."""
+        """Return the confidence that bytes hold this transformation.
+
+        Parameters
+        ----------
+        data : bytes
+            The content of a file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no NIfTI header.
+        **kwargs : Any
+            Options of the reader, as for [`sniff_fileobj`][].
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
@@ -137,8 +168,20 @@ class NiftiBasedTransformation(
 
         A local file is handed to nibabel by name, so that nibabel opens
         it whenever the array is read and can memory-map it. A remote file
-        is read into memory instead. The keyword arguments are passed to
-        nibabel.
+        is read into memory instead.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Options of the nibabel readers, such as `mmap` and
+            `keep_file_open`.
+
+        Returns
+        -------
+        NiftiBasedTransformation
+            The transformation, whose array is read lazily.
 
         Raises
         ------
@@ -157,8 +200,20 @@ class NiftiBasedTransformation(
         """Read a transformation from an open NIfTI stream.
 
         The proxy reads the array from the stream when it is needed, so
-        the stream must stay open while the data may be read. The keyword
-        arguments are passed to nibabel.
+        the stream must stay open while the data may be read.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream, which may be compressed with gzip.
+        **kwargs : Any
+            Options of the nibabel readers, such as `mmap` and
+            `keep_file_open`.
+
+        Returns
+        -------
+        NiftiBasedTransformation
+            The transformation, whose array is read lazily.
         """
         raw, proxy = read_nifti(file, **kwargs)
         return cls(raw=proxy, metadata=NiftiMetadata.from_raw(raw))
@@ -209,6 +264,20 @@ class NiftiBasedTransformation(
         Each concrete format implements this method, on which the writers
         rely.
 
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
+
         Raises
         ------
         WriterNotImplementedError
@@ -222,22 +291,41 @@ class NiftiBasedTransformation(
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a path.
 
-        The file is compressed when its name ends with `.gz`. The keyword
-        arguments are those of [`to_nibabel`][].
+        The file is compressed when its name ends with `.gz`.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Arguments of [`to_nibabel`][].
         """
         write_nifti(self.to_nibabel(**kwargs), filename)
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
         """Write the transformation to a stream as an uncompressed file.
 
-        The keyword arguments are those of [`to_nibabel`][].
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream.
+        **kwargs : Any
+            Arguments of [`to_nibabel`][].
         """
         write_nifti(self.to_nibabel(**kwargs), file)
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the uncompressed NIfTI encoding of the transformation.
 
-        The keyword arguments are those of [`to_nibabel`][].
+        Parameters
+        ----------
+        **kwargs : Any
+            Arguments of [`to_nibabel`][].
+
+        Returns
+        -------
+        bytes
+            The content of an uncompressed NIfTI file.
         """
         return self.to_nibabel(**kwargs).to_bytes()
 

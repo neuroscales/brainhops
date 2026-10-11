@@ -25,10 +25,6 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _record_image,
 )
-from brainhops.io.common.nifti._views import (
-    _affine_to_disk,
-    _affine_to_model,
-)
 from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base._conversions import (
     convert_instance,
@@ -38,6 +34,7 @@ from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 # this format
 from ._base import NiftiBasedTransformation, _nibabel_parts
+from ._views import _affine_to_disk, _affine_to_model
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -161,6 +158,20 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         forms take the code 2 when the header records none. Header
         fields are copied from `like`, and `overrides` are applied last,
         but the geometry always comes from this transformation.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         matrix = self._voxel_to_ras_matrix()
         scode, qcode = _xform_codes(_header(self))
@@ -247,12 +258,73 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
 
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build an object from a file, a transformation or any other value.
+
+        A transformation that this format can be converted from is
+        converted exactly as `other.to(cls)` converts it. Anything else is
+        read or built as [`Format.from_any`][brainhops.io.base.Format.from_any]
+        does.
+
+        Parameters
+        ----------
+        other : object
+            A file, its content, a transformation, a mapping, or an
+            instance of a similar class.
+        *args : Any
+            Constructor arguments. A file and a transformation that is
+            converted take keyword options only.
+        **kwargs : Any
+            Options of the reader or of the conversion, and field values
+            otherwise.
+
+        Returns
+        -------
+        Self
+            The new object.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a file or a transformation
+            that is converted.
+        """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy an instance, or convert a transformation to this format.
+
+        A transformation that this format can be converted from is
+        converted exactly as `other.to(cls)` converts it. An instance of
+        this format is copied with its `raw` array and its metadata, so
+        the data is not read and a proxy stays lazy in the copy. Any other
+        instance is copied as
+        [`Format.from_instance`][brainhops.io.base.Format.from_instance]
+        copies it.
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy or convert.
+        *args : Any
+            Constructor arguments. A transformation that is converted
+            takes keyword options only.
+        **kwargs : Any
+            Options of the conversion, or field values of the copy.
+
+        Returns
+        -------
+        Self
+            The new object.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a transformation that is
+            converted.
+        """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
         if isinstance(other, cls):
@@ -266,6 +338,20 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
 
         The inverse of an affine read from a header is the affine of the
         same header, rather than an inverse of its inverse.
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the inverse now rather than lazily. It is
+            ignored for an affine read from a header.
+        **kwargs : Any
+            Arguments passed to the inverse of the data model, which are
+            ignored for an affine read from a header.
+
+        Returns
+        -------
+        VoxelToRAS
+            The inverse transformation.
         """
         if self.raw is None:
             return NiftiVoxelToRAS(metadata=self.metadata)
@@ -323,12 +409,73 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build an object from a file, a transformation or any other value.
+
+        A transformation that this format can be converted from is
+        converted exactly as `other.to(cls)` converts it. Anything else is
+        read or built as [`Format.from_any`][brainhops.io.base.Format.from_any]
+        does.
+
+        Parameters
+        ----------
+        other : object
+            A file, its content, a transformation, a mapping, or an
+            instance of a similar class.
+        *args : Any
+            Constructor arguments. A file and a transformation that is
+            converted take keyword options only.
+        **kwargs : Any
+            Options of the reader or of the conversion, and field values
+            otherwise.
+
+        Returns
+        -------
+        Self
+            The new object.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a file or a transformation
+            that is converted.
+        """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy an instance, or convert a transformation to this format.
+
+        A transformation that this format can be converted from is
+        converted exactly as `other.to(cls)` converts it. An instance of
+        this format is copied with its `raw` array and its metadata, so
+        the data is not read and a proxy stays lazy in the copy. Any other
+        instance is copied as
+        [`Format.from_instance`][brainhops.io.base.Format.from_instance]
+        copies it.
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy or convert.
+        *args : Any
+            Constructor arguments. A transformation that is converted
+            takes keyword options only.
+        **kwargs : Any
+            Options of the conversion, or field values of the copy.
+
+        Returns
+        -------
+        Self
+            The new object.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a transformation that is
+            converted.
+        """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
         if isinstance(other, cls):
@@ -342,6 +489,20 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
         The inverse of an affine read from a header is the RAS-to-voxel
         affine of the same header.
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the inverse now rather than lazily. It is
+            ignored for an affine read from a header.
+        **kwargs : Any
+            Arguments passed to the inverse of the data model, which are
+            ignored for an affine read from a header.
+
+        Returns
+        -------
+        RASToVoxel
+            The inverse transformation.
         """
         if self.raw is None:
             return NiftiRASToVoxel(metadata=self.metadata)

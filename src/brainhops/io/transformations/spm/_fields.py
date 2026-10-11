@@ -20,7 +20,6 @@ from brainhops.io.common.nifti._header import (
     _record_image,
     _set_coordinates_intent,
 )
-from brainhops.io.common.nifti._views import _field_to_disk, _field_to_model
 from brainhops.io.transformations.base._conversions import (
     convert_instance,
     converts_to,
@@ -34,6 +33,10 @@ from brainhops.io.transformations.nifti import (
     NiftiBasedTransformation,
     NiftiRASCoordinatesField,
     NiftiRASToVoxel,
+)
+from brainhops.io.transformations.nifti._views import (
+    _field_to_disk,
+    _field_to_model,
 )
 
 
@@ -213,6 +216,20 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         the chain over that header, whose geometry is replaced. When `like`
         is given, non-encoding header fields are copied from it. Keyword
         arguments override header fields last.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         stored = (
             self.raw is not None

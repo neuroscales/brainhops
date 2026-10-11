@@ -40,15 +40,12 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _record_image,
 )
-from brainhops.io.common.nifti._views import (
-    _itk_field_to_disk,
-    _itk_field_to_model,
-)
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.base.fields import LPSCoordinatesField
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 
 from .._systems import _make_system
+from ._views import _itk_field_to_disk, _itk_field_to_model
 
 _NDIMS = (2, 3)
 """
@@ -495,6 +492,20 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         the voxel-to-RAS sform and qform. A field read from a file is written
         back as read. Non-encoding header fields are copied from `like`, and
         `overrides` are applied last.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         image = self._read_back(like, **overrides)
         if image is not None:
@@ -600,6 +611,20 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
         and qform. A field read from a file is written back as read.
         Non-encoding header fields are copied from `like`, and `overrides` are
         applied last.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         image = self._read_back(like, **overrides)
         if image is not None:

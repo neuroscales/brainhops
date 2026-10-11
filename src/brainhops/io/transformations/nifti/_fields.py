@@ -43,7 +43,6 @@ from brainhops.io.common.nifti._header import (
     _record_image,
     _set_coordinates_intent,
 )
-from brainhops.io.common.nifti._views import _field_to_disk, _field_to_model
 from brainhops.io.transformations.base._conversions import (
     convert_instance,
     converts_to,
@@ -56,6 +55,7 @@ from brainhops.io.transformations.base.fields import (
 
 # this format
 from ._base import NiftiBasedTransformation
+from ._views import _field_to_disk, _field_to_model
 
 _NDIM = 3
 """Spatial dimension supported by the displacement reader."""
@@ -131,12 +131,73 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build an object from a file, a transformation or any other value.
+
+        A transformation that this format can be converted from is
+        converted exactly as `other.to(cls)` converts it. Anything else is
+        read or built as [`Format.from_any`][brainhops.io.base.Format.from_any]
+        does.
+
+        Parameters
+        ----------
+        other : object
+            A file, its content, a transformation, a mapping, or an
+            instance of a similar class.
+        *args : Any
+            Constructor arguments. A file and a transformation that is
+            converted take keyword options only.
+        **kwargs : Any
+            Options of the reader or of the conversion, and field values
+            otherwise.
+
+        Returns
+        -------
+        Self
+            The new object.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a file or a transformation
+            that is converted.
+        """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy an instance, or convert a transformation to this format.
+
+        A transformation that this format can be converted from is
+        converted exactly as `other.to(cls)` converts it. An instance of
+        this format is copied with its `raw` array and its metadata, so
+        the data is not read and a proxy stays lazy in the copy. Any other
+        instance is copied as
+        [`Format.from_instance`][brainhops.io.base.Format.from_instance]
+        copies it.
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy or convert.
+        *args : Any
+            Constructor arguments. A transformation that is converted
+            takes keyword options only.
+        **kwargs : Any
+            Options of the conversion, or field values of the copy.
+
+        Returns
+        -------
+        Self
+            The new object.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a transformation that is
+            converted.
+        """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
         if isinstance(other, cls):
@@ -180,6 +241,20 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         stored it, and a `cupy` or `dask` array is not converted to `numpy`.
         Non-encoding header fields are copied from `like`, and `overrides`
         are applied last.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         # NIfTI stores sampled coordinates.
         if StoreEnum(self.store) is StoreEnum.values:
@@ -308,12 +383,52 @@ transformations.StationaryVelocityField].
 
     @classmethod
     def from_filename(cls, filename: tx.Any, **kwargs) -> tx.Self:
+        """Read a displacement field from the path of a NIfTI file.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            The encoding options `log` and `steps`, and the options of the
+            nibabel readers.
+
+        Returns
+        -------
+        NiftiRASDisplacementField
+            The field, whose array is read lazily.
+
+        Raises
+        ------
+        TypeError
+            If `steps` is given without `log`.
+        """
         encoding = _pop_encoding(kwargs)
         obj = super().from_filename(filename, **kwargs)
         return _with_encoding(obj, encoding)
 
     @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
+        """Read a displacement field from an open NIfTI stream.
+
+        Parameters
+        ----------
+        fileobj : BinaryIO
+            The stream, which must stay open while the data may be read.
+        **kwargs : Any
+            The encoding options `log` and `steps`, and the options of the
+            nibabel readers.
+
+        Returns
+        -------
+        NiftiRASDisplacementField
+            The field, whose array is read lazily.
+
+        Raises
+        ------
+        TypeError
+            If `steps` is given without `log`.
+        """
         encoding = _pop_encoding(kwargs)
         obj = super().from_fileobj(fileobj, **kwargs)
         return _with_encoding(obj, encoding)
@@ -339,6 +454,36 @@ transformations.StationaryVelocityField].
 
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build an object from a file, a transformation or any other value.
+
+        A transformation that this format can be converted from is
+        converted exactly as `other.to(cls)` converts it. Anything else is
+        read or built as [`Format.from_any`][brainhops.io.base.Format.from_any]
+        does.
+
+        Parameters
+        ----------
+        other : object
+            A file, its content, a transformation, a mapping, or an
+            instance of a similar class.
+        *args : Any
+            Constructor arguments. A file and a transformation that is
+            converted take keyword options only.
+        **kwargs : Any
+            Options of the reader or of the conversion, and field values
+            otherwise.
+
+        Returns
+        -------
+        Self
+            The new object.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a file or a transformation
+            that is converted.
+        """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
         return super().from_any(other, *args, **kwargs)
@@ -352,6 +497,27 @@ transformations.StationaryVelocityField].
         re-read from its NIfTI header, which may mean something else. The
         encoding options `log` and `steps` are not carried over, so a copied
         velocity is written as a displacement unless `log=True` is given.
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy or convert.
+        *args : Any
+            Constructor arguments. A transformation that is converted
+            takes keyword options only.
+        **kwargs : Any
+            Options of the conversion, or field values of the copy.
+
+        Returns
+        -------
+        NiftiRASDisplacementField
+            The new field.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a transformation that is
+            converted.
         """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
@@ -478,6 +644,23 @@ transformations.StationaryVelocityField].
         geometry is replaced.
         Non-encoding header fields are copied from `like`, and `overrides`
         are applied last.
+
+        Parameters
+        ----------
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        log : bool, optional
+            Whether to write the velocity rather than the displacements.
+            It defaults to the `log` option of the field.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        nibabel.Nifti1Image or nibabel.Nifti2Image
+            The encoded image.
         """
         what = "A NIfTI displacement field"
         log = self.log if log is None else log

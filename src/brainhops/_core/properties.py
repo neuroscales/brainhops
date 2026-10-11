@@ -36,6 +36,16 @@ def always_unset(value: tx.Any) -> bool:
     constructor stored a value. A NIfTI format, for example, decodes its
     `data` from its stored array, and the private field in which the data
     model stores its data is never read.
+
+    Parameters
+    ----------
+    value : Any
+        The stored value, which is ignored.
+
+    Returns
+    -------
+    bool
+        Always `True`.
     """
     return True
 

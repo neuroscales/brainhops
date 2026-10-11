@@ -51,8 +51,10 @@ from brainhops.io.common.nifti._raw import (
     write_nifti,
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
-from brainhops.io.common.nifti._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 
 @register_format
