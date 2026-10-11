@@ -15,7 +15,11 @@ from bagof.magic import KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import (
+    drop_cache,
+    lazyproperty,
+    smartproperty,
+)
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
@@ -26,7 +30,7 @@ from brainhops.datamodel.transformations import (
     Scaling,
     Transformation,
 )
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import register_format, store_data_argument
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -63,8 +67,10 @@ from brainhops.io.common.afni._raw import (
     _sniffed_raw,
     _sniffed_raw_at,
 )
-from brainhops.io.common.afni._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 _INDEX = "index"
 _MM = "millimeter"
@@ -220,7 +226,7 @@ class AfniImage(
 
     _metadata: KwOnly[NoRepr[tx.Optional[AfniMetadata]]] = None
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the dataset, which holds its record, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
@@ -228,14 +234,11 @@ class AfniImage(
     """
 
     def __post_init__(self, arguments: tx.Any) -> None:
-        # The constructor assigns the fields in order, so the default of
-        # `raw`, assigned after `data`, erases the array stored by `data=`.
-        # The array is therefore stored again. When both are given, `data`
-        # takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
+        # The default of `raw`, assigned after `data`, erases the array
+        # stored by `data=`, so the array is stored again.
+        store_data_argument(self, arguments)
 
-    @smartproperty(cache=True, invalidates=("data",))
+    @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The image data, decoded from `raw` on first access and cached.
 
@@ -315,6 +318,21 @@ class AfniImage(
 
         The position of the stream is restored, and only the start of a
         stream that does not look like a header is read.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, whose position is restored.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no AFNI
+            image header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         raw, failure = _sniffed_raw(file)
         if raw is None:
@@ -332,6 +350,20 @@ class AfniImage(
 
         The `.HEAD` file of the dataset is tested, whichever file of the
         dataset the path names.
+
+        Parameters
+        ----------
+        filename : path-like
+            Any file of the dataset, or the bare dataset name.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the path names no AFNI image.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         raw, failure = _sniffed_raw_at(filename)
         if raw is None:
@@ -345,7 +377,23 @@ class AfniImage(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold an AFNI image header."""
+        """Return the confidence that bytes hold an AFNI image header.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a `.HEAD` file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no AFNI image
+            header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
@@ -402,6 +450,18 @@ class AfniImage(
         **kwargs : Any
             Refused, since AFNI has no other option.
 
+        Parameters
+        ----------
+        file : BinaryIO
+            The open `.HEAD` or `.BRIK` file, which must have a name.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        AfniImage
+            The image, whose voxels are read lazily.
+
         Raises
         ------
         TypeError
@@ -436,6 +496,18 @@ class AfniImage(
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> "AfniImage":
         """Refuse to read bytes, which cannot hold a dataset of two files.
+
+        Parameters
+        ----------
+        content : bytes
+            The bytes, which are not read.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        AfniImage
+            Never, since an error is always raised.
 
         Raises
         ------
@@ -548,6 +620,19 @@ class AfniImage(
         next read. The values are the same unless `datatype` changed how
         they are stored.
 
+        Parameters
+        ----------
+        filename : path-like
+            The `.HEAD` file, the `.BRIK` file or the bare dataset name.
+        view : {"orig", "acpc", "tlrc"}, optional
+            The view of the dataset, as for [`to_raw`][].
+        datatype : str or dtype, optional
+            The type of the stored values, as for [`to_raw`][].
+        attributes : mapping, optional
+            Attributes set last, as for [`to_raw`][].
+        **kwargs : Any
+            Unknown options, which are refused.
+
         Raises
         ------
         TypeError
@@ -579,7 +664,20 @@ class AfniImage(
                     os.remove(local)
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path; AFNI datasets cannot be written to a stream."""
+        """Write to a path; AFNI datasets cannot be written to a stream.
+
+        Parameters
+        ----------
+        file : path-like or IO
+            The path, or a stream, which is refused.
+        **kwargs : Any
+            Arguments of [`to_filename`][].
+
+        Raises
+        ------
+        WriterError
+            If `file` is a stream.
+        """
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):
@@ -588,6 +686,13 @@ class AfniImage(
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Refuse a stream, which cannot hold a dataset of two files.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, which is not written.
+        **kwargs : Any
+            Options of the writer, which are ignored.
 
         Raises
         ------
@@ -601,6 +706,16 @@ class AfniImage(
 
     def to_bytes(self, **kwargs) -> bytes:
         """Refuse to write bytes, which cannot hold a dataset of two files.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer, which are ignored.
+
+        Returns
+        -------
+        bytes
+            Never, since an error is always raised.
 
         Raises
         ------
@@ -867,7 +982,7 @@ def _leave_brik(
     if not isinstance(raw, _BrikProxy) or not _same_file(raw.brik, stale):
         return
     image.raw = brik_proxy(record, brik, raw.mmap)
-    image.__dict__.pop("_cache_data", None)
+    drop_cache(image, "data")
 
 
 def _record(attrs: tx.Mapping[str, tx.Any]) -> AfniRaw:

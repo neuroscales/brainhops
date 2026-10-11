@@ -5,7 +5,7 @@ __all__ = ["M3zFormat", "M3zMorph"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -129,15 +129,6 @@ def _check_ras(xform: "M3zMorph") -> None:
     )
 
 
-def _set_transformations(
-    self: "M3zMorph",
-    value: tx.Optional[tx.Sequence[_xforms.Transformation]],
-) -> None:
-    """Store an assigned chain as a tuple and forget the decoded chain."""
-    self._transformations = None if value is None else tuple(value)
-    self.__dict__.pop("_cache_transformations", None)
-
-
 # ----------------------------------------------------------------------
 #   FORMAT
 # ----------------------------------------------------------------------
@@ -195,9 +186,9 @@ class M3zMorph(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
 
-    _metadata: KwOnly[NoRepr[tx.Optional[M3zMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[M3zMetadata]] = None
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the file as a record.
 
     A morph built from a chain has no metadata. Assigning other metadata
@@ -205,7 +196,7 @@ class M3zMorph(
     assigned is kept.
     """
 
-    @smartproperty(cache=True, fset=_set_transformations)
+    @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain, in the order of application.
 
@@ -220,6 +211,14 @@ class M3zMorph(
             return ()
         return _decode(record)
 
+    @transformations.setter
+    def transformations(
+        self, value: tx.Optional[tx.Sequence[_xforms.Transformation]]
+    ) -> None:
+        # The assigned chain is stored as a tuple, the type of the chain
+        # that is decoded, and the setter drops the decoded chain.
+        self._transformations = None if value is None else tuple(value)
+
     # --- sniff --------------------------------------------------------
 
     @classmethod
@@ -232,6 +231,20 @@ class M3zMorph(
         """Score an open binary file from its first bytes only.
 
         The file is scored by [`M3zMetadata.sniff_fileobj`][].
+
+        Parameters
+        ----------
+        file : IO
+            The open binary file, whose position is restored.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the file is not a morph.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return M3zMetadata.sniff_fileobj(file, error=error, **kwargs)
 
@@ -245,6 +258,20 @@ class M3zMorph(
         """Score bytes, gzipped or not.
 
         The bytes are scored by [`M3zMetadata.sniff_bytes`][].
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes are not a morph.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return M3zMetadata.sniff_bytes(content, error=error, **kwargs)
 
@@ -257,6 +284,18 @@ class M3zMorph(
         The record is read by [`M3zMetadata.from_fileobj`][], and the
         chain is decoded from it when it is first used. Keyword
         arguments go to the constructor.
+
+        Parameters
+        ----------
+        file : IO
+            The open binary file.
+        **kwargs : Any
+            Field values, which go to the constructor.
+
+        Returns
+        -------
+        Self
+            The morph.
         """
         return cls(metadata=M3zMetadata.from_fileobj(file), **kwargs)
 
@@ -266,6 +305,18 @@ class M3zMorph(
 
         The record is held by new metadata, without a copy. Keyword
         arguments go to the constructor.
+
+        Parameters
+        ----------
+        raw : M3zRaw
+            The record of the file.
+        **kwargs : Any
+            Field values, which go to the constructor.
+
+        Returns
+        -------
+        Self
+            The morph.
         """
         return cls(metadata=M3zMetadata.from_raw(raw), **kwargs)
 
@@ -275,6 +326,22 @@ class M3zMorph(
 
         An [`M3zRaw`][] is read with [`from_raw`][], and any other value
         as the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or an
+            instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword arguments
+            only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new morph.
         """
         if isinstance(other, M3zRaw) and not args:
             return cls.from_raw(other, **kwargs)
@@ -342,7 +409,7 @@ class M3zMorph(
             shape of the source image is needed but unknown.
         """
         record = _record(self)
-        assigned = getattr(self, "_transformations", None) is not None
+        assigned = self._transformations is not None
         declared = self._input is not None or self._output is not None
         if declared:
             _check_ras(self)
@@ -359,6 +426,25 @@ class M3zMorph(
 
         The content is gzipped (`.m3z`) unless `compress=False`
         (`.m3d`). Other keyword arguments go to [`to_raw`][].
+
+        Parameters
+        ----------
+        compress : bool, default=True
+            Whether to gzip the content.
+        **kwargs : Any
+            Arguments of [`to_raw`][].
+
+        Returns
+        -------
+        bytes
+            The content of the file.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the morph cannot be encoded, as described in [`to_raw`][].
+        WriterError
+            If the morph has no content to write.
         """
         return self.to_raw(**kwargs).to_bytes(compress=compress)
 
@@ -374,6 +460,23 @@ class M3zMorph(
         as in FreeSurfer. Other keyword arguments go to [`to_raw`][].
         The record is built first, so a morph that cannot be encoded
         leaves the file untouched.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        compress : bool, optional
+            Whether to gzip the file. By default, the file is gzipped unless
+            its name ends in `.m3d`.
+        **kwargs : Any
+            Arguments of [`to_raw`][].
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the morph cannot be encoded, as described in [`to_raw`][].
+        WriterError
+            If the morph has no content to write.
         """
         self.to_raw(**kwargs).to_filename(filename, compress=compress)
 

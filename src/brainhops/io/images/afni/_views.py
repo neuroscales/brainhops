@@ -18,9 +18,7 @@ import numpy as np
 # internals
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
-
-# this format
-from ._data import _BrikProxy
+from brainhops.io.common.afni._data import _BrikProxy
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:

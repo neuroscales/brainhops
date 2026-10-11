@@ -72,6 +72,20 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Score an open binary file from its first bytes only.
 
         The file is scored by [`M3zRaw.sniff_fileobj`][].
+
+        Parameters
+        ----------
+        file : IO
+            The open binary file, whose position is restored.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the file is not a morph.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return M3zRaw.sniff_fileobj(file, error=error, **kwargs)
 
@@ -85,6 +99,20 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Score bytes, gzipped or not.
 
         The bytes are scored by [`M3zRaw.sniff_bytes`][].
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes are not a morph.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return M3zRaw.sniff_bytes(content, error=error, **kwargs)
 
@@ -96,6 +124,18 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
         The record is read by [`M3zRaw.from_fileobj`][], and the keyword
         arguments are other fields of the metadata.
+
+        Parameters
+        ----------
+        file : IO
+            The open binary file.
+        **kwargs : Any
+            Other fields of the metadata.
+
+        Returns
+        -------
+        M3zMetadata
+            The metadata, which holds the record of the file.
         """
         return cls.from_raw(M3zRaw.from_fileobj(file), **kwargs)
 
@@ -106,6 +146,16 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
         The content is gzipped (`.m3z`) unless `compress=False`
         (`.m3d`).
+
+        Parameters
+        ----------
+        compress : bool, default=True
+            Whether to gzip the content.
+
+        Returns
+        -------
+        bytes
+            The content of the file.
 
         Raises
         ------
@@ -124,6 +174,14 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
         By default, the file is gzipped unless its name ends in `.m3d`,
         as in FreeSurfer.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        compress : bool, optional
+            Whether to gzip the file. By default, the file is gzipped unless
+            its name ends in `.m3d`.
 
         Raises
         ------

@@ -13,14 +13,14 @@ from nibabel.freesurfer import mghformat as _mgh
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import register_format, store_data_argument
 from brainhops.io.base._utils_files import same_file, write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -43,9 +43,11 @@ from brainhops.io.common.mgh._raw import (
     encode_mgh,
     read_mgh,
 )
-from brainhops.io.common.mgh._views import _image_to_disk, _image_to_model
 from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
 from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 _SCANNER = "scanner"
 """Name of the scanner RAS space, the preferred world space."""
@@ -120,7 +122,7 @@ class MghImage(
 
     _metadata: KwOnly[NoRepr[tx.Optional[MghMetadata]]] = None
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
@@ -128,14 +130,11 @@ class MghImage(
     """
 
     def __post_init__(self, arguments: tx.Any) -> None:
-        # The constructor assigns the fields in order, so the default of
-        # `raw`, assigned after `data`, erases the array stored by `data=`.
-        # The array is therefore stored again. When both are given, `data`
-        # takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
+        # The default of `raw`, assigned after `data`, erases the array
+        # stored by `data=`, so the array is stored again.
+        store_data_argument(self, arguments)
 
-    @smartproperty(cache=True, invalidates=("data",))
+    @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The image data, decoded from `raw` on first access and cached.
 
@@ -200,6 +199,20 @@ class MghImage(
         """Return the confidence that a stream holds an MGH image.
 
         The stream is tested with [`MghRaw.sniff_fileobj`][].
+
+        Parameters
+        ----------
+        file : IO
+            The stream, which is read from its current position.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no MGH header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return MghRaw.sniff_fileobj(file, error=error, **kwargs)
 
@@ -210,7 +223,22 @@ class MghImage(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold an MGH image."""
+        """Return the confidence that bytes hold an MGH image.
+
+        Parameters
+        ----------
+        data : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no MGH header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
@@ -221,9 +249,20 @@ class MghImage(
 
         A local file whose name matches its content is handed to nibabel
         by name, so that nibabel opens it whenever the voxels are read and
-        can memory-map them. Any other file is read into memory. The
-        keyword arguments `mmap` and `keep_file_open` are passed to the
-        nibabel proxy.
+        can memory-map them. Any other file is read into memory.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Options of the nibabel proxy, which are `mmap` and
+            `keep_file_open`. Other options are refused.
+
+        Returns
+        -------
+        MghImage
+            The image, whose voxels are read lazily.
 
         Raises
         ------
@@ -246,8 +285,20 @@ class MghImage(
         The record is read at once, and the proxy reads the voxels from
         the stream when they are needed, so the stream must stay open
         while the data may be read. A stream that cannot seek is first
-        read into memory. The keyword arguments `mmap` and
-        `keep_file_open` are passed to the nibabel proxy.
+        read into memory.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream, which may be compressed with gzip.
+        **kwargs : Any
+            Options of the nibabel proxy, which are `mmap` and
+            `keep_file_open`. Other options are refused.
+
+        Returns
+        -------
+        MghImage
+            The image, whose voxels are read lazily.
 
         Raises
         ------
@@ -422,6 +473,14 @@ class MghImage(
         over the file that it was read from. Its lazy array then reads the
         new file, which holds the same voxels, and the cached data is
         dropped.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Arguments of [`to_bytes`][], which are `compress` and the
+            arguments of [`to_raw`][].
         """
         kwargs.setdefault("compress", _compressed_name(filename))
         content = self.to_bytes(**kwargs)

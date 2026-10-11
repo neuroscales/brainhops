@@ -2,10 +2,13 @@
 
 A [`smartproperty`][] stores its value in a private attribute and computes
 the value when nothing is stored. A [`lazyproperty`][] computes its value
-on first access and caches it.
+on first access and caches it. Assigning either property, through any
+setter, deletes its own cached value, and the cached values that it
+names in `invalidates`. Code outside this module deletes a cached value
+with [`drop_cache`][].
 """
 
-__all__ = ["always_unset", "lazyproperty", "smartproperty", "UnsetLike"]
+__all__ = ["drop_cache", "lazyproperty", "smartproperty", "UnsetLike"]
 
 import typing_extensions as tx
 
@@ -26,19 +29,6 @@ The value decides when a stored value reads as unset. It is `None`,
 # are empty. Arrays are not listed, because the truth value of an array is
 # ambiguous and testing it would raise an error.
 _EMPTY_TYPES = (list, tuple, dict, set, frozenset)
-
-
-def always_unset(value: tx.Any) -> bool:
-    """Treat every stored value as unset, so that a value is always computed.
-
-    This predicate is passed as `unset=` to [`smartproperty`][] by a
-    property that must never read the private attribute in which a
-    constructor stored a value. A NIfTI format, for example, decodes its
-    `data` from its stored array, and the private field in which the data
-    model stores its data is never read.
-    """
-    return True
-
 
 _Names: tx.TypeAlias = tx.Union[str, tx.Iterable[str]]
 
@@ -95,6 +85,11 @@ class InvalidatorInMethod(Invalidator):
         return method()
 
 
+_InvalidatesLike = tx.Union[
+    str, Invalidator, tx.Iterable[tx.Union[str, Invalidator]], None
+]
+
+
 # --- lazyproperty -----------------------------------------------------
 
 
@@ -105,7 +100,7 @@ def lazyproperty(fget: _Getter) -> property: ...
 @tx.overload
 def lazyproperty(
     *,
-    unset: UnsetLike = None,
+    invalidates: _InvalidatesLike = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -114,7 +109,7 @@ def lazyproperty(
     fget: None,
     doc: tx.Optional[str] = None,
     *,
-    unset: UnsetLike = None,
+    invalidates: _InvalidatesLike = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -123,21 +118,39 @@ def lazyproperty(
     fget: _Getter,
     doc: tx.Optional[str] = None,
     *,
-    unset: UnsetLike = None,
+    invalidates: _InvalidatesLike = (),
 ) -> property:
     """Create a property that is computed on first access and then cached.
 
-    The property is a read-only [`smartproperty`][] with `cache=True`.
+    A lazy property suits a view that is decoded or derived from other
+    state, such as the array decoded from the record of a file. The
+    property is a [`smartproperty`][] with `cache=True` and without a
+    default setter. A value stored in the private attribute `_<name>`, for
+    example by a constructor, is returned instead of being computed. A
+    setter may be added with the `setter` decorator of the property, as in
+    the example below. That setter deletes the cached value of the
+    property before it runs, and the cached values named by `invalidates`
+    after it runs.
+
+    ```python
+    @lazyproperty(invalidates="transformations")
+    def data(self):
+        return decode(self.raw)
+
+    @data.setter
+    def data(self, value):
+        self.raw = encode(value)
+    ```
 
     Parameters
     ----------
-    fget
+    fget : callable
         Function that computes the value.
-    doc
+    doc : str, optional
         Docstring of the property.
-    unset
-        Values that read as unset, so that the value is computed instead.
-        See [`smartproperty`][].
+    invalidates : str or Invalidator or tuple, default=()
+        Other properties whose cached values a setter deletes. See
+        [`smartproperty`][].
 
     Returns
     -------
@@ -147,8 +160,10 @@ def lazyproperty(
     """
 
 
-def lazyproperty(fget=None, doc=None, unset=None):
-    return smartproperty(fget, fset=False, cache=True, doc=doc, unset=unset)
+def lazyproperty(fget=None, doc=None, *, invalidates=()):
+    return smartproperty(
+        fget, fset=False, cache=True, doc=doc, invalidates=invalidates
+    )
 
 
 # --- smartproperty ----------------------------------------------------
@@ -163,7 +178,7 @@ def smartproperty(
     *,
     unset: UnsetLike = None,
     cache: bool = False,
-    invalidates: tx.Union[str, tx.Iterable[str], None] = (),
+    invalidates: _InvalidatesLike = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -176,7 +191,7 @@ def smartproperty(
     *,
     unset: UnsetLike = None,
     cache: bool = False,
-    invalidates: tx.Union[str, tx.Iterable[str], None] = (),
+    invalidates: _InvalidatesLike = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -189,7 +204,7 @@ def smartproperty(
     *,
     unset: UnsetLike = None,
     cache: bool = False,
-    invalidates: tx.Union[str, tx.Iterable[str], None] = (),
+    invalidates: _InvalidatesLike = (),
 ) -> property:
     """Create a property backed by a private attribute.
 
@@ -199,22 +214,46 @@ def smartproperty(
     `_cache_<name>` so that it is computed only once. A value that has been
     set is always returned rather than computed.
 
+    The common forms are listed below, from the simplest to the most
+    specific.
+
+    - `smartproperty("name")` declares a stored value that reads `None`
+      when nothing is stored.
+    - `@smartproperty` over a getter declares a stored value that is
+      computed when nothing is stored.
+    - `@smartproperty(cache=True)` over a getter declares a stored value
+      that is computed once and cached when nothing is stored.
+    - [`lazyproperty`][], with a setter added by `@name.setter`, declares
+      a view decoded from other state, with a cache.
+    - `invalidates=` names the other cached properties that become stale
+      when the property is assigned.
+    - `fset=` gives a setter defined elsewhere, for example a module-level
+      function shared by several classes.
+    - `fset=False` makes the property read-only.
+    - `unset=` says which stored values read as unset.
+
+    Every setter, whether it is the default setter, a setter given with
+    `fset=`, or a setter added with `@name.setter`, deletes the cached
+    value of the property before it runs, so a property never needs to
+    name itself in `invalidates`. A setter may therefore store a value in
+    its own cache, which is kept. After the setter runs, the cached values
+    named by `invalidates` are deleted.
+
     Parameters
     ----------
-    fget
+    fget : callable or str
         Function that computes the value, or the name of the property when
         there is nothing to compute.
-    fset
+    fset : callable or bool, optional
         Setter of the property. With `None` or `True`, a default setter
-        stores the value as given in the private attribute and deletes the
-        cached value, if there is one. With `False`, the property cannot be
-        assigned, but a value stored in the private attribute, for example
-        by a constructor, is still read.
-    fdel
+        stores the value as given in the private attribute. With `False`,
+        the property cannot be assigned, but a value stored in the private
+        attribute, for example by a constructor, is still read.
+    fdel : callable, optional
         Deleter of the property, passed to [`property`][property] as it is.
-    doc
+    doc : str, optional
         Docstring of the property.
-    unset
+    unset : UnsetLike, optional
         Values that read as unset. By default, only a stored `None` reads
         as unset. With `"empty"`, an empty list, tuple, dict, set or
         frozenset reads as unset, and with a callable, any value for which
@@ -223,14 +262,12 @@ def smartproperty(
         an inherited field whose default is an empty container needs
         `unset=(None, "empty")`, because the constructor writes that
         default through the setter.
-        A property that is always computed, or read from its cache, and
-        never read from the private attribute takes
-        `unset=always_unset` (see [`always_unset`][]).
-    cache
+    cache : bool, default=False
         Whether to cache the computed value.
-    invalidates
-        Names of other properties whose cached values the setter deletes, or
-        an [`Invalidator`][] that reads these names from the object. A
+    invalidates : str or Invalidator or tuple, default=()
+        Other properties whose cached values the setter deletes. Each
+        property is given by its name, or by an [`Invalidator`][] that
+        reads the names from the object, and a tuple may mix both. A
         setter given later with the `setter` decorator of the property
         deletes the same cached values.
 
@@ -245,7 +282,8 @@ def smartproperty(
     ValueError
         If `unset` is an empty tuple or a string other than `"empty"`.
     TypeError
-        If `unset` has any other invalid type.
+        If `unset` has any other invalid type, or if an item of
+        `invalidates` is neither a name nor an `Invalidator`.
     """
 
 
@@ -278,10 +316,9 @@ def smartproperty(
 
         return decorate
 
-    if not callable(invalidates):
-        if isinstance(invalidates, str):
-            invalidates = (invalidates,)
-        invalidates = tuple(invalidates or ())
+    # Like unset, invalidates is resolved at declaration, so that a wrong
+    # item is refused there.
+    invalidates = _invalidated_items(invalidates)
 
     if isinstance(fget, str):
         name = fget
@@ -292,23 +329,25 @@ def smartproperty(
     fget = _make_fget(name, fget, is_unset, set=fset is not False, cache=cache)
 
     if not callable(fset):
-        fset = _make_fset(name, settable=fset is not False, cacheable=cache)
-    if invalidates and fset is not None:
-        fset = _wrap_fset_invalidator(fset, invalidates)
+        fset = _make_fset(name, settable=fset is not False)
+    if fset is not None:
+        fset = _wrap_fset(name, fset, cache, invalidates)
 
-    return _SmartProperty(fget, fset, fdel, doc, invalidates=invalidates)
+    return _SmartProperty(fget, fset, fdel, doc, name, cache, invalidates)
 
 
 class _SmartProperty(property):
-    """Property that keeps its invalidation when its setter is replaced.
+    """Property whose setters always delete the right cached values.
 
     The `setter` decorator of a plain [`property`][property] copies the
     getter and takes the new setter as it is. A setter written with
-    `@name.setter` under a [`smartproperty`][] would therefore no longer
-    delete the cached values named by `invalidates`. This class wraps such
-    a setter in the same way as a setter given with `fset=`. The `getter`
-    and `deleter` decorators keep the invalidation too, so that a later
-    `setter` still applies it.
+    `@name.setter` under a [`smartproperty`][] would therefore neither
+    delete the cached value of the property nor the cached values named by
+    `invalidates`. This class wraps such a setter in the same way as a
+    setter given with `fset=`. To do so, the property keeps its name,
+    whether it caches its value, and what it invalidates. The `getter` and
+    `deleter` decorators keep them too, so that a later `setter` still
+    applies them.
     """
 
     def __init__(
@@ -317,35 +356,79 @@ class _SmartProperty(property):
         fset: tx.Optional[_Setter] = None,
         fdel: tx.Optional[_Deleter] = None,
         doc: tx.Optional[str] = None,
-        invalidates: tx.Union[tx.Tuple[str, ...], Invalidator] = (),
+        name: str = "",
+        cache: bool = False,
+        invalidates: tx.Tuple[tx.Union[str, Invalidator], ...] = (),
     ) -> None:
         super().__init__(fget, fset, fdel, doc)
+        self.name = name
+        self.cache = cache
         self.invalidates = invalidates
 
     def getter(self, fget: _Getter) -> property:
-        """Return a copy of the property with another getter."""
-        return _SmartProperty(
-            fget, self.fset, self.fdel, self.__doc__, self.invalidates
-        )
+        """Return a copy of the property with another getter.
+
+        Parameters
+        ----------
+        fget : callable
+            The new getter.
+
+        Returns
+        -------
+        property
+            The copy of the property.
+        """
+        return self._copy(fget, self.fset, self.fdel)
 
     def setter(self, fset: _Setter) -> property:
         """Return a copy of the property with another setter.
 
-        The setter deletes the cached values named by `invalidates` after
-        it runs, as a setter given with `fset=` does. The cached value of
-        the property itself is deleted only if the property names itself
-        in `invalidates`.
+        The setter deletes the cached value of the property before it runs,
+        and the cached values named by `invalidates` after it runs, as a
+        setter given with `fset=` does.
+
+        Parameters
+        ----------
+        fset : callable
+            The new setter.
+
+        Returns
+        -------
+        property
+            The copy of the property.
         """
-        if self.invalidates:
-            fset = _wrap_fset_invalidator(fset, self.invalidates)
-        return _SmartProperty(
-            self.fget, fset, self.fdel, self.__doc__, self.invalidates
-        )
+        fset = _wrap_fset(self.name, fset, self.cache, self.invalidates)
+        return self._copy(self.fget, fset, self.fdel)
 
     def deleter(self, fdel: _Deleter) -> property:
-        """Return a copy of the property with another deleter."""
+        """Return a copy of the property with another deleter.
+
+        Parameters
+        ----------
+        fdel : callable
+            The new deleter.
+
+        Returns
+        -------
+        property
+            The copy of the property.
+        """
+        return self._copy(self.fget, self.fset, fdel)
+
+    def _copy(
+        self,
+        fget: tx.Optional[_Getter],
+        fset: tx.Optional[_Setter],
+        fdel: tx.Optional[_Deleter],
+    ) -> "_SmartProperty":
         return _SmartProperty(
-            self.fget, self.fset, fdel, self.__doc__, self.invalidates
+            fget,
+            fset,
+            fdel,
+            self.__doc__,
+            self.name,
+            self.cache,
+            self.invalidates,
         )
 
 
@@ -406,13 +489,9 @@ def _make_fget_settable_cacheable(
     return fget
 
 
-def _make_fset(
-    name: str,
-    settable: bool = True,
-    cacheable: bool = False,
-) -> _Setter:
-    if settable and cacheable:
-        return _make_fset_settable_cacheable(name)
+def _make_fset(name: str, settable: bool = True) -> tx.Optional[_Setter]:
+    # The cached value is deleted by the wrapper of every setter, so the
+    # default setter only stores the value.
     if settable:
         return _make_fset_settable(name)
     return None
@@ -430,45 +509,80 @@ def _make_fset_settable(name: str) -> _Setter:
     return fset
 
 
-def _make_fset_settable_cacheable(name: str) -> _Setter:
-    private_name = "_" + name
-    cache_name = "_cache_" + name
-
-    def fset(self: tx.Self, value: tx.Any) -> None:
-        setattr(self, private_name, value)
-        if hasattr(self, cache_name):
-            delattr(self, cache_name)
-
-    fset.__name__ = name
-    return fset
-
-
 # --- invalidates ------------------------------------------------------
 
 
-def _wrap_fset_invalidator(
-    fset: _Setter, invalidates: tx.Tuple[str]
+def _invalidated_items(
+    invalidates: _InvalidatesLike,
+) -> tx.Tuple[tx.Union[str, Invalidator], ...]:
+    """Return the items of `invalidates` as a tuple.
+
+    A single name or `Invalidator` becomes a tuple of one item.
+
+    Raises
+    ------
+    TypeError
+        If an item is neither a string nor an `Invalidator`.
+    """
+    if isinstance(invalidates, (str, Invalidator)):
+        return (invalidates,)
+    items = tuple(invalidates or ())
+    for item in items:
+        if not isinstance(item, (str, Invalidator)):
+            raise TypeError(
+                f"invalidates takes names, Invalidators, or a tuple of "
+                f"them, not a {type(item).__name__}."
+            )
+    return items
+
+
+def _wrap_fset(
+    name: str,
+    fset: _Setter,
+    cache: bool,
+    invalidates: tx.Tuple[tx.Union[str, Invalidator], ...],
 ) -> _Setter:
-    if not callable(invalidates):
-        cache_names = tuple("_cache_" + name for name in invalidates)
+    # The cached value of the property is deleted before the setter runs,
+    # so that a setter may fill it, as the `values` setter of a field does.
+    # A setter with no cached value to delete is used as it is.
+    if not cache and not invalidates:
+        return fset
+    own_cache = (name,) if cache else ()
 
-        def fset_invalidator(self: tx.Self, value: tx.Any) -> None:
-            fset(self, value)
-            for cache_name in cache_names:
-                # A property that was never read has nothing cached.
-                self.__dict__.pop(cache_name, None)
-
-    else:
-
-        def fset_invalidator(self: tx.Self, value: tx.Any) -> None:
-            fset(self, value)
-            invalidated = invalidates(self)
-            cache_names = tuple("_cache_" + name for name in invalidated)
-            for cache_name in cache_names:
-                self.__dict__.pop(cache_name, None)
+    def fset_invalidator(self: tx.Self, value: tx.Any) -> None:
+        drop_cache(self, *own_cache)
+        fset(self, value)
+        for item in invalidates:
+            if isinstance(item, str):
+                drop_cache(self, item)
+            else:
+                drop_cache(self, *item(self))
 
     fset_invalidator.__name__ = fset.__name__
     return fset_invalidator
+
+
+# --- drop_cache -------------------------------------------------------
+
+
+def drop_cache(obj: object, *names: str) -> None:
+    """Delete the cached values of properties of an object.
+
+    A cached [`smartproperty`][] or [`lazyproperty`][] deletes its cached
+    value when it is assigned. This function is for code that changes the
+    state from which a property is computed without assigning the
+    property, for example a writer that points `raw` at the file it has
+    just written. A property that has not cached a value is skipped.
+
+    Parameters
+    ----------
+    obj : object
+        The object whose cached values are deleted.
+    *names : str
+        The names of the properties.
+    """
+    for name in names:
+        obj.__dict__.pop("_cache_" + name, None)
 
 
 # --- smartsetter ------------------------------------------------------

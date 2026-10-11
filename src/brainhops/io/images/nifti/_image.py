@@ -11,7 +11,7 @@ from bagof.magic import KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
@@ -24,7 +24,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
 )
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import register_format, store_data_argument
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -52,8 +52,10 @@ from brainhops.io.common.nifti._raw import (
     write_nifti,
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
-from brainhops.io.common.nifti._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 _NIBABEL_OPTIONS = ("mmap", "keep_file_open")
 """The options of the nibabel readers that a NIfTI image accepts."""
@@ -109,7 +111,7 @@ class NiftiImage(
 
     _metadata: KwOnly[NoRepr[tx.Optional[NiftiMetadata]]] = None
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
@@ -117,14 +119,11 @@ class NiftiImage(
     """
 
     def __post_init__(self, arguments: tx.Any) -> None:
-        # The constructor assigns the fields in order, so the default of
-        # `raw`, assigned after `data`, erases the array stored by `data=`.
-        # The array is therefore stored again. When both are given, `data`
-        # takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
+        # The default of `raw`, assigned after `data`, erases the array
+        # stored by `data=`, so the array is stored again.
+        store_data_argument(self, arguments)
 
-    @smartproperty(cache=True, invalidates=("data",))
+    @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The image data, decoded from `raw` on first access and cached.
 
