@@ -59,6 +59,21 @@ class MrtrixMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Return the confidence that a stream holds an MRtrix header.
 
         The stream is tested with [`MrtrixRaw.sniff_fileobj`][].
+
+        Parameters
+        ----------
+        file : IO
+            The stream, which may be gzipped.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no MRtrix
+            header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return MrtrixRaw.sniff_fileobj(file, error=error, **kwargs)
 
@@ -69,7 +84,23 @@ class MrtrixMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes start with an MRtrix header."""
+        """Return the confidence that bytes start with an MRtrix header.
+
+        Parameters
+        ----------
+        data : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no MRtrix
+            header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
@@ -78,6 +109,18 @@ class MrtrixMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
         The record is read with [`MrtrixRaw.from_fileobj`][], which
         receives the keyword arguments.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream, which may be gzipped.
+        **kwargs : Any
+            Options of [`MrtrixRaw.from_fileobj`][].
+
+        Returns
+        -------
+        MrtrixMetadata
+            The metadata, which holds the record of the header.
         """
         return cls.from_raw(MrtrixRaw.from_fileobj(file, **kwargs))
 
@@ -85,6 +128,16 @@ class MrtrixMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Return the header of the record as the file stores it.
 
         Metadata without a record is written as an empty header.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of [`MrtrixRaw.to_bytes`][].
+
+        Returns
+        -------
+        bytes
+            The header.
         """
         if self.raw is None:
             return b""

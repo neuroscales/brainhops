@@ -18,9 +18,7 @@ import numpy as np
 # internals
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
-
-# this format
-from ._data import _MrtrixProxy
+from brainhops.io.common.mrtrix._data import _MrtrixProxy
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:

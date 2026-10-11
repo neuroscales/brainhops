@@ -63,22 +63,22 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common.afni._data import _BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
-from brainhops.io.common.afni._views import (
+from brainhops.io.common.mrtrix._data import _MrtrixProxy
+from brainhops.io.images.afni import AfniImage, AfniMetadata
+from brainhops.io.images.afni._views import (
     _image_to_disk as _afni_to_disk,
 )
-from brainhops.io.common.afni._views import (
+from brainhops.io.images.afni._views import (
     _image_to_model as _afni_to_model,
 )
-from brainhops.io.common.mrtrix._data import _MrtrixProxy
-from brainhops.io.common.mrtrix._views import (
-    _image_to_disk as _mrtrix_to_disk,
-)
-from brainhops.io.common.mrtrix._views import (
-    _image_to_model as _mrtrix_to_model,
-)
-from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
+from brainhops.io.images.mrtrix._views import (
+    _image_to_disk as _mrtrix_to_disk,
+)
+from brainhops.io.images.mrtrix._views import (
+    _image_to_model as _mrtrix_to_model,
+)
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField

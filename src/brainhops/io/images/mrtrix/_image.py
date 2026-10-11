@@ -14,7 +14,7 @@ from bagof.magic import KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -26,7 +26,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import register_format, store_data_argument
 from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -54,8 +54,10 @@ from brainhops.io.common.mrtrix._geometry import (
     voxel_to_ras,
 )
 from brainhops.io.common.mrtrix._raw import _declined, _sniffed_raw
-from brainhops.io.common.mrtrix._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 _INDEX = "index"
 _MM = "millimeter"
@@ -126,7 +128,7 @@ class MrtrixImage(
 
     _metadata: KwOnly[NoRepr[tx.Optional[MrtrixMetadata]]] = None
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
@@ -134,14 +136,11 @@ class MrtrixImage(
     """
 
     def __post_init__(self, arguments: tx.Any) -> None:
-        # The constructor assigns the fields in order, so the default of
-        # `raw`, assigned after `data`, erases the array stored by `data=`.
-        # The array is therefore stored again. When both are given, `data`
-        # takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
+        # The default of `raw`, assigned after `data`, erases the array
+        # stored by `data=`, so the array is stored again.
+        store_data_argument(self, arguments)
 
-    @smartproperty(cache=True, invalidates=("data",))
+    @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The image data, decoded from `raw` on first access and cached.
 
@@ -219,6 +218,21 @@ class MrtrixImage(
         """Return the confidence that a stream holds an MRtrix image.
 
         The stream may be gzipped, and its position is restored.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, which may be gzipped.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no MRtrix
+            image.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         raw, failure = _sniffed_raw(file)
         if raw is None:
@@ -232,7 +246,23 @@ class MrtrixImage(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold an MRtrix image."""
+        """Return the confidence that bytes hold an MRtrix image.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no MRtrix
+            image.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
@@ -274,6 +304,18 @@ class MrtrixImage(
         while the data may be read. A separate data file is found from the
         name of the stream. The position of the stream is restored, and
         the keyword arguments are ignored.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream, which may be gzipped.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        MrtrixImage
+            The image, whose voxels are read lazily.
 
         Raises
         ------
@@ -365,6 +407,16 @@ class MrtrixImage(
         keyword arguments, padded up to the first voxel. A lazy array that
         reaches the writer unchanged is written as the file stores it.
 
+        Parameters
+        ----------
+        **kwargs : Any
+            Arguments of [`to_raw`][].
+
+        Returns
+        -------
+        bytes
+            The content of the `.mif` file.
+
         Raises
         ------
         TypeError
@@ -374,7 +426,20 @@ class MrtrixImage(
         return record.to_bytes() + _payload(record, source)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write a single-file, uncompressed `.mif` image to a stream."""
+        """Write a single-file, uncompressed `.mif` image to a stream.
+
+        Parameters
+        ----------
+        file : IO
+            The stream.
+        **kwargs : Any
+            Arguments of [`to_raw`][].
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
+        """
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
@@ -385,6 +450,13 @@ class MrtrixImage(
         file. The keyword arguments are those of [`to_raw`][]. The content
         is encoded before any file is opened, so an image can be written
         over the file that it was read from.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the `.mif`, `.mif.gz` or `.mih` file.
+        **kwargs : Any
+            Arguments of [`to_raw`][].
 
         Raises
         ------
@@ -410,7 +482,15 @@ class MrtrixImage(
             f.write(content)
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path or a stream."""
+        """Write to a path or a stream.
+
+        Parameters
+        ----------
+        file : path-like or IO
+            The path or the stream.
+        **kwargs : Any
+            Arguments of [`to_raw`][].
+        """
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, (path.PathLike, os.PathLike)):

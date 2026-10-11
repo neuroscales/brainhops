@@ -70,6 +70,21 @@ class AfniMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Return the confidence that a stream holds an AFNI header.
 
         The stream is tested with [`AfniRaw.sniff_fileobj`][].
+
+        Parameters
+        ----------
+        file : IO
+            The stream, whose position is restored.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no AFNI
+            header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return AfniRaw.sniff_fileobj(file, error=error, **kwargs)
 
@@ -84,6 +99,21 @@ class AfniMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
         The path is tested with [`AfniRaw.sniff_filename`][], which reads
         the `.HEAD` file of the dataset.
+
+        Parameters
+        ----------
+        filename : path-like
+            Any file of the dataset, or the bare dataset name.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the path names no AFNI
+            dataset.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return AfniRaw.sniff_filename(filename, error=error, **kwargs)
 
@@ -94,7 +124,23 @@ class AfniMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold an AFNI header."""
+        """Return the confidence that bytes hold an AFNI header.
+
+        Parameters
+        ----------
+        data : bytes
+            The content of a `.HEAD` file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no AFNI
+            header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
@@ -102,6 +148,18 @@ class AfniMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Read the metadata from an open `.HEAD` or `.BRIK` file.
 
         The record is read with [`AfniRaw.from_fileobj`][] and validated.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The open `.HEAD` or `.BRIK` file.
+        **kwargs : Any
+            Options of [`AfniRaw.from_fileobj`][].
+
+        Returns
+        -------
+        AfniMetadata
+            The metadata, which holds the record of the header.
 
         Raises
         ------
@@ -120,6 +178,18 @@ class AfniMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         The record is read from the `.HEAD` file with
         [`AfniRaw.from_filename`][] and validated.
 
+        Parameters
+        ----------
+        filename : path-like
+            Any file of the dataset, or the bare dataset name.
+        **kwargs : Any
+            Options of [`AfniRaw.from_filename`][].
+
+        Returns
+        -------
+        AfniMetadata
+            The metadata, which holds the record of the header.
+
         Raises
         ------
         ParserExistsError
@@ -134,6 +204,16 @@ class AfniMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Return the content of the `.HEAD` file.
 
         Metadata without a record is written as an empty header.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of [`AfniRaw.to_bytes`][].
+
+        Returns
+        -------
+        bytes
+            The content of the `.HEAD` file.
         """
         if self.raw is None:
             return b""
@@ -144,6 +224,13 @@ class AfniMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
         The path may name the `.HEAD` file, the `.BRIK` file or the bare
         dataset, and no BRIK is written.
+
+        Parameters
+        ----------
+        filename : path-like
+            Any file of the dataset, or the bare dataset name.
+        **kwargs : Any
+            Options of [`AfniRaw.to_bytes`][].
         """
         head, _, _ = afni_dataset_files(filename)
         with head.open("wb") as file:
