@@ -198,10 +198,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         nibabel.Nifti1Image or nibabel.Nifti2Image
             The encoded image.
         """
-        stored = (
-            self.raw is not None
-            and getattr(self, "_transformations", None) is None
-        )
+        stored = self.raw is not None and self._transformations is None
         if stored:
             image = _record_image(
                 self.raw, self._record(), overrides=overrides

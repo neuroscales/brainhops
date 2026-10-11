@@ -19,7 +19,8 @@ is known must therefore be compatible with the system that the format
 has on that side, both the system that the format takes when it is
 given none and the system that the relabelled format reports. The
 check is the one that the classes bound to coordinate systems run when
-they are built ([`IncompatibleSystemError`][brainhops.errors.IncompatibleSystemError]).
+they are built, which raises an
+[`IncompatibleSystemError`][brainhops.errors.IncompatibleSystemError].
 An endpoint that is not known is taken to be the format's. A format
 that has no system of its own on a side accepts any endpoint there, and
 keeps it.
@@ -201,9 +202,7 @@ def _rebuild(
     # would run. A format that cannot be built from these parameters, such
     # as a pyramid of fields from a chain, does not hold `t`.
     try:
-        return super(TransformationFormat, cls).from_instance(
-            source, **kwargs
-        )
+        return super(TransformationFormat, cls).from_instance(source, **kwargs)
     except IncompatibleSystemError as error:
         raise unrepresentable(t, cls, str(error)) from error
     except ConversionError:

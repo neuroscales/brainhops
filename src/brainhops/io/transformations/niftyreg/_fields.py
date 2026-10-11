@@ -423,7 +423,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         """
         if self.raw is None or self.niftyreg_type not in type(self).TYPES:
             return None
-        if getattr(self, "_transformations", None) is not None:
+        if self._transformations is not None:
             return None
         image = _record_image(self.raw, self._record(), overrides=overrides)
         _apply_like(image, like)
@@ -617,7 +617,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         kind = self.niftyreg_type
         if kind in _GRID_DEGREE:
             return _GRID_DEGREE[kind]
-        chain = getattr(self, "_transformations", None)
+        chain = self._transformations
         if chain:
             return int(chain[-2].degree)
         return 3

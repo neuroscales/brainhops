@@ -70,17 +70,17 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     !!! note "Two passes, one conversion"
         Steps 3 and 4 are two passes only until every writable
         transformation format has exact converters (#312). Until then,
-        step 3 writes a transformation to a format without exact
-        converters by copying it into a file-backed version of its data
-        model. Step 4 refuses to rebuild a transformation as such a
-        format with the same parameters, because the result could mean
-        a different map. For the formats that have exact converters
-        (`NiftiVoxelToRAS`, `NiftiRASToVoxel`,
-        `NiftiRASDisplacementField`, `NiftiRASCoordinatesField`,
-        `SpmCoordinatesField`), `from_instance` is `obj.to(Format)`, so
-        both passes run the same conversion. `NiftyRegAffine` converts
-        an affine between world spaces, or between unknown spaces, in
-        step 4.
+        a format without an exact converter holds a transformation only
+        by relabelling it, that is, by being rebuilt from its
+        parameters, when the coordinate systems allow it. Step 3 writes
+        a transformation in such a format only if the format is a
+        file-backed version of its data model. Step 4 converts it only
+        to the formats that convert it exactly, so that the formats
+        that would only relabel it do not make the choice ambiguous.
+        For every transformation format, `from_instance` is
+        `obj.to(Format)`, so both passes run the same conversion.
+        `NiftyRegAffine` converts an affine between world spaces, or
+        between unknown spaces, in step 4.
 
     Parameters
     ----------

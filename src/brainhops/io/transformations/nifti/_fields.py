@@ -531,7 +531,7 @@ transformations.StationaryVelocityField].
         log = self.log if log is None else log
         stored = (
             self.raw is not None
-            and getattr(self, "_transformations", None) is None
+            and self._transformations is None
             and log == self.log
         )
         if stored:
