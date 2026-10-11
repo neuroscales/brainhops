@@ -162,7 +162,7 @@ FORMATS = [
 ]
 """The formats that are bound to RAS, to LPS or to their own spaces."""
 
-CHAIN_FORMATS = [FnirtWarpField, X5Transform, ElastixTransform]
+CHAIN_FORMATS = [FnirtWarpField, M3zMorph, X5Transform, ElastixTransform]
 """
 The formats that hold a chain and read their coordinate systems from it,
 so that they have no systems of their own to refuse.
@@ -333,8 +333,7 @@ def test_a_format_without_systems_relabels_between_voxel_spaces(
 @pytest.mark.parametrize(
     "family, cls",
     [
-        (family, cls)
-        for cls in (ItkNiftiDisplacementField, M3zMorph)
+        (family, ItkNiftiDisplacementField)
         for family in ("sequence", "immutable-sequence")
     ],
     ids=lambda x: getattr(x, "__name__", x),
@@ -355,7 +354,7 @@ def test_a_format_without_an_exact_conversion_refuses(
     "family, cls",
     [
         (family, cls)
-        for cls in (NiftyRegDisplacementField, FnirtWarpField)
+        for cls in (NiftyRegDisplacementField, FnirtWarpField, M3zMorph)
         for family in ("sequence", "immutable-sequence")
     ],
     ids=lambda x: getattr(x, "__name__", x),
@@ -363,9 +362,9 @@ def test_a_format_without_an_exact_conversion_refuses(
 def test_a_format_without_an_exact_conversion_relabels_compatible_systems(
     family: str, cls: type
 ) -> None:
-    # NiftyReg maps RAS to RAS, and FNIRT reads its systems from the chain
-    # it holds, so a chain between RAS spaces is relabelled with the same
-    # parameters until an exact converter is written (#312).
+    # NiftyReg maps RAS to RAS, and FNIRT and M3Z read their systems from
+    # the chain they hold, so a chain between RAS spaces is relabelled with
+    # the same parameters until an exact converter is written (#312).
     t = _families(RASmm(), RASmm())[family]
     for held in _entry_points(t, cls):
         assert type(held) is cls
@@ -404,6 +403,51 @@ def test_an_affine_without_systems_is_relabelled_as_an_lta() -> None:
     for lta in _entry_points(t, LtaTransformation):
         assert type(lta) is LtaTransformation
         np.testing.assert_array_equal(lta.matrix, MATRIX[:-1])
+
+
+NO_EXACT_CONVERTER = [
+    LtaTransformation,
+    FnirtWarpField,
+    ItkNiftiDisplacementField,
+    NiftyRegDisplacementField,
+    M3zMorph,
+]
+"""The formats of #312, whose converters refused every family."""
+
+
+@pytest.mark.parametrize(
+    "cls", NO_EXACT_CONVERTER, ids=lambda cls: cls.__name__
+)
+@pytest.mark.parametrize(
+    "t",
+    [
+        _families(None, None)["affine"],
+        _families(None, None)["sequence"],
+        _families(LPSmm(), LPSmm())["affine"],
+        _families(LPSmm(), LPSmm())["sequence"],
+        _families(RASmm(), RASmm())["displacement"],
+    ],
+    ids=["affine", "chain", "lps-affine", "lps-chain", "field"],
+)
+def test_the_entry_points_are_one_conversion(
+    t: xforms.Transformation, cls: type
+) -> None:
+    # `t.to(cls)`, `cls.from_any(t)` and `cls.from_instance(t)` either all
+    # give the same transformation, or all refuse it.
+    outcomes = []
+    for convert in _conversions(cls):
+        try:
+            outcomes.append(convert(t))
+        except ConversionError as error:
+            outcomes.append(str(error))
+    first = outcomes[0]
+    for outcome in outcomes[1:]:
+        if isinstance(first, str):
+            assert outcome == first
+        else:
+            assert type(outcome) is type(first)
+            assert outcome.input == first.input
+            assert outcome.output == first.output
 
 
 def test_a_chain_between_lps_spaces_is_not_relabelled_as_niftyreg() -> None:
