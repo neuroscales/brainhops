@@ -6,7 +6,7 @@ from io import BytesIO
 # dependencies
 import nibabel as nb
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr
+from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
@@ -58,7 +58,7 @@ class NiftiBasedTransformation(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
 
-    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The array of the file as it is stored, or `None` without one.
 
     After a read, `raw` is a nibabel proxy, which applies the scaling of
@@ -66,7 +66,7 @@ class NiftiBasedTransformation(
     the header, such as an affine, has no array.
     """
 
-    _metadata: KwOnly[NoRepr[tx.Optional[NiftiMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = None
 
     metadata = smartproperty("metadata")
     """The metadata of the file, which holds its header, or `None`.
