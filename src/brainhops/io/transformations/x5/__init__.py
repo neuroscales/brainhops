@@ -131,3 +131,5 @@ __all__ = [
 from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
 from ._struct import X5Domain, X5Header, X5Node
 from ._xform import X5Transform, X5TransformReaderWriter
+
+from . import _converters  # noqa: E402, F401  isort: skip

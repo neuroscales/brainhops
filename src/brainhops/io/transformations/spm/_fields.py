@@ -20,10 +20,6 @@ from brainhops.io.common.nifti._header import (
     _record_image,
     _set_coordinates_intent,
 )
-from brainhops.io.transformations.base._conversions import (
-    convert_instance,
-    converts_to,
-)
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -82,22 +78,6 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         [`PREFIXES`][brainhops.io.transformations.spm.SpmCoordinatesField.PREFIXES].
         """
         return NiftiRASCoordinatesField._score_nibabel(header)
-
-    # --- conversions --------------------------------------------------
-    # Another transformation is converted, as `t.to(cls)` converts it;
-    # anything else is read or copied as the bases do.
-
-    @classmethod
-    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        return super().from_any(other, *args, **kwargs)
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        return super().from_instance(other, *args, **kwargs)
 
     # --- data -----------------------------------------------------------
 

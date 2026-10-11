@@ -16,6 +16,7 @@ from bagof.magic import fields
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.transformations import Transformation
+from brainhops.errors import ConversionError
 from brainhops.io.base._base import Format
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
@@ -163,7 +164,23 @@ def _copy(obj: tx.Any, fmt: type) -> tx.Any:
 
 
 def _convert(obj: Transformation, fmt: type) -> tx.Any:
-    """`obj` converted to `fmt`, as `obj.to(fmt)` converts it."""
+    """`obj` converted exactly to `fmt`, as `obj.to(fmt)` converts it.
+
+    A format that has no converter of its own for `obj` would relabel it
+    (#312). Such a format is not chosen by this pass, so that a format
+    that converts `obj` exactly is not made ambiguous by the formats
+    that would only relabel it.
+    """
+    # The transformation formats import this package, so their helper is
+    # imported when it is used.
+    from brainhops.io.transformations.base._converters import relabels
+
+    if relabels(obj, fmt):
+        raise ConversionError(
+            f"{fmt.__name__} has no exact converter for a "
+            f"{type(obj).__name__} (#312), and a transformation is saved "
+            f"by relabelling it only in a format of its own data model."
+        )
     return obj.to(fmt)
 
 

@@ -38,7 +38,7 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _record_image,
 )
-from brainhops.io.transformations.base._conversions import no_exact_conversion
+from brainhops.io.transformations.base._converters import relabel
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
     homogeneous_matrix,
@@ -303,20 +303,6 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     Assigning other metadata drops the chain decoded from the previous
     header.
     """
-
-    # --- copies -------------------------------------------------------
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """
-        Create a field from an instance of a similar class.
-
-        The chain of the other transformation is carried over rather than
-        re-read from its header, which this reader would misread.
-        """
-        if isinstance(other, _xforms.Sequence) and not isinstance(other, cls):
-            kwargs.setdefault("transformations", tuple(other))
-        return super().from_instance(other, *args, **kwargs)
 
     # --- endpoints ----------------------------------------------------
     # The endpoints are declared rather than read off the chain, which would
@@ -929,16 +915,11 @@ class NiftyRegVelocityField(NiftyRegVelocity):
 # ----------------------------------------------------------------------
 
 
-@converter
-def _(
-    t: _xforms.Sequence, cls: tx.Type[NiftyRegSequence], **kwargs
-) -> NiftyRegSequence:
-    # NiftyReg stores a field on the grid of its file, in one of several
-    # encodings, and no exact conversion into it is written yet (#312).
-    # Without this refusal, the converters of the data model would
-    # rebuild a chain as the format with the same parameters, and the
-    # result would not be the map that the file says it holds.
-    raise no_exact_conversion(t, cls)
+# NiftyReg stores a field on the grid of its file, in one of several
+# encodings, and no exact conversion into it is written yet (#312). Another
+# transformation is relabelled as the format by the converter of
+# `brainhops.io.transformations.base`, which carries its chain over rather
+# than letting this reader decode the header of another format.
 
 
 @converter
@@ -946,8 +927,9 @@ def _(
     t: NiftyRegSequence, cls: tx.Type[NiftyRegSequence], **kwargs
 ) -> NiftyRegSequence:
     # A transformation that is already in this format is changed by the
-    # rules of any chain, and these rules keep its type. A conversion
-    # into another variant of the format is not written yet.
+    # rules of any chain, and these rules keep its type. Another variant
+    # of the format holds the same chain in another encoding, so it is
+    # relabelled, as any other transformation is.
     if not isinstance(t, cls):
-        raise no_exact_conversion(t, cls)
+        return relabel(t, cls, **kwargs)
     return smart_replace(t, cls, **kwargs)
