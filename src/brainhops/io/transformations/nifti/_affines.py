@@ -10,7 +10,7 @@ import typing_extensions as tx
 from brainhops._core import path
 from brainhops._core.properties import (
     InvalidatorInAttribute,
-    always_unset,
+    lazyproperty,
     smartproperty,
 )
 from brainhops._core.typing import ArrayProtocol
@@ -38,31 +38,6 @@ from ._views import _affine_to_disk, _affine_to_model
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
-
-
-def _set_affine_data(
-    self: "_NiftiAffine", value: tx.Optional[ArrayProtocol]
-) -> None:
-    """Store the matrix of an affine in `raw` as a homogeneous matrix.
-
-    The private field in which the data model stores its data is emptied,
-    so that a copy made with `replace` takes the matrix from `raw`.
-    """
-    self.raw = None if value is None else _affine_to_disk(value)
-    self._data = None
-    self.__dict__.pop("_cache_data", None)
-
-
-def _set_affine_metadata(
-    self: "_NiftiAffine", value: tx.Optional[NiftiMetadata]
-) -> None:
-    """Store the metadata of an affine and drop the matrix decoded from it.
-
-    Without a matrix in `raw`, the matrix is decoded from the header of
-    the metadata, so other metadata gives another matrix.
-    """
-    self._metadata = value
-    self.__dict__.pop("_cache_data", None)
 
 
 class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
@@ -223,12 +198,7 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
         reached through `NiftiVoxelToRAS.inverse()`.
     """
 
-    @smartproperty(
-        cache=True,
-        unset=always_unset,
-        fset=_set_affine_data,
-        invalidates=_FORGET_VIEWS,
-    )
+    @lazyproperty(invalidates=_FORGET_VIEWS)
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The (3, 4) matrix of the affine, which the `matrix` view reads.
@@ -244,12 +214,20 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
             return None
         return _read_only(np.linalg.inv(header.get_best_affine())[:-1])
 
-    metadata = smartproperty(
-        "metadata", fset=_set_affine_metadata, invalidates=_FORGET_VIEWS
-    )
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _affine_to_disk(value)
+        # The field of the data model holds nothing, and `raw` holds the
+        # matrix, so the view never serves the array that the constructor
+        # stored there, and a copy made with `replace` reads `raw`.
+        self._data = None
+
+    metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds its header, or `None`.
 
-    Assigning other metadata drops the matrix decoded from the header.
+    Without a matrix in `raw`, the matrix is decoded from the header, so
+    assigning other metadata drops the matrix decoded from the previous
+    header.
     """
 
     # --- conversions --------------------------------------------------
@@ -374,12 +352,7 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
     HINTS = ("nifti",)
 
-    @smartproperty(
-        cache=True,
-        unset=always_unset,
-        fset=_set_affine_data,
-        invalidates=_FORGET_VIEWS,
-    )
+    @lazyproperty(invalidates=_FORGET_VIEWS)
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The (3, 4) matrix of the affine, which the `matrix` view reads.
@@ -395,12 +368,20 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
             return None
         return _read_only(header.get_best_affine()[:-1])
 
-    metadata = smartproperty(
-        "metadata", fset=_set_affine_metadata, invalidates=_FORGET_VIEWS
-    )
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _affine_to_disk(value)
+        # The field of the data model holds nothing, and `raw` holds the
+        # matrix, so the view never serves the array that the constructor
+        # stored there, and a copy made with `replace` reads `raw`.
+        self._data = None
+
+    metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds its header, or `None`.
 
-    Assigning other metadata drops the matrix decoded from the header.
+    Without a matrix in `raw`, the matrix is decoded from the header, so
+    assigning other metadata drops the matrix decoded from the previous
+    header.
     """
 
     # --- conversions --------------------------------------------------

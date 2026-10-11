@@ -8,7 +8,7 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
 # internals
-from brainhops._core.properties import always_unset, smartproperty
+from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
@@ -38,18 +38,6 @@ from brainhops.io.transformations.nifti._views import (
     _field_to_disk,
     _field_to_model,
 )
-
-
-def _set_field_data(
-    self: "SpmCoordinatesField", value: tx.Optional[ArrayProtocol]
-) -> None:
-    """Store the array of an SPM field in `raw`, as NIfTI stores it.
-
-    The cached data is dropped, and the chain decoded from it is dropped
-    by the invalidation of the property.
-    """
-    self.raw = None if value is None else _field_to_disk(value)
-    self.__dict__.pop("_cache_data", None)
 
 
 @register_format
@@ -113,12 +101,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
     # --- data -----------------------------------------------------------
 
-    @smartproperty(
-        cache=True,
-        unset=always_unset,
-        fset=_set_field_data,
-        invalidates=("transformations",),
-    )
+    @lazyproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The RAS coordinates as an (X, Y, Z, 3) array, decoded from `raw`.
@@ -131,7 +114,11 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             return None
         return _field_to_model(self.raw)
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _field_to_disk(value)
+
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
     Assigning other metadata drops the chain decoded from the previous

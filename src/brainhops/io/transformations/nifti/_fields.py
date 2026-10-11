@@ -15,7 +15,7 @@ from bagof.magic import KwOnly, replace
 # internals
 from brainhops._core.properties import (
     InvalidatorInAttribute,
-    always_unset,
+    lazyproperty,
     smartproperty,
 )
 from brainhops.datamodel import systems as _systems
@@ -63,30 +63,6 @@ _NDIM = 3
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
-
-
-def _set_field_data(
-    self: NiftiBasedTransformation, value: tx.Optional[ArrayProtocol]
-) -> None:
-    """Store the data of a NIfTI vector field in `raw`, as NIfTI stores it.
-
-    The cached data is dropped, and the views derived from it are dropped
-    by the invalidation of the property.
-    """
-    self.raw = None if value is None else _field_to_disk(value)
-    self.__dict__.pop("_cache_data", None)
-
-
-def _set_coordinates_data(
-    self: "NiftiRASCoordinatesField", value: tx.Optional[ArrayProtocol]
-) -> None:
-    """Store the data of a field of coordinates in `raw`.
-
-    The private field in which the data model stores its data is emptied,
-    so that a copy made with `replace` takes the data from `raw`.
-    """
-    _set_field_data(self, value)
-    self._data = None
 
 
 @register_format
@@ -206,12 +182,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
             kwargs.setdefault("data", None)
         return super().from_instance(other, *args, **kwargs)
 
-    @smartproperty(
-        cache=True,
-        unset=always_unset,
-        fset=_set_coordinates_data,
-        invalidates=_FORGET_VIEWS,
-    )
+    @lazyproperty(invalidates=_FORGET_VIEWS)
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The field as an (X, Y, Z, 3) array, which its `field` view reads.
@@ -224,6 +195,14 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         if self.raw is None:
             return None
         return _field_to_model(self.raw)
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _field_to_disk(value)
+        # The field of the data model holds nothing, and `raw` holds the
+        # data, so the view never serves the array that the constructor
+        # stored there, and a copy made with `replace` reads `raw`.
+        self._data = None
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
@@ -351,12 +330,7 @@ transformations.StationaryVelocityField].
         KwOnly(),
     ] = None
 
-    @smartproperty(
-        cache=True,
-        unset=always_unset,
-        fset=_set_field_data,
-        invalidates=("transformations",),
-    )
+    @lazyproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The stored vectors as an (X, Y, Z, 3) array, decoded from `raw`.
@@ -370,7 +344,11 @@ transformations.StationaryVelocityField].
             return None
         return _field_to_model(self.raw)
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _field_to_disk(value)
+
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
     Assigning other metadata drops the chain decoded from the previous

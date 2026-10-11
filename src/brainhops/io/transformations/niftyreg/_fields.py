@@ -9,7 +9,7 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.properties import always_unset, smartproperty
+from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
@@ -177,18 +177,6 @@ def _extension(matrix: np.ndarray) -> nb.nifti1.Nifti1Extension:
     return nb.nifti1.Nifti1Extension(_NIFTI_ECODE_IGNORE, content + bytes(8))
 
 
-def _set_field_data(
-    self: "NiftyRegSequence", value: tx.Optional[ArrayProtocol]
-) -> None:
-    """Store the array of a NiftyReg field in `raw`, as NIfTI stores it.
-
-    The cached data is dropped, and the chain decoded from it is dropped
-    by the invalidation of the property.
-    """
-    self.raw = None if value is None else _field_to_disk(value)
-    self.__dict__.pop("_cache_data", None)
-
-
 # ----------------------------------------------------------------------
 #   BASE
 # ----------------------------------------------------------------------
@@ -290,12 +278,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         if header is not None:
             _check_shape(header)
 
-    @smartproperty(
-        cache=True,
-        unset=always_unset,
-        fset=_set_field_data,
-        invalidates=("transformations",),
-    )
+    @lazyproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The stored vectors as an (X, Y, Z, 3) array, decoded from `raw`.
@@ -310,7 +293,11 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             return None
         return _field_to_model(self.raw)
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _field_to_disk(value)
+
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
     Assigning other metadata drops the chain decoded from the previous

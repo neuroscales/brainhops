@@ -2,7 +2,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Alias
 
-from brainhops._core.properties import always_unset, smartproperty
+from brainhops._core.properties import lazyproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
@@ -67,14 +67,6 @@ _SPLINE_DEGREE = {
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
-def _set_fnirt_data(
-    self: "FnirtWarpField", value: tx.Optional[ArrayProtocol]
-) -> None:
-    """Store the array of a FNIRT field in `raw`, as FSL stores it."""
-    self.raw = None if value is None else _image_to_disk(value)
-    self.__dict__.pop("_cache_data", None)
-
-
 @register_format
 class FnirtWarpField(
     FslTransformationFormat,
@@ -137,7 +129,7 @@ class FnirtWarpField(
     infer it from the data. Coefficient fields ignore it.
     """
 
-    @smartproperty(cache=True, unset=always_unset, fset=_set_fnirt_data)
+    @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The array of the file, as FSL stores it, decoded from `raw`.
 
@@ -148,6 +140,10 @@ class FnirtWarpField(
         if self.raw is None:
             return None
         return _image_to_model(self.raw)
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self.raw = None if value is None else _image_to_disk(value)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
