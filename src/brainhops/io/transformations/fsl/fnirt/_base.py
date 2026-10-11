@@ -454,7 +454,7 @@ class FnirtWarpField(
         metadata, the array or `deformation_type` change, and it is a tuple
         so that the cache cannot be edited in place.
         """
-        explicit = getattr(self, "_transformations", None)
+        explicit = self._transformations
         if explicit is not None:
             return explicit
         if _header(self) is None:
@@ -491,7 +491,7 @@ class FnirtWarpField(
         an empty tuple when it cannot be built, so that inspection never
         raises.
         """
-        explicit = getattr(self, "_transformations", None)
+        explicit = self._transformations
         if explicit is not None:
             return explicit
         if not self._resolvable():
