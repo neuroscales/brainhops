@@ -12,7 +12,11 @@ from bagof.magic import KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import (
+    drop_cache,
+    lazyproperty,
+    smartproperty,
+)
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -24,7 +28,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.datamodel.units import Unit, is_indexunit
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import register_format, store_data_argument
 from brainhops.io.base._utils_files import same_file as _same_file
 from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base._utils_files import write_file
@@ -62,8 +66,10 @@ from brainhops.io.common.nrrd._raw import (
     _no_options,
     _sniffed_raw,
 )
-from brainhops.io.common.nrrd._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 _INDEX = "index"
 
@@ -365,7 +371,7 @@ class NrrdImage(
 
     _metadata: KwOnly[NoRepr[tx.Optional[NrrdMetadata]]] = None
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
@@ -373,14 +379,11 @@ class NrrdImage(
     """
 
     def __post_init__(self, arguments: tx.Any) -> None:
-        # The constructor assigns the fields in order, so the default of
-        # `raw`, assigned after `data`, erases the array stored by `data=`.
-        # The array is therefore stored again. When both are given, `data`
-        # takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
+        # The default of `raw`, assigned after `data`, erases the array
+        # stored by `data=`, so the array is stored again.
+        store_data_argument(self, arguments)
 
-    @smartproperty(cache=True, invalidates=("data",))
+    @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The image data, decoded from `raw` on first access and cached.
 
@@ -459,6 +462,21 @@ class NrrdImage(
 
         The header is parsed and scored with [`_score_header`][], and the
         position of the stream is restored.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, whose position is restored.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream does not hold this
+            kind of NRRD file.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         raw, failure = _sniffed_raw(file)
         if raw is None:
@@ -475,7 +493,23 @@ class NrrdImage(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold this kind of NRRD file."""
+        """Return the confidence that bytes hold this kind of NRRD file.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes do not hold this
+            kind of NRRD file.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
@@ -638,6 +672,16 @@ class NrrdImage(
         keyword arguments. A lazy array that reaches the writer unchanged
         is written as the file stores it.
 
+        Parameters
+        ----------
+        **kwargs : Any
+            Arguments of [`to_raw`][].
+
+        Returns
+        -------
+        bytes
+            The content of the file.
+
         Raises
         ------
         TypeError
@@ -647,7 +691,20 @@ class NrrdImage(
         return record.to_bytes() + _payload(self, record, copied, order)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write a NRRD file with attached samples to a stream."""
+        """Write a NRRD file with attached samples to a stream.
+
+        Parameters
+        ----------
+        file : IO
+            The stream.
+        **kwargs : Any
+            Arguments of [`to_raw`][].
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
+        """
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(
@@ -668,6 +725,15 @@ class NrrdImage(
         When the lazy array of the image reads a file that is written,
         `raw` is then pointed at the new file, which holds the same
         samples, and the cached data is dropped.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the `.nrrd` or `.nhdr` file.
+        data_file : str, optional
+            The name of the data file, beside the header.
+        **kwargs : Any
+            Arguments of [`to_raw`][].
 
         Raises
         ------
@@ -1124,7 +1190,7 @@ def _reread(image: NrrdImage, filename: tx.Any) -> None:
     cached data, which may be a lazy view of the old file, is dropped.
     """
     image.raw = read_nrrd(filename, mmap=image.raw.mmap)[1]
-    image.__dict__.pop("_cache_data", None)
+    drop_cache(image, "data")
 
 
 def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:

@@ -66,12 +66,6 @@ from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
 from brainhops.io.common.mrtrix._data import _MrtrixProxy
 from brainhops.io.common.nrrd._data import _NrrdProxy
-from brainhops.io.common.nrrd._views import (
-    _image_to_disk as _nrrd_to_disk,
-)
-from brainhops.io.common.nrrd._views import (
-    _image_to_model as _nrrd_to_model,
-)
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.afni._views import (
     _image_to_disk as _afni_to_disk,
@@ -91,6 +85,12 @@ from brainhops.io.images.nrrd import (
     AttachedNrrdImage,
     DetachedNrrdImage,
     NrrdMetadata,
+)
+from brainhops.io.images.nrrd._views import (
+    _image_to_disk as _nrrd_to_disk,
+)
+from brainhops.io.images.nrrd._views import (
+    _image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
@@ -172,13 +172,13 @@ try:
 
     from brainhops.io.common.minc._data import _MincProxy
     from brainhops.io.common.minc._netcdf import read_netcdf_header
-    from brainhops.io.common.minc._views import (
+    from brainhops.io.images.minc import Minc1Image, Minc2Image, MincMetadata
+    from brainhops.io.images.minc._views import (
         _image_to_disk as _minc_to_disk,
     )
-    from brainhops.io.common.minc._views import (
+    from brainhops.io.images.minc._views import (
         _image_to_model as _minc_to_model,
     )
-    from brainhops.io.images.minc import Minc1Image, Minc2Image, MincMetadata
 
     minc_needs = netcdf_file
 except ImportError:

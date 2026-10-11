@@ -10,7 +10,7 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import drop_cache, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base._base import store_data_argument
 from brainhops.io.base.parsers import (
@@ -308,8 +308,7 @@ class NiftiBasedTransformation(
         if stale:
             # The cached views may be lazy views of the old file.
             self.raw = read_nifti(filename)[1]
-            for name in ("data", *getattr(self, "derived_fields", ())):
-                self.__dict__.pop("_cache_" + name, None)
+            drop_cache(self, "data", *getattr(self, "derived_fields", ()))
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
         """Write the transformation to a stream as an uncompressed file.

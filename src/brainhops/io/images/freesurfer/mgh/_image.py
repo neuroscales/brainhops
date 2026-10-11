@@ -13,7 +13,11 @@ from nibabel.freesurfer import mghformat as _mgh
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.properties import (
+    drop_cache,
+    lazyproperty,
+    smartproperty,
+)
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
@@ -491,7 +495,7 @@ class MghImage(
         if stale:
             # The cached data may be a lazy view of the old file.
             self.raw = read_mgh(filename)[1]
-            self.__dict__.pop("_cache_data", None)
+            drop_cache(self, "data")
 
 
 # ----------------------------------------------------------------------

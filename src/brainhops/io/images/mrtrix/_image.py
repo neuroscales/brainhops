@@ -14,7 +14,11 @@ from bagof.magic import KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.properties import (
+    drop_cache,
+    lazyproperty,
+    smartproperty,
+)
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -510,7 +514,7 @@ class MrtrixImage(
             # The lazy array reads the new file, and the cached data, which
             # may be a lazy view of the old file, is dropped.
             self.raw = read_mrtrix(filename, mmap=self.raw.mmap)[1]
-            self.__dict__.pop("_cache_data", None)
+            drop_cache(self, "data")
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write to a path or a stream.

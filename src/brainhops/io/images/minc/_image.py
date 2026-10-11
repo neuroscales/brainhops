@@ -11,7 +11,7 @@ from bagof.magic import KwOnly, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import HAS_H5PY
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -24,7 +24,7 @@ from brainhops.datamodel.units import (
     Unit,
     is_physicalunit,
 )
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import register_format, store_data_argument
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import BinaryFileReader, ParserContentError
 from brainhops.io.common.minc import MincDimension, MincMetadata, MincRaw
@@ -36,8 +36,10 @@ from brainhops.io.common.minc._utils import (
     _sniff_minc2,
     minc_version,
 )
-from brainhops.io.common.minc._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 _PHYSICAL = "physical"
 """Name of the scaled voxel space."""
@@ -101,7 +103,7 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
     _metadata: KwOnly[NoRepr[tx.Optional[MincMetadata]]] = None
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
@@ -109,14 +111,11 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     """
 
     def __post_init__(self, arguments: tx.Any) -> None:
-        # The constructor assigns the fields in order, so the default of
-        # `raw`, assigned after `data`, erases the array stored by `data=`.
-        # The array is therefore stored again. When both are given, `data`
-        # takes precedence over `raw`.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
+        # The default of `raw`, assigned after `data`, erases the array
+        # stored by `data=`, so the array is stored again.
+        store_data_argument(self, arguments)
 
-    @smartproperty(cache=True, invalidates=("data",))
+    @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The voxels in Fortran order, decoded from `raw` and cached.
 
@@ -209,6 +208,22 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
         A local MINC2 file is opened by name, so that only its header is
         read.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the file is not a MINC file
+            that this class reads.
+        **kwargs : Any
+            Options of the reader, which are passed on when the
+            content is scored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
@@ -233,6 +248,21 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         names a spatial dimension and an `image` variable, and weakly
         accepted otherwise. An HDF5 file is MINC2 when it has a
         `/minc-2.0` group.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, which may be gzipped.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream is not a MINC file
+            that this class reads.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         return _score(sniff_minc(file, cls._versions()), error)
 
@@ -243,7 +273,23 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that bytes hold a MINC file."""
+        """Return the confidence that bytes hold a MINC file.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes are not a MINC file
+            that this class reads.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
         return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
@@ -255,6 +301,19 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         The lazy array reads the voxels from the file, by name, when they
         are needed. A file that is not local, or that is gzipped, is then
         read into memory. MINC has no reader option.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Options of the reader, which are refused.
+
+        Returns
+        -------
+        MincImage
+            The image, of the class of its MINC version, whose voxels are read
+            lazily.
 
         Raises
         ------
@@ -279,6 +338,19 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         memory, where the lazy array decodes the voxels when they are
         needed. The position of the stream is restored. MINC has no reader
         option.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream, which may be gzipped.
+        **kwargs : Any
+            Options of the reader, which are refused.
+
+        Returns
+        -------
+        MincImage
+            The image, of the class of its MINC version, whose voxels are read
+            lazily.
 
         Raises
         ------
