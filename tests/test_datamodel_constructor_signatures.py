@@ -311,8 +311,9 @@ def test_every_public_transformation_is_pinned(cls: type) -> None:
 
 @pytest.mark.parametrize("cls", ALL, ids=_id)
 def test_the_endpoints_are_keyword_only(cls: type) -> None:
-    # A subclass that redeclares an endpoint with its own default must also
-    # write `KwOnly[...]`, which is not inherited.
+    # `Transformation` and `TransformationFormat` declare `kw_only=True`,
+    # which their subclasses inherit, so an endpoint that a subclass
+    # declares again with its own default stays keyword-only.
     kinds = {p.name: p.kind for p in _parameters(cls)}
     for name in KEYWORD_ONLY:
         if name in kinds:
@@ -322,6 +323,23 @@ def test_the_endpoints_are_keyword_only(cls: type) -> None:
 def test_a_positional_endpoint_is_refused() -> None:
     with pytest.raises(TypeError):
         Affine(np.eye(4), RASmm())
+
+
+def test_a_field_declared_again_inherits_kw_only() -> None:
+    # The formats rely on this: they declare `raw` and `_metadata` without
+    # `KwOnly[...]`, and some redeclare an endpoint with a new default.
+    from bagof.magic import Magic
+
+    class Base(Magic, kw_only=True):
+        _input: tx.Optional[int] = None
+
+    class Redeclared(Base):
+        _input: tx.Optional[int] = 1
+        extra: tx.Optional[int] = None
+
+    kinds = {p.name: p.kind for p in _parameters(Redeclared)}
+    assert kinds["input"] is inspect.Parameter.KEYWORD_ONLY
+    assert kinds["extra"] is inspect.Parameter.KEYWORD_ONLY
 
 
 def test_a_list_of_transformations_is_the_first_argument() -> None:

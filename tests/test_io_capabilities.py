@@ -16,6 +16,7 @@ from brainhops.io.base import (
     register_format,
     save,
 )
+from brainhops.io.base._base import is_format_registry
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -138,7 +139,7 @@ def test_sniff_selects_a_class_on_dispatchers_and_scores_on_readers(
         )
     finally:
         for base in Public.__mro__[1:]:
-            if "_REGISTRY" in base.__dict__:
+            if is_format_registry(base):
                 base._REGISTRY.discard(Public)
 
 
@@ -226,7 +227,7 @@ def public_formats() -> tx.Iterator[tx.Tuple[type, type, type]]:
     yield Export, ReadOnly, ReadWrite
     for fmt in (Export, ReadOnly, ReadWrite):
         for base in fmt.__mro__[1:]:
-            if "_REGISTRY" in base.__dict__:
+            if is_format_registry(base):
                 base._REGISTRY.discard(fmt)
 
 

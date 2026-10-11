@@ -6,6 +6,7 @@ import typing_extensions as tx
 from brainhops.io.base._base import (
     Format,
     format_registry,
+    is_format_registry,
     register_format,
 )
 from brainhops.io.base.parsers import (
@@ -54,7 +55,7 @@ def _format(root: type, name: str, **attrs: tx.Any) -> type:
 
 
 def test_format_registry_gives_a_class_its_own_registry(root: type) -> None:
-    assert "_REGISTRY" in root.__dict__
+    assert is_format_registry(root)
     assert root._REGISTRY == set()
 
 

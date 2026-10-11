@@ -362,9 +362,12 @@ raise `WriterError` when more axes are stated than the data has.
 
 ### B.7 Smaller changes
 
-`smartproperty` and `lazyproperty` take a single `unset=` option, which
-says when a stored value reads as "not set": `None` (the default),
-`"empty"`, a predicate, or a tuple of these.
+`smartproperty` takes a single `unset=` option, which says when a stored
+value reads as "not set": `None` (the default), `"empty"`, a predicate,
+or a tuple of these. `lazyproperty` takes no `unset=` option: it computes
+its value when nothing is stored and caches it. Every setter of either
+property deletes the cached value of the property before it runs, and
+the cached values named by `invalidates=` after it runs.
 
 ### Considered and rejected
 
@@ -427,7 +430,8 @@ Part B, implemented:
     and `RSAmm` are millimetre-only.
 20. `order` is declared on `CoordinateSystem`.
 21. `axes.R`, `L`, `A`, `P`, `S` and `I` are classes.
-22. `smartproperty` and `lazyproperty` take a single `unset=` option.
+22. `smartproperty` takes a single `unset=` option, and every setter of
+    a cached property deletes the cached value of that property.
 
 ## Open questions
 

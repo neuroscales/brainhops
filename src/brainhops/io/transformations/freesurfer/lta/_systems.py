@@ -87,7 +87,20 @@ class LtaVoxelSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
         raw: LtaRaw.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("i", "j", "k"),
     ) -> tx.Self:
-        """Return the voxel system of the volume described by `raw`."""
+        """Return the voxel system of the volume described by `raw`.
+
+        Parameters
+        ----------
+        raw : LtaRaw.VolumeInfo
+            The geometry block of the volume, which the system keeps.
+        names : tuple of str, default=("i", "j", "k")
+            The names of the three axes.
+
+        Returns
+        -------
+        Self
+            The system, named after the file of the volume or its role.
+        """
         return cls(
             **_name(raw),
             axes=_make_axes(names, unit=_INDEX, orientation=_get_orient(raw)),
@@ -109,7 +122,20 @@ class LtaScaledSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
         raw: LtaRaw.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
-        """Return the scaled system of the volume described by `raw`."""
+        """Return the scaled system of the volume described by `raw`.
+
+        Parameters
+        ----------
+        raw : LtaRaw.VolumeInfo
+            The geometry block of the volume, which the system keeps.
+        names : tuple of str, default=("x", "y", "z")
+            The names of the three axes.
+
+        Returns
+        -------
+        Self
+            The system, named after the file of the volume or its role.
+        """
         return cls(
             **_name(raw),
             axes=_make_axes(names, unit=_MM, orientation=_get_orient(raw)),
@@ -135,7 +161,20 @@ class LtaPhysicalSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
         raw: LtaRaw.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
-        """Return the physical system of the volume described by `raw`."""
+        """Return the physical system of the volume described by `raw`.
+
+        Parameters
+        ----------
+        raw : LtaRaw.VolumeInfo
+            The geometry block of the volume, which the system keeps.
+        names : tuple of str, default=("x", "y", "z")
+            The names of the three axes.
+
+        Returns
+        -------
+        Self
+            The system, named after the file of the volume or its role.
+        """
         return cls(
             **_name(raw),
             axes=_make_axes(names, unit=_MM, orientation=_get_orient(raw)),
