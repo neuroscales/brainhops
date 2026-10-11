@@ -33,17 +33,22 @@ transformation between other systems cannot be relabelled as that
 format. The exact converters of such a format, one for each family of
 transformations, bridge the endpoints before they build the format.
 
-Most formats have no exact converter yet (#312). One converter, from
-any transformation to any format, relabels a transformation as such a
-format
-([`relabel`][brainhops.io.transformations.base._converters.relabel]),
-and it does so only when the endpoints of the transformation are not
-known or are compatible with the coordinate systems of the format, as
-the bound classes check them. Otherwise it raises the error that
-[`unrepresentable`][] builds. An exact converter names its format and
-the family it converts, so it is more specific than the relabelling
-converter and is always chosen over it. A format that is converted to
-its own class is changed by the rules of its family, as any other
+The formats that derive their coordinate systems from what they hold,
+such as LTA, FNIRT, M3Z and the NiftyReg, ITK and OME-Zarr fields, have
+no exact converter yet (#312). Such a format registers, for each family
+that it holds, one shared converter
+([`relabelling`][brainhops.io.transformations.base._converters.relabelling])
+that relabels a transformation as the format, and it does so only when
+the endpoints of the transformation are not known or are compatible
+with the coordinate systems of the format, as the bound classes check
+them. Otherwise it raises the error that [`unrepresentable`][] builds.
+Each registration names its format and a family, as an exact converter
+does, so it is more specific than the converters of the data model. A
+format that has no coordinate systems of its own and registers no
+converter, such as a bare matrix or an ITK chain, is rebuilt by the
+converters of the data model, which keep the parameters and the
+endpoints of the transformation. A format that is converted to its own
+class is changed by the rules of its family, as any other
 transformation of that family is.
 """
 
