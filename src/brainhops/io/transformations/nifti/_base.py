@@ -12,6 +12,7 @@ from bagof.magic import KwOnly, NoRepr
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
+from brainhops.io.base._base import store_data_argument
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -82,13 +83,10 @@ class NiftiBasedTransformation(
         if post_init is not None:
             post_init(arguments)
         # The constructor stores `data=` in the private field of the data
-        # model, which the view of a concrete format does not read, and
-        # the default of `raw` comes after it. The array is therefore
-        # stored again, through the setter of `data`, which writes `raw`.
-        # When both are given, `data` takes precedence over `raw`. A
-        # format that takes no `data=` is not affected.
-        if arguments.get("data") is not None:
-            self.data = arguments["data"]
+        # model, and the default of `raw` comes after it, so the array is
+        # stored again through the setter of `data`. A format that takes
+        # no `data=` is not affected.
+        store_data_argument(self, arguments)
 
     # --- reading ------------------------------------------------------
 
