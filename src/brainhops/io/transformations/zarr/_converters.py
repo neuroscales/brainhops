@@ -1,10 +1,11 @@
 """
-Private converter of the OME-Zarr field format to itself.
+Private converters into the OME-Zarr field format.
 
 OME-Zarr stores a pyramid of fields on the axes of its store, and no
-exact conversion into it is written yet (#312). Another transformation
-is therefore relabelled as an `OmeZarrField` by the converter of
-[`brainhops.io.transformations.base`][], which keeps its parameters only
+exact conversion into it is written yet (#312). A chain is therefore
+relabelled as an `OmeZarrField` by the converter
+[`relabelling`][brainhops.io.transformations.base._converters.relabelling],
+which this module registers. It keeps the parameters of the chain only
 when its coordinate systems are not known or are compatible with those
 of the format. An `OmeZarrField` that is converted to its own class is
 changed by the rules of its family, as any other transformation of that
@@ -13,12 +14,18 @@ family is.
 
 import typing_extensions as tx
 
+from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
+from brainhops.io.transformations.base._converters import relabelling
 
 from ._xforms import OmeZarrField
+
+# OME-Zarr stores a pyramid of fields on the axes of its store, and no
+# exact conversion into it is written yet, so a chain is relabelled.
+converter(_xforms.Sequence, OmeZarrField)(relabelling)
 
 
 @converter

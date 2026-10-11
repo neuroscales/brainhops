@@ -165,5 +165,3 @@ from ._xform import (
     ElastixTomlTransform,
     ElastixTransform,
 )
-
-from . import _converters  # noqa: E402, F401  isort: skip
