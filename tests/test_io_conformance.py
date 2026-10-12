@@ -11,9 +11,11 @@ format. A small format may keep its data in the record instead, as an LTA
 file keeps its matrix, and so may a format that is parsed in one pass, as
 a FreeSurfer morph keeps its nodes. Such a format has no `raw` field.
 `raw` and the record describe the file as it was read, or as the object
-was last consolidated: assigned data and transformations are pending
-until `consolidate` encodes them into a copy of the object, which is
-also what a writer writes.
+was last consolidated: assigned data are pending until `consolidate`
+encodes them into a copy of the object, which is also what a writer
+writes. Transformations that were read or assigned are compared at
+`consolidate` with those that the record decodes to, and encoded only
+when they differ.
 
 Each format that follows the design is listed in `EXEMPLARS`, with what
 the checks need to know about it, and every other registered format is
@@ -60,6 +62,7 @@ from brainhops.io.base.parsers import (
     WriterError,
     _overrides_from_fileobj,
 )
+from brainhops.io.common._geometry import same_transformations
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
@@ -323,10 +326,14 @@ class ToyImage(
 
     The image is the reference that the formats of the package follow.
     `raw` and the record of the metadata describe the file as it was
-    read, or as it was last consolidated. Assigned data and assigned
-    transformations are pending: they are stored in the private fields
-    `_data` and `_transformations` until `consolidate` encodes them into
-    a new `raw` and a new record, or until the image is written.
+    read, or as it was last consolidated. Assigned data are pending: they
+    are stored in the private field `_data` until `consolidate` encodes
+    them into a new `raw` and a new record, or until the image is written.
+    The transformations are decoded from the record on first access and
+    stored in the private field `_transformations`, where an assigned list
+    is stored too. `consolidate` compares that list with a fresh decode of
+    the record, and encodes it only when they differ, so that a list
+    changed in place is written and an untouched one keeps the record.
     """
 
     EXTENSIONS = (".toy",)
@@ -352,23 +359,34 @@ class ToyImage(
 
     @smartproperty
     def transformations(self) -> tx.List[Transformation]:
-        # The geometry is decoded from the record each time, unless a list
-        # of transformations, which may be empty, has been assigned.
-        if self.metadata is None or self.metadata.raw is None:
-            return []
-        return [Scaling(list(reversed(self.metadata.raw.spacing)))]
+        # The geometry is decoded from the record on first access and
+        # stored, so that a change made to the list in place is kept. A
+        # list, which may be empty, can also be assigned.
+        self._transformations = _toy_to_transformations(self.metadata)
+        return self._transformations
 
     def consolidate(self, *, inplace: bool = False, **options) -> "ToyImage":
-        # Nothing is encoded for an image that has a record and nothing
-        # pending, so its copy shares `raw` and the metadata.
+        # Nothing is encoded for an image that has a record, no pending
+        # data, and transformations that are never read or the same as a
+        # fresh decode of the record, so its copy shares `raw` and the
+        # metadata.
         if (
             self._data is None
-            and self._transformations is None
+            and (
+                self._transformations is None
+                or same_transformations(
+                    self._transformations,
+                    _toy_to_transformations(self.metadata),
+                )
+            )
             and not options
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, transformations=None)
+            self.transformations = None
+            return self
         raw, record = _toy_encoded(self, **options)
         if self.metadata is None:
             metadata = ToyMetadata.from_raw(record)
@@ -436,6 +454,15 @@ class ToyImage(
         self.data = None
 
 
+def _toy_to_transformations(
+    metadata: tx.Optional[ToyMetadata],
+) -> tx.List[Transformation]:
+    """Decode the transformations of a toy image from its record."""
+    if metadata is None or metadata.raw is None:
+        return []
+    return [Scaling(list(reversed(metadata.raw.spacing)))]
+
+
 def _toy_encoded(
     image: ToyImage, note: tx.Optional[str] = None
 ) -> tx.Tuple[ArrayProtocol, ToyRaw]:
@@ -458,7 +485,13 @@ def _toy_encoded(
         base = ToyRaw()
     else:
         base = image.metadata.raw
-    spacing = _toy_spacing(image.transformation, len(raw.shape))
+    # The list of the image is read without being stored, so that a write
+    # leaves the image as it was.
+    transformations = image._transformations
+    if transformations is None:
+        transformations = _toy_to_transformations(image.metadata)
+    preferred = transformations[-1] if transformations else Identity()
+    spacing = _toy_spacing(preferred, len(raw.shape))
     record = replace(
         base,
         shape=tuple(int(n) for n in raw.shape),
@@ -1615,13 +1648,16 @@ def test_13_transformations_are_decoded_unless_assigned(
     tmp_path,  # noqa: ANN001
 ) -> None:
     loaded = cls.load(_placed(cls, exemplar, tmp_path))
-    decoded = exemplar.geometry(loaded)
-    # After a read, the image stores no transformations, so they are
-    # decoded from the record. The copies within the format store none
-    # either, so they decode the same record.
+    # After a read, the image stores no transformations until they are
+    # read, and the copies within the format store none either.
     assert loaded._transformations is None
     for copy in (replace(loaded), cls.from_instance(loaded)):
         assert copy._transformations is None
+    # Reading them decodes the record and stores the list, and the copies
+    # decode the same record.
+    decoded = exemplar.geometry(loaded)
+    assert loaded._transformations is not None
+    for copy in (replace(loaded), cls.from_instance(loaded)):
         assert np.allclose(exemplar.geometry(copy), decoded)
     # An empty list is kept, and the copies keep it.
     loaded.transformations = []
@@ -1806,6 +1842,83 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     assert np.array_equal(np.asarray(loaded.data), value)
     assert np.array_equal(np.asarray(back.data), value)
     assert np.allclose(exemplar.geometry(loaded), exemplar.geometry(back))
+
+
+def _compared(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
+    """Return the path of a file of an image whose list is compared.
+
+    Only images take `transformations` over as a list that is compared
+    at `consolidate`, and the check is skipped for any other format.
+    """
+    path = _saved(cls, exemplar, tmp_path)
+    if not isinstance(cls.load(path), ImageFormat):
+        pytest.skip("Only an image takes its transformations over as a list.")
+    return path
+
+
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_19_read_transformations_keep_the_record(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = _compared(cls, exemplar, tmp_path)
+    loaded = cls.load(path)
+    raw, metadata = loaded.raw, loaded.metadata
+    # Reading the transformations stores them, and they are the same as
+    # those of the record, so nothing is encoded.
+    assert loaded.transformations is loaded.transformations
+    assert loaded._transformations is not None
+    consolidated = loaded.consolidate()
+    assert consolidated.raw is raw
+    assert consolidated.metadata is metadata
+    assert consolidated._transformations is None
+    (tmp_path / "copy").mkdir()
+    loaded.save(tmp_path / "copy" / path.name)
+    assert _decompressed(tmp_path / "copy" / path.name) == _decompressed(path)
+    # An equal list that is assigned keeps the record too.
+    loaded.transformations = cls.load(path).transformations
+    consolidated = loaded.consolidate()
+    assert consolidated.raw is raw
+    assert consolidated.metadata is metadata
+
+
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_19_a_transformation_appended_in_place_is_written(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = _compared(cls, exemplar, tmp_path)
+    loaded = cls.load(path)
+    metadata = loaded.metadata
+    # The transformation that the exemplar assigns is appended to the
+    # stored list instead, which makes it the preferred one.
+    changed = cls.load(path)
+    exemplar.change_geometry(changed)
+    loaded.transformations.append(changed.transformation)
+    assert loaded.consolidate().metadata is not metadata
+    target = tmp_path / ("appended" + exemplar.suffix)
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.allclose(exemplar.geometry(back), exemplar.geometry(changed))
+
+
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_19_a_copy_of_a_read_image_stays_lazy(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = _compared(cls, exemplar, tmp_path)
+    loaded = cls.load(path)
+    assert loaded.transformations is not None
+    copied = replace(loaded)
+    assert "_cache_data" not in vars(loaded)
+    assert "_cache_data" not in vars(copied)
+    assert copied.raw is loaded.raw
+    assert copied.metadata is loaded.metadata
+    assert copied.consolidate().metadata is loaded.metadata
 
 
 # ----------------------------------------------------------------------
