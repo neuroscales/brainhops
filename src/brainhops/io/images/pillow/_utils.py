@@ -18,12 +18,15 @@ without tifffile) follows the same conventions.
 """
 
 __all__ = [
+    "PillowHeader",
     "PillowRaster",
     "EXTENSIONS",
     "SNIFF_FORMATS",
     "DPI_FORMATS",
     "sniff_pillow",
     "read_pillow",
+    "read_pillow_header",
+    "pillow_layout",
     "pillow_to_array",
     "pillow_dpi",
     "array_to_pillow",
@@ -38,7 +41,7 @@ from io import BytesIO
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageMode, UnidentifiedImageError
 
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
@@ -128,6 +131,44 @@ class PillowRaster(Magic, frozen=True, eq=False):
 
     n_frames: int
     """The number of frames in the file."""
+
+    dpi: tx.Optional[tx.Tuple[float, float]]
+    """The resolution recorded by the file, in dots per inch along x and y.
+
+    Placeholder resolutions, such as 72 dpi, are kept.
+    """
+
+
+class PillowHeader(Magic, frozen=True):
+    """What the header of a raster file says about its first frame.
+
+    A reader that must know the shape and the type of many files before it
+    decodes any of them, such as the reader of image sequences, reads this
+    header with [`read_pillow_header`][]. The header gives the array that
+    [`read_pillow`][] would return for the first frame, without decoding
+    the pixels.
+    """
+
+    format: tx.Optional[str]
+    """The Pillow name of the file format, such as `"PNG"`."""
+
+    mode: str
+    """The Pillow mode of the first frame as stored, such as `"P"`."""
+
+    info: tx.Dict[str, tx.Any]
+    """The `info` dictionary of Pillow, with the format-specific metadata."""
+
+    n_frames: int
+    """The number of frames in the file."""
+
+    shape: tx.Tuple[int, ...]
+    """The shape of the decoded first frame, `(rows, columns[, samples])`."""
+
+    dtype: str
+    """The NumPy type of the decoded pixels, in native byte order."""
+
+    axes: str
+    """The storage axes of the decoded first frame, `"YX"` or `"YXS"`."""
 
     dpi: tx.Optional[tx.Tuple[float, float]]
     """The resolution recorded by the file, in dots per inch along x and y.
@@ -229,18 +270,11 @@ def pillow_to_array(
         `"YX"` or `"YXS"`.
     """
     mode = im.mode
-    if mode in _PALETTE_MODES:
-        if palette:
-            alpha = mode == "PA" or "transparency" in im.info
-            im = im.convert("RGBA" if alpha else "RGB")
-        elif mode == "PA":
-            im = im.getchannel(0)
-    elif mode == "La":
-        im = im.convert("LA")
-    elif mode == "RGBa":
-        im = im.convert("RGBA")
-    elif mode.startswith("BGR;"):
-        im = im.convert("RGB")
+    target = _decoded_mode(mode, im.info, palette)
+    if mode == "PA" and target == "L":
+        im = im.getchannel(0)
+    elif target != mode:
+        im = im.convert(target)
     try:
         array = np.array(im)
     except Exception as e:
@@ -363,6 +397,110 @@ def read_pillow(
     )
 
 
+def pillow_layout(
+    mode: str, info: tx.Mapping[str, tx.Any], palette: bool = True
+) -> tx.Tuple[np.dtype, int]:
+    """Return the type and the number of samples of a decoded frame.
+
+    A frame of a given mode is decoded by [`pillow_to_array`][] into an
+    array whose type and number of samples depend only on the mode, on
+    whether the palette is looked up, and, for a palette image, on whether
+    `info` records a transparent colour. This function computes them from
+    the descriptor of the mode that Pillow publishes in `PIL.ImageMode`,
+    so that the pixels need not be decoded.
+
+    Parameters
+    ----------
+    mode : str
+        The Pillow mode of the frame as stored, such as `"P"` or `"I;16B"`.
+    info : Mapping[str, Any]
+        The `info` dictionary of the frame.
+    palette : bool, default=True
+        Whether palette colours are looked up, as in [`pillow_to_array`][].
+
+    Returns
+    -------
+    dtype : numpy.dtype
+        The type of the decoded pixels, in native byte order.
+    samples : int
+        The number of samples per pixel, where 1 means that the array has
+        no axis of samples.
+
+    Raises
+    ------
+    ParserContentError
+        If Pillow does not describe the mode.
+    """
+    target = _decoded_mode(mode, info, palette)
+    try:
+        descriptor = ImageMode.getmode(target)
+    except KeyError as e:
+        raise ParserContentError(
+            f"Pillow does not describe the mode {target!r}."
+        ) from e
+    dtype = np.dtype(descriptor.typestr)
+    if dtype.byteorder not in ("=", "|"):
+        dtype = dtype.newbyteorder("=")
+    return dtype, len(descriptor.bands)
+
+
+def read_pillow_header(file: tx.Any, palette: bool = True) -> PillowHeader:
+    """Read the header of a raster file without decoding its pixels.
+
+    Pillow reads only the header of a file when it opens it, so this
+    function is much cheaper than [`read_pillow`][]. The shape and the type
+    of the decoded first frame are computed with [`pillow_layout`][].
+
+    Parameters
+    ----------
+    file : str or PathLike or IO
+        A path or a file object, which is not closed.
+    palette : bool, default=True
+        Whether the decoded frame would look its palette colours up, as in
+        [`pillow_to_array`][].
+
+    Returns
+    -------
+    PillowHeader
+        The header. The `info` of a PNG file also holds its `sCAL` chunk.
+
+    Raises
+    ------
+    ParserContentError
+        If Pillow cannot read the file, or does not describe its mode.
+    """
+    start = None
+    if hasattr(file, "tell"):
+        try:
+            start = file.tell()
+        except Exception:
+            start = None
+    with _open(file) as im:
+        n_frames = int(getattr(im, "n_frames", 1) or 1)
+        mode = im.mode
+        info = dict(im.info)
+        width, height = im.size
+        fmt = im.format
+    if fmt == "PNG" and "sCAL" not in info:
+        scal = _png_scal(file, start)
+        if scal is not None:
+            info["sCAL"] = scal
+    dtype, samples = pillow_layout(mode, info, palette)
+    shape = (int(height), int(width))
+    if samples > 1:
+        shape += (samples,)
+    return PillowHeader(
+        format=fmt,
+        mode=mode,
+        info=info,
+        n_frames=n_frames,
+        shape=shape,
+        dtype=str(dtype),
+        axes="YXS" if samples > 1 else "YX",
+        dpi=pillow_dpi(info),
+    )
+
+
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -406,6 +544,31 @@ def _png_scal(
             return scan(f)
     except Exception:
         return None
+
+
+def _decoded_mode(
+    mode: str, info: tx.Mapping[str, tx.Any], palette: bool
+) -> str:
+    """Return the mode in which [`pillow_to_array`][] decodes a frame.
+
+    A palette image becomes RGB, or RGBA if it has transparency, when its
+    palette is looked up. Without the lookup, the indices of a `PA` image
+    are its first channel, of mode `L`. The premultiplied modes `La` and
+    `RGBa` become `LA` and `RGBA`, and the `BGR;*` modes become `RGB`.
+    Every other mode is kept.
+    """
+    if mode in _PALETTE_MODES:
+        if palette:
+            alpha = mode == "PA" or "transparency" in info
+            return "RGBA" if alpha else "RGB"
+        return "L" if mode == "PA" else mode
+    if mode == "La":
+        return "LA"
+    if mode == "RGBa":
+        return "RGBA"
+    if mode.startswith("BGR;"):
+        return "RGB"
+    return mode
 
 
 # ----------------------------------------------------------------------
