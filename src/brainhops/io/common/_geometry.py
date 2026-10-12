@@ -24,6 +24,7 @@ __all__ = [
     "plan_axes",
     "ras_conversion",
     "reduce_to_affine",
+    "same_transformations",
     "split_spatial",
 ]
 
@@ -700,3 +701,52 @@ def arrange_voxel_to_ras(
         world,
         filled_time,
     )
+
+
+def same_transformations(
+    first: tx.Sequence[Transformation], second: tx.Sequence[Transformation]
+) -> bool:
+    """Tell whether two lists hold the same maps between the same spaces.
+
+    A format that decodes the transformations of an image from its record
+    compares them with a fresh decode when it consolidates the image: the
+    record is kept as it is when they are the same, and encoded again
+    otherwise. The comparison is exact and made in the data model, not on
+    the encoded bytes. Two transformations are the same when they have
+    the same type, the same input and output spaces, and the same affine
+    matrix, NaN being equal to NaN. A transformation that has no affine
+    form is the same only as itself, so a list that holds one is encoded
+    again unless it holds the very same object.
+
+    Parameters
+    ----------
+    first : sequence of Transformation
+        The transformations of the image.
+    second : sequence of Transformation
+        The transformations that its record decodes to.
+
+    Returns
+    -------
+    bool
+        Whether the lists are the same, in the same order.
+    """
+    first, second = list(first), list(second)
+    if len(first) != len(second):
+        return False
+    return all(_same_map(a, b) for a, b in zip(first, second))
+
+
+def _same_map(first: Transformation, second: Transformation) -> bool:
+    """Tell whether two transformations are the same affine map, exactly."""
+    if first is second:
+        return True
+    if type(first) is not type(second):
+        return False
+    if first.input != second.input or first.output != second.output:
+        return False
+    try:
+        a = np.asarray(first.to(Affine).matrix, dtype=float)
+        b = np.asarray(second.to(Affine).matrix, dtype=float)
+    except ConversionError:
+        return False
+    return a.shape == b.shape and bool(np.array_equal(a, b, equal_nan=True))

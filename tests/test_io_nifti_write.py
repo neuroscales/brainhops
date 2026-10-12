@@ -107,8 +107,9 @@ def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa
     """With only an sform, the rigid part is still written as the qform.
 
     An untouched image is written with the header of its file, which has
-    no qform. Once its transformations are assigned, they are encoded
-    again, and the qform is then the rigid part of the sform.
+    no qform, and so is an image whose transformations are those of the
+    header. Once its transformations differ, they are encoded again, and
+    the qform is then the rigid part of the sform.
     """
     data = np.zeros((3, 4, 5), dtype="float32")
     img = nb.Nifti1Image(data, AFFINE)
@@ -123,6 +124,11 @@ def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa
     assert int(nb.load(str(target)).header["qform_code"]) == 0
 
     image.transformations = image.transformations
+    target = tmp_path / "same.nii"
+    image.save(target)
+    assert int(nb.load(str(target)).header["qform_code"]) == 0
+
+    image.transformations = [Affine(matrix=AFFINE[:3])]
     target = tmp_path / "out.nii"
     image.save(target)
 
@@ -1202,11 +1208,11 @@ def test_consolidated_geometry_has_the_precision_of_the_file() -> None:
     )
     assert np.array_equal(image.transformation.matrix, matrix)
     consolidated = image.consolidate()
+    assert consolidated._transformations is None
     decoded = consolidated.transformation.to(Affine).matrix
     # The sform is stored in single precision.
     assert np.allclose(decoded, matrix, atol=1e-5)
     assert np.array_equal(decoded, matrix.astype("f4"))
-    assert consolidated._transformations is None
 
 
 def test_an_assigned_array_is_pending(tmp_path) -> None:  # noqa: ANN001
