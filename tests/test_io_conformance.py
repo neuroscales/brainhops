@@ -8,7 +8,11 @@ an image, holds a metadata object and a `raw` array, which is the data as
 stored in the file and usually a lazy proxy. The `data` of a format object
 is a cached view of `raw`, decoded by a pair of pure functions of the
 format. A small format may keep its data in the record instead, as an LTA
-file keeps its matrix, and such a format has no `raw` field.
+file keeps its matrix, and such a format has no `raw` field. `raw` and
+the record describe the file as it was read, or as the object was last
+consolidated: assigned data and transformations are pending until
+`consolidate` encodes them into a copy of the object, which is also what
+a writer writes.
 
 Each format that follows the design is listed in `EXEMPLARS`, with what
 the checks need to know about it, and every other registered format is
@@ -24,6 +28,7 @@ import importlib
 import os
 import pickle
 import struct
+from copy import deepcopy
 
 import numpy as np
 import pytest
@@ -31,7 +36,7 @@ import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, Magic, NoRepr, fields, replace
 
 import brainhops.io as io
-from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
@@ -44,11 +49,7 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base._base import (
-    Format,
-    register_format,
-    store_data_argument,
-)
+from brainhops.io.base._base import Format, register_format
 from brainhops.io.base._save import _model
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -305,42 +306,43 @@ class ToyMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         return cls.from_raw(ToyRaw.from_fileobj(file, **kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
-        record = self.to_raw()
-        if record is None:
-            record = ToyRaw()
+        record = ToyRaw() if self.raw is None else self.raw
         return record.to_bytes(**kwargs)
 
 
 class ToyImage(
     ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
 ):
-    """Image stored in a toy file."""
+    """Image stored in a toy file.
+
+    The image is the reference that the formats of the package follow.
+    `raw` and the record of the metadata describe the file as it was
+    read, or as it was last consolidated. Assigned data and assigned
+    transformations are pending: they are stored in the private fields
+    `_data` and `_transformations` until `consolidate` encodes them into
+    a new `raw` and a new record, or until the image is written.
+    """
 
     EXTENSIONS = (".toy",)
 
     raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
     metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
 
-    # The image takes the `transformations` field over under a private
-    # name, where `None` means that they are decoded from the record.
+    # The image takes the `data` and `transformations` fields over under
+    # private names, where `None` means that they are decoded from `raw`
+    # and from the record.
+    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
 
-    def __post_init__(self, arguments: tx.Any) -> None:
-        # The default of `raw`, assigned after `data`, erases the array
-        # stored by `data=`, so the array is stored again.
-        store_data_argument(self, arguments)
-
-    @lazyproperty
+    @smartproperty(cache=True)
     def data(self) -> tx.Optional[np.ndarray]:
+        # An assigned array is returned as it is, and the array decoded
+        # from `raw` is cached.
         if self.raw is None:
             return None
         return _toy_to_model(self.raw)
-
-    @data.setter
-    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self.raw = None if value is None else _toy_to_disk(value)
 
     @smartproperty
     def transformations(self) -> tx.List[Transformation]:
@@ -349,6 +351,36 @@ class ToyImage(
         if self.metadata is None or self.metadata.raw is None:
             return []
         return [Scaling(list(reversed(self.metadata.raw.spacing)))]
+
+    def consolidate(self, inplace: bool = False, **options) -> "ToyImage":
+        # Nothing is encoded for an image that has a record and nothing
+        # pending, so its copy shares `raw` and the metadata.
+        if (
+            self._data is None
+            and self._transformations is None
+            and not options
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            return self if inplace else replace(self)
+        raw, record = _toy_encoded(self, **options)
+        if self.metadata is None:
+            metadata = ToyMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                data=None,
+                transformations=None,
+                raw=raw,
+                metadata=metadata,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        return self
 
     @classmethod
     def sniff_fileobj(
@@ -376,26 +408,83 @@ class ToyImage(
         proxy = _toy_proxy(file, start, metadata.raw)
         return cls(raw=proxy, metadata=metadata)
 
-    def to_bytes(self, **kwargs) -> bytes:
-        if self.raw is None:
-            raise WriterError("A toy image without data cannot be written.")
-        # The record of the metadata is the base of the header, and the
-        # geometry and the layout of the image are encoded over a copy.
-        if self.metadata is None:
-            record = ToyRaw()
-        else:
-            record = self.metadata.to_raw()
-        spacing = _toy_spacing(self.transformation, len(self.raw.shape))
-        record.shape = tuple(self.raw.shape)
-        record.dtype = np.dtype(self.raw.dtype).str
-        record.spacing = tuple(float(x) for x in reversed(spacing))
-        # A proxy is copied out without decoding, so that an untouched
-        # image is written byte for byte.
-        if isinstance(self.raw, _ToyProxy):
-            data = self.raw.read_bytes()
-        else:
-            data = np.ascontiguousarray(self.raw).tobytes()
-        return record.to_bytes() + data
+    def to_bytes(self, **options) -> bytes:
+        return _toy_written(self.consolidate(**options))
+
+    def to_filename(self, filename: tx.Any, **options) -> None:
+        filename = os.fspath(filename)
+        if not _toy_reads(self.raw, filename):
+            with open(filename, "wb") as file:
+                file.write(self.to_bytes(**options))
+            return
+        # The image is written over the file that its proxy reads, so the
+        # image is consolidated in place and then holds what the file
+        # holds (#426). The content is read before the file is replaced.
+        self.consolidate(inplace=True, **options)
+        content = _toy_written(self)
+        with open(filename, "wb") as file:
+            file.write(content)
+        if _toy_reads(self.raw, filename):
+            # The proxy describes the layout of the replaced file.
+            self.raw = _toy_proxy(filename, 0, self.metadata.raw)
+            self.data = None
+
+
+def _toy_encoded(
+    image: ToyImage, note: tx.Optional[str] = None
+) -> tx.Tuple[ArrayProtocol, ToyRaw]:
+    """Encode the pending state of a toy image into `raw` and a record.
+
+    The held record is the base of the new one, which is a new object.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data.
+    """
+    if image._data is not None:
+        raw = _toy_to_disk(image._data)
+    else:
+        raw = image.raw
+    if raw is None:
+        raise WriterError("A toy image without data cannot be encoded.")
+    if image.metadata is None or image.metadata.raw is None:
+        base = ToyRaw()
+    else:
+        base = image.metadata.raw
+    spacing = _toy_spacing(image.transformation, len(raw.shape))
+    record = replace(
+        base,
+        shape=tuple(int(n) for n in raw.shape),
+        dtype=np.dtype(raw.dtype).str,
+        spacing=tuple(float(x) for x in reversed(spacing)),
+        note=base.note if note is None else note,
+    )
+    return raw, record
+
+
+def _toy_written(image: ToyImage) -> bytes:
+    """Return the content of the file of a consolidated toy image.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data.
+    """
+    if image.raw is None:
+        raise WriterError("A toy image without data cannot be written.")
+    # A proxy is copied out without decoding, so that an untouched image
+    # is written byte for byte.
+    if isinstance(image.raw, _ToyProxy):
+        data = image.raw.read_bytes()
+    else:
+        data = np.ascontiguousarray(image.raw).tobytes()
+    return image.metadata.raw.to_bytes() + data
+
+
+def _toy_reads(raw: tx.Any, filename: str) -> bool:
+    """Tell whether `raw` is a proxy that reads a file by its name."""
+    return isinstance(raw, _ToyProxy) and raw.source == filename
 
 
 class _ForeignImage(ImageFormat, SingleScaleImage):
@@ -512,16 +601,17 @@ class Exemplar(tx.NamedTuple):
     """
 
     stored: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
-    """Function that returns the stored data of a format without `raw`.
+    """Function that returns the data of an object as its file stores it.
 
-    The data of a small format may live in the record of its metadata, as
-    the matrix of an LTA file does, and such a format has no `raw` field.
-    The checks then read the stored data with this function, which returns
-    the data as the writer would store it, and `proxies` are the types
-    that it returns just after a file is read. An object built from data
-    still has no metadata, because it holds its data in the data model
-    until it is written. The function is `None` for a format that stores
-    its data in `raw`.
+    It is `None` for a format whose `raw` holds the stored data. The data
+    of a small format may live in the record of its metadata, as the
+    matrix of an LTA file does, and such a format has no `raw` field. The
+    matrix of a NIfTI affine lives in the header of its file too, so a
+    consolidated affine has no `raw` array. The checks then read the
+    stored data with this function, which returns the data as the writer
+    would store it, and `proxies` are the types that it returns just after
+    a file is read. An object built from data has no metadata, because it
+    holds its data in the data model until it is consolidated.
     """
 
     view: str = "data"
@@ -570,6 +660,13 @@ def _nifti_geometry(image: tx.Any) -> np.ndarray:
 
 def _nifti_change_geometry(image: tx.Any) -> None:
     image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+
+
+def _header_matrix(xform: tx.Any) -> tx.Optional[np.ndarray]:
+    # A NIfTI affine stores its matrix as the best affine of its header.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.header.get_best_affine()
 
 
 def _matrix_geometry(xform: tx.Any) -> np.ndarray:
@@ -678,8 +775,8 @@ if nb is not None:
     )
     EXEMPLARS[NiftiVoxelToRAS] = _NIFTI._replace(
         # The matrix of an affine lives in the header, so a read affine has
-        # no array.
-        proxies=(type(None),),
+        # no array, and its stored matrix is decoded from the header.
+        proxies=(np.ndarray,),
         to_model=_affine_to_model,
         to_disk=_affine_to_disk,
         sample=lambda: _VOXEL_TO_RAS,
@@ -687,6 +784,7 @@ if nb is not None:
         change_geometry=_matrix_change_geometry,
         foreign=lambda data: Affine(data),
         derived=("homogeneous_matrix",),
+        stored=_header_matrix,
     )
     EXEMPLARS[NiftiRASCoordinatesField] = _NIFTI_FIELD._replace(
         geometry=_data_geometry,
@@ -730,9 +828,11 @@ if nb is not None:
 
 def _lta_stored(xform: tx.Any) -> tx.Any:
     # The matrix of an LTA file lives in the record, which is parsed in one
-    # pass, so it is a tuple of rows just after a read. `to_raw` returns
-    # that record unless the transformation holds a matrix of its own.
-    return xform.to_raw().affine.matrix
+    # pass, so it is a tuple of rows just after a read. A transformation
+    # without a record stores nothing until it is consolidated.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.affine.matrix
 
 
 def _lta_edit_record(record: tx.Any) -> tx.Any:
@@ -791,8 +891,10 @@ def _x5_set_data(xform: tx.Any, value: tx.Any) -> None:
 
 def _x5_stored(xform: tx.Any) -> tx.Any:
     # The field of an X5 file lives in the record, and a chain that was
-    # assigned is encoded into a new record.
-    return xform.to_raw().nodes[0].transform
+    # assigned is pending until it is encoded into a new record.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.nodes[0].transform
 
 
 def _x5_edit_record(record: tx.Any) -> tx.Any:
@@ -1063,7 +1165,7 @@ def _path(tmp_path: tx.Any, exemplar: Exemplar, name: str) -> tx.Any:
 
 
 def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
-    """Return the data of an object as the file stores it."""
+    """Return the data of an object as its file stores it."""
     if exemplar.stored is None:
         return obj.raw
     return exemplar.stored(obj)
@@ -1099,6 +1201,26 @@ def _cut(
         _write_header(target, metadata.to_bytes())
     else:
         exemplar.cut(source, target)
+
+
+def _raw(obj: tx.Any) -> tx.Any:
+    """Return the `raw` array of an object, or `None` for a format without
+    one."""
+    return getattr(obj, "raw", None)
+
+
+def _pending(obj: tx.Any) -> tx.Tuple[tx.Any, tx.Any]:
+    """Return the assigned data and transformations of an object.
+
+    They are pending until the object is consolidated, and `None` for a
+    field that the format does not have.
+    """
+    return getattr(obj, "_data", None), getattr(obj, "_transformations", None)
+
+
+def _same(first: tx.Sequence[tx.Any], second: tx.Sequence[tx.Any]) -> bool:
+    """Tell whether two sequences hold the same objects."""
+    return all(a is b for a, b in zip(first, second))
 
 
 def _built(cls: type, exemplar: Exemplar, data: tx.Any) -> tx.Any:
@@ -1169,7 +1291,10 @@ def _init_names(klass: type) -> tx.Set[str]:
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
     names = _init_names
-    allowed = names(_model(cls)) | {"raw", "metadata"} | exemplar.options
+    # A format whose data model is a chain may still take its stored data
+    # as `data`, which is pending until the object is consolidated.
+    allowed = names(_model(cls)) | {"raw", "metadata", "data"}
+    allowed |= exemplar.options
     assert names(cls) <= allowed
     assert not names(cls) & _PARSER_STATE
     assert names(exemplar.metadata) <= names(Metadata) | {"raw"}
@@ -1180,8 +1305,6 @@ def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
 def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # noqa: ANN001
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
     assert isinstance(_stored(exemplar, loaded), exemplar.proxies)
-    if exemplar.stored is not None:
-        assert "raw" not in _init_names(cls)
     repr(loaded)
     assert "_cache_" + exemplar.view not in vars(loaded)
     assert isinstance(loaded.metadata, exemplar.metadata)
@@ -1193,7 +1316,7 @@ def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # no
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
-def test_03_setting_data_stores_raw(
+def test_03_assigned_data_is_pending(
     cls: type,
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
@@ -1203,13 +1326,27 @@ def test_03_setting_data_stores_raw(
     for name in views:
         getattr(loaded, name)
         assert "_cache_" + name in vars(loaded)
+    before = np.asarray(_stored(exemplar, loaded))
+    metadata = loaded.metadata
     value = exemplar.sample() + 1
     _set_data(exemplar, loaded, value)
     for name in views:
         assert "_cache_" + name not in vars(loaded)
-    stored = np.asarray(_stored(exemplar, loaded))
-    assert np.array_equal(stored, exemplar.to_disk(value))
+    # The stored data and the record still describe the file, and the
+    # data is pending.
+    pending = _pending(loaded)
+    assert np.array_equal(np.asarray(_stored(exemplar, loaded)), before)
+    assert loaded.metadata is metadata
+    assert any(field is not None for field in pending)
     assert np.array_equal(np.asarray(_data(exemplar, loaded)), value)
+    # Consolidating encodes the data into the stored data of a copy.
+    consolidated = loaded.consolidate()
+    assert all(field is None for field in _pending(consolidated))
+    stored = np.asarray(_stored(exemplar, consolidated))
+    assert np.array_equal(stored, exemplar.to_disk(value))
+    assert np.array_equal(np.asarray(_data(exemplar, consolidated)), value)
+    assert np.array_equal(np.asarray(_stored(exemplar, loaded)), before)
+    assert _same(_pending(loaded), pending)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1276,7 +1413,11 @@ def test_08_an_object_built_from_data_saves(
     value = exemplar.sample()
     built = _built(cls, exemplar, value)
     assert built.metadata is None
-    stored = np.asarray(_stored(exemplar, built))
+    assert np.array_equal(np.asarray(built.data), value)
+    # Consolidating encodes the data and a new record.
+    consolidated = built.consolidate()
+    assert isinstance(consolidated.metadata, exemplar.metadata)
+    stored = np.asarray(_stored(exemplar, consolidated))
     assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "built")
     built.save(path)
@@ -1293,29 +1434,37 @@ def test_09_copies_keep_raw_and_metadata(
     # Within the format, `from_instance` copies the lazy `raw` and does not
     # read the data.
     copy = cls.from_instance(loaded)
-    assert _stored(exemplar, copy) is _stored(exemplar, loaded)
+    assert _raw(copy) is _raw(loaded)
     assert copy.metadata is loaded.metadata
     assert "_cache_" + exemplar.view not in vars(loaded)
-    # `replace` passes the data, which takes precedence over `raw`, so the
-    # copy holds a decoded array with the same content.
+    # `replace` copies the stored fields too, so the copy keeps the lazy
+    # `raw` and decodes nothing.
     copy = replace(loaded)
     assert copy.metadata is loaded.metadata
-    stored = np.asarray(_stored(exemplar, copy))
-    assert np.array_equal(stored, np.asarray(_stored(exemplar, loaded)))
+    assert _raw(copy) is _raw(loaded)
+    assert all(field is None for field in _pending(copy))
+    assert "_cache_" + exemplar.view not in vars(loaded)
+    assert "_cache_" + exemplar.view not in vars(copy)
+    # Assigned data is pending in the copy as well.
+    _set_data(exemplar, loaded, exemplar.sample() + 1)
+    copy = replace(loaded)
+    assert copy.metadata is loaded.metadata
+    assert _same(_pending(copy), _pending(loaded))
     # The record and the stored array of another format mean nothing to
-    # this format, so they are reset. A model that holds data stores it
-    # again, and a model that holds a chain keeps the chain, which the
-    # writer encodes.
+    # this format, so they are reset. A model that holds data keeps it
+    # pending, and a model that holds a chain keeps the chain, which
+    # consolidating encodes.
     if exemplar.foreign is None:
         return
     value = exemplar.sample()
     converted = cls.from_instance(exemplar.foreign(value))
     assert converted.metadata is None
     if "data" in _init_names(_model(cls)):
-        expected = exemplar.to_disk(value)
-        stored = np.asarray(_stored(exemplar, converted))
-        assert np.array_equal(stored, expected)
+        assert getattr(converted, "raw", None) is None
         assert np.array_equal(np.asarray(converted.data), value)
+        consolidated = converted.consolidate()
+        stored = np.asarray(_stored(exemplar, consolidated))
+        assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "converted")
     converted.save(path)
     assert np.array_equal(np.asarray(_data(exemplar, cls.load(path))), value)
@@ -1329,7 +1478,7 @@ def test_10_record_edits_survive_and_geometry_wins(
 ) -> None:
     source = _saved(cls, exemplar, tmp_path)
     loaded = cls.load(source)
-    edited = exemplar.edit_record(loaded.metadata.to_raw())
+    edited = exemplar.edit_record(deepcopy(loaded.metadata.raw))
     loaded.metadata = exemplar.metadata.from_raw(edited)
     exemplar.change_geometry(loaded)
     header = loaded.metadata.to_bytes()
@@ -1434,6 +1583,122 @@ def test_14_copies_between_classes_carry_the_decoded_transformations(
     )
 
 
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_15_consolidating_an_untouched_object_changes_nothing(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    loaded = cls.load(_saved(cls, exemplar, tmp_path))
+    raw, metadata = _raw(loaded), loaded.metadata
+    # The copy shares `raw` and the metadata, and nothing is decoded.
+    consolidated = loaded.consolidate()
+    assert consolidated is not loaded
+    assert _raw(consolidated) is raw
+    assert consolidated.metadata is metadata
+    assert "_cache_data" not in vars(loaded)
+    assert "_cache_data" not in vars(consolidated)
+    assert loaded.consolidate(inplace=True) is loaded
+    assert _raw(loaded) is raw
+    assert loaded.metadata is metadata
+
+
+def _changed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
+    """Load an object and give it new data and a new geometry."""
+    loaded = cls.load(_saved(cls, exemplar, tmp_path))
+    _set_data(exemplar, loaded, exemplar.sample() + 1)
+    exemplar.change_geometry(loaded)
+    return loaded
+
+
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_16_consolidate_is_idempotent(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    loaded = _changed(cls, exemplar, tmp_path)
+    raw, metadata, pending = _raw(loaded), loaded.metadata, _pending(loaded)
+    once = loaded.consolidate()
+    # Nothing is pending in the copy, whose record is new, and the copy
+    # holds what a file written from the object holds.
+    assert all(field is None for field in _pending(once))
+    assert once.metadata is not metadata
+    target = _path(tmp_path, exemplar, "written")
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.array_equal(
+        np.asarray(_data(exemplar, once)), np.asarray(_data(exemplar, back))
+    )
+    assert np.allclose(exemplar.geometry(once), exemplar.geometry(back))
+    assert np.allclose(exemplar.geometry(once), exemplar.geometry(loaded))
+    # A second consolidation changes nothing.
+    twice = once.consolidate()
+    assert _raw(twice) is _raw(once)
+    assert twice.metadata is once.metadata
+    # The object itself keeps its pending state.
+    assert _raw(loaded) is raw
+    assert loaded.metadata is metadata
+    assert _same(_pending(loaded), pending)
+    # In place, the object holds the consolidated state.
+    assert loaded.consolidate(inplace=True) is loaded
+    assert all(field is None for field in _pending(loaded))
+    raw, metadata = _raw(loaded), loaded.metadata
+    loaded.consolidate(inplace=True)
+    assert _raw(loaded) is raw
+    assert loaded.metadata is metadata
+
+
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_17_save_writes_the_consolidated_copy(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    loaded = _changed(cls, exemplar, tmp_path)
+    raw, metadata, pending = _raw(loaded), loaded.metadata, _pending(loaded)
+    (tmp_path / "saved").mkdir()
+    (tmp_path / "consolidated").mkdir()
+    name = exemplar.prefix + "copy" + exemplar.suffix
+    loaded.save(tmp_path / "saved" / name)
+    loaded.consolidate().save(tmp_path / "consolidated" / name)
+    assert _decompressed(tmp_path / "saved" / name) == _decompressed(
+        tmp_path / "consolidated" / name
+    )
+    # Saving leaves the object as it was.
+    assert _raw(loaded) is raw
+    assert loaded.metadata is metadata
+    assert _same(_pending(loaded), pending)
+
+
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_18_saving_over_its_own_file_consolidates_the_object(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    if cls not in TEST_EXEMPLARS:
+        pytest.skip("The formats write over their own files from #427.")
+    path = _saved(cls, exemplar, tmp_path)
+    # An untouched object is written over the file that it reads.
+    loaded = cls.load(path)
+    loaded.save(path)
+    assert np.array_equal(np.asarray(loaded.data), exemplar.sample())
+    assert np.array_equal(np.asarray(cls.load(path).data), exemplar.sample())
+    # A changed object is consolidated in place, and then holds what the
+    # file holds (#426).
+    value = exemplar.sample() + 1
+    loaded.data = value
+    exemplar.change_geometry(loaded)
+    loaded.save(path)
+    assert loaded._data is None
+    assert loaded._transformations is None
+    back = cls.load(path)
+    assert np.array_equal(np.asarray(loaded.data), value)
+    assert np.array_equal(np.asarray(back.data), value)
+    assert np.allclose(exemplar.geometry(loaded), exemplar.geometry(back))
+
+
 # ----------------------------------------------------------------------
 #   THE TOY FORMAT THROUGH THE GENERIC ENTRY POINTS
 # ----------------------------------------------------------------------
@@ -1453,21 +1718,58 @@ def test_the_generic_loader_reads_a_toy_image(tmp_path) -> None:  # noqa: ANN001
 
 def test_data_takes_precedence_over_raw() -> None:
     data = np.arange(6.0).reshape(2, 3)
-    image = ToyImage(data, raw=np.zeros((5, 5)))
-    assert np.array_equal(image.raw, data.T)
+    stored = np.zeros((5, 5))
+    image = ToyImage(data, raw=stored)
+    # Assigned data is read first, and `raw` is kept until the image is
+    # consolidated.
+    assert image.data is data
+    assert image.raw is stored
+    assert np.array_equal(image.consolidate().raw, data.T)
     assert np.array_equal(ToyImage(raw=data.T).data, data)
+    # Assigning `None` decodes `raw` again.
+    image.data = None
+    assert np.array_equal(image.data, stored.T)
 
 
-def test_a_record_is_copied_before_it_is_changed() -> None:
+def test_a_record_is_never_changed() -> None:
     record = ToyRaw(shape=(3, 2), spacing=(1.0, 1.0), note="kept")
     metadata = ToyMetadata.from_raw(record)
     assert metadata.raw is record
-    copy = metadata.to_raw()
-    assert copy == record and copy is not record
+    # Metadata consolidates into a copy that holds the same record, since
+    # it holds nothing but its record.
+    copy = metadata.consolidate()
+    assert copy is not metadata and copy.raw is record
+    assert metadata.consolidate(inplace=True) is metadata
     image = ToyImage(np.zeros((2, 3)), metadata=metadata)
     image.transformations = [Scaling([4.0, 5.0])]
     image.to_bytes()
+    consolidated = image.consolidate(note="changed")
+    assert consolidated.metadata.raw.note == "changed"
+    assert consolidated.metadata.raw.spacing == (5.0, 4.0)
     assert record == ToyRaw(shape=(3, 2), spacing=(1.0, 1.0), note="kept")
+    image.consolidate(inplace=True)
+    assert image.metadata is not metadata
+    assert record == ToyRaw(shape=(3, 2), spacing=(1.0, 1.0), note="kept")
+
+
+def test_writer_options_are_encoded_like_a_consolidation(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = tmp_path / "image.toy"
+    ToyImage(np.arange(6.0).reshape(2, 3)).save(path)
+    image = ToyImage.load(path)
+    image.save(tmp_path / "noted.toy", note="a longer note")
+    assert image.metadata.raw.note == ""
+    noted = ToyImage.load(tmp_path / "noted.toy")
+    assert noted.metadata.raw.note == "a longer note"
+    assert (
+        noted.to_bytes() == image.consolidate(note="a longer note").to_bytes()
+    )
+    # Over its own file, the options are consolidated in place, and the
+    # proxy reads the data after the longer header.
+    image.save(path, note="a longer note")
+    assert image.metadata.raw.note == "a longer note"
+    assert np.array_equal(image.data, np.arange(6.0).reshape(2, 3))
 
 
 def test_copied_metadata_keeps_only_a_record_of_its_own_format() -> None:
@@ -1539,7 +1841,7 @@ def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: AN
     # Other metadata gives other transformations.
     first = loaded.transformation
     assert loaded.transformation is first
-    edited = loaded.metadata.to_raw()
+    edited = loaded.metadata.raw.copy()
     edited.header.set_sform(np.diag([2.0, 2.0, 2.0, 1.0]), code=2)
     loaded.metadata = NiftiMetadata.from_raw(edited)
     assert loaded.transformation is not first

@@ -280,25 +280,26 @@ def _record_image(
     affine: tx.Optional[np.ndarray] = None,
     overrides: tx.Optional[tx.Mapping[str, tx.Any]] = None,
 ) -> _NiftiObject:
-    """Build the nibabel image that writes an array over a record.
+    """Build the nibabel image that encodes an array over a record.
 
     The header of the record is the base of the new header, so that its
     description, its intent and its extensions are kept. That header is
     changed, so the caller passes a copy of the record, such as the one
-    that `NiftiMetadata.to_raw` returns. When the geometry is given as
-    the voxel-to-world `affine`, the fields that describe the layout of
-    the array and the geometry are reset and encoded again, and the
-    caller then sets the codes and the intent that its format writes.
-    Without `affine`, the geometry was not changed, so the sform and the
-    qform of the record are kept with their codes, and only the shape
-    and the data type follow the array. Without a record, the header is
-    new, and its affine is `affine` or the identity.
+    that `NiftiRaw.copy` returns. When the geometry is given as the
+    voxel-to-world `affine`, the fields that describe the layout of the
+    array and the geometry are reset and encoded again, and the caller
+    then sets the codes and the intent that its format writes. Without
+    `affine`, the geometry was not changed, so the sform and the qform of
+    the record are kept with their codes, and only the shape and the data
+    type follow the array. Without a record, the header is new, and its
+    affine is `affine` or the identity.
 
-    A nibabel proxy is written unscaled, with the data type and the scaling
-    that the file stored, so that an untouched file is written byte for
-    byte. When the `overrides`, which the caller applies afterwards, change
-    the data type or the scaling, the proxy is read and scaled again
-    instead.
+    The array of the image is `raw` as it is given. A nibabel proxy keeps
+    the data type and the scaling that its file stored, so the header
+    records how the proxy is stored and [`_written_nifti`][] writes it
+    unscaled, byte for byte. When the `overrides`, which the caller
+    applies afterwards, change the data type or the scaling, the proxy is
+    read and scaled again when it is written instead.
     """
     header = None if record is None else record.header
     scaling = None
@@ -306,7 +307,6 @@ def _record_image(
         _STORAGE_OVERRIDES.intersection(overrides or {})
     ):
         scaling = _stored_scaling(header, raw)
-        raw = raw.get_unscaled()
     if header is None:
         affine = np.eye(4) if affine is None else affine
         image = _new_nifti(raw, affine)
@@ -320,6 +320,51 @@ def _record_image(
         image = _new_nifti(raw, affine, header)
     if scaling is not None:
         image.header["scl_slope"], image.header["scl_inter"] = scaling
+    return image
+
+
+def _stores_proxy(header: nb.Nifti1Header, proxy: ArrayProxy) -> bool:
+    """Tell whether a header stores the voxels of a proxy as they are.
+
+    The header must have the data type of the stored voxels, and a slope
+    and an intercept that mean the scaling that the proxy applies.
+    """
+    if header.get_data_dtype() != proxy.dtype:
+        return False
+    slope, inter = header.get_slope_inter()
+    slope = 1.0 if slope is None else slope
+    inter = 0.0 if inter is None else inter
+    return (slope, inter) == (proxy.slope, proxy.inter)
+
+
+def _written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> _NiftiObject:
+    """Build the nibabel image that writes an array over its record.
+
+    The record is written as it is, since it already encodes the layout
+    of the array and the geometry, and nibabel writes a copy of it, so
+    the record is not changed. nibabel chooses the offset of the voxels
+    again, as for a new header. A proxy that the header stores as it is,
+    as an encoder leaves an untouched proxy, is written unscaled, so that
+    its voxels are copied byte for byte. Any other array is written with
+    the data type of the header, and nibabel scales it when the header
+    has no scaling.
+    """
+    header = record.header
+    if isinstance(raw, ArrayProxy) and _stores_proxy(header, raw):
+        raw = raw.get_unscaled()
+    image_cls = nb.Nifti1Image
+    if isinstance(header, nb.Nifti2Header):
+        image_cls = nb.Nifti2Image
+    # nibabel copies the header, and an image built without an affine keeps
+    # the geometry of the header as it is, codes of zero included. The
+    # affine of the image is then the best affine of the header, as nibabel
+    # sets it when it reads a file. nibabel resets the scaling, which is
+    # set again, so that a proxy is written unscaled with the scaling that
+    # its file stored.
+    image = image_cls(raw, None, header)
+    image._affine = image.header.get_best_affine()
+    image.header["scl_slope"] = header["scl_slope"]
+    image.header["scl_inter"] = header["scl_inter"]
     return image
 
 
