@@ -1,56 +1,53 @@
-# dependencies
 import typing_extensions as tx
 
-# internals
 from brainhops._core.path import FileOrContentLike
 from brainhops.io.base.specs import ImageSpec
 
-from ._base import FileBasedImage
+from ._base import ImageFormat
 
 
 def load(
     filelike: tx.Union[FileOrContentLike, ImageSpec],
     brute: bool = False,
     **kwargs,
-) -> FileBasedImage:
-    """
-    Read an image from a file, whatever its format.
+) -> ImageFormat:
+    """Read an image from a file, whatever its format.
 
     Parameters
     ----------
-    filelike : FileOrContentLike | ImageSpec
-        Input file, its content, or a structured image source.
-    brute : bool
-        If no format recognizes the input, try every registered reader.
-    **kwargs
+    filelike : file, content or ImageSpec
+        File to read, its content, or a structured image source.
+    brute : bool, default=False
+        Whether to try every registered reader when no format recognizes
+        the input.
+    **kwargs : Any
         Format-specific options.
 
     Returns
     -------
-    image : FileBasedImage
+    ImageFormat
         The image that was read.
     """
-    return FileBasedImage.load(filelike, brute=brute, **kwargs)
+    return ImageFormat.load(filelike, brute=brute, **kwargs)
 
 
 def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
-    """
-    Identify which image format would read this file.
+    """Predict which image format would read a file.
 
-    The file is only inspected, never parsed, so this is a prediction of
-    what `load` would reach for rather than a guarantee.
+    The file is inspected but never parsed, so the result predicts what
+    [`load`][] would try first rather than guaranteeing success.
 
     Parameters
     ----------
-    filelike : FileOrContentLike
-        Input file, or its content.
-    **kwargs
+    filelike : file or content
+        File to inspect, or its content.
+    **kwargs : Any
         Format-specific options.
 
     Returns
     -------
-    format : type | None
-        The best match among registered image formats, or `None` if no
-        single one stands out.
+    type or None
+        The best-matching registered format, or `None` if no single
+        format stands out.
     """
-    return FileBasedImage.sniff(filelike, **kwargs)
+    return ImageFormat.sniff(filelike, **kwargs)

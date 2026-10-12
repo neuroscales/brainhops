@@ -1,30 +1,38 @@
-# dependencies
+import typing_extensions as tx
 from bagof.magic import KwOnly
 
-# internals
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
 
 
 class RASToWarpField(_xforms.Affine):
-    """Affine from reference world (RAS) space to a FNIRT warp grid.
+    """Affine transformation from the reference RAS space to a warp grid.
 
-    The warp grid is the grid on which a FNIRT warp field is stored. For a
-    dense deformation field this is the reference voxel grid. For a
-    coefficient field this is the coarse B-spline knot grid. Coordinates
-    in the warp grid are the positions at which the warp's spline basis is
+    The warp grid is the grid on which an FNIRT warp field is stored. It is
+    the voxel grid of the reference image for a dense deformation field, and
+    the coarse grid of B-spline knots for a coefficient field. Coordinates on
+    the warp grid are the positions at which the spline basis of the warp is
     evaluated.
     """
 
     _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _RAS)
+
 
 class WarpFieldToRAS(_xforms.Affine):
-    """Affine from a FNIRT warp grid to moving world (RAS) space.
+    """Affine transformation from an FNIRT warp grid to the moving RAS space.
 
-    This affine carries the warped position, expressed on the warp grid,
-    into the moving image world coordinates. It folds in the scaled-mm
-    geometry of the moving image and the initial FLIRT affine.
+    The affine carries a warped position on the warp grid into the world
+    coordinates of the moving image. It includes both the scaled-mm geometry
+    of the moving image and the initial FLIRT affine.
     """
 
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "output", _RAS)

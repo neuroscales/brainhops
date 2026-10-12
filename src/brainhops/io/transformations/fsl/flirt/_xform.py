@@ -1,70 +1,73 @@
-# dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly
+from bagof.magic import Forget, KwOnly
 
-# externals
-# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-
-# io
 from brainhops.io.base._base import register_format
-from brainhops.io.transformations.base import FileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
+from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
 
 from .._affines import _ImageGeometry
 from .._formats import FslAffineFormat
 from .._repr import stored_repr
-from ._parser import FlirtMatrixParser
+from ._parser import FlirtMatrixReader
 
 
 @register_format
 class FlirtTransform(
     FslAffineFormat,
-    FlirtMatrixParser,
+    FlirtMatrixReader,
     _xforms.Affine,
-    FileBasedTransformation,
+    TransformationFormat,
 ):
-    """A linear transformation stored in a FLIRT `.mat` file.
+    """Linear transformation stored in an FSL FLIRT `.mat` file.
 
-    A FLIRT matrix maps moving-image scaled-mm coordinates to
-    reference-image scaled-mm coordinates. This reader exposes it as an
-    affine whose `matrix` maps reference-image world (RAS) coordinates to
-    moving-image world (RAS) coordinates, which is the direction the data
-    model uses to resample a moving image onto a reference.
+    The FLIRT matrix maps the scaled millimetre coordinates of the moving image
+    to those of the reference image. This class exposes it as an affine whose
+    `matrix` maps reference world (RAS) coordinates to moving world (RAS)
+    coordinates, which is the direction the data model uses to resample a
+    moving image onto a reference.
 
-    The reference and moving images must be supplied, because the `.mat`
-    file carries no image geometry. They may be passed as keyword
-    arguments to `load` or `from_file` (`reference=`, `moving=`), or set
-    on the object before its `matrix` is read.
+    Because the file carries no image geometry, the reference and moving
+    images must be supplied. They can be passed as the `reference=` and
+    `moving=` keyword arguments when the file is loaded, or set on the object
+    before its `matrix` is read.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS = ("flirt",)
-    # The stored parameter is the raw FLIRT matrix: `matrix` is derived from
-    # it and the two image geometries, so reading it is not free and may
-    # raise. Naming the raw field here keeps `_is_unparameterized()` (and so
-    # `inverse()`) off that path.
+    # The data field is the raw FLIRT matrix. The `matrix` view is derived
+    # from the raw matrix and the two images, so computing it is costly and
+    # may raise. Naming the raw matrix here keeps the identity check of
+    # `inverse()` from computing the affine.
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ("flirt_matrix",)
 
     _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
-    # `matrix` is computed on demand from the raw FLIRT matrix and the two
-    # image geometries, so it is not a stored, constructor-taken field
-    # here. Declaring it a `ClassVar` overrides the inherited init-field
-    # from `Affine` and keeps `matrix` out of `__init__` and `fields()`,
-    # while the property below serves reads.
-    matrix: tx.ClassVar[tx.Optional[tx.Any]]
+    # The affine is computed on demand, so it is not a constructor field.
+    # Forgetting the fields `_data` and `_matrix` inherited from `Affine`
+    # keeps `data` and `matrix` out of `__init__` and `fields()`.
+    _data: Forget
+    _matrix: Forget
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _RAS)
+        _check_endpoint(self, "output", _RAS)
 
     @property
-    def matrix(self) -> tx.Optional[np.ndarray]:
-        """The reference-RAS to moving-RAS affine, as a `(3, 4)` matrix.
+    def data(self) -> tx.Optional[np.ndarray]:
+        """The affine from reference RAS to moving RAS, as a (3, 4) array.
 
-        Reading this resolves the affine from the raw FLIRT matrix and the
-        two image geometries. It raises when the raw matrix is present but
-        either image is missing, because the affine cannot be placed in
-        world coordinates without both.
+        The affine is computed from the raw matrix and both image geometries,
+        and is `None` when no raw matrix is set. It cannot be assigned.
+
+        Raises
+        ------
+        ValueError
+            If a raw matrix is set but an image is missing.
         """
         raw = self.flirt_matrix
         if raw is None:
@@ -82,8 +85,8 @@ class FlirtTransform(
         full = mov.fsl2ras @ np.linalg.inv(flirt) @ ref.ras2fsl
         return full[:-1]
 
-    @matrix.setter
-    def matrix(self, value: None) -> None:
+    @data.setter
+    def data(self, value: None) -> None:
         if value is not None:
             raise ValueError(
                 "The FLIRT affine is computed from the raw matrix and the "
@@ -91,9 +94,8 @@ class FlirtTransform(
             )
 
     def inverse(self, compute: bool = False, **kwargs) -> _xforms.Affine:
-        # The inverse of a resolved FLIRT affine is a plain affine, because
-        # the raw-matrix and image structure of a FLIRT transform does not
-        # survive inversion.
+        # The inverse is a plain affine, because the raw matrix and the two
+        # images of a FLIRT transform have no meaning after inversion.
         return _xforms.Affine(
             matrix=self.matrix, input=self.input, output=self.output
         ).inverse(compute=compute, **kwargs)

@@ -1,13 +1,8 @@
-"""
-Tests for whole-slide images read with OpenSlide.
+"""Tests for whole-slide images read through OpenSlide.
 
-OpenSlide's sample slides cannot be downloaded here, so the fixtures are
-generated with tifffile: a generic tiled pyramidal TIFF, and an
-Aperio-like SVS (a tiled TIFF whose `ImageDescription` starts with
-`Aperio`, with a thumbnail, a label and a macro image), both of which
-OpenSlide recognizes. The other vendors (Hamamatsu, MIRAX, Leica,
-Philips, Ventana, Sakura, Trestle, Zeiss, DICOM) need real files and are
-only checked for their declarations.
+Sample slides cannot be downloaded, so tifffile writes a generic tiled
+pyramidal TIFF and an Aperio-like SVS. Other vendors need real files, so
+only their declarations are checked.
 """
 
 import subprocess
@@ -66,7 +61,7 @@ VENDOR_CLASSES = [
 
 
 def _generic(path: Path) -> Path:
-    """A tiled pyramidal TIFF: three levels as successive directories."""
+    """A tiled pyramidal TIFF with three levels in successive directories."""
     with tifffile.TiffWriter(path) as w:
         image = BASE
         for k in range(3):
@@ -83,8 +78,7 @@ def _generic(path: Path) -> Path:
 
 
 def _svs(path: Path, mpp: bool = True) -> Path:
-    """An Aperio-like SVS: three tiled levels, a thumbnail, a label and a
-    macro image."""
+    """An Aperio-like SVS: three levels, a thumbnail, a label and a macro."""
     suffix = f"|MPP = {MPP}" if mpp else ""
 
     def write(
@@ -111,7 +105,7 @@ def _svs(path: Path, mpp: bool = True) -> Path:
 
 
 def _reference(path: Path, level: int) -> np.ndarray:
-    """A level as OpenSlide reads it, as an (x, y, c) RGB array."""
+    """A level as OpenSlide reads it, in (x, y, c) RGB order."""
     with openslide.OpenSlide(str(path)) as slide:
         size = slide.level_dimensions[level]
         rgba = np.asarray(slide.read_region((0, 0), level, size))
@@ -242,7 +236,6 @@ def test_pixel_size_overrides(svs: Path) -> None:
 
 @pytest.fixture
 def calls(monkeypatch: pytest.MonkeyPatch) -> tx.List[tx.Any]:
-    """Record every `read_region` call."""
     log = []
     original = openslide.OpenSlide.read_region
 
@@ -298,7 +291,7 @@ def test_dask(svs: Path, calls: tx.List[tx.Any]) -> None:
     data = load(svs, lazy=True).images[0].data
     assert type(data).__module__.startswith("dask")
     assert data.shape == (768, 512, 3)
-    assert data.chunksize == (768, 512, 3)  # tiles grouped to >= 1024
+    assert data.chunksize == (768, 512, 3)  # grouped into larger chunks
     assert calls == []
     np.testing.assert_array_equal(
         data[:100, :50].compute(), _reference(svs, 0)[:100, :50]
@@ -347,7 +340,7 @@ def test_generic_tiff_stays_with_tiff(generic: Path) -> None:
     np.testing.assert_array_equal(
         np.asarray(level.data), BASE[::4, ::4].transpose(1, 0, 2)
     )
-    # No pixel size recorded: the identity.
+    # Without a recorded pixel size, the axes have no unit.
     assert all(
         a.unit is None for a in image.images[0].transformation.output.axes
     )
@@ -362,15 +355,15 @@ def test_sniff_scores(svs: Path, generic: Path) -> None:
     assert bos.HamamatsuMultiScaleImage.sniff(svs) == Confidence.NO
     assert bos.GenericTiffMultiScaleImage.sniff(generic) == Confidence.MAYBE
     assert TiffMultiScaleImage.sniff(generic) > Confidence.MAYBE
-    # In memory, nothing is sniffed.
+    # Nothing is sniffed in memory.
     assert bos.AperioMultiScaleImage.sniff(svs.read_bytes()) == Confidence.NO
 
 
 def test_tiff_yields_vendor_pyramids(
     generic: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # tifffile reads a vendor pyramid as one series with levels; the fake
-    # SVS has a single level per series, so the flag is forced here.
+    # The fixture cannot reproduce how tifffile reads a vendor pyramid, so
+    # the whole-slide flag is forced.
     assert TiffMultiScaleImage.sniff(generic) == Confidence.CERTAIN
     monkeypatch.setattr(tiff_backend, "is_whole_slide", lambda tif: True)
     score = TiffMultiScaleImage.sniff(generic)

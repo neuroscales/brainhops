@@ -1,4 +1,4 @@
-"""Readers and writers for Zarr and OME-Zarr images."""
+"""Zarr and OME-Zarr images."""
 
 __all__ = ["ZarrImage", "OmeZarrImage", "OmeImageError"]
 

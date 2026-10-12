@@ -1,9 +1,7 @@
-"""Tests for the polymorphic dispatch of axes, orientations and systems.
+"""Tests of the polymorphic dispatch of axes, orientations and systems.
 
-Calling a polymorphic data model class builds the most specific subclass
-its arguments describe. These tests pin down, for every concrete class,
-from which classes it is reached -- the root and the intermediate bases --
-and that no call is ambiguous.
+Calling a polymorphic class builds the most specific subclass that its
+arguments describe, and no call may be ambiguous.
 """
 
 import pytest
@@ -13,14 +11,14 @@ from bagof.magic import PolymorphError
 
 from brainhops.datamodel import axes as ax
 from brainhops.datamodel import systems as cs
-from brainhops.datamodel.orientation import (
+from brainhops.datamodel.orientations import (
     AnatomicalOrientation,
     AnteriorToPosterior,
     LeftToRight,
     Orientation,
     RightToLeft,
 )
-from brainhops.datamodel.units import MilliMeter, SampleUnit, Second
+from brainhops.datamodel.units import IndexUnit, Unit
 
 # ----------------------------------------------------------------------
 #   AXES
@@ -38,7 +36,7 @@ _ORIENTED = [
     [
         ({"type": "space"}, ax.SpaceAxis),
         ({"type": "space", "unit": "mm"}, ax.SpaceAxis),
-        ({"type": "space", "unit": "sample"}, ax.SpaceAxis),
+        ({"type": "space", "unit": "index"}, ax.SpaceAxis),
         ({"type": "time"}, ax.TimeAxis),
         ({"type": "time", "unit": "s"}, ax.TimeAxis),
         ({"type": "channel"}, ax.ChannelAxis),
@@ -100,12 +98,12 @@ def test_intermediate_axes_reach_their_subclasses(
 
 
 def test_an_anatomical_orientation_makes_a_spatial_axis() -> None:
-    # An anatomical direction is a direction in space, so an axis that only
-    # names one is spatial -- also when it counts samples (a voxel axis).
-    axis = ax.Axis(orientation=LeftToRight(), unit="sample")
+    # An anatomical direction is a direction in space, so an axis that names
+    # one is spatial, even when the axis counts samples.
+    axis = ax.Axis(orientation=LeftToRight(), unit="index")
     assert type(axis) is ax.LeftToRightAxis
     assert axis.type == "space"
-    assert isinstance(axis.unit, SampleUnit)
+    assert isinstance(axis.unit, IndexUnit)
 
 
 @pytest.mark.parametrize(
@@ -115,15 +113,14 @@ def test_an_anatomical_orientation_makes_a_spatial_axis() -> None:
         lambda: ax.SpaceAxis(unit="s"),
         lambda: ax.Axis(type="time", unit="mm"),
         lambda: ax.TimeAxis(unit="mm"),
-        lambda: ax.SpaceAxis(unit=Second()),
-        lambda: ax.TimeAxis(unit=MilliMeter()),
+        lambda: ax.SpaceAxis(unit=Unit("s")),
+        lambda: ax.TimeAxis(unit=Unit("mm")),
         lambda: ax.SpaceAxis(type="time"),
         lambda: ax.ChannelAxis(type="space"),
         lambda: ax.LeftToRightAxis(orientation=RightToLeft()),
-        # An anatomical orientation makes a spatial axis.
         lambda: ax.Axis(type="time", orientation=LeftToRight()),
         lambda: ax.Axis(type="channel", orientation=LeftToRight()),
-        # A class selected on a value refuses one it is not selected on.
+        # A class selected on a value refuses any other value.
         lambda: ax.OrientedAxis(),
         lambda: ax.OrientedSpaceAxis(orientation=None),
         lambda: ax.OrientedTimeAxis(),
@@ -131,8 +128,7 @@ def test_an_anatomical_orientation_makes_a_spatial_axis() -> None:
     ],
 )
 def test_contradicting_axes_are_refused(build: tx.Callable) -> None:
-    # A unit of the wrong kind fails the conversion of the field (a
-    # `ConversionError`); a contradicting discriminant fails as a value.
+    # A unit of the wrong kind fails the conversion of the field.
     with pytest.raises((ValueError, ConversionError)):
         build()
 
@@ -140,7 +136,7 @@ def test_contradicting_axes_are_refused(build: tx.Callable) -> None:
 def test_a_singleton_orientation_cannot_be_given_another_value() -> None:
     with pytest.raises(ValueError, match="left-to-right"):
         LeftToRight(value="right-to-left")
-    # ... and the singleton was not changed on the way.
+    # The singleton is not changed in passing.
     assert LeftToRight().value == "left-to-right"
     assert ax.R().orientation.value == "left-to-right"
 
@@ -184,16 +180,15 @@ def _oriented(code: str, unit: object = None) -> list:
         (_space(2), cs.SpatialCoordinateSystem2D),
         (_space(3), cs.SpatialCoordinateSystem3D),
         (_space(4), cs.SpatialCoordinateSystem),
-        (_plain(2, "sample"), cs.ArrayCoordinateSystem2D),
-        (_plain(3, "sample"), cs.ArrayCoordinateSystem3D),
-        (_space(2, "sample"), cs.PixelCoordinateSystem),
-        (_space(3, "sample"), cs.VoxelCoordinateSystem),
+        (_plain(2, "index"), cs.ArrayCoordinateSystem2D),
+        (_plain(3, "index"), cs.ArrayCoordinateSystem3D),
+        (_space(2, "index"), cs.PixelCoordinateSystem),
+        (_space(3, "index"), cs.VoxelCoordinateSystem),
         (_oriented("RAS"), cs.RASCoordinateSystem),
         (_oriented("LPS"), cs.LPSCoordinateSystem),
         (_oriented("RSA"), cs.RSACoordinateSystem),
-        # An anatomical system says nothing about the metric: sampled axes
-        # pointing R, A, S are still an RAS system.
-        (_oriented("RAS", "sample"), cs.RASCoordinateSystem),
+        # An anatomical system ignores the metric of its axes.
+        (_oriented("RAS", "index"), cs.RASCoordinateSystem),
         (_oriented("RAS", "mm"), cs.RASmm),
         (_oriented("LPS", "mm"), cs.LPSmm),
         (_oriented("RSA", "mm"), cs.RSAmm),
@@ -212,7 +207,7 @@ def test_the_root_reaches_every_generic_system(
         (cs.CoordinateSystem2D, _space(2), cs.SpatialCoordinateSystem2D),
         (
             cs.CoordinateSystem2D,
-            _plain(2, "sample"),
+            _plain(2, "index"),
             cs.ArrayCoordinateSystem2D,
         ),
         (cs.CoordinateSystem3D, _oriented("RAS", "mm"), cs.RASmm),
@@ -220,7 +215,7 @@ def test_the_root_reaches_every_generic_system(
         (cs.SpatialCoordinateSystem, _oriented("LPS"), cs.LPSCoordinateSystem),
         (
             cs.SpatialCoordinateSystem3D,
-            _space(3, "sample"),
+            _space(3, "index"),
             cs.VoxelCoordinateSystem,
         ),
         (cs.SpatialCoordinateSystem3D, _oriented("RSA", "mm"), cs.RSAmm),
@@ -231,16 +226,15 @@ def test_the_root_reaches_every_generic_system(
         (cs.ArrayCoordinateSystem, _plain(3), cs.ArrayCoordinateSystem3D),
         (
             cs.ArrayCoordinateSystem2D,
-            _space(2, "sample"),
+            _space(2, "index"),
             cs.PixelCoordinateSystem,
         ),
         (
             cs.ArrayCoordinateSystem3D,
-            _space(3, "sample"),
+            _space(3, "index"),
             cs.VoxelCoordinateSystem,
         ),
-        # An ordered base reaches the classes of its order on the axes
-        # alone (see MEMORY ORDER below for the rest).
+        # An ordered base reaches the classes of its order from the axes alone.
         (cs.CArrayCoordinateSystem, _plain(2), cs.CArrayCoordinateSystem2D),
         (cs.CArrayCoordinateSystem, _plain(3), cs.CArrayCoordinateSystem3D),
         (cs.FArrayCoordinateSystem, _plain(2), cs.FArrayCoordinateSystem2D),
@@ -252,7 +246,7 @@ def test_the_root_reaches_every_generic_system(
         (cs.FVoxelCoordinateSystem, _oriented("RAS"), cs.FRASCoordinateSystem),
         (cs.FVoxelCoordinateSystem, _oriented("LPS"), cs.FLPSCoordinateSystem),
         (cs.FVoxelCoordinateSystem, _oriented("RSA"), cs.FRSACoordinateSystem),
-        # A C-ordered grid lists its axes z, y, x.
+        # A C-ordered grid lists its axes as z, y, x.
         (cs.CVoxelCoordinateSystem, _oriented("SAR"), cs.CRASCoordinateSystem),
         (cs.CVoxelCoordinateSystem, _oriented("SPL"), cs.CLPSCoordinateSystem),
         (cs.CVoxelCoordinateSystem, _oriented("ASR"), cs.CRSACoordinateSystem),
@@ -266,8 +260,7 @@ def test_intermediate_systems_reach_their_subclasses(
     assert type(base(axes=axes)) is expected
 
 
-# Every system class with a default, which `cs.__all__` lists among the
-# other names it exports (the axis containers).
+# Every system class that has a default.
 _DEFAULT_SYSTEMS = [
     name
     for name in cs.__all__
@@ -279,8 +272,7 @@ _DEFAULT_SYSTEMS = [
 
 @pytest.mark.parametrize("name", _DEFAULT_SYSTEMS)
 def test_every_system_builds_itself_by_default(name: str) -> None:
-    # No class is ambiguous with another when it is built from its own
-    # defaults: it is what it says it is.
+    # No class built from its own defaults is ambiguous with another.
     cls = getattr(cs, name)
     assert type(cls()) is cls
 
@@ -310,47 +302,46 @@ def test_every_system_builds_itself_by_default(name: str) -> None:
 )
 def test_array_systems_count_samples_by_default(name: str) -> None:
     system = getattr(cs, name)()
-    assert all(isinstance(axis.unit, SampleUnit) for axis in system.axes)
+    assert all(isinstance(axis.unit, IndexUnit) for axis in system.axes)
 
 
 def test_ras_dispatch_follows_the_orientations() -> None:
     assert type(cs.CoordinateSystem(axes=[ax.R(), ax.A(), ax.S()])) is (
         cs.RASCoordinateSystem
     )
-    # A system that is not RAS-oriented is not read as one, even in mm.
+    # A system that is not oriented as RAS is not read as RAS, even in mm.
     with pytest.raises(ValueError, match="RASCoordinateSystem.axes"):
         cs.RASCoordinateSystem(axes=_oriented("LPS", "mm"))
 
 
 def test_a_physical_system_needs_physical_axes() -> None:
-    # A physical system may be open, or leave a unit unspecified (the
-    # maintainer's decision on #112), and has then nothing to refuse:
-    # `PhysicalCoordinateSystem()` is `[...]`, and `[]` has no axis.
+    # A physical system may be open or leave its unit unspecified (#112), so
+    # its defaults are not refused.
     assert cs.PhysicalCoordinateSystem().axes == [...]
     assert cs.PhysicalCoordinateSystem(axes=[]).ndim == 0
-    # It never counts samples.
+    # A physical axis never counts samples.
     with pytest.raises(ValueError, match="counts samples"):
-        cs.PhysicalCoordinateSystem(axes=_oriented("RAS", "sample"))
-    # The millimetre systems are in millimetres, and nothing else.
+        cs.PhysicalCoordinateSystem(axes=_oriented("RAS", "index"))
+    # A millimeter system accepts only millimeters.
     with pytest.raises(ValueError, match="in millimetres"):
         cs.RASmm(axes=_oriented("RAS"))
     with pytest.raises(ValueError, match="counts samples"):
-        cs.RASmm(axes=_oriented("RAS", "sample"))
+        cs.RASmm(axes=_oriented("RAS", "index"))
 
 
 def test_no_system_is_ambiguous() -> None:
-    # Every combination of axis kinds the classes select on is decided.
+    # Every combination of the axis kinds that the classes select on.
     kinds = [
         _plain(2),
         _plain(3),
         _space(2),
         _space(3),
-        _plain(2, "sample"),
-        _plain(3, "sample"),
-        _space(2, "sample"),
-        _space(3, "sample"),
+        _plain(2, "index"),
+        _plain(3, "index"),
+        _space(2, "index"),
+        _space(3, "index"),
         _space(3, "mm"),
-        _oriented("RAS", "sample"),
+        _oriented("RAS", "index"),
         _oriented("SAR"),
         _oriented("RAS", "mm"),
     ]
@@ -392,8 +383,7 @@ _SHORT = {
 
 @pytest.mark.parametrize("short, cls", _SHORT.items())
 def test_short_axis_names_are_classes(short: str, cls: type) -> None:
-    # `axes.R` is the class, not a shared instance: each call builds a new
-    # axis, and `isinstance(axis, R)` reads as it should.
+    # Each short name is a class, so each call builds a new axis.
     assert getattr(ax, short) is cls
     first, second = cls(), cls(unit="mm")
     assert first is not second
@@ -410,11 +400,9 @@ def test_the_axes_module_holds_no_axis_instance() -> None:
 def test_two_default_systems_share_no_axis_with_another_class(
     name: str,
 ) -> None:
-    # A default system holds axes of its own class's making: no axis
-    # object is shared with the default of another system class.
+    # A default system holds axes of its own, shared with no other default.
     system = getattr(cs, name)()
-    # (`...`, which an open system defaults to, is no axis but the one
-    # `Ellipsis`.)
+    # The ellipsis of an open system is not an axis.
     mine = {id(axis) for axis in system.axes if axis is not ...}
     for other in _DEFAULT_SYSTEMS:
         if other == name:
@@ -424,8 +412,8 @@ def test_two_default_systems_share_no_axis_with_another_class(
 
 
 def test_the_singleton_orientations_are_frozen() -> None:
-    # Every axis that points left-to-right holds the one `LeftToRight`, so
-    # it cannot be changed through any of them.
+    # Every left-to-right axis holds the one `LeftToRight`, which no axis can
+    # change.
     with pytest.raises(AttributeError):
         ax.R().orientation.value = "right-to-left"
     with pytest.raises(AttributeError):
@@ -436,8 +424,7 @@ def test_the_singleton_orientations_are_frozen() -> None:
 # ----------------------------------------------------------------------
 #   MEMORY ORDER
 # ----------------------------------------------------------------------
-# `order` selects the C- and F-ordered classes, together with the axes.
-# Every system has the field, so every class can be called with it.
+# `order` selects the C- and F-ordered classes together with the axes.
 
 _ORDERED = [
     cs.CArrayCoordinateSystem2D,
@@ -458,10 +445,8 @@ _ORDERED = [
 
 
 def _bases(cls: type) -> tx.List[type]:
-    # Every system class above `cls`, the root included. A C-ordered
-    # anatomical grid lists its axes S, A, R, which its anatomical parent
-    # (a fixed R, A, S tuple) cannot hold, so that one parent cannot be
-    # called with them.
+    # Every system class above `cls`, the root included, except an anatomical
+    # parent that cannot hold the S, A, R axes of a C-ordered grid.
     anatomical = {
         cs.RASCoordinateSystem,
         cs.LPSCoordinateSystem,
@@ -509,8 +494,8 @@ def test_an_ordered_class_is_reached_from_every_base(cls: type) -> None:
         ),
         (cs.CoordinateSystem, _plain(2), "C", cs.CArrayCoordinateSystem2D),
         (cs.CoordinateSystem, _plain(3), "F", cs.FArrayCoordinateSystem3D),
-        # The order says the axes index an array: a spatial axis whose
-        # unit is not given is enough for a pixel or a voxel grid.
+        # An order says that the axes index an array, so unitless spatial axes
+        # suffice.
         (cs.CoordinateSystem, _space(2), "C", cs.CPixelCoordinateSystem),
         (
             cs.SpatialCoordinateSystem,
@@ -523,7 +508,7 @@ def test_an_ordered_class_is_reached_from_every_base(cls: type) -> None:
         (cs.CoordinateSystem, _oriented("RAS"), "F", cs.FRASCoordinateSystem),
         (
             cs.CoordinateSystem,
-            _oriented("SPL", "sample"),
+            _oriented("SPL", "index"),
             "C",
             cs.CLPSCoordinateSystem,
         ),
@@ -548,11 +533,11 @@ def test_the_order_and_the_axes_select_the_class(
         (cs.ArrayCoordinateSystem, _plain(3), cs.ArrayCoordinateSystem3D),
         (cs.ArrayCoordinateSystem, [ax.Axis(), ...], cs.ArrayCoordinateSystem),
         (cs.ArrayCoordinateSystem, _plain(4), cs.ArrayCoordinateSystem),
-        (cs.CoordinateSystem, _space(3, "sample"), cs.VoxelCoordinateSystem),
-        (cs.CoordinateSystem, _space(2, "sample"), cs.PixelCoordinateSystem),
+        (cs.CoordinateSystem, _space(3, "index"), cs.VoxelCoordinateSystem),
+        (cs.CoordinateSystem, _space(2, "index"), cs.PixelCoordinateSystem),
         (
             cs.CoordinateSystem,
-            _oriented("RAS", "sample"),
+            _oriented("RAS", "index"),
             cs.RASCoordinateSystem,
         ),
     ],
@@ -586,13 +571,13 @@ def test_no_ordered_call_is_ambiguous() -> None:
         _plain(4),
         _space(2),
         _space(3),
-        _space(2, "sample"),
-        _space(3, "sample"),
+        _space(2, "index"),
+        _space(3, "index"),
         _oriented("RAS"),
-        _oriented("RAS", "sample"),
-        _oriented("SAR", "sample"),
+        _oriented("RAS", "index"),
+        _oriented("SAR", "index"),
         _oriented("LPS"),
-        _oriented("RSA", "sample"),
+        _oriented("RSA", "index"),
         [ax.Axis(), ...],
     ]
     roots = [
@@ -609,5 +594,5 @@ def test_no_ordered_call_is_ambiguous() -> None:
                 except PolymorphError as e:  # pragma: no cover
                     pytest.fail(f"{root.__name__}: {e}")
                 except (TypeError, ValueError):
-                    # A class refuses axes, or an order, it cannot hold.
+                    # The class refuses axes or an order that it cannot hold.
                     pass

@@ -1,633 +1,487 @@
-# stdlib
-from functools import wraps
-from numbers import Integral, Real
-
-# dependencies
 import typing_extensions as tx
+from bagof.magic import Forget, NotKwOnly
 
-# core
-from brainhops._core.affines import inv as inverse_affine
-from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops._core.compat import PLACEHOLDER, partial
-from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol, Derived, npmatrix, npvector
-from brainhops._ext.invfield import inverse as inverse_disp
+from brainhops._core.typing import ArrayProtocol
 
-# api
-from brainhops.backends import backend, get_array_backend
-from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
-
-# internals
 from .base import Transformation
 from .concrete import (
     Affine,
-    CartesianField,
     CoordinatesField,
     DisplacementField,
-    Identity,
     Linear,
     Permutation,
     Rotation,
     Scaling,
     Translation,
+    _alias,
+    _data2coeffs,
+    _data2values,
 )
-from .modes import ModeLike, mode_admits, normalize_modes
-from .registries import INVERSE_CACHE, register_inverse
-from .simplify import SimplifyLike
-from .simplify import simplify as _simplify
-
-# typing
-if tx.TYPE_CHECKING:
-    from brainhops.datamodel.systems import CoordinateSystem
+from .nocycles import register_operator
+from .operators import Operation
+from .tangents import (
+    AffineExponential,
+    LinearExponential,
+    RotationExponential,
+    ScalingExponential,
+    StationaryVelocityField,
+)
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 
-
-def _invcache(func: tx.Callable) -> property:
-    """A parameter of an inverse, derived on demand and cached.
-
-    The materialized value is cached on the **forward** transform, under
-    `registries.INVERSE_CACHE`, rather than on the wrapper. A wrapper
-    rebuilt by `replace` or `.to(...)` keeps the same forward transform, so
-    the cache survives the rebuild and an expensive inversion is not run
-    twice.
-
-    The cache assumes the forward transform is not mutated in place after
-    it is wrapped: a forward transform whose parameter is replaced by
-    editing the same object would keep serving the stale inverse.
-    """
-    name = func.__name__
-
-    @property
-    @wraps(func)
-    def parameter(self: "Inverse") -> tx.Any:
-        forward = self.forward
-        if forward is None:
-            return None
-        cache = getattr(forward, INVERSE_CACHE, None)
-        if cache is None:
-            cache = {}
-            setattr(forward, INVERSE_CACHE, cache)
-        if name not in cache:
-            cache[name] = func(self)
-        return cache[name]
-
-    return parameter
+_TypeReference = tx.ClassVar[tx.Optional[tx.Type[Transformation]]]
+_FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
+_Array: tx.TypeAlias = ArrayProtocol
+_OptionalArray: tx.TypeAlias = tx.Optional[_Array]
 
 
-@register_inverse
-class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
-    """The inverse of a transformation, resolved on demand.
+# ----------------------------------------------------------------------
+#       BASE
+# ======================================================================
 
-    An `Inverse` holds a forward transformation and represents its
-    inverse. The inverse is not computed when the wrapper is built. It is
-    computed only when the wrapper is applied, computed, or converted to a
-    concrete type. Placed next to its forward transformation in a
-    [`Sequence`][], the two cancel to the identity, and no inverse is ever
-    computed.
 
-    Constructing `Inverse(forward=t)` represents the inverse of any
-    transformation `t`. Each family of transformations also has its own
-    typed inverse, such as [`InverseAffine`][] or
-    [`InverseDisplacementField`][], which a transformation returns from its
-    `inverse()` method. A typed inverse remains an instance of the family
-    it inverts, so composition and the kind checks treat it exactly like a
-    forward transformation of that family.
+@register_operator("inverse")
+class Inverse(Operation, tx.Generic[TRANSFORMATION], polymorphic=True):
+    """Lazy inverse of a forward transformation, resolved on demand.
+
+    The inverse is resolved when it is applied, computed or converted. When
+    the inverse is placed next to its forward transformation in a
+    [`Sequence`][brainhops.datamodel.transformations.Sequence], the two cancel
+    and no inverse is computed.
+
+    `Inverse(forward=t)` builds the inverse wrapper that belongs to the family
+    of `t`, such as [`InverseAffine`][] for an affine transformation, and
+    `t.inverse()` returns the same wrapper. Such a typed inverse is an instance
+    of the family it inverts, so composition and the kind checks treat it like
+    any other member of that family. Unlike the other kinds of
+    [`Operation`][], an inverse reverses the direction of its forward
+    transformation, so its input and output systems are those of the forward,
+    swapped.
     """
 
     # --- class attributes ---------------------------------------------
 
-    # The forward transformation type a typed inverse inverts. It is unset
-    # on the generic `Inverse` front-door and set on each typed subclass,
-    # which is what the materialization below rebuilds. Which wrapper a
-    # given transform gets is decided polymorphically, from the `on={...}`
-    # predicates below, so nothing is registered anywhere.
-    _inverseof: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
+    _operator: tx.ClassVar[str] = "inverse"
+    _reverses: tx.ClassVar[bool] = True
+
+    # The class of the family that a typed inverse inverts, which is the type
+    # that evaluating the inverse produces. It is unset on the generic
+    # `Inverse` class. The wrapper class is chosen by the `on={...}`
+    # predicates of the subclasses, so nothing needs to be registered.
+    _resultof: _TypeReference = None
 
     # --- attributes ---------------------------------------------------
 
-    forward: tx.Annotated[
-        tx.Optional[Transformation],  # TRANSFORMATION
-        tx.Doc("The forward transformation whose inverse this represents."),
-    ] = None
-
-    # --- properties ---------------------------------------------------
-
-    # An inverse maps the forward's output back to its input, so it knows
-    # its own endpoints without being told: they are the forward's,
-    # swapped. An endpoint declared on the wrapper still wins -- that is
-    # what `smartproperty` does -- so an explicit override is honoured.
-
-    @smartproperty
-    def input(self) -> tx.Optional["CoordinateSystem"]:
-        return self.forward.output if self.forward is not None else None
-
-    @smartproperty
-    def output(self) -> tx.Optional["CoordinateSystem"]:
-        return self.forward.input if self.forward is not None else None
+    forward: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
+    """The transformation whose inverse this is."""
 
     # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> Transformation:
-        """Return the forward transformation, with the endpoints restored.
+        """Return the forward transformation, with its endpoints restored.
 
-        The inverse of an inverse is the original forward transformation.
-        An endpoint edit made on the wrapper is carried onto it. With
-        `compute`, the other keywords are passed on to `compute()`.
+        The inverse of an inverse is the forward. Endpoints edited on the
+        wrapper are carried onto the forward; when there are none, the forward
+        itself is returned. With `compute`, the other keyword arguments are
+        passed to `compute()`.
         """
-        forward = self.forward
-        if forward is None:
-            return Identity(input=self.input, output=self.output)
-        new_input = self.output or forward.input
-        new_output = self.input or forward.output
-        if new_input is not forward.input or new_output is not forward.output:
-            forward = forward.to(input=new_input, output=new_output)
-        if compute:
-            forward = forward.compute(**kwargs)
-        return forward
+        return self._undo(compute, **kwargs)
 
-    def compute(
-        self,
-        mode: ModeLike = True,
-        *,
-        simplify: SimplifyLike = "analytic",
-        factor: bool = False,
-    ) -> Transformation:
-        """Resolve the inverse, if the mode admits it.
 
-        Materializing an inverse is the one thing this wrapper exists to
-        put off, so it happens here and nowhere else: never in a
-        simplifier, which may only rewrite for free. The compose `mode` is
-        the gate -- a mode that does not admit this wrapper leaves it lazy,
-        so an adjacent pair can still cancel in a sequence -- and
-        `simplify` then still downcasts what it wraps. `factor` is forwarded
-        to the materialized result.
-        """
-        modes = normalize_modes(mode)
-        if mode_admits(self, modes):
-            return self._materialize().compute(
-                mode, simplify=simplify, factor=factor
-            )
-        return _simplify(self, policy=simplify)
+# ----------------------------------------------------------------------
+#       MIXINS
+# ======================================================================
 
-    def to(
-        self,
-        cls: tx.Optional[tx.Type[Transformation]] = None,
-        *,
-        lossy: bool = False,
-        **kwargs,
-    ) -> Transformation:
-        if cls is None or cls is type(self):
-            # An endpoint or metadata edit keeps the inverse unresolved,
-            # reusing the forward transform and its cached materialization.
-            return super().to(cls, **kwargs)
-        # A conversion to another type, including the forward type,
-        # materializes the concrete inverse first, then converts onward.
-        return self._materialize().to(cls, lossy=lossy, **kwargs)
 
-    # --- helpers ------------------------------------------------------
+# A typed inverse derives its `data` from the forward and reads its views off
+# that data. The convenience keywords of the family, such as `translation=`
+# and `matrix=`, are deactivated, since a wrapper is built from its forward
+# only.
 
-    def _materialize(self) -> Transformation:
-        # The concrete inverse. A typed inverse builds a plain instance of
-        # the forward type holding the inverted parameter, with the
-        # wrapper's (swapped) endpoints -- or, when the forward type is
-        # half of a pair that names the direction it maps, an instance of
-        # the other half. The generic front-door defers to the forward
-        # transform's own inverse, which resolves to the typed inverse of
-        # that family.
-        forward = self.forward
-        inverseof = type(self)._inverseof
-        if inverseof is None:
-            # Not a concrete inverse, but no forward to resolve to identity.
-            if forward is None:
-                return Identity(input=self.input, output=self.output)
 
-            # Compute an explicit inverse, and edit its spaces.
-            resolved = forward.inverse()
-            edits = {}
-            if self.input:
-                edits["input"] = self.input
-            if self.output:
-                edits["output"] = self.output
-            return resolved.to(**edits)
+class ConcreteInverseMixin:
+    """Mixin that reads the parameter of a typed inverse from its forward.
 
-        if forward is None:
-            # No forward, but we know the concrete inverse type
-            return inverseof(input=self.input, output=self.output)
-        changes = {
-            "input": self.input,
-            "output": self.output,
-            **{name: getattr(self, name) for name in inverseof.data_fields},
-        }
-        # This is the path that matters for a type that names a direction:
-        # the wrapper wears no direction of its own, but what it materializes
-        # into does, and rebuilding the forward type around an inverted
-        # parameter would state the direction backwards. The other half of
-        # the pair states it right.
-        reverse = getattr(type(forward), "_reverse_type", None)
-        if reverse is not None:
-            return reverse.from_instance(forward, **changes)
-        return forward.to(**changes)
+    Each family computes the parameter of its inverse in the `_inverse`
+    property of the forward transformation, and caches it there in the
+    encoding of the forward. The wrapper holds no array of its own and reports
+    the cached array as its `data`. The forward clears the cache when its
+    `data` or a flag is assigned, so an edited forward never serves a stale
+    inverse.
+    """
+
+    data = _alias("data", "forward._inverse", fset=False)
+
+
+class FieldInverseMixin(ConcreteInverseMixin):
+    """Mixin that decodes the views of an inverse field with the forward flags.
+
+    The views are not cached, because a cache would live on the wrapper, which
+    is not told when the forward is edited.
+    """
+
+    @property
+    def values(self) -> _OptionalArray:
+        """Inverse field as values."""
+        return _data2values(self.data, self.store, self.degree, self.bound)
+
+    @property
+    def coefficients(self) -> _OptionalArray:
+        """Inverse field as spline coefficients."""
+        return _data2coeffs(self.data, self.store, self.degree, self.bound)
+
+
+# ----------------------------------------------------------------------
+#       CONCRETE INVERSES
+# ======================================================================
 
 
 class InverseTranslation(
+    ConcreteInverseMixin,
     Inverse[Translation],
     Translation,
     on={"forward": partial(isinstance, PLACEHOLDER, Translation)},
 ):
-    """The inverse of a [`Translation`][], resolved on demand."""
+    """Inverse of a [`Translation`][], resolved on demand."""
 
-    # --- class attributes ---------------------------------------------
+    _resultof: _TypeReference = Translation
 
-    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Translation
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("translation",)
+    derived_fields: _FieldNames = "data", "translation"
 
-    # --- attributes ---------------------------------------------------
-
-    forward: tx.Annotated[
-        tx.Optional[Translation],
-        tx.Doc("The translation whose inverse this represents."),
-    ] = None
-
-    # --- derived attributes -------------------------------------------
-    # Declare derived fields as classvar to exclude them from `__init__`
-
-    translation: Derived[tx.Optional[npvector[Real]]]
-
-    @_invcache
-    def translation(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.translation is None:
-            return None
-        return -self.forward.translation
+    _data: Forget
+    _translation: Forget
 
 
 class InverseScaling(
-    Inverse,
-    Scaling,  # [Scaling]
+    ConcreteInverseMixin,
+    Inverse[Scaling],
+    Scaling,
     on={"forward": partial(isinstance, PLACEHOLDER, Scaling)},
 ):
-    """The inverse of a [`Scaling`][], resolved on demand."""
+    """Inverse of a [`Scaling`][], resolved on demand."""
 
-    # --- class attributes ---------------------------------------------
+    _resultof: _TypeReference = Scaling
 
-    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Scaling
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("scale",)
+    derived_fields: _FieldNames = "data", "scale"
 
-    # --- attributes ---------------------------------------------------
+    _data: Forget
+    _scale: Forget
+    _log: Forget
 
-    forward: tx.Annotated[
-        tx.Optional[Scaling],
-        tx.Doc("The scaling whose inverse this represents."),
-    ] = None
-
-    # --- derived attributes -------------------------------------------
-    # Declare derived fields as classvar to exclude them from `__init__`
-
-    scale: Derived[tx.Optional[npvector[Real]]]
-
-    @_invcache
-    def scale(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.scale is None:
-            return None
-        return 1.0 / self.forward.scale
+    log = _alias("log", "forward.log", fset=False)
 
 
 class InversePermutation(
-    Inverse,
-    Permutation,  # [Permutation]
+    ConcreteInverseMixin,
+    Inverse[Permutation],
+    Permutation,
     on={"forward": partial(isinstance, PLACEHOLDER, Permutation)},
 ):
-    """The inverse of a [`Permutation`][], resolved on demand."""
+    """Inverse of a [`Permutation`][], resolved on demand."""
 
-    # --- class attributes ---------------------------------------------
+    _resultof: _TypeReference = Permutation
 
-    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Permutation
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("permutation",)
+    derived_fields: _FieldNames = "data", "permutation"
 
-    # --- attributes ---------------------------------------------------
-
-    forward: tx.Annotated[
-        tx.Optional[Permutation],
-        tx.Doc("The permutation whose inverse this represents."),
-    ] = None
-
-    # --- derived attributes -------------------------------------------
-    # Declare derived fields as classvar to exclude them from `__init__`
-
-    permutation: Derived[tx.Optional[npvector[Integral]]]
-
-    @_invcache
-    def permutation(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.permutation is None:
-            return None
-        backend = get_array_backend(self.forward.permutation)
-        forward = self.forward.permutation
-        inverse_permutation = backend.zeros(forward.shape, dtype=forward.dtype)
-        for i, p in enumerate(forward):
-            inverse_permutation[p] = i
-        return inverse_permutation
+    _data: Forget
+    _permutation: Forget
 
 
 class InverseRotation(
+    ConcreteInverseMixin,
     Inverse[Rotation],
     Rotation,
     on={"forward": partial(isinstance, PLACEHOLDER, Rotation)},
-    # A `Rotation` is a `Linear`, so `Inverse(forward=rotation)` matches
-    # `InverseLinear` just as well. The more specific wrapper wins: it
-    # inverts by transposing rather than by solving a linear system.
+    # A rotation is a linear transformation, so `InverseLinear` matches it too.
+    # This wrapper wins and inverts by transposing rather than by solving a
+    # linear system.
     priority=1,
 ):
-    """The inverse of a [`Rotation`][], resolved on demand."""
+    """Inverse of a [`Rotation`][], resolved on demand."""
 
-    # --- class attributes ---------------------------------------------
+    _resultof: _TypeReference = Rotation
 
-    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Rotation
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+    derived_fields: _FieldNames = "data", "matrix"
 
-    # --- attributes ---------------------------------------------------
+    _data: Forget
+    _matrix: Forget
+    _log: Forget
 
-    forward: tx.Annotated[
-        tx.Optional[Rotation],
-        tx.Doc("The rotation whose inverse this represents."),
-    ] = None
-
-    # --- derived attributes -------------------------------------------
-    # Declare derived fields as classvar to exclude them from `__init__`
-
-    matrix: Derived[tx.Optional[npmatrix[Real]]]
-
-    @_invcache
-    def matrix(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.matrix is None:
-            return None
-        # A rotation is orthogonal, so its inverse is its transpose.
-        return self.forward.matrix.T
+    log = _alias("log", "forward.log", fset=False)
 
 
 class InverseLinear(
+    ConcreteInverseMixin,
     Inverse[Linear],
     Linear,
     on={"forward": partial(isinstance, PLACEHOLDER, Linear)},
 ):
-    """The inverse of a [`Linear`][] transformation, resolved on demand."""
+    """Inverse of a [`Linear`][] transformation, resolved on demand."""
 
-    # --- class attributes ---------------------------------------------
+    _resultof: _TypeReference = Linear
 
-    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Linear
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+    derived_fields: _FieldNames = "data", "matrix"
 
-    # --- attributes ---------------------------------------------------
+    _data: Forget
+    _matrix: Forget
+    _log: Forget
 
-    forward: tx.Annotated[
-        tx.Optional[Linear],
-        tx.Doc("The linear transformation whose inverse this represents."),
-    ] = None
-
-    # --- derived attributes -------------------------------------------
-    # Declare derived fields as classvar to exclude them from `__init__`
-
-    matrix: Derived[tx.Optional[npmatrix[Real]]]
-
-    @_invcache
-    def matrix(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.matrix is None:
-            return None
-        ab = get_array_backend(self.forward.matrix)
-        return ab.linalg.inv(self.forward.matrix)
+    log = _alias("log", "forward.log", fset=False)
 
 
 class InverseAffine(
+    ConcreteInverseMixin,
     Inverse[Affine],
     Affine,
     on={"forward": partial(isinstance, PLACEHOLDER, Affine)},
 ):
-    """The inverse of an [`Affine`][] transformation, resolved on demand."""
+    """Inverse of an [`Affine`][] transformation, resolved on demand."""
 
-    # --- class attributes ---------------------------------------------
+    _resultof: _TypeReference = Affine
 
-    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Affine
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+    derived_fields: _FieldNames = (
+        "data",
+        "matrix",
+        "homogeneous_matrix",
+    )
 
-    # --- attributes ---------------------------------------------------
-    forward: tx.Annotated[
-        tx.Optional[Affine],
-        tx.Doc("The affine transformation whose inverse this represents."),
-    ] = None
+    _data: Forget
+    _matrix: Forget
+    _log: Forget
 
-    # --- derived attributes -------------------------------------------
-    # Declare derived fields as classvar to exclude them from `__init__`
-
-    matrix: Derived[tx.Optional[npmatrix[Real]]]
-
-    @_invcache
-    def matrix(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.matrix is None:
-            return None
-        return inverse_affine(self.forward.matrix)
+    log = _alias("log", "forward.log", fset=False)
 
 
 class InverseDisplacementField(
+    FieldInverseMixin,
     Inverse[DisplacementField],
     DisplacementField,
     on={"forward": partial(isinstance, PLACEHOLDER, DisplacementField)},
 ):
-    """The inverse of a [`DisplacementField`][], resolved on demand.
+    """Inverse of a [`DisplacementField`][], resolved on demand.
 
-    The wrapper reports the `degree`, `bound` and `coeff` of the forward
-    field, and the inverse field it materializes preserves them. A field
-    of spline coefficients is inverted by re-fitting, and its inverse is
-    itself a field of coefficients.
+    The inverse reports the `degree`, `bound` and `store` of its forward. Its
+    `data` is the inverse field in the same encoding. To build it, the values
+    of the forward are inverted, and then refitted to coefficients if the
+    forward holds coefficients. The `field` view holds the inverse as values
+    in either case.
+
+    !!! note "Accuracy"
+        The inversion sees only the values at the grid nodes and inverts the
+        piecewise-affine map that they define (see
+        [`inverse`][brainhops._ext.invfield.inverse]), whatever the degree of
+        the forward. The result is then interpolated at that degree. The
+        inversion is exact only for the piecewise-affine map, so a cubic field
+        is inverted about as accurately as a linear one, and the error grows
+        near the border. For smooth fields with an amplitude of a few voxels,
+        `fwd(inv(x)) - x` is typically a few hundredths of a voxel in the
+        interior and a few tenths near the border.
     """
 
     # --- class attributes ---------------------------------------------
 
-    _inverseof: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    metadata_fields: tx.ClassVar[tx.Tuple[str]] = ()
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = (
-        "field",
-        "degree",
-        "bound",
-        "coeff",
-    )
+    _resultof: _TypeReference = DisplacementField
+
+    derived_fields: _FieldNames = ("data", "field", "values", "coefficients")
 
     # --- attributes ---------------------------------------------------
 
-    forward: tx.Annotated[
-        tx.Optional[DisplacementField],
-        tx.Doc("The displacement field whose inverse this represents."),
-    ] = None
+    forward: ... = None
+    """The displacement field whose inverse this is."""
 
     # --- derived attributes -------------------------------------------
-    # Declare derived fields as classvar to exclude them from `__init__`
+    # The fields below derive from the forward, so they are kept out of
+    # `__init__`.
 
-    field: Derived[tx.Optional[ArrayProtocol]]
-    degree: Derived[InterpolationOrder]
-    bound: Derived[tx.Union[BoundaryCondition, float]]
-    coeff: Derived[bool]
+    _data: Forget
+    _field: Forget
+    _values: Forget
+    _coefficients: Forget
+    _degree: Forget
+    _bound: Forget
+    _store: Forget
+    _log: Forget
 
-    @_invcache
-    def field(self) -> tx.Optional[ArrayProtocol]:
-        forward = self.forward
-        return _inv_disp(
-            forward.field,
-            coeff=forward.coeff,
-            degree=forward.degree,
-            bound=forward.bound,
-        )
-
-    @property
-    def degree(self) -> InterpolationOrder:
-        return self.forward.degree
-
-    @property
-    def bound(self) -> tx.Union[BoundaryCondition, float]:
-        return self.forward.bound
-
-    @property
-    def coeff(self) -> bool:
-        return self.forward.coeff
+    degree = _alias("degree", "forward.degree", fset=False)
+    bound = _alias("bound", "forward.bound", fset=False)
+    store = _alias("store", "forward.store", fset=False)
+    log = _alias("log", "forward.log", fset=False)
 
 
 class InverseCoordinatesField(
+    FieldInverseMixin,
     Inverse[CoordinatesField],
     CoordinatesField,
     on={"forward": partial(isinstance, PLACEHOLDER, CoordinatesField)},
 ):
-    """The inverse of a [`CoordinatesField`][], resolved on demand.
+    """Inverse of a [`CoordinatesField`][], resolved on demand.
 
-    The wrapper reports the `degree`, `bound` and `coeff` of the forward
-    field, and the inverse field it materializes preserves them. A field of
-    spline coefficients is inverted by re-fitting, and its inverse is
-    itself a field of coefficients.
+    The inverse is encoded like an [`InverseDisplacementField`][]. When the
+    inverse is placed next to the field it inverts in a
+    [`Sequence`][brainhops.datamodel.transformations.Sequence], the two cancel
+    without any computation. Otherwise, evaluating the inverse runs a mesh
+    inversion, since a coordinates field has no closed-form inverse.
 
-    Placed next to the field it inverts in a [`Sequence`][], the two cancel
-    and nothing is computed. That is the cheap path, and the one worth
-    reaching for: a coordinate field has no closed-form inverse, so
-    materializing this wrapper runs a mesh inversion.
+    !!! note "Accuracy"
+        As for an [`InverseDisplacementField`][], only the piecewise-affine map
+        defined by the values at the grid nodes is inverted, so the result is
+        approximate between nodes and worse near the border.
 
     !!! warning "The coordinates must live on the grid they are sampled on"
-        A coordinate field is inverted by reading it as the identity grid
-        plus a displacement, inverting that displacement, and adding the
-        grid back. The mesh inversion therefore assumes the coordinates are
-        expressed in the units of the grid they are sampled on -- voxels,
-        in practice. A field whose coordinates are in world units is
-        inverted as though they were voxel coordinates, and the result,
-        while well defined, falls outside the output lattice and is of
-        little use. Compose the world-to-voxel affine into the field first.
+        A coordinates field is inverted as an identity grid plus a
+        displacement, which assumes coordinates in voxels of the grid.
+        Coordinates in world units give a result that is well defined but
+        useless, because it does not lie on the output grid. A world-to-voxel
+        affine transformation should therefore be composed into the field
+        first.
     """
 
-    # --- class attributes ---------------------------------------------
+    _resultof: _TypeReference = CoordinatesField
 
-    _inverseof: tx.ClassVar[tx.Type[Transformation]] = CoordinatesField
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    metadata_fields: tx.ClassVar[tx.Tuple[str]] = ()
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = (
-        "field",
-        "degree",
-        "bound",
-        "coeff",
+    derived_fields: _FieldNames = "data", "field", "values", "coefficients"
+
+    _data: Forget
+    _field: Forget
+    _values: Forget
+    _coefficients: Forget
+    _degree: Forget
+    _bound: Forget
+    _store: Forget
+
+    degree = _alias("degree", "forward.degree", fset=False)
+    bound = _alias("bound", "forward.bound", fset=False)
+    store = _alias("store", "forward.store", fset=False)
+
+
+# ----------------------------------------------------------------------
+#       INVERSE TANGENTS
+# ======================================================================
+
+
+class InverseAffineExponential(
+    ConcreteInverseMixin,
+    Inverse[AffineExponential],
+    AffineExponential,
+    on={"forward": partial(isinstance, PLACEHOLDER, AffineExponential)},
+):
+    """Inverse of an [`AffineExponential`][], whose tangent is negated."""
+
+    _resultof: _TypeReference = AffineExponential
+
+    derived_fields: _FieldNames = (
+        "data",
+        "matrix",
+        "logmatrix",
+        "homogeneous_matrix",
+        "homogeneous_logmatrix",
     )
 
-    # --- attributes ---------------------------------------------------
+    _data: Forget
+    _matrix: Forget
+    _logmatrix: Forget
+    _homogeneous_matrix: Forget
+    _homogeneous_logmatrix: Forget
+    _log: Forget
 
-    forward: tx.Annotated[
-        tx.Optional[CoordinatesField],
-        tx.Doc("The coordinate field whose inverse this represents."),
-    ] = None
-
-    # --- derived attributes -------------------------------------------
-    # Declare derived fields as classvar to exclude them from `__init__`
-
-    field: Derived[tx.Optional[ArrayProtocol]]
-    degree: Derived[InterpolationOrder]
-    bound: Derived[tx.Union[BoundaryCondition, float]]
-    coeff: Derived[bool]
-
-    @_invcache
-    def field(self) -> tx.Optional[ArrayProtocol]:
-        forward = self.forward
-        return _inv_coords(
-            forward.field,
-            coeff=forward.coeff,
-            degree=forward.degree,
-            bound=forward.bound,
-        )
-
-    @property
-    def degree(self) -> InterpolationOrder:
-        return self.forward.degree
-
-    @property
-    def bound(self) -> tx.Union[BoundaryCondition, float]:
-        return self.forward.bound
-
-    @property
-    def coeff(self) -> bool:
-        return self.forward.coeff
+    log = _alias("log", "forward.log", fset=False)
 
 
-# ----------------------------------------------------------------------
-#   HELPERS
-# ----------------------------------------------------------------------
+class InverseLinearExponential(
+    ConcreteInverseMixin,
+    Inverse[LinearExponential],
+    LinearExponential,
+    on={"forward": partial(isinstance, PLACEHOLDER, LinearExponential)},
+):
+    """Inverse of a [`LinearExponential`][], whose tangent is negated."""
+
+    _resultof: _TypeReference = LinearExponential
+
+    derived_fields: _FieldNames = "data", "matrix", "logmatrix"
+
+    _data: Forget
+    _matrix: Forget
+    _logmatrix: Forget
+    _log: Forget
+
+    log = _alias("log", "forward.log", fset=False)
 
 
-def _inv_disp(
-    disp: ArrayProtocol, coeff: bool = False, **options
-) -> ArrayProtocol:
-    if disp is None:
-        return None
-    if not coeff:
-        return inverse_disp(disp)
-    # A coefficient field is inverted by re-fitting: the coefficients
-    # are read out as values, the value field is inverted, and the
-    # result is fitted back to coefficients.
-    disp = coeff2value_field(disp, **options)
-    disp = inverse_disp(disp)
-    return value2coeff_field(disp, **options)
+class InverseRotationExponential(
+    ConcreteInverseMixin,
+    Inverse[RotationExponential],
+    RotationExponential,
+    on={"forward": partial(isinstance, PLACEHOLDER, RotationExponential)},
+    # `InverseRotation` matches a rotation exponential too, with the same
+    # priority, and the deeper subclass wins the tie.
+    priority=1,
+):
+    """Inverse of a [`RotationExponential`][], whose tangent is negated."""
+
+    _resultof: _TypeReference = RotationExponential
+
+    derived_fields: _FieldNames = "data", "matrix", "logmatrix"
+
+    _data: Forget
+    _matrix: Forget
+    _logmatrix: Forget
+    _log: Forget
+
+    log = _alias("log", "forward.log", fset=False)
 
 
-def _inv_coords(
-    coords: ArrayProtocol, coeff: bool = False, **options
-) -> ArrayProtocol:
-    if coords is None:
-        return None
+class InverseScalingExponential(
+    ConcreteInverseMixin,
+    Inverse[ScalingExponential],
+    ScalingExponential,
+    on={"forward": partial(isinstance, PLACEHOLDER, ScalingExponential)},
+):
+    """Inverse of a [`ScalingExponential`][], whose tangent is negated."""
 
-    # A coordinate field is the identity grid plus a displacement, so
-    # it is inverted by inverting that displacement and adding the grid
-    # back. See the class docstring: this reads the coordinates as
-    # living in the units of their own grid.
-    #
-    # FIXME
-    #   A better approach is to regress out the affine transformation
-    #   from the field, such that the normalised field is close to
-    #   being in voxel space. The objective would be
-    #   ``||aff @ field - idgrid||_F``.
+    _resultof: _TypeReference = ScalingExponential
 
-    if coeff:
-        # The coefficients are read out as values first: the arithmetic
-        # below is on coordinates, not on spline coefficients.
-        coords = coeff2value_field(coords, **options)
+    derived_fields: _FieldNames = "data", "scale"
 
-    # Compute the identity coordinates mapping.
-    # The grid is built on the backend the field lives on,
-    # rather than on whichever backend happens to be selected.
-    ab = get_array_backend(coords)
-    with backend(ab):
-        idgrid = CartesianField(shape=coords.shape[:-1]).field
+    _data: Forget
+    _scale: Forget
+    _logscale: Forget
+    _log: Forget
 
-    # Invert the coordinates field via the equivalent displacement field.
-    inverse_coords = inverse_disp(coords - idgrid) + idgrid
+    log = _alias("log", "forward.log", fset=False)
 
-    if coeff:
-        # Convert back to coefficients, so that the inverse uses the
-        # same parameters as the forward field.
-        inverse_coords = value2coeff_field(inverse_coords, **options)
 
-    return inverse_coords
+class InverseStationaryVelocityField(
+    FieldInverseMixin,
+    Inverse[StationaryVelocityField],
+    StationaryVelocityField,
+    on={"forward": partial(isinstance, PLACEHOLDER, StationaryVelocityField)},
+):
+    """Inverse of a [`StationaryVelocityField`][], resolved on demand.
+
+    The inverse of the map `exp(v)` is `exp(-v)`. Its `data` is the negated
+    velocity in the encoding of the forward, and it reports the flags of the
+    forward, including `steps`. Its `field` view integrates the negated
+    velocity in the same way as the forward integrates its own velocity. No
+    mesh is inverted, so the accuracy caveat of [`InverseDisplacementField`][]
+    does not apply.
+    """
+
+    _resultof: _TypeReference = StationaryVelocityField
+
+    derived_fields: _FieldNames = "data", "field", "values", "coefficients"
+
+    _data: Forget
+    _field: Forget
+    _values: Forget
+    _coefficients: Forget
+    _degree: Forget
+    _bound: Forget
+    _store: Forget
+    _log: Forget
+    _steps: Forget
+
+    degree = _alias("degree", "forward.degree", fset=False)
+    bound = _alias("bound", "forward.bound", fset=False)
+    store = _alias("store", "forward.store", fset=False)
+    log = _alias("log", "forward.log", fset=False)
+    steps = _alias("steps", "forward.steps", fset=False)

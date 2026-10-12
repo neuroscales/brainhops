@@ -1,8 +1,7 @@
-"""
-Two-dimensional raster images -- PNG, JPEG, BMP, GIF, WebP, PNM, TGA,
-... -- read and written with [Pillow](https://python-pillow.org).
+"""Raster images, read and written with [Pillow](https://python-pillow.org).
 
-This reader requires the `pillow` extra (`pip install brainhops[pillow]`).
+This module covers PNG, JPEG, BMP, GIF, WebP, PNM, TGA and other formats, and
+needs the `pillow` extra.
 
 ```python
 from brainhops.io.images import load
@@ -15,10 +14,9 @@ save(image, "photo.jpg", quality=95)
 
 ## Data
 
-Pillow decodes an image into rows of pixels, `(rows, columns[,
-samples])`. The reader returns that array transposed to the brainhops
-order -- a view, not a copy -- so that `data[x, y]` is the pixel in
-column `x` and row `y`, as for every image in brainhops:
+Pillow decodes images as `(rows, columns[, samples])`, and the reader returns a
+transposed view in the brainhops order, so that `data[x, y]` is the pixel of
+column `x` and row `y`.
 
 | Pillow mode                     | `data`                                |
 | ------------------------------- | ------------------------------------- |
@@ -32,73 +30,60 @@ column `x` and row `y`, as for every image in brainhops:
 | `F` (floating point)            | `float32`, `(x, y)`                   |
 | `P`, `PA` (palette)             | `uint8`, `(x, y, 3)` or `(x, y, 4)`   |
 
-The channels of a multi-sample image lie on a channel axis `c`, after the
-spatial axes. The colour space is the one the file stores (`mode` tells
-which), and is not converted, except for a palette image, whose colours
-are looked up (`palette=False` keeps the indices instead). Pillow reduces
-16-bit-per-channel colour PNGs to 8 bits per channel.
+Channels come after the spatial axes. Colours stay in the colour space in
+which they are stored, which `mode` names. Palette images are the exception:
+their colours are looked up in the palette, unless `palette=False` keeps the
+indices. Pillow reduces 16-bit colour PNG files to 8 bits.
 
 ## Geometry
 
-A raster file stores no origin and no orientation. The index space is
-0-based, and an integer index is the *centre* of a pixel. The first row of
-the file is the top of the picture, so `y` points down; this is a
-convention of the format, which the reader does not encode as an
-orientation. Nor is the EXIF orientation tag of a photograph applied: the
-pixels are returned as stored (apply `PIL.ImageOps.exif_transpose` yourself
-if you need them as displayed).
+Raster files store no origin or orientation. Pixel coordinates are 0-based,
+with integers at pixel centres, and the first row of the file is the top of the
+image. This convention is not encoded as an orientation, and the EXIF
+orientation is not applied (see `PIL.ImageOps.exif_transpose`).
 
-The image carries one transformation, a scaling from its `"pixel"`
-coordinate system, whose axes count samples, to a `"physical"` one. By
-default, the physical size of a pixel is **unknown**: the scaling is the
-identity and the physical axes have no unit. Most files record a
-resolution in dots per inch (`info["dpi"]`: the PNG `pHYs` chunk, the JPEG
-JFIF density or EXIF resolution, the BMP header), but it describes a screen
-or a printer far more often than the scene, so it is used only when the
-caller asks:
+The image has a single transformation, which scales pixels to the `"physical"`
+system. The pixel size is unknown by default, which makes the transformation
+the identity, with no unit. The resolution that a file records
+(`info["dpi"]`) usually describes a screen or a printer, so it is used only on
+request:
 
-* `load(file, dpi=True)` takes the pixel size from the file's resolution,
-  `25.4 / dpi` millimetres, unless it is missing or a placeholder (72 or
-  96 dpi), in which case the size stays unknown.
+* `load(file, dpi=True)` makes pixels `25.4 / dpi` millimetres wide, unless the
+  resolution is missing or a placeholder (72 or 96 dpi).
 * `load(file, dpi=300)` or `dpi=(300, 150)` uses that resolution instead.
-* `load(file, pixel_size=0.01, unit="mm")` (or `pixel_size=(sx, sy)`) sets
-  the pixel size directly, and wins over the resolution. `unit` alone
-  converts a size from `dpi` to another unit of length.
+* `load(file, pixel_size=0.01, unit="mm")`, or `pixel_size=(sx, sy)`, takes
+  precedence over any resolution. `unit` alone converts a size derived from a
+  resolution.
 
-A PNG file may also record a pixel size in an `sCAL` chunk, which ITK
-reads and writes as its pixel spacing. ITK does not convert its spacing
-(conventionally in millimetres) to the unit the chunk names, so that unit
-cannot be relied on, and the chunk is not applied: it is kept as
-`info["sCAL"] = (unit, x, y)` (unit 1 is the metre, 2 the radian), and can
-be passed on as `load(file, pixel_size=info["sCAL"][1:], unit="mm")`.
+ITK writes its spacing (conventionally in millimetres) to the PNG `sCAL` chunk
+without converting it to the unit of the chunk, so the unit of the chunk is
+unreliable. The chunk is therefore kept as `info["sCAL"] = (unit, x, y)`, where
+unit 1 means metres and unit 2 means radians, but it is not applied. Its sizes
+can be passed on as `load(file, pixel_size=info["sCAL"][1:], unit="mm")`.
 
-When an image is written, its resolution is recorded in the formats that
-store one (PNG, JPEG, BMP, TIFF) if its preferred transformation is a
-scaling onto axes measured in a unit of length; a translation, which no
-raster format stores, is dropped. Otherwise, a resolution the image was
-read with is written back. `dpi=` overrides this (`dpi=False` records
-none).
+When an image is written in a format that stores a resolution (PNG, JPEG, BMP
+and TIFF), the resolution is computed from the preferred transformation if
+that transformation scales onto axes with a unit of length, and any
+translation is ignored. Otherwise, the resolution read with the image is
+written back. `dpi=` overrides both, and `dpi=False` records no resolution.
 
 ## Frames
 
-A multi-frame file (an animated GIF, PNG or WebP, a multi-picture JPEG) is
-read one frame at a time: the first by default, or `load(file, frame=i)`.
-The number of frames is `image.n_frames`. Pillow composites the frames of
-an animated GIF, so frame `i` is what is displayed at step `i`.
+Multi-frame files (animated GIF, PNG and WebP, multi-picture JPEG) are read one
+frame at a time. The first frame is read by default, `load(file, frame=i)`
+reads frame `i`, and `image.n_frames` gives the number of frames. Animated GIF
+frames are composited, so frame `i` is the picture displayed at step `i`.
 
 ## Metadata
 
-What the file records besides the pixels is kept on the image, not in the
-data model: `image_format` (Pillow's name for the format, such as
-`"PNG"`), `mode` (the mode as stored, such as `"P"`), `info` (Pillow's
-metadata dictionary), `frame` and `n_frames`. The ICC profile and the
-EXIF block are written back when the image is saved.
+The image keeps `image_format` (such as `"PNG"`), `mode` (as stored, such as
+`"P"`), the Pillow `info` dictionary, `frame` and `n_frames`. The ICC profile
+and EXIF block are written back on save.
 
 ## Writing
 
-The data must be `(x, y)` or `(x, y, c)` with one to four channels (more
-axes are accepted only if they are singletons). The data type is stored as
-it is, never converted:
+The data to write is `(x, y)`, or `(x, y, c)` with 1 to 4 channels, and any
+other axis must be a singleton. The data type is stored as is:
 
 | `data`                          | Pillow mode | Formats that store it       |
 | ------------------------------- | ----------- | --------------------------- |
@@ -110,33 +95,28 @@ it is, never converted:
 | `uint16`, `(x, y)`              | `I;16`      | PNG, TIFF                   |
 | `int32` / `float32`, `(x, y)`   | `I` / `F`   | TIFF                        |
 
-Anything else -- `float64`, `int16`, several channels of 16 bits, more
-than four channels, a 3D volume -- raises
+Any other data (`float64`, `int16`, several 16-bit channels, more than four
+channels, a volume) raises a
 [`WriterError`][brainhops.io.base.parsers.WriterError], as does a mode the
-chosen format cannot store (16 bits in JPEG, say). Convert the data first.
-The format is chosen from the file extension, or with `format=` (default
-PNG when writing to an unnamed stream). Other keywords are passed on to
-Pillow's `Image.save`, such as `quality` for JPEG. JPEG and lossy WebP do
-not store the data exactly.
+format cannot store, such as 16-bit JPEG. The format is given by `format=` or,
+failing that, by the extension of the file, and a stream without a name is
+written as PNG. Other keywords are passed to `Image.save`, such as `quality`
+for JPEG. JPEG and lossy WebP do not preserve the pixel values exactly.
 
 ## Limits
 
-* **Decompression bombs.** Pillow refuses to decode an image of more than
-  twice `PIL.Image.MAX_IMAGE_PIXELS` pixels (about 179 million pixels by
-  default), raising `PIL.Image.DecompressionBombError`, and warns above it.
-  To read a larger image you trust, set `PIL.Image.MAX_IMAGE_PIXELS` to a
-  larger value, or to `None`.
-* **No lazy access.** Pillow decodes a whole frame at once: the data is
-  read in full when the image is loaded.
-* **TIFF.** Pillow reads TIFF, but TIFF files (`.tif`, `.tiff`) are left to
-  the dedicated TIFF reader, which reads stacks, pyramids and their
-  metadata; this reader claims TIFF content only as a fallback, and reads
-  it when tifffile (the `tiff` extra) is not installed.
-* **JPEG 2000.** JPEG 2000 files (`.jp2`, `.j2k`, ...) are likewise left
-  to the dedicated JPEG 2000 reader
-  ([`brainhops.io.images.jpeg2000`][]), which reads their resolution
-  levels and resolution boxes; this reader claims them only as a fallback
-  (`hint="pillow"`), at full resolution.
+* Pillow refuses images larger than twice `PIL.Image.MAX_IMAGE_PIXELS` (about
+  179 million pixels) with a `PIL.Image.DecompressionBombError`, and warns
+  above the limit itself. Raising `MAX_IMAGE_PIXELS`, or setting it to `None`,
+  allows a trusted larger image.
+* The whole frame is decoded on load, so there is no lazy access.
+* `.tif` and `.tiff` files are left to the dedicated TIFF reader. The Pillow
+  reader claims TIFF only as a fallback, when tifffile (the `tiff` extra) is
+  not installed.
+* JPEG 2000 files (`.jp2`, `.j2k` and the like) are left to the dedicated
+  reader of [`brainhops.io.images.jpeg2000`][], which reads their resolution
+  levels and their resolution boxes. The Pillow reader claims them only as a
+  fallback, at full resolution, or when `hint="pillow"` asks for it.
 """
 
 __all__ = ["PillowImage"]

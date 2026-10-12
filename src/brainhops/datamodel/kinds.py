@@ -90,19 +90,26 @@ All classical linear group can be extended with the translation group
 #   LIST OF ALL SETS
 # ======================================================================
 #
+# The Symbol column gives the SYMBOL attribute of each kind, which is
+# the exact string that `TransformationKind.parse` and
+# `TransformationFamily.parse` accept. An empty Symbol cell means that
+# the kind has no SYMBOL and can only be parsed from its name or from
+# one of its aliases. A test in `tests/test_hierarchy_membership.py`
+# checks this table against the code.
+#
 # +-------------------------------------+--------+---------+-----------+
 # | Name                                | Symbol | Def.    | Property  |
 # +-------------------------------------+--------+---------+-----------+
 # |                              GENERAL                               |
 # +-------------------------------------+--------+---------+-----------+
 # | TransformationKind                  |        |         |           |
-# | Transformation                      | Trans  |         |           |
+# | Transformation                      | Map    |         |           |
 # | Injection                           |        |         |           |
 # | Surjection                          |        |         |           |
 # | Bijection                           |        |         |           |
 # | Diffeomorphism                      | Diff   |         |det Df ≠ 0 |
 # | VolumePreservingDiffeomorphism      |        |         |det Df =±1 |
-# | OrientationPreservingDiffeomorphism |        |         |det Df > 0 |
+# | OrientationPreservingDiffeomorphism | Diff+  |         |det Df > 0 |
 # | ConformalDiffeomorphism             |        |         |           |
 # | SpecialDiffeomorphism               | SDiff  |         |det Df = 1 |
 # +-------------------------------------+--------+---------+-----------+
@@ -124,13 +131,13 @@ All classical linear group can be extended with the translation group
 # | SpecialConformalEuclidean           | Sim+   | CO+ ⋉ T | det > 0   |
 # | Euclidean                           | E      | O   ⋉ T | det =±1   |
 # | SpecialEuclidean                    | SE     | SO  ⋉ T | det = 1   |
-# | Dilation                            |        | ℝ*  ⋉ T | det ≠ 0   |
-# | PositiveDilation                    |        | ℝ+  ⋉ T | det > 0   |
+# | Dilation                            | ℝ* ⋉ T | ℝ*  ⋉ T | det ≠ 0   |
+# | PositiveDilation                    | ℝ+ ⋉ T | ℝ+  ⋉ T | det > 0   |
 # | Translation                         | T      |         | det = 1   |
 # +-------------------------------------+--------+---------+-----------+
 # |                              LINEAR                                |
 # +-------------------------------------+--------+---------+-----------+
-# | Linear                              | M      |         | ⊄ Gp      |
+# | Linear                              |        |         | ⊄ Gp      |
 # | InvertibleLinear                    | GL     |         | det ≠ 0   |
 # | PositiveLinear                      | GL+    |         | det > 0   |
 # | SpecialLinear                       | SL     |         | det = 1   |
@@ -138,12 +145,14 @@ All classical linear group can be extended with the translation group
 # | SpecialConformalOrthogonal          | CO+    | SO x ℝ+ | det > 0   |
 # | Orthogonal                          | O      |         | det =±1   |
 # | SpecialOrthogonal                   | SO     |         | det = 1   |
-# | GeneralizedPermutation              |        | Δ ⋊ S   | det ≠ 0   |
+# | GeneralizedPermutation              | S ⋉ Δ  | S ⋉ Δ   | det ≠ 0   |
 # | SignedPermutation                   | B      | C₂ⁿ ⋊ S | det ≠ 0   |
 # | Permutation                         | S      |         | det ≠ 0   |
-# | Diagonal                            | D      |         | ⊄ Gp      |
+# | EvenPermutation                     | A      |         | det = 1   |
+# | OddPermutation                      | S \ A  |         | det = -1  |
+# | Diagonal                            |        |         | ⊄ Gp      |
 # | InvertibleDiagonal                  | Δ      |         | det ≠ 0   |
-# | PositiveDiagonal                    | Δ_+    |         | det > 0   |
+# | PositiveDiagonal                    | Δ+     |         | det > 0   |
 # | SpecialDiagonal                     | Δ_S    | Δ ∩ SL  | det = 1   |
 # | OrthogonalDiagonal                  | Δ_O    | Δ ∩ O   | det =±1   |
 # | SpecialOrthogonalDiagonal           | Δ_SO   | Δ ∩ SO  | det = 1   |
@@ -597,7 +606,7 @@ class TransformationFamily(
         return fsymbol
 
     # --- magic --------------------------------------------------------
-    # > allows unpacking into a 2-tuple
+    # A family has three items, so it unpacks into (kind, ndim, odim).
 
     def __len__(self) -> int:
         return 3
@@ -632,25 +641,40 @@ class TransformationFamily(
     ) -> tx.Self:
         """Return a transformation family from its name, symbol or type.
 
-        An explicit `ndim` wins over one carried by `repr`; `ndim=None`
-        means "whatever `repr` says", so parsing a family is idempotent.
+        The input `repr` can be a family, a tuple
+        `(kind[, ndim[, odim]])`, a bare input dimension, a kind, or a
+        string that holds the name, an alias or the symbol of a kind.
 
-        The cases are ordered so that no branch is reached with a value it
-        cannot type-check: a bare `issubclass` would raise on an `int` or a
-        `str`.
+        When `ndim` or `odim` is left at its default value, the family
+        keeps the dimension that `repr` carries, so parsing a family
+        returns the same family. A value that is passed explicitly
+        replaces the dimension carried by `repr`, and passing `None`
+        explicitly means that the dimension is unknown. When only
+        `ndim` is passed, `odim` follows the new `ndim` if `repr` does
+        not give an output dimension of its own. A family always holds
+        an output dimension, so for a family an output dimension equal
+        to the input dimension is treated as following it, and
+        `parse(parse("SO(3)"), ndim=None)` and
+        `parse("SO(3)", ndim=None)` both give a family whose two
+        dimensions are unknown.
+
+        The cases are tested in an order that never passes a value to
+        a check that cannot handle it, because a bare `issubclass`
+        would raise on an `int` or a `str`.
         """
         # --- already a family ---
         if isinstance(repr, TransformationFamily):
-            updates = {}
-            if ndim is not MISSING and repr.ndim != ndim:
-                updates["ndim"] = ndim
-            if odim is not MISSING and repr.odim != odim:
-                updates["odim"] = odim
-            if updates:
-                repr = replace(repr, **updates)
-            return repr
+            if ndim is MISSING:
+                ndim = repr.ndim
+                if odim is MISSING:
+                    odim = repr.odim
+            elif odim is MISSING and repr.odim != repr.ndim:
+                odim = repr.odim
+            if (repr.ndim, repr.odim) == (ndim, odim):
+                return repr
+            return replace(repr, ndim=ndim, odim=odim)
 
-        # --- a (kind, ndim) pair ---
+        # --- a (kind[, ndim[, odim]]) tuple ---
         if isinstance(repr, tuple):
             if not is_family_tuple(repr):
                 raise ValueError(
@@ -684,7 +708,12 @@ class TransformationFamily(
     def from_tuple(
         cls, values: FamilyTupleLike, ndim: Dim = MISSING, odim: Dim = MISSING
     ) -> tx.Self:
-        """Return a transformation family from its `(kind, ndim)` pair."""
+        """Return a transformation family from a tuple.
+
+        The tuple has one to three elements, `(kind[, ndim[, odim]])`,
+        which is also the form that `to_tuple` returns. An explicit
+        `ndim` or `odim` argument replaces the matching element.
+        """
         values = list(values)
         if len(values) < 3:
             values += [MISSING] * (3 - len(values))
@@ -739,11 +768,12 @@ class TransformationFamily(
 
 
 def is_family_tuple(value: tuple) -> bool:
-    """Whether a tuple is a well-formed `(kind, ndim)` pair.
+    """Return whether a tuple describes a transformation family.
 
-    Exactly two elements, whose second one is a dimension: an `int` or
-    `None`. A `bool` is an `int` in Python but not a dimension, so it is
-    excluded.
+    A family tuple has one to three elements, `(kind[, ndim[, odim]])`.
+    The first element is a kind or a string, and each of the others is
+    a dimension, which is an `int` or `None`. A `bool` is an `int` in
+    Python but not a dimension, so it is rejected.
     """
     if len(value) not in (1, 2, 3):
         return False
@@ -1472,7 +1502,7 @@ class GeneralizedPermutation(InvertibleLinear):
     symmetric group (permutations) and the group of invertible diagonal
     matrices.
 
-    symbol: Δ ⋊ S
+    symbol: S ⋉ Δ
 
     wiki: https://en.wikipedia.org/wiki/Generalized_permutation_matrix
     """

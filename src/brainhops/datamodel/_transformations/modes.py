@@ -1,14 +1,15 @@
-"""The compose mode: which kinds of transformation `compute()` fuses.
+"""Compose modes, which decide what kinds of transformation are composed.
 
-A *mode* is a list of [`TransformationFamily`][] entries -- a `(kind, ndim)`
-pair each. `compute(mode)` composes a run of adjacent transforms only when
-every transform in the run is admitted by one of those entries.
+A compose mode is a list of [`Family`][] entries, each pairing a kind of
+transformation with an optional number of dimensions. When a sequence is
+computed, a run of adjacent transformations is combined into one only if
+every transformation in the run is admitted by some entry of the mode.
 
-The mode says *what gets composed*. It says nothing about how hard a leaf is
-looked at, which is the simplify policy's job (see `simplify`). The two are
-deliberately independent: `compute(mode=False, simplify="numeric")` reads
-values to retype leaves and composes nothing, and `compute(mode=True,
-simplify=False)` composes everything without retyping anything.
+The mode is independent of the simplify policy, which decides how closely each
+concrete transformation is inspected. For example,
+`compute(mode=False, simplify="numeric")` reads parameter values to convert
+each concrete transformation to a cheaper type but composes nothing, whereas
+`compute(mode=True, simplify=False)` composes everything and converts nothing.
 """
 
 __all__ = [
@@ -17,43 +18,6 @@ __all__ = [
     "mode_children",
     "normalize_modes",
     "normalize_family",
-]
-
-# dependencies
-import typing_extensions as tx
-
-# datamodel
-from brainhops.datamodel.kinds import Transformation as TransformationSet
-from brainhops.datamodel.kinds import TransformationFamily
-
-# The membership predicates, and the single key-normalizing routine, all
-# live in `check`, next to the checker registry they dispatch on. They are
-# re-exported here because mode resolution is their main caller.
-from .check import (
-    FamilyLike,
-    Kind,
-    KindLike,
-    is_family,
-    is_kind,
-    normalize_family,
-)
-
-# typing
-if tx.TYPE_CHECKING:
-    # internals
-    from .base import Transformation
-
-
-Family = TransformationFamily
-"""
-A [`TransformationFamily`][] is a [`Kind`][] and, optionally, a
-dimensionality.
-"""
-
-ModeLike = tx.Union[None, bool, FamilyLike, tx.Iterable[FamilyLike]]
-"""Possible input to the `mode` argument of [`compute()`][]."""
-
-__all__ += [
     "Family",
     "FamilyLike",
     "Kind",
@@ -63,19 +27,101 @@ __all__ += [
     "normalize_family",
 ]
 
+import typing_extensions as tx
 
-# ======================================================================
-#
-#                            M O D E S
-#
-# ======================================================================
+from brainhops.datamodel.kinds import Transformation as TransformationSet
+from brainhops.datamodel.kinds import TransformationFamily
+
+# The functions that test whether a transformation belongs to a kind or a
+# family, and the function that normalizes the keys of a mode, are defined in
+# `check`, next to the registry of checkers that they use. They are
+# re-exported here because resolving modes is their main use.
+from .compute.check import (
+    FamilyLike,
+    Kind,
+    KindLike,
+    is_family,
+    is_kind,
+    normalize_family,
+)
+
+if tx.TYPE_CHECKING:
+    from .base import Transformation
+
+
+Family: tx.TypeAlias = TransformationFamily
+"""A kind of transformation together with an optional number of dimensions.
+
+This is an alias of [`TransformationFamily`][].
+"""
+
+ModeLike: tx.TypeAlias = tx.Union[
+    None, bool, FamilyLike, tx.Iterable[FamilyLike]
+]
+"""Values accepted as a compose mode, the `mode` argument of `compute()`."""
+
+
+def normalize_modes(mode: ModeLike) -> tx.List[Family]:
+    """Convert a mode-like value to a list of families.
+
+    | Input                | Meaning                       |
+    |----------------------|-------------------------------|
+    | `True`               | compose every kind            |
+    | `None`               | compose every kind (no restriction given) |
+    | `False`              | compose nothing (simplify-only)           |
+    | `[]`                 | compose nothing (simplify-only)           |
+    | a key, or a list of keys | compose only those kinds  |
+
+    `None` stands for an absent argument, so, like `True`, it places no
+    restriction on composition. A single family-like value is wrapped in a
+    list first.
+
+    Parameters
+    ----------
+    mode : ModeLike
+        The value to normalize.
+
+    Returns
+    -------
+    list of Family
+        Families that the mode admits.
+    """
+    if mode is True or mode is None:
+        return [TransformationFamily(TransformationSet, None)]
+    if mode is False:
+        return []
+    if _is_family_like(mode):
+        mode = [mode]
+    return list(map(normalize_family, mode))
+
+
+def mode_children(mode: Family) -> tx.List[Family]:
+    """Return the families one level below `mode` in the kind hierarchy.
+
+    The children are the direct subclasses of the kind, with the number of
+    dimensions of `mode` and without duplicates.
+    """
+    children = []
+    seen = set()
+    subclasses = getattr(mode.kind, "__subclasses__", lambda: [])
+    for child in subclasses():
+        family = TransformationFamily(child, mode.ndim)
+        if family not in seen:
+            seen.add(family)
+            children.append(family)
+    return children
+
+
+def mode_admits(t: "Transformation", modes: tx.Iterable[Family]) -> bool:
+    """Return whether some family in `modes` admits the transformation `t`."""
+    return any(is_family(t, m) for m in modes)
 
 
 def _is_kind_like(kind: tx.Any) -> bool:
     if isinstance(kind, str):
         return True
-    # One kind is one node of the hierarchy -- and a concrete transform is
-    # registered into it, so it is one too.
+    # A concrete transformation class is registered into the kind hierarchy, so
+    # it counts as kind-like as well.
     return isinstance(kind, type) and issubclass(kind, TransformationSet)
 
 
@@ -96,50 +142,3 @@ def _is_family_like(mode: tx.Any) -> bool:
     if isinstance(ndim, bool) or not isinstance(ndim, (int, type(None))):
         return False
     return True
-
-
-def normalize_modes(mode: ModeLike) -> tx.List[Family]:
-    """Convert any mode-like input into a list of [`Family`][] entries.
-
-    | Input                | Meaning                       |
-    |----------------------|-------------------------------|
-    | `True`               | compose every kind            |
-    | `None`               | compose every kind (no restriction given) |
-    | `False`              | compose nothing (simplify-only)           |
-    | `[]`                 | compose nothing (simplify-only)           |
-    | a key, or a list of keys | compose only those kinds  |
-
-    `None` reads as "no restriction was given", not as "nothing": it is the
-    absent-argument spelling of `True`. `False` and the empty list are the
-    two spellings of "compose nothing", which leaves `compute()` doing only
-    what `simplify()` does.
-    """
-    if mode is True or mode is None:
-        return [TransformationFamily(TransformationSet, None)]
-    if mode is False:
-        return []  # compose nothing (simplify-only)
-    if _is_family_like(mode):
-        mode = [mode]
-    return list(map(normalize_family, mode))
-
-
-def mode_children(mode: Family) -> tx.List[Family]:
-    """The families one step down the hierarchy from `mode`.
-
-    A class kind (a representation rather than a set) has no children in
-    the hierarchy, so it yields none.
-    """
-    children = []
-    seen = set()
-    subclasses = getattr(mode.kind, "__subclasses__", lambda: [])
-    for child in subclasses():
-        family = TransformationFamily(child, mode.ndim)
-        if family not in seen:
-            seen.add(family)
-            children.append(family)
-    return children
-
-
-def mode_admits(t: "Transformation", modes: tx.Iterable[Family]) -> bool:
-    """Whether any family in `modes` admits a transform."""
-    return any(is_family(t, m) for m in modes)

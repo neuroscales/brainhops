@@ -1,8 +1,6 @@
-"""The ``brainhops`` command-line interface.
+"""Command-line interface of brainhops.
 
-The interface exposes the library as subcommands of a single
-``brainhops`` program. `main` is the entry point registered as the
-console script and is also what ``python -m brainhops`` calls.
+[`main`][] is the entry point of the `brainhops` console script.
 """
 
 from __future__ import annotations

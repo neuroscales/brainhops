@@ -1,9 +1,6 @@
-"""
-The transformations an X5 node decodes into, and the nodes they encode
-back into.
+"""Transformations that X5 nodes decode into and encode from.
 
-The rules, and the sources they were checked against, are described in
-the package docstring, [`brainhops.io.transformations.x5`][].
+The rules are described in [`brainhops.io.transformations.x5`][].
 """
 
 __all__ = [
@@ -14,27 +11,22 @@ __all__ = [
     "transformation_to_nodes",
 ]
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
-# core
 from brainhops._core import affines as _affines
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
-
-# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.enums import BoundaryCondition
-
-# io
+from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserNotImplementedError,
     UnrepresentableTransformationError,
 )
+from brainhops.io.common.hdf5 import DelayedH5Array
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -43,14 +35,13 @@ from brainhops.io.transformations.base.fields import (
     split_ras_displacement_chain,
 )
 
-# locals
-from ._struct import X5Domain, X5Node
+from ._raw import X5Domain, X5Node
 
 _NDIM = 3
-"""The number of spatial dimensions supported: X5 world space is RAS."""
+"""The number of spatial dimensions, which is 3 because X5 worlds are RAS."""
 
 DISPLACEMENTS = ("displacements", "displacement", "deltas", "relative")
-"""`Representation` values of a field of relative displacements."""
+"""The `Representation` values of relative displacement fields."""
 
 COORDINATES = (
     "deformations",
@@ -58,19 +49,20 @@ COORDINATES = (
     "coordinates",
     "absolute",
 )
-"""`Representation` values of a field of absolute coordinates."""
+"""The `Representation` values of absolute coordinate fields."""
 
 COEFFICIENTS = (None, "coefficients", "coefficient")
-"""`Representation` values of a `bspline` field of coefficients."""
+"""The `Representation` values of B-spline coefficients."""
 
 _DENSE_SUBTYPES = (None, "densefield", "dense")
-"""`SubType` values of a dense field sampled on the domain."""
+"""The `SubType` values of dense fields sampled on the `Domain`."""
 
 _BSPLINE_SUBTYPES = ("bspline", "b-spline")
-"""`SubType` values of a field of B-spline coefficients."""
+"""The `SubType` values of B-spline fields."""
 
 _BSPLINE_DEGREE = 3
-"""The degree of an X5 B-spline: nitransforms evaluates only cubics."""
+"""The degree of X5 B-splines, which is 3 because nitransforms only
+evaluates cubic B-splines."""
 
 _KINDS = ("space",) * _NDIM + ("vector",)
 
@@ -81,54 +73,51 @@ _KINDS = ("space",) * _NDIM + ("vector",)
 
 
 class _X5RASDisplacements(_xforms.ImmutableSequence):
-    """A field of RAS displacements on a voxel grid, as a chain."""
+    """A RAS displacement field on a voxel grid, modelled as a chain."""
 
     degree: tx.ClassVar[int] = 1
-    """The spline degree used to interpolate the field."""
+    """The degree of the spline that interpolates the field."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
-    """The boundary condition used outside of the field of view."""
+    """The boundary condition outside the field of view."""
 
-    coeff: tx.ClassVar[bool] = False
-    """Whether the field holds spline coefficients rather than values."""
+    store: tx.ClassVar[StoreEnum] = StoreEnum.values
+    """Whether the field holds spline coefficients or values."""
 
     @classmethod
     def from_ras(cls, vectors: ArrayProtocol, vox2ras: np.ndarray) -> tx.Self:
-        """Build the field from RAS vectors and their grid."""
+        """Build the chain from RAS displacements and the grid's affine."""
         return cls(
             transformations=ras_displacement_chain(
                 vectors,
                 vox2ras,
                 degree=cls.degree,
                 bound=cls.bound,
-                coeff=cls.coeff,
+                store=cls.store,
             )
         )
 
     @property
     def ras2voxel(self) -> _xforms.Transformation:
-        """The affine from RAS world coordinates to the field's voxels."""
+        """The map from RAS world coordinates to the field's voxels."""
         return self.transformations[0]
 
     @property
     def displacement(self) -> _xforms.Transformation:
-        """The displacement field, in the voxel units of its grid."""
+        """The displacement field, in voxel units."""
         return self.transformations[1]
 
     @property
     def voxel2ras(self) -> _xforms.Transformation:
-        """The affine from the field's voxels back to RAS world."""
+        """The map from the field's voxels to RAS world coordinates."""
         return self.transformations[2]
 
 
 class X5DisplacementField(_X5RASDisplacements):
-    """
-    A `nonlinear` X5 transform that stores relative displacements.
+    """A nonlinear X5 transform that holds relative displacements.
 
-    Each sample of the field holds the displacement, in RAS millimetres,
-    of the world point at its centre: the field maps RAS to RAS as
-    `x -> x + u(x)`. The `Domain/Mapping` of the node is the voxel-to-RAS
-    affine of its grid.
+    Each sample is the displacement, in RAS millimetres, of the world point at
+    the centre of its voxel, on the grid placed by `Domain/Mapping`.
 
     | Slot           | Transformation                              |
     | -------------- | ------------------------------------------- |
@@ -139,38 +128,31 @@ class X5DisplacementField(_X5RASDisplacements):
 
 
 class X5BSplineField(_X5RASDisplacements):
-    """
-    A `nonlinear` X5 transform of `SubType` `bspline`.
+    """A nonlinear X5 transform of cubic B-spline coefficients.
 
-    The field holds, at each knot of a regular grid, the cubic B-spline
-    coefficients of a displacement in RAS millimetres; the grid's
-    voxel-to-RAS affine is the node's `AdditionalParameters` (its
-    `Domain` is the reference grid, which the transform does not
-    depend on). The displacement of a point `x` is
-    `u(x) = sum_k c_k B3(i(x) - k)`, where `i(x)` are the coordinates of
-    `x` in the knot grid, `B3` is the tensor-product centred cubic
-    B-spline and coefficients beyond the grid are zero; the field maps
-    RAS to RAS as `x -> x + u(x)`.
+    Each coefficient is a displacement in RAS millimetres at a knot of a
+    regular grid, placed by the node's `AdditionalParameters`. The transform
+    maps `x` to `x + sum_k c_k B3(i(x) - k)`, where `i(x)` are the knot-grid
+    coordinates of `x` and `B3` is the centred cubic B-spline.
 
     | Slot           | Transformation                                   |
     | -------------- | ------------------------------------------------ |
     | `ras2voxel`    | RAS world coordinates to the knot grid           |
-    | `displacement` | the coefficients, in knot-grid units (`coeff`)   |
+    | `displacement` | the coefficients, in knot-grid units            |
     | `voxel2ras`    | the knot grid back to RAS world                  |
     """
 
     degree: tx.ClassVar[int] = _BSPLINE_DEGREE
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.zeros
-    coeff: tx.ClassVar[bool] = True
+    store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
 
 
 class X5CoordinatesField(_xforms.ImmutableSequence):
-    """
-    A `nonlinear` X5 transform that stores absolute coordinates.
+    """A nonlinear X5 transform that holds absolute coordinates.
 
-    Each sample of the field holds the RAS coordinates, in millimetres,
-    that the world point at its centre maps to. The `Domain/Mapping` of
-    the node is the voxel-to-RAS affine of its grid.
+    Each sample holds the RAS coordinates, in millimetres, to which the world
+    point at the centre of its voxel is mapped, on the grid placed by
+    `Domain/Mapping`.
 
     | Slot          | Transformation                              |
     | ------------- | ------------------------------------------- |
@@ -182,11 +164,24 @@ class X5CoordinatesField(_xforms.ImmutableSequence):
     def from_ras(
         cls, coordinates: ArrayProtocol, vox2ras: np.ndarray
     ) -> tx.Self:
-        """Build the field from RAS coordinates and their grid."""
+        """Build the chain from RAS coordinates and the grid's affine.
+
+        Parameters
+        ----------
+        coordinates : ArrayProtocol
+            The field of RAS coordinates, sampled on the grid.
+        vox2ras : np.ndarray
+            The (4, 4) voxel-to-RAS matrix of the grid.
+
+        Returns
+        -------
+        Self
+            The chain of the RAS-to-voxel affine and the coordinate field.
+        """
         vox2ras = np.asarray(vox2ras, dtype=np.float64)
         compact = vox2ras[:-1]
         return cls(
-            transformations=(
+            (
                 RASToVoxel(matrix=_affines.inv(compact)),
                 RASCoordinatesField(field=coordinates),
             )
@@ -194,32 +189,63 @@ class X5CoordinatesField(_xforms.ImmutableSequence):
 
     @property
     def ras2voxel(self) -> _xforms.Transformation:
-        """The affine from RAS world coordinates to the field's voxels."""
+        """The map from RAS world coordinates to the field's voxels."""
         return self.transformations[0]
 
     @property
     def coordinates(self) -> _xforms.Transformation:
-        """The field of RAS coordinates, defined on the field's voxels."""
+        """The field of RAS coordinates, sampled on the field's voxels."""
         return self.transformations[1]
 
 
 # ----------------------------------------------------------------------
 #   DECODING
 # ----------------------------------------------------------------------
+# A node is decoded from the arrays of the record without changing them,
+# and the arrays that a transformation receives are read-only. The writer
+# writes the nodes of the record, not the decoded transformations, so an
+# edit in place would be lost, and it would also change the record, which
+# other objects may share. A new chain is assigned instead.
+
+
+def _read(stored: tx.Any) -> ArrayProtocol:
+    """Return an array of a node, read from the file if it is a proxy.
+
+    A [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] is read
+    with the array backend, which loads it with NumPy and keeps it lazy
+    with Dask. A NumPy array is returned as a read-only view.
+    """
+    if isinstance(stored, DelayedH5Array):
+        array = get_array_backend().asarray(stored)
+    else:
+        array = get_array_backend(stored).asarray(stored)
+    if isinstance(array, np.ndarray):
+        array = array.view()
+        array.flags.writeable = False
+    return array
 
 
 def node_to_transformation(node: X5Node) -> _xforms.Transformation:
-    """
-    The transformation an X5 node encodes, from RAS to RAS.
+    """Decode an X5 node into a transformation from RAS to RAS.
+
+    Parameters
+    ----------
+    node : X5Node
+        The node.
+
+    Returns
+    -------
+    Transformation
+        The transformation that the node encodes.
 
     Raises
     ------
     ParserNotImplementedError
-        If the node is valid but cannot be represented: a `composite`
-        node, a stack of transforms (`ArrayLength > 1`), or a field
-        that is not sampled on a regular 3-D grid.
+        If the node is valid but cannot be represented, as is the case for
+        a `composite` transform, a stack of affines, or a field that is not
+        on a regular 3-D grid.
     ParserContentError
-        If the node is malformed.
+        If the node is malformed or of an unknown `Type`.
     """
     if node.type == "linear":
         return _decode_linear(node)
@@ -236,7 +262,7 @@ def node_to_transformation(node: X5Node) -> _xforms.Transformation:
 
 
 def _decode_linear(node: X5Node) -> _xforms.Affine:
-    matrix = np.asarray(node.transform, dtype=np.float64)
+    matrix = np.asarray(_read(node.transform), dtype=np.float64)
     if int(node.array_length) != 1 or matrix.ndim != 2:
         raise ParserNotImplementedError(
             f"This X5 node stacks {node.array_length} affines (one per "
@@ -285,7 +311,7 @@ def _decode_nonlinear(node: X5Node) -> _xforms.Transformation:
             f"Only cartesian X5 domains are supported, not "
             f"{domain.coordinates!r}."
         )
-    vox2ras = np.asarray(domain.mapping, dtype=np.float64)
+    vox2ras = np.asarray(_read(domain.mapping), dtype=np.float64)
     if vox2ras.shape != (_NDIM + 1, _NDIM + 1):
         raise ParserNotImplementedError(
             f"Only 3-D X5 domains, mapped by a 4x4 affine, are supported, "
@@ -305,7 +331,7 @@ def _decode_nonlinear(node: X5Node) -> _xforms.Transformation:
         )
     representation = (node.representation or "").lower()
     if representation in DISPLACEMENTS:
-        return X5DisplacementField.from_ras(field, vox2ras)
+        return _read_only_field(X5DisplacementField.from_ras(field, vox2ras))
     if representation in COORDINATES:
         return X5CoordinatesField.from_ras(field, vox2ras)
     raise ParserContentError(
@@ -316,14 +342,10 @@ def _decode_nonlinear(node: X5Node) -> _xforms.Transformation:
 
 
 def _decode_bspline(node: X5Node) -> X5BSplineField:
-    """
-    A field of B-spline coefficients, as nitransforms writes and reads it.
+    """Decode a B-spline node as nitransforms writes it.
 
-    `BSplineFieldTransform.to_x5` stores the coefficients, `(X, Y, Z, 3)`
-    in RAS millimetres, as `Transform`, and the voxel-to-RAS affine of
-    their grid as `AdditionalParameters`; `from_x5` reads them back as a
-    NIfTI image of coefficients with that affine. The `Domain` is the
-    reference grid it is sampled on by `to_field`, which `map` ignores.
+    The `Domain`, which nitransforms only uses to sample the field on the
+    reference grid, is ignored.
     """
     representation = node.representation
     if representation is not None:
@@ -338,7 +360,7 @@ def _decode_bspline(node: X5Node) -> X5BSplineField:
             "An X5 B-spline must store the voxel-to-RAS affine of its "
             "grid of knots as AdditionalParameters."
         )
-    knots = np.asarray(node.additional_parameters, dtype=np.float64)
+    knots = np.asarray(_read(node.additional_parameters), dtype=np.float64)
     if knots.shape != (_NDIM + 1, _NDIM + 1):
         raise ParserNotImplementedError(
             f"Only 3-D X5 B-splines, whose knots are placed by a 4x4 "
@@ -357,21 +379,53 @@ def _decode_bspline(node: X5Node) -> X5BSplineField:
             f"A 3-D X5 B-spline holds one 3-vector per knot, not an array "
             f"of shape {shape}."
         )
-    return X5BSplineField.from_ras(field, knots)
+    return _read_only_field(X5BSplineField.from_ras(field, knots))
 
 
-def _vector_last(node: X5Node) -> ArrayProtocol:
-    """The field, with the axis that `DimensionKinds` calls "vector"
-    moved last."""
-    field = node.transform
-    backend = get_array_backend(field)
-    field = backend.asarray(field)
-    kinds = node.dimension_kinds
+def _read_only_field(xform: _X5RASDisplacements) -> _X5RASDisplacements:
+    """Make the vectors that a field computed from its node read-only.
+
+    The vectors in voxel units are a new array rather than a view of the
+    record, but the writer writes the node, so an edit in place would
+    still be lost.
+    """
+    vectors = xform.displacement.data
+    if isinstance(vectors, np.ndarray):
+        vectors.flags.writeable = False
+    return xform
+
+
+def _field_to_model(
+    stored: tx.Any, kinds: tx.Optional[tx.Sequence[str]]
+) -> ArrayProtocol:
+    """Return a field with its `vector` axis last, from the stored array.
+
+    `kinds` is the `DimensionKinds` dataset of the node, which says what
+    each axis of the stored array holds. When it places the vector axis
+    elsewhere, that axis is moved last. The stored array is read with
+    `_read`.
+    """
+    field = _read(stored)
     if kinds and len(kinds) == field.ndim and "vector" in kinds:
         axis = list(kinds).index("vector")
         if axis != field.ndim - 1:
-            field = backend.moveaxis(field, axis, -1)
+            field = get_array_backend(field).moveaxis(field, axis, -1)
     return field
+
+
+def _field_to_disk(field: ArrayProtocol) -> ArrayProtocol:
+    """Return the array that a node stores for a field.
+
+    The writer declares the vector axis last in `DimensionKinds`, so the
+    field, whose vector axis is last, is stored as it is. With these
+    kinds, `_field_to_model` returns the field unchanged.
+    """
+    return field
+
+
+def _vector_last(node: X5Node) -> ArrayProtocol:
+    """Return the node's field with its `vector` axis moved last."""
+    return _field_to_model(node.transform, node.dimension_kinds)
 
 
 # ----------------------------------------------------------------------
@@ -379,8 +433,12 @@ def _vector_last(node: X5Node) -> ArrayProtocol:
 # ----------------------------------------------------------------------
 
 
-def _name(system: tx.Any) -> str:
-    return "an unspecified system" if system is None else type(system).__name__
+def _name(system: tx.Optional[_systems.CoordinateSystem]) -> str:
+    if name := getattr(system, "name", None):
+        return name
+    if system is not None:
+        return type(system).__name__
+    return "an unspecified system"
 
 
 def _check_ras(xform: _xforms.Transformation, what: str) -> None:
@@ -397,32 +455,43 @@ def _check_ras(xform: _xforms.Transformation, what: str) -> None:
 def transformation_to_nodes(
     xform: _xforms.Transformation,
 ) -> tx.List[X5Node]:
-    """
-    The X5 nodes that encode a transformation, in the order they apply.
+    """Encode a transformation into X5 nodes, in the order they are applied.
 
-    - A field of RAS displacements (an [`X5DisplacementField`][], a
-      NIfTI `DISPVECT` field, or any chain of an affine, a
-      `DisplacementField` and an affine) is one `nonlinear` node that
-      stores `displacements`.
-    - The same chain whose field holds cubic spline coefficients
-      (`coeff`, degree 3, zero boundary), such as an
-      [`X5BSplineField`][], is one `nonlinear` `bspline` node that
-      stores `coefficients`.
-    - A field of RAS coordinates (an [`X5CoordinatesField`][], an SPM
-      `y_` field, or any chain of an affine and a `CoordinatesField`) is
-      one `nonlinear` node that stores `deformations`.
-    - Anything that converts to an `Affine` is one `linear` node.
-    - Any other sequence is the nodes of its elements, in order.
+    The first rule that applies is used:
+
+    - A RAS displacement chain, which is an affine followed by a
+      displacement field and another affine, becomes a node of
+      displacements. Examples are an [`X5DisplacementField`][] and a NIfTI
+      `DISPVECT` field.
+    - The same chain whose field stores coefficients, such as an
+      [`X5BSplineField`][], becomes a `bspline` node. Coefficients of another
+      degree or boundary condition are refitted to cubic coefficients with a
+      zero boundary.
+    - A RAS coordinate chain, which is an affine followed by a coordinate
+      field, becomes a node of deformations. Examples are an
+      [`X5CoordinatesField`][] and an SPM `y_` field.
+    - A transformation that converts to an affine becomes a linear node.
+    - Any other sequence becomes the nodes of its elements.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The transformation to encode.
+
+    Returns
+    -------
+    list of X5Node
+        The nodes, in the order in which they are applied.
 
     Raises
     ------
     UnrepresentableTransformationError
-        If a transformation is none of these, or does not map RAS to RAS.
+        If no rule applies, or if the transformation does not map RAS to RAS.
     """
     chain = _chain(xform)
     if chain is not None:
         if len(chain) == 3 and isinstance(chain[1], _xforms.DisplacementField):
-            if chain[1].coeff:
+            if chain[1].store is StoreEnum.coefficients:
                 return [_encode_bspline(xform, chain)]
             return [_encode_displacements(xform, chain)]
         if len(chain) == 2 and isinstance(chain[1], _xforms.CoordinatesField):
@@ -486,38 +555,23 @@ def _encode_bspline(
     xform: _xforms.Transformation, chain: tx.Sequence
 ) -> X5Node:
     _check_ras(xform, "B-spline field")
-    what = "An X5 B-spline"
-    field = chain[1]
-    if int(field.degree) != _BSPLINE_DEGREE:
-        raise UnrepresentableTransformationError(
-            f"{what} is cubic, and this field is a spline of degree "
-            f"{int(field.degree)}."
-        )
-    if not _is_zero_bound(field.bound):
-        raise UnrepresentableTransformationError(
-            f"{what} has no coefficients beyond its grid of knots (a zero "
-            f"boundary), and this field's boundary is {field.bound!r}."
-        )
+    # Fields that are not cubic with a zero boundary are refitted.
     vox2ras, coefficients = split_ras_displacement_chain(
-        chain, what, ndim=_NDIM, coeff=True
+        chain,
+        "An X5 B-spline",
+        ndim=_NDIM,
+        store=StoreEnum.coefficients,
+        degree=_BSPLINE_DEGREE,
+        bound=BoundaryCondition.zeros,
     )
     node = _field_node(coefficients, vox2ras, "coefficients")
-    # nitransforms reads the affine of the knots from AdditionalParameters,
-    # and the Domain as the grid of its reference image, which it requires
-    # but does not use to map points. Without a reference, the knot grid
-    # is the Domain.
+    # nitransforms requires a Domain (the reference grid) even though the
+    # transform ignores it, so the knot grid is written as one.
     return replace(
         node,
         subtype="bspline",
         additional_parameters=np.asarray(vox2ras, dtype=np.float64),
     )
-
-
-def _is_zero_bound(bound: tx.Any) -> bool:
-    # A field's bound is a `BoundaryCondition` or a constant fill value.
-    if isinstance(bound, str):
-        return bound == BoundaryCondition.zeros
-    return float(bound) == 0.0
 
 
 def _encode_coordinates(
@@ -526,20 +580,15 @@ def _encode_coordinates(
     _check_ras(xform, "coordinates field")
     what = "An X5 coordinates field"
     ras2vox = homogeneous_matrix(chain[0], what, ndim=_NDIM)
-    field = chain[1]
-    if field.field is None:
+    field = chain[1].to(store=StoreEnum.values)
+    if field.data is None:
         raise UnrepresentableTransformationError(
             "This field has no coordinates, so there is nothing to write."
         )
-    if field.coeff:
-        raise UnrepresentableTransformationError(
-            f"{what} stores sampled coordinates, and this field holds "
-            f"spline coefficients. Convert it to values first."
-        )
-    coordinates = field.field
+    coordinates = field.data
     shape = tuple(int(s) for s in coordinates.shape)
     if len(shape) == _NDIM + 2 and shape[_NDIM] == 1:
-        # The NIfTI layout, (X, Y, Z, 1, 3), keeps a singleton axis.
+        # Drop the singleton axis of the NIfTI layout (X, Y, Z, 1, 3).
         coordinates = coordinates[:, :, :, 0]
     return _field_node(coordinates, np.linalg.inv(ras2vox), "deformations")
 
@@ -557,7 +606,7 @@ def _field_node(
         type="nonlinear",
         subtype="densefield",
         representation=representation,
-        transform=field,
+        transform=_field_to_disk(field),
         dimension_kinds=_KINDS,
         domain=X5Domain(
             grid=True,
