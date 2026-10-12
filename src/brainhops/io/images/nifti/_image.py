@@ -38,15 +38,13 @@ from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
 )
-from brainhops.io.common.nifti._geometry import (
-    _image_with_geometry,
-    _written_nifti,
-)
+from brainhops.io.common.nifti._geometry import _image_with_geometry
 from brainhops.io.common.nifti._header import (
     _nifti_intent,
     _nifti_shape,
     _nifti_to_axes,
     _NiftiObject,
+    _written_nifti,
 )
 from brainhops.io.common.nifti._raw import (
     _sniffed_header,
@@ -773,14 +771,14 @@ def _nifti_encoded(
             "This image has no data, so there is nothing to encode."
         )
     if image.metadata is None or image.metadata.raw is None:
-        base = None
+        header = None
     else:
-        base = image.metadata.raw.copy()
+        header = image.metadata.raw.copy().header
     nifti = _image_with_geometry(
         source,
         image.transformation,
         image.transformations,
-        base=base,
+        header=header,
         like=like,
         overrides=overrides,
     )

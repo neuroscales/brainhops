@@ -556,6 +556,15 @@ class Exemplar(tx.NamedTuple):
     SPM by `y_`, needs it so that the generic writer chooses it.
     """
 
+    stored: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+    """Function that returns the data of an object as its file stores it.
+
+    It is `None` for a format whose `raw` holds the stored data. The
+    matrix of a NIfTI affine lives in the header of its file, so a
+    consolidated affine has no `raw` array, and the checks read the matrix
+    of its header with this function instead.
+    """
+
 
 def _nifti_edit_record(record: tx.Any) -> tx.Any:
     record.header["descrip"] = b"edited"
@@ -568,6 +577,13 @@ def _nifti_geometry(image: tx.Any) -> np.ndarray:
 
 def _nifti_change_geometry(image: tx.Any) -> None:
     image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+
+
+def _header_matrix(xform: tx.Any) -> tx.Optional[np.ndarray]:
+    # A NIfTI affine stores its matrix as the best affine of its header.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.header.get_best_affine()
 
 
 def _matrix_geometry(xform: tx.Any) -> np.ndarray:
@@ -685,6 +701,7 @@ if nb is not None:
         change_geometry=_matrix_change_geometry,
         foreign=lambda data: Affine(data),
         derived=("homogeneous_matrix",),
+        stored=_header_matrix,
     )
     EXEMPLARS[NiftiRASCoordinatesField] = _NIFTI_FIELD._replace(
         geometry=_data_geometry,
@@ -870,6 +887,13 @@ def _path(tmp_path: tx.Any, exemplar: Exemplar, name: str) -> tx.Any:
     return tmp_path / (exemplar.prefix + name + exemplar.suffix)
 
 
+def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
+    """Return the data of an object as its file stores it."""
+    if exemplar.stored is None:
+        return obj.raw
+    return exemplar.stored(obj)
+
+
 def _built(cls: type, exemplar: Exemplar, data: tx.Any) -> tx.Any:
     """Build an object of the format from data alone."""
     if exemplar.build is None:
@@ -938,7 +962,10 @@ def _init_names(klass: type) -> tx.Set[str]:
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
     names = _init_names
-    allowed = names(_model(cls)) | {"raw", "metadata"} | exemplar.options
+    # A format whose data model is a chain may still take its stored data
+    # as `data`, which is pending until the object is consolidated.
+    allowed = names(_model(cls)) | {"raw", "metadata", "data"}
+    allowed |= exemplar.options
     assert names(cls) <= allowed
     assert not names(cls) & _PARSER_STATE
     assert names(exemplar.metadata) <= names(Metadata) | {"raw"}
@@ -983,9 +1010,8 @@ def test_03_assigned_data_is_pending(
     # Consolidating encodes the data into the `raw` of a copy.
     consolidated = loaded.consolidate()
     assert consolidated._data is None
-    assert np.array_equal(
-        np.asarray(consolidated.raw), exemplar.to_disk(value)
-    )
+    stored = np.asarray(_stored(exemplar, consolidated))
+    assert np.array_equal(stored, exemplar.to_disk(value))
     assert np.array_equal(np.asarray(consolidated.data), value)
     assert loaded.raw is raw
     assert loaded._data is value
@@ -1057,9 +1083,8 @@ def test_08_an_object_built_from_data_saves(
     # Consolidating encodes the data and a new record.
     consolidated = built.consolidate()
     assert isinstance(consolidated.metadata, exemplar.metadata)
-    assert np.array_equal(
-        np.asarray(consolidated.raw), exemplar.to_disk(value)
-    )
+    stored = np.asarray(_stored(exemplar, consolidated))
+    assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "built")
     built.save(path)
     assert np.array_equal(np.asarray(cls.load(path).data), value)
@@ -1105,8 +1130,8 @@ def test_09_copies_keep_raw_and_metadata(
         assert converted.raw is None
         assert np.array_equal(np.asarray(converted.data), value)
         consolidated = converted.consolidate()
-        expected = exemplar.to_disk(value)
-        assert np.array_equal(np.asarray(consolidated.raw), expected)
+        stored = np.asarray(_stored(exemplar, consolidated))
+        assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "converted")
     converted.save(path)
     assert np.array_equal(np.asarray(cls.load(path).data), value)
@@ -1243,23 +1268,33 @@ def test_15_consolidating_an_untouched_object_changes_nothing(
     assert loaded.metadata is metadata
 
 
+def _changed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
+    """Load an object and give it new data and a new geometry."""
+    loaded = cls.load(_saved(cls, exemplar, tmp_path))
+    loaded.data = exemplar.sample() + 1
+    exemplar.change_geometry(loaded)
+    return loaded
+
+
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_16_consolidate_is_idempotent(
     cls: type,
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    loaded = cls.load(_saved(cls, exemplar, tmp_path))
-    raw, metadata = loaded.raw, loaded.metadata
-    value = exemplar.sample() + 1
-    loaded.data = value
-    exemplar.change_geometry(loaded)
+    loaded = _changed(cls, exemplar, tmp_path)
+    raw, metadata, pending = loaded.raw, loaded.metadata, loaded._data
     once = loaded.consolidate()
-    # Nothing is pending in the copy, whose record is new.
+    # Nothing is pending in the copy, whose record is new, and the copy
+    # holds what a file written from the object holds.
     assert once._data is None
-    assert once._transformations is None
+    assert getattr(once, "_transformations", None) is None
     assert once.metadata is not metadata
-    assert np.array_equal(np.asarray(once.data), value)
+    target = _path(tmp_path, exemplar, "written")
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.array_equal(np.asarray(once.data), np.asarray(back.data))
+    assert np.allclose(exemplar.geometry(once), exemplar.geometry(back))
     assert np.allclose(exemplar.geometry(once), exemplar.geometry(loaded))
     # A second consolidation changes nothing.
     twice = once.consolidate()
@@ -1268,11 +1303,11 @@ def test_16_consolidate_is_idempotent(
     # The object itself keeps its pending state.
     assert loaded.raw is raw
     assert loaded.metadata is metadata
-    assert loaded._data is value
+    assert loaded._data is pending
     # In place, the object holds the consolidated state.
     assert loaded.consolidate(inplace=True) is loaded
     assert loaded._data is None
-    assert loaded._transformations is None
+    assert getattr(loaded, "_transformations", None) is None
     raw, metadata = loaded.raw, loaded.metadata
     loaded.consolidate(inplace=True)
     assert loaded.raw is raw
@@ -1285,14 +1320,12 @@ def test_17_save_writes_the_consolidated_copy(
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    loaded = cls.load(_saved(cls, exemplar, tmp_path))
-    raw, metadata = loaded.raw, loaded.metadata
-    value = exemplar.sample() + 1
-    loaded.data = value
-    exemplar.change_geometry(loaded)
+    loaded = _changed(cls, exemplar, tmp_path)
+    raw, metadata, pending = loaded.raw, loaded.metadata, loaded._data
+    chain = getattr(loaded, "_transformations", None)
     (tmp_path / "saved").mkdir()
     (tmp_path / "consolidated").mkdir()
-    name = "copy" + exemplar.suffix
+    name = exemplar.prefix + "copy" + exemplar.suffix
     loaded.save(tmp_path / "saved" / name)
     loaded.consolidate().save(tmp_path / "consolidated" / name)
     assert _decompressed(tmp_path / "saved" / name) == _decompressed(
@@ -1301,8 +1334,8 @@ def test_17_save_writes_the_consolidated_copy(
     # Saving leaves the object as it was.
     assert loaded.raw is raw
     assert loaded.metadata is metadata
-    assert loaded._data is value
-    assert loaded._transformations is not None
+    assert loaded._data is pending
+    assert getattr(loaded, "_transformations", None) is chain
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)

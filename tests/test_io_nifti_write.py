@@ -306,7 +306,13 @@ def test_an_affine_keeps_the_code_of_each_form(
     qcode: int,
     expected: tuple,
 ) -> None:
-    """Each form keeps its code, and the sform always holds the matrix."""
+    """Each form keeps its code, and the sform always holds the matrix.
+
+    An untouched affine is written with the header of its file, so its
+    codes are kept as they are. Once its matrix is assigned, the matrix is
+    encoded in both forms, and a form without a code takes the code of the
+    other one.
+    """
     # Without an affine given to the image, nibabel saves the codes as
     # they are set, including a code of zero.
     img = nb.Nifti1Image(np.zeros((4, 5, 6), dtype="float32"), None)
@@ -316,6 +322,15 @@ def test_an_affine_keeps_the_code_of_each_form(
     nb.save(img, str(source))
 
     affine = NiftiVoxelToRAS.from_file(source)
+    target = tmp_path / "untouched.nii"
+    affine.save(target)
+    header = nb.load(str(target)).header
+    assert (int(header["sform_code"]), int(header["qform_code"])) == (
+        scode,
+        qcode,
+    )
+
+    affine.matrix = affine.matrix
     target = tmp_path / "affine.nii"
     affine.save(target)
 
