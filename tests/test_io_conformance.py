@@ -1000,13 +1000,16 @@ def test_13_transformations_are_decoded_unless_assigned(
     tmp_path,  # noqa: ANN001
 ) -> None:
     loaded = cls.load(_placed(cls, exemplar, tmp_path))
-    decoded = exemplar.geometry(loaded)
-    # After a read, the image stores no transformations, so they are
-    # decoded from the record. The copies within the format store none
-    # either, so they decode the same record.
+    # After a read, the image stores no transformations until they are
+    # read, and the copies within the format store none either.
     assert loaded._transformations is None
     for copy in (replace(loaded), cls.from_instance(loaded)):
         assert copy._transformations is None
+    # Reading them decodes the record and stores the list, and the copies
+    # decode the same record.
+    decoded = exemplar.geometry(loaded)
+    assert loaded._transformations is not None
+    for copy in (replace(loaded), cls.from_instance(loaded)):
         assert np.allclose(exemplar.geometry(copy), decoded)
     # An empty list is kept, and the copies keep it.
     loaded.transformations = []
