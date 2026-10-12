@@ -1884,7 +1884,7 @@ def test_19_read_transformations_keep_the_record(
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
-def test_19_a_transformation_appended_in_place_is_written(
+def test_19_a_list_changed_in_place_is_written(
     cls: type,
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
@@ -1892,11 +1892,11 @@ def test_19_a_transformation_appended_in_place_is_written(
     path = _compared(cls, exemplar, tmp_path)
     loaded = cls.load(path)
     metadata = loaded.metadata
-    # The transformation that the exemplar assigns is appended to the
-    # stored list instead, which makes it the preferred one.
+    # The stored list is given the transformations that the exemplar
+    # assigns, in place rather than by assignment.
     changed = cls.load(path)
     exemplar.change_geometry(changed)
-    loaded.transformations.append(changed.transformation)
+    loaded.transformations[:] = changed.transformations
     assert loaded.consolidate().metadata is not metadata
     target = tmp_path / ("appended" + exemplar.suffix)
     loaded.save(target)
