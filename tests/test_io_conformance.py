@@ -537,6 +537,7 @@ if nb is not None:
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        storage={"dtype": "int16"},
     )
 
 NOT_MIGRATED: tx.Tuple[str, ...] = (
