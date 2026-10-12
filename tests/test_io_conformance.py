@@ -2264,11 +2264,14 @@ def _compared(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
     """Return the path of a file of an image whose list is compared.
 
     Only images take `transformations` over as a list that is compared
-    at `consolidate`, and the check is skipped for any other format.
+    at `consolidate`, and the check is skipped for any other format, and
+    for a format that cannot write, such as MINC, which keeps its list.
     """
     path = _saved(cls, exemplar, tmp_path)
     if not isinstance(cls.load(path), ImageFormat):
         pytest.skip("Only an image takes its transformations over as a list.")
+    if exemplar.source is not None:
+        pytest.skip("A format that cannot write encodes no list.")
     return path
 
 

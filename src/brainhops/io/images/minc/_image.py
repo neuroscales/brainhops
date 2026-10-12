@@ -69,21 +69,22 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     and the data reverse it into Fortran order, so a file with
     dimensions `zspace, yspace, xspace` gives data indexed `(x, y, z)`.
 
-    The transformations are decoded from the record, unless other
-    transformations are assigned. They are, in order, a [`Scaling`][] to
-    `"physical"` by the absolute step of each dimension, in its unit
-    (millimeters by default for spatial dimensions), and the preferred
-    [`Affine`][] to the RAS space `"world"`, which moves along the
-    direction cosines of each spatial dimension by its signed step from
-    `start`. The affine is recorded only for volumes with three spatial
-    dimensions.
+    The transformations are decoded from the record on first access,
+    unless other transformations are assigned. They are, in order, a
+    [`Scaling`][] to `"physical"` by the absolute step of each dimension,
+    in its unit (millimeters by default for spatial dimensions), and the
+    preferred [`Affine`][] to the RAS space `"world"`, which moves along
+    the direction cosines of each spatial dimension by its signed step
+    from `start`. The affine is recorded only for volumes with three
+    spatial dimensions.
 
     MINC files cannot be written, so the class has no writer: an image is
     saved to another format, such as NIfTI, and [`save`][brainhops.io.save]
     refuses to write it as MINC. The record is `metadata.raw`, and it
     describes the file as it was read. Assigned data is pending until
-    [`consolidate`][] moves it into `raw`, and assigned transformations
-    stay pending, since no record can be encoded.
+    [`consolidate`][] moves it into `raw`, and the transformations that
+    the image holds, read or assigned, are kept, since no record can be
+    encoded.
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc",)
@@ -117,24 +118,31 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations given to the image, or `None` to decode them.
+    """The transformations of the image, or `None` when never read or set.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
     property of the same name reads it. `None`, the default, means that
-    the transformations are decoded from the record, while a list, even
-    an empty one, is used as it is.
+    the transformations have been neither read nor assigned, so the
+    record is kept as it is. The property stores here the list that it
+    decodes, and an assigned list, even an empty one, is stored as it is.
     """
 
     _metadata: KwOnly[NoRepr[tx.Optional[MincMetadata]]] = None
 
-    metadata = smartproperty("metadata", invalidates="transformations")
+    metadata = smartproperty("metadata")
     """The metadata of the file, which holds its record, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
-    drops the transformations decoded from the previous record.
+    drops the transformations that the image holds, read or assigned, so
+    that they are decoded from the new record.
     """
+
+    @metadata.setter
+    def metadata(self, value: tx.Optional[MincMetadata]) -> None:
+        self._metadata = value
+        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -150,21 +158,24 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             return None
         return _image_to_model(self.raw)
 
-    @smartproperty(cache=True)
+    @smartproperty
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The decoded list is cached, so `img.transformation is
-        img.transformation`. Assigning other metadata drops the decoded
-        list. An image without metadata has no transformations.
+        The list is decoded on first access and stored in the image, so
+        `img.transformation is img.transformation`, and a change made to
+        the list in place, such as an appended transformation, is kept.
+        Assigning other metadata drops the list. An image without
+        metadata has no transformations.
 
-        Assigning a list replaces the decoded one, and an empty list means
-        that the image has no geometry. Assigning `None` decodes the record
-        again.
+        Assigning a list replaces the stored one. In both cases, the list
+        is compared at [`consolidate`][], and by a write, with the list
+        that the record decodes to, exactly. An empty list means that the
+        image has no geometry, and the image is then written as an image
+        built from data alone. Assigning `None` decodes the record again.
         """
-        if self.metadata is None or self.metadata.raw is None:
-            return []
-        return _minc_to_transformations(self.metadata.raw)
+        self._transformations = _record_transformations(self.metadata)
+        return self._transformations
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -199,9 +210,9 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         MINC files cannot be written, so no record can be encoded, and
         consolidating a MINC image is limited to its data: an assigned
         array becomes `raw`, with its axes reversed, and is no longer
-        pending. The metadata is kept, and assigned transformations stay
-        pending. An image without pending data is left as it is: the copy
-        shares `raw` and the metadata.
+        pending. The metadata is kept, and so are the transformations that
+        the image holds, read or assigned. An image without pending data is
+        left as it is: the copy shares `raw` and the metadata.
 
         Parameters
         ----------
@@ -486,6 +497,18 @@ def _minc_system(record: MincRaw) -> CoordinateSystem:
     """Return the voxel system of a record, in Fortran order."""
     axes = [_axis(d.name) for d in reversed(record.dimensions)]
     return CoordinateSystem(name="voxel", axes=axes, order="F")
+
+
+def _record_transformations(
+    metadata: tx.Optional[MincMetadata],
+) -> tx.List[Transformation]:
+    """Decode the transformations of the record of some metadata.
+
+    Metadata without a record gives no transformation.
+    """
+    if metadata is None or metadata.raw is None:
+        return []
+    return _minc_to_transformations(metadata.raw)
 
 
 def _minc_to_transformations(record: MincRaw) -> tx.List[Transformation]:
