@@ -377,6 +377,27 @@ def test_a_scaling_and_no_geometry_are_written(tmp_path) -> None:  # noqa: ANN00
     assert np.allclose(nb.load(str(target)).affine, np.eye(4))
 
 
+def test_an_image_whose_transformations_are_emptied_has_no_geometry(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """An empty list is honoured, and `None` decodes the record again.
+
+    The writer encodes an image without transformations as it encodes an
+    image built from data alone: the vox2ras matrix is the identity, and
+    `goodRASFlag` is set.
+    """
+    image = MghImage.load(_write(tmp_path, "source.mgz", _data()))
+    image.transformations = []
+    assert image.transformations == []
+    target = tmp_path / "bare.mgz"
+    image.save(target)
+    header = nb.load(str(target)).header
+    assert int(header["goodRASFlag"]) == 1
+    assert np.allclose(header.get_affine(), np.eye(4))
+    image.transformations = None
+    assert np.allclose(image.to_nibabel().affine, AFFINE)
+
+
 def test_a_preferred_tkr_is_not_written_as_scanner(tmp_path) -> None:  # noqa: ANN001
     source = _write(tmp_path, "vol.mgz", _data())
     image = io.images.load(source)

@@ -889,3 +889,29 @@ def test_nothing_but_the_data_reads_the_voxels(
     assert image.shape == (2, 3)
     with pytest.raises(AttributeError):
         _ = MrtrixImage().shape
+
+
+def test_an_image_whose_transformations_are_emptied_has_no_geometry(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """An empty list is honoured, and `None` decodes the record again.
+
+    The writer encodes an image without transformations as it encodes an
+    image built from data alone, with the identity transform and a voxel
+    size of one.
+    """
+    matrix = np.diag([2.0, 3.0, 4.0, 1.0])[:3]
+    matrix[:, 3] = [5.0, 6.0, 7.0]
+    source = tmp_path / "placed.mif"
+    MrtrixImage(np.zeros((2, 3, 4), "f4"), [Affine(matrix=matrix)]).save(
+        source
+    )
+    image = MrtrixImage.load(source)
+    image.transformations = []
+    assert image.transformations == []
+    target = tmp_path / "emptied.mif"
+    image.save(target)
+    written = MrtrixImage.load(target).transformation.to(Affine).matrix
+    assert np.allclose(written, np.eye(4)[:3])
+    image.transformations = None
+    assert np.allclose(image.transformation.to(Affine).matrix, matrix)
