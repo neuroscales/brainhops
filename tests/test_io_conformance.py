@@ -1029,7 +1029,8 @@ def _regdat_edit_record(record: tx.Any) -> tx.Any:
 # the geometries `reference` and `moving` are options of the reader that
 # are never written. The view `RegisterDatTransformationRASToRAS` is not
 # a variant here, because it reads no matrix without both geometries,
-# which the checks do not give when they load a file. Its tests are in
+# which the checks do not give when they load a file (item 150 of the
+# tensions in `docs/design/format-records.md`). Its tests are in
 # `test_io_regdat.py`. Check 6 is vacuous, as it is for LTA, because the
 # file has no data beside its record.
 _REGDAT = Exemplar(
