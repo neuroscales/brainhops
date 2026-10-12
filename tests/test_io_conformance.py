@@ -27,7 +27,7 @@ import struct
 import numpy as np
 import pytest
 import typing_extensions as tx
-from bagof.magic import KwOnly, Magic, NoRepr, fields, replace
+from bagof.magic import Inherit, KwOnly, Magic, NoRepr, fields, replace
 
 import brainhops.io as io
 from brainhops._core.properties import lazyproperty, smartproperty
@@ -232,6 +232,12 @@ class ToyImage(
     raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
     metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
 
+    # The image takes the `transformations` field over under a private
+    # name, where `None` means that they are decoded from the record.
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+
     def __post_init__(self, arguments: tx.Any) -> None:
         # The default of `raw`, assigned after `data`, erases the array
         # stored by `data=`, so the array is stored again.
@@ -247,10 +253,10 @@ class ToyImage(
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self.raw = None if value is None else _toy_to_disk(value)
 
-    @smartproperty(unset=(None, "empty"))
+    @smartproperty
     def transformations(self) -> tx.List[Transformation]:
         # The geometry is decoded from the record each time, unless a list
-        # of transformations has been assigned.
+        # of transformations, which may be empty, has been assigned.
         if self.metadata is None or self.metadata.raw is None:
             return []
         return [Scaling(list(reversed(self.metadata.raw.spacing)))]
