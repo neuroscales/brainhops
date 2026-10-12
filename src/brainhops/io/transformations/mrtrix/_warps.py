@@ -1535,8 +1535,8 @@ def _coordinates_parts(
     Raises
     ------
     WriterError
-        If the chain is not an affine and a field of coordinates that
-        holds sampled values.
+        If the chain is not an affine and a field of coordinates, or if
+        the field has no coordinates.
     UnrepresentableTransformationError
         If the chain does not map scanner RAS to scanner RAS.
     """
@@ -1547,18 +1547,14 @@ def _coordinates_parts(
             f"voxel, and a field of RAS coordinates."
         )
     _check_ras(chain[0].input, chain[-1].output, what)
-    field = chain[1]
-    if field.field is None:
+    # MRtrix stores sampled coordinates, so a field of spline coefficients
+    # is written as its values.
+    coordinates = chain[1].values
+    if coordinates is None:
         raise WriterError(
             "This field has no coordinates, so there is nothing to write."
         )
-    if field.coeff:
-        raise WriterError(
-            f"{what} stores sampled coordinates, and this field holds "
-            f"spline coefficients. Convert it to values first."
-        )
     ras2vox = homogeneous_matrix(chain[0], what, ndim=_NDIM)
-    coordinates = field.field
     shape = tuple(int(s) for s in coordinates.shape)
     if len(shape) == _NDIM + 2 and shape[_NDIM] == 1:
         # The NIfTI layout, (X, Y, Z, 1, 3), keeps a singleton axis.

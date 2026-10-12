@@ -187,6 +187,21 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("h5py",),
     ),
+    "brainhops.io.transformations.mrtrix": Package(
+        names=frozenset(
+            {
+                "MrtrixDeformationField",
+                "MrtrixDisplacementField",
+                "MrtrixLinearMetadata",
+                "MrtrixLinearRaw",
+                "MrtrixLinearTransform",
+                "MrtrixMetadata",
+                "MrtrixRaw",
+                "MrtrixWarp",
+                "MrtrixWarpFull",
+            }
+        ),
+    ),
     "brainhops.io.transformations.itk": Package(
         names=frozenset(
             {

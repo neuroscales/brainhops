@@ -7,6 +7,9 @@ described in the package docstring,
 [`brainhops.io.transformations.mrtrix`][].
 """
 
+# stdlib
+from collections import OrderedDict
+
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -40,6 +43,9 @@ from ._raw import MrtrixLinearRaw
 
 _NDIM = 3
 """The number of spatial dimensions of an MRtrix linear transform."""
+
+_HISTORY = "command_history"
+"""The key in which MRtrix records the commands that wrote a file."""
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -84,6 +90,18 @@ class MrtrixLinearTransform(
 
     HINTS = ("linear",)
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
+
+    PRIORITY: tx.ClassVar[int] = -1
+    """
+    Priority below the NiftyReg affine.
+
+    A `.txt` name cannot tell an MRtrix transform from a NiftyReg affine,
+    and both hold an affine between RAS spaces exactly. `io.save` writes
+    such an affine as a NiftyReg affine (#343), unless it already is an
+    MRtrix transform, which is built with `t.to(MrtrixLinearTransform)`.
+    A file is read as an MRtrix transform from its comments, whose score
+    decides before the priority.
+    """
 
     _metadata: NoRepr[tx.Optional[MrtrixLinearMetadata]] = None
 
@@ -269,9 +287,13 @@ class MrtrixLinearTransform(
         assigned, is left as it is, since its record also holds its
         matrix: the copy shares the metadata. Otherwise a new record holds
         the matrix, and the comments of the current record, and new
-        metadata holds the record. The record held before is never
-        changed. An `input` or `output` that was assigned must be
-        compatible with scanner RAS, which is what the file stores.
+        metadata holds the record. A transformation without a record gets
+        a record whose `command_history` names brainhops and its version,
+        as every MRtrix command records itself, so that the file it writes
+        is recognized as an MRtrix transform when it is read again. The
+        record held before is never changed. An `input` or `output` that
+        was assigned must be compatible with scanner RAS, which is what
+        the file stores.
 
         Parameters
         ----------
@@ -300,7 +322,7 @@ class MrtrixLinearTransform(
                 f"An MRtrix linear transform is 3-D, and this affine has a "
                 f"matrix of shape {matrix.shape[0] - 1}x{matrix.shape[1] - 1}."
             )
-        keyval = None if record is None else record.keyval
+        keyval = _new_keyval() if record is None else record.keyval
         record = MrtrixLinearRaw(matrix=matrix, keyval=keyval)
         if self.metadata is None:
             metadata = MrtrixLinearMetadata.from_raw(record)
@@ -401,6 +423,17 @@ def _read_only(matrix: np.ndarray) -> np.ndarray:
     matrix = np.array(matrix, dtype=np.float64)
     matrix.flags.writeable = False
     return matrix
+
+
+def _new_keyval() -> "OrderedDict[str, str]":
+    """Return the comments of a new record, which name the writer.
+
+    MRtrix appends the command line and its version to the
+    `command_history` of every file that it writes (`core/app.cpp`).
+    """
+    from brainhops import __version__
+
+    return OrderedDict([(_HISTORY, f"brainhops  (version={__version__})")])
 
 
 def _check_ras(xform: MrtrixLinearTransform) -> None:
