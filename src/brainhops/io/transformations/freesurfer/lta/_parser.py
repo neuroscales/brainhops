@@ -5,7 +5,6 @@ from warnings import warn
 import typing_extensions as tx
 from bagof.magic import Magic, fields
 
-from brainhops._core.path import FileOrContentLike, Path, PathLike, exists
 from brainhops._core.peek import peekable_lines
 from brainhops.io.base.parsers import (
     Confidence,
@@ -20,20 +19,20 @@ _FIRST_LINE = re.compile(r"^type\s*=\s*\d+$")
 
 
 # ----------------------------------------------------------------------
-#   Parser classes with public methods inherited by LtaStruct
+#   Parser classes with public methods inherited by LtaRaw
 # ----------------------------------------------------------------------
 
 
 class LtaReaderWriter(Magic, TextFileReader, TextFileWriter):
     """Mixin that lets a class be sniffed, read and written as LTA.
 
-    `LtaStruct` and its blocks inherit their `sniff*`, `from_*` and `to_*`
+    `LtaRaw` and its blocks inherit their `sniff*`, `from_*` and `to_*`
     methods from this class, which follows the contract of
     [`TextFileReader`][] and [`TextFileWriter`][]. These bases provide the
     public entry points, such as `load` and `save`, and this class implements
     the format-specific steps: `sniff_line`, `from_lines` and `to_lines`.
 
-    A struct is read field by field, in declaration order. A field whose type
+    A record is read field by field, in declaration order. A field whose type
     is itself an `LtaReaderWriter` reads its own block of lines. Any other
     field reads one line of the form `key = values`, or a line of bare values
     in a block without keys. Comments and blank lines are skipped.
@@ -79,41 +78,6 @@ class LtaReaderWriter(Magic, TextFileReader, TextFileWriter):
         return Confidence.NO
 
     # --- from ---------------------------------------------------------
-
-    @classmethod
-    def from_(cls, other: FileOrContentLike) -> tx.Self:
-        """Build an object from a file or from its content.
-
-        !!! warning "Deprecated"
-            Use `load` for a file, a file object or bytes, and `from_text` or
-            `from_lines` for content in memory. Unlike `load`, `from_` reads a
-            string that names no existing file as LTA content.
-
-        Parameters
-        ----------
-        other : str, PathLike, IO, bytes or iterable of str
-            The file, or its content.
-        """
-        warn(
-            f"{cls.__name__}.from_() is deprecated: use load() for a file, "
-            f"a file object or bytes, and from_text() or from_lines() for "
-            f"content held in memory.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if isinstance(other, str):
-            # This method is the only one in which a string may hold
-            # content rather than a path. Multi-line content is usually too
-            # long to be a file name, so `exists` reports it as missing
-            # instead of raising an error.
-            if not exists(other):
-                return cls.from_text(other)
-            other = Path(other)
-        if isinstance(other, (PathLike, bytes, bytearray)) or hasattr(
-            other, "read"
-        ):
-            return cls.load(other)
-        return cls.from_lines(other)
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
@@ -237,7 +201,7 @@ class MatrixReaderWriter(LtaReaderWriter):
 
 
 class LtaFieldReader:
-    """Reader of a single field of an LTA struct.
+    """Reader of a single field of an LTA record.
 
     Calling the reader consumes as many lines as the field needs, which is
     one line or a block of lines, and returns the parsed value.
@@ -263,7 +227,7 @@ class LtaFieldReader:
             lines = peekable_lines(lines)
         types = self.type
 
-        # A field that is a struct defers to the parser of that struct.
+        # A field that is a block defers to the parser of that block.
         if isinstance(types, type) and issubclass(types, LtaReaderWriter):
             value = types.from_lines(lines)
             if value is None and not self.optional:
@@ -307,7 +271,7 @@ class LtaFieldReader:
 
 
 class LtaFieldWriter:
-    """Writer of a single field of an LTA struct.
+    """Writer of a single field of an LTA record.
 
     Calling the writer yields the line, or the block of lines, of a value.
     """

@@ -89,9 +89,10 @@ PACKAGES: tx.Dict[str, Package] = {
             {
                 "LtaCoordinateSystem",
                 "LtaMatrixType",
+                "LtaMetadata",
                 "LtaPhysicalSystem",
+                "LtaRaw",
                 "LtaScaledSystem",
-                "LtaStruct",
                 "LtaTransformation",
                 "LtaTransformationPhysToPhys",
                 "LtaTransformationRASToRAS",

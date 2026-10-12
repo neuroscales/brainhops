@@ -1,4 +1,6 @@
-__all__ = ["LtaStruct"]
+"""The record of an LTA file, which holds the whole file as it is parsed."""
+
+__all__ = ["LtaRaw"]
 
 import typing_extensions as tx
 from bagof.magic import Factory
@@ -18,8 +20,18 @@ _MatrixComplex = tx.Tuple[tx.Tuple[complex, ...], ...]
 _Matrix = tx.Union[_MatrixFloat, _MatrixComplex]
 
 
-class LtaStruct(LtaReaderWriter):
-    """In-memory representation of an LTA file.
+class LtaRaw(LtaReaderWriter):
+    """Record of an LTA file, which holds the content of the file as parsed.
+
+    An LTA file is short and is read in one pass, so the record holds the
+    whole file: its type, its matrix and the geometries of its source and
+    destination volumes. The metadata of an LTA file,
+    [`LtaMetadata`][brainhops.io.transformations.freesurfer.lta.LtaMetadata],
+    holds a record, and an
+    [`LtaTransformation`][brainhops.io.transformations.freesurfer.lta.LtaTransformation]
+    reads its matrix and its coordinate systems from the record of its
+    metadata. A record is never changed in place, so that several objects
+    can share it.
 
     Reading and writing are implemented by `LtaReaderWriter`,
     `MatrixReaderWriter` and `VolumeInfoReaderWriter`.
