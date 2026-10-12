@@ -1018,8 +1018,10 @@ def _m3z_set_data(xform: tx.Any, value: tx.Any) -> None:
 
 def _m3z_stored(xform: tx.Any) -> tx.Any:
     # The positions of a morph live in the record, and a chain that was
-    # assigned is encoded into a new record.
-    return xform.to_raw().positions
+    # assigned is pending until it is encoded into a new record.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.positions
 
 
 def _m3z_edit_record(record: tx.Any) -> tx.Any:

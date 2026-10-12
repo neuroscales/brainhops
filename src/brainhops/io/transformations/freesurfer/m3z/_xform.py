@@ -177,11 +177,17 @@ class M3zMorph(
     the atlas is `morph.metadata.raw.atlas_geometry.vox2ras`. A morph
     built from a chain has no metadata.
 
+    The record describes the file as it was read, or as the morph was
+    last consolidated. A chain that is assigned is pending until
+    [`consolidate`][] encodes it into a new record, or until the morph is
+    written.
+
     !!! note "What is written"
         A morph whose chain was not assigned is written back as the
         record that it read. A morph whose `transformations` were
-        assigned, including a morph built from a chain, is written from
-        the assigned chain, as described in [`to_raw`][].
+        assigned, including a morph built from a chain, is consolidated,
+        and written from the assigned chain, as described in
+        [`consolidate`][].
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
@@ -203,8 +209,8 @@ class M3zMorph(
         The chain is decoded from the record when it is first used, and
         it is then cached. A morph without a record and without an
         assigned chain has an empty chain. Assigning a chain replaces
-        the decoded one, and the assigned chain is what the writer
-        encodes.
+        the decoded one, and the assigned chain is pending until
+        [`consolidate`][] or the writer encodes it.
         """
         record = _record(self)
         if record is None:
@@ -349,30 +355,32 @@ class M3zMorph(
 
     # --- to -----------------------------------------------------------
 
-    def to_raw(
+    def consolidate(
         self,
+        inplace: bool = False,
         spacing: tx.Optional[int] = None,
         image_shape: tx.Optional[tx.Sequence[int]] = None,
         atlas_shape: tx.Optional[tx.Sequence[int]] = None,
-    ) -> M3zRaw:
-        """Return the [`M3zRaw`][] that encodes this morph.
+    ) -> tx.Self:
+        """Encode the pending chain into a new record.
 
         Systems that were assigned to `input` or `output` must be
         `RASmm`, since a morph always maps atlas RAS to source RAS. When
         no chain has been assigned, the record that the metadata holds
-        is then returned as it is, without a copy, so that it is written
-        as read, and the arguments are not used. An assigned chain is
-        encoded into a new record, and it must have one of the two
+        is kept as it is, so that it is written as read, and the
+        options are not used. An assigned chain is encoded into a new
+        record, held by new metadata, and it must have one of the two
         shapes that the reader builds. The first shape has three
         transformations: atlas RAS to node voxels, a field of source
         voxel coordinates, and source voxels to RAS. The second shape
         has two: the same first affine, followed by a field of source
-        RAS coordinates.
+        RAS coordinates. Afterwards the chain is decoded from the new
+        record, with the precision of the file.
 
         The atlas geometry is rebuilt from the first affine, and with
         three transformations, the source geometry is rebuilt from the
         last one. Whatever the chain does not describe is taken from the
-        arguments, then from the current record if there is one, and
+        options, then from the current record if there is one, and
         otherwise from defaults. The original positions, the GCA node
         indices and the labels of the current record are kept when the
         node grid keeps its shape, and they are shared with the current
@@ -380,6 +388,8 @@ class M3zMorph(
 
         Parameters
         ----------
+        inplace : bool, default=False
+            Whether to change this morph rather than a copy.
         spacing : int, optional
             Number of atlas voxels between nodes. The default is the
             spacing of the current record, or 1 when there is no record.
@@ -395,8 +405,8 @@ class M3zMorph(
 
         Returns
         -------
-        M3zRaw
-            The record that encodes the morph.
+        Self
+            The consolidated copy, or this morph with `inplace=True`.
 
         Raises
         ------
@@ -416,23 +426,45 @@ class M3zMorph(
         if not assigned:
             if record is None:
                 raise WriterError("This morph has no content to write.")
-            return record
-        return _encode(
-            self.transformations, record, spacing, image_shape, atlas_shape
-        )
+            if not declared:
+                return self if inplace else replace(self)
+            metadata = self.metadata
+        else:
+            record = _encode(
+                self.transformations, record, spacing, image_shape, atlas_shape
+            )
+            if self.metadata is None:
+                metadata = M3zMetadata.from_raw(record)
+            else:
+                metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                metadata=metadata,
+                transformations=None,
+                input=None,
+                output=None,
+            )
+        self.metadata = metadata
+        self.transformations = None
+        self.input = None
+        self.output = None
+        return self
 
     def to_bytes(self, compress: bool = True, **kwargs) -> bytes:
         """Return the content of the morph file that encodes this morph.
 
         The content is gzipped (`.m3z`) unless `compress=False`
-        (`.m3d`). Other keyword arguments go to [`to_raw`][].
+        (`.m3d`). The morph is consolidated into a copy with the other
+        keyword arguments, as by [`consolidate`][], and the record of the
+        copy is written. The morph itself is not changed.
 
         Parameters
         ----------
         compress : bool, default=True
             Whether to gzip the content.
         **kwargs : Any
-            Arguments of [`to_raw`][].
+            The options of [`consolidate`][].
 
         Returns
         -------
@@ -442,11 +474,13 @@ class M3zMorph(
         Raises
         ------
         UnrepresentableTransformationError
-            If the morph cannot be encoded, as described in [`to_raw`][].
+            If the morph cannot be encoded, as described in
+            [`consolidate`][].
         WriterError
             If the morph has no content to write.
         """
-        return self.to_raw(**kwargs).to_bytes(compress=compress)
+        record = _record(self.consolidate(**kwargs))
+        return record.to_bytes(compress=compress)
 
     def to_filename(
         self,
@@ -457,9 +491,10 @@ class M3zMorph(
         """Write the morph to a file.
 
         By default, the file is gzipped unless its name ends in `.m3d`,
-        as in FreeSurfer. Other keyword arguments go to [`to_raw`][].
-        The record is built first, so a morph that cannot be encoded
-        leaves the file untouched.
+        as in FreeSurfer. The morph is consolidated into a copy with the
+        other keyword arguments, as by [`consolidate`][], before the file
+        is opened, so a morph that cannot be encoded leaves the file
+        untouched, and the morph itself is not changed.
 
         Parameters
         ----------
@@ -469,16 +504,18 @@ class M3zMorph(
             Whether to gzip the file. By default, the file is gzipped unless
             its name ends in `.m3d`.
         **kwargs : Any
-            Arguments of [`to_raw`][].
+            The options of [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
-            If the morph cannot be encoded, as described in [`to_raw`][].
+            If the morph cannot be encoded, as described in
+            [`consolidate`][].
         WriterError
             If the morph has no content to write.
         """
-        self.to_raw(**kwargs).to_filename(filename, compress=compress)
+        record = _record(self.consolidate(**kwargs))
+        record.to_filename(filename, compress=compress)
 
 
 # ----------------------------------------------------------------------
@@ -495,7 +532,7 @@ def _encode(
 ) -> M3zRaw:
     """Encode a chain of transformations as a new record.
 
-    The rules are described in [`M3zMorph.to_raw`][]. The current
+    The rules are described in [`M3zMorph.consolidate`][]. The current
     record, `old`, is never changed: the new record replaces its fields,
     and it shares the arrays that it keeps.
     """
