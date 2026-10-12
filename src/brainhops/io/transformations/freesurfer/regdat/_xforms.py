@@ -151,9 +151,7 @@ class RegisterDatTransformation(
     until the transformation is consolidated.
     """
 
-    reference = smartproperty(
-        "reference", invalidates=("data", _FORGET_VIEWS)
-    )
+    reference = smartproperty("reference", invalidates=("data", _FORGET_VIEWS))
     """The geometry of the reference (target) volume, or `None`.
 
     It is an option of the reader, since the file does not store it, and

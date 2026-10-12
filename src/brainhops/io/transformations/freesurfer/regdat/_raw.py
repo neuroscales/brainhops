@@ -29,6 +29,8 @@ _UNKNOWN_SUBJECT = "subject-unknown"
 """The subject that FreeSurfer writes when it knows none."""
 
 
+# The example of a file has lines longer than the limit.
+# ruff: disable[E501]
 class RegisterDatRaw(Magic, TextFileReader, TextFileWriter):
     """Record of a FreeSurfer `register.dat` file, as it was read.
 
@@ -70,6 +72,8 @@ class RegisterDatRaw(Magic, TextFileReader, TextFileWriter):
         round
         ```
     """
+
+    # ruff: enable[E501]
 
     subject: str = _UNKNOWN_SUBJECT
     """The name of the subject, which cannot contain white space."""
@@ -127,10 +131,8 @@ class RegisterDatRaw(Magic, TextFileReader, TextFileWriter):
         The content must hold a subject, three positive numbers, a 4x4
         matrix whose last row is `0 0 0 1`, and a known rounding method
         or nothing after the matrix. Content that ends with a rounding
-        method scores [`Confidence.LIKELY`][brainhops.io.base.parsers.Confidence],
-        and content that ends with the matrix scores
-        [`Confidence.MAYBE`][brainhops.io.base.parsers.Confidence], since
-        it has a weaker signature. Content with more words is left to other
+        method scores `Confidence.LIKELY`, and content that ends with the
+        matrix scores `Confidence.MAYBE`, since it has a weaker signature. Content with more words is left to other
         formats, although FreeSurfer would ignore them.
 
         Parameters
@@ -396,17 +398,19 @@ def _encode(record: RegisterDatRaw) -> tx.List[str]:
         raise WriterError("A register.dat file holds a 4x4 matrix.")
     lines = [
         subject,
-        "%f" % record.inplane_resolution,
-        "%f" % record.slice_thickness,
-        "%f" % record.intensity,
+        format(record.inplane_resolution, "f"),
+        format(record.slice_thickness, "f"),
+        format(record.intensity, "f"),
     ]
     for row in matrix[:3]:
-        lines.append("".join("%18.15e " % value for value in row))
+        lines.append("".join(format(value, "18.15e") + " " for value in row))
     if matrix[3] == (0.0, 0.0, 0.0, 1.0):
         # FreeSurfer writes the last row as it is fixed.
         lines.append("0 0 0 1")
     else:
-        lines.append("".join("%18.15e " % value for value in matrix[3]))
+        lines.append(
+            "".join(format(value, "18.15e") + " " for value in matrix[3])
+        )
     if record.float2int is not None:
         lines.append(record.float2int)
     return lines
