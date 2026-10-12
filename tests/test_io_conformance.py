@@ -189,6 +189,20 @@ except ImportError:
     minc_needs = None
 
 try:
+    import tifffile
+
+    from brainhops.io.images.sequence import SequenceImage, SequenceMetadata
+    from brainhops.io.images.sequence._data import _SequenceProxy
+    from brainhops.io.images.sequence._views import (
+        _image_to_disk as _sequence_to_disk,
+    )
+    from brainhops.io.images.sequence._views import (
+        _image_to_model as _sequence_to_model,
+    )
+except ImportError:
+    tifffile = None
+
+try:
     import h5py
 
     from brainhops.io.common.hdf5 import DelayedH5Array
@@ -769,6 +783,15 @@ class Exemplar(tx.NamedTuple):
     the format must refuse them, and the metadata is read from the bytes
     of the header file. A copy of a file whose data cannot be read is
     then the header file, beside an empty file of data.
+    """
+
+    folder: bool = False
+    """Whether an object of the format is a folder of files.
+
+    An image sequence is a folder of numbered files, so its checks write
+    and read a folder, whose path is the path of the other formats. Bytes
+    and streams cannot hold a folder, so the format and its metadata must
+    refuse them, and check 12 tests that they do instead of reading them.
     """
 
     storage: tx.Optional[tx.Dict[str, tx.Any]] = None
@@ -1395,6 +1418,66 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+
+def _write_sequence(path: tx.Any, data: tx.Any) -> None:
+    """Write data `(x, y, z)` as a folder of TIFF files, one per slice.
+
+    The files record a pixel size of 0.5 cm along x and 0.25 cm along y in
+    their resolution tags, so that the geometry of the sequence is not the
+    identity.
+    """
+    os.mkdir(path)
+    for k in range(data.shape[2]):
+        tifffile.imwrite(
+            os.path.join(path, f"slice_{k:03d}.tif"),
+            np.ascontiguousarray(np.asarray(data)[:, :, k].T),
+            resolution=(2.0, 4.0),
+            resolutionunit="CENTIMETER",
+        )
+
+
+def _sequence_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy a folder of TIFF files, each cut before its pixels.
+
+    tifffile writes the pixels of a page after its header, so each copy
+    keeps the tags, which the record reads, and loses the pixels.
+    """
+    os.mkdir(target)
+    for name in sorted(os.listdir(source)):
+        with tifffile.TiffFile(os.path.join(source, name)) as tif:
+            offset = min(tif.pages[0].dataoffsets)
+        with open(os.path.join(source, name), "rb") as file:
+            header = file.read(offset)
+        with open(os.path.join(target, name), "wb") as file:
+            file.write(header)
+
+
+if tifffile is not None:
+    # An image sequence is a folder that cannot be written, as MINC files
+    # cannot be. The checks of writing therefore check that it refuses to
+    # write, and checks 16a, 17, 18 and 19 are skipped. Check 12 checks
+    # that bytes and streams are refused, since they cannot hold a
+    # folder, and check 6 cuts each file of the folder before its pixels
+    # (items 115 to 119 of the memo on format records).
+    EXEMPLARS[SequenceImage] = Exemplar(
+        metadata=SequenceMetadata,
+        suffix="",
+        proxies=(_SequenceProxy,),
+        to_model=_sequence_to_model,
+        to_disk=_sequence_to_disk,
+        sample=lambda: np.arange(24, dtype="uint16").reshape(2, 3, 4),
+        edit_record=lambda record: replace(record, pattern="slice_*.tif"),
+        record_edited=lambda record: record.pattern == "slice_*.tif",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"pixel_size", "unit"}),
+        cut=_sequence_cut,
+        header=lambda metadata: metadata.raw,
+        source=_write_sequence,
+        folder=True,
+    )
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
@@ -2000,6 +2083,16 @@ def test_12_adapter_contract(
         else:
             assert klass._READ_MODE == "rt"
     path = _saved(cls, exemplar, tmp_path)
+    if exemplar.folder:
+        # Neither the bytes of one file of the folder nor a stream can
+        # hold a folder of files.
+        content = sorted(path.iterdir())[0].read_bytes()
+        for klass in (cls, exemplar.metadata):
+            with pytest.raises(ParserError):
+                klass.from_bytes(content)
+            with pytest.raises(ParserError):
+                klass.from_fileobj(BytesIO(content))
+        return
     if exemplar.header_file is None:
         data = _data(exemplar, cls.from_bytes(path.read_bytes()))
         assert np.array_equal(np.asarray(data), exemplar.sample())

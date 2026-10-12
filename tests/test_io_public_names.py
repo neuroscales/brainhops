@@ -70,6 +70,16 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.images.sequence": Package(
+        names=frozenset(
+            {
+                "SequenceImage",
+                "SequenceMember",
+                "SequenceMetadata",
+                "SequenceRaw",
+            }
+        ),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),

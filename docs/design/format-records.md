@@ -1131,3 +1131,40 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+115. An image sequence (#193) is an image whose file is a folder of
+     numbered two-dimensional files (`io/images/sequence`). The folder has
+     no header, so its record, `SequenceRaw`, lists the files and holds
+     the header of each one. TIFF and Pillow images have no record yet,
+     so the header of a member is the structure that their readers
+     already parse: the `TiffMetadata` of the TIFF backend, and a new
+     `PillowHeader` that the Pillow backend reads without decoding the
+     pixels. When TIFF and Pillow move to records, the members are to
+     hold those records instead. Status: open.
+116. Image sequences are read only, as MINC is. Writing a folder would
+     replace many files that the lazy array reads, and the TIFF and
+     Pillow writers do not keep an untouched file byte for byte, so the
+     rules on saves could not be met. `SequenceImage.consolidate()` only
+     moves pending data into `raw`. Status: open, for the review of
+     #193.
+117. The conformance harness has a new field, `Exemplar.folder`, for a
+     format whose object is a folder. Check 12 then checks that the
+     format and its metadata refuse bytes and streams, since neither can
+     hold a folder. As for MINC, checks 5, 8, 9, 10 and 13 check that
+     writing is refused, check 16 checks the consolidation of the data
+     alone, and checks 16a, 17, 18 and 19 are skipped. Check 6 cuts each
+     TIFF file of the folder before its pixels, which tifffile writes
+     after the tags. Status: open, for the review of #193.
+118. The options `pixel_size` and `unit` of `SequenceImage` are fields of
+     the format. A folder records no spacing between its slices, so the
+     caller gives it, and check 13 requires that the transformations are
+     decoded from the record on first access, which needs the options.
+     They describe the object rather than the reading (item 11). Status:
+     open.
+119. `SequenceImage` and `SequenceMetadata` claim a local folder that is
+     not a Zarr store and whose image files are numbered without a gap,
+     with the confidence `LIKELY`, judged by the names alone. They never
+     claim a file, a stream or bytes, so they take nothing from the TIFF
+     and Pillow readers. Dispatch already sniffs a directory with every
+     format, and the formats that open a file fail on it, so no change of
+     dispatch was needed. Status: open, for the maintainer to decide
+     whether a folder should be read only with the hint `sequence`.
