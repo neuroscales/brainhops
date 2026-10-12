@@ -689,6 +689,7 @@ if nb is not None:
         geometry=_chain_geometry,
         change_geometry=_chain_change_geometry,
         derived=("transformations",),
+        storage={"dtype": "int16"},
     )
     _NIFTYREG = _NIFTI_FIELD
     _ITK = _NIFTI_FIELD._replace(
@@ -749,6 +750,7 @@ if nb is not None:
         change_geometry=_data_change_geometry,
         build=lambda data: FnirtWarpField(raw=data),
         options=frozenset({"moving", "reference", "deformation_type"}),
+        storage={"dtype": "int16"},
     )
 
 NOT_MIGRATED: tx.Tuple[str, ...] = (

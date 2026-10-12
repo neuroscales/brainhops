@@ -8,7 +8,6 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
-from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core import path
@@ -45,7 +44,7 @@ from brainhops.io.common.nifti._header import (
     _nifti_shape,
     _nifti_to_axes,
     _NiftiObject,
-    _stores_proxy,
+    _stored_parts,
     _written_nifti,
 )
 from brainhops.io.common.nifti._raw import (
@@ -760,10 +759,9 @@ def _nifti_encoded(
     """Encode the pending state of an image into `raw` and a new record.
 
     The data is the assigned array, or `raw` when no array is pending. A
-    copy of the held record is the base of the new header. When the header
-    does not store the array as it is, because an override changes the
-    data type or the scaling, the encoded image is written to bytes and
-    read again, and `raw` is a proxy of those bytes.
+    copy of the held record is the base of the new header. When an
+    override changes the data type or the scaling, `raw` is a proxy of
+    the voxels as the file stores them, as `_stored_parts` returns it.
 
     Raises
     ------
@@ -790,16 +788,7 @@ def _nifti_encoded(
         like=like,
         overrides=overrides,
     )
-    if not _stores_array(nifti.header, nifti.dataobj):
-        # The header stores the voxels in another type or with a scaling,
-        # as a storage override asks, and nibabel converts and scales them
-        # only when it writes them. The image is written to bytes and read
-        # again, so that `raw` is a proxy of the voxels as the file stores
-        # them and the record holds the header that was written, with its
-        # scaling.
-        record, proxy = read_nifti(BytesIO(nifti.to_bytes()))
-        return proxy, record
-    return nifti.dataobj, NiftiRaw(header=nifti.header)
+    return _stored_parts(nifti)
 
 
 def _nifti_written(
@@ -817,20 +806,3 @@ def _nifti_written(
             "This image has no data, so there is nothing to write."
         )
     return _written_nifti(image.raw, image.metadata.raw)
-
-
-def _stores_array(header: nb.Nifti1Header, array: ArrayProtocol) -> bool:
-    """Tell whether a header stores an array as it is.
-
-    A proxy is stored as it is when the header has its stored data type
-    and its scaling. Any other array is stored as it is when the header
-    has its data type and no scaling.
-    """
-    if isinstance(array, ArrayProxy):
-        return _stores_proxy(header, array)
-    slope, inter = header.get_slope_inter()
-    return (
-        header.get_data_dtype() == array.dtype
-        and slope is None
-        and inter is None
-    )

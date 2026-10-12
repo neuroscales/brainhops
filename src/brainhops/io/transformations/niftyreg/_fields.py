@@ -25,7 +25,6 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
 )
-from brainhops.io.common.nifti import NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
@@ -39,6 +38,7 @@ from brainhops.io.common.nifti._header import (
     _nifti_shape,
     _NiftiObject,
     _record_image,
+    _stored_parts,
 )
 from brainhops.io.transformations.base._converters import (
     relabel,
@@ -52,7 +52,7 @@ from brainhops.io.transformations.base.fields import (
     voxel_grid_coordinates,
 )
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _consolidated
+from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import (
     _field_to_disk,
     _field_to_model,
@@ -406,7 +406,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     _WHAT: tx.ClassVar[str] = "A NiftyReg field"
 
     def consolidate(
-        self, inplace: bool = False, like: tx.Any = None, **overrides
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> tx.Self:
         """Encode the pending vectors or chain into `raw` and a header.
 
@@ -443,15 +443,21 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             and self.metadata.raw is not None
         ):
             return self if inplace else replace(self)
-        image = self._encoded(like, **overrides)
-        return _consolidated(
-            self,
-            inplace,
-            image.dataobj,
-            NiftiRaw(header=image.header),
-            data=None,
-            transformations=None,
-        )
+        raw, record = _stored_parts(self._encoded(like, **overrides))
+        metadata = _consolidated_metadata(self, record)
+        if not inplace:
+            return replace(
+                self,
+                raw=raw,
+                metadata=metadata,
+                data=None,
+                transformations=None,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        return self
 
     def _encoded(
         self, like: tx.Any = None, **overrides
