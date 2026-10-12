@@ -18,8 +18,13 @@ from brainhops.io.common.zarr._parsers import _as_node
 from brainhops.io.images.base import ImageFormat
 
 
+# `kw_only=True` is repeated here because bagof takes each class option
+# from the first base in the method resolution order, whether that base
+# sets the option or keeps the default. That base is `ZarrReaderWriter`,
+# which keeps the default, so the fields declared by this class would
+# otherwise be positional.
 @register_format
-class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
+class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
     """An image stored as a plain Zarr array.
 
     A plain array has no world geometry, so the image is read with an identity
