@@ -1,15 +1,23 @@
-"""The MRtrix image header."""
+"""The record of an MRtrix image: its header."""
 
 # stdlib
 import math
 from collections import OrderedDict
+from io import BytesIO
 
 # dependencies
 import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops.io.base.parsers import ParserContentError
+from brainhops._core.streams import open_compressed, preserve_position
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    BinaryFileWriter,
+    Confidence,
+    ParserContentError,
+    SnifferContentError,
+)
 
 # this format
 from ._codecs import (
@@ -29,7 +37,7 @@ from ._constants import (
 )
 
 # ----------------------------------------------------------------------
-#   HEADER
+#   RECORD
 # ----------------------------------------------------------------------
 
 
@@ -54,14 +62,22 @@ def _parse_floats(value: str, key: str) -> tx.List[float]:
         ) from error
 
 
-class MrtrixHeader:
-    """
-    The content of an MRtrix image header.
+class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
+    """The header of an MRtrix image, as the file stores it.
 
-    Keys other than `dim`, `vox`, `layout`, `datatype`, `transform`,
-    `scaling` and `file` are kept in `keyval`, in order and with the lines
-    of a repeated key joined by newlines, so that the header is written
-    back as read. A header is plain data, which never touches a file.
+    An MRtrix image is a text header followed by the voxel values, in one
+    file (`.mif`, or `.mif.gz` gzipped) or in two (a `.mih` header and the
+    data file that it names). The record holds the header: the keys that
+    describe the voxels and the geometry as attributes, and every other
+    key in `keyval`, in order and with the lines of a repeated key joined
+    by newlines. It also keeps the bytes that the header was read from,
+    so that a header that is read and written again keeps its bytes.
+
+    The record knows where the voxels lie and how they are stored, but it
+    never reads them. It is held by
+    [`MrtrixMetadata`][brainhops.io.common.mrtrix.MrtrixMetadata], which
+    never changes it in place: a writer works on the copy that [`copy`][]
+    returns. Two records are equal when they format to the same text.
     """
 
     def __init__(
@@ -74,6 +90,7 @@ class MrtrixHeader:
         scaling: tx.Optional[tx.Sequence[float]] = None,
         file: tx.Optional[tx.Tuple[str, int]] = None,
         keyval: tx.Optional[tx.Mapping[str, str]] = None,
+        stored: tx.Optional[bytes] = None,
     ) -> None:
         self.dim = tuple(int(d) for d in dim)
         """The size of each axis."""
@@ -101,6 +118,15 @@ class MrtrixHeader:
         """`(name, offset)` of the data, or `None` when not known."""
         self.keyval = OrderedDict(keyval or {})
         """Every other key, with its lines joined by newlines."""
+        self.stored = stored
+        """The bytes that the header was read from, or `None`.
+
+        For a single-file image, the bytes run from the start of the file
+        to the first voxel, padding included. They are written back as
+        they are while they still describe the record, whichever program
+        wrote them, and the record is formatted as the writer spells it
+        otherwise.
+        """
 
     @property
     def ndim(self) -> int:
@@ -154,6 +180,11 @@ class MrtrixHeader:
 
         The rotation is the identity, and the field of view is centred on the
         origin.
+
+        Returns
+        -------
+        array, shape `(3, 4)`
+            The rotation and the translation, in millimetres.
         """
         dim = list(self.dim[:3]) + [1] * (3 - min(3, self.ndim))
         vox = list(self.spacing[:3]) + [1.0] * (3 - min(3, self.ndim))
@@ -168,6 +199,11 @@ class MrtrixHeader:
 
         The matrix is `transform @ diag(vox[0], vox[1], vox[2], 1)`, with
         [`default_transform`][] replacing a missing or non-finite transform.
+
+        Returns
+        -------
+        array, shape `(4, 4)`
+            The homogeneous matrix.
         """
         transform = self.transform
         if transform is None or not np.all(np.isfinite(transform)):
@@ -178,11 +214,23 @@ class MrtrixHeader:
         return matrix @ np.diag(vox + [1.0])
 
     @classmethod
-    def from_lines(cls, lines: tx.Iterable[str]) -> "MrtrixHeader":
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> "MrtrixRaw":
         """
         Parse the header lines from `mrtrix image` to `END`.
 
         Lines after `END` are ignored.
+
+        Parameters
+        ----------
+        lines : iterable of str
+            The lines of the header, without their line breaks.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        MrtrixRaw
+            The record.
 
         Raises
         ------
@@ -298,39 +346,150 @@ class MrtrixHeader:
         )
 
     @classmethod
-    def from_text(cls, text: str) -> "MrtrixHeader":
-        """Parse a header from text."""
+    def from_text(cls, text: str, **kwargs) -> "MrtrixRaw":
+        """Parse a header from text.
+
+        Parameters
+        ----------
+        text : str
+            The text of the header.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        MrtrixRaw
+            The record.
+
+        Raises
+        ------
+        ParserContentError
+            If the text is not an MRtrix header.
+        """
         return cls.from_lines(text.splitlines())
 
     @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO) -> tx.Tuple["MrtrixHeader", int]:
-        """
-        Read a header from a binary stream, and return it with the number of
-        bytes read.
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MrtrixRaw":
+        """Read the header of an MRtrix stream, gzipped or not.
 
-        The stream is left just after the `END` line.
+        The voxels are not read. The header of a single-file image is
+        read up to the first voxel, so that its padding is kept, and the
+        position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        MrtrixRaw
+            The record.
 
         Raises
         ------
         ParserContentError
             If the stream does not hold an MRtrix header.
         """
-        first = file.readline()
-        if not first.startswith(_MAGIC_BYTES):
-            raise ParserContentError(
-                f"Not an MRtrix image: the first line is not {MRTRIX_MAGIC!r}."
-            )
-        raw = [first]
-        for _ in range(_MAX_HEADER_LINES):
-            line = file.readline()
-            if not line:
-                break
-            raw.append(line)
-            if line.split(b"#", 1)[0].strip() == _END.encode():
-                break
-        nbytes = sum(len(line) for line in raw)
-        text = b"".join(raw).decode("utf-8", "replace")
-        return cls.from_text(text), nbytes
+        with preserve_position(file):
+            return _read_header(open_compressed(file))
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a stream holds an MRtrix header.
+
+        The stream may be gzipped, and its position is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream to test, open in binary mode.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no header.
+            With `True`, the error is a `SnifferContentError`, and an
+            exception class is raised instead when one is given.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            `Confidence.LIKELY` or `Confidence.NO`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the stream holds no header and `error` is `True`.
+        """
+        raw, failure = _sniffed_raw(file)
+        if raw is not None:
+            return Confidence.LIKELY
+        return _declined(error, failure)
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that bytes hold an MRtrix header.
+
+        Parameters
+        ----------
+        content : bytes
+            The content to test, which may be gzipped.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content holds no header, as
+            in [`sniff_fileobj`][].
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            `Confidence.LIKELY` or `Confidence.NO`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the content holds no header and `error` is `True`.
+        """
+        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Return the header as the file stores it.
+
+        The bytes that the header was read from are returned while they
+        still describe the record. Otherwise, the header of a single-file
+        image is padded up to its first voxel by [`embedded`][], and any
+        other header is its text.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        bytes
+            The header.
+        """
+        embedded = self.file is not None and self.file[0] == "."
+        if self.stored is not None and _parsed(self.stored) == self:
+            # The bytes of a single-file header must end at the first voxel.
+            if not embedded or len(self.stored) == self.file[1]:
+                return self.stored
+        if embedded:
+            return self.embedded()
+        return self.to_text().encode("utf-8")
 
     def to_lines(
         self, file: tx.Optional[tx.Tuple[str, tx.Optional[int]]] = None
@@ -340,6 +499,16 @@ class MrtrixHeader:
 
         The `file` argument, which defaults to the `file` of the header, is the
         `(name, offset)` of the `file:` line; an offset of `None` is omitted.
+
+        Parameters
+        ----------
+        file : tuple of str and int, optional
+            The name of the data file and the offset of the data in it.
+
+        Returns
+        -------
+        list of str
+            The lines, without their line breaks.
         """
         lines = [MRTRIX_MAGIC]
         lines.append("dim: " + ",".join(str(d) for d in self.dim))
@@ -369,7 +538,20 @@ class MrtrixHeader:
         return lines
 
     def to_text(self, *args, **kwargs) -> str:
-        """Return the header text, terminated by a newline."""
+        """Return the header text, terminated by a newline.
+
+        Parameters
+        ----------
+        *args : Any
+            The arguments of [`to_lines`][].
+        **kwargs : Any
+            The arguments of [`to_lines`][].
+
+        Returns
+        -------
+        str
+            The text of the header.
+        """
         return "\n".join(self.to_lines(*args, **kwargs)) + "\n"
 
     def embedded(self, align: int = 4) -> bytes:
@@ -378,6 +560,16 @@ class MrtrixHeader:
 
         The data offset is aligned on `align` bytes. Since the offset is part
         of the header it measures, it is found by iteration.
+
+        Parameters
+        ----------
+        align : int, default=4
+            The alignment of the data offset, in bytes.
+
+        Returns
+        -------
+        bytes
+            The header, padded with zeros up to the data offset.
         """
         offset = 0
         while True:
@@ -387,9 +579,19 @@ class MrtrixHeader:
                 return text + b"\0" * (offset - len(text))
             offset = needed
 
-    def copy(self) -> "MrtrixHeader":
-        """Return an independent copy."""
-        return MrtrixHeader(
+    def copy(self) -> "MrtrixRaw":
+        """Return a copy of the record that can be changed freely.
+
+        The bytes that the header was read from are kept, since
+        [`to_bytes`][] writes them only while they still describe the
+        record.
+
+        Returns
+        -------
+        MrtrixRaw
+            The copy.
+        """
+        return MrtrixRaw(
             dim=self.dim,
             vox=self.vox,
             layout=self.layout,
@@ -400,14 +602,79 @@ class MrtrixHeader:
             scaling=self.scaling,
             file=self.file,
             keyval=self.keyval,
+            stored=self.stored,
         )
 
     def __repr__(self) -> str:
-        return f"MrtrixHeader({self.to_text()!r})"
+        return f"MrtrixRaw({self.to_text()!r})"
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, MrtrixHeader):
+        if not isinstance(other, MrtrixRaw):
             return NotImplemented
         return self.to_text() == other.to_text()
 
     __hash__ = None
+
+
+def _read_header(file: tx.BinaryIO) -> MrtrixRaw:
+    """Read a header from a decompressed stream, keeping its bytes.
+
+    The stream is left just after the header. The header of a single-file
+    image runs up to its first voxel, so the padding after the `END` line
+    is read as well.
+
+    Raises
+    ------
+    ParserContentError
+        If the stream does not hold an MRtrix header.
+    """
+    first = file.readline()
+    if not first.startswith(_MAGIC_BYTES):
+        raise ParserContentError(
+            f"Not an MRtrix image: the first line is not {MRTRIX_MAGIC!r}."
+        )
+    lines = [first]
+    for _ in range(_MAX_HEADER_LINES):
+        line = file.readline()
+        if not line:
+            break
+        lines.append(line)
+        if line.split(b"#", 1)[0].strip() == _END.encode():
+            break
+    stored = b"".join(lines)
+    raw = MrtrixRaw.from_text(stored.decode("utf-8", "replace"))
+    if raw.file is not None and raw.file[0] == ".":
+        stored += file.read(max(0, raw.file[1] - len(stored)))
+    raw.stored = stored
+    return raw
+
+
+def _parsed(stored: bytes) -> MrtrixRaw:
+    """Parse the header of stored bytes, which may hold padding."""
+    return MrtrixRaw.from_text(stored.decode("utf-8", "replace"))
+
+
+def _sniffed_raw(
+    file: tx.IO,
+) -> tx.Tuple[tx.Optional[MrtrixRaw], tx.Optional[Exception]]:
+    """Read the record of a stream for sniffing.
+
+    The position of the stream is restored. The result is the record, or
+    `None` with the error that refused it.
+    """
+    try:
+        return MrtrixRaw.from_fileobj(file), None
+    except Exception as e:  # noqa: BLE001
+        return None, e
+
+
+def _declined(
+    error: tx.Union[bool, tx.Type[Exception]],
+    failure: tx.Optional[Exception],
+) -> float:
+    """Decline a sniffed input, raising the requested error if any."""
+    if error:
+        if error is True:
+            error = SnifferContentError
+        raise error("Content is not an MRtrix image") from failure
+    return Confidence.NO

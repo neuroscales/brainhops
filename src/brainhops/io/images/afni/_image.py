@@ -1,26 +1,58 @@
+"""The AFNI image format."""
+
+# stdlib
 import math
+import os
 import time
 import uuid
 from collections import OrderedDict
+from io import BytesIO
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Inherit, replace
+from bagof.magic import Inherit, NoRepr, replace
 
-from brainhops._core.properties import smartproperty
+# internals
+from brainhops._core import path
+from brainhops._core.properties import (
+    smartproperty,
+)
+from brainhops._core.streams import preserve_position
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
+    Identity,
     Scaling,
     Transformation,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.afni import AfniHeader, AfniReaderWriter
-from brainhops.io.common.afni._constants import AFNI_VIEWS
-from brainhops.io.common.afni._data import brick_code, brick_dtype
+from brainhops.io.base._utils_files import local_path as _local_path
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    BinaryFileWriter,
+    Confidence,
+    ParserContentError,
+    WriterError,
+)
+from brainhops.io.common._geometry import same_transformations
+from brainhops.io.common.afni import AfniFormat, AfniMetadata, AfniRaw
+from brainhops.io.common.afni._constants import _BRIK_SUFFIXES, AFNI_VIEWS
+from brainhops.io.common.afni._data import (
+    _BrikProxy,
+    _same_file,
+    brick_code,
+    brick_dtype,
+    brik_proxy,
+    decode_bricks,
+    encode_bricks,
+    read_afni,
+    write_brik,
+)
+from brainhops.io.common.afni._files import _brik_suffix, afni_dataset_files
 from brainhops.io.common.afni._geometry import (
     afni_cardinal_matrix,
     afni_geometry_from_matrix,
@@ -28,7 +60,17 @@ from brainhops.io.common.afni._geometry import (
     afni_voxel_to_dicom,
     afni_world,
 )
+from brainhops.io.common.afni._raw import (
+    _declined,
+    _format_attributes,
+    _looks_like_head,
+    _sniffed_raw,
+    _sniffed_raw_at,
+)
 from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 _INDEX = "index"
 _MM = "millimeter"
@@ -39,7 +81,8 @@ _CARDINAL = "-cardinal"
 # Codes of `TAXIS_NUMS[2]` for the time units the writer may meet.
 _TAXIS_CODES = {"millisecond": 77001, "second": 77002, "hertz": 77003}
 
-# Attributes the writer computes itself, never copied from the source.
+# Attributes that the writer computes itself, never copied from the
+# source.
 _GENERATED = (
     "TYPESTRING",
     "IDCODE_STRING",
@@ -93,7 +136,31 @@ _TYPESTRINGS = (
 _ANAT_SPGR, _ANAT_EPI, _ANAT_BUCK = 0, 2, 11
 
 
-def _afni_axes(header: AfniHeader) -> tx.List[Axis]:
+# Attributes that describe how the BRIK stores the voxels. The data and
+# the `datatype` option decide them, so they cannot be overridden.
+_LAYOUT = (
+    "DATASET_RANK",
+    "DATASET_DIMENSIONS",
+    "BRICK_TYPES",
+    "BRICK_STATS",
+    "BRICK_FLOAT_FACS",
+    "BYTEORDER_STRING",
+)
+
+# Attributes that describe the grid of the voxels in DICOM space.
+_GEOMETRY = (
+    "ORIENT_SPECIFIC",
+    "ORIGIN",
+    "DELTA",
+    "IJK_TO_DICOM",
+    "IJK_TO_DICOM_REAL",
+)
+
+# Attributes that identify a dataset, renewed when it changes.
+_IDENTITY = ("IDCODE_STRING", "IDCODE_DATE")
+
+
+def _afni_axes(header: AfniRaw) -> tx.List[Axis]:
     """Return the voxel axes of an AFNI dataset.
 
     Several sub-bricks add a fourth axis: `t` for a time series, and
@@ -108,25 +175,42 @@ def _afni_axes(header: AfniHeader) -> tx.List[Axis]:
     return axes
 
 
-# `kw_only=True` is repeated here because bagof takes each class option
-# from the first base in the method resolution order, whether that base
-# sets the option or keeps the default. That base is `AfniReaderWriter`,
-# which keeps the default, so the fields declared by this class would
-# otherwise be positional.
 @register_format
-class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
+class AfniImage(
+    ImageFormat,
+    SingleScaleImage,
+    AfniFormat,
+    BinaryFileReader,
+    BinaryFileWriter,
+):
     """An image stored as an AFNI dataset (`.HEAD` and `.BRIK` files).
 
-    The data are indexed `[x, y, z]`, or `[x, y, z, sub-brick]`, in
-    Fortran order and scaled by `BRICK_FLOAT_FACS`. The transformations
-    lead to `physical`, `<view>-cardinal` and `<view>`, the last of which
-    is preferred. Header attributes without a place in the data model are
-    kept in `header` and written back.
+    An AFNI image holds the header of its dataset as [`AfniMetadata`][],
+    whose record is an [`AfniRaw`][], and the voxels as stored in `raw`.
+    When the image is read from a file, `raw` is a lazy array that reads
+    the BRIK only when the voxels are needed, and `data` is decoded from
+    it on first access. The data are indexed `[x, y, z]`, or
+    `[x, y, z, sub-brick]`, in Fortran order and scaled by
+    `BRICK_FLOAT_FACS`.
 
-    !!! note "Why the bases are in this order"
-        As for `NiftiImage`, [`SingleScaleImage`][] comes last so that its
-        `data` field follows the defaulted fields of the parser, and so that
-        the lazy properties of this class override plain fields.
+    The transformations are decoded from the record on first access,
+    unless other transformations are assigned. They lead to `physical`,
+    `<view>-cardinal` and `<view>`, the last of which is preferred.
+
+    `raw` and the record describe the dataset as it was read, or as the
+    image was last consolidated. Data that are assigned are pending until
+    [`consolidate`][] encodes them into a copy, or until the image is
+    written, which writes such a copy and leaves the image as it was. The
+    transformations, read or assigned, are compared at [`consolidate`][]
+    with those that the record decodes to, and the geometry of the record
+    is kept when they are the same.
+
+    When the image is consolidated, the record of its metadata is the base
+    of the new header, as [`consolidate`][] describes, so the attributes
+    that the data model has no place for, such as `HISTORY_NOTE` or
+    `BRICK_LABS`, are kept. An image that is read and written again
+    without changes gives the same bytes in both files, after
+    decompression of the BRIK.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (
@@ -139,45 +223,123 @@ class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
         ".brik.gz",
         ".brik.bz2",
     )
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("brik",)
 
-    _data: tx.Optional[tx.Any] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it.
+    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    """The voxels as the BRIK stores them, or `None` without data.
+
+    After a read, `raw` is a lazy array of the BRIK, which applies the
+    scale factors of the header when it is read. `raw` describes the
+    dataset as it was read, or as the image was last consolidated, so
+    assigning `data` leaves it as it is.
+    """
+
+    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    """The data given to the image, or `None` to decode it from `raw`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
-    in the same place, and the property of the same name reads it.
-    `None`, the default, means that the data is decoded from the stored
-    sub-bricks, so that a copy of the image made with `replace` keeps
-    the lazy sub-bricks rather than a decoded array.
+    in the same place, and the property of the same name reads it. An
+    array stored here is pending: it is encoded into `raw` only by
+    [`consolidate`][] or by a write.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations given to the image, or `None` to decode them.
+    """The transformations of the image, or `None` when never read or set.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
     property of the same name reads it. `None`, the default, means that
-    the transformations are decoded from the header, while a list, even
-    an empty one, is used as it is.
+    the transformations have been neither read nor assigned, so the
+    record is kept as it is. The property stores here the list that it
+    decodes, and an assigned list, even an empty one, is stored as it is.
     """
+
+    _metadata: NoRepr[tx.Optional[AfniMetadata]] = None
+
+    metadata = smartproperty("metadata")
+    """The metadata of the dataset, which holds its record, or `None`.
+
+    An image built from data has no metadata. Assigning other metadata
+    drops the transformations that the image holds, read or assigned, so
+    that they are decoded from the new record.
+    """
+
+    @metadata.setter
+    def metadata(self, value: tx.Optional[AfniMetadata]) -> None:
+        self._metadata = value
+        self._transformations = None
+
+    @smartproperty(cache=True)
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The image data, assigned or decoded from `raw`.
+
+        An array assigned to the image is returned as it is, and stays
+        pending until [`consolidate`][] or a write encodes it. Otherwise
+        the data is decoded from `raw` on first access and cached. Data
+        decoded from a file is read-only, because changing it in place
+        would not change `raw`, which is what the image writes. To change
+        the voxels, assign `data`. Assigning `None` decodes `raw` again.
+        """
+        if self.raw is None:
+            return None
+        return _image_to_model(self.raw)
+
+    @smartproperty
+    def transformations(self) -> tx.List[Transformation]:
+        """Voxel-to-world transformations, decoded from the record.
+
+        The list is decoded on first access and stored in the image, so
+        `img.transformation is img.transformation`, and a change made to
+        the list in place, such as an appended transformation, is kept.
+        Assigning other metadata drops the list. An image without
+        metadata has no transformations.
+
+        Assigning a list replaces the stored one. In both cases, the list
+        is compared at [`consolidate`][], and by a write, with the list
+        that the record decodes to, exactly. An empty list means that the
+        image has no geometry, and the image is then written as an image
+        built from data alone. Assigning `None` decodes the record again.
+        """
+        self._transformations = _record_transformations(self.metadata)
+        return self._transformations
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the data, read without reading the voxels.
+
+        The shape is that of the assigned data, or else of `raw`: the data
+        is `raw` as the lazy array presents it, so the two have the same
+        shape, and the lazy array knows its shape from the record. An image
+        without data raises as [`SingleScaleImage`][] does.
+        """
+        if self._data is not None:
+            return tuple(int(d) for d in self._data.shape)
+        if self.raw is None:
+            return self.data.shape
+        return tuple(int(d) for d in self.raw.shape)
+
+    @property
+    def system(self) -> tx.Optional[CoordinateSystem]:
+        """The voxel coordinate system described by the record.
+
+        The axes are `x`, `y` and `z`, in Fortran order, and a fourth axis
+        for several sub-bricks: `t` for a time series and `brick`
+        otherwise. An image without metadata has no system.
+        """
+        if self.metadata is None or self.metadata.raw is None:
+            return None
+        axes = _afni_axes(self.metadata.raw)
+        return CoordinateSystem(name="voxel", axes=axes, order="F")
 
     # --- reading ------------------------------------------------------
 
     @classmethod
-    def _from_header(
-        cls, header: AfniHeader, bricks: np.ndarray, **kwargs
-    ) -> tx.Self:
-        """Build an image, dropping the last axis of a single sub-brick."""
-        if header.nvals == 1:
-            bricks = bricks[..., 0]
-        return cls(header=header, dataobj=bricks, **kwargs)
-
-    @classmethod
-    def _score_header(cls, header: AfniHeader) -> float:
-        """Score a header as a plain image.
+    def _score_header(cls, header: AfniRaw) -> float:
+        """Score a valid header as a plain image.
 
         A dataset with exactly three sub-bricks may be a warp (such as the
         `_WARP` output of 3dQwarp), so it is only a weak match.
@@ -186,189 +348,788 @@ class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
             return Confidence.WEAK
         return Confidence.LIKELY
 
-    # --- data model ---------------------------------------------------
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a stream holds an AFNI image header.
 
-    @smartproperty(cache=True)
-    def data(self) -> tx.Optional[tx.Any]:
-        """Image data, scaled from the stored sub-bricks unless assigned.
+        The position of the stream is restored, and only the start of a
+        stream that does not look like a header is read.
 
-        The data decoded from the sub-bricks is cached. Assigning an array
-        replaces it, and assigning `None` decodes the sub-bricks again.
+        Parameters
+        ----------
+        file : IO
+            The stream, whose position is restored.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no AFNI
+            image header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
-        return self._scaled_data()
+        raw, failure = _sniffed_raw(file)
+        if raw is None:
+            return _declined(error, failure)
+        return cls._score_header(raw)
 
-    @smartproperty
-    def system(self) -> tx.Optional[CoordinateSystem]:
-        """Voxel coordinate system, derived from the header unless set."""
-        if self.header is None:
-            return None
-        axes = _afni_axes(self.header)
-        return CoordinateSystem(name="voxel", axes=axes, order="F")
+    @classmethod
+    def sniff_filename(
+        cls,
+        filename: path.FilenameLike,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a path names an AFNI image.
 
-    @smartproperty
-    def transformations(self) -> tx.List[Transformation]:
-        """Voxel-to-world transformations, decoded from the header.
+        The `.HEAD` file of the dataset is tested, whichever file of the
+        dataset the path names.
 
-        The transformations are decoded from the header on each access,
-        unless a list, which may be empty, has been assigned. Assigning
-        `None` decodes the header again. An image built from data alone
-        has none.
+        Parameters
+        ----------
+        filename : path-like
+            Any file of the dataset, or the bare dataset name.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the path names no AFNI image.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
-        if self.header is None:
-            return []
-        return _afni_to_transformations(self.header)
+        raw, failure = _sniffed_raw_at(filename)
+        if raw is None:
+            return _declined(error, failure)
+        return cls._score_header(raw)
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that bytes hold an AFNI image header.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a `.HEAD` file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no AFNI image
+            header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
+
+    @classmethod
+    def from_filename(
+        cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
+    ) -> "AfniImage":
+        """Read an image from the path of a `.HEAD`, a `.BRIK` or a dataset.
+
+        The record is read from the `.HEAD` file, and the BRIK is checked
+        but not read: the lazy array reads it when the voxels are needed.
+        Other keyword arguments are ignored.
+
+        Parameters
+        ----------
+        filename : path
+            Any file of the dataset, or the bare dataset name.
+        mmap : bool, default=True
+            Whether the lazy array memory-maps a local BRIK that is not
+            compressed and whose sub-bricks share a type.
+        **kwargs : Any
+            Ignored.
+
+        Raises
+        ------
+        ParserExistsError
+            If the `.HEAD` or the `.BRIK` file does not exist.
+        ParserContentError
+            If the header is invalid, or the BRIK cannot be read.
+        """
+        raw, proxy = read_afni(filename, mmap=mmap)
+        return cls(raw=proxy, metadata=AfniMetadata.from_raw(raw))
+
+    @classmethod
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "AfniImage":
+        """Read an image from an open `.HEAD` or `.BRIK` file.
+
+        The other file of the dataset is found from the name of the
+        stream, which must have one, and the BRIK is opened by name when
+        the voxels are needed, without memory mapping. A stream that does
+        not start like a header is taken to be the BRIK, which is not
+        read. The position of the stream is restored, and the keyword
+        arguments are ignored.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The open `.HEAD` or `.BRIK` file, which must have a name.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        AfniImage
+            The image, whose voxels are read lazily.
+
+        Raises
+        ------
+        ParserContentError
+            If the stream has no file name.
+        """
+        name = getattr(file, "name", None)
+        named = isinstance(name, (str, bytes, os.PathLike))
+        with preserve_position(file):
+            start = file.read(256)
+            if isinstance(start, str):
+                start = start.encode("latin-1")
+            head = _looks_like_head(bytes(start).decode("latin-1"))
+            rest = file.read() if head and named else b""
+        if not named:
+            raise ParserContentError(
+                "An AFNI dataset is two files (.HEAD and .BRIK), and this "
+                "stream has no file name to find the other one from. Read "
+                "the dataset from its path instead."
+            )
+        if not head:
+            return cls.from_filename(os.fsdecode(name), mmap=False)
+        if isinstance(rest, str):
+            rest = rest.encode("latin-1")
+        record = AfniRaw.from_bytes(bytes(start) + bytes(rest)).validate()
+        _, brik, _ = afni_dataset_files(os.fsdecode(name))
+        proxy = brik_proxy(record, brik, mmap=False)
+        return cls(raw=proxy, metadata=AfniMetadata.from_raw(record))
+
+    @classmethod
+    def from_bytes(cls, content: bytes, **kwargs) -> "AfniImage":
+        """Refuse to read bytes, which cannot hold a dataset of two files.
+
+        Parameters
+        ----------
+        content : bytes
+            The bytes, which are not read.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        AfniImage
+            Never, since an error is always raised.
+
+        Raises
+        ------
+        ParserContentError
+            Always.
+        """
+        raise ParserContentError(
+            "An AFNI dataset is two files (.HEAD and .BRIK), which bytes "
+            "alone cannot hold. Read it from its path instead."
+        )
 
     # --- writing ------------------------------------------------------
 
-    def _afni_data(self) -> tx.Any:
-        data = self.data
-        if data is None:
-            raise WriterError(
-                "This image has no data, so there is nothing to write."
-            )
-        ndim = len(np.shape(data))
-        if ndim == 0 or ndim > 4:
-            raise WriterError(
-                f"AFNI stores three spatial axes and sub-bricks, so a "
-                f"{ndim}D array cannot be written."
-            )
-        if ndim < 3:
-            data = np.reshape(data, tuple(np.shape(data)) + (1,) * (3 - ndim))
-        return data
-
-    def _afni_header(
+    def consolidate(
         self,
-        filename: tx.Any = None,
+        *,
+        inplace: bool = False,
+        view: tx.Optional[str] = None,
+        datatype: tx.Optional[tx.Any] = None,
+        attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
+    ) -> "AfniImage":
+        """Encode the pending data and geometry into `raw` and the record.
+
+        Consolidating makes `raw` and the record describe the image, as a
+        dataset written from it would. The record is encoded in a fixed
+        order. The base is the record of the metadata, or no attribute for
+        an image without metadata.
+
+        1. The attributes that describe how the BRIK stores the voxels
+           (`DATASET_RANK`, `DATASET_DIMENSIONS`, `BRICK_TYPES`,
+           `BRICK_STATS`, `BRICK_FLOAT_FACS` and `BYTEORDER_STRING`)
+           follow `raw`. A lazy array of a BRIK that `datatype` does not
+           change is copied as the BRIK stores it, so its attributes are
+           those of its own record. Any other array is stored without
+           scale factors, in little-endian order, with the type that
+           `datatype` names or else the closest type to that of the data.
+        2. The geometry comes from the preferred transformation. The
+           geometry attributes of the base are kept as they are stored
+           when the transformation and the spatial shape are those of the
+           base, exactly. When the transformation is only close to that of
+           the base, the cardinal grid of the base is kept, and otherwise
+           the grid is the cardinal grid closest to the transformation.
+           `IJK_TO_DICOM_REAL` is then the transformation itself.
+        3. The view is `view`, or else the view named by the world space
+           of the preferred transformation, then the view of the base,
+           then `"orig"`.
+        4. The other attributes of the base are kept, except those of the
+           sub-bricks when their number changes, those of the grid when it
+           changes, and `TEMPLATE_SPACE` when the view changes. The
+           `attributes` are applied last.
+
+        When this encoding gives the attributes of the base, the metadata
+        is kept as it is, so that an image that was read and not changed
+        writes the header that it read. Otherwise, the dataset gets a new
+        `IDCODE_STRING` and `IDCODE_DATE`, unless `attributes` sets them,
+        and the new record is held by new metadata. The record held before
+        is never changed. The voxels to write become `raw`, with at least
+        three axes, and nothing is pending afterwards, so the
+        transformations are decoded from the new record, with the
+        precision of the file. The transformations that the image holds,
+        read or assigned, are compared with those that the record decodes
+        to, exactly, and an image with a record, no pending data, and the
+        transformations of its record or none read, consolidated without
+        options, is left as it is: the copy shares `raw` and the metadata.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this image rather than a copy.
+        view : {"orig", "acpc", "tlrc"}, optional
+            The view of the dataset. Writing to a file whose name carries
+            a view, such as `anat+tlrc.HEAD`, gives that view.
+        datatype : str or dtype, optional
+            AFNI type name (`"byte"`, `"short"`, `"int"`, `"float"`,
+            `"double"`, `"complex"`) or NumPy type of the stored values.
+            Values are never rescaled.
+        attributes : mapping, optional
+            Attributes set last. A value of `None` removes an attribute.
+            The attributes that describe how the BRIK stores the voxels,
+            the grid and the view (`SCENE_DATA`) are refused, because the
+            data, `datatype`, the transformations and `view` decide them.
+            A string must be Latin-1 text.
+
+        Returns
+        -------
+        AfniImage
+            The consolidated copy, or this image with `inplace=True`.
+
+        Raises
+        ------
+        WriterError
+            If there is no data, the data have no dimension or more than
+            four, the type cannot be stored, the geometry is degenerate,
+            the view is unknown, or `attributes` sets an attribute that the
+            data, the geometry or the view decide, or a string that is not
+            Latin-1 text.
+        UnrepresentableTransformationError
+            If the preferred transformation is not affine.
+        """
+        # The record is kept when the transformations were never read, or
+        # are the same as those that it decodes to.
+        kept = self._transformations is None or same_transformations(
+            self._transformations, _record_transformations(self.metadata)
+        )
+        if (
+            self._data is None
+            and kept
+            and view is None
+            and datatype is None
+            and attributes is None
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            if not inplace:
+                return replace(self, transformations=None)
+            self.transformations = None
+            return self
+        record, raw = _encoded(self, view, datatype, attributes)
+        if self.metadata is not None and record is self.metadata.raw:
+            metadata = self.metadata
+        elif self.metadata is None:
+            metadata = AfniMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                data=None,
+                transformations=None,
+                raw=raw,
+                metadata=metadata,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        return self
+
+    def to_filename(
+        self,
+        filename: path.FilenameLike,
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
         **kwargs,
-    ) -> AfniHeader:
-        """Build a header that encodes this image.
+    ) -> None:
+        """Write the `.HEAD` and `.BRIK` files of a dataset.
 
-        The preferred transformation is written as `IJK_TO_DICOM_REAL`, and
-        its closest cardinal grid as `ORIENT_SPECIFIC`, `ORIGIN` and
-        `DELTA`. The grid of the source header is kept if the geometry is
-        unchanged.
+        The path may name the `.HEAD` file, the `.BRIK` file (a `.gz` or
+        `.bz2` suffix compresses it) or the bare dataset. The image is
+        consolidated into a copy with the options, as by
+        [`consolidate`][], whose view defaults to the view in the file
+        name, and the header and `raw` of the copy are written. The image
+        itself is not changed. The BRIK is written first, then the header.
+        As AFNI does, a sibling BRIK with another suffix is removed, so
+        that it cannot shadow the new one.
+
+        The lazy array of an image may read the BRIK that is removed, for
+        example when an image read from `x+orig.BRIK` is saved as
+        `x+orig.BRIK.gz`. The image is then written over its own dataset,
+        so it is consolidated in place with the options, and it holds what
+        the dataset holds (#426): its lazy array reads the new BRIK, and
+        its data is decoded again from that file when it is next read.
 
         Parameters
         ----------
-        filename : path, optional
-            File being written, whose name may carry a view.
+        filename : path-like
+            The `.HEAD` file, the `.BRIK` file or the bare dataset name.
         view : {"orig", "acpc", "tlrc"}, optional
-            Defaults to the view in the file name, then to the view named
-            by the world space, then to the source view, then to `"orig"`.
+            The view of the dataset, as for [`consolidate`][].
         datatype : str or dtype, optional
-            AFNI type name or numpy type, by default that of the data.
-            Values are never rescaled.
+            The type of the stored values, as for [`consolidate`][].
         attributes : mapping, optional
-            Extra attributes. A value of `None` removes an attribute.
-
-        Returns
-        -------
-        AfniHeader
-            The validated header.
+            Attributes set last, as for [`consolidate`][].
+        **kwargs : Any
+            Unknown options, which are refused.
 
         Raises
         ------
         TypeError
             If an unknown option is given.
         WriterError
-            If the data, the geometry or the view cannot be written.
+            If the image cannot be encoded, as in [`consolidate`][].
         """
         if kwargs:
             raise TypeError(
                 f"Unknown AFNI writer option(s): {', '.join(kwargs)}"
             )
-        data = self._afni_data()
-        shape = tuple(int(d) for d in np.shape(data))
-        nvals = shape[3] if len(shape) == 4 else 1
-        source = self.header
-
-        # --- geometry -------------------------------------------------
-        matrix = afni_voxel_to_dicom(self.transformation)
-        if not np.all(np.isfinite(matrix)) or not np.linalg.det(matrix):
-            raise WriterError(
-                "The voxel-to-world matrix is degenerate or not finite, so "
-                "it cannot be written as AFNI geometry."
-            )
-        same_grid = (
-            source is not None
-            and source.shape == shape[:3]
-            and np.allclose(source.voxel_to_dicom, matrix, atol=1e-5)
-        )
-        if same_grid:
-            orient, origin, delta = source.orient, source.origin, source.delta
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+        head, _, stem = afni_dataset_files(filename)
+        brik_ext = ".brik" if head.name.endswith(".head") else ".BRIK"
+        suffix = ""
+        if ".BRIK" in filename.name.upper():
+            suffix = _brik_suffix(filename)
+        brik = filename.parent / (stem + brik_ext + suffix)
+        stale = []
+        for other in _BRIK_SUFFIXES:
+            sibling = filename.parent / (stem + brik_ext + other)
+            if other != suffix and path.exists(sibling):
+                local = _local_path(sibling)
+                if local is not None:
+                    stale.append((sibling, local))
+        options = dict(view=view or afni_view(filename), datatype=datatype)
+        options["attributes"] = attributes
+        reading = any(_reads_brik(self, sibling) for sibling, _ in stale)
+        if reading:
+            mmap = self.raw.mmap
+            image = self.consolidate(inplace=True, **options)
         else:
-            orient, origin, delta = afni_geometry_from_matrix(matrix)
-        cardinal = afni_cardinal_matrix(orient, origin, delta)
+            image = self.consolidate(**options)
+        record, data = _afni_written(image)
+        write_brik(record, data, brik)
+        with head.open("wb") as f:
+            f.write(record.to_bytes())
+        for _, local in stale:
+            os.remove(local)
+        if reading:
+            # The image holds what the dataset holds, and its lazy array
+            # reads the new BRIK, since the one that it read is removed.
+            self.raw = brik_proxy(record, brik, mmap)
+            self.data = None
 
-        # --- view and type --------------------------------------------
-        output = getattr(self.transformation, "output", None)
-        name = getattr(output, "name", None)
-        chosen = (
-            view
-            or afni_view(filename)
-            or afni_view(name)
-            or (source.view if source is not None else None)
-            or "orig"
+    def to_file(self, file: path.FileLike, **kwargs) -> None:
+        """Write to a path; AFNI datasets cannot be written to a stream.
+
+        Parameters
+        ----------
+        file : path-like or IO
+            The path, or a stream, which is refused.
+        **kwargs : Any
+            Arguments of [`to_filename`][].
+
+        Raises
+        ------
+        WriterError
+            If `file` is a stream.
+        """
+        if isinstance(file, str):
+            file = path.Path(file)
+        if isinstance(file, (path.PathLike, os.PathLike)):
+            return self.to_filename(file, **kwargs)
+        return self.to_fileobj(file, **kwargs)
+
+    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
+        """Refuse a stream, which cannot hold a dataset of two files.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, which is not written.
+        **kwargs : Any
+            Options of the writer, which are ignored.
+
+        Raises
+        ------
+        WriterError
+            Always.
+        """
+        raise WriterError(
+            "An AFNI dataset is two files (.HEAD and .BRIK), which a "
+            "single stream cannot hold. Write it to a path instead."
         )
-        if chosen not in AFNI_VIEWS:
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Refuse to write bytes, which cannot hold a dataset of two files.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer, which are ignored.
+
+        Returns
+        -------
+        bytes
+            Never, since an error is always raised.
+
+        Raises
+        ------
+        WriterError
+            Always.
+        """
+        raise WriterError(
+            "An AFNI dataset is two files (.HEAD and .BRIK), which bytes "
+            "alone cannot hold. Write it to a path instead."
+        )
+
+
+# ----------------------------------------------------------------------
+#   WRITING
+# ----------------------------------------------------------------------
+
+
+def _encoded(
+    image: AfniImage,
+    view: tx.Optional[str],
+    datatype: tx.Optional[tx.Any],
+    attributes: tx.Optional[tx.Mapping[str, tx.Any]],
+) -> tx.Tuple[AfniRaw, ArrayProtocol]:
+    """Return the record and the voxels that consolidating an image stores.
+
+    The record is encoded as [`AfniImage.consolidate`][] describes, and
+    the held record is returned when the encoding changes nothing. The
+    voxels are `raw` when it is a lazy array that is copied as the BRIK
+    stores it, and otherwise the assigned data or the data, as an array
+    of at least three dimensions, converted to the types of the record as
+    the writer converts them, with `_stored_voxels`.
+    """
+    if image._data is None and image.raw is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    overrides = dict(attributes or {})
+    refused = sorted(set(_LAYOUT).intersection(overrides))
+    if refused:
+        raise WriterError(
+            f"The AFNI attributes {refused} cannot be set: they describe "
+            f"how the BRIK stores the voxels, which the data and "
+            f"datatype= decide."
+        )
+    refused = sorted(set(_GEOMETRY + ("SCENE_DATA",)).intersection(overrides))
+    if refused:
+        raise WriterError(
+            f"The AFNI attributes {refused} cannot be set: they describe "
+            f"the grid and the view, which the transformations and view= "
+            f"decide."
+        )
+    for name, value in overrides.items():
+        if isinstance(value, str) and not _is_latin1(value):
             raise WriterError(
-                f"Unknown AFNI view {chosen!r}: use one of {AFNI_VIEWS}."
+                f"The AFNI attribute {name} holds characters that a "
+                f"header, which is Latin-1 text, cannot store."
             )
-        if datatype is None:
-            datatype = getattr(data, "dtype", np.dtype(np.float32))
-        stored = brick_dtype(datatype)
-        taxis = _time_axis(self, source, nvals)
+    held = None if image.metadata is None else image.metadata.raw
+    data = _stored_data(image, datatype)
+    shape = tuple(int(d) for d in data.shape)
+    nvals = shape[3] if len(shape) == 4 else 1
 
-        # --- attributes -----------------------------------------------
-        attrs = OrderedDict()
-        typestring, scene = _typestring_and_scene(source, nvals, taxis)
-        attrs["TYPESTRING"] = typestring
+    # The list of the image is read without being stored, so that a write
+    # leaves the image as it was.
+    transformations = image._transformations
+    if transformations is None:
+        transformations = _record_transformations(image.metadata)
+    preferred = transformations[-1] if transformations else Identity()
+    matrix = afni_voxel_to_dicom(preferred)
+    geometry, same_grid = _geometry(held, matrix, shape[:3])
+    output = getattr(preferred, "output", None)
+    chosen = (
+        view
+        or afni_view(getattr(output, "name", None))
+        or (held.view if held is not None else None)
+        or "orig"
+    )
+    if chosen not in AFNI_VIEWS:
+        raise WriterError(
+            f"Unknown AFNI view {chosen!r}: use one of {AFNI_VIEWS}."
+        )
+    taxis = _time_axis(image, transformations, held, nvals)
+
+    # The generated attributes come first, in the order that AFNI writes
+    # them. The identity is that of the base until the encoding is known
+    # to change the dataset.
+    attrs = OrderedDict()
+    typestring, scene = _typestring_and_scene(held, nvals, taxis)
+    attrs["TYPESTRING"] = typestring
+    for name in _IDENTITY:
+        attrs[name] = None if held is None else held.get(name)
+    attrs["SCENE_DATA"] = (AFNI_VIEWS.index(chosen),) + scene
+    attrs.update(geometry)
+    attrs.update(_layout(data, nvals, datatype))
+
+    # The other attributes of the base follow, then the time axis.
+    if held is not None:
+        for key, value in held.attributes.items():
+            if key in attrs or key in _GENERATED:
+                continue
+            if key in _PER_BRICK and held.nvals != nvals:
+                continue
+            if key in _PER_GRID and not same_grid:
+                continue
+            if key == "TEMPLATE_SPACE" and held.view != chosen:
+                continue
+            attrs[key] = value
+    if taxis is not None and "TAXIS_NUMS" not in attrs:
+        tr, unit = taxis
+        attrs["TAXIS_NUMS"] = (nvals, 0, _TAXIS_CODES.get(unit, 77002))
+        attrs["TAXIS_FLOATS"] = (0.0, float(tr), 0.0, 0.0, 0.0)
+
+    for name, value in overrides.items():
+        if value is None:
+            attrs.pop(name, None)
+        else:
+            attrs[name] = value
+
+    # The attributes are compared as they are written, so that a NaN, which
+    # differs from itself, still compares equal, and the order of the
+    # attributes does not matter.
+    record = _record(attrs)
+    if held is not None and _written(record) == _written(held):
+        return held, _stored_voxels(held, data)
+    if "IDCODE_STRING" not in overrides:
         attrs["IDCODE_STRING"] = "AFN_" + uuid.uuid4().hex[:22]
+    if "IDCODE_DATE" not in overrides:
         attrs["IDCODE_DATE"] = time.ctime()
-        attrs["SCENE_DATA"] = (AFNI_VIEWS.index(chosen),) + scene
-        attrs["ORIENT_SPECIFIC"] = tuple(int(o) for o in orient)
-        attrs["ORIGIN"] = tuple(float(o) for o in origin)
-        attrs["DELTA"] = tuple(float(d) for d in delta)
-        attrs["IJK_TO_DICOM"] = tuple(float(v) for v in cardinal[:3].ravel())
-        attrs["IJK_TO_DICOM_REAL"] = tuple(
-            float(v) for v in matrix[:3].ravel()
-        )
-        attrs["DATASET_RANK"] = (3, nvals, 0, 0, 0, 0, 0, 0)
-        attrs["DATASET_DIMENSIONS"] = tuple(shape[:3]) + (0, 0)
-        attrs["BRICK_TYPES"] = (brick_code(stored),) * nvals
-        attrs["BRICK_STATS"] = _brick_stats(data, nvals)
-        attrs["BRICK_FLOAT_FACS"] = (0.0,) * nvals
-        attrs["BYTEORDER_STRING"] = "LSB_FIRST"
+    record = _record(attrs).validate()
+    return record, _stored_voxels(record, data)
 
-        if source is not None:
-            for key, value in source.attributes.items():
-                if key in attrs or key in _GENERATED:
-                    continue
-                if key in _PER_BRICK and source.nvals != nvals:
-                    continue
-                if key in _PER_GRID and not same_grid:
-                    continue
-                if key == "TEMPLATE_SPACE" and source.view != chosen:
-                    continue
-                attrs[key] = value
-        if taxis is not None and "TAXIS_NUMS" not in attrs:
-            tr, unit = taxis
-            attrs["TAXIS_NUMS"] = (nvals, 0, _TAXIS_CODES.get(unit, 77002))
-            attrs["TAXIS_FLOATS"] = (0.0, float(tr), 0.0, 0.0, 0.0)
 
-        header = AfniHeader(attributes=attrs)
-        if attributes:
-            header = header.replace(**dict(attributes))
-        header = AfniHeader(
-            attributes=OrderedDict(
-                (key, _as_value(value))
-                for key, value in header.attributes.items()
-            )
+def _stored_data(
+    image: AfniImage, datatype: tx.Optional[tx.Any]
+) -> ArrayProtocol:
+    """Return the voxels to write, as a lazy array or as an array.
+
+    A lazy array of a BRIK is kept when no data is pending and `datatype`
+    names the type of every sub-brick or is not given, so that the BRIK is
+    copied as it is stored. Otherwise, the data are written, with three
+    spatial axes and an optional axis of sub-bricks.
+
+    Raises
+    ------
+    WriterError
+        If the data have no dimension or more than four.
+    """
+    if image._data is not None:
+        raw = _image_to_disk(image._data)
+    else:
+        raw = image.raw
+    if isinstance(raw, _BrikProxy):
+        if datatype is None:
+            return raw
+        stored = brick_dtype(datatype)
+        native = [dtype.newbyteorder("=") for dtype in raw.record.dtypes]
+        if all(dtype == stored for dtype in native):
+            return raw
+        raw = image.data
+    ndim = len(np.shape(raw))
+    if ndim == 0 or ndim > 4:
+        raise WriterError(
+            f"AFNI stores three spatial axes and sub-bricks, so a "
+            f"{ndim}D array cannot be written."
         )
-        return header.validate()
+    if ndim < 3:
+        raw = np.reshape(raw, tuple(np.shape(raw)) + (1,) * (3 - ndim))
+    return raw
+
+
+def _stored_voxels(record: AfniRaw, data: ArrayProtocol) -> ArrayProtocol:
+    """Return voxels as the BRIK of a record stores them.
+
+    The writer, `encode_bricks`, rounds floating-point values that are
+    stored as integers, checks their range, and converts them to the
+    types of the record. Voxels of another type are encoded and decoded
+    in memory in the same way, so that they are the values of the BRIK,
+    in its types. A lazy array of a BRIK, and voxels of the stored type
+    in either byte order, are returned as they are, so that they are not
+    read.
+
+    Raises
+    ------
+    WriterError
+        If integer values overflow their stored type.
+    """
+    if isinstance(data, _BrikProxy):
+        return data
+    dtype = np.dtype(data.dtype).newbyteorder("=")
+    if all(stored.newbyteorder("=") == dtype for stored in record.dtypes):
+        return data
+    content = b"".join(encode_bricks(record, data))
+    return decode_bricks(record, content).reshape(np.shape(data))
+
+
+def _layout(
+    data: ArrayProtocol, nvals: int, datatype: tx.Optional[tx.Any]
+) -> "OrderedDict[str, tx.Any]":
+    """Return the attributes that describe how the BRIK stores the voxels.
+
+    A lazy array of a BRIK is copied as it is stored, so its attributes
+    are those of its own record, as stored. Any other array is stored in
+    little-endian order without scale factors, and its statistics are
+    computed from its values.
+    """
+    if isinstance(data, _BrikProxy):
+        return OrderedDict(
+            (name, data.record[name])
+            for name in _LAYOUT
+            if name in data.record
+        )
+    if datatype is None:
+        datatype = getattr(data, "dtype", np.dtype(np.float32))
+    stored = brick_dtype(datatype)
+    shape = tuple(int(d) for d in np.shape(data))
+    layout = OrderedDict()
+    layout["DATASET_RANK"] = (3, nvals, 0, 0, 0, 0, 0, 0)
+    layout["DATASET_DIMENSIONS"] = shape[:3] + (0, 0)
+    layout["BRICK_TYPES"] = (brick_code(stored),) * nvals
+    layout["BRICK_STATS"] = _brick_stats(data, nvals)
+    layout["BRICK_FLOAT_FACS"] = (0.0,) * nvals
+    layout["BYTEORDER_STRING"] = "LSB_FIRST"
+    return layout
+
+
+def _geometry(
+    held: tx.Optional[AfniRaw],
+    matrix: np.ndarray,
+    shape: tx.Tuple[int, int, int],
+) -> tx.Tuple["OrderedDict[str, tx.Any]", bool]:
+    """Return the geometry attributes to write, and whether the grid is kept.
+
+    The geometry attributes of the base are kept as they are stored when
+    the voxel-to-DICOM matrix and the spatial shape are those of the base,
+    exactly. A record read from a file and transformations decoded from it
+    therefore keep the stored attributes, which encoding them again could
+    spell differently. Otherwise, the cardinal grid of the base is kept
+    when the matrix is close to that of the base, and the closest cardinal
+    grid is used when it is not.
+
+    Raises
+    ------
+    WriterError
+        If the matrix is degenerate or not finite.
+    """
+    if not np.all(np.isfinite(matrix)) or not np.linalg.det(matrix):
+        raise WriterError(
+            "The voxel-to-world matrix is degenerate or not finite, so "
+            "it cannot be written as AFNI geometry."
+        )
+    same_shape = held is not None and held.shape == shape
+    if same_shape and np.array_equal(held.voxel_to_dicom, matrix):
+        stored = OrderedDict(
+            (name, held[name]) for name in _GEOMETRY if name in held
+        )
+        return stored, True
+    same_grid = same_shape and np.allclose(
+        held.voxel_to_dicom, matrix, atol=1e-5
+    )
+    if same_grid:
+        orient, origin, delta = held.orient, held.origin, held.delta
+    else:
+        orient, origin, delta = afni_geometry_from_matrix(matrix)
+    cardinal = afni_cardinal_matrix(orient, origin, delta)
+    geometry = OrderedDict()
+    geometry["ORIENT_SPECIFIC"] = tuple(int(o) for o in orient)
+    geometry["ORIGIN"] = tuple(float(o) for o in origin)
+    geometry["DELTA"] = tuple(float(d) for d in delta)
+    geometry["IJK_TO_DICOM"] = tuple(float(v) for v in cardinal[:3].ravel())
+    geometry["IJK_TO_DICOM_REAL"] = tuple(float(v) for v in matrix[:3].ravel())
+    return geometry, same_grid
+
+
+def _written(record: AfniRaw) -> str:
+    """Return the attributes of a record as written, sorted by name."""
+    return _format_attributes(OrderedDict(sorted(record.attributes.items())))
+
+
+def _is_latin1(value: str) -> bool:
+    """Tell whether a string can be written in Latin-1 text."""
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _afni_written(image: AfniImage) -> tx.Tuple[AfniRaw, ArrayProtocol]:
+    """Return the record and the voxels of a consolidated image.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data.
+    """
+    if image.raw is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    return image.metadata.raw, image.raw
+
+
+def _reads_brik(image: AfniImage, brik: tx.Any) -> bool:
+    """Tell whether the lazy array of an image reads a BRIK."""
+    raw = image.raw
+    return isinstance(raw, _BrikProxy) and _same_file(raw.brik, brik)
+
+
+def _record(attrs: tx.Mapping[str, tx.Any]) -> AfniRaw:
+    """Build a record from attributes, leaving out those set to `None`.
+
+    The values are normalized to strings and flat tuples, as a record
+    read from a file holds them.
+    """
+    return AfniRaw(
+        attributes=OrderedDict(
+            (key, _as_value(value))
+            for key, value in attrs.items()
+            if value is not None
+        )
+    )
 
 
 def _as_value(value: tx.Any) -> tx.Any:
@@ -395,7 +1156,7 @@ def _brick_stats(data: tx.Any, nvals: int) -> tx.Tuple[float, ...]:
 
 
 def _typestring_and_scene(
-    source: tx.Optional[AfniHeader],
+    source: tx.Optional[AfniRaw],
     nvals: int,
     taxis: tx.Optional[tx.Tuple[float, str]],
 ) -> tx.Tuple[str, tx.Tuple[int, ...]]:
@@ -424,7 +1185,10 @@ def _typestring_and_scene(
 
 
 def _time_axis(
-    image: AfniImage, source: tx.Optional[AfniHeader], nvals: int
+    image: AfniImage,
+    transformations: tx.Sequence[Transformation],
+    source: tx.Optional[AfniRaw],
+    nvals: int,
 ) -> tx.Optional[tx.Tuple[float, str]]:
     """Return the TR and its unit for a time series, or `None`.
 
@@ -437,14 +1201,14 @@ def _time_axis(
     if nvals < 2:
         return None
     system = getattr(image, "system", None)
-    for xform in image.transformations or []:
+    for xform in transformations:
         if system is not None:
             break
         system = getattr(xform, "input", None)
     axes = list(getattr(system, "axes", None) or [])
     if len(axes) < 4 or getattr(axes[3], "type", None) != "time":
         return None
-    for xform in reversed(list(image.transformations or [])):
+    for xform in reversed(list(transformations)):
         if not isinstance(xform, Scaling):
             continue
         scale = np.ravel(np.asarray(getattr(xform, "scale", []), float))
@@ -458,7 +1222,24 @@ def _time_axis(
     return 1.0, "second"
 
 
-def _afni_to_transformations(header: AfniHeader) -> tx.List[Transformation]:
+# ----------------------------------------------------------------------
+#   READING
+# ----------------------------------------------------------------------
+
+
+def _record_transformations(
+    metadata: tx.Optional[AfniMetadata],
+) -> tx.List[Transformation]:
+    """Decode the transformations of the record of some metadata.
+
+    Metadata without a record gives no transformation.
+    """
+    if metadata is None or metadata.raw is None:
+        return []
+    return _afni_to_transformations(metadata.raw)
+
+
+def _afni_to_transformations(header: AfniRaw) -> tx.List[Transformation]:
     """Convert an AFNI header to transformations, in this order.
 
     1. voxel -> "physical": a `Scaling` by `|DELTA|` (and the TR of a

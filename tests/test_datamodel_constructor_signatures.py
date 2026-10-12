@@ -256,7 +256,7 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "SingleScaleImage": ("data", "transformations"),
     },
     "brainhops.io.images.afni._image": {
-        "AfniImage": ("data", "transformations", "header", "dataobj"),
+        "AfniImage": ("data", "transformations"),
     },
     "brainhops.io.images.base._base": {
         "ImageFormat": (),
@@ -269,7 +269,7 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         for name in ("Minc1Image", "Minc2Image", "MincImage")
     },
     "brainhops.io.images.mrtrix._image": {
-        "MrtrixImage": ("data", "transformations", "header", "dataobj"),
+        "MrtrixImage": ("data", "transformations"),
     },
     "brainhops.io.images.nifti._image": {
         "NiftiImage": ("data", "transformations"),
