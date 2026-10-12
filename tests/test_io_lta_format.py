@@ -207,9 +207,9 @@ def test_the_metadata_holds_the_record(tmp_path) -> None:  # noqa: ANN001
     assert LtaMetadata.from_text(file.read_text()).raw == _raw()
     # The metadata registry finds the format by its extension and content.
     assert type(MetadataFormat.load(file)) is LtaMetadata
-    # A copy of the record is free to change, and the record is not.
-    copy = metadata.to_raw()
-    assert copy == metadata.raw and copy is not metadata.raw
+    # Consolidating the metadata gives a copy that holds the same record.
+    copy = metadata.consolidate()
+    assert copy is not metadata and copy.raw is metadata.raw
 
 
 def test_metadata_without_a_record_writes_an_empty_record() -> None:
@@ -531,35 +531,43 @@ def test_keyword_options_override_the_file(tmp_path) -> None:  # noqa: ANN001
 
 def test_an_untouched_transformation_writes_its_record(tmp_path) -> None:  # noqa: ANN001
     xform = LtaTransformation.load(_write(tmp_path, _raw()))
-    assert xform.to_raw() is xform.metadata.raw
+    assert xform.consolidate().metadata is xform.metadata
     # The matrix is decoded once, and it is read-only, since an edit in
     # place would not reach the record.
     assert xform.data is xform.data
     assert not xform.data.flags.writeable
 
 
-def test_setting_the_matrix_stores_it_in_a_new_record(tmp_path) -> None:  # noqa: ANN001
+def test_a_set_matrix_is_encoded_in_a_new_record(tmp_path) -> None:  # noqa: ANN001
     xform = LtaTransformation.load(_write(tmp_path, _raw()))
     old = xform.metadata
     xform.homogeneous_matrix  # noqa: B018  the cached view
     xform.data = np.eye(4)[:-1]
-    # The record that was read is not changed, and the new record keeps
-    # its type, its volumes and its other fields.
+    # The matrix is pending: the record that was read is held and is not
+    # changed, and the views read the new matrix.
+    assert xform.metadata is old
+    assert old.raw == _raw()
+    np.testing.assert_array_equal(xform.homogeneous_matrix, np.eye(4))
+    # Consolidating encodes a new record, which keeps the type, the
+    # volumes and the other fields of the record that was read.
+    xform.consolidate(inplace=True)
     assert old.raw == _raw()
     assert xform.metadata is not old
+    assert xform._data is None
     assert xform.metadata.raw.type is LtaType.LINEAR_RAS_TO_RAS
     assert xform.metadata.raw.src == SRC
     assert xform.metadata.raw.affine.matrix == tuple(map(tuple, np.eye(4)))
     np.testing.assert_array_equal(xform.homogeneous_matrix, np.eye(4))
-    assert xform.to_raw() is xform.metadata.raw
+    assert xform.consolidate().metadata is xform.metadata
 
 
 def test_a_view_stores_its_matrix_under_its_own_type(tmp_path) -> None:  # noqa: ANN001
     file = _write(tmp_path, _raw(LtaType.LINEAR_RAS_TO_RAS))
     xform = LtaTransformationVoxToVox.load(file)
     xform.data = xform.data * 2
-    assert xform.metadata.raw.type is LtaType.LINEAR_VOX_TO_VOX
-    assert (xform.metadata.raw.src, xform.metadata.raw.dst) == (SRC, DST)
+    record = xform.consolidate().metadata.raw
+    assert record.type is LtaType.LINEAR_VOX_TO_VOX
+    assert (record.src, record.dst) == (SRC, DST)
     io.save(xform, tmp_path / "y.lta")
     back = LtaTransformationVoxToVox.load(tmp_path / "y.lta")
     np.testing.assert_allclose(back.matrix, xform.matrix)
@@ -568,8 +576,10 @@ def test_a_view_stores_its_matrix_under_its_own_type(tmp_path) -> None:  # noqa:
 def test_other_metadata_gives_another_matrix(tmp_path) -> None:  # noqa: ANN001
     xform = LtaTransformation.load(_write(tmp_path, _raw()))
     first = xform.data
-    record = xform.metadata.to_raw()
-    record.affine = LtaRaw.Affine(matrix=tuple(map(tuple, np.eye(4))))
+    record = replace(
+        xform.metadata.raw,
+        affine=LtaRaw.Affine(matrix=tuple(map(tuple, np.eye(4)))),
+    )
     xform.metadata = LtaMetadata.from_raw(record)
     assert xform.data is not first
     np.testing.assert_array_equal(xform.data, np.eye(4)[:-1])
@@ -579,12 +589,17 @@ def test_a_copy_carries_the_record(tmp_path) -> None:  # noqa: ANN001
     xform = LtaTransformation.load(_write(tmp_path, _raw()))
     for copy in (replace(xform), LtaTransformation.from_instance(xform)):
         assert copy.metadata is xform.metadata
-        assert copy.to_raw() is xform.metadata.raw
-    xform.data = np.eye(4)[:-1]
-    assert replace(xform).metadata is xform.metadata
+        assert copy._data is None
+        assert copy.consolidate().metadata is xform.metadata
     # A view copied from the format reads the same record.
     view = LtaTransformationVoxToVox.from_instance(xform)
     assert view.metadata is xform.metadata
+    # A pending matrix is copied as it is.
+    matrix = np.eye(4)[:-1]
+    xform.data = matrix
+    for copy in (replace(xform), LtaTransformation.from_instance(xform)):
+        assert copy.metadata is xform.metadata
+        assert copy._data is matrix
 
 
 def test_a_view_of_the_record_is_one_conversion(tmp_path) -> None:  # noqa: ANN001
@@ -615,7 +630,7 @@ def test_a_new_transformation_without_systems_is_refused() -> None:
     xform = LtaTransformation(np.eye(4)[:-1])
     assert xform.input is None
     with pytest.raises(UnrepresentableTransformationError):
-        xform.to_raw()
+        xform.consolidate()
 
 
 # ----------------------------------------------------------------------

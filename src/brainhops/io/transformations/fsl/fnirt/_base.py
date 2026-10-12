@@ -1,8 +1,8 @@
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Alias
+from bagof.magic import Alias, KwOnly, NoRepr, replace
 
-from brainhops._core.properties import lazyproperty
+from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
@@ -10,6 +10,7 @@ from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common.nifti import NiftiRaw
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -24,6 +25,7 @@ from brainhops.io.images.nifti._views import (
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._base import _consolidated
 from brainhops.io.transformations.nifti._views import _field_to_model
 
 from .._affines import _ImageGeometry
@@ -129,21 +131,26 @@ class FnirtWarpField(
     infer it from the data. Coefficient fields ignore it.
     """
 
-    @lazyproperty
+    _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    """The array given to the field, or `None` to decode it from `raw`.
+
+    An array stored here is pending until [`consolidate`][] or a write
+    encodes it into `raw`.
+    """
+
+    @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The array of the file, as FSL stores it, decoded from `raw`.
+        """The array of the file, as FSL stores it.
 
         A deformation field has shape (X, Y, Z, 3), and a coefficient field
-        holds the coefficients on its knot grid. Setting the data stores it
-        in `raw`, and the chain is then built again from the new array.
+        holds the coefficients on its knot grid. An array that is assigned
+        is returned as it is, and stays pending until [`consolidate`][] or
+        a write encodes it. Otherwise the array is decoded from `raw`. The
+        chain is built again from a new array.
         """
         if self.raw is None:
             return None
         return _image_to_model(self.raw)
-
-    @data.setter
-    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self.raw = None if value is None else _image_to_disk(value)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -218,19 +225,26 @@ class FnirtWarpField(
         obj = super().from_fileobj(fileobj, **kwargs)
         return cls._with_images(obj, moving, reference)
 
-    def to_nibabel(self, like: tx.Any = None, **overrides) -> tx.Any:
-        """Build the NIfTI image of the field under the header of its file.
+    def consolidate(
+        self, inplace: bool = False, like: tx.Any = None, **overrides
+    ) -> tx.Self:
+        """Encode the pending array into `raw` and a new header.
 
         FNIRT writes the field and the parameters of its spline in the
         header, which no other transformation can be converted to, so the
-        array is written back under a copy of the header of the metadata,
-        with its intent. A field built from an array alone is written as a
+        array is kept under a copy of the header of the metadata, with its
+        intent. A field built from an array alone is encoded as a
         deformation field (intent 2006) whose voxel-to-world affine is the
-        identity. Non-encoding header fields are copied from `like`, and
-        `overrides` are applied last.
+        identity. A chain that is assigned cannot be encoded, so it stays
+        pending in the copy. Non-encoding header fields are copied from
+        `like`, and `overrides` are applied last. A field that has a header
+        and no pending array, consolidated without options, is left as it
+        is.
 
         Parameters
         ----------
+        inplace : bool, default=False
+            Whether to change this field rather than a copy.
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
@@ -240,24 +254,25 @@ class FnirtWarpField(
 
         Returns
         -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
+        Self
+            The consolidated copy, or this field with `inplace=True`.
 
         Raises
         ------
         WriterError
             If the field has no array.
         """
-        if self.raw is None:
-            raise WriterError(
-                "A FNIRT file needs its field data to be written."
-            )
-        image = _record_image(self.raw, self._record(), overrides=overrides)
-        if _header(self) is None:
-            image.header.set_intent(FSL_FNIRT_DISPLACEMENT_FIELD)
-        _apply_like(image, like)
-        _apply_overrides(image, overrides)
-        return image
+        if (
+            self._data is None
+            and like is None
+            and not overrides
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            return self if inplace else replace(self)
+        image = _fnirt_encoded(self, like, overrides)
+        record = NiftiRaw(header=image.header)
+        return _consolidated(self, inplace, image.dataobj, record, data=None)
 
     # --- exposed parameters -------------------------------------------
 
@@ -479,6 +494,7 @@ class FnirtWarpField(
             id(self.reference),
             id(self.metadata),
             id(self.raw),
+            id(self._data),
             self.deformation_type,
         )
 
@@ -514,6 +530,30 @@ class FnirtWarpField(
         self, index: tx.Union[int, slice]
     ) -> _xforms.Transformation:
         return self._cached_transformations()[index]
+
+
+def _fnirt_encoded(
+    field: FnirtWarpField, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+) -> tx.Any:
+    """Encode the array of a FNIRT field over a copy of its record.
+
+    Raises
+    ------
+    WriterError
+        If the field has no array.
+    """
+    if field._data is not None:
+        stored = _image_to_disk(field._data)
+    else:
+        stored = field.raw
+    if stored is None:
+        raise WriterError("A FNIRT file needs its field data to be written.")
+    image = _record_image(stored, field._record(), overrides=overrides)
+    if _header(field) is None:
+        image.header.set_intent(FSL_FNIRT_DISPLACEMENT_FIELD)
+    _apply_like(image, like)
+    _apply_overrides(image, overrides)
+    return image
 
 
 # ----------------------------------------------------------------------
