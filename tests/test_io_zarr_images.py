@@ -1251,6 +1251,233 @@ def test_reader_maps_a_multi_field_sequence_without_banning(
     )
 
 
+# ---- named coordinate systems of OME-NGFF 0.6 ------------------------
+
+
+_UM = "micrometer"
+
+
+def _space(names: str, unit: tx.Optional[str] = _UM) -> tx.List[dict]:
+    axes = []
+    for name in names:
+        axis = {"name": name, "type": "space"}
+        if unit is not None:
+            axis["unit"] = unit
+        axes.append(axis)
+    return axes
+
+
+def _named_pyramid(
+    tmp_path: Path,
+    systems: tx.List[dict],
+    commons: tx.List[dict],
+    arrays: tx.Optional[tx.Dict[str, np.ndarray]] = None,
+    scale: tx.Sequence[float] = (1.0, 1.0, 1.0),
+) -> str:
+    """Write a 0.6 pyramid of one (z, y, x) level onto `intrinsic`, with
+    other named systems and the common transformations that reach them.
+    """
+    from abczarr.ome import v0_6 as v6
+
+    path = str(tmp_path / "named.zarr")
+    group = abczarr.open_group(path, mode="w")
+    group.create_array("0", data=np.ones((6, 5, 4), "float32"))
+    for name, array in (arrays or {}).items():
+        group.create_array(name, data=array)
+    block = {
+        "coordinateSystems": [{"name": "intrinsic", "axes": _space("zyx")}]
+        + systems,
+        "datasets": [
+            {
+                "path": "0",
+                "coordinateTransformations": [
+                    {
+                        "type": "scale",
+                        "scale": list(scale),
+                        "input": {"path": "0"},
+                        "output": {"name": "intrinsic"},
+                    }
+                ],
+            }
+        ],
+        "coordinateTransformations": commons,
+    }
+    group.ome = v6.OME.from_json({"version": "0.6", "multiscales": [block]})
+    return path
+
+
+def test_reader_names_each_system_with_its_own_axes_and_units(
+    tmp_path: Path,
+) -> None:
+    # The world system lists its axes as (x, y, z) and in millimeters, and
+    # the mapAxis only spells out that reordering.
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "world", "axes": _space("xyz", "millimeter")}],
+        [
+            {
+                "type": "mapAxis",
+                "mapAxis": [2, 1, 0],
+                "input": {"name": "intrinsic"},
+                "output": {"name": "world"},
+            }
+        ],
+    )
+    pyramid = OmeZarrImage.from_store(path)
+    (placement,) = pyramid.transformations
+    assert placement.input.name == "intrinsic"
+    assert placement.output.name == "world"
+    assert [a.name for a in placement.input.axes] == ["x", "y", "z"]
+    assert [str(a.unit) for a in placement.input.axes] == [_UM] * 3
+    assert [a.name for a in placement.output.axes] == ["x", "y", "z"]
+    assert [str(a.unit) for a in placement.output.axes] == ["millimeter"] * 3
+    np.testing.assert_allclose(_world_matrix(placement), np.eye(3, 4))
+
+
+def test_reader_keeps_a_system_with_fewer_axes(tmp_path: Path) -> None:
+    # The plane system is reached by dropping z, so it has two axes.
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "plane", "axes": _space("yx")}],
+        [
+            {
+                "type": "projectAxis",
+                "droppedInputs": [0],
+                "input": {"name": "intrinsic"},
+                "output": {"name": "plane"},
+            }
+        ],
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    assert [a.name for a in placement.output.axes] == ["x", "y"]
+
+
+def test_reader_inverts_a_transformation_into_the_intrinsic_space(
+    tmp_path: Path,
+) -> None:
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "world", "axes": _space("zyx")}],
+        [
+            {
+                "type": "scale",
+                "scale": [2.0, 4.0, 8.0],
+                "input": {"name": "world"},
+                "output": {"name": "intrinsic"},
+            }
+        ],
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    assert placement.output.name == "world"
+    np.testing.assert_allclose(
+        np.diag(_world_matrix(placement)[:, :3]), [1 / 8, 1 / 4, 1 / 2]
+    )
+
+
+def test_reader_reads_parameters_stored_in_an_array(tmp_path: Path) -> None:
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "world", "axes": _space("zyx")}],
+        [
+            {
+                "type": "affine",
+                "path": "params/affine",
+                "input": {"name": "intrinsic"},
+                "output": {"name": "world"},
+            }
+        ],
+        arrays={
+            "params/affine": np.asarray(
+                [[3.0, 0, 0, 30], [0, 2.0, 0, 20], [0, 0, 1.0, 10]]
+            )
+        },
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    np.testing.assert_allclose(
+        _world_matrix(placement),
+        [[1.0, 0, 0, 10], [0, 2.0, 0, 20], [0, 0, 3.0, 30]],
+    )
+
+
+def _displacement_group(
+    group: tx.Any, path: str, vector: tx.List[float]
+) -> None:
+    """Write a 0.6 displacement field group with a constant vector.
+
+    The vector axis comes before the spatial axes, as OME-NGFF 0.6
+    requires, and the field is sampled every two units.
+    """
+    from abczarr.ome import v0_6 as v6
+
+    field = np.zeros((3, 3, 3, 2), dtype="float32")
+    for component, value in enumerate(vector):
+        field[component] = value
+    node = group.create_group(path)
+    node.create_array("0", data=field)
+    axes = [{"name": "d", "type": "displacement", "discrete": True}]
+    node.ome = v6.OME.from_json(
+        {
+            "version": "0.6",
+            "multiscales": [
+                {
+                    "coordinateSystems": [
+                        {"name": "intrinsic", "axes": axes + _space("zyx")}
+                    ],
+                    "datasets": [
+                        {
+                            "path": "0",
+                            "coordinateTransformations": [
+                                {
+                                    "type": "scale",
+                                    "scale": [1.0, 2.0, 2.0, 2.0],
+                                    "input": {"path": "0"},
+                                    "output": {"name": "intrinsic"},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_reader_reads_a_displacement_field_group_of_version_0_6(
+    tmp_path: Path,
+) -> None:
+    from brainhops.datamodel.transformations import (
+        CoordinatesField,
+        Permutation,
+    )
+
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "warped", "axes": _space("zyx")}],
+        [
+            {
+                "type": "displacements",
+                "path": "fields/disp",
+                "input": {"name": "intrinsic"},
+                "output": {"name": "warped"},
+            }
+        ],
+    )
+    # The stored components are (dz, dy, dx).
+    _displacement_group(
+        abczarr.open_group(path, mode="r+"), "fields/disp", [1.0, 2.0, 3.0]
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    first, field, last = placement.transformations
+    assert isinstance(first, Permutation)
+    assert isinstance(last, Permutation)
+    # A point is carried by (dx, dy, dz) = (3, 2, 1), in brainhops order.
+    points = np.asarray([[[[0.5, 1.0, 1.5]]]])
+    moved = placement(CoordinatesField(field=points), compute=True)
+    np.testing.assert_allclose(
+        np.asarray(moved.field)[0, 0, 0], [3.5, 3.0, 2.5]
+    )
+
+
 # ---- base Zarr writer ------------------------------------------------
 
 
