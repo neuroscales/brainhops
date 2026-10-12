@@ -13,9 +13,19 @@ images, and linear transforms stored as text.
 
 The three warps share the abstract [`MrtrixWarp`][] (hint
 `"mrtrix.warp"`), which reads the `.mif`, `.mif.gz` and `.mih` variants
-through the same header parser and codec as the MRtrix image reader
-([`brainhops.io.base.mrtrix`][]). They are read and written with no
+with the record and the lazy array of the MRtrix image
+([`brainhops.io.common.mrtrix`][]). They are read and written with no
 dependency beyond numpy.
+
+Each warp holds the header of its file as [`MrtrixMetadata`][], whose
+record is an [`MrtrixRaw`][], and the values of the file, read lazily, in
+`raw`. A linear transform is short and read in one pass, so its whole
+file, matrix included, is held as an [`MrtrixLinearRaw`][] record by its
+[`MrtrixLinearMetadata`][]. The record and `raw` describe the file as it
+was read: values, chains and matrices that are assigned are pending until
+`consolidate()` encodes them into a copy, or until the object is written,
+which writes such a copy and leaves the object as it was. An object that
+is read and written again without changes keeps the bytes of its file.
 
 ```python
 import brainhops.io as io
@@ -150,17 +160,30 @@ is applied by the shared header parser.
 """
 
 __all__ = [
-    "MrtrixWarp",
     "MrtrixDeformationField",
     "MrtrixDisplacementField",
-    "MrtrixWarpFull",
+    "MrtrixLinearMetadata",
+    "MrtrixLinearRaw",
     "MrtrixLinearTransform",
+    "MrtrixMetadata",
+    "MrtrixRaw",
+    "MrtrixWarp",
+    "MrtrixWarpFull",
 ]
 
+from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
+
 from ._linear import MrtrixLinearTransform
+from ._metadata import MrtrixLinearMetadata
+from ._raw import MrtrixLinearRaw
 from ._warps import (
     MrtrixDeformationField,
     MrtrixDisplacementField,
     MrtrixWarp,
     MrtrixWarpFull,
 )
+
+# Importing the private converters registers them with the data model, so
+# that a conversion into one of these formats, such as `t.to(Format)`,
+# holds the very map or fails with a reason.
+from . import _converters  # noqa: E402, F401  isort: skip

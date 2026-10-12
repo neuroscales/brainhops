@@ -1,159 +1,144 @@
 """
-MRtrix linear transforms: the 3x4 / 4x4 text files of `mrtransform
--linear` and `mrregister -rigid` / `-affine`.
+MRtrix linear transforms: the text files of `mrtransform -linear` and
+`mrregister -rigid` or `-affine`.
 
 What they hold, and the MRtrix3 sources it was checked against, is
 described in the package docstring,
 [`brainhops.io.transformations.mrtrix`][].
 """
 
-__all__ = ["MrtrixLinearTransform"]
-
-# stdlib
-from collections import OrderedDict
-
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, KwOnly
+from bagof.magic import NoRepr, replace
 
-# datamodel
-from brainhops.datamodel import systems as _systems
-from brainhops.datamodel import transformations as _xforms
-
-# io
+# internals
+from brainhops._core import path
+from brainhops._core.properties import (
+    InvalidatorInAttribute,
+    smartproperty,
+)
+from brainhops.errors import IncompatibleSystemError
 from brainhops.io.base._base import register_format
-from brainhops.io.base.arrays import TxtArrayParser, _as_lines, _reject
+from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
-    Confidence,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.transformations.base import (
-    AffineTransformationFormat,
-    WritableFileBasedTransformation,
+from brainhops.io.transformations.base import AffineTransformationFormat
+from brainhops.io.transformations.base.affines import (
+    _RAS,
+    RASToRAS,
+    _check_endpoint,
 )
 
+# this format
 from ._formats import MrtrixTransformationFormat
+from ._metadata import MrtrixLinearMetadata
+from ._raw import MrtrixLinearRaw
 
 _NDIM = 3
-_HISTORY = "command_history"
-_CENTRE = "centre"
-_VERSION = "(version="
-"""What MRtrix appends to every `command_history` entry (`core/app.cpp`)."""
+"""The number of spatial dimensions of an MRtrix linear transform."""
 
-
-def _comment_keyval(lines: tx.Iterable[str]) -> tx.Dict[str, str]:
-    """
-    The `# key: value` comments of an MRtrix text file.
-
-    MRtrix writes its key-values as comments, one line per entry
-    (`File::KeyValue::write` with the prefix `"# "`). The lines of a
-    repeated key are joined by newlines, as in an image header. Other
-    comments are dropped.
-    """
-    keyval: tx.Dict[str, str] = OrderedDict()
-    for line in lines:
-        if "#" not in line:
-            continue
-        comment = line.split("#", 1)[1].strip()
-        key, sep, value = comment.partition(":")
-        key = key.strip()
-        if not sep or not key or " " in key:
-            continue
-        value = value.strip()
-        if key in keyval:
-            keyval[key] += "\n" + value
-        else:
-            keyval[key] = value
-    return keyval
-
-
-def _mrtrix_signature(keyval: tx.Mapping[str, str]) -> float:
-    """How surely the comments of a text matrix were written by MRtrix."""
-    history = keyval.get(_HISTORY, "")
-    if _VERSION in history:
-        return Confidence.CERTAIN
-    if _HISTORY in keyval or _CENTRE in keyval:
-        return Confidence.LIKELY
-    return Confidence.NO
+_FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
+"""Invalidator that clears the views that the data model derives."""
 
 
 @register_format
 class MrtrixLinearTransform(
     MrtrixTransformationFormat,
     AffineTransformationFormat,
-    TxtArrayParser,
-    TextFileParserWriter,
-    _xforms.Affine,
-    WritableFileBasedTransformation,
+    TextFileReader,
+    TextFileWriter,
+    RASToRAS,
 ):
     """
-    An affine stored in an MRtrix linear transform file (a 3x4 or 4x4
-    text matrix).
+    An affine stored in an MRtrix linear transform file, a `(3, 4)` or
+    `(4, 4)` text matrix.
 
     The matrix maps scanner RAS points of the *template* image to scanner
     RAS points of the *moving* image, in millimetres: the "reverse"
-    convention `mrtransform -linear` and `mrregister` use. It is read as
-    it is, as an affine from `RASmm` to `RASmm`, since that is also the
-    direction of the data model (template points to the points to
-    sample).
+    convention that `mrtransform -linear` and `mrregister` use. It is read
+    as it is, as an affine from `RASmm` to `RASmm`, since that is also the
+    direction of the data model, from template points to the points to
+    sample.
 
-    The `# key: value` comments MRtrix writes (`command_history`,
-    `centre`) are kept and written back.
+    A linear transform file is short and is read in one pass, so the whole
+    file is held as an [`MrtrixLinearRaw`][] record by the
+    [`MrtrixLinearMetadata`][] of the transformation, including its
+    `# key: value` comments, such as `command_history` and `centre`. The
+    matrix lives in that record, and the data of the transformation is a
+    read-only view of it. A matrix that is assigned is pending until
+    [`consolidate`][] encodes it into a new record, which keeps the
+    comments of the old one. A transformation without a record, such as
+    one built from data alone, holds its matrix as any affine does and has
+    no metadata. A transformation that is read and written again without
+    changes keeps the bytes of its file.
 
-    Plain text matrices look all alike, so a file is claimed only when
-    its comments say MRtrix wrote it (a `command_history` entry, or a
-    `centre`). Otherwise, ask for it: `hint="mrtrix.linear"`.
+    Plain text matrices look all alike, so a file is claimed only when its
+    comments say that MRtrix wrote it, with a `command_history` or a
+    `centre` entry. Otherwise, the file is read with
+    `hint="mrtrix.linear"`.
     """
 
     HINTS = ("linear",)
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
-    # MRtrix splits values on spaces, commas, semicolons and tabs
-    # (`load_matrix_2D_vector`, `core/math/math.h`).
-    SEPARATORS: tx.ClassVar[tx.Optional[str]] = r"[\s,;]+"
-    SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 1 << 20
 
-    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
-    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+    _metadata: NoRepr[tx.Optional[MrtrixLinearMetadata]] = None
 
-    _keyval: KwOnly[tx.Dict[str, str]] = Factory(OrderedDict, repr=False)
-    """The `# key: value` comments of the file, written back."""
+    metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
+    """The metadata of the file, which holds the file as a record.
 
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy another affine, which must map scanner RAS to scanner RAS:
-        an affine between other spaces (or unnamed ones) is not given a
-        meaning it did not have."""
-        src = getattr(other, "input", None)
-        dst = getattr(other, "output", None)
-        if not (
-            isinstance(src, _systems.RASmm) and isinstance(dst, _systems.RASmm)
-        ):
-            raise TypeError(
-                "An MRtrix linear transform maps scanner RAS to scanner RAS "
-                "world coordinates; set the input and output of this affine "
-                "to RASmm to say that it does."
-            )
-        return super().from_instance(other, *args, **kwargs)
+    A transformation built from data alone has no metadata, and setting
+    its data does not create any. Assigning other metadata drops the
+    matrix decoded from the old record. A matrix that was assigned is
+    pending and is kept, and it wins over the matrix of the new record
+    until the transformation is consolidated.
+    """
 
-    # --- ArrayParser hooks ----------------------------------------------
+    @smartproperty(cache=True, invalidates=_FORGET_VIEWS)
+    def data(self) -> tx.Optional[np.ndarray]:
+        """The `(3, 4)` affine matrix, which the `matrix` view reads.
+
+        A matrix that is assigned is returned as it is, and stays pending
+        until [`consolidate`][] encodes it in a new record. Otherwise the
+        matrix is a read-only copy of the matrix of the record, or `None`
+        without a record.
+        """
+        if self.metadata is None or self.metadata.raw is None:
+            return None
+        return _read_only(self.metadata.raw.matrix)
+
+    # --- reading ------------------------------------------------------
 
     @classmethod
-    def _accepts_array(cls, array: np.ndarray) -> bool:
-        """MRtrix reads 3 or 4 rows of 4 columns (`load_transform`)."""
-        return array.ndim == 2 and array.shape in ((3, 4), (4, 4))
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a text stream holds a transform.
 
-    @classmethod
-    def from_array(
-        cls, array: np.ndarray, key: tx.Optional[str] = None, **kwargs
-    ) -> tx.Self:
-        """The affine of the first three rows, as MRtrix reads it: a
-        fourth row is not read."""
-        matrix = np.asarray(array, dtype=np.float64)[:_NDIM]
-        return cls(matrix=matrix, **kwargs)
+        The stream is scored by [`MrtrixLinearRaw.sniff_fileobj`][].
 
-    # --- sniff / read ---------------------------------------------------
+        Parameters
+        ----------
+        file : IO
+            The stream, open in text mode.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no transform
+            written by MRtrix.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        return MrtrixLinearRaw.sniff_fileobj(file, error=error)
 
     @classmethod
     def sniff_lines(
@@ -162,69 +147,278 @@ class MrtrixLinearTransform(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score text as an MRtrix transform: a 3x4 or 4x4 matrix whose
-        comments carry MRtrix's signature."""
-        kwargs.pop("_named", None)
-        lines = _as_lines(lines)
-        score = super().sniff_lines(lines, error=error, _named=True, **kwargs)
-        if not score:
-            return score
-        score = _mrtrix_signature(_comment_keyval(lines))
-        if not score:
-            return _reject(
-                error,
-                "A text matrix without the comments MRtrix writes; read it "
-                "with hint='mrtrix.linear' if it is an MRtrix transform.",
-            )
-        return score
+        """Return the confidence that lines hold a transform of MRtrix.
+
+        The lines are scored by [`MrtrixLinearRaw.sniff_lines`][].
+
+        Parameters
+        ----------
+        lines : iterable of str
+            The lines of the file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the lines hold no transform
+            written by MRtrix.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        return MrtrixLinearRaw.sniff_lines(lines, error=error)
 
     @classmethod
-    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
-        lines = _as_lines(lines)
-        kwargs.setdefault("keyval", _comment_keyval(lines))
-        return super().from_lines(lines, **kwargs)
+    def from_text(cls, text: str, **kwargs) -> "MrtrixLinearTransform":
+        """Read a transformation from the text of a linear transform file.
 
-    # --- write ----------------------------------------------------------
+        The text is read by [`MrtrixLinearMetadata.from_text`][], and only
+        the first three rows of the matrix are read, as MRtrix reads them.
 
-    def to_lines(self, **kwargs) -> tx.Iterator[str]:
+        Parameters
+        ----------
+        text : str
+            The content of the file.
+        **kwargs : Any
+            Refused, since the reader has no option.
+
+        Returns
+        -------
+        MrtrixLinearTransform
+            The transformation.
+
+        Raises
+        ------
+        TypeError
+            If an option is given.
+        ParserContentError
+            If the text does not hold a `(3, 4)` or `(4, 4)` matrix.
         """
-        The lines MRtrix writes for this transform (`save_transform`):
-        the `# key: value` comments, three rows of four values, and
-        `0 0 0 1`.
+        return cls(metadata=MrtrixLinearMetadata.from_text(text, **kwargs))
+
+    @classmethod
+    def from_lines(
+        cls, lines: tx.Iterable[str], **kwargs
+    ) -> "MrtrixLinearTransform":
+        """Read a transformation from the lines of a linear transform file.
+
+        Parameters
+        ----------
+        lines : iterable of str
+            The lines of the file, without their line breaks.
+        **kwargs : Any
+            Refused, since the reader has no option.
+
+        Returns
+        -------
+        MrtrixLinearTransform
+            The transformation.
+
+        Raises
+        ------
+        TypeError
+            If an option is given.
+        ParserContentError
+            If the lines do not hold a `(3, 4)` or `(4, 4)` matrix.
+        """
+        return cls(metadata=MrtrixLinearMetadata.from_lines(lines, **kwargs))
+
+    @classmethod
+    def from_instance(
+        cls, other: tx.Any, *args, **kwargs
+    ) -> "MrtrixLinearTransform":
+        """Copy an instance, or convert a transformation to this format.
+
+        Within the format, the record of the metadata carries the matrix,
+        so the copy holds the same metadata as `other` and its pending
+        matrix, which is `None` unless a matrix was assigned, and the
+        matrix is not decoded. The data model would copy the decoded
+        matrix, so the rule is kept here. Any other transformation is
+        converted as `other.to(cls)` converts it.
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy or convert.
+        *args : Any
+            Constructor arguments. A transformation that is converted
+            takes keyword options only.
+        **kwargs : Any
+            Options of the conversion, or field values of the copy.
+
+        Returns
+        -------
+        MrtrixLinearTransform
+            The new object.
+
+        Raises
+        ------
+        ConversionError
+            If the format cannot hold a transformation that is converted.
+        """
+        if isinstance(other, cls):
+            kwargs.setdefault("data", other._data)
+        return super().from_instance(other, *args, **kwargs)
+
+    # --- writing ------------------------------------------------------
+
+    def consolidate(self, *, inplace: bool = False) -> "MrtrixLinearTransform":
+        """Encode the pending matrix into a new record.
+
+        A transformation that holds a record, and whose matrix was not
+        assigned, is left as it is, since its record also holds its
+        matrix: the copy shares the metadata. Otherwise a new record holds
+        the matrix, and the comments of the current record, and new
+        metadata holds the record. The record held before is never
+        changed. An `input` or `output` that was assigned must be
+        compatible with scanner RAS, which is what the file stores.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this transformation rather than a copy.
+
+        Returns
+        -------
+        MrtrixLinearTransform
+            The consolidated copy, or this transformation with
+            `inplace=True`.
 
         Raises
         ------
         UnrepresentableTransformationError
+            If the matrix is not that of a 3-D affine, or if the input or
+            the output is not compatible with scanner RAS.
+        """
+        _check_ras(self)
+        record = None if self.metadata is None else self.metadata.raw
+        if record is not None and self._data is None:
+            return self if inplace else replace(self)
+        matrix = np.asarray(self.homogeneous_matrix, dtype=np.float64)
+        if matrix.shape != (_NDIM + 1, _NDIM + 1):
+            raise UnrepresentableTransformationError(
+                f"An MRtrix linear transform is 3-D, and this affine has a "
+                f"matrix of shape {matrix.shape[0] - 1}x{matrix.shape[1] - 1}."
+            )
+        keyval = None if record is None else record.keyval
+        record = MrtrixLinearRaw(matrix=matrix, keyval=keyval)
+        if self.metadata is None:
+            metadata = MrtrixLinearMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(self, metadata=metadata, data=None)
+        self.metadata = metadata
+        self.data = None
+        return self
+
+    def to_text(self, **kwargs) -> str:
+        """Return the content of the file that encodes the transformation.
+
+        The transformation is consolidated into a copy, whose record is
+        written: the text that it was read from, when the matrix was not
+        changed, and otherwise the lines that MRtrix writes
+        (`save_transform`), which are the comments, three rows of four
+        values and `0 0 0 1`. The transformation itself is not changed.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Refused, since the writer has no option.
+
+        Returns
+        -------
+        str
+            The content of the file, ending with a newline.
+
+        Raises
+        ------
+        TypeError
+            If an option is given.
+        UnrepresentableTransformationError
             If the affine does not map scanner RAS to scanner RAS, or is
             not 3-D.
         """
-        if kwargs:
-            raise TypeError(
-                f"Unknown MRtrix writer option(s): {', '.join(kwargs)}"
-            )
-        src, dst = self.input, self.output
-        if not (
-            isinstance(src, _systems.RASmm) and isinstance(dst, _systems.RASmm)
-        ):
-            raise UnrepresentableTransformationError(
-                "An MRtrix linear transform maps scanner RAS to scanner RAS "
-                "world coordinates; set the input and output of this affine "
-                "to RASmm to say that it does."
-            )
-        matrix = self.homogeneous_matrix
-        matrix = np.eye(4) if matrix is None else np.asarray(matrix, float)
-        if matrix.shape != (_NDIM + 1, _NDIM + 1):
-            raise UnrepresentableTransformationError(
-                f"An MRtrix linear transform is 3-D, and this affine has "
-                f"shape {matrix.shape[0] - 1}x{matrix.shape[1] - 1}."
-            )
-        for key, value in self._keyval.items():
-            for line in str(value).split("\n"):
-                yield f"# {key}: {line}"
-        for row in matrix[:_NDIM]:
-            yield " ".join(repr(float(v)) for v in row)
-        yield "0 0 0 1"
+        return self.consolidate().metadata.to_text(**kwargs)
 
-    def to_text(self, **kwargs) -> str:
-        """The lines of `to_lines`, ending with a newline as MRtrix's."""
-        return super().to_text(**kwargs) + "\n"
+    def to_lines(self, **kwargs) -> tx.List[str]:
+        """Return the lines of the file that encodes the transformation.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Refused, since the writer has no option.
+
+        Returns
+        -------
+        list of str
+            The lines of the file, without their line breaks.
+        """
+        return self.to_text(**kwargs).splitlines()
+
+    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
+        """Write the transformation to a text stream.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, open in text mode.
+        **kwargs : Any
+            Refused, since the writer has no option.
+        """
+        file.write(self.to_text(**kwargs))
+
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """Write the transformation to a path.
+
+        The content is encoded before the file is written, so a
+        transformation that cannot be encoded leaves the file untouched,
+        and a local file is replaced at once.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Refused, since the writer has no option.
+        """
+        write_file(filename, self.to_bytes(**kwargs))
+
+
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+
+def _read_only(matrix: np.ndarray) -> np.ndarray:
+    """Return a read-only copy of a matrix decoded from a record.
+
+    The writer reads the record and not the decoded matrix, so an edit in
+    place would be lost. To change the matrix, a new matrix is assigned as
+    data instead, which stays pending until the transformation is
+    consolidated.
+    """
+    matrix = np.array(matrix, dtype=np.float64)
+    matrix.flags.writeable = False
+    return matrix
+
+
+def _check_ras(xform: MrtrixLinearTransform) -> None:
+    """Refuse endpoints that are not compatible with scanner RAS.
+
+    The endpoints are checked when the transformation is built, and again
+    here, since they may have been assigned since.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the input or the output is not compatible with `RASmm`.
+    """
+    for side in ("input", "output"):
+        try:
+            _check_endpoint(xform, side, _RAS)
+        except IncompatibleSystemError as error:
+            raise UnrepresentableTransformationError(
+                f"An MRtrix linear transform maps scanner RAS to scanner "
+                f"RAS. {error}"
+            ) from error
