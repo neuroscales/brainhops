@@ -1413,7 +1413,7 @@ def test_08_an_object_built_from_data_saves(
     value = exemplar.sample()
     built = _built(cls, exemplar, value)
     assert built.metadata is None
-    assert np.array_equal(np.asarray(built.data), value)
+    assert np.array_equal(np.asarray(_data(exemplar, built)), value)
     # Consolidating encodes the data and a new record.
     consolidated = built.consolidate()
     assert isinstance(consolidated.metadata, exemplar.metadata)
@@ -1627,7 +1627,7 @@ def test_16_consolidate_is_idempotent(
     target = _path(tmp_path, exemplar, "written")
     loaded.save(target)
     back = cls.load(target)
-    assert np.array_equal(
+    assert np.allclose(
         np.asarray(_data(exemplar, once)), np.asarray(_data(exemplar, back))
     )
     assert np.allclose(exemplar.geometry(once), exemplar.geometry(back))

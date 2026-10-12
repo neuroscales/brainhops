@@ -99,6 +99,11 @@ class X5Transform(
     of transformations is decoded from the record when it is first used,
     and it is then cached.
 
+    The record describes the file as it was read, or as the transformation
+    was last consolidated. A chain that is assigned, and an `input` or
+    `output` that is set, are pending until [`consolidate`][] encodes them
+    into a new record, or until the transformation is written.
+
     !!! note "What is written"
         A transformation read from a file, whose `transformations` were never
         assigned, is written back as read, with every node and chain, in the
@@ -106,14 +111,14 @@ class X5Transform(
         is read, so they never change what is written. To write only the
         selected chain, assign it with `xform.transformations = list(xform)`.
 
-        Otherwise, the nodes that encode `transformations` are written, with
-        one `/TransformChain` that applies them in order when there are
-        several. An element that this transformation decoded from its own
-        record is written as that node, so its JSON metadata, `Inverse`,
-        `Jacobian` and other content survive. An element taken from another
-        object, or from a copy made with `replace`, is encoded again and
-        loses that content. The package documentation lists what can be
-        encoded.
+        Otherwise, the transformation is consolidated: the nodes that encode
+        `transformations` are written, with one `/TransformChain` that
+        applies them in order when there are several. An element that this
+        transformation decoded from its own record is written as that node,
+        so its JSON metadata, `Inverse`, `Jacobian` and other content
+        survive. An element taken from another object, or from a copy made
+        with `replace`, is encoded again and loses that content. The
+        package documentation lists what can be encoded.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
@@ -237,7 +242,8 @@ class X5Transform(
 
         The chain is decoded from the record when it is first used, and it
         is then cached. Assigning a chain replaces the decoded one, and the
-        assigned chain is what the writer encodes.
+        assigned chain is pending until [`consolidate`][] or the writer
+        encodes it.
         """
         return tuple(self.node_transformation(i) for i in self.selection)
 
@@ -372,21 +378,35 @@ class X5Transform(
 
     # --- to -----------------------------------------------------------
 
-    def to_raw(self) -> X5Raw:
-        """Return the [`X5Raw`][] that encodes this transformation.
+    def consolidate(self, inplace: bool = False) -> tx.Self:
+        """Encode the pending chain and systems into a new record.
 
         If neither `transformations` nor the `input` and `output` systems
-        were assigned, the record that the metadata holds is returned as it
-        is, without a copy, so that the file is written back as it was
-        read, with every node and chain. The options `chain` and `position`
-        only select what is decoded, so they do not change the record.
+        were assigned, and the metadata holds a record, the transformation
+        is left as it is, so that the file is written back as it was read,
+        with every node and chain. The options `chain` and `position` only
+        select what is decoded, so they do not change the record.
         Otherwise, a new record is built from the chain, whose header keeps
         the root attributes of the current record. An element that this
-        transformation decoded from its own record is written as that node.
+        transformation decoded from its own record is encoded as that node.
         An element taken from another object, or from a copy made with
         `replace`, is encoded again and loses the JSON metadata, `Inverse`,
         `Jacobian` and other content of its node. A transformation without
-        a record and without a chain gives an empty record.
+        a record and without a chain gives an empty record. The new record
+        is held by new metadata, the chain is then decoded from it, and the
+        options `chain` and `position`, which indexed the old record, are
+        reset.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this transformation rather than a copy.
+
+        Returns
+        -------
+        Self
+            The consolidated copy, or this transformation with
+            `inplace=True`.
 
         Raises
         ------
@@ -398,16 +418,42 @@ class X5Transform(
         assigned = self._transformations is not None
         declared = self._input is not None or self._output is not None
         if not assigned and not declared:
-            return X5Raw() if record is None else record
-        if declared:
-            _check_ras(self, "chain")
-        decoded = self.__dict__.get("_cache_decoded_nodes", {})
-        return _encode(self.transformations, record, decoded)
+            if record is not None:
+                return self if inplace else replace(self)
+            record = X5Raw()
+        else:
+            if declared:
+                _check_ras(self, "chain")
+            decoded = self.__dict__.get("_cache_decoded_nodes", {})
+            record = _encode(self.transformations, record, decoded)
+        if self.metadata is None:
+            metadata = X5Metadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                metadata=metadata,
+                transformations=None,
+                input=None,
+                output=None,
+                chain=None,
+                position=None,
+            )
+        self.metadata = metadata
+        self.transformations = None
+        self.input = None
+        self.output = None
+        self.chain = None
+        self.position = None
+        return self
 
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the transformation into an empty HDF5 file.
 
-        The record is written by [`X5Raw.to_h5`][].
+        The transformation is consolidated into a copy, whose record is
+        written by [`X5Raw.to_h5`][], and the transformation itself is not
+        changed.
 
         Parameters
         ----------
@@ -422,13 +468,14 @@ class X5Transform(
             If an element cannot be encoded in X5, or if the systems
             that were assigned are not `RASmm`.
         """
-        self.to_raw().to_h5(h5file, **kwargs)
+        _record(self.consolidate()).to_h5(h5file, **kwargs)
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to the file at a path, replacing it.
 
-        The record is built before the file is opened, so a transformation
-        that cannot be encoded leaves the file untouched.
+        The transformation is consolidated into a copy before the file is
+        opened, so a transformation that cannot be encoded leaves the file
+        untouched, and the transformation itself is not changed.
 
         Parameters
         ----------
@@ -443,10 +490,13 @@ class X5Transform(
             If an element cannot be encoded in X5, or if the systems
             that were assigned are not `RASmm`.
         """
-        self.to_raw().to_filename(filename, **kwargs)
+        _record(self.consolidate()).to_filename(filename, **kwargs)
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the X5 file that encodes the transformation.
+
+        The transformation is consolidated into a copy, whose record is
+        written.
 
         Parameters
         ----------
@@ -464,7 +514,7 @@ class X5Transform(
             If an element cannot be encoded in X5, or if the systems
             that were assigned are not `RASmm`.
         """
-        return self.to_raw().to_bytes(**kwargs)
+        return _record(self.consolidate()).to_bytes(**kwargs)
 
 
 # ----------------------------------------------------------------------

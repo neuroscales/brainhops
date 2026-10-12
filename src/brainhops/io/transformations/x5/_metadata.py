@@ -39,19 +39,6 @@ class X5Metadata(MetadataFormat, Hdf5ReaderWriter):
     raw: NoRepr[tx.Optional[X5Raw]] = None
     """The content of the file, or `None` for metadata without a record."""
 
-    def to_raw(self) -> tx.Optional[X5Raw]:
-        """Return a copy of the record that the caller is free to change.
-
-        The copy shares the arrays of the record, which are never changed
-        in place, so that copying a record never reads a field.
-
-        Returns
-        -------
-        X5Raw or None
-            A copy of `raw`, or `None` when no record is held.
-        """
-        return None if self.raw is None else self.raw.copy()
-
     @classmethod
     def sniff_h5(
         cls,
