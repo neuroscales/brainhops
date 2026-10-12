@@ -7,7 +7,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
@@ -118,6 +118,19 @@ class MghImage(
     array here.
     """
 
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+    """The transformations given to the image, or `None` to decode them.
+
+    The image takes over the `transformations` field of
+    [`SingleScaleImage`][] to store it under this private name. The
+    constructor still takes `transformations` in the same place, and the
+    property of the same name reads it. `None`, the default, means that
+    the transformations are decoded from the record, while a list, even
+    an empty one, is used as it is.
+    """
+
     _metadata: KwOnly[NoRepr[tx.Optional[MghMetadata]]] = None
 
     metadata = smartproperty("metadata", invalidates="transformations")
@@ -149,14 +162,18 @@ class MghImage(
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self.raw = None if value is None else _image_to_disk(value)
 
-    @smartproperty(cache=True, unset=(None, "empty"))
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
         The decoded list is cached, so `img.transformation is
-        img.transformation`. Assigning a list replaces the decoded one, and
-        assigning other metadata drops it. An image without metadata has
-        no transformations.
+        img.transformation`. Assigning other metadata drops the decoded
+        list. An image without metadata has no transformations.
+
+        Assigning a list replaces the decoded one. An empty list means that
+        the image has no geometry, and the image is then written as an
+        image built from data alone. Assigning `None` decodes the record
+        again.
         """
         if self.metadata is None or self.metadata.raw is None:
             return []
