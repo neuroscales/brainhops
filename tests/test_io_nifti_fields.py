@@ -319,13 +319,22 @@ def test_a_coordinates_field_round_trips_as_vector(tmp_path) -> None:  # noqa: A
 
 
 def test_a_legacy_coordinates_file_is_read_through_a_hint(tmp_path) -> None:  # noqa: ANN001
-    """A legacy DISPVECT coordinates file read by hint is saved as VECTOR."""
+    """A legacy DISPVECT coordinates file read by hint is encoded as VECTOR.
+
+    An untouched field is written with the header of its file, so the
+    legacy intent is kept. Once its coordinates are assigned, the field is
+    encoded again, under the intent that coordinates are written with.
+    """
     values = (_grid_points() + _ramp()).astype("float32")
     legacy = _write(tmp_path / "legacy.nii.gz", values, DISPVECT)
     assert type(io.transformations.load(legacy)) is NiftiRASDisplacementField
 
     field = io.transformations.load(legacy, hint="nifti.coordinates")
     assert type(field) is NiftiRASCoordinatesField
+    target = tmp_path / "copied.nii.gz"
+    field.save(target)
+    assert int(nb.load(str(target)).header["intent_code"]) == DISPVECT
+    field.data = field.data
     target = tmp_path / "migrated.nii.gz"
     field.save(target)
     assert int(nb.load(str(target)).header["intent_code"]) == VECTOR
@@ -392,6 +401,61 @@ def test_assigning_data_refreshes_the_field_view() -> None:
     assert coords.field is coords.field  # cached
     coords.data = grid + 10.0
     np.testing.assert_allclose(np.asarray(coords.field), grid + 10.0)
+
+
+def test_a_coefficients_field_consolidates_to_its_values() -> None:
+    """NIfTI stores values, so the consolidated copy stores values."""
+    from brainhops._core.bsplines import value2coeff_field
+
+    values = np.random.default_rng(0).normal(size=(*SHAPE, 3))
+    coefficients = value2coeff_field(values, degree=3, bound="nearest")
+    field = NiftiRASCoordinatesField(
+        data=coefficients, degree=3, store="coefficients"
+    )
+    consolidated = field.consolidate()
+    assert consolidated.store == "values"
+    assert consolidated._data is None
+    np.testing.assert_allclose(
+        np.asarray(consolidated.data), values, atol=1e-10
+    )
+    # The field itself still stores its coefficients.
+    assert field.store == "coefficients"
+    assert field._data is coefficients
+
+
+def test_a_velocity_consolidated_without_log_holds_its_displacement(
+    velocity_warp,  # noqa: ANN001
+) -> None:
+    velocity = io.transformations.load(velocity_warp, log=True)
+    stored = velocity.raw
+    # The option `log` fixes the encoding of the consolidated copy.
+    integrated = velocity.consolidate(log=False)
+    assert integrated.log is False
+    assert integrated._transformations is None
+    np.testing.assert_allclose(
+        np.asarray(integrated.data),
+        np.zeros((*SHAPE, 3)) + VELOCITY,
+        atol=1e-4,
+    )
+    assert velocity.log is True
+    assert velocity.raw is stored
+    # Without options, nothing is encoded and the proxy is shared.
+    assert velocity.consolidate().raw is stored
+
+
+def test_assigned_vectors_are_pending(standard_warp, tmp_path) -> None:  # noqa: ANN001
+    field = io.transformations.load(standard_warp)
+    proxy = field.raw
+    vectors = np.zeros((*SHAPE, 3), dtype="float32")
+    field.data = vectors
+    assert field.raw is proxy
+    assert field._data is vectors
+    np.testing.assert_allclose(np.asarray(field.displacement.field), 0)
+    target = tmp_path / "zeros.nii.gz"
+    field.save(target)
+    assert field.raw is proxy
+    written = np.asarray(nb.load(str(target)).dataobj)
+    np.testing.assert_array_equal(written, 0)
 
 
 # ----------------------------------------------------------------------

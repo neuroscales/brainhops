@@ -1,9 +1,7 @@
 __all__ = ["MetadataFormat"]
 
-import copy
-
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import NoRepr, replace
 
 from brainhops.datamodel.metadata import Metadata
 from brainhops.io.base._base import (
@@ -27,10 +25,13 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
     its own format. In both cases, the data that follows the header is not
     read.
 
-    The header held in `raw` is called the record of the file. A record is
-    never changed in place: [`to_raw`][] returns a copy, and a writer
-    encodes its changes into that copy. Metadata keeps no open file and no
-    reference to the data, so it is cheap to copy and it can be pickled.
+    The header held in `raw` is called the record of the file. The record
+    describes the file as it was read, or as the object that holds it was
+    last consolidated. A record is never changed in place: an object that
+    encodes a new header, with its `consolidate` method or when it is
+    written, encodes it into a copy and holds that copy in new metadata.
+    Metadata keeps no open file and no reference to the data, so it is
+    cheap to copy and it can be pickled.
     The record of one format means nothing to another, so `from_instance`
     leaves `raw` unset when it copies the metadata of another format.
 
@@ -69,17 +70,28 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
         """
         return cls(raw=raw, **kwargs)
 
-    def to_raw(self) -> tx.Any:
-        """Return a copy of the record that the caller is free to change.
+    def consolidate(self, inplace: bool = False) -> tx.Self:
+        """Encode the fields of the metadata into its record.
 
-        A writer encodes its changes into the copy, so the record held by
-        the metadata stays as it was read. The default implementation makes
-        a deep copy, and a format whose record has a cheaper copy overrides
-        this method.
+        Consolidating metadata makes its record describe every field of
+        the metadata, so that the header written from the record holds
+        them. The fields that differ from a fresh decode of the record are
+        encoded into a copy of the record, and the metadata then holds
+        that copy. The record held before is never changed. Today the
+        metadata of a format holds only its record, so there is nothing
+        to encode: the copy holds the same record, and with
+        `inplace=True` the metadata is left as it is.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this metadata rather than a copy.
 
         Returns
         -------
-        object
-            A copy of `raw`, or `None` when no record is held.
+        Self
+            The consolidated copy, or this metadata with `inplace=True`.
         """
-        return copy.deepcopy(self.raw)
+        if inplace:
+            return self
+        return replace(self)
