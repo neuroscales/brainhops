@@ -11,7 +11,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -227,7 +227,7 @@ class AfniImage(
     )
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("brik",)
 
-    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the BRIK stores them, or `None` without data.
 
     After a read, `raw` is a lazy array of the BRIK, which applies the
@@ -260,7 +260,7 @@ class AfniImage(
     decodes, and an assigned list, even an empty one, is stored as it is.
     """
 
-    _metadata: KwOnly[NoRepr[tx.Optional[AfniMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[AfniMetadata]] = None
 
     metadata = smartproperty("metadata")
     """The metadata of the dataset, which holds its record, or `None`.

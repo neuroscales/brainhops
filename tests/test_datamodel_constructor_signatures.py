@@ -1,11 +1,15 @@
-"""Tests pinning the positional parameters of every transformation.
+"""Tests pinning the positional parameters of every transformation and image.
 
 Fields are collected in MRO order, so their position in `__init__`
 follows the order of the bases, and reordering the bases once made
 `TfmTransform([scaling])` read the list as the input coordinate system.
 Fields are therefore keyword-only by default, and only the defining
 fields, such as `data` or the parsed file of a reader, are positional.
-An intended change of signature must update `POSITIONAL`.
+An image is defined by its `data` (or its `images`, for a pyramid) and
+its `transformations`, which are positional in that order. The fields
+that a reader of `brainhops.io.common` contributes, such as the opened
+Zarr `node`, stay positional, as they do on the transformations. An
+intended change of signature must update `POSITIONAL` or `IMAGES`.
 """
 
 import importlib
@@ -17,7 +21,9 @@ import typing_extensions as tx
 
 # Import every family so that the subclass walk finds all of them.
 import brainhops.datamodel.geometry  # noqa: F401
+import brainhops.io.images  # noqa: F401
 import brainhops.io.transformations  # noqa: F401
+from brainhops.datamodel.images import Image, SingleScaleImage
 from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
     Affine,
@@ -25,6 +31,7 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
+from brainhops.io.images.base import ImageFormat
 
 # Positional parameters of each public transformation, in order, keyed by
 # the defining module. All other parameters are keyword-only.
@@ -240,6 +247,97 @@ PINNED = [
     (module, name) for module in POSITIONAL for name in POSITIONAL[module]
 ]
 
+# Positional parameters of each public image, in order, keyed by the
+# defining module. All other parameters are keyword-only.
+IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
+    "brainhops.datamodel.images": {
+        "Image": (),
+        "MultiScaleImage": ("images", "transformations"),
+        "SingleScaleImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.afni._image": {
+        "AfniImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.base._base": {
+        "ImageFormat": (),
+    },
+    "brainhops.io.images.freesurfer.mgh._image": {
+        "MghImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.minc._image": {
+        name: ("data", "transformations")
+        for name in ("Minc1Image", "Minc2Image", "MincImage")
+    },
+    "brainhops.io.images.mrtrix._image": {
+        "MrtrixImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.nifti._image": {
+        "NiftiImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.nrrd._image": {
+        name: ("data", "transformations")
+        for name in ("AttachedNrrdImage", "DetachedNrrdImage", "NrrdImage")
+    },
+    "brainhops.io.images.openslide._base": {
+        "OpenSlideImage": ("data", "transformations"),
+        "OpenSlideMultiScaleImage": ("images", "transformations"),
+    },
+    "brainhops.io.images.openslide._formats": {
+        **{
+            f"{vendor}Image": ("data", "transformations")
+            for vendor in (
+                "Aperio",
+                "DicomWsi",
+                "GenericTiff",
+                "Hamamatsu",
+                "Leica",
+                "Mirax",
+                "Philips",
+                "Sakura",
+                "Trestle",
+                "Ventana",
+                "Zeiss",
+            )
+        },
+        **{
+            f"{vendor}MultiScaleImage": ("images", "transformations")
+            for vendor in (
+                "Aperio",
+                "DicomWsi",
+                "GenericTiff",
+                "Hamamatsu",
+                "Leica",
+                "Mirax",
+                "Philips",
+                "Sakura",
+                "Trestle",
+                "Ventana",
+                "Zeiss",
+            )
+        },
+    },
+    "brainhops.io.images.pillow._image": {
+        "PillowImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.tiff._image": {
+        "TiffImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.tiff._multiscale": {
+        "TiffMultiScaleImage": ("images", "transformations"),
+    },
+    "brainhops.io.images.zarr._image": {
+        "ZarrImage": ("data", "transformations", "node"),
+    },
+    "brainhops.io.images.zarr._multiscale": {
+        "OmeZarrImage": ("images", "transformations", "node"),
+        "OmeZarrLevel": ("data", "transformations", "node"),
+    },
+}
+
+PINNED_IMAGES = [
+    (module, name) for module in IMAGES for name in IMAGES[module]
+]
+
 # Parameters that are keyword-only on every transformation.
 KEYWORD_ONLY = ("input", "output")
 
@@ -272,6 +370,21 @@ PUBLIC = [
     for cls in ALL
     if not cls.__name__.startswith("_") and cls.__name__.isidentifier()
 ]
+
+
+# Every image class defined by the package, but none defined by tests.
+ALL_IMAGES = sorted(
+    (
+        cls
+        for cls in {Image, ImageFormat}.union(
+            _subclasses(Image), _subclasses(ImageFormat)
+        )
+        if cls.__module__.startswith("brainhops.")
+    ),
+    key=lambda cls: (cls.__module__, cls.__qualname__),
+)
+
+PUBLIC_IMAGES = [cls for cls in ALL_IMAGES if not cls.__name__.startswith("_")]
 
 
 def _parameters(cls: type) -> tx.List[inspect.Parameter]:
@@ -311,9 +424,9 @@ def test_every_public_transformation_is_pinned(cls: type) -> None:
 
 @pytest.mark.parametrize("cls", ALL, ids=_id)
 def test_the_endpoints_are_keyword_only(cls: type) -> None:
-    # `Transformation` and `TransformationFormat` declare `kw_only=True`,
-    # which their subclasses inherit, so an endpoint that a subclass
-    # declares again with its own default stays keyword-only.
+    # A subclass that declares an endpoint again inherits `kw_only=True`,
+    # unless its first base is a file reader that is not keyword-only, in
+    # which case the subclass must write `KwOnly[...]` itself.
     kinds = {p.name: p.kind for p in _parameters(cls)}
     for name in KEYWORD_ONLY:
         if name in kinds:
@@ -349,3 +462,51 @@ def test_a_list_of_transformations_is_the_first_argument() -> None:
         xform = cls([scaling])
         assert xform.input is None
         assert len(xform.transformations) == 1
+
+
+# --- images -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "module, name",
+    PINNED_IMAGES,
+    ids=[f"{m}.{n}" for m, n in PINNED_IMAGES],
+)
+def test_the_positional_parameters_of_an_image_are_pinned(
+    module: str, name: str
+) -> None:
+    try:
+        mod = importlib.import_module(module)
+    except ImportError as e:  # An optional dependency is missing.
+        pytest.skip(str(e))
+    assert _positional(getattr(mod, name)) == IMAGES[module][name]
+
+
+@pytest.mark.parametrize("cls", PUBLIC_IMAGES, ids=_id)
+def test_every_public_image_is_pinned(cls: type) -> None:
+    assert cls.__name__ in IMAGES.get(cls.__module__, {}), (
+        f"{_id(cls)} is missing from IMAGES; its positional "
+        f"parameters are {_positional(cls)!r}."
+    )
+
+
+def test_a_field_of_an_image_subclass_is_keyword_only() -> None:
+    # The `kw_only=True` option of `Image` is inherited, so a field that a
+    # subclass declares without `KwOnly[...]` is keyword-only, and so is a
+    # field declared again without `NotKwOnly`.
+    class Labelled(SingleScaleImage):
+        label: str = ""
+
+    class Redeclared(SingleScaleImage):
+        transformations: tx.List[Transformation] = ()
+
+    assert _positional(Labelled) == ("data", "transformations")
+    assert _positional(Redeclared) == ("data",)
+    kinds = {p.name: p.kind for p in _parameters(Labelled)}
+    assert kinds["label"] is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_a_positional_metadata_field_is_refused() -> None:
+    tiff = pytest.importorskip("brainhops.io.images.tiff")
+    with pytest.raises(TypeError):
+        tiff.TiffImage(np.zeros((2, 2)), [], "ome")

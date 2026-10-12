@@ -14,7 +14,9 @@ from brainhops.io.base.specs import register_parser
 
 @register_parser(Image)
 @format_registry
-class ImageFormat(_FileBasedModelMixin, DataModelBase, Format, eq=False):
+class ImageFormat(
+    _FileBasedModelMixin, DataModelBase, Format, eq=False, kw_only=True
+):
     """Format dispatcher and common base for stored images.
 
     [`ImageFormat`][] is the common base of the image formats, and it

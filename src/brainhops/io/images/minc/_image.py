@@ -6,7 +6,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -96,7 +96,7 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     VARIANTS: tx.ClassVar[tx.Tuple[type, ...]] = ()
     """The classes to which a versionless class hands files."""
 
-    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels in the order of the file, or `None` without data.
 
     After a read, `raw` is a lazy array, which reads the voxels and
@@ -129,7 +129,7 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     decodes, and an assigned list, even an empty one, is stored as it is.
     """
 
-    _metadata: KwOnly[NoRepr[tx.Optional[MincMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[MincMetadata]] = None
 
     metadata = smartproperty("metadata")
     """The metadata of the file, which holds its record, or `None`.
