@@ -1100,6 +1100,7 @@ if nb is not None:
         edit_record=_mgh_edit_record,
         record_edited=_mgh_record_edited,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        storage={"dtype": "int16"},
     )
 
 NOT_MIGRATED: tx.Tuple[str, ...] = (

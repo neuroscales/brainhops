@@ -9,6 +9,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 from nibabel.freesurfer import mghformat as _mgh
+from nibabel.volumeutils import array_from_file, array_to_file
 
 # internals
 from brainhops._core import path
@@ -373,7 +374,7 @@ class MghImage(
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, inplace: bool = False, like: tx.Any = None, **overrides
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> "MghImage":
         """Encode the pending data and geometry into `raw` and the record.
 
@@ -632,7 +633,9 @@ def _encoded(
     The record is encoded as [`MghImage.consolidate`][] describes, and the
     voxels are the assigned data, or else `raw`, arranged in the axis order
     of the file when the transformations declare another order. The held
-    record is returned when the encoding changes nothing.
+    record is returned when the encoding changes nothing. Voxels of
+    another type than the stored one are converted as the writer converts
+    them, with `_stored_voxels`.
     """
     if image._data is not None:
         source = _image_to_disk(image._data)
@@ -677,6 +680,9 @@ def _encoded(
     for name, value in overrides.items():
         header[name] = value
 
+    # The voxels are converted as the writer converts them, so that `raw`
+    # holds what the file holds.
+    data = _stored_voxels(data, header.get_data_dtype())
     if record == held:
         return held, data
     return record, data
@@ -899,3 +905,23 @@ def _mgh_written(image: MghImage) -> tx.Tuple[MghRaw, ArrayProtocol]:
             "This image has no data, so there is nothing to write."
         )
     return image.metadata.raw, image.raw
+
+
+def _stored_voxels(data: ArrayProtocol, dtype: np.dtype) -> ArrayProtocol:
+    """Return voxels in the type that the file stores, as written.
+
+    The writer, `encode_mgh`, writes the voxels with nibabel's
+    `array_to_file`, which rounds floating-point values and clips them to
+    the range of an integer type. Voxels of another type are written to
+    memory and read back in the same way, so that they are the values of
+    the file, in its type and byte order. Voxels of the stored type, in
+    either byte order, are returned as they are, so that a proxy or a
+    lazy array is not read.
+    """
+    if np.dtype(data.dtype).newbyteorder("=") == dtype.newbyteorder("="):
+        return data
+    shape = tuple(int(d) for d in data.shape)
+    buffer = BytesIO()
+    array_to_file(np.asarray(data), buffer, dtype, order="F")
+    buffer.seek(0)
+    return array_from_file(shape, dtype, buffer, order="F")
