@@ -33,7 +33,12 @@ _RAS_ORIENTATION = {
 _UNIT_TYPES = {"space": SpaceUnit, "time": TimeUnit}
 
 
-class MincImage(MincReader, ImageFormat, SingleScaleImage):
+# `kw_only=True` is repeated here because bagof takes each class option
+# from the first base in the method resolution order, whether that base
+# sets the option or keeps the default. That base is `MincReader`,
+# which keeps the default, so the fields declared by this class would
+# otherwise be positional.
+class MincImage(MincReader, ImageFormat, SingleScaleImage, kw_only=True):
     """An image stored in a MINC file, of version 1 or 2.
 
     This class answers to the format hint `"minc"` and reads both

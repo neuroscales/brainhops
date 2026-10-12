@@ -47,8 +47,13 @@ _MGH_DTYPES = {
 }
 
 
+# `kw_only=True` is repeated here because bagof takes each class option
+# from the first base in the method resolution order, whether that base
+# sets the option or keeps the default. That base is `MghReaderWriter`,
+# which keeps the default, so the fields declared by this class would
+# otherwise be positional.
 @register_format
-class MghImage(MghReaderWriter, ImageFormat, SingleScaleImage):
+class MghImage(MghReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
     """An image stored in a FreeSurfer MGH or MGZ file.
 
     The voxels are in Fortran order, and the data are indexed `(x, y, z)`

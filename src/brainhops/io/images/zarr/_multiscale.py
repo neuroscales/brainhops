@@ -1,7 +1,7 @@
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
@@ -49,7 +49,7 @@ class OmeZarrLevel(ZarrImage):
     is read, so opening a pyramid reads no array data.
     """
 
-    _perm: KwOnly[NoRepr[tx.Optional[tx.Tuple[int, ...]]]] = None
+    _perm: NoRepr[tx.Optional[tx.Tuple[int, ...]]] = None
     """The permutation from the stored axes to the brainhops order.
 
     The level keeps it as a field, so that a copy made with `replace`
@@ -65,8 +65,15 @@ class OmeZarrLevel(ZarrImage):
         return raw
 
 
+# `kw_only=True` is repeated here because bagof takes each class option
+# from the first base in the method resolution order, whether that base
+# sets the option or keeps the default. That base is `ZarrReaderWriter`,
+# which keeps the default, so the fields declared by this class would
+# otherwise be positional.
 @register_format
-class OmeZarrImage(ZarrReaderWriter, ImageFormat, MultiScaleImage):
+class OmeZarrImage(
+    ZarrReaderWriter, ImageFormat, MultiScaleImage, kw_only=True
+):
     """Multiscale image backed by an OME-Zarr pyramid.
 
     Each level is a single-scale image placed by the coordinate
