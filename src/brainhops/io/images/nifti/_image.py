@@ -96,12 +96,11 @@ class NiftiImage(
     """The transformations given to the image, or `None` to decode them.
 
     The image takes over the `transformations` field of
-    [`SingleScaleImage`][brainhops.datamodel.images.SingleScaleImage] to
-    store it under this private name. The constructor still takes
-    `transformations` in the same place, and the property of the same
-    name reads it. `None`, the default, means that the transformations
-    are decoded from the header, while a list, even an empty one, is used
-    as it is.
+    [`SingleScaleImage`][] to store it under this private name. The
+    constructor still takes `transformations` in the same place, and the
+    property of the same name reads it. `None`, the default, means that
+    the transformations are decoded from the header, while a list, even
+    an empty one, is used as it is.
     """
 
     _metadata: KwOnly[NoRepr[tx.Optional[NiftiMetadata]]] = None
