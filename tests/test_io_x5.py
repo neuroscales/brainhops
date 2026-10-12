@@ -834,7 +834,8 @@ def _reference_image():  # noqa: ANN202
 def test_nitransforms_files_are_read_as_it_reads_them(
     tmp_path: Path,
 ) -> None:
-    pytest.importorskip("nitransforms")
+    # nitransforms reads and writes X5 since 25.0 (Python 3.10+).
+    pytest.importorskip("nitransforms.io.x5")
     from nitransforms.linear import Affine
     from nitransforms.manip import TransformChain
     from nitransforms.nonlinear import DenseFieldTransform
@@ -867,7 +868,8 @@ def test_nitransforms_files_are_read_as_it_reads_them(
 
 @pytest.mark.parametrize("deltas", [True, False])
 def test_nitransforms_fields_match(tmp_path: Path, deltas: bool) -> None:
-    pytest.importorskip("nitransforms")
+    # nitransforms reads and writes X5 since 25.0 (Python 3.10+).
+    pytest.importorskip("nitransforms.io.x5")
     from nitransforms.io.x5 import to_filename
     from nitransforms.nonlinear import DenseFieldTransform
 
@@ -920,7 +922,8 @@ def test_fslpy_files_are_read_as_it_reads_them(
 
 
 def test_nitransforms_bsplines_match(tmp_path: Path) -> None:
-    pytest.importorskip("nitransforms")
+    # nitransforms reads and writes X5 since 25.0 (Python 3.10+).
+    pytest.importorskip("nitransforms.io.x5")
     nb = pytest.importorskip("nibabel")
     from nitransforms.io.x5 import to_filename
     from nitransforms.nonlinear import BSplineFieldTransform
