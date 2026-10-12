@@ -107,8 +107,9 @@ def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa
     """With only an sform, the rigid part is still written as the qform.
 
     An untouched image is written with the header of its file, which has
-    no qform. Once its transformations are assigned, they are encoded
-    again, and the qform is then the rigid part of the sform.
+    no qform, and so is an image whose transformations are those of the
+    header. Once its transformations differ, they are encoded again, and
+    the qform is then the rigid part of the sform.
     """
     data = np.zeros((3, 4, 5), dtype="float32")
     img = nb.Nifti1Image(data, AFFINE)
@@ -123,12 +124,36 @@ def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa
     assert int(nb.load(str(target)).header["qform_code"]) == 0
 
     image.transformations = image.transformations
+    target = tmp_path / "same.nii"
+    image.save(target)
+    assert int(nb.load(str(target)).header["qform_code"]) == 0
+
+    image.transformations = [Affine(matrix=AFFINE[:3])]
     target = tmp_path / "out.nii"
     image.save(target)
 
     header = nb.load(str(target)).header
     assert int(header["qform_code"]) != 0
     assert np.allclose(header.get_qform(), AFFINE, atol=1e-5)
+
+
+def test_a_transformation_appended_in_place_is_written(tmp_path) -> None:  # noqa: ANN001
+    """The stored list is compared at a write, so an append is written.
+
+    The appended transformation is the preferred one, which becomes the
+    sform, and an image whose list is only read is written as it was.
+    """
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    image = NiftiImage.load(source)
+    assert len(image.transformations) > 0
+    image.save(tmp_path / "read.nii")
+    with open(source, "rb") as a, open(tmp_path / "read.nii", "rb") as b:
+        assert a.read() == b.read()
+    scaled = np.diag([2.0, 3.0, 4.0, 1.0])[:3]
+    image.transformations.append(Affine(matrix=scaled))
+    image.save(tmp_path / "appended.nii")
+    header = nb.load(str(tmp_path / "appended.nii")).header
+    assert np.allclose(header.get_best_affine()[:3], scaled)
 
 
 def test_a_scaling_geometry_is_representable(tmp_path) -> None:  # noqa: ANN001
@@ -1202,11 +1227,11 @@ def test_consolidated_geometry_has_the_precision_of_the_file() -> None:
     )
     assert np.array_equal(image.transformation.matrix, matrix)
     consolidated = image.consolidate()
+    assert consolidated._transformations is None
     decoded = consolidated.transformation.to(Affine).matrix
     # The sform is stored in single precision.
     assert np.allclose(decoded, matrix, atol=1e-5)
     assert np.array_equal(decoded, matrix.astype("f4"))
-    assert consolidated._transformations is None
 
 
 def test_an_assigned_array_is_pending(tmp_path) -> None:  # noqa: ANN001
