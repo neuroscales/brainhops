@@ -582,6 +582,14 @@ class _FileBasedModelMixin:
         `data` is not copied when `raw` is set. The copy then holds the same
         `raw` as `other`, which stays lazy if it is a proxy.
 
+        A format that decodes its transformations from its record stores
+        them in the private field `_transformations`, where `None` means
+        that they are decoded. Within the format, the stored value is
+        copied, so a copy of an image whose transformations were not
+        assigned decodes them from the same record. From another class,
+        the transformations that `other` reports are copied, decoded if
+        need be, because its record means nothing to this format.
+
         Parameters
         ----------
         other : object
@@ -613,6 +621,17 @@ class _FileBasedModelMixin:
             and any(field.public_name == "data" for field in fields(cls))
         ):
             kwargs.setdefault("data", None)
+        # The field `_transformations` of another class, if it has one, is
+        # its own stored value, so the decoded transformations are read
+        # instead.
+        if not isinstance(other, cls) and any(
+            field.name == "_transformations"
+            and field.public_name == "transformations"
+            for field in fields(cls)
+        ):
+            transformations = getattr(other, "transformations", None)
+            if transformations is not None:
+                kwargs.setdefault("transformations", transformations)
         return super().from_instance(other, *args, **kwargs)
 
 
@@ -653,11 +672,13 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
 
     A field belongs to file formats when, in the MRO of `cls`, only file
     parsers declare it. A field that a plain data model also declares is
-    shared by all formats and is never returned. A format field is
-    also left out when `other` is an instance of one of the formats that
-    declare it, because `other` then holds a meaningful value for that field.
-    Only keyword fields that the constructor accepts and that have a default
-    are returned.
+    shared by all formats and is never returned. Fields are compared by
+    their public names, so a field of the data model that a format takes
+    over under a private name, such as `_transformations`, is still
+    shared. A format field is also left out when `other` is an instance
+    of one of the formats that declare it, because `other` then holds a
+    meaningful value for that field. Only keyword fields that the
+    constructor accepts and that have a default are returned.
 
     A dispatcher is not counted among the formats that declare a field.
     `MetadataFormat` declares the `raw` field of every metadata format, but
@@ -673,7 +694,7 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
             continue
         if is_format_registry(klass):
             continue
-        names = [field.name for field in fields(klass)]
+        names = [field.public_name for field in fields(klass)]
         if issubclass(klass, (Format, FileReader, FileWriter)):
             for name in names:
                 owners.setdefault(name, []).append(klass)
@@ -685,9 +706,11 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
         for field in fields(cls)
         if field.init
         and field.kw
-        and field.name not in shared
+        and field.public_name not in shared
         and field.default is not no_default
-        and not any(isinstance(other, k) for k in owners.get(field.name, ()))
+        and not any(
+            isinstance(other, k) for k in owners.get(field.public_name, ())
+        )
     ]
 
 
