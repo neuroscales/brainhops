@@ -1,6 +1,9 @@
 """NIfTI headers: intents, shapes, axes, and building a header
 or image from another."""
 
+# stdlib
+from io import BytesIO
+
 # dependencies
 import nibabel as nb
 import numpy as np
@@ -25,7 +28,7 @@ from ._constants import (
     _NIFTI_INTENT_VECTOR,
     _NIFTI_SPECIFIC_AXES,
 )
-from ._raw import NiftiRaw
+from ._raw import NiftiRaw, read_nifti
 
 _NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
 
@@ -335,6 +338,40 @@ def _stores_proxy(header: nb.Nifti1Header, proxy: ArrayProxy) -> bool:
     slope = 1.0 if slope is None else slope
     inter = 0.0 if inter is None else inter
     return (slope, inter) == (proxy.slope, proxy.inter)
+
+
+def _stores_array(header: nb.Nifti1Header, array: ArrayProtocol) -> bool:
+    """Tell whether a header stores an array as it is.
+
+    A proxy is stored as it is when the header has its stored data type
+    and its scaling. Any other array is stored as it is when the header
+    has its data type and no scaling.
+    """
+    if isinstance(array, ArrayProxy):
+        return _stores_proxy(header, array)
+    slope, inter = header.get_slope_inter()
+    return (
+        header.get_data_dtype() == array.dtype
+        and slope is None
+        and inter is None
+    )
+
+
+def _stored_parts(image: _NiftiObject) -> tx.Tuple[ArrayProtocol, NiftiRaw]:
+    """Return the array and the record that a file of an image holds.
+
+    An encoder builds a nibabel image whose header may store the array in
+    another data type or with a scaling, as a storage override asks, and
+    nibabel converts and scales the array only when it writes it. Such an
+    image is written to bytes and read again, so that the array is a
+    proxy of the voxels as the file stores them, in memory, and the
+    record holds the header that was written, with its scaling. An image
+    whose header stores the array as it is gives its array and its header.
+    """
+    if _stores_array(image.header, image.dataobj):
+        return image.dataobj, NiftiRaw(header=image.header)
+    record, proxy = read_nifti(BytesIO(image.to_bytes()))
+    return proxy, record
 
 
 def _written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> _NiftiObject:

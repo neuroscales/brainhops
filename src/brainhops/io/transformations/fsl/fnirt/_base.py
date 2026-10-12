@@ -9,8 +9,11 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.nifti import NiftiRaw
+from brainhops.io.base.parsers import (
+    Confidence,
+    UnrepresentableTransformationError,
+    WriterError,
+)
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -18,6 +21,7 @@ from brainhops.io.common.nifti._header import (
     _nifti_intent,
     _NiftiObject,
     _record_image,
+    _stored_parts,
 )
 from brainhops.io.images.nifti._views import (
     _image_to_disk,
@@ -25,7 +29,7 @@ from brainhops.io.images.nifti._views import (
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _consolidated
+from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import _field_to_model
 
 from .._affines import _ImageGeometry
@@ -226,7 +230,7 @@ class FnirtWarpField(
         return cls._with_images(obj, moving, reference)
 
     def consolidate(
-        self, inplace: bool = False, like: tx.Any = None, **overrides
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> tx.Self:
         """Encode the pending array into `raw` and a new header.
 
@@ -235,11 +239,11 @@ class FnirtWarpField(
         array is kept under a copy of the header of the metadata, with its
         intent. A field built from an array alone is encoded as a
         deformation field (intent 2006) whose voxel-to-world affine is the
-        identity. A chain that is assigned cannot be encoded, so it stays
-        pending in the copy. Non-encoding header fields are copied from
-        `like`, and `overrides` are applied last. A field that has a header
-        and no pending array, consolidated without options, is left as it
-        is.
+        identity. FNIRT cannot encode a chain, so consolidating a field
+        whose chain was assigned raises an error. Non-encoding header fields
+        are copied from `like`, and `overrides` are applied last. A field
+        that has a header and nothing pending, consolidated without
+        options, is left as it is.
 
         Parameters
         ----------
@@ -261,18 +265,31 @@ class FnirtWarpField(
         ------
         WriterError
             If the field has no array.
+        UnrepresentableTransformationError
+            If a chain was assigned to the field.
         """
         if (
             self._data is None
+            and self._transformations is None
             and like is None
             and not overrides
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
             return self if inplace else replace(self)
-        image = _fnirt_encoded(self, like, overrides)
-        record = NiftiRaw(header=image.header)
-        return _consolidated(self, inplace, image.dataobj, record, data=None)
+        raw, record = _stored_parts(_fnirt_encoded(self, like, overrides))
+        metadata = _consolidated_metadata(self, record)
+        if not inplace:
+            return replace(
+                self,
+                raw=raw,
+                metadata=metadata,
+                data=None,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        return self
 
     # --- exposed parameters -------------------------------------------
 
@@ -541,7 +558,15 @@ def _fnirt_encoded(
     ------
     WriterError
         If the field has no array.
+    UnrepresentableTransformationError
+        If a chain was assigned to the field.
     """
+    if field._transformations is not None:
+        raise UnrepresentableTransformationError(
+            "A FNIRT file stores a warp field and the parameters of its "
+            "spline, so a chain assigned to the field cannot be written. "
+            "Assign the field data instead."
+        )
     if field._data is not None:
         stored = _image_to_disk(field._data)
     else:

@@ -24,7 +24,6 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.nifti import NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
@@ -41,11 +40,12 @@ from brainhops.io.common.nifti._header import (
     _nifti_shape,
     _NiftiObject,
     _record_image,
+    _stored_parts,
 )
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.base.fields import LPSCoordinatesField
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _consolidated
+from brainhops.io.transformations.nifti._base import _consolidated_metadata
 
 from .._systems import _make_system
 from ._views import _itk_field_to_disk, _itk_field_to_model
@@ -205,18 +205,20 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     def _ndim(self) -> tx.Optional[int]:
         """Return the spatial dimension without decoding the data.
 
-        The dimension is read from the header, or else from an assigned
-        chain, or else from the shape of assigned vectors or of `raw`.
+        The pending state comes first, since the header describes the
+        file as it was read: the dimension is read from an assigned chain,
+        or else from the shape of assigned vectors, or else from the
+        header, or else from the shape of `raw`.
         """
-        header = _header(self)
-        if header is not None:
-            return _itk_ndim(_nifti_shape(header))
         chain = self._transformations
         if chain:
             # The first slot maps LPS to voxels, with one row per dimension.
             return int(np.asarray(chain[0].matrix).shape[0])
         if self._data is not None:
             return int(self._data.shape[-1])
+        header = _header(self)
+        if header is not None:
+            return _itk_ndim(_nifti_shape(header))
         if self.raw is not None:
             return _itk_ndim(tuple(self.raw.shape))
         return None
@@ -298,7 +300,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, inplace: bool = False, like: tx.Any = None, **overrides
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> tx.Self:
         """Encode the pending vectors or chain into `raw` and a header.
 
@@ -334,15 +336,21 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             and self.metadata.raw is not None
         ):
             return self if inplace else replace(self)
-        image = self._encoded(like, **overrides)
-        return _consolidated(
-            self,
-            inplace,
-            image.dataobj,
-            NiftiRaw(header=image.header),
-            data=None,
-            transformations=None,
-        )
+        raw, record = _stored_parts(self._encoded(like, **overrides))
+        metadata = _consolidated_metadata(self, record)
+        if not inplace:
+            return replace(
+                self,
+                raw=raw,
+                metadata=metadata,
+                data=None,
+                transformations=None,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        return self
 
     def _encoded(
         self, like: tx.Any = None, **overrides

@@ -378,7 +378,7 @@ class X5Transform(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, inplace: bool = False) -> tx.Self:
+    def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending chain and systems into a new record.
 
         If neither `transformations` nor the `input` and `output` systems
