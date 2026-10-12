@@ -481,15 +481,15 @@ class ToyImage(
             return
         # The image is written over the file that its proxy reads, so the
         # image is consolidated in place and then holds what the file
-        # holds (#426). The content is read before the file is replaced.
+        # holds (#426). The content is read before the file is replaced,
+        # and the proxy of the old file, which describes how that file
+        # stored the data, is replaced by a proxy of the new file.
         self.consolidate(inplace=True, **options)
         content = _toy_written(self)
         with open(filename, "wb") as file:
             file.write(content)
-        if _toy_reads(self.raw, filename):
-            # The proxy describes the layout of the replaced file.
-            self.raw = _toy_proxy(filename, 0, self.metadata.raw)
-            self.data = None
+        self.raw = _toy_proxy(filename, 0, self.metadata.raw)
+        self.data = None
 
 
 def _toy_encoded(
@@ -2162,7 +2162,7 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     # file holds (#426): its `raw` reads the new file.
     loaded = _changed(cls, exemplar, tmp_path)
     path = _path(tmp_path, exemplar, "src")
-    expected = np.asarray(loaded.data)
+    expected = np.asarray(_data(exemplar, loaded.consolidate()))
     loaded.save(path)
     assert all(field is None for field in _pending(loaded))
     assert isinstance(_raw(loaded), exemplar.proxies)
