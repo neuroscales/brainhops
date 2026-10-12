@@ -1131,3 +1131,44 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+115. JPEG 2000 has a pyramid before the fourth pass decides the levels of
+     a multiscale image (item 15). `Jpeg2000MultiScaleImage` holds a lazy
+     array of the full resolution in `raw`, takes `images` and
+     `transformations` over as `OmeZarrImage` does, and decodes its levels
+     from `raw` and the record as `Jpeg2000Image` objects that share its
+     metadata (`io/images/jpeg2000/_multiscale.py`). It is consolidated
+     through its full-resolution level. The codec computes the coarser
+     levels again, so their shapes are checked and their data are not
+     written, which neither honors nor refuses data assigned to them. The
+     pyramid is listed in `NOT_MIGRATED`, and its full-resolution level is
+     an exemplar. Status: open until the fourth pass.
+116. A raw JPEG 2000 codestream has no resolution box, so the pixel size
+     of an image written as a `.j2k` file is lost, as for the Pillow
+     formats that store no resolution. The checks of geometry would be
+     vacuous for such a file, which is therefore not a variant of the
+     conformance harness. Status: open.
+117. The JPEG 2000 record keeps the bytes of the file up to its first tile
+     (`Jpeg2000Raw.stored`), as NRRD does, so that the metadata can be
+     written. An untouched full-resolution image copies its file. When
+     only the comments, the resolutions, the XML and UUID boxes or the
+     container change, the header is rewritten around the coded image,
+     which is copied (`io/common/jpeg2000/_boxes.py`), and a record that
+     changes a field that the coded image decides is refused with
+     `WriterError`. Any other change encodes the pixels again with
+     Pillow, and the comments of the record, including the version
+     comment of the encoder of the source, are written over those of the
+     new encoder. Status: accepted.
+118. A JPEG 2000 image read with `level=r` for `r > 0` is not the file
+     that it reads, so it is encoded again whenever it is consolidated,
+     even untouched. The level is the level that `raw` reads, and not a
+     field, so that the consolidated copy, whose `raw` reads the new
+     file, holds level 0. The options `pixel_size=` and `unit=` of the
+     readers become assigned transformations, so a file read with them
+     is written with that pixel size, and not byte for byte (item 11).
+     Status: accepted.
+119. Pillow decodes a whole JPEG 2000 level at once, so a Dask array
+     built over the lazy array of a large level, which Dask cuts into
+     several chunks, decodes the level once per chunk. Status: open.
+120. Pillow reads signed JPEG 2000 samples but cannot encode them, so an
+     image of signed samples can be written only while its coded image is
+     copied. Status: open, and older than this work.

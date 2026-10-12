@@ -60,7 +60,18 @@ class _Jpeg2000Source:
             return f.read()
 
     def is_file(self, filename: tx.Any) -> bool:
-        """Return whether the source is a local file of a given path."""
+        """Return whether the source is the local file of a path.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path.
+
+        Returns
+        -------
+        bool
+            Whether the source opens the file of that path by name.
+        """
         return self.filename is not None and same_file(self.filename, filename)
 
     def __repr__(self) -> str:

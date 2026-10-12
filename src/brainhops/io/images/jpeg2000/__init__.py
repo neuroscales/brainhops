@@ -113,16 +113,18 @@ exported here as well.
 assigned are pending until the image is consolidated or written, as for
 every image format. A full-resolution image or a pyramid that is read and
 written again without changes gives the same bytes. When only the
-comments, the pixel size, the boxes or the container change, the coded
-image of the file is copied as it is, and only the boxes and the comments
-are written again.
+comments, the pixel size, the boxes or the container of such an image
+change, the coded image of the file is copied as it is, and only the
+boxes and the comments are written again. A reduced level is always
+encoded again, because it is not the image that its file codes.
 
 Otherwise the image is encoded with Pillow, losslessly by default, with
 the reversible 5-3 wavelet and one quality layer, as a JP2 file or a raw
 codestream, as the name of the file says. Pillow writes 8-bit grey, grey
 and alpha, RGB and RGBA images, and 16-bit grey images. The number of
-resolution levels is that of the file that the image was read from, or
-else six, which is the default of OpenJPEG, or fewer for a small image.
+resolution levels is the number of levels that the file the image was
+read from has at and below the level of the image, or else six, which is
+the default of OpenJPEG, and fewer for a small image.
 The option `num_resolutions=` sets it. The other options of the JPEG
 2000 writer of Pillow are passed on, such as `quality_mode`,
 `quality_layers`, `irreversible` and `tile_size`.

@@ -100,6 +100,18 @@ def walk_boxes(file: tx.IO, end: tx.Optional[int] = None) -> tx.Iterator[_Box]:
 def read_exact(file: tx.IO, n: int) -> bytes:
     """Read exactly `n` bytes from a stream.
 
+    Parameters
+    ----------
+    file : IO
+        The stream.
+    n : int
+        The number of bytes.
+
+    Returns
+    -------
+    bytes
+        The bytes.
+
     Raises
     ------
     ParserContentError
@@ -112,7 +124,19 @@ def read_exact(file: tx.IO, n: int) -> bytes:
 
 
 def container_of(head: bytes) -> tx.Optional[str]:
-    """Return `"jp2"`, `"j2k"` or `None` from the first 12 bytes of a file."""
+    """Return the container of a file from its first bytes.
+
+    Parameters
+    ----------
+    head : bytes
+        The first 12 bytes of the file, or more.
+
+    Returns
+    -------
+    str or None
+        `"jp2"` for a JP2 file, `"j2k"` for a raw codestream, and `None`
+        for anything else.
+    """
     if head[:12] == JP2_SIGNATURE:
         return "jp2"
     if head[:4] == J2K_SIGNATURE:
@@ -121,10 +145,18 @@ def container_of(head: bytes) -> tx.Optional[str]:
 
 
 def read_resolution(content: bytes) -> tx.Optional[tx.Tuple[float, float]]:
-    """Decode a `resc` or `resd` box into `(x, y)` grid points per metre.
+    """Decode the content of a `resc` or `resd` box.
 
-    A box that is too short, or whose numerator or denominator is zero,
-    gives `None`.
+    Parameters
+    ----------
+    content : bytes
+        The content of the box, after its header.
+
+    Returns
+    -------
+    tuple of float or None
+        The resolution `(x, y)` in grid points per metre, or `None` for a
+        box that is too short or whose numerator or denominator is zero.
     """
     if len(content) < 10:
         return None
