@@ -1131,7 +1131,7 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
-115. A `register.dat` file holds no volume geometry, so the geometries
+150. A `register.dat` file holds no volume geometry, so the geometries
      of the reference and the movable volume are options of the reader,
      `reference=` and `moving=`, which are kept on the transformation and
      never written (`io/transformations/freesurfer/regdat/_xforms.py`).
