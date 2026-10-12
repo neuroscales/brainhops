@@ -116,8 +116,8 @@ class MrtrixImage(
     of the header is applied to them.
 
     The transformations are decoded from the record on first access,
-    unless other transformations are assigned. They are a [`Scaling`][] to
-    `"physical"` by the voxel sizes and the preferred [`Affine`][] to
+    unless other transformations are assigned. They are a [`Scaling`][]
+    to `"physical"` by the voxel sizes and the preferred [`Affine`][] to
     scanner RAS+ in millimeters, `transform @ diag(vox)`.
 
     `raw` and the record describe the file as it was read, or as the image
