@@ -1163,6 +1163,7 @@ _AFNI = Exemplar(
     change_geometry=_nifti_change_geometry,
     foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
     header_file=_afni_header_file,
+    storage={"datatype": "int16"},
 )
 EXEMPLARS[AfniImage] = _AFNI
 
@@ -1190,6 +1191,7 @@ _MRTRIX = Exemplar(
     geometry=_nifti_geometry,
     change_geometry=_nifti_change_geometry,
     foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    storage={"datatype": "int16"},
 )
 EXEMPLARS[MrtrixImage] = _MRTRIX
 
