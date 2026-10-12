@@ -14,13 +14,13 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
-from brainhops.io.common.nifti import NiftiRaw
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _NiftiObject,
     _record_image,
     _set_coordinates_intent,
+    _stored_parts,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
@@ -32,7 +32,7 @@ from brainhops.io.transformations.nifti import (
     NiftiRASCoordinatesField,
     NiftiRASToVoxel,
 )
-from brainhops.io.transformations.nifti._base import _consolidated
+from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import (
     _field_to_disk,
     _field_to_model,
@@ -178,7 +178,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, inplace: bool = False, like: tx.Any = None, **overrides
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> tx.Self:
         """
         Encode the pending coordinates or chain into `raw` and a header.
@@ -226,15 +226,21 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             and self.metadata.raw is not None
         ):
             return self if inplace else replace(self)
-        image = _spm_encoded(self, like, overrides)
-        return _consolidated(
-            self,
-            inplace,
-            image.dataobj,
-            NiftiRaw(header=image.header),
-            data=None,
-            transformations=None,
-        )
+        raw, record = _stored_parts(_spm_encoded(self, like, overrides))
+        metadata = _consolidated_metadata(self, record)
+        if not inplace:
+            return replace(
+                self,
+                raw=raw,
+                metadata=metadata,
+                data=None,
+                transformations=None,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        return self
 
 
 def _spm_encoded(
