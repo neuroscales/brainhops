@@ -1270,6 +1270,7 @@ _NRRD = Exemplar(
     geometry=_nifti_geometry,
     change_geometry=_nifti_change_geometry,
     foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    storage={"datatype": "int16"},
 )
 EXEMPLARS[AttachedNrrdImage] = _NRRD
 EXEMPLARS[DetachedNrrdImage] = _NRRD._replace(
@@ -2140,13 +2141,16 @@ def test_16_a_storage_override_holds_what_the_file_holds(
     # them changes them, as the writer of the format does.
     loaded.data = (exemplar.sample() + 1) / 7
     once = loaded.consolidate(**exemplar.storage)
-    path = tmp_path / ("stored" + exemplar.suffix)
+    # The file has the name of the source, in another directory, since a
+    # header may name its data file.
+    (tmp_path / "stored").mkdir()
+    path = _path(tmp_path / "stored", exemplar, "src")
     once.save(path)
     back = cls.load(path)
     # The copy holds the data and the header of the file exactly.
     assert np.asarray(once.data).dtype == np.asarray(back.data).dtype
     assert np.array_equal(np.asarray(once.data), np.asarray(back.data))
-    assert once.metadata.to_bytes() == back.metadata.to_bytes()
+    assert _header(exemplar, once.metadata) == _header(exemplar, back.metadata)
     # Nothing is pending in the copy.
     twice = once.consolidate()
     assert twice.raw is once.raw

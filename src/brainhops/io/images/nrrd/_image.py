@@ -52,6 +52,7 @@ from brainhops.io.common.nrrd._constants import (
     SPACES,
 )
 from brainhops.io.common.nrrd._data import (
+    _decode,
     _NrrdProxy,
     encode_data,
     read_nrrd,
@@ -610,6 +611,7 @@ class NrrdImage(
 
     def consolidate(
         self,
+        *,
         inplace: bool = False,
         encoding: tx.Optional[str] = None,
         endian: tx.Optional[str] = None,
@@ -898,10 +900,11 @@ def _encoded(
 
     The record is encoded as [`NrrdImage.consolidate`][] describes, and the
     held record is returned when the encoding changes nothing. The samples
-    are the assigned data, or else `raw`, in the order of the image. The
-    `data_files` are those of the header: an empty tuple for attached
-    samples, one name for a detached header, or `None` to keep those of
-    the base.
+    are the assigned data, or else `raw`, in the order of the image,
+    converted to the stored type as the writer converts them, with
+    `_stored_samples`. The `data_files` are those of the header: an empty
+    tuple for attached samples, one name for a detached header, or `None`
+    to keep those of the base.
 
     Raises
     ------
@@ -1003,10 +1006,10 @@ def _encoded(
         data_files=tuple(data_files),
     )
     if held is not None and record == held:
-        return held, raw
+        return held, _stored_samples(held, raw)
     if version < 4:
         record = replace(record, version=4)
-    return record, raw
+    return record, _stored_samples(record, raw)
 
 
 def _storage_order(
@@ -1274,6 +1277,27 @@ def _payload(image: NrrdImage, record: NrrdRaw) -> bytes:
     else:
         values = np.asarray(image.raw)
     return encode_data(record, values.transpose(np.argsort(order)))
+
+
+def _stored_samples(record: NrrdRaw, samples: ArrayProtocol) -> ArrayProtocol:
+    """Return samples as the file of a record stores them.
+
+    The writer, `encode_data`, rounds floating-point values that are
+    stored as integers and converts them to the stored type, and a text
+    encoding writes them as decimal numbers. Samples of another type are
+    encoded into memory in the same way and decoded as the reader decodes
+    a file, so that they are the values of the file, in its type and byte
+    order. Samples of the stored type, in either byte order, are returned
+    as they are, so that a lazy array is not read.
+    """
+    if record.dtype.newbyteorder("=") == np.dtype(samples.dtype).newbyteorder(
+        "="
+    ):
+        return samples
+    order = image_order(record)
+    values = np.asarray(samples).transpose(np.argsort(order))
+    content = BytesIO(encode_data(record, values))
+    return _decode(record, [(content, 0)], mmap=False).transpose(order)
 
 
 def _nrrd_written(image: NrrdImage, data_files: tx.Tuple[str, ...]) -> NrrdRaw:

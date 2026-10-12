@@ -193,7 +193,7 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             return None
         return _minc_system(self.metadata.raw)
 
-    def consolidate(self, inplace: bool = False) -> "MincImage":
+    def consolidate(self, *, inplace: bool = False) -> "MincImage":
         """Move the pending data into `raw`.
 
         MINC files cannot be written, so no record can be encoded, and
