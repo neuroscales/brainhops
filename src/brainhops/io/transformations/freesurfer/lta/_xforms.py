@@ -267,7 +267,7 @@ class LtaTransformation(
 class LtaTransformationVoxToVox(LtaTransformation):
     """LTA file interpreted as a voxel-to-voxel affine."""
 
-    struct: LtaStruct = Factory(
+    struct: ... = Factory(
         partial(
             LtaStruct,
             type=LtaType.LINEAR_VOX_TO_VOX,
@@ -314,7 +314,7 @@ class LtaTransformationVoxToVox(LtaTransformation):
 class LtaTransformationPhysToPhys(LtaTransformation):
     """LTA file interpreted as a physical-to-physical affine."""
 
-    struct: LtaStruct = Factory(
+    struct: ... = Factory(
         partial(
             LtaStruct,
             type=LtaType.LINEAR_PHYSVOX_TO_PHYSVOX,
@@ -361,7 +361,7 @@ class LtaTransformationPhysToPhys(LtaTransformation):
 class LtaTransformationRASToRAS(LtaTransformation):
     """LTA file interpreted as a RAS-to-RAS affine."""
 
-    struct: LtaStruct = Factory(
+    struct: ... = Factory(
         partial(
             LtaStruct,
             type=LtaType.LINEAR_RAS_TO_RAS,
