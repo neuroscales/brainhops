@@ -104,7 +104,12 @@ def test_the_sform_code_follows_the_world_space(tmp_path) -> None:  # noqa: ANN0
 
 
 def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa: ANN001
-    """With only an sform, the rigid part is still written as the qform."""
+    """With only an sform, the rigid part is still written as the qform.
+
+    An untouched image is written with the header of its file, which has
+    no qform. Once its transformations are assigned, they are encoded
+    again, and the qform is then the rigid part of the sform.
+    """
     data = np.zeros((3, 4, 5), dtype="float32")
     img = nb.Nifti1Image(data, AFFINE)
     img.header.set_sform(AFFINE, code=2)
@@ -112,8 +117,14 @@ def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa
     source = tmp_path / "sform_only.nii"
     nb.save(img, str(source))
 
+    image = io.images.load(source)
+    target = tmp_path / "untouched.nii"
+    image.save(target)
+    assert int(nb.load(str(target)).header["qform_code"]) == 0
+
+    image.transformations = image.transformations
     target = tmp_path / "out.nii"
-    io.images.load(source).save(target)
+    image.save(target)
 
     header = nb.load(str(target)).header
     assert int(header["qform_code"]) != 0
@@ -1117,6 +1128,56 @@ def test_a_dtype_override_scales_an_untouched_image_again(tmp_path) -> None:  # 
     written = nb.load(str(target))
     assert written.get_data_dtype() == np.dtype("int16")
     assert np.allclose(written.get_fdata(), values, atol=1e-3)
+
+
+def test_consolidating_encodes_the_writer_options(tmp_path) -> None:  # noqa: ANN001
+    values = np.linspace(-3.0, 7.0, 60, dtype="f4").reshape(3, 4, 5)
+    source = _write_image(tmp_path, "source.nii", values)
+    image = NiftiImage.load(source)
+    consolidated = image.consolidate(dtype="int16", descrip="consolidated")
+    header = consolidated.metadata.raw.header
+    assert header.get_data_dtype() == np.dtype("int16")
+    assert header["descrip"].item() == b"consolidated"
+    # The image itself is not changed, and the copy writes what the image
+    # writes with the same options.
+    assert image.metadata.raw.header.get_data_dtype() == np.dtype("f4")
+    image.save(tmp_path / "saved.nii", dtype="int16", descrip="consolidated")
+    consolidated.save(tmp_path / "consolidated.nii")
+    saved = nb.load(str(tmp_path / "saved.nii"))
+    written = nb.load(str(tmp_path / "consolidated.nii"))
+    assert saved.header == written.header
+    assert np.array_equal(saved.get_fdata(), written.get_fdata())
+
+
+def test_consolidated_geometry_has_the_precision_of_the_file() -> None:
+    matrix = np.array(
+        [[1.1, 0.1, 0.0, 10.3], [0.0, 1.2, 0.0, 20.7], [0.0, 0.0, 1.3, 30.1]]
+    )
+    image = NiftiImage(
+        np.zeros((3, 4, 5), "f4"), transformations=[Affine(matrix=matrix)]
+    )
+    assert np.array_equal(image.transformation.matrix, matrix)
+    consolidated = image.consolidate()
+    decoded = consolidated.transformation.to(Affine).matrix
+    # The sform is stored in single precision.
+    assert np.allclose(decoded, matrix, atol=1e-5)
+    assert np.array_equal(decoded, matrix.astype("f4"))
+    assert consolidated._transformations is None
+
+
+def test_an_assigned_array_is_pending(tmp_path) -> None:  # noqa: ANN001
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    image = NiftiImage.load(source)
+    proxy = image.raw
+    image.data = np.ones((3, 4, 5), "f4")
+    assert image.raw is proxy
+    assert np.array_equal(np.asarray(image.data), np.ones((3, 4, 5)))
+    image.save(tmp_path / "ones.nii")
+    assert image.raw is proxy
+    assert np.all(nb.load(str(tmp_path / "ones.nii")).get_fdata() == 1)
+    # Assigning `None` decodes the file again.
+    image.data = None
+    assert np.array_equal(np.asarray(image.data), np.zeros((3, 4, 5)))
 
 
 @pytest.mark.parametrize("suffix", [".nii", ".nii.gz"])

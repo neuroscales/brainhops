@@ -1,7 +1,6 @@
 """The NIfTI image format."""
 
 # stdlib
-import os
 from io import BytesIO
 
 # dependencies
@@ -9,7 +8,6 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
-from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core import path
@@ -475,9 +473,7 @@ class NiftiImage(
         """Write the image to a path, compressed if its name ends with `.gz`.
 
         The image is consolidated into a copy, which is written, and the
-        image itself is not changed. An image written over the file that
-        its proxy reads is consolidated in place instead, so that it holds
-        what the file holds (#426), and its proxy then reads the new file.
+        image itself is not changed.
 
         Parameters
         ----------
@@ -492,15 +488,7 @@ class NiftiImage(
         WriterError
             If the image cannot be encoded, as in [`consolidate`][].
         """
-        if not _reads_file(self.raw, filename):
-            write_nifti(self.to_nibabel(**kwargs), filename)
-            return
-        self.consolidate(inplace=True, **kwargs)
-        write_nifti(_nifti_written(self), filename)
-        if _reads_file(self.raw, filename):
-            # The proxy describes the layout of the replaced file.
-            self.raw = read_nifti(filename)[1]
-            self.data = None
+        write_nifti(self.to_nibabel(**kwargs), filename)
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
         """Write the image to a stream as an uncompressed NIfTI file.
@@ -812,15 +800,3 @@ def _nifti_written(
             "This image has no data, so there is nothing to write."
         )
     return _written_nifti(image.raw, image.metadata.raw)
-
-
-def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
-    """Tell whether a proxy reads a local file by its name."""
-    if not isinstance(raw, ArrayProxy) or not isinstance(raw.file_like, str):
-        return False
-    if not isinstance(file, (str, os.PathLike)):
-        return False
-    try:
-        return os.path.samefile(raw.file_like, os.fspath(file))
-    except OSError:
-        return False

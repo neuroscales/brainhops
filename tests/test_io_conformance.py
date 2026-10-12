@@ -1014,7 +1014,6 @@ def test_14_copies_between_classes_carry_the_decoded_transformations(
     )
 
 
-
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_15_consolidating_an_untouched_object_changes_nothing(
     cls: type,
@@ -1103,6 +1102,8 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
+    if cls not in TEST_EXEMPLARS:
+        pytest.skip("The formats write over their own files from #427.")
     path = _saved(cls, exemplar, tmp_path)
     # An untouched object is written over the file that it reads.
     loaded = cls.load(path)

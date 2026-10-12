@@ -453,16 +453,25 @@ def _written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> _NiftiObject:
     """Build the nibabel image that writes an array over its record.
 
     The record is written as it is, since it already encodes the layout
-    of the array and the geometry: the header is copied, because nibabel
-    sets the offset of the voxels in the header that it writes. A proxy
+    of the array and the geometry, and nibabel writes a copy of it, so
+    the record is not changed. nibabel chooses the offset of the voxels
+    again, as for a new header. A proxy
     that the header stores as it is, as [`_image_with_geometry`][] leaves
     an untouched proxy, is written unscaled, so that its voxels are copied
     byte for byte. Any other array is written with the data type of the
     header, and nibabel scales it when the header has no scaling.
     """
-    header = record.header.copy()
+    header = record.header
     if isinstance(raw, ArrayProxy) and _stores_proxy(header, raw):
         raw = raw.get_unscaled()
+    image_cls = nb.Nifti1Image
     if isinstance(header, nb.Nifti2Header):
-        return nb.Nifti2Image(raw, None, header)
-    return nb.Nifti1Image(raw, None, header)
+        image_cls = nb.Nifti2Image
+    # nibabel copies the header, and keeps its geometry since the affine is
+    # the one that the header gives. It resets the scaling, which is set
+    # again, so that a proxy is written unscaled with the scaling that its
+    # file stored.
+    image = image_cls(raw, header.get_best_affine(), header)
+    image.header["scl_slope"] = header["scl_slope"]
+    image.header["scl_inter"] = header["scl_inter"]
+    return image
