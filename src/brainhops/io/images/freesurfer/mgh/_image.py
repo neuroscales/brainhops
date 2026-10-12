@@ -7,7 +7,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 from nibabel.freesurfer import mghformat as _mgh
 from nibabel.volumeutils import array_from_file, array_to_file
 
@@ -121,7 +121,7 @@ class MghImage(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mgh", "mgz")
 
-    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the file stores them, or `None` without data.
 
     After a read, `raw` is a nibabel proxy. `raw` describes the file as it
@@ -153,7 +153,7 @@ class MghImage(
     decodes, and an assigned list, even an empty one, is stored as it is.
     """
 
-    _metadata: KwOnly[NoRepr[tx.Optional[MghMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[MghMetadata]] = None
 
     metadata = smartproperty("metadata")
     """The metadata of the file, which holds its record, or `None`.

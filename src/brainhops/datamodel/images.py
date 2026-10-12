@@ -3,7 +3,7 @@
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
-from bagof.magic import NoRepr
+from bagof.magic import NoRepr, NotKwOnly
 
 from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol
@@ -22,7 +22,7 @@ from .transformations import (
 )
 
 
-class Image(IdentityComparison, DataModelBase, eq=False):
+class Image(IdentityComparison, DataModelBase, eq=False, kw_only=True):
     """The base class of all images.
 
     !!! note
@@ -61,7 +61,14 @@ class Image(IdentityComparison, DataModelBase, eq=False):
 
 
 class SingleScaleImage(Image):
-    """The base class of single-resolution images."""
+    """The base class of single-resolution images.
+
+    `data` and `transformations` are the parameters most often given
+    to the constructor, and they can be passed by position in this order.
+    The other parameters are keyword-only, except those that a file
+    reader from `brainhops.io.common` adds, such as the opened Zarr `node`
+    of a plain Zarr array, which follow `transformations`.
+    """
 
     data: tx.Annotated[
         NoRepr[tx.Optional[ArrayProtocol]],
@@ -80,6 +87,7 @@ class SingleScaleImage(Image):
             because reading it may load a whole file.
             """
         ),
+        NotKwOnly(),
     ] = None
 
     transformations: tx.Annotated[
@@ -89,6 +97,7 @@ class SingleScaleImage(Image):
             "of data's axes) to different world spaces. The last "
             "transformation in the list is the preferred one."
         ),
+        NotKwOnly(),
     ] = ()
 
     @property
@@ -263,7 +272,14 @@ class SingleScaleImage(Image):
 
 
 class MultiScaleImage(Image):
-    """The base class of multi-scale (pyramid) images."""
+    """The base class of multi-scale (pyramid) images.
+
+    `images` and `transformations` are the parameters most often given
+    to the constructor, and they can be passed by position in this order.
+    The other parameters are keyword-only, except those that a file
+    reader from `brainhops.io.common` adds, such as the opened Zarr `node`
+    of an OME-Zarr pyramid, which follow `transformations`.
+    """
 
     images: tx.Annotated[
         tx.List[SingleScaleImage],
@@ -271,6 +287,7 @@ class MultiScaleImage(Image):
             "Each image in the multi-resolution pyramid, ordered from "
             "highest to lowest resolution."
         ),
+        NotKwOnly(),
     ] = ()
 
     transformations: tx.Annotated[
@@ -280,6 +297,7 @@ class MultiScaleImage(Image):
             "to different world spaces. The last transformation in the list "
             "is the preferred one."
         ),
+        NotKwOnly(),
     ] = ()
 
     @property

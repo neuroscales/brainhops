@@ -10,7 +10,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -133,7 +133,7 @@ class MrtrixImage(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mrtrix",)
 
-    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the file stores them, or `None` without data.
 
     After a read, `raw` is a lazy array, which presents the voxels in the
@@ -166,7 +166,7 @@ class MrtrixImage(
     decodes, and an assigned list, even an empty one, is stored as it is.
     """
 
-    _metadata: KwOnly[NoRepr[tx.Optional[MrtrixMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = None
 
     metadata = smartproperty("metadata")
     """The metadata of the file, which holds its record, or `None`.
