@@ -27,16 +27,14 @@ __all__ = [
     "UNARY_OPERATORS",
 ]
 
-from numbers import Real
 from operator import methodcaller
 from types import MappingProxyType
 
 import typing_extensions as tx
-from bagof.magic import NotKwOnly, fields
+from bagof.magic import Forget, NotKwOnly, fields
 
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.properties import smartproperty
-from brainhops._core.typing import Derived, npmatrix, npvector
 
 from . import nocycles
 from .base import Transformation
@@ -59,8 +57,6 @@ if tx.TYPE_CHECKING:
 
 _TypeReference = tx.ClassVar[tx.Optional[tx.Type[Transformation]]]
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
-_OptionalMatrix: tx.TypeAlias = tx.Optional[npmatrix[Real]]
-_OptionalVector: tx.TypeAlias = tx.Optional[npvector[Real]]
 
 
 # ======================================================================
@@ -344,8 +340,8 @@ class SqrtTranslation(
     forward: NotKwOnly[tx.Optional[Translation]] = None
     """Translation whose square root this is."""
 
-    _data: Derived[_OptionalVector]
-    _translation: Derived[_OptionalVector]
+    _data: Forget
+    _translation: Forget
 
 
 class SqrtScaling(
@@ -363,8 +359,8 @@ class SqrtScaling(
     forward: NotKwOnly[tx.Optional[Scaling]] = None
     """Scaling whose square root this is."""
 
-    _data: Derived[_OptionalVector]
-    _scale: Derived[_OptionalVector]
+    _data: Forget
+    _scale: Forget
 
 
 class SqrtRotation(
@@ -389,8 +385,8 @@ class SqrtRotation(
     forward: NotKwOnly[tx.Optional[Rotation]] = None
     """Rotation whose square root this is."""
 
-    _data: Derived[_OptionalMatrix]
-    _matrix: Derived[_OptionalMatrix]
+    _data: Forget
+    _matrix: Forget
 
 
 class SqrtLinear(
@@ -408,8 +404,8 @@ class SqrtLinear(
     forward: NotKwOnly[tx.Optional[Linear]] = None
     """Linear transformation whose square root this is."""
 
-    _data: Derived[_OptionalMatrix]
-    _matrix: Derived[_OptionalMatrix]
+    _data: Forget
+    _matrix: Forget
 
 
 class SqrtAffine(
@@ -427,8 +423,8 @@ class SqrtAffine(
     forward: NotKwOnly[tx.Optional[Affine]] = None
     """Affine transformation whose square root this is."""
 
-    _data: Derived[_OptionalMatrix]
-    _matrix: Derived[_OptionalMatrix]
+    _data: Forget
+    _matrix: Forget
 
 
 # ======================================================================

@@ -242,6 +242,30 @@ def test_an_image_built_from_data_alone_is_written(tmp_path) -> None:  # noqa: A
     assert np.allclose(written.affine, np.eye(4))
 
 
+def test_an_image_whose_transformations_are_emptied_has_no_geometry(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """An empty list is honoured, and `None` decodes the header again.
+
+    The writer encodes an image without transformations as it encodes an
+    image built from data alone: the qform and the sform are the identity
+    under the code `aligned` (2), and the voxel size is one.
+    """
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    image = NiftiImage.load(source)
+    image.transformations = []
+    assert image.transformations == []
+    target = tmp_path / "bare.nii"
+    image.save(target)
+    header = nb.load(str(target)).header
+    assert int(header["qform_code"]) == 2
+    assert int(header["sform_code"]) == 2
+    assert np.allclose(header.get_best_affine(), np.eye(4))
+    assert np.allclose(header.get_zooms(), 1.0)
+    image.transformations = None
+    assert np.allclose(image.to_nibabel().affine, AFFINE)
+
+
 # ----------------------------------------------------------------------
 #   TRANSFORMATIONS
 # ----------------------------------------------------------------------
