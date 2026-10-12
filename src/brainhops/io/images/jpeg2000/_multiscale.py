@@ -5,6 +5,7 @@ import os
 from io import BytesIO
 
 # dependencies
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
@@ -13,7 +14,7 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.transformations import Transformation
+from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base._utils_files import write_file
@@ -64,9 +65,10 @@ class Jpeg2000MultiScaleImage(
 
     A pyramid is written as its full-resolution level, with as many
     resolution levels as it has. The codec computes the coarser levels
-    again, so they must have the shapes that it gives them, and their
-    data are not written. A pyramid that is read and written again
-    without changes gives the same bytes.
+    again, so they must have the shapes that it gives them, and a coarser
+    level that holds assigned data or transformations is refused. A
+    pyramid that is read and written again without changes gives the
+    same bytes.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = _EXTENSIONS
@@ -373,8 +375,12 @@ class Jpeg2000MultiScaleImage(
         it has one. A pyramid of another number of levels than its file is
         encoded again with as many resolution levels as it has. The coarser
         levels must have the shapes that the codec gives them, which is
-        `ceil(n / 2**r)` along each spatial axis, and their data are not
-        written, because the codec computes them again.
+        `ceil(n / 2**r)` along each spatial axis. The codec computes their
+        data again, so a coarser [`Jpeg2000Image`][] that holds assigned
+        data, or assigned transformations other than those that the first
+        level gives it, is refused rather than dropped. A coarser level of
+        another class, such as a level of a TIFF pyramid that is
+        converted, is derived again.
 
         A pyramid whose full-resolution level is left as it is by its own
         consolidation, and whose levels and placements are those of its
@@ -410,8 +416,9 @@ class Jpeg2000MultiScaleImage(
             If an unknown option is given.
         WriterError
             If the pyramid has no level, a coarser level does not have the
-            shape that the codec gives it, or the full-resolution level
-            cannot be encoded.
+            shape that the codec gives it or holds assigned data or
+            transformations, or the full-resolution level cannot be
+            encoded.
         """
         images = self._images
         if images is None:
@@ -592,11 +599,19 @@ def _base_level(
     placement of the pyramid is composed with the transformation of the
     level.
 
+    The codec computes the coarser levels again from the first one, so a
+    coarser [`Jpeg2000Image`][] that holds assigned data, or assigned
+    transformations other than those that the first level gives it, is
+    refused rather than dropped. A coarser level of another class is
+    taken as a level of the pyramid that it converts, whose data and
+    transformations the codec derives again.
+
     Raises
     ------
     WriterError
         If the pyramid has no level, or a coarser level does not have the
-        shape that the codec gives it.
+        shape that the codec gives it, or holds assigned data or
+        transformations that the file cannot store.
     """
     if not images:
         raise WriterError(
@@ -607,6 +622,7 @@ def _base_level(
     if not isinstance(base, Jpeg2000Image):
         base = Jpeg2000Image.from_instance(base, metadata=pyramid.metadata)
     shape = tuple(int(n) for n in base.shape)
+    first = _preferred(base)
     for index, image in enumerate(images[1:], start=1):
         factor = 2**index
         expected = tuple(-(-n // factor) for n in shape[:2]) + shape[2:]
@@ -617,19 +633,80 @@ def _base_level(
                 f"2000 derives a level of shape {expected} from the full "
                 f"resolution level {shape}."
             )
-    if pyramid._transformations:
-        # The transformations of the level are read without being stored,
-        # so that a write leaves the level as it was.
-        transformations = base._transformations
-        if transformations is None:
-            transformations = _record_transformations(
-                base.metadata, base.level
+        if not isinstance(image, Jpeg2000Image):
+            continue
+        if image._data is not None:
+            raise WriterError(
+                f"Level {index} of this pyramid holds assigned data, but a "
+                f"JPEG 2000 pyramid is written from its first level, and "
+                f"the codec computes level {index} again. Assign the data "
+                f"of the first level, or drop the coarser levels."
             )
+        if image._transformations is not None and not _derived(
+            first, _preferred(image), factor, _level_start(image)
+        ):
+            raise WriterError(
+                f"Level {index} of this pyramid holds assigned "
+                f"transformations that its first level does not give it, "
+                f"but a JPEG 2000 pyramid is written from its first level, "
+                f"and the file stores the pixel size of that level alone."
+            )
+    if pyramid._transformations:
         xform = pyramid.transformation
-        if transformations:
-            xform = xform @ transformations[-1]
+        if first is not None:
+            xform = xform @ first
         base = replace(base, transformations=[xform])
     return base
+
+
+def _preferred(level: Jpeg2000Image) -> tx.Optional[Transformation]:
+    """Return the preferred transformation of a level, if it has one.
+
+    The transformations are read without being stored, so that a write
+    leaves the level as it was.
+    """
+    transformations = level._transformations
+    if transformations is None:
+        transformations = _record_transformations(level.metadata, level.level)
+    return transformations[-1] if transformations else None
+
+
+def _level_start(level: Jpeg2000Image) -> tx.Tuple[int, int]:
+    """Return the full-resolution pixel on which a level of a file starts.
+
+    A level that reads no file starts on the first pixel.
+    """
+    if not isinstance(level.raw, _Jpeg2000Proxy):
+        return (0, 0)
+    return level.raw.record.level_start(level.raw.level)
+
+
+def _derived(
+    first: tx.Optional[Transformation],
+    xform: tx.Optional[Transformation],
+    factor: int,
+    start: tx.Tuple[int, int],
+) -> bool:
+    """Tell whether a coarser level has the geometry that a file gives it.
+
+    The level reduced by `factor` that starts on the full-resolution pixel
+    `start` maps its pixel `i` as the first level maps the pixel
+    `factor * i + start`, along `x` and `y`.
+    """
+    if first is None or xform is None:
+        return first is None and xform is None
+    try:
+        matrix = np.asarray(first.to(Affine).homogeneous_matrix, dtype=float)
+        level = np.asarray(xform.to(Affine).homogeneous_matrix, dtype=float)
+    except Exception:
+        return False
+    if matrix.shape != level.shape or matrix.shape[0] < 3:
+        return False
+    n = matrix.shape[0] - 1
+    reduction = np.eye(n + 1)
+    reduction[0, 0] = reduction[1, 1] = factor
+    reduction[0, n], reduction[1, n] = start
+    return np.allclose(matrix @ reduction, level)
 
 
 def _file_levels(level: Jpeg2000Image) -> tx.Optional[int]:

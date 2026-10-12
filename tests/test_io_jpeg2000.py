@@ -737,3 +737,32 @@ def test_resolution_box_encoding() -> None:
         box = _boxes._resolution_box(b"resc", (value, value))
         back = _boxes.read_resolution(box[8:])
         assert back == pytest.approx((value, value), rel=1e-6)
+
+
+def test_a_coarser_level_that_was_assigned_is_refused(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.jp2", RAMP)
+    # Data assigned to a coarser level cannot be written, since the codec
+    # computes that level again from the first one.
+    pyramid = load(path)
+    pyramid.images[2].data = np.zeros((12, 10), np.uint16)
+    with pytest.raises(WriterError, match="Level 2 .* first level"):
+        pyramid.consolidate()
+    with pytest.raises(WriterError, match="Level 2"):
+        pyramid.save(tmp_path / "b.jp2")
+    assert not (tmp_path / "b.jp2").exists()
+    # So are transformations that the first level does not give it.
+    pyramid = load(path)
+    level = pyramid.images[1].transformation
+    pyramid.images[1].transformations = [
+        Scaling([3.0, 3.0], input=level.input, output=level.output)
+    ]
+    with pytest.raises(WriterError, match="Level 1 .* transformations"):
+        pyramid.to_bytes()
+    # Transformations that were read, or that a pixel size gives every
+    # level, are those that the first level gives, and are written.
+    pyramid = load(path)
+    _ = [image.transformation for image in pyramid.images]
+    assert pyramid.to_bytes() == path.read_bytes()
+    pyramid = load(path, pixel_size=0.5, unit="mm")
+    back = Jpeg2000MultiScaleImage.from_bytes(pyramid.to_bytes())
+    np.testing.assert_allclose(back.images[3].transformation.scale, [4, 4])

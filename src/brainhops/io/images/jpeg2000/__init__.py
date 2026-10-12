@@ -136,8 +136,10 @@ stores the comments alone, and its pixel size is lost.
 
 A pyramid is written as its full-resolution level, with as many
 resolution levels as it has. The codec computes the coarser levels
-again, so they must have the shapes that it gives them, and their data
-are not written.
+again, so they must have the shapes that it gives them. A coarser level
+that holds assigned data, or assigned transformations other than those
+that the first level gives it, is refused, because the file cannot store
+them.
 
 ## Pillow
 
