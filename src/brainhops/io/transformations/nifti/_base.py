@@ -256,7 +256,7 @@ class NiftiBasedTransformation(
             return None
         return self.metadata.raw.copy()
 
-    def consolidate(self, inplace: bool = False, **options) -> tx.Self:
+    def consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
         """Encode the pending state into `raw` and the header.
 
         Each concrete format implements this method, on which the writers
@@ -411,28 +411,15 @@ def _nifti_written(xform: NiftiBasedTransformation) -> _NibabelImage:
     return _written_nifti(xform.raw, xform.metadata.raw)
 
 
-def _consolidated(
-    xform: NiftiBasedTransformation,
-    inplace: bool,
-    raw: tx.Optional[ArrayProtocol],
-    record: NiftiRaw,
-    **changes,
-) -> NiftiBasedTransformation:
-    """Give a transformation, or a copy of it, an encoded state.
+def _consolidated_metadata(
+    xform: NiftiBasedTransformation, record: NiftiRaw
+) -> NiftiMetadata:
+    """Return the metadata that holds the record of a consolidation.
 
-    The transformation, or a copy of it with `inplace=False`, holds `raw`
-    and new metadata that holds `record`, and the `changes`, which reset
-    the pending fields to `None` and set any option that the encoding
-    fixed. The metadata held before is never changed.
+    The metadata of the transformation is copied to hold the new record,
+    so the metadata held before is never changed. A transformation
+    without metadata gets new metadata.
     """
     if xform.metadata is None:
-        metadata = NiftiMetadata.from_raw(record)
-    else:
-        metadata = replace(xform.metadata, raw=record)
-    if not inplace:
-        return replace(xform, raw=raw, metadata=metadata, **changes)
-    xform.raw = raw
-    xform.metadata = metadata
-    for name, value in changes.items():
-        setattr(xform, name, value)
-    return xform
+        return NiftiMetadata.from_raw(record)
+    return replace(xform.metadata, raw=record)

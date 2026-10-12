@@ -16,6 +16,9 @@ nb = pytest.importorskip("nibabel")
 import brainhops.io as io  # noqa: E402
 from brainhops.backends import available_backends, backend  # noqa: E402
 from brainhops.datamodel import transformations as _xforms  # noqa: E402
+from brainhops.io.base.parsers import (  # noqa: E402
+    UnrepresentableTransformationError,
+)
 from brainhops.io.transformations.fsl import FlirtTransform  # noqa: E402
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
     VoxelToScaledMm,
@@ -389,6 +392,24 @@ def test_fnirt_repr_and_inspection_do_not_raise() -> None:
     assert "FnirtWarpField" in repr(warp)
     assert list(warp) == []
     assert len(warp) == 0
+
+
+def test_fnirt_refuses_to_encode_an_assigned_chain(tmp_path) -> None:  # noqa: ANN001
+    # FNIRT stores a warp field and the parameters of its spline, so a
+    # chain assigned to the field is neither kept pending in a
+    # consolidated copy nor dropped by a write: both refuse it.
+    _, absolute, _ = _fnirt_setup()
+    img = nb.Nifti1Image(absolute.astype(np.float32), REF_AFFINE)
+    img.header["intent_code"] = 2006
+    path = tmp_path / "warp.nii"
+    nb.save(img, str(path))
+    warp = FnirtWarpField.load(path)
+    warp.transformations = (_xforms.Affine(matrix=np.eye(4)[:-1]),)
+    with pytest.raises(UnrepresentableTransformationError):
+        warp.consolidate()
+    with pytest.raises(UnrepresentableTransformationError):
+        warp.save(tmp_path / "copy.nii")
+    assert not (tmp_path / "copy.nii").exists()
 
 
 # ----------------------------------------------------------------------

@@ -26,7 +26,6 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.nifti import NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_NIFTYREG,
@@ -42,6 +41,7 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _record_image,
     _set_coordinates_intent,
+    _stored_parts,
 )
 from brainhops.io.transformations.base._conversions import (
     convert_instance,
@@ -54,7 +54,7 @@ from brainhops.io.transformations.base.fields import (
 )
 
 # this format
-from ._base import NiftiBasedTransformation, _consolidated
+from ._base import NiftiBasedTransformation, _consolidated_metadata
 from ._views import _field_to_disk, _field_to_model
 
 _NDIM = 3
@@ -169,7 +169,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         return _field_to_model(self.raw)
 
     def consolidate(
-        self, inplace: bool = False, like: tx.Any = None, **overrides
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> tx.Self:
         """Encode the pending field into `raw` and a new header.
 
@@ -219,16 +219,23 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
             and self.metadata.raw is not None
         ):
             return self if inplace else replace(self)
-        image = _coordinates_encoded(self, like, overrides)
-        record = NiftiRaw(header=image.header)
-        return _consolidated(
-            self,
-            inplace,
-            image.dataobj,
-            record,
-            data=None,
-            store=StoreEnum.values,
+        raw, record = _stored_parts(
+            _coordinates_encoded(self, like, overrides)
         )
+        metadata = _consolidated_metadata(self, record)
+        if not inplace:
+            return replace(
+                self,
+                raw=raw,
+                metadata=metadata,
+                data=None,
+                store=StoreEnum.values,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.store = StoreEnum.values
+        return self
 
 
 @register_format
@@ -505,6 +512,7 @@ transformations.StationaryVelocityField].
 
     def consolidate(
         self,
+        *,
         inplace: bool = False,
         like: tx.Any = None,
         log: tx.Optional[bool] = None,
@@ -558,16 +566,25 @@ transformations.StationaryVelocityField].
             and self.metadata.raw is not None
         ):
             return self if inplace else replace(self)
-        image = _displacement_encoded(self, like, log, overrides)
-        return _consolidated(
-            self,
-            inplace,
-            image.dataobj,
-            NiftiRaw(header=image.header),
-            data=None,
-            transformations=None,
-            log=log,
+        raw, record = _stored_parts(
+            _displacement_encoded(self, like, log, overrides)
         )
+        metadata = _consolidated_metadata(self, record)
+        if not inplace:
+            return replace(
+                self,
+                raw=raw,
+                metadata=metadata,
+                data=None,
+                transformations=None,
+                log=log,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        self.log = log
+        return self
 
     def to_nibabel(
         self,

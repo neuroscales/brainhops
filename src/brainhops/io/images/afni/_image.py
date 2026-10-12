@@ -46,6 +46,8 @@ from brainhops.io.common.afni._data import (
     brick_code,
     brick_dtype,
     brik_proxy,
+    decode_bricks,
+    encode_bricks,
     read_afni,
     write_brik,
 )
@@ -552,6 +554,7 @@ class AfniImage(
 
     def consolidate(
         self,
+        *,
         inplace: bool = False,
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
@@ -835,8 +838,8 @@ def _encoded(
     the held record is returned when the encoding changes nothing. The
     voxels are `raw` when it is a lazy array that is copied as the BRIK
     stores it, and otherwise the assigned data or the data, as an array
-    of at least three dimensions, which the writer encodes with the types
-    of the record.
+    of at least three dimensions, converted to the types of the record as
+    the writer converts them, with `_stored_voxels`.
     """
     if image._data is None and image.raw is None:
         raise WriterError(
@@ -923,12 +926,13 @@ def _encoded(
     # attributes does not matter.
     record = _record(attrs)
     if held is not None and _written(record) == _written(held):
-        return held, data
+        return held, _stored_voxels(held, data)
     if "IDCODE_STRING" not in overrides:
         attrs["IDCODE_STRING"] = "AFN_" + uuid.uuid4().hex[:22]
     if "IDCODE_DATE" not in overrides:
         attrs["IDCODE_DATE"] = time.ctime()
-    return _record(attrs).validate(), data
+    record = _record(attrs).validate()
+    return record, _stored_voxels(record, data)
 
 
 def _stored_data(
@@ -969,6 +973,31 @@ def _stored_data(
     if ndim < 3:
         raw = np.reshape(raw, tuple(np.shape(raw)) + (1,) * (3 - ndim))
     return raw
+
+
+def _stored_voxels(record: AfniRaw, data: ArrayProtocol) -> ArrayProtocol:
+    """Return voxels as the BRIK of a record stores them.
+
+    The writer, `encode_bricks`, rounds floating-point values that are
+    stored as integers, checks their range, and converts them to the
+    types of the record. Voxels of another type are encoded and decoded
+    in memory in the same way, so that they are the values of the BRIK,
+    in its types. A lazy array of a BRIK, and voxels of the stored type
+    in either byte order, are returned as they are, so that they are not
+    read.
+
+    Raises
+    ------
+    WriterError
+        If integer values overflow their stored type.
+    """
+    if isinstance(data, _BrikProxy):
+        return data
+    dtype = np.dtype(data.dtype).newbyteorder("=")
+    if all(stored.newbyteorder("=") == dtype for stored in record.dtypes):
+        return data
+    content = b"".join(encode_bricks(record, data))
+    return decode_bricks(record, content).reshape(np.shape(data))
 
 
 def _layout(

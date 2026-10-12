@@ -70,7 +70,7 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
         """
         return cls(raw=raw, **kwargs)
 
-    def consolidate(self, inplace: bool = False) -> tx.Self:
+    def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the fields of the metadata into its record.
 
         Consolidating metadata makes its record describe every field of

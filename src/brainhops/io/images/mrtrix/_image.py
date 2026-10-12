@@ -47,7 +47,9 @@ from brainhops.io.common.mrtrix._codecs import (
 )
 from brainhops.io.common.mrtrix._constants import _FILE, _RESERVED
 from brainhops.io.common.mrtrix._data import (
+    _is_scaled,
     _MrtrixProxy,
+    _scaled_dtype,
     encode_data,
     read_mrtrix,
 )
@@ -383,6 +385,7 @@ class MrtrixImage(
 
     def consolidate(
         self,
+        *,
         inplace: bool = False,
         layout: tx.Optional[tx.Union[str, tx.Sequence[int]]] = None,
         datatype: tx.Optional[tx.Any] = None,
@@ -649,7 +652,8 @@ def _encoded(
     the held record is returned when the encoding changes nothing. The
     voxels are `raw` when it is a lazy array that is copied as the file
     stores it, and otherwise the array of the assigned data or of the
-    data, in the axis order of the header. The `file` argument names the
+    data, in the axis order of the header, read back as the file stores
+    them with `_stored_voxels`. The `file` argument names the
     data file of the header: `"."` for a single-file image, a file name
     for a `.mih` header, or `None` to keep the entry of the base.
     """
@@ -738,10 +742,32 @@ def _encoded(
         keyval=merged,
     )
     if held is not None and record == held:
-        return held, source
+        return held, _stored_voxels(held, source)
     if record.file[0] == ".":
         record.file = (".", len(record.embedded()))
-    return record, source
+    return record, _stored_voxels(record, source)
+
+
+def _stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
+    """Return voxels as the file of a record stores them.
+
+    The writer maps the voxels through the intensity scaling of the
+    record, rounds floating-point values that are stored as integers, and
+    converts them to the stored type. Voxels that this changes are
+    encoded into memory in the same way, and a lazy array of those bytes
+    is returned, which reads them as a file of the record is read. A lazy
+    array of a file, and voxels of the stored type without scaling, are
+    returned as they are, so that they are not read.
+    """
+    if isinstance(source, _MrtrixProxy):
+        return source
+    stored = _scaled_dtype(record).newbyteorder("=")
+    if not _is_scaled(record) and stored == np.dtype(
+        source.dtype
+    ).newbyteorder("="):
+        return source
+    content = BytesIO(_payload(record, source))
+    return _MrtrixProxy(content, 0, 0, record, mmap=False)
 
 
 def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
