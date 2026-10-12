@@ -214,7 +214,10 @@ def _model(cls: type) -> tx.Optional[type]:
 
 
 def _init_fields(cls: type) -> tx.Set[str]:
-    return {field.name for field in fields(cls) if field.init}
+    # Public names are compared, because a format may take a field of its
+    # data model over under a private name, as `OmeZarrImage` stores
+    # `images` in `_images`.
+    return {field.public_name for field in fields(cls) if field.init}
 
 
 def _holds(fmt: type, obj: tx.Any, reasons: tx.List[str]) -> bool:

@@ -25,6 +25,7 @@ nav = [
       "api/datamodel/geometry.md",
       "api/datamodel/transformations.md",
       "api/datamodel/images.md",
+      "api/datamodel/metadata.md",
       "api/datamodel/kinds.md",
     ]},
     {"io" = [
@@ -79,6 +80,7 @@ nav = [
         {"niftyreg" = "api/io/transformations/niftyreg.md"},
         "api/io/transformations/zarr.md",
       ]},
+      {"metadata" = "api/io/metadata.md"},
       {"vectors" = "api/io/vectors/index.md"},
     ]},
     {"For developers" = [

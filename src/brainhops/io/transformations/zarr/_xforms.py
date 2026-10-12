@@ -11,6 +11,7 @@ metadata unchanged.
 import abczarr
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
+from bagof.magic import Forget
 
 from brainhops._core.affines import inv as _affine_inv
 from brainhops.backends import get_array_backend
@@ -121,9 +122,9 @@ class OmeZarrField(ZarrReaderWriter, TransformationFormat, MultiscaleField):
     ] = None
 
     # scales is built on demand from the arrays and the placement, not stored.
-    # Declaring it a ClassVar overrides the init field inherited from
-    # MultiscaleField, which keeps it out of __init__, fields() and replace().
-    scales: tx.ClassVar[tx.Optional[tx.List[Sequence]]]
+    # Forgetting the field inherited from MultiscaleField keeps it out of
+    # __init__, fields() and replace().
+    scales: Forget
 
     @property
     def scales(self) -> tx.Optional[tx.List[Sequence]]:

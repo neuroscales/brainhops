@@ -62,6 +62,28 @@ def format_registry(
     return cls
 
 
+def is_format_registry(cls: type) -> bool:
+    """Tell whether a class owns a format registry.
+
+    A class owns a registry when it is decorated with
+    [`format_registry`][], which makes it a dispatcher. A format registered
+    under that class inherits the registry attribute but does not own it,
+    so the test looks in the class's own `__dict__` rather than using
+    `hasattr`.
+
+    Parameters
+    ----------
+    cls : type
+        The class to test.
+
+    Returns
+    -------
+    bool
+        Whether `cls` was decorated with [`format_registry`][].
+    """
+    return "_REGISTRY" in cls.__dict__
+
+
 def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
     """Register a concrete format into ancestor registries up to isolation.
 
@@ -87,7 +109,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
     TypeError
         If `cls` owns a registry.
     """
-    if "_REGISTRY" in cls.__dict__:
+    if is_format_registry(cls):
         raise TypeError(
             f"{cls.__name__} owns a registry (@format_registry), so it "
             f"dispatches to formats rather than being one; it must not "
@@ -100,7 +122,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
         if base in visited:
             continue
         visited.add(base)
-        if "_REGISTRY" in base.__dict__:
+        if is_format_registry(base):
             base._REGISTRY.add(cls)
             if base.__dict__.get("_REGISTRY_ISOLATED", False):
                 continue
@@ -143,7 +165,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
 
     @classmethod
     def _is_dispatcher(cls) -> bool:
-        return "_REGISTRY" in cls.__dict__
+        return is_format_registry(cls)
 
     @classmethod
     def _reader_formats(cls) -> tx.Set[type]:
@@ -497,8 +519,9 @@ class _FileBasedModelMixin:
 
     A path, an open file, binary content or a [`SourceSpec`][] is read with
     `load`, and any other value is passed to the data model. This mixin,
-    inherited by `ImageFormat` and `TransformationFormat`, must precede
-    `DataModelBase` in each concrete class's MRO. The format dispatcher
+    inherited by `ImageFormat`, `TransformationFormat` and
+    `MetadataFormat`, must precede `DataModelBase` in each concrete class's
+    MRO. The format dispatcher
     supplies file handling; the concrete class supplies its data model.
     Keeping this mixin separate from the input adapters lets native parsers
     retain their specialized methods without hiding file-aware construction.
@@ -554,6 +577,32 @@ class _FileBasedModelMixin:
         default is kept, because the same field name holds something different.
         Converting NIfTI to MGH on save therefore converts the data model only,
         and the writer rebuilds the format state.
+
+        A format that decodes its data or its transformations from its
+        file stores them in the private fields `_data` and
+        `_transformations`, where `None` means that they are decoded.
+        Within the format, the stored values are copied, so a copy of an
+        image whose data was not assigned holds the same `raw` as `other`,
+        which stays lazy if it is a proxy, and decodes the same record.
+        From another class, the data and the transformations that `other`
+        reports are copied, decoded if need be, because its `raw` and its
+        record mean nothing to this format.
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy.
+        *args : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+        **kwargs : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+
+        Returns
+        -------
+        Self
+            The copy.
         """
         for field in _foreign_format_fields(cls, other):
             if field.factory is True:
@@ -561,6 +610,23 @@ class _FileBasedModelMixin:
             else:
                 default = field.default
             kwargs.setdefault(field.public_name, default)
+        # The fields `_data` and `_transformations` of another class, if it
+        # has them, are its own stored values, so the decoded views are
+        # read instead. A transformation model stores its data as `_data`
+        # itself, and its own `from_instance` converts the data of another
+        # class, so only a format that takes `data` over reads it here.
+        if not isinstance(other, cls) and _takes_over(cls, "data"):
+            data = getattr(other, "data", None)
+            if data is not None:
+                kwargs.setdefault("data", data)
+        if not isinstance(other, cls) and any(
+            field.name == "_transformations"
+            and field.public_name == "transformations"
+            for field in fields(cls)
+        ):
+            transformations = getattr(other, "transformations", None)
+            if transformations is not None:
+                kwargs.setdefault("transformations", transformations)
         return super().from_instance(other, *args, **kwargs)
 
 
@@ -569,11 +635,18 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
 
     A field belongs to file formats when, in the MRO of `cls`, only file
     parsers declare it. A field that a plain data model also declares is
-    shared by all formats and is never returned. A format field is
-    also left out when `other` is an instance of one of the formats that
-    declare it, because `other` then holds a meaningful value for that field.
-    Only keyword fields that the constructor accepts and that have a default
-    are returned.
+    shared by all formats and is never returned. Fields are compared by
+    their public names, so a field of the data model that a format takes
+    over under a private name, such as `_transformations`, is still
+    shared. A format field is also left out when `other` is an instance
+    of one of the formats that declare it, because `other` then holds a
+    meaningful value for that field. Only keyword fields that the
+    constructor accepts and that have a default are returned.
+
+    A dispatcher is not counted among the formats that declare a field.
+    `MetadataFormat` declares the `raw` field of every metadata format, but
+    the record of one format means nothing to another, so `raw` is reset
+    when metadata is copied from another format.
     """
     if isinstance(other, cls):
         return []
@@ -582,7 +655,9 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
     for klass in cls.__mro__:
         if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
             continue
-        names = [field.name for field in fields(klass)]
+        if is_format_registry(klass):
+            continue
+        names = [field.public_name for field in fields(klass)]
         if issubclass(klass, (Format, FileReader, FileWriter)):
             for name in names:
                 owners.setdefault(name, []).append(klass)
@@ -594,10 +669,36 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
         for field in fields(cls)
         if field.init
         and field.kw
-        and field.name not in shared
+        and field.public_name not in shared
         and field.default is not no_default
-        and not any(isinstance(other, k) for k in owners.get(field.name, ()))
+        and not any(
+            isinstance(other, k) for k in owners.get(field.public_name, ())
+        )
     ]
+
+
+def _takes_over(cls: type, name: str) -> bool:
+    """Tell whether a format stores a field of its data model privately.
+
+    A format takes a field over when it declares the field `_<name>` with
+    the public name `name`, while its data model, the first class in its
+    MRO that is a data model but not a parser, declares the field under
+    the name `name`. An image format that takes `data` over is an example.
+    A transformation model declares `_data` itself, so a transformation
+    format does not take `data` over.
+    """
+    if not any(
+        field.name == "_" + name and field.public_name == name
+        for field in fields(cls)
+    ):
+        return False
+    for klass in cls.__mro__:
+        if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
+            continue
+        if issubclass(klass, (Format, FileReader, FileWriter)):
+            continue
+        return any(field.name == name for field in fields(klass))
+    return False
 
 
 def _is_file_or_content(other: tx.Any) -> bool:

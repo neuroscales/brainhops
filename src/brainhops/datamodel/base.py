@@ -168,13 +168,18 @@ def _build(
     """Build an instance of `cls` from the values returned by `read`.
 
     `read(field)` returns the value of the source, or `_ABSENT`. Keyword
-    fields take that value unless `kwargs` already sets them. Fixed fields
-    are checked before construction when their value can be read from the
-    field, and after construction otherwise. With `init_vars`, the
-    constructor-only keywords are read too, since a mapping can name them.
+    fields take that value unless `kwargs` already sets them, in which case
+    the source is not read at all. A field may be a property that computes
+    its value, such as the data of an image that reads a file, so reading
+    a value that would be discarded is not free. Fixed fields are checked
+    before construction when their value can be read from the field, and
+    after construction otherwise. With `init_vars`, the constructor-only
+    keywords are read too, since a mapping can name them.
     """
     later = {}
     for field in _fields(cls, init_vars):
+        if field.init and field.kw and field.public_name in kwargs:
+            continue
         value = read(field)
         if value is _ABSENT:
             continue

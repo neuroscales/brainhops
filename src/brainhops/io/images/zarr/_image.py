@@ -1,5 +1,6 @@
 import typing_extensions as tx
 from abczarr import ZarrArray, ZarrNode, create
+from bagof.magic import Inherit
 
 from brainhops._core.dependencies import da
 from brainhops._core.properties import smartproperty
@@ -36,8 +37,24 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
 
+    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    """The data given to the image, or `None` to read it from `node`.
+
+    The image takes over the `data` field of [`SingleScaleImage`][] to
+    store it under this private name. The constructor still takes `data`
+    in the same place, and the property of the same name reads it.
+    `None`, the default, means that the data is read from `node`, so that
+    a copy of the image made with `replace` keeps the node and reads no
+    array.
+    """
+
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
+        """Image data, read from `node` on first access unless assigned.
+
+        The array read from `node` is cached. Assigning an array replaces
+        it, and assigning `None` reads `node` again.
+        """
         node = self.node
         if node is not None:
             backend = get_array_backend()

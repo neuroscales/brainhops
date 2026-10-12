@@ -3,7 +3,7 @@
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
-from bagof.magic import NotKwOnly
+from bagof.magic import NoRepr, NotKwOnly
 
 from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol
@@ -71,7 +71,7 @@ class SingleScaleImage(Image):
     """
 
     data: tx.Annotated[
-        tx.Optional[ArrayProtocol],
+        NoRepr[tx.Optional[ArrayProtocol]],
         tx.Doc(
             """
             The image data. Must be an array-like object that supports
@@ -82,6 +82,9 @@ class SingleScaleImage(Image):
             file and materializes the array on first access, and cannot
             supply it at construction time. This mirrors
             `Affine.matrix`, which is optional for the same reason.
+
+            The data is left out of the representation of the image,
+            because reading it may load a whole file.
             """
         ),
         NotKwOnly(),

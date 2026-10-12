@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import typing_extensions as tx
+from bagof.magic import replace
 
 import brainhops.io.images as images
 from brainhops.datamodel.axes import (
@@ -18,8 +19,8 @@ from brainhops.datamodel.axes import (
     SpaceAxis,
     TimeAxis,
 )
-from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.transformations import Affine
+from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.transformations import Affine, Translation
 from brainhops.io.base.parsers import WriterError
 
 # The module imports abczarr itself, so the skip must come first.
@@ -626,6 +627,96 @@ def test_opening_a_pyramid_does_not_read_its_levels(tmp_path: Path) -> None:
     _ = np.asarray(back.images[0].data)
     assert getattr(back.images[0], "_cache_data", None) is not None
     assert getattr(back.images[1], "_cache_data", None) is None
+
+
+def _placed_pyramid(path: str) -> OmeZarrImage:
+    # A pyramid read from a store whose metadata holds two levels and one
+    # placement.
+    pyramid = _small_pyramid()
+    pyramid.transformations = [Translation([5.0, 6.0, 7.0])]
+    pyramid.save(path)
+    return OmeZarrImage.from_store(path)
+
+
+def test_a_read_pyramid_stores_no_levels_or_placements(
+    tmp_path: Path,
+) -> None:
+    back = _placed_pyramid(str(tmp_path / "placed.zarr"))
+    # Nothing is stored, so the levels and placements are read from the
+    # node.
+    assert back._images is None and back._transformations is None
+    assert back.nscales == 2
+    assert len(back.transformations) == 1
+    # Assigning `None` reads them from the node again.
+    back.images = None
+    back.transformations = None
+    assert back.nscales == 2
+    assert len(back.transformations) == 1
+
+
+def test_an_empty_list_of_levels_or_placements_is_used_as_it_is(
+    tmp_path: Path,
+) -> None:
+    back = _placed_pyramid(str(tmp_path / "placed.zarr"))
+    back.images = []
+    back.transformations = []
+    assert back.images == [] and back.nscales == 0
+    assert back.transformations == []
+    # The constructor keeps an empty list as well.
+    built = OmeZarrImage(images=[], transformations=[], node=back.node)
+    assert built.images == [] and built.transformations == []
+
+
+def test_a_copy_of_a_read_pyramid_stays_lazy(tmp_path: Path) -> None:
+    back = _placed_pyramid(str(tmp_path / "placed.zarr"))
+    copy = replace(back)
+    # The copy stores nothing either, and parses the metadata only when
+    # its levels are first read.
+    assert copy._images is None and copy._transformations is None
+    assert not hasattr(copy, "_cache__layout")
+    assert copy.nscales == 2
+    assert len(copy.transformations) == 1
+    # An empty list is copied as it is.
+    back.transformations = []
+    assert replace(back).transformations == []
+    assert OmeZarrImage.from_instance(back).transformations == []
+
+
+def test_a_copy_of_a_read_level_stays_lazy(tmp_path: Path) -> None:
+    path = str(tmp_path / "lazy.zarr")
+    _small_pyramid().save(path)
+    level = OmeZarrImage.from_store(path).images[0]
+    copy = replace(level)
+    # The copy keeps the node and the permutation, and reads no array.
+    assert copy._data is None
+    assert copy.node is level.node
+    assert copy._perm == level._perm
+    assert getattr(level, "_cache_data", None) is None
+    assert np.array_equal(np.asarray(copy.data), np.asarray(level.data))
+    # An assigned array is copied as it is.
+    level.data = np.zeros(level.data.shape)
+    assert replace(level).data is level.data
+
+
+def test_a_copy_of_a_read_array_stays_lazy(tmp_path: Path) -> None:
+    path = str(tmp_path / "plain.zarr")
+    data = np.arange(24.0).reshape(2, 3, 4)
+    ZarrImage(data).save(path)
+    image = ZarrImage.from_store(path)
+    copy = replace(image)
+    assert copy._data is None
+    assert getattr(image, "_cache_data", None) is None
+    assert np.array_equal(np.asarray(copy.data), data)
+
+
+def test_a_copy_from_a_data_model_pyramid_keeps_its_levels() -> None:
+    model = MultiScaleImage(
+        images=list(_small_pyramid().images),
+        transformations=[Translation([5.0, 6.0, 7.0])],
+    )
+    pyramid = OmeZarrImage.from_instance(model)
+    assert pyramid.images == model.images
+    assert pyramid.transformations == model.transformations
 
 
 # Chunking

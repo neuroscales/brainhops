@@ -1,7 +1,7 @@
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
-from bagof.magic import replace
+from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
@@ -49,13 +49,19 @@ class OmeZarrLevel(ZarrImage):
     is read, so opening a pyramid reads no array data.
     """
 
+    _perm: NoRepr[tx.Optional[tx.Tuple[int, ...]]] = None
+    """The permutation from the stored axes to the brainhops order.
+
+    The level keeps it as a field, so that a copy made with `replace`
+    keeps the node and still transposes the array that it reads.
+    """
+
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
         raw = super().data
         backend = get_array_backend(raw)
-        perm = getattr(self, "_perm", None)
-        if perm is not None:
-            raw = backend.transpose(raw, perm)
+        if self._perm is not None:
+            raw = backend.transpose(raw, self._perm)
         return raw
 
 
@@ -99,6 +105,29 @@ class OmeZarrImage(
         tx.Doc("The OME multiscale metadata, normalized to 0.6."),
     ] = None
 
+    _images: tx.Optional[tx.List[SingleScaleImage]] = Inherit(
+        "images", default=None
+    )
+    """The levels given to the pyramid, or `None` to read them.
+
+    The pyramid takes over the `images` field of [`MultiScaleImage`][]
+    to store it under this private name. The constructor still takes
+    `images` in the same place, and the property of the same name reads
+    it. `None`, the default, means that the levels are read from `node`,
+    while a list, even an empty one, is used as it is.
+    """
+
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+    """The placements given to the pyramid, or `None` to read them.
+
+    The pyramid takes over the `transformations` field of
+    [`MultiScaleImage`][] in the same way as `images`. `None`, the
+    default, means that the placements are read from `node`, while a
+    list, even an empty one, is used as it is.
+    """
+
     # ---- properties --------------------------------------------------
 
     @property
@@ -135,14 +164,29 @@ class OmeZarrImage(
         """OME version of the source group, reused by the writer."""
         return self._layout["version"]
 
-    @smartproperty(unset=(None, "empty"))
+    @smartproperty(cache=True)
     def images(self) -> tx.List[SingleScaleImage]:
+        """Levels of the pyramid, read from `node` on first access.
+
+        The levels read from `node` are cached, and assigning another node
+        drops them. Assigning a list replaces the levels that were read,
+        and an empty list means that the pyramid has no level. Assigning
+        `None` reads the levels from `node` again.
+        """
         return self._layout["images"]
 
-    @smartproperty(unset=(None, "empty"))
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
-        # One placement per named world space, with the preferred one last. The
-        # list is empty when the levels sit directly in world space.
+        """Placements of the pyramid, read from `node` on first access.
+
+        There is one placement per named world space, and the preferred
+        one is last. The list is empty when the levels sit directly in
+        world space. The placements read from `node` are cached, so a
+        placement appended to the list in place is kept, and assigning
+        another node drops them. Assigning a list replaces the placements
+        that were read, and an empty list means that the pyramid has no
+        placement. Assigning `None` reads the placements from `node` again.
+        """
         return list(self._layout["commons"])
 
     # ---- load --------------------------------------------------------
@@ -157,6 +201,41 @@ class OmeZarrImage(
         image = super().from_node(node, **kwargs)
         _ = image._layout
         return image
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy an instance of this class or of another multiscale image.
+
+        The pyramid stores its levels in the private field `_images`, where
+        `None` means that they are read from `node`. Within this class, the
+        stored value is copied, so a copy of a pyramid whose levels were
+        not assigned reads them from the same node. From another class,
+        the levels that `other` reports are copied, read if need be,
+        because the private field of `other` means nothing to this class.
+        The placements in `_transformations` are copied in the same way by
+        the `from_instance` of [`ImageFormat`][].
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy.
+        *args : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+        **kwargs : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+
+        Returns
+        -------
+        Self
+            The copy.
+        """
+        if not isinstance(other, cls):
+            images = getattr(other, "images", None)
+            if images is not None:
+                kwargs.setdefault("images", images)
+        return super().from_instance(other, *args, **kwargs)
 
     # ---- workers  ----------------------------------------------------
 
@@ -247,8 +326,9 @@ class OmeZarrImage(
                 input=voxel_system,
                 output=intrinsic_system,
             )
-            level = OmeZarrLevel(transformations=[geometry], node=array)
-            level._perm = perm
+            level = OmeZarrLevel(
+                transformations=[geometry], node=array, perm=perm
+            )
             images.append(level)
 
         commons = common_transformations(

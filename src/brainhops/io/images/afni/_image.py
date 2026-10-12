@@ -5,7 +5,7 @@ from collections import OrderedDict
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import Inherit, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel.axes import Axis
@@ -140,6 +140,30 @@ class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
         ".brik.bz2",
     )
 
+    _data: tx.Optional[tx.Any] = Inherit("data", default=None)
+    """The data given to the image, or `None` to decode it.
+
+    The image takes over the `data` field of [`SingleScaleImage`][] to
+    store it under this private name. The constructor still takes `data`
+    in the same place, and the property of the same name reads it.
+    `None`, the default, means that the data is decoded from the stored
+    sub-bricks, so that a copy of the image made with `replace` keeps
+    the lazy sub-bricks rather than a decoded array.
+    """
+
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+    """The transformations given to the image, or `None` to decode them.
+
+    The image takes over the `transformations` field of
+    [`SingleScaleImage`][] to store it under this private name. The
+    constructor still takes `transformations` in the same place, and the
+    property of the same name reads it. `None`, the default, means that
+    the transformations are decoded from the header, while a list, even
+    an empty one, is used as it is.
+    """
+
     # --- reading ------------------------------------------------------
 
     @classmethod
@@ -164,13 +188,14 @@ class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
 
     # --- data model ---------------------------------------------------
 
-    @smartproperty
+    @smartproperty(cache=True)
     def data(self) -> tx.Optional[tx.Any]:
-        """Scaled image data, unless set explicitly."""
-        data = self._scaled_data()
-        if data is not None and data is not getattr(self, "dataobj", None):
-            self._data = data
-        return data
+        """Image data, scaled from the stored sub-bricks unless assigned.
+
+        The data decoded from the sub-bricks is cached. Assigning an array
+        replaces it, and assigning `None` decodes the sub-bricks again.
+        """
+        return self._scaled_data()
 
     @smartproperty
     def system(self) -> tx.Optional[CoordinateSystem]:
@@ -180,15 +205,17 @@ class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
         axes = _afni_axes(self.header)
         return CoordinateSystem(name="voxel", axes=axes, order="F")
 
-    @smartproperty(unset="empty")
+    @smartproperty
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the header.
 
-        The transformations are decoded lazily unless they are set
-        explicitly. An image built from data alone has none.
+        The transformations are decoded from the header on each access,
+        unless a list, which may be empty, has been assigned. Assigning
+        `None` decodes the header again. An image built from data alone
+        has none.
         """
         if self.header is None:
-            return list(getattr(self, "_transformations", None) or [])
+            return []
         return _afni_to_transformations(self.header)
 
     # --- writing ------------------------------------------------------
