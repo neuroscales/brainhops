@@ -1018,6 +1018,11 @@ CASES = [
     for cls, exemplar in {**EXEMPLARS, **TEST_EXEMPLARS}.items()
 ] + [pytest.param(cls, exemplar, id=name) for name, cls, exemplar in VARIANTS]
 
+IMAGE_CASES = [
+    case for case in CASES if issubclass(case.values[0], SingleScaleImage)
+]
+"""The cases whose format is an image, which decodes its transformations."""
+
 # Names that belonged to the parsers that the design removes.
 _PARSER_STATE = {"image", "header", "_header", "struct", "dataobj", "node"}
 
@@ -1372,7 +1377,7 @@ def test_12_adapter_contract(
     assert isinstance(metadata, exemplar.metadata)
 
 
-@pytest.mark.parametrize("cls, exemplar", CASES)
+@pytest.mark.parametrize("cls, exemplar", IMAGE_CASES)
 def test_13_transformations_are_decoded_unless_assigned(
     cls: type,
     exemplar: Exemplar,
@@ -1404,7 +1409,7 @@ def test_13_transformations_are_decoded_unless_assigned(
     assert np.allclose(exemplar.geometry(loaded), decoded)
 
 
-@pytest.mark.parametrize("cls, exemplar", CASES)
+@pytest.mark.parametrize("cls, exemplar", IMAGE_CASES)
 def test_14_copies_between_classes_carry_the_decoded_transformations(
     cls: type,
     exemplar: Exemplar,
@@ -1420,7 +1425,7 @@ def test_14_copies_between_classes_carry_the_decoded_transformations(
     ):
         assert np.allclose(exemplar.geometry(copy), decoded)
     # This format stores the transformations of another class as given.
-    foreign = exemplar.foreign(exemplar.sample())
+    foreign = _ForeignImage(exemplar.sample())
     exemplar.change_geometry(foreign)
     converted = cls.from_instance(foreign)
     assert converted._transformations is not None
