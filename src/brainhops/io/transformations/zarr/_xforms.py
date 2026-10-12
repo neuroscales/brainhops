@@ -9,6 +9,7 @@ metadata unchanged.
 """
 
 import abczarr
+import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget
@@ -25,8 +26,10 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Identity,
     MultiscaleField,
+    Scaling,
     Sequence,
     Transformation,
+    Translation,
     is_identity,
 )
 from brainhops.io.base._base import register_format
@@ -210,10 +213,18 @@ class OmeZarrField(ZarrReaderWriter, TransformationFormat, MultiscaleField):
             if axis.type in ("displacement", "coordinate")
         )
         spatial_ndim = ndim - vector_count
-        perm = list(range(spatial_ndim))
-        placements = [
-            _dataset_placement(ds, perm, spatial_ndim) for ds in datasets
-        ]
+        # The placement of a level is mapped over every stored axis, and its
+        # part on the spatial axes is kept. OME-NGFF 0.6 stores the vector
+        # axis before the spatial axes, so they are found by their type.
+        if axes:
+            spatial = [
+                index
+                for index, axis in enumerate(axes)
+                if axis.type not in ("displacement", "coordinate")
+            ]
+        else:
+            spatial = list(range(spatial_ndim))
+        placements = [_dataset_placement(ds, spatial, ndim) for ds in datasets]
         voxel2world = placements[0]
         world2voxel = voxel2world.inverse()
         level_transforms = [
@@ -384,16 +395,59 @@ def _to_voxel_displacement(
 
 
 def _dataset_placement(
-    dataset: tx.Any, perm: tx.Sequence[int], ndim: int
+    dataset: tx.Any, spatial: tx.Sequence[int], ndim: int
 ) -> Transformation:
     # A level's placement is the dataset's first coordinate transformation, or
-    # the identity.
+    # the identity. It is mapped over all `ndim` stored axes, and then
+    # restricted to the `spatial` ones, which keep their stored order.
     transforms = list(
         getattr(dataset, "coordinateTransformations", None) or []
     )
     if not transforms:
         return Identity()
-    return _map.from_ome(transforms[0], perm, ndim)
+    stored = list(range(ndim))
+    if list(spatial) == stored:
+        return _map.from_ome(transforms[0], stored, stored)
+    try:
+        placement = _map.from_ome(transforms[0], stored, stored)
+    except _map.OmeMappingError:
+        # Fields written before OME-NGFF 0.6 give their placement over the
+        # spatial axes alone, which is read as it is.
+        spatial_only = list(range(len(spatial)))
+        return _map.from_ome(transforms[0], spatial_only, spatial_only)
+    return _spatial_part(placement, list(spatial), ndim)
+
+
+def _spatial_part(
+    placement: Transformation, spatial: tx.List[int], ndim: int
+) -> Transformation:
+    # Restrict a placement to the spatial axes. A scale, a translation and a
+    # sequence of them keep their type, and any other affine is restricted
+    # through its matrix.
+    if is_identity(placement):
+        return Identity()
+    if isinstance(placement, Scaling):
+        return Scaling(scale=[placement.scale[i] for i in spatial])
+    if isinstance(placement, Translation):
+        return Translation(
+            translation=[placement.translation[i] for i in spatial]
+        )
+    if isinstance(placement, Sequence):
+        return Sequence(
+            [
+                _spatial_part(part, spatial, ndim)
+                for part in placement.transformations
+            ]
+        )
+    affine = _as_affine(placement)
+    if affine is None:
+        raise OmeFieldError(
+            "This OME field is placed by a transformation that is not "
+            "affine, so its spatial part cannot be told apart from its "
+            "vector axis."
+        )
+    matrix = np.asarray(affine.matrix, dtype=float)
+    return Affine(matrix=matrix[np.ix_(spatial, spatial + [ndim])])
 
 
 def _affine_or_identity(xform: Transformation, ndim: int) -> Transformation:

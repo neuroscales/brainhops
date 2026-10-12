@@ -169,40 +169,113 @@ def _make_read_field(
     node: tx.Optional[ZarrGroup], store_axes: tx.Optional[tx.Sequence[Axis]]
 ) -> tx.Optional[tx.Callable]:
     # Build the callback with which `_map.from_ome` reads a displacement or
-    # coordinate field. The callback reads the array that the transformation
-    # names from `node`, and lays the field out in the brainhops order.
+    # coordinate field. The callback reads the node that the transformation
+    # names from `node`, and returns a field that maps the brainhops order of
+    # the input system to the brainhops order of the output system.
     if node is None:
         return None
 
-    def read_field(transform: tx.Any, kind: str) -> Transformation:
+    def read_field(
+        transform: tx.Any,
+        kind: str,
+        source: tx.Sequence[int],
+        target: tx.Sequence[int],
+    ) -> Transformation:
         path = getattr(transform, "path", None)
         if not isinstance(path, str):
             raise OmeImageError(
                 f"This OME-Zarr {kind} field names no array, so its field "
                 "cannot be read."
             )
-        field_node = _node.follow_path(node, path)
-        raw = _node.read_array(field_node)
-        typed = _node.typed_axes(field_node, field_node.ndim)
-        if typed is not None:
-            # Sorting the typed axes into the brainhops order puts the spatial
-            # axes first and the component axis last.
-            data = get_array_backend().transpose(
-                raw, _axisorder.to_canonical(typed)
-            )
-        else:
-            # A field array without OME metadata can only be laid out from
-            # its dimension names.
-            data = _field_from_names(raw, field_node, store_axes, kind, path)
-        degree = _INTERPOLATION_DEGREE.get(
-            getattr(transform, "interpolation", None), 1
+        try:
+            field_node = _node.follow_path(node, path)
+        except Exception as error:
+            raise OmeImageError(
+                f"The {kind} field at {path!r} could not be opened. {error}"
+            ) from error
+        if isinstance(field_node, ZarrGroup):
+            return _field_group(field_node, kind, path, source, target)
+        return _field_array(
+            transform, field_node, store_axes, kind, path, target
         )
-        field_cls = (
-            DisplacementField if kind == "displacements" else CoordinatesField
-        )
-        return field_cls(field=data, degree=degree)
 
     return read_field
+
+
+def _field_group(
+    field_node: ZarrGroup,
+    kind: str,
+    path: str,
+    source: tx.Sequence[int],
+    target: tx.Sequence[int],
+) -> Transformation:
+    # In OME-NGFF 0.6, `path` names a multiscale group whose own
+    # transformation places the vectors in the input system of the
+    # transformation, and whose vector axis lists the components in the
+    # stored order of the output system. The group is read as an
+    # `OmeZarrField`, which works in the stored order, and the field is
+    # surrounded by the permutations to and from that order.
+    from brainhops.io.transformations.zarr import OmeZarrField
+
+    try:
+        field = OmeZarrField.from_node(field_node)
+    except Exception as error:
+        raise OmeImageError(
+            f"The {kind} field at {path!r} could not be read as an "
+            f"OME-Zarr field. {error}"
+        ) from error
+    types = [axis.type for axis in field.axes or []]
+    if kind[:-1] not in types:
+        raise OmeImageError(
+            f"The field at {path!r} has no {kind[:-1]} axis, so it cannot "
+            f"be read as {kind}."
+        )
+    count = len(types) - 1
+    if count != len(source):
+        raise OmeImageError(
+            f"The {kind} field at {path!r} has {count} spatial axes, but "
+            f"its input coordinate system has {len(source)} axes."
+        )
+    return _map.in_stored_order(field, source, target)
+
+
+def _field_array(
+    transform: tx.Any,
+    field_node: tx.Any,
+    store_axes: tx.Optional[tx.Sequence[Axis]],
+    kind: str,
+    path: str,
+    target: tx.Sequence[int],
+) -> Transformation:
+    # Drafts of OME-NGFF 0.6 let `path` name the array of the field itself,
+    # with its axes named by its own typed metadata or by its dimension
+    # names. Its spatial axes are sorted into the brainhops order, and the
+    # component axis comes last.
+    raw = _node.read_array(field_node)
+    typed = _node.typed_axes(field_node, field_node.ndim)
+    if typed is not None:
+        data = get_array_backend().transpose(
+            raw, _axisorder.to_canonical(typed)
+        )
+    else:
+        data = _field_from_names(raw, field_node, store_axes, kind, path)
+    # Component `i` belongs to the stored output axis `i` (ngff-spec 0.6,
+    # "coordinates and displacements", "Vector component mapping"), so the
+    # components are reordered like the axes of the output system.
+    if data.shape[-1] != len(target):
+        raise OmeImageError(
+            f"The {kind} field at {path!r} has {data.shape[-1]} components, "
+            f"but its output coordinate system has {len(target)} axes."
+        )
+    if list(target) != list(range(len(target))):
+        data = data[..., list(target)]
+    degree = _INTERPOLATION_DEGREE.get(
+        getattr(transform, "interpolation", None), 1
+    )
+    field_cls = (
+        DisplacementField if kind == "displacements" else CoordinatesField
+    )
+    return field_cls(field=data, degree=degree)
 
 
 def _field_from_names(
@@ -241,26 +314,31 @@ def _field_from_names(
 
 def _map_transform(
     transform: CoordinateTransformation,
-    perm: tx.Sequence[int],
-    ndim: int,
+    source: tx.Sequence[int],
+    target: tx.Sequence[int],
     node: tx.Optional[ZarrGroup] = None,
     store_axes: tx.Optional[tx.Sequence[Axis]] = None,
+    orders: tx.Optional[tx.Mapping[str, tx.Sequence[int]]] = None,
 ) -> Transformation:
-    read_field = _make_read_field(node, store_axes)
+    reading = _map.Reading(
+        node=node,
+        read_field=_make_read_field(node, store_axes),
+        orders=dict(orders or {}),
+    )
     try:
-        return _map.from_ome(transform, perm, ndim, read_field)
+        return _map.from_ome(transform, source, target, reading)
     except _map.OmeMappingError as error:
         raise OmeImageError(str(error)) from error
 
 
 def level_transformation(
     dataset: Dataset,
-    perm: tx.Sequence[int],
-    ndim: int,
+    order: tx.Sequence[int],
     node: tx.Optional[ZarrGroup] = None,
     store_axes: tx.Optional[tx.Sequence[Axis]] = None,
     input: tx.Optional[CoordinateSystem] = None,
     output: tx.Optional[CoordinateSystem] = None,
+    orders: tx.Optional[tx.Mapping[str, tx.Sequence[int]]] = None,
 ) -> Transformation:
     """Return the voxel-to-intrinsic transformation of one level.
 
@@ -271,16 +349,20 @@ def level_transformation(
     [`Sequence`][] in application order, and a dataset without
     transformations yields an [`Identity`][].
 
+    OME-NGFF 0.6 only allows a `scale`, an `identity`, or a `sequence` of a
+    `scale` and a `translation` here, but the drafts that preceded it, and
+    earlier versions of brainhops, wrote other types. Every type that the
+    mapping knows is therefore read.
+
     Parameters
     ----------
     dataset : Dataset
         OME dataset of the level.
-    perm : sequence of int
-        Permutation from the stored axis order to the brainhops order.
-    ndim : int
-        Dimensionality of the level.
+    order : sequence of int
+        Order of the array axes, which is also the order of the intrinsic
+        system: element `k` is the stored position of brainhops axis `k`.
     node : ZarrGroup, optional
-        Group in which fields named by the transformations are looked up.
+        Group in which arrays named by the transformations are looked up.
     store_axes : sequence of Axis, optional
         Image axes in stored order, used to lay out fields that have no OME
         metadata.
@@ -288,6 +370,9 @@ def level_transformation(
         Input coordinate system attached to the result.
     output : CoordinateSystem, optional
         Output coordinate system attached to the result.
+    orders : mapping of str to sequence of int, optional
+        Order of each named coordinate system, for the transformations
+        inside a sequence that name their output system.
 
     Raises
     ------
@@ -298,7 +383,8 @@ def level_transformation(
     if not transforms:
         return Identity(input=input, output=output)
     mapped = [
-        _map_transform(one, perm, ndim, node, store_axes) for one in transforms
+        _map_transform(one, order, order, node, store_axes, orders)
+        for one in transforms
     ]
     if len(mapped) == 1:
         return replace(mapped[0], input=input, output=output)
@@ -307,8 +393,8 @@ def level_transformation(
 
 def common_transformations(
     multiscale: Multiscale,
-    perm: tx.Sequence[int],
-    ndim: int,
+    orders: tx.Mapping[str, tx.Sequence[int]],
+    root_order: tx.Sequence[int],
     node: tx.Optional[ZarrGroup] = None,
     store_axes: tx.Optional[tx.Sequence[Axis]] = None,
     input: tx.Optional[CoordinateSystem] = None,
@@ -324,6 +410,15 @@ def common_transformations(
     from a space reached by an earlier step extends the path to that space,
     and the path then becomes a [`Sequence`][].
 
+    OME-NGFF 0.6 lets a common transformation either start from the
+    intrinsic space or end there. One that ends there is read as the
+    inverse of the declared transformation, so that every placement of the
+    pyramid starts from the intrinsic space. The inverse is exact, but it is
+    only computed in closed form for the types that have one, such as an
+    affine. A transformation that refers to a coordinate system of another
+    group, such as a labels image, by a `path` does not place this pyramid
+    and is skipped.
+
     The result holds one transformation per world space reached, ordered by
     the last declaration that reaches each space, so that the last
     transformation is the preferred one, as
@@ -335,10 +430,12 @@ def common_transformations(
     ----------
     multiscale : Multiscale
         Normalized multiscale metadata.
-    perm : sequence of int
-        As in [`level_transformation`][].
-    ndim : int
-        As in [`level_transformation`][].
+    orders : mapping of str to sequence of int
+        Order of each named coordinate system: element `k` is the stored
+        position of brainhops axis `k`.
+    root_order : sequence of int
+        Order of the intrinsic system, which is also used for a system that
+        a transformation does not name.
     node : ZarrGroup, optional
         As in [`level_transformation`][].
     store_axes : sequence of Axis, optional
@@ -360,20 +457,34 @@ def common_transformations(
     systems = dict(systems or {})
     root = getattr(input, "name", None)
 
-    edges = [
-        (
-            getattr(getattr(one, "input", None), "name", None),
-            getattr(getattr(one, "output", None), "name", None),
-            _map_transform(one, perm, ndim, node, store_axes),
+    def order(name: tx.Optional[str]) -> tx.Sequence[int]:
+        if isinstance(name, str) and name in orders:
+            return orders[name]
+        return root_order
+
+    edges = []  # type: tx.List[tx.Tuple[tx.Any, tx.Any, Transformation]]
+    for one in common:
+        source = getattr(one, "input", None)
+        target = getattr(one, "output", None)
+        if _other_group(source) or _other_group(target):
+            continue
+        source = getattr(source, "name", None)
+        target = getattr(target, "name", None)
+        mapped = _map_transform(
+            one, order(source), order(target), node, store_axes, orders
         )
-        for one in common
-    ]
+        if target == root and source not in (None, root):
+            # The transformation ends in the intrinsic space, so its inverse
+            # starts there.
+            edges.append((target, source, mapped.inverse()))
+        else:
+            edges.append((source, target, mapped))
 
     # `paths` maps each reached space to the transformations that lead to it
     # from the intrinsic space. `order` lists the reached spaces by their last
     # declaration, so that the preferred space stays last.
     paths = {}  # type: tx.Dict[tx.Optional[str], tx.List[Transformation]]
-    order = []  # type: tx.List[tx.Optional[str]]
+    reached = []  # type: tx.List[tx.Optional[str]]
     pending = list(edges)
     while pending:
         progress = False
@@ -390,9 +501,9 @@ def common_transformations(
             pending.remove(edge)
             progress = True
             paths[target] = prefix + [transform]
-            if target in order:
-                order.remove(target)
-            order.append(target)
+            if target in reached:
+                reached.remove(target)
+            reached.append(target)
         if not progress:
             unreachable = sorted(
                 str(source) for source, _, _ in pending if source is not None
@@ -405,7 +516,7 @@ def common_transformations(
             )
 
     transformations = []  # type: tx.List[Transformation]
-    for target in order:
+    for target in reached:
         parts = paths[target]
         output = systems.get(target) if isinstance(target, str) else None
         if len(parts) == 1:
@@ -592,3 +703,9 @@ def write_multiscale(
     The arguments are those of [`build_ome`][].
     """
     node.ome = build_ome(axes, levels, commons, name, version)
+
+
+def _other_group(space: tx.Any) -> bool:
+    # A space that gives a path lies in another group of the hierarchy.
+    path = getattr(space, "path", None)
+    return isinstance(path, str) and path not in ("", ".")

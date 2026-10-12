@@ -288,19 +288,24 @@ class OmeZarrImage(
 
         perm = _axisorder.to_canonical(store_axes)
         canonical_axes = _axisorder.permute(store_axes, perm)
-        # Without common transformations, the intrinsic space is the world
-        # space.
+        # Each named system sorts its own axes into the brainhops order, and
+        # the mapping of a transformation reorders its parameters by the
+        # orders of its two systems. Without common transformations, the
+        # intrinsic space is the world space.
         declared = system_axes(multiscale)
+        orders = {
+            name: _axisorder.to_canonical(axes)
+            for name, axes in declared.items()
+        }
 
         def system(name: tx.Optional[str]) -> CoordinateSystem:
-            # Fall back to the canonical axes when the axis count of a named
-            # system does not match the array.
+            # A name that no system declares takes the axes of the array.
             axes = declared.get(name) if isinstance(name, str) else None
-            if axes is None or len(axes) != ndim:
-                axes = canonical_axes
-            else:
-                axes = _axisorder.permute(axes, perm)
-            return CoordinateSystem(name=name, axes=axes)
+            if axes is None:
+                return CoordinateSystem(name=name, axes=canonical_axes)
+            return CoordinateSystem(
+                name=name, axes=_axisorder.permute(axes, orders[name])
+            )
 
         # Stored arrays are C-ordered. A level whose permutation reverses the
         # stored axes is F-ordered, as in nibabel; any other permutation leaves
@@ -320,11 +325,11 @@ class OmeZarrImage(
             geometry = level_transformation(
                 dataset,
                 perm,
-                ndim,
                 node=node,
                 store_axes=store_axes,
                 input=voxel_system,
                 output=intrinsic_system,
+                orders=orders,
             )
             level = OmeZarrLevel(
                 transformations=[geometry], node=array, perm=perm
@@ -333,8 +338,8 @@ class OmeZarrImage(
 
         commons = common_transformations(
             multiscale,
+            orders,
             perm,
-            ndim,
             node=node,
             store_axes=store_axes,
             input=intrinsic_system,

@@ -997,8 +997,9 @@ def test_reader_maps_a_map_axis_to_a_permutation(tmp_path: Path) -> None:
 
 
 def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
-    # A mapAxis over a subset of the input axes is a Projection; tested on
-    # the mapping, since such a level is not wired through the reader.
+    # A mapAxis over an increasing subset of the input axes, as the
+    # 0.6.dev1 draft allowed, is a Projection; tested on the mapping, since
+    # such a level is not wired through the reader.
     from abczarr.ome.v0_6.transformations import CoordinateTransformation
 
     from brainhops.datamodel.transformations import Projection
@@ -1007,7 +1008,7 @@ def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
     transform = CoordinateTransformation.from_json(
         {"type": "mapAxis", "mapAxis": [0, 2]}
     )
-    projection = _ome._map_transform(transform, perm=[0, 1, 2], ndim=3)
+    projection = _ome._map_transform(transform, [0, 1, 2], [0, 1])
     assert isinstance(projection, Projection)
     np.testing.assert_array_equal(np.asarray(projection.dropped), [1])
     np.testing.assert_array_equal(np.asarray(projection.created), [])
@@ -1115,9 +1116,11 @@ def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
     geometry = OmeZarrImage.from_store(path).images[0].transformation
     assert isinstance(geometry, DisplacementField)
     result = np.asarray(geometry.field)
-    # Read as (x, y, z, component), without reordering the values.
+    # Read as (x, y, z, component). Component `i` belongs to the stored
+    # output axis `i` (ngff-spec 0.6, "Vector component mapping"), so the
+    # stored (z, y, x) components are reordered into (x, y, z).
     assert result.shape == (4, 5, 6, 3)
-    np.testing.assert_allclose(result[0, 0, 0, :], [100.0, 200.0, 300.0])
+    np.testing.assert_allclose(result[0, 0, 0, :], [300.0, 200.0, 100.0])
 
 
 def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
@@ -1136,8 +1139,8 @@ def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
     field = np.asarray(geometry.field)
     # The component axis moves to the end.
     assert field.shape == (4, 5, 6, 3)
-    # The component values are not reordered.
-    np.testing.assert_allclose(field[0, 0, 0, :], [100.0, 200.0, 300.0])
+    # The components follow the output axes into the (x, y, z) order.
+    np.testing.assert_allclose(field[0, 0, 0, :], [300.0, 200.0, 100.0])
 
 
 def test_reader_reads_a_field_by_its_axis_names_not_position(
@@ -1158,7 +1161,7 @@ def test_reader_reads_a_field_by_its_axis_names_not_position(
     assert isinstance(geometry, DisplacementField)
     result = np.asarray(geometry.field)
     assert result.shape == (4, 5, 6, 3)
-    np.testing.assert_allclose(result[0, 0, 0, :], [100.0, 200.0, 300.0])
+    np.testing.assert_allclose(result[0, 0, 0, :], [300.0, 200.0, 100.0])
 
 
 def test_reader_refuses_a_field_that_does_not_name_its_axes(

@@ -1,17 +1,58 @@
 """Mapping of coordinate transformations between OME-Zarr and brainhops.
 
-Each OME coordinate transformation is read as a brainhops transformation:
+OME-Zarr places an image, and relates coordinate systems to each other,
+with coordinate transformations. Their metadata is parsed by abczarr and
+normalized to OME-NGFF 0.6, the version that adopted RFC-5, before this
+module maps each transformation to a brainhops transformation:
 
-| OME-Zarr                         | brainhops                             |
-| -------------------------------- | ------------------------------------- |
-| `identity`                       | [`Identity`][]                        |
-| `scale`                          | [`Scaling`][]                         |
-| `translation`                    | [`Translation`][]                     |
-| `rotation`                       | [`Rotation`][]                        |
-| `affine`                         | [`Affine`][]                          |
-| `mapAxis`                        | [`Permutation`][] or [`Projection`][] |
-| `displacements`, `coordinates`   | the field read from its node          |
-| `sequence`                       | [`Sequence`][] of the mapped children |
+| OME-Zarr                       | brainhops                             |
+| ------------------------------ | ------------------------------------- |
+| `identity`                     | [`Identity`][]                        |
+| `scale`                        | [`Scaling`][]                         |
+| `translation`                  | [`Translation`][]                     |
+| `rotation`                     | [`Rotation`][]                        |
+| `affine`                       | [`Affine`][]                          |
+| `mapAxis`                      | [`Permutation`][]                     |
+| `projectAxis`                  | [`Projection`][]                      |
+| `displacements`, `coordinates` | the field read from the node it names |
+| `sequence`                     | [`Sequence`][] of the mapped children |
+| `bijection`                    | [`Bijection`][]                       |
+| `byDimension`                  | [`Affine`][] or subspace parts        |
+
+A `byDimension` whose parts are all affine is read as one [`Affine`][].
+Otherwise each part becomes a [`SubspaceTransformation`][] of a
+[`Sequence`][], which is exact only when each part writes the axes that
+it reads, so any other such `byDimension` is refused.
+
+The draft type `inverseOf` is not read. RFC-5 removed it before version
+0.6 was released (ome/ngff `rfc/5/responses/2/index.md`, "Remove
+`inverseOf` transformation", at d844a6a), and abczarr refuses to
+normalize a draft that uses it, so such metadata is refused with the
+error of abczarr.
+
+Both formats read a transformation in the same direction. OME-NGFF 0.6
+defines a transformation as a function from points of its `input`
+coordinate system to points of its `output` coordinate system (ngff-spec
+branch `0.6` at 89da1da, `index.md`, section "coordinateTransformations
+metadata"), and a brainhops transformation maps points of its `input`
+system to points of its `output` system.
+
+The parameters of an OME transformation follow the order of the axes of
+its coordinate systems. Entry `i` of a scale or a translation belongs to
+axis `i`, and a matrix acts on a column vector whose first entry is the
+first axis (same file, sections "Additional details" and "Matrix
+transformations"). For an image, this is the order of the array
+dimensions, such as `(t, c, z, y, x)`. brainhops sorts the axes of each
+coordinate system into its own order, as described in
+[`brainhops.io.images.zarr`][]. The mapping therefore needs to know, for
+both the input and the output system of a transformation, the stored
+position of each brainhops axis. This list is called an order below. The
+columns and the input entries of a parameter are reordered by the order
+of the input system, and its rows and output entries by the order of the
+output system. When the two systems sort their axes differently, as two
+systems with axes `(z, y, x)` and `(x, y, z)` do, a type that cannot
+express the reordering, such as a scale, is followed by a
+[`Permutation`][], so that the mapping stays exact.
 
 On write, an affine that only scales and translates each axis is written
 as a `scale` and a `translation`. Any other affine is written in full as an
@@ -30,8 +71,10 @@ import typing_extensions as tx
 from abczarr.ome.v0_6 import transformations as _ot
 from bagof.dispatchers import Function, NoMethodError
 
+from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.transformations import (
     Affine,
+    Bijection,
     Identity,
     Linear,
     Permutation,
@@ -39,9 +82,11 @@ from brainhops.datamodel.transformations import (
     Rotation,
     Scaling,
     Sequence,
+    SubspaceTransformation,
     Transformation,
     Translation,
 )
+from brainhops.io.transformations.zarr import _node
 
 
 class OmeMappingError(ValueError):
@@ -52,11 +97,35 @@ class OmeMappingError(ValueError):
     """
 
 
+class Reading(tx.NamedTuple):
+    """What the mapping of a transformation may need to read.
+
+    The parameters of a transformation may be stored in an array of the
+    group instead of inline, and a field transformation names the node of
+    its field. A transformation inside a sequence may also name the
+    coordinate system that it maps to.
+    """
+
+    node: tx.Optional[tx.Any] = None
+    """The group against which the paths of the metadata are resolved."""
+
+    read_field: tx.Optional[tx.Callable] = None
+    """The callable that reads a displacement or coordinate field.
+
+    It is called as `read_field(transform, kind, source, target)`, where
+    `kind` is `"displacements"` or `"coordinates"` and `source` and
+    `target` are the orders of the input and output systems.
+    """
+
+    orders: tx.Mapping[str, tx.Sequence[int]] = {}
+    """The order of each named coordinate system of the metadata."""
+
+
 # ----------------------------------------------------------------------
 #   axis reordering
 # ----------------------------------------------------------------------
-# Parameters are stored in the OME axis order and are read into the
-# brainhops axis order by permuting the rows and the linear columns of a
+# The writer stores parameters from the brainhops axis order into the
+# stored OME order by permuting the rows and the linear columns of a
 # matrix, or the entries of a vector.
 
 
@@ -87,41 +156,6 @@ def permute_linear(matrix: tx.Any, perm: tx.Sequence[int]) -> np.ndarray:
     return matrix[np.ix_(perm, perm)]
 
 
-def _invert_perm(perm: tx.Sequence[int]) -> tx.List[int]:
-    # perm[i] is the stored index at brainhops position i, so the inverse maps
-    # a stored index to its brainhops position.
-    inverse = [0] * len(perm)
-    for position, stored in enumerate(perm):
-        inverse[stored] = position
-    return inverse
-
-
-def _map_axis_transform(
-    mapping: tx.Sequence[int], perm: tx.Sequence[int], ndim: int
-) -> Transformation:
-    # An axis map that names every input axis exactly once is a permutation.
-    # An axis map that names only a subset of the input axes is a projection
-    # that drops the other axes.
-    mapping = list(mapping)
-    inverse = _invert_perm(perm)
-    if sorted(mapping) == list(range(ndim)):
-        # Output axis o (in brainhops order) is stored axis perm[o], and the
-        # input axis that it names is mapped back by the inverse permutation.
-        return Permutation(permutation=[inverse[mapping[p]] for p in perm])
-    if mapping == sorted(mapping) and set(mapping) <= set(range(ndim)):
-        # A map that lists an increasing subset of the input axes drops the
-        # omitted ones. The dropped axes are reported in brainhops order, and
-        # no axis is created.
-        dropped_stored = [i for i in range(ndim) if i not in mapping]
-        dropped = sorted(inverse[i] for i in dropped_stored)
-        return Projection(dropped=dropped, created=[])
-    raise OmeMappingError(
-        "This OME-Zarr image is placed by a mapAxis transformation that both "
-        "drops and reorders axes, which brainhops does not read as a single "
-        "transformation."
-    )
-
-
 # ----------------------------------------------------------------------
 #   read: OME-Zarr coordinate transformation -> brainhops transformation
 # ----------------------------------------------------------------------
@@ -145,32 +179,47 @@ def _from_ome(ome_type: type) -> tx.Callable:
 
 def from_ome(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable] = None,
+    source: tx.Sequence[int],
+    target: tx.Sequence[int],
+    reading: tx.Optional[Reading] = None,
 ) -> Transformation:
     """Map an OME coordinate transformation to a brainhops transformation.
+
+    The orders say where each brainhops axis is stored. Element `k` of
+    `source` is the position, among the axes of the input system as OME
+    lists them, of the axis that brainhops places at position `k`, as
+    [`to_canonical`][brainhops.io.images.zarr._axisorder.to_canonical]
+    returns it. `target` says the same for the output system. Both are
+    permutations of all the axes of their system.
 
     Parameters
     ----------
     transform : Any
-        The OME coordinate transformation.
-    perm : sequence of int
-        The permutation from the stored OME axis order to the brainhops order.
-    ndim : int
-        The number of spatial dimensions.
-    read_field : callable, optional
-        A callable that reads the displacement or coordinate field from the
-        node that a field transformation names. It is only needed for field
-        transformations.
+        The OME coordinate transformation, normalized to version 0.6.
+    source : sequence of int
+        The order of the input coordinate system.
+    target : sequence of int
+        The order of the output coordinate system.
+    reading : Reading, optional
+        The group, the field reader and the named orders that the
+        transformation may need. Without it, nothing can be read from a
+        group.
+
+    Returns
+    -------
+    Transformation
+        The brainhops transformation, without input and output systems.
 
     Raises
     ------
     OmeMappingError
-        If brainhops does not read this kind of transformation.
+        If brainhops does not read this kind of transformation, or if its
+        parameters do not fit its coordinate systems.
     """
+    if reading is None:
+        reading = Reading()
     try:
-        return _from_ome_fn(transform, perm, ndim, read_field)
+        return _from_ome_fn(transform, list(source), list(target), reading)
     except NoMethodError:
         name = getattr(transform, "type", type(transform).__name__)
         raise OmeMappingError(
@@ -180,111 +229,316 @@ def from_ome(
         ) from None
 
 
+def in_stored_order(
+    xform: Transformation,
+    source: tx.Sequence[int],
+    target: tx.Sequence[int],
+) -> Transformation:
+    """Place a transformation that acts on the stored axis orders.
+
+    Some transformations, such as a `projectAxis` or an OME-Zarr field,
+    are easiest to express in the order in which OME lists the axes of
+    their systems. The result applies the permutation from the brainhops
+    order of the input system to its stored order, then `xform`, then the
+    permutation from the stored order of the output system to its
+    brainhops order. A permutation that would change nothing is left out.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The transformation, from the stored order of the input system to
+        the stored order of the output system.
+    source : sequence of int
+        The order of the input system, as in [`from_ome`][].
+    target : sequence of int
+        The order of the output system, as in [`from_ome`][].
+
+    Returns
+    -------
+    Transformation
+        `xform` alone, or a [`Sequence`][] that surrounds it with
+        permutations.
+    """
+    position = _positions(source)
+    parts = []  # type: tx.List[Transformation]
+    if not _is_identity_order(source):
+        to_stored = [position[stored] for stored in range(len(source))]
+        parts.append(Permutation(permutation=to_stored))
+    parts.append(xform)
+    if not _is_identity_order(target):
+        parts.append(Permutation(permutation=list(target)))
+    if len(parts) == 1:
+        return parts[0]
+    return Sequence(parts)
+
+
 @_from_ome(_ot.Identity)
 def _(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable],
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    return Identity()
+    _check_same_dimension(transform, source, target)
+    return _relabel(Identity(), source, target)
 
 
 @_from_ome(_ot.Scale)
 def _(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable],
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    return Scaling(scale=permute_vector(transform.scale, perm))
+    _check_same_dimension(transform, source, target)
+    values = _parameter(transform, "scale", reading, ndim=1)
+    _check_entries(transform, values, source)
+    return _relabel(
+        Scaling(scale=permute_vector(values, source)), source, target
+    )
 
 
 @_from_ome(_ot.Translation)
 def _(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable],
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    return Translation(translation=permute_vector(transform.translation, perm))
+    _check_same_dimension(transform, source, target)
+    values = _parameter(transform, "translation", reading, ndim=1)
+    _check_entries(transform, values, source)
+    return _relabel(
+        Translation(translation=permute_vector(values, source)),
+        source,
+        target,
+    )
 
 
 @_from_ome(_ot.Affine)
 def _(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable],
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    matrix = np.asarray(transform.affine, dtype=float)
-    if matrix.shape == (ndim + 1, ndim + 1):
-        matrix = matrix[:ndim]
-    return Affine(matrix=permute_affine(matrix, perm))
+    # The matrix has one row per output axis and one column per input axis,
+    # followed by the translation. A full homogeneous matrix, whose last row
+    # is (0, ..., 0, 1), is also accepted.
+    matrix = _affine_rows(
+        _parameter(transform, "affine", reading, ndim=2), len(target)
+    )
+    width = len(source)
+    if matrix.shape[1] != width + 1:
+        raise OmeMappingError(
+            f"This OME affine has {matrix.shape[1]} columns, which does not "
+            f"fit an input coordinate system of {width} axes."
+        )
+    columns = list(source) + [width]
+    return Affine(matrix=matrix[np.ix_(list(target), columns)])
 
 
 @_from_ome(_ot.Rotation)
 def _(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable],
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    return Rotation(matrix=permute_linear(transform.rotation, perm))
+    _check_same_dimension(transform, source, target)
+    matrix = np.asarray(
+        _parameter(transform, "rotation", reading, ndim=2), dtype=float
+    )
+    width = len(source)
+    if matrix.shape != (width, width):
+        raise OmeMappingError(
+            f"This OME rotation has the shape {matrix.shape}, which does "
+            f"not fit a coordinate system of {width} axes."
+        )
+    return _relabel(
+        Rotation(matrix=permute_linear(matrix, source)), source, target
+    )
 
 
 @_from_ome(_ot.MapAxis)
 def _(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable],
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    return _map_axis_transform(transform.mapAxis, perm, ndim)
+    # Entry `i` of `mapAxis` is the input axis that output axis `i` carries,
+    # which is also what a brainhops permutation stores.
+    mapping = [int(index) for index in transform.mapAxis]
+    if sorted(mapping) == list(range(len(mapping))):
+        _check_same_dimension(transform, source, target)
+        position = _positions(source)
+        try:
+            permutation = [position[mapping[stored]] for stored in target]
+        except (IndexError, KeyError):
+            raise OmeMappingError(
+                f"This OME mapAxis {mapping} does not fit coordinate "
+                f"systems of {len(source)} axes."
+            ) from None
+        return Permutation(permutation=permutation)
+    if mapping == sorted(set(mapping)) and len(mapping) == len(target):
+        # The 0.6.dev1 draft let mapAxis list an increasing subset of the
+        # input axes, which drops the others. Version 0.6 spells this
+        # `projectAxis`, but the meaning is unambiguous, so it is read.
+        dropped = [i for i in range(len(source)) if i not in mapping]
+        return in_stored_order(
+            Projection(dropped=dropped, created=[]), source, target
+        )
+    raise OmeMappingError(
+        f"This OME mapAxis {mapping} is not a permutation of the input "
+        "axes, which OME-NGFF 0.6 requires."
+    )
+
+
+@_from_ome(_ot.ProjectAxis)
+def _(
+    transform: tx.Any,
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
+) -> Transformation:
+    # Both lists hold stored positions. The projection is built in the
+    # stored order and surrounded by the permutations to and from it.
+    dropped = [int(index) for index in transform.droppedInputs or []]
+    created = [int(index) for index in transform.createdOutputs or []]
+    if len(target) != len(source) - len(dropped) + len(created):
+        raise OmeMappingError(
+            f"This OME projectAxis drops {len(dropped)} and creates "
+            f"{len(created)} axes, which does not map {len(source)} input "
+            f"axes onto {len(target)} output axes."
+        )
+    return in_stored_order(
+        Projection(dropped=dropped, created=created), source, target
+    )
 
 
 @_from_ome(_ot.Displacements)
 def _(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable],
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    return _read_field(transform, "displacements", read_field)
+    _check_same_dimension(transform, source, target)
+    return _read_field(transform, "displacements", source, target, reading)
 
 
 @_from_ome(_ot.Coordinates)
 def _(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable],
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    return _read_field(transform, "coordinates", read_field)
+    return _read_field(transform, "coordinates", source, target, reading)
 
 
 @_from_ome(_ot.Sequence)
 def _(
     transform: tx.Any,
-    perm: tx.Sequence[int],
-    ndim: int,
-    read_field: tx.Optional[tx.Callable],
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    children = [
-        from_ome(inner, perm, ndim, read_field)
-        for inner in transform.transformations
+    # The spaces between two children are unnamed unless a child names its
+    # output system. Any order is exact for such a space, as long as both
+    # children that meet there use the same one, so the order of the input
+    # system is kept while the number of axes stays the same.
+    children = list(transform.transformations)
+    mapped = []  # type: tx.List[Transformation]
+    current = list(source)
+    for position, child in enumerate(children):
+        if position == len(children) - 1:
+            following = list(target)
+        else:
+            following = _intermediate_order(child, current, reading)
+        mapped.append(from_ome(child, current, following, reading))
+        current = following
+    return Sequence(mapped)
+
+
+@_from_ome(_ot.Bijection)
+def _(
+    transform: tx.Any,
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
+) -> Transformation:
+    _check_same_dimension(transform, source, target)
+    forward = from_ome(transform.forward, source, target, reading)
+    backward = from_ome(transform.inverse, target, source, reading)
+    return Bijection(forward=forward, backward=backward)
+
+
+@_from_ome(_ot.ByDimension)
+def _(
+    transform: tx.Any,
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
+) -> Transformation:
+    # Each part reads the input axes and writes the output axes that it
+    # lists, in its own order, and every output axis is written once.
+    parts = []  # type: tx.List[tx.Tuple[tx.List[int], tx.List[int], tx.Any]]
+    written = []  # type: tx.List[int]
+    for item in transform.transformations:
+        inputs = [int(i) for i in item.inputAxes or []]
+        outputs = [int(i) for i in item.outputAxes or []]
+        if item.transformation is None or not inputs or not outputs:
+            raise OmeMappingError(
+                "A part of this OME byDimension does not name its "
+                "transformation, its input axes or its output axes."
+            )
+        parts.append((inputs, outputs, item.transformation))
+        written.extend(outputs)
+    width_in = len(source)
+    width_out = len(target)
+    if sorted(written) != list(range(width_out)):
+        raise OmeMappingError(
+            "This OME byDimension does not write every output axis exactly "
+            "once, as OME-NGFF 0.6 requires."
+        )
+    if any(i >= width_in for inputs, _, _ in parts for i in inputs):
+        raise OmeMappingError(
+            "This OME byDimension reads an input axis that its input "
+            "coordinate system does not have."
+        )
+    mapped = [
+        (
+            inputs,
+            outputs,
+            from_ome(
+                child,
+                list(range(len(inputs))),
+                list(range(len(outputs))),
+                reading,
+            ),
+        )
+        for inputs, outputs, child in parts
     ]
-    return Sequence(children)
+    affine = _assembled_affine(mapped, source, target, width_in, width_out)
+    if affine is not None:
+        return affine
+    return _subspaces(mapped, source, target)
 
 
 def _read_field(
-    transform: tx.Any, kind: str, read_field: tx.Optional[tx.Callable]
+    transform: tx.Any,
+    kind: str,
+    source: tx.List[int],
+    target: tx.List[int],
+    reading: Reading,
 ) -> Transformation:
-    if read_field is None:
+    if reading.read_field is None:
         raise OmeMappingError(
             "A field transformation can only be read from a group."
         )
-    return read_field(transform, kind)
+    return reading.read_field(transform, kind, source, target)
 
 
 # ----------------------------------------------------------------------
@@ -503,3 +757,230 @@ def _(
     transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     return _affine_to_ome(transform, storage_perm, ndim)
+
+
+# ----------------------------------------------------------------------
+#   helpers of the reader
+# ----------------------------------------------------------------------
+
+
+def _positions(order: tx.Sequence[int]) -> tx.Dict[int, int]:
+    # Map each stored position to the brainhops position of its axis.
+    return {int(stored): position for position, stored in enumerate(order)}
+
+
+def _is_identity_order(order: tx.Sequence[int]) -> bool:
+    return list(order) == list(range(len(order)))
+
+
+def _check_same_dimension(
+    transform: tx.Any, source: tx.Sequence[int], target: tx.Sequence[int]
+) -> None:
+    if len(source) != len(target):
+        raise OmeMappingError(
+            f"This OME {transform.type} maps {len(source)} axes onto "
+            f"{len(target)} axes, although it keeps the number of axes."
+        )
+
+
+def _check_entries(
+    transform: tx.Any, values: np.ndarray, source: tx.Sequence[int]
+) -> None:
+    if values.shape[0] != len(source):
+        raise OmeMappingError(
+            f"This OME {transform.type} has {values.shape[0]} entries, "
+            f"which does not fit a coordinate system of {len(source)} axes."
+        )
+
+
+def _relabel(
+    xform: Transformation,
+    source: tx.Sequence[int],
+    target: tx.Sequence[int],
+) -> Transformation:
+    # `xform` is expressed in the order of the input system on both of its
+    # sides. Its output axis `j` is therefore the stored output axis
+    # `source[j]`, and the permutation that follows it moves that axis to
+    # the brainhops position that `target` gives it.
+    position = _positions(source)
+    permutation = [position[int(stored)] for stored in target]
+    if _is_identity_order(permutation):
+        return xform
+    return Sequence([xform, Permutation(permutation=permutation)])
+
+
+def _parameter(
+    transform: tx.Any, name: str, reading: Reading, ndim: int
+) -> np.ndarray:
+    # A parameter is given inline, or as an array of the group named by
+    # `path`. The path is resolved against the group that holds the
+    # metadata, which is how the field paths are resolved too.
+    values = getattr(transform, name, None)
+    if values is None:
+        path = getattr(transform, "path", None)
+        if not isinstance(path, str):
+            raise OmeMappingError(
+                f"This OME {transform.type} gives neither its {name!r} "
+                "parameters nor the path of an array that holds them."
+            )
+        if reading.node is None:
+            raise OmeMappingError(
+                f"This OME {transform.type} stores its parameters in the "
+                f"array {path!r}, which can only be read from a group."
+            )
+        try:
+            values = _node.follow_path(reading.node, path)[...]
+        except Exception as error:
+            raise OmeMappingError(
+                f"The parameters of this OME {transform.type} could not be "
+                f"read from the array {path!r}. {error}"
+            ) from error
+    values = np.asarray(values, dtype=float)
+    if values.ndim != ndim:
+        raise OmeMappingError(
+            f"The parameters of this OME {transform.type} have "
+            f"{values.ndim} dimensions instead of {ndim}."
+        )
+    return values
+
+
+def _affine_rows(matrix: np.ndarray, rows: int) -> np.ndarray:
+    # The metadata stores the rows of the output axes. A full homogeneous
+    # matrix, whose extra last row is (0, ..., 0, 1), is accepted as well.
+    if matrix.shape[0] == rows + 1 and _is_homogeneous_row(matrix[-1]):
+        return matrix[:-1]
+    if matrix.shape[0] != rows:
+        raise OmeMappingError(
+            f"This OME affine has {matrix.shape[0]} rows, which does not fit "
+            f"an output coordinate system of {rows} axes."
+        )
+    return matrix
+
+
+def _is_homogeneous_row(row: np.ndarray) -> bool:
+    expected = np.zeros(row.shape[0])
+    expected[-1] = 1.0
+    return bool(np.array_equal(row, expected))
+
+
+def _intermediate_order(
+    child: tx.Any, current: tx.Sequence[int], reading: Reading
+) -> tx.List[int]:
+    # A child that names a declared output system takes the order of that
+    # system. Otherwise the space keeps the order of the previous space
+    # when it has the same number of axes, and the stored order when the
+    # number of axes changes.
+    output = getattr(child, "output", None)
+    name = getattr(output, "name", None)
+    in_group = getattr(output, "path", None) is None
+    if isinstance(name, str) and in_group and name in reading.orders:
+        return list(reading.orders[name])
+    count = _output_count(child, len(current), reading)
+    if count == len(current):
+        return list(current)
+    return list(range(count))
+
+
+def _output_count(child: tx.Any, count: int, reading: Reading) -> int:
+    # Return the number of axes that `child` maps `count` input axes onto.
+    # A coordinates transformation is assumed to keep the number of axes,
+    # and its reader checks that its field agrees.
+    if isinstance(child, _ot.Affine):
+        matrix = _parameter(child, "affine", reading, ndim=2)
+        square = matrix.shape == (count + 1, count + 1)
+        if square and _is_homogeneous_row(matrix[-1]):
+            return count
+        return int(matrix.shape[0])
+    if isinstance(child, _ot.ProjectAxis):
+        dropped = child.droppedInputs or []
+        created = child.createdOutputs or []
+        return count - len(dropped) + len(created)
+    if isinstance(child, _ot.MapAxis):
+        return len(child.mapAxis)
+    if isinstance(child, _ot.ByDimension):
+        return sum(
+            len(item.outputAxes or []) for item in child.transformations
+        )
+    if isinstance(child, _ot.Sequence):
+        for inner in child.transformations:
+            count = _output_count(inner, count, reading)
+        return count
+    return count
+
+
+def _part_matrix(
+    part: Transformation, inputs: int, outputs: int
+) -> tx.Optional[np.ndarray]:
+    # Return the compact matrix of one part of a byDimension, or `None` when
+    # the part is not affine.
+    if isinstance(part, Identity):
+        if inputs != outputs:
+            return None
+        return np.eye(outputs, inputs + 1)
+    affine = _as_affine(part)
+    if affine is None:
+        return None
+    matrix = np.asarray(affine.matrix, dtype=float)
+    if matrix.shape != (outputs, inputs + 1):
+        return None
+    return matrix
+
+
+def _assembled_affine(
+    parts: tx.Sequence[tx.Tuple[tx.List[int], tx.List[int], Transformation]],
+    source: tx.Sequence[int],
+    target: tx.Sequence[int],
+    width_in: int,
+    width_out: int,
+) -> tx.Optional[Affine]:
+    # Each affine part fills the rows of its output axes and the columns of
+    # its input axes, in the stored order, and the full matrix is then
+    # reordered into the brainhops order. `None` is returned as soon as one
+    # part is not affine.
+    full = np.zeros((width_out, width_in + 1))
+    for inputs, outputs, part in parts:
+        matrix = _part_matrix(part, len(inputs), len(outputs))
+        if matrix is None:
+            return None
+        full[np.ix_(outputs, inputs)] = matrix[:, :-1]
+        full[outputs, -1] = matrix[:, -1]
+    columns = list(source) + [width_in]
+    return Affine(matrix=full[np.ix_(list(target), columns)])
+
+
+def _subspaces(
+    parts: tx.Sequence[tx.Tuple[tx.List[int], tx.List[int], Transformation]],
+    source: tx.Sequence[int],
+    target: tx.Sequence[int],
+) -> Transformation:
+    # A part that is not affine is embedded as a subspace transformation,
+    # which leaves the other axes unchanged. The parts then form an exact
+    # sequence only when each one reads the axes that it writes, since they
+    # then act on disjoint sets of axes.
+    if len(source) != len(target):
+        raise OmeMappingError(
+            "This OME byDimension has a part that is not affine and changes "
+            "the number of axes, which brainhops cannot read."
+        )
+    source_position = _positions(source)
+    target_position = _positions(target)
+    embedded = []  # type: tx.List[Transformation]
+    for inputs, outputs, part in parts:
+        input_axes = [source_position[i] for i in inputs]
+        output_axes = [target_position[o] for o in outputs]
+        if sorted(input_axes) != sorted(output_axes):
+            raise OmeMappingError(
+                "This OME byDimension has a part that is not affine and "
+                "writes other axes than those it reads, which brainhops "
+                "cannot read."
+            )
+        embedded.append(
+            SubspaceTransformation(
+                transformation=part,
+                input_axes=input_axes,
+                output_axes=output_axes,
+            )
+        )
+    if len(embedded) == 1:
+        return embedded[0]
+    return Sequence(embedded)
