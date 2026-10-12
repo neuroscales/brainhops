@@ -275,7 +275,7 @@ class ToyImage(
             return []
         return [Scaling(list(reversed(self.metadata.raw.spacing)))]
 
-    def consolidate(self, inplace: bool = False, **options) -> "ToyImage":
+    def consolidate(self, *, inplace: bool = False, **options) -> "ToyImage":
         # Nothing is encoded for an image that has a record and nothing
         # pending, so its copy shares `raw` and the metadata.
         if (
@@ -498,6 +498,14 @@ class Exemplar(tx.NamedTuple):
 
     binary: bool = True
     """Whether the format is read in binary mode."""
+
+    storage: tx.Optional[tx.Dict[str, tx.Any]] = None
+    """Options of `consolidate` that change how the data is stored.
+
+    They are `None` for a format whose writer has no such option. A copy
+    consolidated with them must hold what a file written with them holds,
+    so the checks give it values that the stored type changes.
+    """
 
 
 def _nifti_edit_record(record: tx.Any) -> tx.Any:
@@ -1068,6 +1076,32 @@ def test_16_consolidate_is_idempotent(
     loaded.consolidate(inplace=True)
     assert loaded.raw is raw
     assert loaded.metadata is metadata
+
+
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_16_a_storage_override_holds_what_the_file_holds(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    if exemplar.storage is None:
+        pytest.skip("The format has no option that changes the stored data.")
+    loaded = cls.load(_saved(cls, exemplar, tmp_path))
+    # The values are not whole numbers, so an integer type that stores
+    # them changes them, as the writer of the format does.
+    loaded.data = (exemplar.sample() + 1) / 7
+    once = loaded.consolidate(**exemplar.storage)
+    path = tmp_path / ("stored" + exemplar.suffix)
+    once.save(path)
+    back = cls.load(path)
+    # The copy holds the data and the header of the file exactly.
+    assert np.asarray(once.data).dtype == np.asarray(back.data).dtype
+    assert np.array_equal(np.asarray(once.data), np.asarray(back.data))
+    assert once.metadata.to_bytes() == back.metadata.to_bytes()
+    # Nothing is pending in the copy.
+    twice = once.consolidate()
+    assert twice.raw is once.raw
+    assert twice.metadata is once.metadata
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
