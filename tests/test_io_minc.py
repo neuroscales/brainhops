@@ -561,7 +561,7 @@ def test_the_record_holds_the_header(tmp_path, version) -> None:  # noqa: ANN001
     np.testing.assert_allclose(record.vox2world, expected_vox2world(dims))
     assert pickle.loads(pickle.dumps(record)) == record
     metadata = MincMetadata.from_raw(record)
-    assert metadata.to_raw() == record
+    assert metadata.raw.copy() == record
     assert not hasattr(metadata, "save")
 
 
@@ -626,7 +626,7 @@ def test_nothing_but_the_data_reads_the_voxels(
     repr(image)
     assert image.transformations
     assert image.system is not None
-    assert image.metadata.to_raw() == image.metadata.raw
+    assert image.metadata.raw.copy() == image.metadata.raw
     pickle.loads(pickle.dumps(image))
     MincImage.from_bytes(filename.read_bytes())
     assert reads.count == 0
@@ -639,7 +639,10 @@ def test_nothing_but_the_data_reads_the_voxels(
     assert reads.count == 1
     image.data = np.zeros((2, 3))
     assert image.shape == (2, 3)
-    assert image.raw.shape == (3, 2)
+    # The assigned data is pending until the image is consolidated, which
+    # stores it in `raw` in the order of the file.
+    assert image.raw.shape == (4, 5, 6)
+    assert image.consolidate().raw.shape == (3, 2)
     with pytest.raises(AttributeError):
         _ = MincImage().shape
     with pytest.raises(AttributeError):

@@ -767,8 +767,8 @@ def test_metadata_reads_the_header_alone(tmp_path, detached) -> None:  # noqa: A
     assert metadata.raw.fields["content"] == "kept"
     assert metadata.to_bytes() == source.read_bytes()
     assert pickle.loads(pickle.dumps(metadata)).raw == metadata.raw
-    assert metadata.to_raw() == metadata.raw
-    assert metadata.to_raw() is not metadata.raw
+    assert metadata.raw.copy() == metadata.raw
+    assert metadata.raw.copy() is not metadata.raw
     assert isinstance(MetadataFormat.load(source), NrrdMetadata)
 
 
@@ -779,7 +779,7 @@ def test_an_untouched_attached_image_keeps_its_bytes(
 ) -> None:
     source, values = _foreign(tmp_path, encoding)
     loaded = AttachedNrrdImage.load(source)
-    assert loaded.to_raw() is loaded.metadata.raw
+    assert loaded.consolidate().metadata.raw is loaded.metadata.raw
     writers = {
         "save": lambda target: loaded.save(target),
         "io.save": lambda target: io.save(
@@ -796,9 +796,15 @@ def test_an_untouched_attached_image_keeps_its_bytes(
     assert AttachedNrrdImage.from_bytes(source.read_bytes()).to_bytes() == (
         source.read_bytes()
     )
-    # A copy made with `replace` holds the decoded samples, which are
-    # encoded again, with the fields of the source except `min` and `max`.
-    back = io.load(_saved_as(replace(loaded), tmp_path / "replace.nrrd"))
+    # A copy made with `replace` keeps the lazy array, so it is written as
+    # the file stores it.
+    target = _saved_as(replace(loaded), tmp_path / "replace.nrrd")
+    assert target.read_bytes() == source.read_bytes()
+    # Samples that are assigned are encoded again, with the fields of the
+    # source except `min` and `max`.
+    copy = replace(loaded)
+    copy.data = np.array(values)
+    back = io.load(_saved_as(copy, tmp_path / "assigned.nrrd"))
     np.testing.assert_array_equal(back.data, values)
     assert back.metadata.raw.fields["content"] == "kept"
     assert "min" not in back.metadata.raw.fields
@@ -816,7 +822,7 @@ def test_an_untouched_detached_image_keeps_both_files(
 ) -> None:
     source, values = _detached(tmp_path, encoding=encoding)
     loaded = DetachedNrrdImage.load(source)
-    assert loaded.to_raw() is loaded.metadata.raw
+    assert loaded.consolidate().metadata.raw is loaded.metadata.raw
     (tmp_path / "same").mkdir()
     loaded.save(tmp_path / "same" / source.name)
     names = sorted(p.name for p in (tmp_path / "same").iterdir())
@@ -938,7 +944,7 @@ def test_a_file_written_again_elsewhere_is_refused(tmp_path) -> None:  # noqa: A
         np.asarray(loaded.raw)
 
 
-def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
+def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     """Each public knob is either written or leaves the record as read."""
     source, values = _foreign(tmp_path, "gzip")
 
@@ -947,44 +953,49 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
 
     image = loaded()
     record = image.metadata.raw
-    assert image.to_raw() is record
+    assert image.consolidate().metadata.raw is record
     # Options that name what the file stores keep the record and the
     # stored samples.
     same = dict(encoding="gz", endian="little", datatype="int16", space="LPS")
-    assert image.to_raw(**same) is record
+    assert image.consolidate(**same).metadata.raw is record
     assert image.to_bytes(**same) == source.read_bytes()
     # Other options are written, and the samples are encoded again.
-    assert image.to_raw(encoding="raw").fields["encoding"] == "raw"
-    assert image.to_raw(endian="big").fields["endian"] == "big"
-    written = image.to_raw(datatype="float")
+    assert (
+        image.consolidate(encoding="raw").metadata.raw.fields["encoding"]
+        == "raw"
+    )
+    assert (
+        image.consolidate(endian="big").metadata.raw.fields["endian"] == "big"
+    )
+    written = image.consolidate(datatype="float").metadata.raw
     assert written.fields["type"] == "float" and "min" not in written.fields
-    written = image.to_raw(space="RAS")
+    written = image.consolidate(space="RAS").metadata.raw
     assert written.fields["space"] == "right-anterior-superior"
     assert written.fields["space origin"] == "(-10,-20,30)"
     back = io.load(_saved_as(image, tmp_path / "be.nrrd"))
     np.testing.assert_array_equal(back.data, values)
     # Key/value pairs are merged last, and a pair that would read back as
     # another is refused.
-    written = image.to_raw(keyvalue={"b": None, "x": "y"})
+    written = image.consolidate(keyvalue={"b": None, "x": "y"}).metadata.raw
     assert written.keyvalue == {"x": "y"}
     for key in ("a:=b", "#a", ""):
         with pytest.raises(WriterError, match="key"):
-            image.to_raw(keyvalue={key: "1"})
+            image.consolidate(keyvalue={key: "1"})
     with pytest.raises(WriterError, match="UTF-8"):
-        image.to_raw(keyvalue={"a": "\ud800"})
+        image.consolidate(keyvalue={"a": "\ud800"})
     with pytest.raises(WriterError):
-        image.to_raw(encoding="zip")
+        image.consolidate(encoding="zip")
     with pytest.raises(WriterError):
-        image.to_raw(endian="middle")
+        image.consolidate(endian="middle")
     with pytest.raises(WriterError):
-        image.to_raw(space="scanner-xyz")
+        image.consolidate(space="scanner-xyz")
     with pytest.raises(TypeError):
         image.to_bytes(data_file="x.raw")
 
     # New samples are stored with their own type, and keep the geometry.
     image = loaded()
     image.data = np.asarray(image.data, dtype="float32") * 2
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert written is not record and written.fields["type"] == "float"
     assert (
         written.fields["space directions"]
@@ -993,7 +1004,7 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     # Assigned transformations give the geometry.
     image = loaded()
     image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert written.fields["space directions"] == "(2,0,0) (0,3,0) (0,0,4)"
     assert written.fields["content"] == "kept"
     # Other metadata gives its record.
@@ -1001,7 +1012,7 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     edited = record.copy()
     edited.keyvalue["x"] = "y"
     image.metadata = NrrdMetadata.from_raw(edited)
-    assert image.to_raw() is edited
+    assert image.consolidate().metadata.raw is edited
     # The record of the metadata is never changed.
     assert record == AttachedNrrdImage.load(source).metadata.raw
     assert record.stored == AttachedNrrdImage.load(source).metadata.raw.stored
@@ -1045,7 +1056,7 @@ def test_nothing_but_the_data_reads_the_samples(
     repr(image)
     assert image.transformations
     assert image.system is not None
-    assert image.to_raw() is image.metadata.raw
+    assert image.consolidate().metadata.raw is image.metadata.raw
     pickle.loads(pickle.dumps(image))
     AttachedNrrdImage.from_bytes(source.read_bytes())
     assert reads.count == 0
@@ -1100,11 +1111,11 @@ def test_a_space_is_refused_for_a_world_without_orientation(
         + bytes(8)
     )
     image = io.load(tmp_path / "a.nrrd")
-    assert image.to_raw() is image.metadata.raw
+    assert image.consolidate().metadata.raw is image.metadata.raw
     with pytest.raises(WriterError, match="anatomical orientation"):
-        image.to_raw(space="LPS")
+        image.consolidate(space="LPS")
     with pytest.raises(WriterError, match="anatomical orientation"):
-        AttachedNrrdImage(np.zeros((2, 2, 2))).to_raw(space="RAS")
+        AttachedNrrdImage(np.zeros((2, 2, 2))).consolidate(space="RAS")
 
 
 def test_unknown_types_and_missing_directories_are_reported(
@@ -1113,9 +1124,12 @@ def test_unknown_types_and_missing_directories_are_reported(
     source, _ = _foreign(tmp_path)
     image = AttachedNrrdImage.load(source)
     with pytest.raises(WriterError, match="type"):
-        image.to_raw(datatype="no such type")
+        image.consolidate(datatype="no such type")
     with pytest.raises(FileNotFoundError) as error:
         image.save(tmp_path / "a.nhdr", data_file="missing/a.raw")
     assert error.value.filename == str(tmp_path / "missing" / "a.raw")
     # A new encoding keeps the spelling of the type of the source.
-    assert image.to_raw(encoding="gzip").fields["type"] == "short"
+    assert (
+        image.consolidate(encoding="gzip").metadata.raw.fields["type"]
+        == "short"
+    )
