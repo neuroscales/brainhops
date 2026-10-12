@@ -1,16 +1,8 @@
-from numbers import Integral, Real
-
 import typing_extensions as tx
-from bagof.magic import NotKwOnly
+from bagof.magic import Forget, NotKwOnly
 
 from brainhops._core.compat import PLACEHOLDER, partial
-from brainhops._core.typing import (
-    ArrayProtocol,
-    Derived,
-    npmatrix,
-    npvector,
-)
-from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
+from brainhops._core.typing import ArrayProtocol
 
 from .base import Transformation
 from .concrete import (
@@ -21,7 +13,6 @@ from .concrete import (
     Permutation,
     Rotation,
     Scaling,
-    StoreEnum,
     Translation,
     _alias,
     _data2coeffs,
@@ -41,13 +32,7 @@ TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 
 _TypeReference = tx.ClassVar[tx.Optional[tx.Type[Transformation]]]
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
-_Matrix: tx.TypeAlias = npmatrix[Real]
-_Vector: tx.TypeAlias = npvector[Real]
-_Perm: tx.TypeAlias = npmatrix[Integral]
 _Array: tx.TypeAlias = ArrayProtocol
-_OptionalMatrix: tx.TypeAlias = tx.Optional[_Matrix]
-_OptionalVector: tx.TypeAlias = tx.Optional[_Vector]
-_OptionalPerm: tx.TypeAlias = tx.Optional[_Perm]
 _OptionalArray: tx.TypeAlias = tx.Optional[_Array]
 
 
@@ -164,8 +149,8 @@ class InverseTranslation(
 
     derived_fields: _FieldNames = "data", "translation"
 
-    _data: Derived[_OptionalVector]
-    _translation: Derived[_OptionalVector]
+    _data: Forget
+    _translation: Forget
 
 
 class InverseScaling(
@@ -180,9 +165,9 @@ class InverseScaling(
 
     derived_fields: _FieldNames = "data", "scale"
 
-    _data: Derived[_OptionalVector]
-    _scale: Derived[_OptionalVector]
-    _log: Derived[bool]
+    _data: Forget
+    _scale: Forget
+    _log: Forget
 
     log = _alias("log", "forward.log", fset=False)
 
@@ -199,8 +184,8 @@ class InversePermutation(
 
     derived_fields: _FieldNames = "data", "permutation"
 
-    _data: Derived[_OptionalPerm]
-    _permutation: Derived[_OptionalPerm]
+    _data: Forget
+    _permutation: Forget
 
 
 class InverseRotation(
@@ -219,9 +204,9 @@ class InverseRotation(
 
     derived_fields: _FieldNames = "data", "matrix"
 
-    _data: Derived[_OptionalMatrix]
-    _matrix: Derived[_OptionalMatrix]
-    _log: Derived[bool]
+    _data: Forget
+    _matrix: Forget
+    _log: Forget
 
     log = _alias("log", "forward.log", fset=False)
 
@@ -238,9 +223,9 @@ class InverseLinear(
 
     derived_fields: _FieldNames = "data", "matrix"
 
-    _data: Derived[_OptionalMatrix]
-    _matrix: Derived[_OptionalMatrix]
-    _log: Derived[bool]
+    _data: Forget
+    _matrix: Forget
+    _log: Forget
 
     log = _alias("log", "forward.log", fset=False)
 
@@ -261,9 +246,9 @@ class InverseAffine(
         "homogeneous_matrix",
     )
 
-    _data: Derived[_OptionalMatrix]
-    _matrix: Derived[_OptionalMatrix]
-    _log: Derived[bool]
+    _data: Forget
+    _matrix: Forget
+    _log: Forget
 
     log = _alias("log", "forward.log", fset=False)
 
@@ -309,14 +294,14 @@ class InverseDisplacementField(
     # The fields below derive from the forward, so they are kept out of
     # `__init__`.
 
-    _data: Derived[_OptionalArray]
-    _field: Derived[_OptionalArray]
-    _values: Derived[_OptionalArray]
-    _coefficients: Derived[_OptionalArray]
-    _degree: Derived[InterpolationOrder]
-    _bound: Derived[tx.Union[BoundaryCondition, float]]
-    _store: Derived[StoreEnum]
-    _log: Derived[bool]
+    _data: Forget
+    _field: Forget
+    _values: Forget
+    _coefficients: Forget
+    _degree: Forget
+    _bound: Forget
+    _store: Forget
+    _log: Forget
 
     degree = _alias("degree", "forward.degree", fset=False)
     bound = _alias("bound", "forward.bound", fset=False)
@@ -356,13 +341,13 @@ class InverseCoordinatesField(
 
     derived_fields: _FieldNames = "data", "field", "values", "coefficients"
 
-    _data: Derived[_OptionalArray]
-    _field: Derived[_OptionalArray]
-    _values: Derived[_OptionalArray]
-    _coefficients: Derived[_OptionalArray]
-    _degree: Derived[InterpolationOrder]
-    _bound: Derived[tx.Union[BoundaryCondition, float]]
-    _store: Derived[StoreEnum]
+    _data: Forget
+    _field: Forget
+    _values: Forget
+    _coefficients: Forget
+    _degree: Forget
+    _bound: Forget
+    _store: Forget
 
     degree = _alias("degree", "forward.degree", fset=False)
     bound = _alias("bound", "forward.bound", fset=False)
@@ -392,12 +377,12 @@ class InverseAffineExponential(
         "homogeneous_logmatrix",
     )
 
-    _data: Derived[_OptionalMatrix]
-    _matrix: Derived[_OptionalMatrix]
-    _logmatrix: Derived[_OptionalMatrix]
-    _homogeneous_matrix: Derived[_OptionalMatrix]
-    _homogeneous_logmatrix: Derived[_OptionalMatrix]
-    _log: Derived[bool]
+    _data: Forget
+    _matrix: Forget
+    _logmatrix: Forget
+    _homogeneous_matrix: Forget
+    _homogeneous_logmatrix: Forget
+    _log: Forget
 
     log = _alias("log", "forward.log", fset=False)
 
@@ -414,10 +399,10 @@ class InverseLinearExponential(
 
     derived_fields: _FieldNames = "data", "matrix", "logmatrix"
 
-    _data: Derived[_OptionalMatrix]
-    _matrix: Derived[_OptionalMatrix]
-    _logmatrix: Derived[_OptionalMatrix]
-    _log: Derived[bool]
+    _data: Forget
+    _matrix: Forget
+    _logmatrix: Forget
+    _log: Forget
 
     log = _alias("log", "forward.log", fset=False)
 
@@ -437,10 +422,10 @@ class InverseRotationExponential(
 
     derived_fields: _FieldNames = "data", "matrix", "logmatrix"
 
-    _data: Derived[_OptionalMatrix]
-    _matrix: Derived[_OptionalMatrix]
-    _logmatrix: Derived[_OptionalMatrix]
-    _log: Derived[bool]
+    _data: Forget
+    _matrix: Forget
+    _logmatrix: Forget
+    _log: Forget
 
     log = _alias("log", "forward.log", fset=False)
 
@@ -457,10 +442,10 @@ class InverseScalingExponential(
 
     derived_fields: _FieldNames = "data", "scale"
 
-    _data: Derived[tx.Optional[npvector[Real]]]
-    _scale: Derived[tx.Optional[npvector[Real]]]
-    _logscale: Derived[tx.Optional[npvector[Real]]]
-    _log: Derived[bool]
+    _data: Forget
+    _scale: Forget
+    _logscale: Forget
+    _log: Forget
 
     log = _alias("log", "forward.log", fset=False)
 
@@ -485,15 +470,15 @@ class InverseStationaryVelocityField(
 
     derived_fields: _FieldNames = "data", "field", "values", "coefficients"
 
-    _data: Derived[_OptionalArray]
-    _field: Derived[_OptionalArray]
-    _values: Derived[_OptionalArray]
-    _coefficients: Derived[_OptionalArray]
-    _degree: Derived[InterpolationOrder]
-    _bound: Derived[tx.Union[BoundaryCondition, float]]
-    _store: Derived[StoreEnum]
-    _log: Derived[bool]
-    _steps: Derived[tx.Optional[int]]
+    _data: Forget
+    _field: Forget
+    _values: Forget
+    _coefficients: Forget
+    _degree: Forget
+    _bound: Forget
+    _store: Forget
+    _log: Forget
+    _steps: Forget
 
     degree = _alias("degree", "forward.degree", fset=False)
     bound = _alias("bound", "forward.bound", fset=False)
