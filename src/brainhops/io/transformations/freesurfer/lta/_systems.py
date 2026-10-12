@@ -76,7 +76,7 @@ class LtaCoordinateSystem(_systems.SpatialCoordinateSystem3D):
 class LtaVoxelSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Unscaled voxel space of a source or destination volume."""
 
-    name: tx.Optional[str] = "voxel"
+    name: ... = "voxel"
     axes: _3SpatialAxes = _make_axes(("i", "j", "k"), unit=_INDEX)
     raw: KwOnly[tx.Optional[LtaRaw.VolumeInfo]] = None
     """The geometry block of the volume, or `None` without one."""
@@ -111,7 +111,7 @@ class LtaVoxelSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
 class LtaScaledSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Voxel space of a volume, scaled to millimetres."""
 
-    name: tx.Optional[str] = "scaled"
+    name: ... = "scaled"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
     raw: KwOnly[tx.Optional[LtaRaw.VolumeInfo]] = None
     """The geometry block of the volume, or `None` without one."""
@@ -150,7 +150,7 @@ class LtaPhysicalSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
     lies at the center of the volume rather than at its corner.
     """
 
-    name: tx.Optional[str] = "physical"
+    name: ... = "physical"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
     raw: KwOnly[tx.Optional[LtaRaw.VolumeInfo]] = None
     """The geometry block of the volume, or `None` without one."""

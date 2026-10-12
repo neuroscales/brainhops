@@ -287,7 +287,7 @@ class InverseDisplacementField(
 
     # --- attributes ---------------------------------------------------
 
-    forward: NotKwOnly[tx.Optional[DisplacementField]] = None
+    forward: ... = None
     """The displacement field whose inverse this is."""
 
     # --- derived attributes -------------------------------------------

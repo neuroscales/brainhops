@@ -363,8 +363,11 @@ raise `WriterError` when more axes are stated than the data has.
 ### B.7 Smaller changes
 
 `smartproperty` takes a single `unset=` option, which says when a stored
-value reads as "not set": `None` (the default), `"empty"`, a predicate,
-or a tuple of these. `lazyproperty` takes no `unset=` option: it computes
+value reads as "not set": `None` (the default), a predicate, or a tuple
+of these. A property over an inherited field whose default is an empty
+container takes the field over under a private name with
+`Inherit("x", default=None)` instead of reading an empty container as
+unset. `lazyproperty` takes no `unset=` option: it computes
 its value when nothing is stored and caches it. Every setter of either
 property deletes the cached value of the property before it runs, and
 the cached values named by `invalidates=` after it runs.
