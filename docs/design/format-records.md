@@ -152,11 +152,32 @@ it is, and `None` means that `data` is decoded from `raw`. Assigning
 changes `raw`. The data model of a transformation already stores its
 data in `_data`, and a format whose model is a chain, such as a NIfTI
 displacement field, declares a private `_data` field of its own.
-Assigned transformations are pending in the same way, in the private
-field `_transformations`. `raw` and the record therefore describe the
-file as it was read, or as the object was last consolidated, until
-`consolidate()` or a write encodes the pending state. This replaces the
-rule of #302, which stored an assigned array in `raw` at once.
+`raw` and the record therefore describe the file as it was read, or as
+the object was last consolidated, until `consolidate()` or a write
+encodes the pending state. This replaces the rule of #302, which stored
+an assigned array in `raw` at once.
+
+The transformations of an image are compared at consolidation instead
+of being pending by assignment. An image takes the `transformations`
+field of its model over as `_transformations`, where `None` means that
+the transformations were neither read nor assigned. The property
+decodes the record on first access and stores the list in
+`_transformations`, so a change made to the list in place, such as an
+appended transformation, acts on the stored list. `consolidate()` and
+every write compare the list that the image holds with a fresh decode of
+the record, in the data model and exactly: each transformation must have
+the same type, the same input and output spaces, and the same affine
+matrix (`same_transformations` in `io/common/_geometry.py`). The
+encoded bytes are never compared. When the lists are the same, or when
+`_transformations` is `None`, the geometry of the record is kept as it
+is stored, byte for byte, and otherwise it is encoded again from the
+list. An image that was read and whose list was only read is therefore
+saved byte for byte, and assigning an equal list keeps the record. The
+encoders read the list without storing it, so that a write leaves the
+image as it was, and assigning other metadata drops the list. This
+applies to the images that take `transformations` over: the toy image
+of the tests, NIfTI, MGH, AFNI, MRtrix, NRRD and MINC. MINC cannot be
+written, so it keeps the list that it holds.
 
 Within a format, `replace` and `from_instance` copy `_data` and
 `_transformations` as they are stored, so a copy of an untouched object
@@ -178,16 +199,31 @@ precedence over the copy in the record.
 
 ### Consolidation
 
-`consolidate(inplace=False, **options)` is the only public method that
-encodes a format object, and every format object has it: images,
+`consolidate(*, inplace=False, **options)` is the only public method
+that encodes a format object, and every format object has it: images,
 transformations and metadata. It returns a copy whose `raw` and record
 are encoded from the pending state, which is the assigned data, the
-assigned transformations and the fields of the model, and from the
-writer options of the format, such as `like=`, `dtype=` and header
-overrides. The options of each class are those that its writer takes.
+transformations that differ from those of the record and the fields of
+the model, and from the writer options of the format, such as `like=`,
+`dtype=` and header overrides. The options of each class are those that its writer takes.
 The copy holds new metadata that holds the new record, and its `_data`
 and `_transformations` are `None`. With `inplace=True`, the object
-itself is changed, and it is returned.
+itself is changed, and it is returned. `inplace` and every option are
+keyword-only.
+
+A copy consolidated with an option that changes how the data is stored,
+such as `dtype=` for NIfTI and MGH or `datatype=` for AFNI, MRtrix and
+NRRD, holds what a file written with that option holds. Its `raw` holds
+the values as the writer converts them, with the rounding and the
+clipping of the writer, and its record holds the header that the writer
+writes. NIfTI writes the encoded image to bytes and reads it again, so
+that `raw` is a lazy array of the stored voxels in memory and the record
+holds the scaling that nibabel chose (`_stored_parts` in
+`io/common/nifti/_header.py`). MGH, AFNI and NRRD encode the voxels with
+their writer and decode them with their reader. MRtrix encodes them with
+its writer, and `raw` is then a lazy array of those bytes, which applies
+the intensity scaling as a file is read. Data of the stored type, and a
+lazy array of a file, are kept as they are, so that nothing is read.
 
 An object that has a record and nothing pending, consolidated without
 options, gives a copy that shares `raw` and the metadata, so nothing is
@@ -197,11 +233,12 @@ its geometry is decoded from the new record, so it has the precision of
 the file, such as the single precision of a NIfTI sform or the
 quaternion of a qform.
 
-`MetadataFormat.consolidate(inplace=False)` has the same form. It is to
-encode the fields of the metadata that differ from a fresh decode of
-the record into a copy of the record, which the fifth pass implements.
-Today metadata holds only its record, so the method returns a copy that
-holds the same record, or the metadata itself with `inplace=True`.
+`MetadataFormat.consolidate(*, inplace=False)` has the same form, but
+it takes no options today. It is to encode the fields of the metadata
+that differ from a fresh decode of the record into a copy of the
+record, which the fifth pass implements. Today metadata holds only its
+record, so the method returns a copy that holds the same record, or the
+metadata itself with `inplace=True`.
 
 The methods `to_raw()` and `to_metadata()` are removed from every class,
 including `MetadataFormat`. The encoding code of each format stays
@@ -214,7 +251,9 @@ that copy, so the object itself is not changed. The single exception is
 a save over the file that the object's own lazy array reads (#426). The
 object is then consolidated in place with the same options and written,
 and its `raw` then reads the new file, so that the object holds what
-`load(path)` gives.
+`load(path)` gives. For NIfTI, the record is also read again from the
+new file, because nibabel sets fields such as the offset of the voxels
+when it writes, so the object equals `load(path)`, record included.
 
 ### Precedence on write
 
@@ -251,7 +290,8 @@ had.
 `raw` and the record describe the file as it was read, or as the object
 was last consolidated. Assigning `data`, `transformations` or another
 field of the model leaves them as they are until `consolidate()` or a
-write. There is no `pending` property. An untouched object, consolidated
+write, where the transformations of an image are compared with those
+of the record. There is no `pending` property. An untouched object, consolidated
 without options, shares `raw` and its metadata with its copy, so that
 `obj.consolidate().metadata is obj.metadata` and
 `obj.consolidate().raw is obj.raw`. After `consolidate()`, nothing is
@@ -403,18 +443,26 @@ format.
 12. The adapter contract holds. A format whose bytes are read through a
     stream really overrides `from_fileobj`, a binary format reads in
     `"rb"` mode, and a concrete format is not a dispatcher.
-13. The transformations of an image are decoded from the record unless
-    they are assigned, and copies within the format keep them.
+13. The transformations of an image are decoded from the record on first
+    access and stored, unless they are assigned, and copies within the
+    format keep them.
 14. Copies between classes carry the decoded transformations.
 15. Consolidating an untouched object gives a copy that shares `raw`
     and the metadata, and decodes nothing.
 16. Consolidating is idempotent, nothing is pending afterwards, and the
-    copy holds what a file written from the object holds. A format that
-    cannot write consolidates only its data.
+    copy holds exactly what a file written from the object holds. With
+    an option that changes how the data is stored, given by
+    `Exemplar.storage`, the copy holds the data, their type and the
+    header of the file exactly. A format that cannot write consolidates
+    only its data.
 17. A save writes the consolidated copy and leaves the object as it was.
 18. A save over the file that the `raw` of the object reads consolidates
     the object in place, and the object then holds what `load(path)`
-    gives (#426).
+    gives (#426), its header included.
+19. The transformations of an image are compared at consolidation. A
+    list that was only read keeps the record and the bytes, an equal
+    list that is assigned keeps the record, a list changed in place is
+    written, and a copy of a read image stays lazy.
 
 The second pass moves LTA first, so that the reference format matches
 this design. `LtaStruct` becomes `LtaRaw`, its field becomes a
@@ -644,12 +692,12 @@ its status.
     compresses the file when its name ends in `.gz`. Whether
     `FileWriter.to_filename` should do the same for every format is an
     open question.
-31. `NiftiImage.transformations` is cached and returned as the same
-    object each time, so appending to the list in place persists. It
-    used to return a copy. Status: decided in pass 1b. Since pending
-    state is tracked by assignment, a transformation appended to the
-    decoded list in place is not pending and is not written, and a
-    changed list must be assigned.
+31. `NiftiImage.transformations` is returned as the same object each
+    time, so appending to the list in place persists. It used to return
+    a copy. Status: resolved. The list is stored in `_transformations`
+    and compared at consolidation with the list that the record decodes
+    to, so a transformation appended in place is written, for every
+    image format.
 32. `read_nifti` parses the header twice when it reads a local path,
     once for the record and once for the nibabel image. Status:
     accepted.
@@ -996,8 +1044,8 @@ its status.
      stay pending after a consolidation. Status: accepted.
 101. MINC files cannot be written, so `MincImage.consolidate()` only
      moves pending data into `raw` (`io/images/minc/_image.py`). The
-     metadata is kept, and assigned transformations stay pending,
-     because no record can be encoded. The conformance harness checks
+     metadata is kept, and so are the transformations that the image
+     holds, read or assigned, because no record can be encoded. The conformance harness checks
      this data-only consolidation instead of checks 16 and 17. Status:
      accepted.
 102. A consolidated NIfTI affine has no `raw` array, because its matrix
@@ -1030,12 +1078,13 @@ its status.
      check 18 does not cover it. The problem is older than this work.
      Status: open.
 107. A writer option that changes how the data is stored, such as
-     `dtype=` for NIfTI or `datatype=` for AFNI, is recorded in the
-     header of the consolidated copy, while `raw` holds the values
-     before they are converted to that type. The writer converts them,
-     so the file and a save of the copy agree, but the data of the copy
-     is not rounded until it is read again from a file. Status:
-     accepted.
+     `dtype=` for NIfTI or `datatype=` for AFNI, was recorded in the
+     header of the consolidated copy, while `raw` held the values before
+     they were converted to that type, and the NIfTI header had no
+     scaling yet. The copy did not hold what its file holds. Status:
+     resolved. The copy holds the values as the writer converts them,
+     and the record holds the header that the writer writes, as the
+     section on consolidation describes. Check 16 compares them exactly.
 108. `ZarrImage`, `OmeZarrLevel` and the AFNI image of the core take
      `data` over as `_data`, so that `replace` keeps their lazy source,
      and the permutation of an OME-Zarr level is a field (`perm`), so
@@ -1044,6 +1093,41 @@ its status.
 109. An untouched object is written with its record as it is, so a NIfTI
      qform whose code is 0, or the `DISPVECT` intent of a legacy field
      of coordinates read through a hint, is kept on an untouched save.
-     Writing the same object with its geometry encoded again needs an
-     assignment, such as `img.transformations = img.transformations`,
-     or a writer option. Status: accepted.
+     The transformations are compared at consolidation, so assigning an
+     equal list, such as `img.transformations = img.transformations`,
+     keeps the record too. Writing the same object with its geometry
+     encoded again needs a different list or a writer option. Status:
+     accepted.
+110. Some readers of the record do not see what is pending. The FSL
+     helpers `_best_affine` and `_pixdim`
+     (`io/transformations/fsl/_affines.py`) read `metadata.raw` of a NIfTI
+     image, so after `img.transformations = ...` they still give the
+     geometry of the file. `NiftiImage.system` is decoded from the
+     header, so it ignores pending data of another number of dimensions.
+     Status: open.
+111. FNIRT cannot encode a chain. An assigned chain was neither written
+     nor refused: `consolidate` treated the field as untouched, and a
+     save wrote the file without it. Status: resolved. `consolidate`
+     encodes when a chain is pending, and the encoder raises
+     `UnrepresentableTransformationError`
+     (`io/transformations/fsl/fnirt/_base.py`).
+112. A NIfTI image or transformation saved over its own file pointed
+     `raw` at the new file but kept the record of the consolidation,
+     whose header differs from the one written. Status: resolved. The
+     object reads the record and the lazy array of the new file, and
+     check 18 compares its header with that of `load(path)` for every
+     format.
+113. With the exact comparison of check 16, an X5 field read lazily was
+     decoded in double precision, while its consolidated copy was decoded
+     in single precision. Dask ignores the `dtype` of `asarray`, so the
+     matrix that rotates the vectors into voxel units stayed in double
+     precision (`io/transformations/base/fields.py`). Status: resolved,
+     where the matrix is cast by NumPy.
+114. The formats whose data model is a chain (the NIfTI displacement
+     field, SPM, NiftyReg, ITK, FNIRT, X5 and M3Z) keep their
+     transformations pending by assignment. Their decoded chain is an
+     immutable tuple, so it cannot be changed in place, and comparing a
+     chain with a fresh decode would compare whole fields of vectors.
+     Assigning an equal chain therefore still encodes it again. Status:
+     open, for the maintainer to decide whether these formats compare
+     their chain at consolidation too.
