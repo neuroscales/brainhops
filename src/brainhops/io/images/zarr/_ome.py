@@ -2,12 +2,14 @@
 
 OME-Zarr stores an image pyramid as a Zarr group whose metadata lists
 the array of each level and the transformations that place the levels in
-space. The metadata is parsed and validated by abczarr, so metadata that
-contradicts the schema is rejected when it is parsed. Whatever version
-the store uses, the metadata is then normalized to OME-NGFF 0.6, which
+space. The metadata is parsed by abczarr, which refuses metadata that
+does not fit its models, such as an unknown type of transformation, but
+does not check every rule of the specification. Whatever version the
+store uses, the metadata is then normalized to OME-NGFF 0.6, which
 describes each level by a single transformation. Each OME transformation
 becomes a brainhops transformation of the same kind rather than being
-flattened into an affine.
+flattened into an affine. The conventions are described in
+[`brainhops.io.images.zarr`][].
 """
 
 import typing_extensions as tx
