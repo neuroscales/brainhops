@@ -183,6 +183,21 @@ class NiftiImage(
         return self._transformations
 
     @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the data, read without reading the voxels.
+
+        The shape is that of the assigned data, or else of `raw`: an image
+        decodes its data from `raw` without changing its shape, and a proxy
+        knows its shape from the header. An image without data raises as
+        [`SingleScaleImage`][] does.
+        """
+        if self._data is not None:
+            return tuple(int(d) for d in self._data.shape)
+        if self.raw is None:
+            return self.data.shape
+        return tuple(int(d) for d in self.raw.shape)
+
+    @property
     def system(self) -> tx.Optional[CoordinateSystem]:
         """The voxel coordinate system described by the header.
 

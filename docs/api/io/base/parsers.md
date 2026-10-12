@@ -72,7 +72,7 @@ replaced by `FileReader`, `TextFileReader`, and `BinaryFileReader`. Replace
 the combined `*FileParserWriter` bases with the corresponding reader and
 writer bases explicitly. Format-specific classes use `*Reader` when they only read and
 `*ReaderWriter` when they implement both routes. For example, `MincReader`
-only reads, while `LtaReaderWriter` and `MghReaderWriter` also write.
+only reads, while `LtaReaderWriter` and `MrtrixReaderWriter` also write.
 
 The `FileBased*` and `WritableFileBased*` wrappers are removed. Use `Format`,
 `ImageFormat`, or `TransformationFormat` and obtain writing from the native

@@ -262,14 +262,7 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "ImageFormat": (),
     },
     "brainhops.io.images.freesurfer.mgh._image": {
-        "MghImage": (
-            "data",
-            "transformations",
-            "image",
-            "header",
-            "good_ras",
-            "tags",
-        ),
+        "MghImage": ("data", "transformations"),
     },
     "brainhops.io.images.minc._image": {
         name: ("data", "transformations", "dimensions", "source")
