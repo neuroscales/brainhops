@@ -62,8 +62,15 @@ def _mrtrix_axes(ndim: int) -> tx.List[Axis]:
     return axes
 
 
+# `kw_only=True` is repeated here because bagof takes each class option
+# from the first base in the method resolution order, whether that base
+# sets the option or keeps the default. That base is `MrtrixReaderWriter`,
+# which keeps the default, so the fields declared by this class would
+# otherwise be positional.
 @register_format
-class MrtrixImage(MrtrixReaderWriter, ImageFormat, SingleScaleImage):
+class MrtrixImage(
+    MrtrixReaderWriter, ImageFormat, SingleScaleImage, kw_only=True
+):
     """An image stored in an MRtrix file (`.mif`, `.mif.gz` or `.mih`).
 
     The data are indexed `[x, y, z, ...]` in Fortran order, whatever
