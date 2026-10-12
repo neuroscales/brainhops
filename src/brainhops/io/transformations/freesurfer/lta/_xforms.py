@@ -400,7 +400,7 @@ class LtaTransformation(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, inplace: bool = False) -> tx.Self:
+    def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`

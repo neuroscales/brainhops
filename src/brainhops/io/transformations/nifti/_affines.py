@@ -34,7 +34,11 @@ from brainhops.io.transformations.base._conversions import (
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 # this format
-from ._base import NiftiBasedTransformation, _consolidated, _nibabel_parts
+from ._base import (
+    NiftiBasedTransformation,
+    _consolidated_metadata,
+    _nibabel_parts,
+)
 from ._views import _affine_to_model
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
@@ -121,7 +125,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         raise NotImplementedError
 
     def consolidate(
-        self, inplace: bool = False, like: tx.Any = None, **overrides
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> tx.Self:
         """Encode the pending matrix into a new header.
 
@@ -167,7 +171,18 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
             return self if inplace else replace(self)
         image = _affine_encoded(self, like, overrides)
         record = NiftiRaw(header=image.header)
-        return _consolidated(self, inplace, None, record, data=None)
+        metadata = _consolidated_metadata(self, record)
+        if not inplace:
+            return replace(
+                self,
+                raw=None,
+                metadata=metadata,
+                data=None,
+            )
+        self.raw = None
+        self.metadata = metadata
+        self.data = None
+        return self
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides

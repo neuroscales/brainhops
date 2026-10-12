@@ -357,6 +357,7 @@ class M3zMorph(
 
     def consolidate(
         self,
+        *,
         inplace: bool = False,
         spacing: tx.Optional[int] = None,
         image_shape: tx.Optional[tx.Sequence[int]] = None,
