@@ -222,6 +222,17 @@ class AfniImage(
     the new array here.
     """
 
+    _data: tx.Optional[tx.Any] = Inherit("data", default=None)
+    """The data given to the image, or `None` to decode it.
+
+    The image takes over the `data` field of [`SingleScaleImage`][] to
+    store it under this private name. The constructor still takes `data`
+    in the same place, and the property of the same name reads it.
+    `None`, the default, means that the data is decoded from the stored
+    sub-bricks, so that a copy of the image made with `replace` keeps
+    the lazy sub-bricks rather than a decoded array.
+    """
+
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )

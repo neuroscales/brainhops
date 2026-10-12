@@ -579,17 +579,15 @@ class _FileBasedModelMixin:
         Converting NIfTI to MGH on save therefore converts the data model only,
         and the writer rebuilds the format state.
 
-        Within one format, the `raw` field of an object carries its data, so
-        `data` is not copied when `raw` is set. The copy then holds the same
-        `raw` as `other`, which stays lazy if it is a proxy.
-
-        A format that decodes its transformations from its record stores
-        them in the private field `_transformations`, where `None` means
-        that they are decoded. Within the format, the stored value is
-        copied, so a copy of an image whose transformations were not
-        assigned decodes them from the same record. From another class,
-        the transformations that `other` reports are copied, decoded if
-        need be, because its record means nothing to this format.
+        A format that decodes its data or its transformations from its
+        file stores them in the private fields `_data` and
+        `_transformations`, where `None` means that they are decoded.
+        Within the format, the stored values are copied, so a copy of an
+        image whose data was not assigned holds the same `raw` as `other`,
+        which stays lazy if it is a proxy, and decodes the same record.
+        From another class, the data and the transformations that `other`
+        reports are copied, decoded if need be, because its `raw` and its
+        record mean nothing to this format.
 
         Parameters
         ----------
@@ -613,18 +611,15 @@ class _FileBasedModelMixin:
             else:
                 default = field.default
             kwargs.setdefault(field.public_name, default)
-        # Within a format, `raw` carries the data, so the view `data` is not
-        # read. Passing it would decode the whole array, and since `data`
-        # takes precedence over `raw`, the copy would lose the lazy proxy.
-        if (
-            isinstance(other, cls)
-            and getattr(other, "raw", None) is not None
-            and any(field.public_name == "data" for field in fields(cls))
-        ):
-            kwargs.setdefault("data", None)
-        # The field `_transformations` of another class, if it has one, is
-        # its own stored value, so the decoded transformations are read
-        # instead.
+        # The fields `_data` and `_transformations` of another class, if it
+        # has them, are its own stored values, so the decoded views are
+        # read instead. A transformation model stores its data as `_data`
+        # itself, and its own `from_instance` converts the data of another
+        # class, so only a format that takes `data` over reads it here.
+        if not isinstance(other, cls) and _takes_over(cls, "data"):
+            data = getattr(other, "data", None)
+            if data is not None:
+                kwargs.setdefault("data", data)
         if not isinstance(other, cls) and any(
             field.name == "_transformations"
             and field.public_name == "transformations"
@@ -634,38 +629,6 @@ class _FileBasedModelMixin:
             if transformations is not None:
                 kwargs.setdefault("transformations", transformations)
         return super().from_instance(other, *args, **kwargs)
-
-
-def store_data_argument(obj: tx.Any, arguments: tx.Any) -> None:
-    """Store the `data` argument of a constructor through the `data` setter.
-
-    A format that keeps its data in a `raw` array calls this function in
-    its `__post_init__`. The generated constructor assigns the fields in
-    the order in which they are declared, and `raw` is declared after
-    `data`. The array that the `data` setter stores in `raw` is therefore
-    erased by the default value of `raw`, and a transformation format,
-    whose data model stores `data` in its private field `_data`, never runs
-    the setter at all. This function assigns the `data` argument again,
-    through the setter, once every field is set. When both `data` and
-    `raw` are given, `data` takes precedence.
-
-    ```python
-    def __post_init__(self, arguments):
-        super().__post_init__(arguments)
-        store_data_argument(self, arguments)
-    ```
-
-    Parameters
-    ----------
-    obj : object
-        The object that the constructor builds.
-    arguments : Any
-        The arguments of the constructor, as `__post_init__` receives
-        them. A `data` argument that is `None` or absent is ignored.
-    """
-    data = arguments.get("data")
-    if data is not None:
-        obj.data = data
 
 
 def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
@@ -713,6 +676,30 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
             isinstance(other, k) for k in owners.get(field.public_name, ())
         )
     ]
+
+
+def _takes_over(cls: type, name: str) -> bool:
+    """Tell whether a format stores a field of its data model privately.
+
+    A format takes a field over when it declares the field `_<name>` with
+    the public name `name`, while its data model, the first class in its
+    MRO that is a data model but not a parser, declares the field under
+    the name `name`. An image format that takes `data` over is an example.
+    A transformation model declares `_data` itself, so a transformation
+    format does not take `data` over.
+    """
+    if not any(
+        field.name == "_" + name and field.public_name == name
+        for field in fields(cls)
+    ):
+        return False
+    for klass in cls.__mro__:
+        if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
+            continue
+        if issubclass(klass, (Format, FileReader, FileWriter)):
+            continue
+        return any(field.name == name for field in fields(klass))
+    return False
 
 
 def _is_file_or_content(other: tx.Any) -> bool:

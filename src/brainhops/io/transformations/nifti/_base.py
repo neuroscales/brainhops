@@ -6,23 +6,24 @@ from io import BytesIO
 # dependencies
 import nibabel as nb
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.io.base._base import store_data_argument
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserExistsError,
+    WriterError,
     WriterNotImplementedError,
 )
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._header import (
     _NiftiObject,
+    _written_nifti,
 )
 from brainhops.io.common.nifti._raw import (
     _sniffed_header,
@@ -47,12 +48,18 @@ class NiftiBasedTransformation(
     format decodes its `data`, and the transformation of the data model,
     from `raw` and from the header, and caches what it decodes.
 
-    When the transformation is written, a copy of the header of its file is
-    the base of the new header. A transformation whose data model was not
-    changed writes its array back under that header, and one whose data
+    `raw` and the header describe the file as it was read, or as the
+    transformation was last consolidated. Data and transformations that
+    are assigned are pending until [`consolidate`][] encodes them into a
+    copy, or until the transformation is written. A write encodes them in
+    the same way, into a copy, and leaves the transformation as it was.
+
+    When the transformation is consolidated, a copy of the header of its
+    file is the base of the new header. A transformation whose data model
+    was not changed keeps its array under that header, and one whose data
     model was changed encodes the model over the header. This class is
     abstract and is not registered as a format. Its subclasses implement
-    [`to_nibabel`][], which the writers call.
+    [`consolidate`][], on which the writers rely.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
@@ -63,7 +70,9 @@ class NiftiBasedTransformation(
 
     After a read, `raw` is a nibabel proxy, which applies the scaling of
     the header when it is read. A transformation that keeps its data in
-    the header, such as an affine, has no array.
+    the header, such as an affine, has no array. `raw` describes the file
+    as it was read, or as the transformation was last consolidated, so
+    assigning `data` leaves it as it is.
     """
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = None
@@ -75,18 +84,6 @@ class NiftiBasedTransformation(
     that caches what it decodes from the header drops those values when
     other metadata is assigned.
     """
-
-    def __post_init__(self, arguments: tx.Any) -> None:
-        # The data model may come before or after this class in the method
-        # resolution order, so a later `__post_init__` may not exist.
-        post_init = getattr(super(), "__post_init__", None)
-        if post_init is not None:
-            post_init(arguments)
-        # The constructor stores `data=` in the private field of the data
-        # model, and the default of `raw` comes after it, so the array is
-        # stored again through the setter of `data`. A format that takes
-        # no `data=` is not affected.
-        store_data_argument(self, arguments)
 
     # --- reading ------------------------------------------------------
 
@@ -251,25 +248,58 @@ class NiftiBasedTransformation(
     def _record(self) -> tx.Optional[NiftiRaw]:
         """Return a copy of the record of the metadata, or `None`.
 
-        The writers build the new header over this copy, so they are free
+        The encoders build the new header over this copy, so they are free
         to change it.
         """
-        return None if self.metadata is None else self.metadata.to_raw()
+        if self.metadata is None or self.metadata.raw is None:
+            return None
+        return self.metadata.raw.copy()
 
-    def to_nibabel(self, like: tx.Any = None, **overrides) -> _NibabelImage:
-        """Build the nibabel image that encodes this transformation.
+    def consolidate(self, inplace: bool = False, **options) -> tx.Self:
+        """Encode the pending state into `raw` and the header.
 
         Each concrete format implements this method, on which the writers
-        rely.
+        rely. Consolidating makes `raw` and the header describe the
+        transformation, as a file written from it would, and nothing is
+        pending afterwards. A transformation that has a header and nothing
+        pending, consolidated without options, is left as it is.
 
         Parameters
         ----------
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        inplace : bool, default=False
+            Whether to change this transformation rather than a copy.
+        **options : Any
+            The writer options of the concrete format.
+
+        Returns
+        -------
+        Self
+            The consolidated copy, or this transformation with
+            `inplace=True`.
+
+        Raises
+        ------
+        WriterNotImplementedError
+            Always, since the base does not know what to encode.
+        """
+        raise WriterNotImplementedError(
+            f"{type(self).__name__} does not know how to write itself to "
+            f"NIfTI."
+        )
+
+    def to_nibabel(self, **options) -> _NibabelImage:
+        """Build the nibabel image that a file written from this holds.
+
+        The transformation is consolidated with the options, as by
+        [`consolidate`][], into a copy, and the nibabel image holds the
+        `raw` array and the header of that copy. The transformation itself
+        is not changed.
+
+        Parameters
+        ----------
+        **options : Any
+            The writer options of [`consolidate`][], such as the template
+            `like` and the header overrides.
 
         Returns
         -------
@@ -278,13 +308,10 @@ class NiftiBasedTransformation(
 
         Raises
         ------
-        WriterNotImplementedError
-            Always, since the base does not know what to write.
+        WriterError
+            If the transformation has no array to write.
         """
-        raise WriterNotImplementedError(
-            f"{type(self).__name__} does not know how to write itself to "
-            f"NIfTI."
-        )
+        return _nifti_written(self.consolidate(**options))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a path.
@@ -296,7 +323,7 @@ class NiftiBasedTransformation(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Arguments of [`to_nibabel`][].
+            The writer options of [`consolidate`][].
         """
         write_nifti(self.to_nibabel(**kwargs), filename)
 
@@ -308,7 +335,7 @@ class NiftiBasedTransformation(
         file : BinaryIO
             The stream.
         **kwargs : Any
-            Arguments of [`to_nibabel`][].
+            The writer options of [`consolidate`][].
         """
         write_nifti(self.to_nibabel(**kwargs), file)
 
@@ -318,7 +345,7 @@ class NiftiBasedTransformation(
         Parameters
         ----------
         **kwargs : Any
-            Arguments of [`to_nibabel`][].
+            The writer options of [`consolidate`][].
 
         Returns
         -------
@@ -350,3 +377,46 @@ def _nibabel_parts(
     if isinstance(nifti, nb.Nifti1Header):
         return None, nifti
     raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")
+
+
+def _nifti_written(xform: NiftiBasedTransformation) -> _NibabelImage:
+    """Return the nibabel image that writes a consolidated transformation.
+
+    Raises
+    ------
+    WriterError
+        If the transformation has no array to write.
+    """
+    if xform.raw is None:
+        raise WriterError(
+            f"This {type(xform).__name__} has no array, so there is "
+            f"nothing to write."
+        )
+    return _written_nifti(xform.raw, xform.metadata.raw)
+
+
+def _consolidated(
+    xform: NiftiBasedTransformation,
+    inplace: bool,
+    raw: tx.Optional[ArrayProtocol],
+    record: NiftiRaw,
+    **changes,
+) -> NiftiBasedTransformation:
+    """Give a transformation, or a copy of it, an encoded state.
+
+    The transformation, or a copy of it with `inplace=False`, holds `raw`
+    and new metadata that holds `record`, and the `changes`, which reset
+    the pending fields to `None` and set any option that the encoding
+    fixed. The metadata held before is never changed.
+    """
+    if xform.metadata is None:
+        metadata = NiftiMetadata.from_raw(record)
+    else:
+        metadata = replace(xform.metadata, raw=record)
+    if not inplace:
+        return replace(xform, raw=raw, metadata=metadata, **changes)
+    xform.raw = raw
+    xform.metadata = metadata
+    for name, value in changes.items():
+        setattr(xform, name, value)
+    return xform

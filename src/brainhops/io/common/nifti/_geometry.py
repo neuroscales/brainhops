@@ -321,11 +321,12 @@ def _image_with_geometry(
     inserted where NIfTI needs them: `(x,y,t)->(X,Y,1,T)`,
     `(x,y,z,c)->(X,Y,Z,1,C)` and `(x,y,c)->(X,Y,1,1,C)`.
 
-    The data is written after the header. A nibabel proxy that reaches the
-    writer unchanged is written unscaled, with the data type, the slope and
-    the intercept that the file stored, so that an untouched image is
-    written byte for byte. An override of the data type or of the scaling
-    makes the proxy be read and scaled again instead.
+    The array of the image is the data, laid out as NIfTI stores it. A
+    nibabel proxy keeps the data type, the slope and the intercept that
+    its file stored, so the header records how the proxy is stored and
+    `_written_nifti` writes it unscaled, byte for byte. An override of
+    the data type or of the scaling resets the scaling instead, and the
+    proxy is then read and scaled again when it is written.
     """
     overrides = dict(overrides or {})
 
@@ -351,7 +352,6 @@ def _image_with_geometry(
         _STORAGE_OVERRIDES.intersection(overrides)
     ):
         scaling = _stored_scaling(header, data)
-        data = data.get_unscaled()
     if header is not None:
         if space == "mm" and header.get_xyzt_units()[0] == "unknown":
             space = "unknown"

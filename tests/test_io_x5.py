@@ -355,7 +355,7 @@ def test_a_record_is_never_changed_in_place(
 ) -> None:
     xform = io.load(chain_x5)
     record = xform.metadata.raw
-    copy = xform.metadata.to_raw()
+    copy = record.copy()
     assert copy is not record and copy.nodes[0] is not record.nodes[0]
     copy.header.attrs["Edited"] = "yes"
     copy.nodes[0].metadata["Edited"] = True
@@ -417,7 +417,7 @@ def test_other_metadata_gives_another_chain(chain_x5: Path) -> None:
     xform = io.load(chain_x5)
     first = xform.transformations
     assert isinstance(first[0], xforms.Affine)
-    record = xform.metadata.to_raw()
+    record = xform.metadata.raw.copy()
     record.header.chains = [(1,)]
     xform.metadata = X5Metadata.from_raw(record)
     assert isinstance(xform[0], X5DisplacementField)
@@ -1096,16 +1096,33 @@ def test_assigned_systems_are_encoded(chain_x5: Path) -> None:
     # encoded, and X5 only stores maps from RAS to RAS.
     xform = io.load(chain_x5)
     xform.input = systems.RASmm()
-    record = xform.to_raw()
+    record = xform.consolidate().metadata.raw
     assert record is not xform.metadata.raw
     assert record.header.chains == [(0, 1)]
     assert record.nodes[0] is xform.metadata.raw.nodes[0]
     xform.input = systems.LPSmm()
     with pytest.raises(UnrepresentableTransformationError, match="RAS"):
-        xform.to_raw()
+        xform.consolidate()
     # The options only select what is decoded.
     selected = X5Transform.from_file(chain_x5, chain=1)
-    assert selected.to_raw() is selected.metadata.raw
+    assert selected.consolidate().metadata is selected.metadata
+
+
+def test_a_selected_chain_is_encoded_as_the_only_chain(
+    chain_x5: Path,
+) -> None:
+    selected = X5Transform.from_file(chain_x5, chain=1)
+    chain = selected.transformations
+    selected.transformations = list(selected)
+    consolidated = selected.consolidate()
+    # The chain becomes the content of the record, so the option that
+    # selected it in the old record is reset.
+    assert consolidated.chain is None
+    assert len(consolidated.metadata.raw.nodes) == len(chain)
+    assert all(
+        type(a) is type(b) for a, b in zip(consolidated.transformations, chain)
+    )
+    assert selected.chain == 1
 
 
 def test_decoded_fields_are_read_only(field_x5: Path) -> None:
