@@ -5,7 +5,7 @@ from collections import OrderedDict
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import Inherit, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel.axes import Axis
@@ -135,6 +135,19 @@ class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage):
         ".brik.bz2",
     )
 
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+    """The transformations given to the image, or `None` to decode them.
+
+    The image takes over the `transformations` field of
+    [`SingleScaleImage`][] to store it under this private name. The
+    constructor still takes `transformations` in the same place, and the
+    property of the same name reads it. `None`, the default, means that
+    the transformations are decoded from the header, while a list, even
+    an empty one, is used as it is.
+    """
+
     # --- reading ------------------------------------------------------
 
     @classmethod
@@ -175,15 +188,17 @@ class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage):
         axes = _afni_axes(self.header)
         return CoordinateSystem(name="voxel", axes=axes, order="F")
 
-    @smartproperty(unset="empty")
+    @smartproperty
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the header.
 
-        The transformations are decoded lazily unless they are set
-        explicitly. An image built from data alone has none.
+        The transformations are decoded from the header on each access,
+        unless a list, which may be empty, has been assigned. Assigning
+        `None` decodes the header again. An image built from data alone
+        has none.
         """
         if self.header is None:
-            return list(getattr(self, "_transformations", None) or [])
+            return []
         return _afni_to_transformations(self.header)
 
     # --- writing ------------------------------------------------------
