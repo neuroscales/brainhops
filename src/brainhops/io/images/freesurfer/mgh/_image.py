@@ -32,6 +32,7 @@ from brainhops.io.common._geometry import (
     Arrangement,
     arrange_voxel_to_ras,
     declared_axes,
+    same_transformations,
 )
 from brainhops.io.common.freesurfer import FreesurferFormat
 from brainhops.io.common.freesurfer._geometry import fs_geometry_from_vox2ras
@@ -89,17 +90,19 @@ class MghImage(
     order, and the data are indexed `(x, y, z)` or `(x, y, z, frames)`,
     where the frames form a time axis.
 
-    The transformations are decoded from the record, unless other
-    transformations are assigned. They are, in order, a [`Scaling`][] to
-    `"physical"` by the voxel size in millimeters and the TR in
-    milliseconds, an [`Affine`][] to `"tkr"` (`MghRaw.vox2tkr`), and the
-    preferred [`Affine`][] to `"scanner"` (`MghRaw.vox2ras`).
+    The transformations are decoded from the record on first access,
+    unless other transformations are assigned. They are, in order, a
+    [`Scaling`][] to `"physical"` by the voxel size in millimeters and the
+    TR in milliseconds, an [`Affine`][] to `"tkr"` (`MghRaw.vox2tkr`), and
+    the preferred [`Affine`][] to `"scanner"` (`MghRaw.vox2ras`).
 
     `raw` and the record describe the file as it was read, or as the image
-    was last consolidated. Data and transformations that are assigned are
-    pending until [`consolidate`][] encodes them into a copy, or until the
-    image is written, which writes such a copy and leaves the image as it
-    was.
+    was last consolidated. Data that are assigned are pending until
+    [`consolidate`][] encodes them into a copy, or until the image is
+    written, which writes such a copy and leaves the image as it was. The
+    transformations, read or assigned, are compared at [`consolidate`][]
+    with those that the record decodes to, and the geometry of the record
+    is kept when they are the same.
 
     When the image is consolidated, the record of its metadata is the base
     of the new record, as [`consolidate`][] describes, so the acquisition
@@ -139,24 +142,31 @@ class MghImage(
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations given to the image, or `None` to decode them.
+    """The transformations of the image, or `None` when never read or set.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
     property of the same name reads it. `None`, the default, means that
-    the transformations are decoded from the record, while a list, even
-    an empty one, is used as it is.
+    the transformations have been neither read nor assigned, so the
+    record is kept as it is. The property stores here the list that it
+    decodes, and an assigned list, even an empty one, is stored as it is.
     """
 
     _metadata: KwOnly[NoRepr[tx.Optional[MghMetadata]]] = None
 
-    metadata = smartproperty("metadata", invalidates="transformations")
+    metadata = smartproperty("metadata")
     """The metadata of the file, which holds its record, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
-    drops the transformations decoded from the previous record.
+    drops the transformations that the image holds, read or assigned, so
+    that they are decoded from the new record.
     """
+
+    @metadata.setter
+    def metadata(self, value: tx.Optional[MghMetadata]) -> None:
+        self._metadata = value
+        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -173,23 +183,24 @@ class MghImage(
             return None
         return _image_to_model(self.raw)
 
-    @smartproperty(cache=True)
+    @smartproperty
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The decoded list is cached, so `img.transformation is
-        img.transformation`. Assigning other metadata drops the decoded
-        list. An image without metadata has no transformations.
+        The list is decoded on first access and stored in the image, so
+        `img.transformation is img.transformation`, and a change made to
+        the list in place, such as an appended transformation, is kept.
+        Assigning other metadata drops the list. An image without
+        metadata has no transformations.
 
-        Assigning a list replaces the decoded one, and the list stays
-        pending until [`consolidate`][] or a write encodes it. An empty
-        list means that the image has no geometry, and the image is then
-        written as an image built from data alone. Assigning `None`
-        decodes the record again.
+        Assigning a list replaces the stored one. In both cases, the list
+        is compared at [`consolidate`][], and by a write, with the list
+        that the record decodes to, exactly. An empty list means that the
+        image has no geometry, and the image is then written as an image
+        built from data alone. Assigning `None` decodes the record again.
         """
-        if self.metadata is None or self.metadata.raw is None:
-            return []
-        return _mgh_to_transformations(self.metadata.raw)
+        self._transformations = _record_transformations(self.metadata)
+        return self._transformations
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -430,15 +441,23 @@ class MghImage(
             non-spatial axis, or shifts or scales frames in a way that MGH
             cannot store.
         """
+        # The record is kept when the transformations were never read, or
+        # are the same as those that it decodes to.
+        kept = self._transformations is None or same_transformations(
+            self._transformations, _record_transformations(self.metadata)
+        )
         if (
             self._data is None
-            and self._transformations is None
+            and kept
             and like is None
             and not overrides
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, transformations=None)
+            self.transformations = None
+            return self
         record, raw = _encoded(self, like, overrides)
         if self.metadata is not None and record is self.metadata.raw:
             metadata = self.metadata
@@ -564,6 +583,18 @@ class MghImage(
 # ----------------------------------------------------------------------
 
 
+def _record_transformations(
+    metadata: tx.Optional[MghMetadata],
+) -> tx.List[Transformation]:
+    """Decode the transformations of the record of some metadata.
+
+    Metadata without a record gives no transformation.
+    """
+    if metadata is None or metadata.raw is None:
+        return []
+    return _mgh_to_transformations(metadata.raw)
+
+
 def _mgh_system(record: MghRaw) -> CoordinateSystem:
     """Return the voxel coordinate system of a record."""
     axes = _MGH_AXES[: len(record.shape)]
@@ -654,7 +685,12 @@ def _encoded(
             f"with dtype=."
         )
     dtype = overrides.pop("dtype", None)
-    vox2ras, layout, tr = _scanner_geometry(image.transformations, source)
+    # The list of the image is read without being stored, so that a write
+    # leaves the image as it was.
+    transformations = image._transformations
+    if transformations is None:
+        transformations = _record_transformations(image.metadata)
+    vox2ras, layout, tr = _scanner_geometry(transformations, source)
     data = source if layout is None else layout.apply(image.data)
     shape = _mgh_shape(data)
 
