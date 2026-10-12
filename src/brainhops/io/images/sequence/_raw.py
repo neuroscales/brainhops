@@ -202,7 +202,8 @@ class SequenceRaw(Magic, frozen=True):
             A glob pattern, relative to the folder, that selects the files
             of the sequence, such as `"slice_*.tif"`. By default, every
             file of the folder whose extension is that of a TIFF file or
-            of a format that Pillow reads is taken, except hidden files.
+            of a format that Pillow reads is taken. Hidden files, whose
+            names start with a dot, are never taken.
 
         Returns
         -------
@@ -330,14 +331,17 @@ def _listed(folder: str, pattern: tx.Optional[str]) -> tx.List[str]:
     """List the image files of a folder, relative to it, with `/`.
 
     Without a pattern, the files of the folder itself are listed, except
-    hidden files and files whose extension is not an image extension.
-    With a pattern, the files that the glob pattern selects are listed,
-    and each must have an image extension.
+    files whose extension is not an image extension. With a pattern, the
+    files that the glob pattern selects are listed, and each must have an
+    image extension. Hidden files, whose names start with a dot, are
+    never listed, which also leaves out the temporary files of a writer.
+    The names are sorted, so that errors name the same files each time.
 
     Raises
     ------
     ParserContentError
-        If no file is listed, or if a selected file is not an image file.
+        If no file is listed, if a selected file is not an image file, or
+        if the pattern reaches outside the folder.
     """
     names: tx.List[str] = []
     if pattern is None:
@@ -349,10 +353,16 @@ def _listed(folder: str, pattern: tx.Optional[str]) -> tx.List[str]:
                     names.append(entry.name)
         where = f"in the folder {folder!r}"
     else:
+        if os.path.isabs(pattern) or ".." in pathlib.PurePath(pattern).parts:
+            raise ParserContentError(
+                f"The pattern {pattern!r} must select files inside the "
+                f"folder, relative to it."
+            )
         for found in pathlib.Path(folder).glob(pattern):
-            if not found.is_file():
-                continue
             name = found.relative_to(folder).as_posix()
+            hidden = any(part.startswith(".") for part in name.split("/"))
+            if hidden or not found.is_file():
+                continue
             if member_format(name) is None:
                 raise ParserContentError(
                     f"The pattern {pattern!r} selects {name!r}, which is "
@@ -368,7 +378,7 @@ def _listed(folder: str, pattern: tx.Optional[str]) -> tx.List[str]:
             f"their extensions: TIFF files need tifffile and other images "
             f"need Pillow."
         )
-    return names
+    return sorted(names)
 
 
 def _numbered(names: tx.Sequence[str]) -> tx.List[tx.Tuple[int, str]]:

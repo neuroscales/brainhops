@@ -194,6 +194,24 @@ def test_a_pattern_selects_image_files_only(tmp_path: Path) -> None:
         SequenceImage.load(folder, pattern="*.png")
 
 
+def test_hidden_files_are_never_taken(tmp_path: Path) -> None:
+    # A writer that replaces a file at once writes a hidden file first.
+    folder = _tiffs(tmp_path / "slices")
+    tifffile.imwrite(folder / ".tmp.z12.tif", VOLUME[0])
+    for pattern in (None, "*.tif", "*"):
+        image = SequenceImage.load(folder, pattern=pattern)
+        assert len(image.metadata.raw.members) == 12
+
+
+def test_a_pattern_stays_in_the_folder(tmp_path: Path) -> None:
+    _tiffs(tmp_path / "a")
+    _tiffs(tmp_path / "b")
+    with pytest.raises(ParserContentError, match="inside the folder"):
+        SequenceImage.load(tmp_path / "a", pattern="../b/*.tif")
+    with pytest.raises(ParserContentError, match="inside the folder"):
+        SequenceImage.load(tmp_path / "a", pattern=str(tmp_path / "b/*"))
+
+
 # ----------------------------------------------------------------------
 #   REFUSED FOLDERS
 # ----------------------------------------------------------------------
@@ -394,6 +412,26 @@ def test_the_spacing_comes_from_imagej(tmp_path: Path) -> None:
     assert np.allclose(_scale(SequenceImage.load(flipped)), [0.5, 0.5, -1.5])
     image = SequenceImage.load(flipped, pixel_size={"z": 3.0})
     assert np.allclose(_scale(image), [0.5, 0.5, 3.0])
+
+
+def test_slices_that_run_in_both_directions_disagree(
+    tmp_path: Path,
+) -> None:
+    folder = _tiffs(
+        tmp_path / "slices",
+        VOLUME[:3],
+        imagej=True,
+        metadata={"spacing": 1.5, "unit": "um"},
+    )
+    tifffile.imwrite(
+        folder / "z3.tif",
+        VOLUME[3],
+        imagej=True,
+        metadata={"spacing": -1.5, "unit": "um"},
+    )
+    image = SequenceImage.load(folder)
+    with pytest.warns(UserWarning, match="along z"):
+        assert np.allclose(_scale(image)[2], 1.0)
 
 
 def test_sizes_on_which_the_files_disagree_are_unknown(

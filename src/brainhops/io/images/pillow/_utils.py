@@ -407,7 +407,12 @@ def pillow_layout(
     whether the palette is looked up, and, for a palette image, on whether
     `info` records a transparent colour. This function computes them from
     the descriptor of the mode that Pillow publishes in `PIL.ImageMode`,
-    so that the pixels need not be decoded.
+    so that the pixels need not be decoded. The descriptor gives the
+    NumPy type string of a band (`typestr`) and the names of the bands
+    (`bands`), as in `src/PIL/ImageMode.py` of Pillow 10.4.0, which also
+    builds the array interface of an image from them (`_conv_type_shape`
+    in `src/PIL/Image.py`). A test compares the
+    result with decoded frames of each mode.
 
     Parameters
     ----------

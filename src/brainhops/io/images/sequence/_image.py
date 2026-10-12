@@ -12,6 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
@@ -24,6 +25,7 @@ from ._data import _SequenceProxy
 from ._metadata import SequenceMetadata
 from ._raw import (
     NOT_A_STREAM,
+    SequenceMember,
     SequenceRaw,
     refuse_options,
     refuse_stream,
@@ -326,7 +328,8 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         pattern : str, optional
             The glob pattern, relative to the folder, that selects the
             files of the sequence, such as `"slice_*.tif"`. By default,
-            every image file of the folder is taken, except hidden files.
+            every image file of the folder is taken. Hidden files are
+            never taken.
         pixel_size : float or Sequence[float] or Mapping[str, float], optional
             The size of a voxel, which takes precedence over the sizes that
             the files record. It is one size for every spatial axis, one
@@ -453,7 +456,7 @@ def _sequence_transformations(
     return raster.raster_transformations(axes, scales)
 
 
-def _model_axes(record: SequenceRaw) -> tx.List[tx.Any]:
+def _model_axes(record: SequenceRaw) -> tx.List[Axis]:
     """Return the axes of the data of a sequence, `x, y, z[, c]`."""
     axes = raster.storage_axes(record.axes)
     return [axes[p] for p in raster.canonical_permutation(axes)]
@@ -475,10 +478,15 @@ def _recorded_scales(
     scales: tx.Dict[str, raster.AxisScale] = {}
     signs: tx.Dict[str, float] = {}
     for name in ("x", "y", "z"):
-        found = [file_scales.get(name) for file_scales, _ in per_file]
-        if all(scale is None for scale in found):
+        # A size is compared with its sign, so that files whose slices run
+        # in opposite directions disagree.
+        found = [
+            (file_scales.get(name), file_signs.get(name, 1.0))
+            for file_scales, file_signs in per_file
+        ]
+        if all(scale is None for scale, _ in found):
             continue
-        if any(scale != found[0] for scale in found):
+        if any(pair != found[0] for pair in found):
             warnings.warn(
                 f"The files of the sequence do not all record the same "
                 f"size along {name}, so that size is unknown. Pass "
@@ -486,15 +494,14 @@ def _recorded_scales(
                 stacklevel=3,
             )
             continue
-        scales[name] = found[0]
-        file_signs = {file_signs.get(name) for _, file_signs in per_file}
-        if file_signs == {-1.0}:
-            signs[name] = -1.0
+        scales[name], sign = found[0]
+        if sign < 0:
+            signs[name] = sign
     return scales, signs
 
 
 def _file_scales(
-    member: tx.Any,
+    member: SequenceMember,
 ) -> tx.Tuple[tx.Dict[str, raster.AxisScale], tx.Dict[str, float]]:
     """Return the sizes that one file records, and the signs of its steps.
 

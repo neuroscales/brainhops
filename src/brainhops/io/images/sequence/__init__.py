@@ -24,13 +24,14 @@ io.save(image, "volume.nii.gz")                  # or any other format
 
 A sequence is a local folder. Its files are, by default, every file of
 the folder whose extension is that of a TIFF file or of a format that the
-Pillow reader claims, except hidden files, whose names start with a dot.
-Subfolders are not searched. The option `pattern` gives a glob pattern
-relative to the folder instead, such as `"slice_*.png"` or
-`"ch1/*.tif"`, and every file that it selects must be an image file. The
-format of a file is told from its extension, and TIFF files need tifffile
-while other images need Pillow. A folder that holds a Zarr store is never
-read as a sequence.
+Pillow reader claims, and subfolders are not searched. The option
+`pattern` gives a glob pattern relative to the folder instead, such as
+`"slice_*.png"` or `"ch1/*.tif"`, and every file that it selects must be
+an image file. A pattern cannot reach outside the folder. Hidden files,
+whose names start with a dot, are never taken. The format of a file is
+told from its extension, and TIFF files need tifffile while other images
+need Pillow. A folder that holds a Zarr store is never read as a
+sequence.
 
 The names of the files must differ in one run of digits only, which is
 the number of the file, as in `z0.tif`, `z1.tif`, ..., `z10.tif`. The

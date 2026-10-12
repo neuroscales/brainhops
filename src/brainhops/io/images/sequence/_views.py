@@ -39,8 +39,10 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     if isinstance(raw, _SequenceProxy):
         backend = get_array_backend()
         if da is not None and backend is da:
-            # The name is random, because hashing the proxy would mean
-            # reading every file.
+            # `name=False` gives a random name instead of a hash of the
+            # proxy, which Dask computes only to recognize two arrays of
+            # the same source (docstring of `dask.array.from_array`, dask
+            # 2023.5.0), and which says nothing about the files.
             raw = da.from_array(
                 raw, chunks=raw.chunks, name=False, asarray=True
             )
