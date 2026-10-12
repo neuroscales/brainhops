@@ -103,7 +103,7 @@ def test_the_geometry_is_decoded_once_per_header(tmp_path) -> None:  # noqa: ANN
     assert img.transformations is first
     assert img.geometry.transformation is img.transformation
 
-    img.metadata = type(img.metadata).from_raw(img.metadata.to_raw())
+    img.metadata = type(img.metadata).from_raw(img.metadata.raw.copy())
     assert all(a is not b for a, b in zip(img.transformations, first))
 
 

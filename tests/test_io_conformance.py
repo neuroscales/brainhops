@@ -1051,7 +1051,7 @@ def test_16_consolidate_is_idempotent(
     assert once._data is None
     assert once._transformations is None
     assert once.metadata is not metadata
-    assert np.array_equal(once.data, value)
+    assert np.array_equal(np.asarray(once.data), value)
     assert np.allclose(exemplar.geometry(once), exemplar.geometry(loaded))
     # A second consolidation changes nothing.
     twice = once.consolidate()
@@ -1107,8 +1107,8 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     # An untouched object is written over the file that it reads.
     loaded = cls.load(path)
     loaded.save(path)
-    assert np.array_equal(loaded.data, exemplar.sample())
-    assert np.array_equal(cls.load(path).data, exemplar.sample())
+    assert np.array_equal(np.asarray(loaded.data), exemplar.sample())
+    assert np.array_equal(np.asarray(cls.load(path).data), exemplar.sample())
     # A changed object is consolidated in place, and then holds what the
     # file holds (#426).
     value = exemplar.sample() + 1
@@ -1118,8 +1118,8 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     assert loaded._data is None
     assert loaded._transformations is None
     back = cls.load(path)
-    assert np.array_equal(loaded.data, value)
-    assert np.array_equal(back.data, value)
+    assert np.array_equal(np.asarray(loaded.data), value)
+    assert np.array_equal(np.asarray(back.data), value)
     assert np.allclose(exemplar.geometry(loaded), exemplar.geometry(back))
 
 
@@ -1265,7 +1265,7 @@ def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: AN
     # Other metadata gives other transformations.
     first = loaded.transformation
     assert loaded.transformation is first
-    edited = loaded.metadata.to_raw()
+    edited = loaded.metadata.raw.copy()
     edited.header.set_sform(np.diag([2.0, 2.0, 2.0, 1.0]), code=2)
     loaded.metadata = NiftiMetadata.from_raw(edited)
     assert loaded.transformation is not first

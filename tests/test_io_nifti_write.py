@@ -1050,7 +1050,7 @@ def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
 def test_like_and_overrides_take_precedence_over_the_record(tmp_path) -> None:  # noqa: ANN001
     source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
     image = NiftiImage.load(source)
-    record = image.metadata.to_raw()
+    record = image.metadata.raw.copy()
     record.header["descrip"] = b"from the record"
     record.header["aux_file"] = b"kept"
     image.metadata = type(image.metadata).from_raw(record)
