@@ -489,12 +489,15 @@ def _(
     for item in transform.transformations:
         inputs = [int(i) for i in item.inputAxes or []]
         outputs = [int(i) for i in item.outputAxes or []]
-        if item.transformation is None or not inputs or not outputs:
+        inner = item.transformation
+        if not isinstance(inner, _ot.CoordinateTransformation) or not (
+            inputs and outputs
+        ):
             raise OmeMappingError(
                 "A part of this OME byDimension does not name its "
                 "transformation, its input axes or its output axes."
             )
-        parts.append((inputs, outputs, item.transformation))
+        parts.append((inputs, outputs, inner))
         written.extend(outputs)
     width_in = len(source)
     width_out = len(target)
@@ -815,8 +818,9 @@ def _parameter(
     # A parameter is given inline, or as an array of the group named by
     # `path`. The path is resolved against the group that holds the
     # metadata, which is how the field paths are resolved too.
+    # abczarr marks an absent field with a sentinel that is false.
     values = getattr(transform, name, None)
-    if values is None:
+    if not values:
         path = getattr(transform, "path", None)
         if not isinstance(path, str):
             raise OmeMappingError(
