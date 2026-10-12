@@ -123,7 +123,10 @@ def ras_displacement_chain(
     compact = vox2ras[:ndim]
     backend = get_array_backend(vectors)
     ras2vox = np.linalg.inv(vox2ras[:ndim, :ndim])
-    rotate = backend.asarray(ras2vox, dtype=vectors.dtype)
+    # The matrix is cast by NumPy, because Dask ignores the `dtype` of
+    # `asarray` and would compute a single-precision field in double
+    # precision.
+    rotate = backend.asarray(ras2vox.astype(vectors.dtype))
     field = backend.matmul(rotate, vectors[..., None])[..., 0]
     voxel = _systems.VoxelCoordinateSystem()
     # `steps` is passed only when set, so that a field without `log`
@@ -230,7 +233,8 @@ def split_ras_displacement_chain(
             f"{what} holds one {ndim}-vector per voxel of a {ndim}-D "
             f"grid, not an array of shape {tuple(field.shape)}."
         )
-    rotate = backend.asarray(vox2ras[:ndim, :ndim], dtype=field.dtype)
+    # The matrix is cast by NumPy, as in `ras_displacement_chain`.
+    rotate = backend.asarray(vox2ras[:ndim, :ndim].astype(field.dtype))
     vectors = backend.matmul(rotate, field[..., None])[..., 0]
     return vox2ras, vectors
 

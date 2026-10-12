@@ -1638,7 +1638,7 @@ def test_16_consolidate_is_idempotent(
     target = _path(tmp_path, exemplar, "written")
     loaded.save(target)
     back = cls.load(target)
-    assert np.allclose(
+    assert np.array_equal(
         np.asarray(_data(exemplar, once)), np.asarray(_data(exemplar, back))
     )
     assert np.allclose(exemplar.geometry(once), exemplar.geometry(back))
