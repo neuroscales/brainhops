@@ -890,7 +890,7 @@ class Rotation(Linear):
 
     # --- attributes ---------------------------------------------------
 
-    _data: NotKwOnly[tx.Optional[npmatrix[Real]]] = None
+    _data: ... = None
     """Matrix of shape `(N, N)`, with determinant one.
 
     `None` stands for the identity.

@@ -586,19 +586,19 @@ class ArrayCoordinateSystem(CoordinateSystem):
     `order="F"`, it builds the matching ordered subclass.
     """
 
-    name: tx.Optional[str] = "array"
+    name: ... = "array"
 
 
 class CArrayCoordinateSystem(ArrayCoordinateSystem, on={"order": "C"}):
     """A C-ordered array system, whose last axis varies fastest in memory."""
 
-    name: tx.Optional[str] = "carray"
+    name: ... = "carray"
 
 
 class FArrayCoordinateSystem(ArrayCoordinateSystem, on={"order": "F"}):
     """An F-ordered array system, whose first axis varies fastest in memory."""
 
-    name: tx.Optional[str] = "farray"
+    name: ... = "farray"
 
 
 # ArrayCoordinateSystem has no constraint of its own, so its 2-D subclass is
@@ -715,7 +715,7 @@ class PixelCoordinateSystem(
 ):
     """A coordinate system for two-dimensional pixel grids."""
 
-    name: tx.Optional[str] = "pixel"
+    name: ... = "pixel"
     axes: Axes[_2SpatialAxes] = _SpaceArrayAxesFactory("dim0", "dim1")
 
 
@@ -724,7 +724,7 @@ class VoxelCoordinateSystem(
 ):
     """A coordinate system for three-dimensional voxel grids."""
 
-    name: tx.Optional[str] = "voxel"
+    name: ... = "voxel"
     axes: Axes[_3SpatialAxes] = _SpaceArrayAxesFactory("dim0", "dim1", "dim2")
 
 
@@ -736,7 +736,7 @@ class CPixelCoordinateSystem(
 ):
     """A coordinate system for C-ordered pixel grids, with axes j and i."""
 
-    name: tx.Optional[str] = "cpixel"
+    name: ... = "cpixel"
     order: tx.Literal["C"] = "C"
     axes: Axes[_2SpatialAxes] = _SpaceArrayAxesFactory("j", "i")
 
@@ -749,7 +749,7 @@ class FPixelCoordinateSystem(
 ):
     """A coordinate system for F-ordered pixel grids, with axes i and j."""
 
-    name: tx.Optional[str] = "fpixel"
+    name: ... = "fpixel"
     order: tx.Literal["F"] = "F"
     axes: Axes[_2SpatialAxes] = _SpaceArrayAxesFactory("i", "j")
 
@@ -759,7 +759,7 @@ class CVoxelCoordinateSystem(
 ):
     """A coordinate system for C-ordered voxel grids, with axes k, j and i."""
 
-    name: tx.Optional[str] = "cvoxel"
+    name: ... = "cvoxel"
     axes: Axes[_3SpatialAxes] = _SpaceArrayAxesFactory("k", "j", "i")
 
 
@@ -768,7 +768,7 @@ class FVoxelCoordinateSystem(
 ):
     """A coordinate system for F-ordered voxel grids, with axes i, j and k."""
 
-    name: tx.Optional[str] = "fvoxel"
+    name: ... = "fvoxel"
     axes: Axes[_3SpatialAxes] = _SpaceArrayAxesFactory("i", "j", "k")
 
 
@@ -790,7 +790,7 @@ class RASCoordinateSystem(
     Coordinates increase towards the right, anterior and superior directions.
     """
 
-    name: tx.Optional[str] = "RAS"
+    name: ... = "RAS"
     axes: Axes[AxisTuple[_axes.R, _axes.A, _axes.S]] = Factory()
 
 
@@ -802,7 +802,7 @@ class LPSCoordinateSystem(
     Coordinates increase towards the left, posterior and superior directions.
     """
 
-    name: tx.Optional[str] = "LPS"
+    name: ... = "LPS"
     axes: Axes[AxisTuple[_axes.L, _axes.P, _axes.S]] = Factory()
 
 
@@ -814,7 +814,7 @@ class RSACoordinateSystem(
     Coordinates increase towards the right, superior and anterior directions.
     """
 
-    name: tx.Optional[str] = "RSA"
+    name: ... = "RSA"
     axes: Axes[AxisTuple[_axes.R, _axes.S, _axes.A]] = Factory()
 
 
@@ -859,7 +859,7 @@ class RASmm(
 ):
     """A [`RASCoordinateSystem`][] in millimetres."""
 
-    name: tx.Optional[str] = "RAS"
+    name: ... = "RAS"
     axes: Axes[AxisTuple[_axes.R, _axes.A, _axes.S]] = Factory(
         lambda: (
             _axes.R("x", unit=_MM),
@@ -876,7 +876,7 @@ class LPSmm(
 ):
     """An [`LPSCoordinateSystem`][] in millimetres."""
 
-    name: tx.Optional[str] = "LPS"
+    name: ... = "LPS"
     axes: Axes[AxisTuple[_axes.L, _axes.P, _axes.S]] = Factory(
         lambda: (
             _axes.L("x", unit=_MM),
@@ -893,7 +893,7 @@ class RSAmm(
 ):
     """An [`RSACoordinateSystem`][] in millimetres."""
 
-    name: tx.Optional[str] = "RSA"
+    name: ... = "RSA"
     axes: Axes[AxisTuple[_axes.R, _axes.S, _axes.A]] = Factory(
         lambda: (
             _axes.R("x", unit=_MM),
@@ -920,7 +920,7 @@ class RSAmm(
 class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
     """An F-ordered voxel grid whose axes point in RAS order."""
 
-    name: tx.Optional[str] = "fRAS"
+    name: ... = "fRAS"
     axes: Axes[AxisTuple[_axes.R, _axes.A, _axes.S]] = Factory(
         lambda: (
             _axes.R("x", unit=_INDEX),
@@ -934,7 +934,7 @@ class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
 class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
     """An F-ordered voxel grid whose axes point in LPS order."""
 
-    name: tx.Optional[str] = "fLPS"
+    name: ... = "fLPS"
     axes: Axes[AxisTuple[_axes.L, _axes.P, _axes.S]] = Factory(
         lambda: (
             _axes.L("x", unit=_INDEX),
@@ -948,7 +948,7 @@ class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
 class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
     """An F-ordered voxel grid whose axes point in RSA order."""
 
-    name: tx.Optional[str] = "fRSA"
+    name: ... = "fRSA"
     axes: Axes[AxisTuple[_axes.R, _axes.S, _axes.A]] = Factory(
         lambda: (
             _axes.R("x", unit=_INDEX),
@@ -964,7 +964,7 @@ class CRASCoordinateSystem(
 ):
     """A C-ordered RAS voxel grid, whose axes are listed S, A, R."""
 
-    name: tx.Optional[str] = "cRAS"
+    name: ... = "cRAS"
     order: tx.Literal["C"] = "C"
     axes: Axes[AxisTuple[_axes.S, _axes.A, _axes.R]] = Factory(
         lambda: (
@@ -981,7 +981,7 @@ class CLPSCoordinateSystem(
 ):
     """A C-ordered LPS voxel grid, whose axes are listed S, P, L."""
 
-    name: tx.Optional[str] = "cLPS"
+    name: ... = "cLPS"
     order: tx.Literal["C"] = "C"
     axes: Axes[AxisTuple[_axes.S, _axes.P, _axes.L]] = Factory(
         lambda: (
@@ -998,7 +998,7 @@ class CRSACoordinateSystem(
 ):
     """A C-ordered RSA voxel grid, whose axes are listed A, S, R."""
 
-    name: tx.Optional[str] = "cRSA"
+    name: ... = "cRSA"
     order: tx.Literal["C"] = "C"
     axes: Axes[AxisTuple[_axes.A, _axes.S, _axes.R]] = Factory(
         lambda: (
