@@ -3,6 +3,8 @@
 This memo is agreed and is being implemented. It is tracked in #415,
 and the work is done in the passes described at the end. The first
 two passes are written and under review, and the third is in progress.
+The design of pending data and `consolidate()` is applied across the
+whole stack.
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides
@@ -139,9 +141,29 @@ blocks that knows their offset and compression.
 The public `data` attribute is a cached view of `raw`. Each format
 defines a pair of pure functions, `to_model` and `to_disk`, with
 `data = to_model(raw)` and `raw = to_disk(data)`. Reading `data` decodes
-`raw` once and caches the result. Setting `data` stores
-`to_disk(value)` in `raw` and clears the cache. This is the rule of
-#302, which keeps a single stored array and decodes views from it.
+`raw` once and caches the result.
+
+Assigned data is pending. A format takes the `data` field of its model
+over under the private name `_data`, with
+`_data: ... = Inherit("data", default=None)`, and its `data` property is
+a `smartproperty(cache=True)`. An array stored in `_data` is returned as
+it is, and `None` means that `data` is decoded from `raw`. Assigning
+`data` stores the array in `_data` and clears the cache, and it never
+changes `raw`. The data model of a transformation already stores its
+data in `_data`, and a format whose model is a chain, such as a NIfTI
+displacement field, declares a private `_data` field of its own.
+Assigned transformations are pending in the same way, in the private
+field `_transformations`. `raw` and the record therefore describe the
+file as it was read, or as the object was last consolidated, until
+`consolidate()` or a write encodes the pending state. This replaces the
+rule of #302, which stored an assigned array in `raw` at once.
+
+Within a format, `replace` and `from_instance` copy `_data` and
+`_transformations` as they are stored, so a copy of an untouched object
+keeps the lazy proxy and decodes nothing, and a copy of a changed
+object keeps its pending state. From another class, `from_instance`
+reads the decoded `data` and `transformations` of the other object,
+because its `raw` and its record mean nothing to this format.
 
 Only exact and invertible changes may happen between `raw` and `data`.
 These are permuting axes, removing or adding singleton axes (such as
@@ -154,17 +176,60 @@ the matrix of an affine, or the content of a file that is cheaper to
 parse in one pass. On write, the data of the model always takes
 precedence over the copy in the record.
 
+### Consolidation
+
+`consolidate(inplace=False, **options)` is the only public method that
+encodes a format object, and every format object has it: images,
+transformations and metadata. It returns a copy whose `raw` and record
+are encoded from the pending state, which is the assigned data, the
+assigned transformations and the fields of the model, and from the
+writer options of the format, such as `like=`, `dtype=` and header
+overrides. The options of each class are those that its writer takes.
+The copy holds new metadata that holds the new record, and its `_data`
+and `_transformations` are `None`. With `inplace=True`, the object
+itself is changed, and it is returned.
+
+An object that has a record and nothing pending, consolidated without
+options, gives a copy that shares `raw` and the metadata, so nothing is
+copied and the object is still saved byte for byte. Consolidating a
+consolidated object changes nothing. Once an object is consolidated,
+its geometry is decoded from the new record, so it has the precision of
+the file, such as the single precision of a NIfTI sform or the
+quaternion of a qform.
+
+`MetadataFormat.consolidate(inplace=False)` has the same form. It is to
+encode the fields of the metadata that differ from a fresh decode of
+the record into a copy of the record, which the fifth pass implements.
+Today metadata holds only its record, so the method returns a copy that
+holds the same record, or the metadata itself with `inplace=True`.
+
+The methods `to_raw()` and `to_metadata()` are removed from every class,
+including `MetadataFormat`. The encoding code of each format stays
+explicit, in private helpers that `consolidate` calls. The reading
+methods, `from_raw` and `from_any` given a record, are kept.
+
+A write, through `save`, `to_bytes`, `to_fileobj` or `to_filename`,
+consolidates the object into a copy with the writer options and writes
+that copy, so the object itself is not changed. The single exception is
+a save over the file that the object's own lazy array reads (#426). The
+object is then consolidated in place with the same options and written,
+and its `raw` then reads the new file, so that the object holds what
+`load(path)` gives.
+
 ### Precedence on write
 
-Writing follows three steps.
+Consolidation, and therefore every write, follows four steps.
 
-1. The base record comes from `metadata.to_raw()`. Only the metadata
-   fields that differ from a fresh decode of the record are encoded
-   over it.
-2. The geometry is encoded from the model over that record. The image
+1. The data to store is `to_disk(_data)` when data is pending, and
+   `raw` otherwise.
+2. The base record is a copy of the record of the metadata. In the
+   fifth pass, only the metadata fields that differ from a fresh decode
+   of the record are encoded over it.
+3. The geometry is encoded from the model over that record. The image
    or the transformation owns its geometry and its data, the metadata
    owns its vocabulary, and the record supplies everything else.
-3. The header is written, then the data.
+4. The writer writes the header of the consolidated copy, then its
+   data.
 
 If `raw` is still the proxy that the reader built, the data is copied
 from the source file without being decoded, so an object that was read
@@ -183,27 +248,33 @@ writes a record only when it is saved. A record made up for an object
 built from scratch would claim header fields that the object never
 had.
 
-A format object's `to_raw()` may return the record that the object
-holds, because the writer only reads it. `MetadataFormat.to_raw()`
-returns a copy of the record, because the caller may change it.
+`raw` and the record describe the file as it was read, or as the object
+was last consolidated. Assigning `data`, `transformations` or another
+field of the model leaves them as they are until `consolidate()` or a
+write. There is no `pending` property. An untouched object, consolidated
+without options, shares `raw` and its metadata with its copy, so that
+`obj.consolidate().metadata is obj.metadata` and
+`obj.consolidate().raw is obj.raw`. After `consolidate()`, nothing is
+pending, and a second `consolidate()` changes nothing.
 
-For chain formats (X5, M3Z), assigned `input`/`output` systems count as
-overrides: `to_raw()` re-encodes and the writer checks they are
-RAS-compatible, raising `UnrepresentableTransformationError` otherwise.
+For chain formats (X5, M3Z), assigned `input` and `output` systems count
+as overrides. `consolidate()` encodes them, and it checks that the file
+can express them, raising `UnrepresentableTransformationError`
+otherwise.
 
-Each class states its rule for overrides in `to_raw()` explicitly, and a
-test probes it by assigning each public attribute and checking whether
-`to_raw()` still returns the held record. An attribute that is neither
-honored on write nor refused is the bug that recurred in the LTA data,
-the X5 systems and the M3Z systems. Where nothing was assigned, a class
-returns the held record after a cheap check, and does not encode it
-again.
+Each class states its rule for overrides in `consolidate()` explicitly,
+and a test probes it by assigning each public attribute and checking
+whether the consolidated copy still holds the same metadata. An
+attribute that is neither honored on write nor refused is the bug that
+recurred in the LTA data, the X5 systems and the M3Z systems. Where
+nothing was assigned, a class keeps the held record after a cheap
+check, and does not encode it again.
 
 The views that a class decodes from the record are read-only by
 construction, and do not rely on the flags of the arrays in the record.
 
-Each image class gives an explicit `shape` read from `raw` without
-reading the voxels; `ndim` follows from it.
+Each image class gives an explicit `shape` read from the pending data,
+or else from `raw`, without reading the voxels; `ndim` follows from it.
 
 A lazy array answers an empty selection without reading the file, so
 that Dask's metadata probe reads nothing.
@@ -211,8 +282,9 @@ that Dask's metadata probe reads nothing.
 Header fields that the data or `dtype=` decide (dimensions, voxel type)
 cannot be overridden; the writer refuses them with `WriterError`.
 
-A save never removes or overwrites a file that a live proxy reads; when
-it replaces that file, the image is pointed at the new one.
+A save never removes or overwrites a file that a live proxy reads. When
+it replaces that file, the object is consolidated in place with the
+writer options, and its `raw` reads the new file (#426).
 
 A conformance check that is vacuous for a format is logged in the comment
 of the exemplar of that format and in the list of tensions, instead of
@@ -270,15 +342,16 @@ one. The historical accessors that the memo planned to keep, such as
 
 This memo keeps the name `raw` and the `<X>Raw` types that the memo
 chose in its section 6.1. `LtaStruct` therefore becomes `LtaRaw`, and
-`from_struct` and `to_struct` become `from_raw` and `to_raw`. It also
-keeps the vocabulary of common metadata fields and the `to` conversion.
+`from_struct` becomes `from_raw`, while `to_struct` is removed in favor
+of `consolidate()` (see Consolidation). It also keeps the vocabulary of
+common metadata fields and the `to` conversion.
 
 The vocabulary itself arrives in the fifth pass, after the formats have
 moved to records. That pass takes the vocabulary from #310 and #287 and
 adds it to `Metadata`. Each format gets module-level functions that
-decode and encode the vocabulary, and `to_raw` encodes only the fields
-that differ from a fresh decode. The same pass adds the BIDS codec,
-puts metadata on the roots of the data model, propagates metadata
+decode and encode the vocabulary, and `consolidate()` encodes only the
+fields that differ from a fresh decode. The same pass adds the BIDS
+codec, puts metadata on the roots of the data model, propagates metadata
 through operations, and updates section 6.1 of the memo.
 
 ## Implementation passes
@@ -289,7 +362,8 @@ one starts.
 The first pass adds the core classes and moves NIfTI. It is made of
 three stacked pull requests. The first adds `Metadata` and the
 `MetadataFormat` dispatcher, whose `from_raw` builds an object from a
-record and whose `to_raw` returns a copy of the record. It also adds a
+record and whose `consolidate` returns a copy of the metadata. It also
+adds the mechanism of pending data and of `consolidate()`, and a
 conformance test, which checks every migrated format against the rules
 of this memo and lists the formats that are not migrated yet. The
 second adds `NiftiRaw`, `NiftiMetadata` and the views of NIfTI data,
@@ -299,7 +373,8 @@ deletes `NiftiReaderWriter`, `_explicit_matrix`,
 `_store_through_the_parser` and `_WritableNifti`. It also renames the
 `header=` option of the NIfTI converters to `metadata=`.
 
-The conformance test runs twelve checks on every migrated format.
+The conformance test runs the following checks on every migrated
+format.
 
 1. The constructor fields of the format are the fields of its model,
    `raw`, `metadata` and the options the format declares. None of them
@@ -307,17 +382,20 @@ The conformance test runs twelve checks on every migrated format.
    `node`.
 2. Loading is lazy. After a load, `raw` is a proxy and no decoded data
    is cached yet.
-3. Setting `data` stores `to_disk(value)` in `raw`, and clears the
-   cached data and the views derived from it.
+3. Setting `data` leaves the stored data and the record as they are,
+   clears the cached data and the views derived from it, and is
+   pending. `consolidate()` stores `to_disk(value)` in a copy.
 4. `to_model(to_disk(x))` equals `x`.
 5. An object that is loaded and saved without changes gives the same
    bytes, after decompression.
 6. `<X>Metadata.load` never reads the data, which is tested on a file
    truncated after its header.
 7. The metadata can be pickled.
-8. An object built from `data=` alone can be saved.
-9. `replace` and `from_instance` keep `raw` and `metadata` within a
-   format, and reset both when copying from another format.
+8. An object built from `data=` alone holds its data pending, and it
+   can be consolidated and saved.
+9. `replace` and `from_instance` keep `raw`, `metadata` and the pending
+   fields within a format, so a copy of an untouched object stays lazy,
+   and they reset `raw` and `metadata` when copying from another format.
 10. An edit of `metadata.raw` survives a save, and a changed geometry
     takes precedence over the stale header.
 11. Each format package exports exactly its intended public names, no
@@ -325,6 +403,18 @@ The conformance test runs twelve checks on every migrated format.
 12. The adapter contract holds. A format whose bytes are read through a
     stream really overrides `from_fileobj`, a binary format reads in
     `"rb"` mode, and a concrete format is not a dispatcher.
+13. The transformations of an image are decoded from the record unless
+    they are assigned, and copies within the format keep them.
+14. Copies between classes carry the decoded transformations.
+15. Consolidating an untouched object gives a copy that shares `raw`
+    and the metadata, and decodes nothing.
+16. Consolidating is idempotent, nothing is pending afterwards, and the
+    copy holds what a file written from the object holds. A format that
+    cannot write consolidates only its data.
+17. A save writes the consolidated copy and leaves the object as it was.
+18. A save over the file that the `raw` of the object reads consolidates
+    the object in place, and the object then holds what `load(path)`
+    gives (#426).
 
 The second pass moves LTA first, so that the reference format matches
 this design. `LtaStruct` becomes `LtaRaw`, its field becomes a
@@ -374,7 +464,12 @@ its status.
    `__post_init__` applies `data=` again, and for the NIfTI
    transformations it is written once, in `NiftiBasedTransformation`
    (`io/transformations/nifti/_base.py:84`). When both `raw=` and
-   `data=` are given, `data=` wins. Status: open.
+   `data=` are given, `data=` wins. Status: resolved by pending data.
+   The constructor stores `data=` in `_data`, which the default of
+   `raw` no longer overwrites, so `store_data_argument` and the
+   `__post_init__` methods that only called it are deleted. When both
+   `raw=` and `data=` are given, `data` is read first, and `raw` is kept
+   until the object is consolidated.
 2. A `smartproperty` whose setter was added later with `@data.setter`
    lost its `invalidates=` option, because the invalidator was wrapped
    around the setter only when the property was built. Status: resolved
@@ -452,8 +547,12 @@ its status.
     (`load=False`), `keep_open=` raises `TypeError`, `chain` and
     `position` become keyword-only, the `header`, `nodes` and `file`
     attributes are removed in favor of `metadata.raw`,
-    `X5TransformReaderWriter` is removed, and `to_struct` becomes
-    `to_raw`. Status: open.
+    `X5TransformReaderWriter` is removed, and `to_struct` is removed.
+    The design of pending data adds that `to_raw()` and `to_metadata()`
+    are removed from every class in favor of `consolidate()`, that
+    assigned data no longer changes `raw`, that a write no longer
+    changes the object except over its own file, and that an untouched
+    object is written with its record as it is. Status: open.
 14. The design needs `bagof-magic` 0.3.dev2 or later, which is not on
     PyPI yet, so the checks before each pull request need it installed
     from another source. Status: open.
@@ -466,21 +565,24 @@ its status.
     longer counted as owners.
 17. Copying an object within its format with `from_instance`, as
     `io.save` does, read `data` and so turned the proxy into an array.
-    Status: resolved in pass 1a, where `from_instance` keeps `raw` and
-    leaves `data` unset within a format, so that copies stay lazy and
-    an untouched object is still saved byte for byte.
-    `_FileBasedModelMixin` passes `data=None` only when `raw` is set,
-    so `LtaTransformation` overrides `from_instance` to pass
-    `data=None` when the source holds no matrix of its own
-    (`io/transformations/freesurfer/lta/_xforms.py:398`). This
-    override is accepted in pass 2a as explicit code in one class.
+    Status: resolved by pending data. Within a format, `from_instance`
+    copies `_data` as it is stored, so copies stay lazy and an untouched
+    object is still saved byte for byte, and the special case of
+    `_FileBasedModelMixin` that passed `data=None` is deleted. From
+    another class, it reads the decoded `data` of a format that takes
+    `data` over. The data model of a transformation copies the decoded
+    view of another instance (item 35), so `LtaTransformation` and the
+    NIfTI affines and coordinates field pass their stored `_data` within
+    the format, in explicit code in each class.
 18. `replace` reads `data` through the property, so a copy made with
     `replace` turns the proxy into an array and is no longer saved byte
     for byte. The setters of the NIfTI transformations empty the
     private `_data` of the model
     (`io/transformations/nifti/_affines.py:55` and `_fields.py:87`), so
-    that `replace` passes `data=None` and the copy keeps `raw`. Status: resolved in pass 1c for the
-    transformations, and open for `NiftiImage`, which has no `_data`.
+    that `replace` passes `data=None` and the copy keeps `raw`. Status:
+    resolved by pending data for every format, since `replace` copies
+    `_data`, which is `None` for an untouched object, and the setters
+    that emptied `_data` are deleted.
 19. The `repr` of an image decoded the whole proxy to show `data`.
     Status: resolved in pass 1a, where `SingleScaleImage.data` is
     hidden from `repr`, which changes the public `repr`.
@@ -513,10 +615,10 @@ its status.
     to be written back with code 2, and the padding before `vox_offset`
     was lost. Status: decided in pass 1c for the fields, which treat the
     geometry as unchanged while `_transformations` is unset and then
-    write `raw` under the record with its forms kept, and open for the
-    affines, which write the `sform` and the `qform` under the single
-    code that `_xform_code` chooses
-    (`io/transformations/nifti/_affines.py:185`).
+    write `raw` under the record with its forms kept. Resolved by
+    consolidation for every NIfTI format, since an untouched object is
+    written with its record as it is. A geometry that is assigned, or a
+    writer option, encodes the forms again.
 25. Encoding a model in millimeters over a record whose spatial unit
     is unknown could replace that unit. Status: decided in pass 1b,
     where the unknown unit of the record is kept.
@@ -544,7 +646,10 @@ its status.
     open question.
 31. `NiftiImage.transformations` is cached and returned as the same
     object each time, so appending to the list in place persists. It
-    used to return a copy. Status: decided in pass 1b.
+    used to return a copy. Status: decided in pass 1b. Since pending
+    state is tracked by assignment, a transformation appended to the
+    decoded list in place is not pending and is not written, and a
+    changed list must be assigned.
 32. `read_nifti` parses the header twice when it reads a local path,
     once for the record and once for the nibabel image. Status:
     accepted.
@@ -575,7 +680,8 @@ its status.
     `X5Affine(Affine)` subclass that carries its node, and that is left
     to the maintainer. Status: accepted for X5 in the pass 2b review
     (146c69b), which follows FNIRT, and open for FNIRT, whose cache is
-    older than pass 1c.
+    older than pass 1c. The key of the FNIRT cache now includes the
+    pending `_data`.
 37. In the conformance tests, check 9 does not convert NiftyReg, ITK
     and FNIRT fields to another format, because they have no converter
     until #312, and it compares `raw` and `data` only for models that
@@ -588,17 +694,20 @@ its status.
 39. Setting the data of a fresh LTA transformation used to build a
     record for it, and that record broke the untouched VOX and PHYS
     files that have no geometry blocks. Status: resolved in pass 2a.
-    Without a record, the model holds its matrix, and `to_raw` returns
-    the record only when `_data`, `_input` and `_output` are all unset.
-    The rules above now forbid making up a record to hold data.
-40. Two contracts exist for `to_raw`. A format object returns the record
-    that it holds, and `MetadataFormat.to_raw()` returns a copy. Status:
-    decided in pass 2a, and a rule for every format.
-41. Setting `data` on an LTA transformation that has a record replaces
+    Without a record, the model holds its matrix, and `consolidate`
+    keeps the record only when `_data`, `_input` and `_output` are all
+    unset. The rules above now forbid making up a record to hold data.
+40. Two contracts existed for `to_raw`. A format object returned the
+    record that it held, and `MetadataFormat.to_raw()` returned a copy.
+    Status: resolved, since `to_raw` is removed and `consolidate()` is
+    the single public encoding method, with one contract for every
+    class.
+41. Setting `data` on an LTA transformation that has a record replaced
     its metadata object, so that
-    `LtaTransformation(metadata=md, matrix=m).metadata is not md`. A
-    record is never changed in place and the matrix lives in the record,
-    so the record must be replaced. Status: accepted.
+    `LtaTransformation(metadata=md, matrix=m).metadata is not md`.
+    Status: resolved by pending data. The matrix is pending in `_data`
+    and the metadata is kept, and `consolidate()` replaces the metadata
+    with new metadata that holds a new record, as for every format.
 42. Without a record, the views of an LTA transformation read an
     anonymous volume block that was built again on each access. Status:
     resolved in pass 2a.
@@ -671,8 +780,8 @@ its status.
     the field is a read-only view of `record.positions`
     (`io/transformations/freesurfer/m3z/_xform.py`). Status: accepted in
     pass 2c, in the same category as the matrix of LTA.
-57. `M3zMetadata.to_raw()` shares the arrays of the record instead of
-    copying them, and pickling the metadata serializes the whole morph
+57. A copy of an M3Z record (`M3zRaw.copy()`) shares its arrays instead
+    of copying them, and pickling the metadata serializes the whole morph
     (`io/transformations/freesurfer/m3z/_metadata.py`). Dropping the
     arrays would make the record unwritable, and sharing them keeps
     copies free. Status: accepted in pass 2c.
@@ -680,9 +789,9 @@ its status.
     until the file is written, because the encoding needs the writer
     options and may refuse. X5 behaves in the same way. Status: accepted
     in pass 2c.
-59. `M3zMorph.to_raw(spacing, image_shape, atlas_shape)` takes writer
-    options, unlike `to_raw` of LTA and X5, because a chain cannot say
-    the shape of an image. Status: accepted in pass 2c.
+59. `M3zMorph.consolidate(spacing=, image_shape=, atlas_shape=)` takes
+    writer options, unlike the `consolidate` of LTA and X5, because a
+    chain cannot say the shape of an image. Status: accepted in pass 2c.
 60. Assigned `input` and `output` systems were not counted as overrides
     by M3Z, so a changed system was silently ignored on write. Status:
     resolved in pass 2c (730ef86), as a rule for every chain format, and
@@ -731,10 +840,11 @@ its status.
     `replace` assign the decoded list. Re-encoding the geometry does not
     drift: none of 300 random oblique geometries changed when it was
     encoded again. Status: accepted in the pass 3a review (4411bec).
-70. `MghImage.to_raw` returns the held record after it compares the
-    record with an encoded copy, and not after it checks that nothing
-    was assigned (`io/images/freesurfer/mgh/_image.py`). Status:
-    accepted in the pass 3a review (4411bec).
+70. `MghImage.consolidate` keeps the held metadata after it compares the
+    record with an encoded copy, and not only after it checks that
+    nothing was assigned (`io/images/freesurfer/mgh/_image.py`). AFNI,
+    MRtrix and NRRD compare in the same way. Status: accepted in the
+    pass 3a review (4411bec).
 71. An untouched MGH file is saved byte for byte only for canonical
     layouts, where bytes 90 to 283 of the header are zero. A file
     without a footer gains a footer of 20 zero bytes
@@ -776,8 +886,9 @@ its status.
 80. MGH imports `_is_local` from the private module
     `io/common/nifti/_files.py`. The function should move to
     `io/common/_files.py`. Status: open.
-81. `replace` on an `MghImage` reads `data` and so materializes the
-    proxy, as for `NiftiImage` (item 18). Status: open.
+81. `replace` on an `MghImage` read `data` and so materialized the
+    proxy, as for `NiftiImage` (item 18). Status: resolved by pending
+    data, as in item 18.
 82. `Metadata.__eq__` is based on identity, not on content. This is a
     matter of the base class and not of MGH. Status: open.
 83. The axis changes that depend on the record live in the lazy arrays
@@ -811,7 +922,8 @@ its status.
     receives a new `IDCODE` for AFNI, and a scaled MRtrix image is stored
     as floating point. The problem is shared by every image format and is
     to be fixed once in the base, as in item 18, and not once per format.
-    Status: open.
+    Status: resolved by pending data, as in item 18, for every format at
+    once.
 87. Saving an AFNI image with a different compression of the BRIK file
     removed the old BRIK file, which the lazy array of the loaded image
     still read, so the image lost its data (`_BrikProxy` in
@@ -819,7 +931,8 @@ its status.
     a loss of data, and the rule that a save never removes a file that a
     live proxy reads comes from it. Status: resolved in the pass 3b
     review (c7e2a4e), where `raw` points to the new BRIK file after the
-    old one is removed.
+    old one is removed. Such a save is now a save over the dataset of
+    the image (#426), so the image is consolidated in place first.
 88. The `__getitem__` of the proxies of AFNI and MRtrix decoded the whole
     file when Dask asked for an empty selection to find the metadata of
     the array, so a Dask array read the file twice. Status: resolved in
@@ -874,3 +987,63 @@ its status.
 99. `_views.py` now exists in three copies, for MGH, AFNI and MRtrix, in
     line with the rule of explicit code in each format (item 74).
     Status: accepted in the pass 3b review (c7e2a4e).
+100. After `consolidate()`, the geometry is decoded from the new record,
+     so it has the precision of the file: a NIfTI sform in single
+     precision, a qform as a quaternion, and the 16 significant digits
+     of LTA (item 44). An assigned geometry is therefore not returned
+     exactly by the consolidated copy. Keeping the assigned list in
+     `_transformations` would keep it exact, but something would then
+     stay pending after a consolidation. Status: accepted.
+101. MINC files cannot be written, so `MincImage.consolidate()` only
+     moves pending data into `raw` (`io/images/minc/_image.py`). The
+     metadata is kept, and assigned transformations stay pending,
+     because no record can be encoded. The conformance harness checks
+     this data-only consolidation instead of checks 16 and 17. Status:
+     accepted.
+102. A consolidated NIfTI affine has no `raw` array, because its matrix
+     lives in the header that the consolidation encodes
+     (`io/transformations/nifti/_affines.py`). The harness reads the
+     matrix of the header through `Exemplar.stored`, as it reads the
+     matrix of LTA. Status: accepted.
+103. The formats whose data model is a chain (the NIfTI displacement
+     field, SPM, NiftyReg, ITK and FNIRT) declare a private `_data`
+     field, so that their `data` can be pending, and their constructor
+     therefore takes `data=`. Check 1 allows `data` for them. Status:
+     accepted, and to be announced with item 13.
+104. A save over the file that the lazy array of an object reads
+     consolidates the object in place, and then points `raw` at the new
+     file. The consolidation alone is not enough, because the lazy array
+     of the old file describes how that file stored the data, such as
+     its offset, its type and its scaling, which the new file may store
+     differently, either because a header changed length or because a
+     writer option such as `dtype=` changed the storage. Status:
+     accepted.
+105. An AFNI dataset that is encoded again receives a new `IDCODE`, so
+     two consolidations of the same image give different headers. Check
+     17 therefore compares the files that a save and a save of the
+     consolidated copy write by reading them back, and not by their
+     bytes. Status: accepted.
+106. An X5 file is written with h5py in mode `"w"`, which truncates the
+     file, while the lazy fields of an X5 record read the file by its
+     name, so an X5 transformation saved over its own file loses its
+     fields. X5 keeps its fields in its record and has no `raw`, so
+     check 18 does not cover it. The problem is older than this work.
+     Status: open.
+107. A writer option that changes how the data is stored, such as
+     `dtype=` for NIfTI or `datatype=` for AFNI, is recorded in the
+     header of the consolidated copy, while `raw` holds the values
+     before they are converted to that type. The writer converts them,
+     so the file and a save of the copy agree, but the data of the copy
+     is not rounded until it is read again from a file. Status:
+     accepted.
+108. `ZarrImage`, `OmeZarrLevel` and the AFNI image of the core take
+     `data` over as `_data`, so that `replace` keeps their lazy source,
+     and the permutation of an OME-Zarr level is a field (`perm`), so
+     that a copy still transposes the array that it reads. Status:
+     resolved in the first pass of pending data.
+109. An untouched object is written with its record as it is, so a NIfTI
+     qform whose code is 0, or the `DISPVECT` intent of a legacy field
+     of coordinates read through a hint, is kept on an untouched save.
+     Writing the same object with its geometry encoded again needs an
+     assignment, such as `img.transformations = img.transformations`,
+     or a writer option. Status: accepted.
