@@ -10,7 +10,7 @@ from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import drop_cache, smartproperty
+from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -317,11 +317,13 @@ class NiftiBasedTransformation(
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a path.
 
-        The file is compressed when its name ends with `.gz`. A local
-        file is replaced at once, so a transformation can be written over
-        the file that it was read from. Its lazy array then reads the new
-        file, which holds the same values, and the cached views are
-        dropped.
+        The file is compressed when its name ends with `.gz`. The
+        transformation is consolidated into a copy, which is written, and
+        the transformation itself is not changed. A local file is replaced
+        at once, so a transformation can be written over the file that it
+        was read from. The transformation is then consolidated in place,
+        so that it holds what the file holds (#426), and its lazy array
+        reads the new file.
 
         Parameters
         ----------
@@ -330,12 +332,16 @@ class NiftiBasedTransformation(
         **kwargs : Any
             The writer options of [`consolidate`][].
         """
-        stale = reads_file(self.raw, filename)
-        write_nifti(self.to_nibabel(**kwargs), filename)
-        if stale:
-            # The cached views may be lazy views of the old file.
-            self.raw = read_nifti(filename)[1]
-            drop_cache(self, "data", *getattr(self, "derived_fields", ()))
+        if not reads_file(self.raw, filename):
+            write_nifti(self.to_nibabel(**kwargs), filename)
+            return
+        self.consolidate(inplace=True, **kwargs)
+        write_nifti(self.to_nibabel(), filename)
+        # The lazy array of the old file describes how that file stored
+        # the values, so the transformation reads the new file, and the
+        # views decoded from the old array are dropped.
+        self.raw = read_nifti(filename)[1]
+        self.data = None
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
         """Write the transformation to a stream as an uncompressed file.
