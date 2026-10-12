@@ -322,8 +322,8 @@ class NiftiBasedTransformation(
         the transformation itself is not changed. A local file is replaced
         at once, so a transformation can be written over the file that it
         was read from. The transformation is then consolidated in place,
-        so that it holds what the file holds (#426), and its lazy array
-        reads the new file.
+        so that it holds what the file holds (#426): its lazy array reads
+        the new file, and its record is the header of that file.
 
         Parameters
         ----------
@@ -338,9 +338,11 @@ class NiftiBasedTransformation(
         self.consolidate(inplace=True, **kwargs)
         write_nifti(self.to_nibabel(), filename)
         # The lazy array of the old file describes how that file stored
-        # the values, so the transformation reads the new file, and the
-        # views decoded from the old array are dropped.
-        self.raw = read_nifti(filename)[1]
+        # the values, so the transformation reads the new file, holds the
+        # record of its header, and drops the views decoded before.
+        record, proxy = read_nifti(filename)
+        self.raw = proxy
+        self.metadata = replace(self.metadata, raw=record)
         self.data = None
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:

@@ -2200,8 +2200,12 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
         pytest.skip("Only an object whose `raw` reads its file is affected.")
     # An untouched object is written over the file that it reads.
     loaded.save(path)
+    back = cls.load(path)
     assert np.array_equal(np.asarray(loaded.data), exemplar.sample())
-    assert np.array_equal(np.asarray(cls.load(path).data), exemplar.sample())
+    assert np.array_equal(np.asarray(back.data), exemplar.sample())
+    assert _header(exemplar, loaded.metadata) == _header(
+        exemplar, back.metadata
+    )
     # A changed object is consolidated in place, and then holds what the
     # file holds (#426): its `raw` reads the new file.
     loaded = _changed(cls, exemplar, tmp_path)
@@ -2214,6 +2218,10 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     assert np.array_equal(np.asarray(loaded.data), np.asarray(back.data))
     assert np.allclose(np.asarray(back.data), expected)
     assert np.allclose(exemplar.geometry(loaded), exemplar.geometry(back))
+    # Its record is the header of the new file.
+    assert _header(exemplar, loaded.metadata) == _header(
+        exemplar, back.metadata
+    )
 
 
 # ----------------------------------------------------------------------

@@ -532,7 +532,8 @@ class NiftiImage(
         image itself is not changed. A local file is replaced at once, so
         an image can be written over the file that it was read from. The
         image is then consolidated in place, so that it holds what the
-        file holds (#426), and its lazy array reads the new file.
+        file holds (#426): its lazy array reads the new file, and its
+        record is the header of that file.
 
         Parameters
         ----------
@@ -552,11 +553,15 @@ class NiftiImage(
             return
         self.consolidate(inplace=True, **kwargs)
         write_nifti(_nifti_written(self), filename)
-        # The image holds what the file holds, and its lazy array reads the
-        # new file, since the lazy array of the old file describes how that
-        # file stored the voxels.
-        self.raw = read_nifti(filename)[1]
+        # The image holds what the file holds: its lazy array reads the new
+        # file, since the lazy array of the old file describes how that
+        # file stored the voxels, and its record is the header of the new
+        # file.
+        record, proxy = read_nifti(filename)
+        self.raw = proxy
+        self.metadata = replace(self.metadata, raw=record)
         self.data = None
+        self.transformations = None
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
         """Write the image to a stream as an uncompressed NIfTI file.
