@@ -841,6 +841,8 @@ def _encoded(
     xform = transformations[-1] if transformations else None
     data = image._data if image._data is not None else image.data
     storage, sizes = raster.planar_storage(data, xform)
+    if sizes is not None:
+        sizes = (sizes["x"], sizes["y"])
     if num_resolutions is None and held is not None:
         num_resolutions = min(
             held.n_levels - image.level,

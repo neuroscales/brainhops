@@ -41,6 +41,7 @@ nav = [
         "api/io/common/mrtrix.md",
         "api/io/common/afni.md",
         "api/io/common/nrrd.md",
+        "api/io/common/jpeg2000.md",
         "api/io/common/freesurfer.md",
         "api/io/common/mgh.md",
         "api/io/common/minc.md",
