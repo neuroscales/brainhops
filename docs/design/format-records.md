@@ -1131,3 +1131,30 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+130. An OME-Zarr pyramid that is saved unchanged does not keep the bytes
+     of its metadata, because the writer encodes the metadata again from
+     the levels and the placements (`io/images/zarr/_multiscale.py`).
+     Keeping them needs the record of the Zarr pass (item 15), and that
+     record has to hold the JSON of the group as it was read, because
+     abczarr writes the numbers of a parsed model again in its own form,
+     such as `1.0` for `1`. Status: open, for the Zarr pass.
+131. OME-NGFF 0.6 only allows a `scale`, or a `scale` followed by a
+     `translation`, in the dataset of a level, and puts any other
+     placement in the transformations of the multiscale. A
+     `MultiScaleImage` lets each level hold any geometry, and the writer
+     puts that geometry in the dataset as it is, so a rotated or sheared
+     level is written as an `affine` that the official schema of version
+     0.6 rejects (`io/images/zarr/_multiscale.py`, `to_node`). The
+     writer could split the geometry into a diagonal part per level and a
+     part shared by every level, or refuse such levels. Either choice
+     changes how a pyramid shares its geometry between its levels and its
+     placements. Status: open, for the maintainer.
+132. OME-NGFF 0.6 identifies a coordinate system by its name and the path
+     of its group, while two brainhops systems are equal when they have
+     the same class, name and axes. Two images whose intrinsic systems are
+     both named `physical` therefore have equal systems in brainhops. The
+     reader of one multiscale is not affected, since names are unique in
+     a multiscale, but it skips the transformations that refer to another
+     group, such as a labels image (`io/images/zarr/_ome.py`,
+     `common_transformations`), and scenes are not read. Status: open,
+     for the maintainer.

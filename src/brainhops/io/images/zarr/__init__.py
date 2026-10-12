@@ -80,20 +80,23 @@ The draft type `inverseOf` was removed before version 0.6 and is
 refused. A `byDimension` is read only when its parts are affine, or when
 each part writes the axes that it reads. A transformation of the
 multiscale that refers to a system of another group, such as a labels
-image, is skipped, and only the first multiscale of a group is read.
+image, is skipped (item 132 of the tensions in
+`docs/design/format-records.md`), and only the first multiscale of a
+group is read.
 
 The writer encodes the geometry from the levels and the placements, and
 does not keep the metadata as it was read, so a pyramid that is saved
-unchanged does not keep the bytes of its metadata. It writes every
-placement that reduces to an affine as a `scale`, a `translation`, a
-`rotation`, an `affine` or a `sequence` of them, so that a placement
-read as an inverse is written in the forward direction. It refuses the
-other placements, such as a projection, a bijection or a field, with a
-[`WriterError`][brainhops.io.base.parsers.WriterError]. The writer also puts
-the geometry of each level in its dataset as it is. Version 0.6 only
-allows a `scale`, or a `scale` followed by a `translation`, there, so a
-level that is rotated or sheared is written as an `affine` that the
-official schema of version 0.6 rejects.
+unchanged does not keep the bytes of its metadata (item 130). It writes
+every placement that reduces to an affine as a `scale`, a
+`translation`, a `rotation`, an `affine` or a `sequence` of them, so
+that a placement read as an inverse is written in the forward direction.
+It refuses the other placements, such as a projection, a bijection or a
+field, with a [`WriterError`][brainhops.io.base.parsers.WriterError].
+The writer also puts the geometry of each level in its dataset as it is.
+Version 0.6 only allows a `scale`, or a `scale` followed by a
+`translation`, there, so a level that is rotated or sheared is written
+as an `affine` that the official schema of version 0.6 rejects (item
+131).
 """
 
 __all__ = ["ZarrImage", "OmeZarrImage", "OmeImageError"]
