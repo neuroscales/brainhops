@@ -574,6 +574,54 @@ def test_write_no_space_round_trip(tmp_path) -> None:  # noqa: ANN001
     )
 
 
+def test_an_image_whose_transformations_are_emptied_has_no_geometry(
+    lps_file,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """An empty list is honoured, and `None` decodes the record again.
+
+    The writer encodes an image without transformations as it encodes an
+    image built from data alone: the header keeps the other fields of the
+    base, but neither its space nor the spacings and positions of its
+    spatial axes.
+    """
+    name, _ = lps_file
+    image = io.load(name)
+    decoded = image.transformation.matrix
+    image.transformations = []
+    assert image.transformations == []
+    image.save(tmp_path / "emptied.nrrd")
+    fields = io.load(tmp_path / "emptied.nrrd").metadata.raw.fields
+    for field in ("space", "space directions", "space origin", "spacings"):
+        assert field not in fields
+    assert fields["kinds"] == "domain domain domain"
+    image.transformations = None
+    np.testing.assert_allclose(image.transformation.matrix, decoded)
+
+
+def test_an_unoriented_image_whose_transformations_are_emptied_has_no_spacings(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    (tmp_path / "a.nrrd").write_bytes(
+        _header(
+            "type: uint8",
+            "dimension: 2",
+            "sizes: 4 3",
+            "spacings: 0.5 2",
+            "axis mins: 1 nan",
+            "encoding: raw",
+        )
+        + b"\n"
+        + bytes(range(12))
+    )
+    image = io.load(tmp_path / "a.nrrd")
+    image.transformations = []
+    image.save(tmp_path / "b.nrrd")
+    fields = io.load(tmp_path / "b.nrrd").metadata.raw.fields
+    assert "spacings" not in fields
+    assert "axis mins" not in fields
+
+
 # ----------------------------------------------------------------------
 #   PYNRRD CROSS-CHECK
 # ----------------------------------------------------------------------

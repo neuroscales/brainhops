@@ -243,6 +243,27 @@ def test_transformations(anyminc) -> None:  # noqa: ANN001
     assert [a.name for a in image.system.axes] == ["x", "y", "z"]
 
 
+def test_an_image_whose_transformations_are_emptied_has_no_geometry(
+    anyminc,  # noqa: ANN001
+) -> None:
+    """An empty list is honoured, and `None` decodes the record again.
+
+    MINC cannot be written, so the empty list is checked on the image and
+    on its copies, including a NIfTI copy, which the NIfTI writer would
+    write as an image built from data alone.
+    """
+    _, filename = anyminc
+    image = io.images.load(filename)
+    image.transformations = []
+    assert image.transformations == []
+    assert type(image).from_instance(image).transformations == []
+    assert NiftiImage.from_instance(image).transformations == []
+    image.transformations = None
+    np.testing.assert_allclose(
+        image.transformation.matrix, image.metadata.raw.vox2world[:3]
+    )
+
+
 def test_dimensions_are_kept(anyminc) -> None:  # noqa: ANN001
     _, filename = anyminc
     image = io.images.load(filename)

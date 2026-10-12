@@ -8,7 +8,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -369,6 +369,19 @@ class NrrdImage(
     here.
     """
 
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+    """The transformations given to the image, or `None` to decode them.
+
+    The image takes over the `transformations` field of
+    [`SingleScaleImage`][] to store it under this private name. The
+    constructor still takes `transformations` in the same place, and the
+    property of the same name reads it. `None`, the default, means that
+    the transformations are decoded from the record, while a list, even
+    an empty one, is used as it is.
+    """
+
     _metadata: KwOnly[NoRepr[tx.Optional[NrrdMetadata]]] = None
 
     metadata = smartproperty("metadata", invalidates="transformations")
@@ -400,14 +413,18 @@ class NrrdImage(
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self.raw = None if value is None else _image_to_disk(value)
 
-    @smartproperty(cache=True, unset=(None, "empty"))
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Index-to-world transformations, decoded from the record.
 
         The decoded list is cached, so `img.transformation is
-        img.transformation`. Assigning a list replaces the decoded one, and
-        assigning other metadata drops it. An image without metadata has
-        no transformations.
+        img.transformation`. Assigning other metadata drops the decoded
+        list. An image without metadata has no transformations.
+
+        Assigning a list replaces the decoded one. An empty list means that
+        the image has no geometry, and the image is then written as an
+        image built from data alone. Assigning `None` decodes the record
+        again.
         """
         if self.metadata is None or self.metadata.raw is None:
             return []
@@ -617,6 +634,8 @@ class NrrdImage(
            the base, or in the anatomical space that the transformation
            maps to, and in RAS by default. A scaling onto unoriented axes
            of a base without a space becomes `spacings` and `axis mins`.
+           An image without transformations is written without geometry,
+           as an image built from data alone.
         3. The other fields of the base, such as `content`, are kept when
            the shape is that of the base, except `min` and `max` when the
            samples are new. The key/value pairs of the base are kept, and
@@ -1063,7 +1082,9 @@ def _geometry_fields(
 
     The fields of one value per axis are taken from the base when the
     shape is that of the base, and the spatial axes are then described by
-    their geometry alone. The base also gives the space and the
+    their geometry alone. An image without transformations has no
+    geometry, so the spacings, positions and units of its spatial axes
+    are dropped as well. The base also gives the space and the
     measurement frame of the result, whatever its shape.
 
     Raises
@@ -1086,6 +1107,18 @@ def _geometry_fields(
             if len(values) == ndim:
                 per_axis[name] = values
     spatial = [order[j] for j, r in enumerate(roles) if r == "space"]
+    if not image.transformations:
+        # The image is written as an image built from data alone, which
+        # has none of these fields, rather than with the geometry of the
+        # base.
+        for name in ("spacings", "axis mins", "axis maxs", "units"):
+            if name not in per_axis:
+                continue
+            empty = '""' if name == "units" else "nan"
+            for i in spatial:
+                per_axis[name][i] = empty
+            if all(value == empty for value in per_axis[name]):
+                del per_axis[name]
     geometry = _geometry(image, roles, space, held)
     if geometry is not None:
         kind, values = geometry

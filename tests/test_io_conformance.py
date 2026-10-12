@@ -1515,10 +1515,14 @@ def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
     """Write a new object of the format with a geometry and return its path.
 
     The geometry is the one that `exemplar.change_geometry` assigns, so
-    that it differs from the geometry of an object built from data.
+    that it differs from the geometry of an object built from data. A
+    format that cannot write keeps the geometry that `exemplar.source`
+    writes.
     """
-    path = tmp_path / ("placed" + exemplar.suffix)
-    obj = cls(data=exemplar.sample())
+    if exemplar.source is not None:
+        return _saved(cls, exemplar, tmp_path, "placed")
+    path = _path(tmp_path, exemplar, "placed")
+    obj = _built(cls, exemplar, exemplar.sample())
     exemplar.change_geometry(obj)
     obj.save(path)
     return path
@@ -1827,13 +1831,17 @@ def test_13_transformations_are_decoded_unless_assigned(
     assert loaded.transformations == []
     assert replace(loaded).transformations == []
     assert cls.from_instance(loaded).transformations == []
-    # The image is then written as an image built from data alone.
-    target = tmp_path / ("empty" + exemplar.suffix)
-    loaded.save(target)
-    bare = cls.load(_saved(cls, exemplar, tmp_path, "bare"))
-    assert np.allclose(
-        exemplar.geometry(cls.load(target)), exemplar.geometry(bare)
-    )
+    # The image is then written as an image built from data alone, by a
+    # format that can write.
+    target = _path(tmp_path, exemplar, "empty")
+    if exemplar.source is not None:
+        _refuses_writing(loaded, target)
+    else:
+        loaded.save(target)
+        bare = cls.load(_saved(cls, exemplar, tmp_path, "bare"))
+        assert np.allclose(
+            exemplar.geometry(cls.load(target)), exemplar.geometry(bare)
+        )
     # Assigning `None` decodes the record again.
     loaded.transformations = None
     assert np.allclose(exemplar.geometry(loaded), decoded)
