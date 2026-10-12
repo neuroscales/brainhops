@@ -34,9 +34,10 @@ _UNIT_TYPES = {"space": SpaceUnit, "time": TimeUnit}
 
 
 # `kw_only=True` is repeated here because bagof takes each class option
-# from the first base in the method resolution order that sets it. That
-# base is `MincReader`, which is not keyword-only, so the fields
-# declared by this class would otherwise be positional.
+# from the first base in the method resolution order, whether that base
+# sets the option or keeps the default. That base is `MincReader`,
+# which keeps the default, so the fields declared by this class would
+# otherwise be positional.
 class MincImage(MincReader, ImageFormat, SingleScaleImage, kw_only=True):
     """An image stored in a MINC file, of version 1 or 2.
 

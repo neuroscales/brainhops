@@ -48,9 +48,10 @@ _MGH_DTYPES = {
 
 
 # `kw_only=True` is repeated here because bagof takes each class option
-# from the first base in the method resolution order that sets it. That
-# base is `MghReaderWriter`, which is not keyword-only, so the fields
-# declared by this class would otherwise be positional.
+# from the first base in the method resolution order, whether that base
+# sets the option or keeps the default. That base is `MghReaderWriter`,
+# which keeps the default, so the fields declared by this class would
+# otherwise be positional.
 @register_format
 class MghImage(MghReaderWriter, ImageFormat, SingleScaleImage, kw_only=True):
     """An image stored in a FreeSurfer MGH or MGZ file.

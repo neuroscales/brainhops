@@ -111,9 +111,10 @@ class Transformation(
     # the position of a positional field follows the MRO. A subclass that
     # declares a system again, to give it a new default, inherits the
     # `kw_only=True` option of this class, so the system stays keyword-only.
-    # bagof takes the option from the first base in the MRO that sets it,
-    # however, so a subclass whose first base is a file reader that is not
-    # keyword-only must write `KwOnly[...]` itself.
+    # bagof takes the option from the first base in the MRO, however, even
+    # when that base only keeps the default, so a subclass whose first base
+    # is a file reader that is not keyword-only must write `KwOnly[...]`
+    # itself.
 
     _input: tx.Optional[CoordinateSystem] = None
     """Input coordinate system, which may be inferred from context if unset."""

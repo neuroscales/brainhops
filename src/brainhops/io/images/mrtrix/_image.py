@@ -63,9 +63,10 @@ def _mrtrix_axes(ndim: int) -> tx.List[Axis]:
 
 
 # `kw_only=True` is repeated here because bagof takes each class option
-# from the first base in the method resolution order that sets it. That
-# base is `MrtrixReaderWriter`, which is not keyword-only, so the fields
-# declared by this class would otherwise be positional.
+# from the first base in the method resolution order, whether that base
+# sets the option or keeps the default. That base is `MrtrixReaderWriter`,
+# which keeps the default, so the fields declared by this class would
+# otherwise be positional.
 @register_format
 class MrtrixImage(
     MrtrixReaderWriter, ImageFormat, SingleScaleImage, kw_only=True
