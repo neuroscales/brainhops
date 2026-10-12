@@ -772,9 +772,11 @@ if nb is not None:
 
 def _lta_stored(xform: tx.Any) -> tx.Any:
     # The matrix of an LTA file lives in the record, which is parsed in one
-    # pass, so it is a tuple of rows just after a read. `to_raw` returns
-    # that record unless the transformation holds a matrix of its own.
-    return xform.to_raw().affine.matrix
+    # pass, so it is a tuple of rows just after a read. A transformation
+    # without a record stores nothing until it is consolidated.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.affine.matrix
 
 
 def _lta_edit_record(record: tx.Any) -> tx.Any:
@@ -1209,14 +1211,14 @@ def test_09_copies_keep_raw_and_metadata(
     # Within the format, `from_instance` copies the lazy `raw` and does not
     # read the data.
     copy = cls.from_instance(loaded)
-    assert _stored(exemplar, copy) is _stored(exemplar, loaded)
+    assert _raw(copy) is _raw(loaded)
     assert copy.metadata is loaded.metadata
     assert "_cache_data" not in vars(loaded)
     # `replace` copies the stored fields too, so the copy keeps the lazy
     # `raw` and decodes nothing.
     copy = replace(loaded)
     assert copy.metadata is loaded.metadata
-    assert _stored(exemplar, copy) is _stored(exemplar, loaded)
+    assert _raw(copy) is _raw(loaded)
     assert copy._data is None
     assert "_cache_data" not in vars(loaded)
     assert "_cache_data" not in vars(copy)
