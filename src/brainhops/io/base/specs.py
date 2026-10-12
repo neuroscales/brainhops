@@ -1,4 +1,7 @@
-"""Structured file-source specifications and field parser registration."""
+"""Structured file sources, written `path|hint|key:value`.
+
+The module also registers the parsers that convert option values.
+"""
 
 __all__ = [
     "ImageSpec",
@@ -7,6 +10,7 @@ __all__ = [
     "SourceSpec",
     "TransformationSpec",
     "format_hints",
+    "parse_bool",
     "parser_for",
     "register_parser",
 ]
@@ -15,23 +19,30 @@ import re
 
 import typing_extensions as tx
 from bagof.core.magic import get_from_registry
-from bagof.magic import ConvertTo, Factory, Magic
+from bagof.magic import ConvertTo, Factory, Magic, replace
 
 from brainhops._core.path import Path
 
 
 class Parser(Magic, frozen=True):
-    """``Annotated`` metadata selecting the parser for a field.
+    """Annotation metadata choosing the parser of a field.
 
-    The value may be a registered target type or a parser callable/class.
-    An explicit ``Parser`` always takes precedence over registry lookup.
+    A field annotated as `Annotated[T, Parser(value)]` converts its option
+    string with `value` instead of the parser registered for `T`. The value is
+    either a parser or a target registered with [`register_parser`][], in
+    which case the parser registered for that target is used.
     """
 
     value: tx.Any
 
 
 class SourceSpec(Magic, frozen=True):
-    """A source path plus format hints and typed named options."""
+    """An immutable source path with format hints and named options.
+
+    A source specification names a file to read. Its format hints restrict
+    the formats that may read the file, and its options set fields of the
+    format that reads it. Option values are strings or nested specifications.
+    """
 
     path: ConvertTo[Path]
     hints: tx.Tuple[str, ...] = ()
@@ -39,12 +50,21 @@ class SourceSpec(Magic, frozen=True):
 
     @classmethod
     def from_arg(cls, text: str) -> tx.Self:
-        """Parse ``path|hint|key:value`` CLI syntax.
+        """Parse a source argument written as `path|hint|key:value`.
 
-        Brackets delimit a nested source specification. Colons are syntax
-        only in modifier segments, so URI schemes in source values remain
-        intact. A literal pipe must be percent-encoded as ``%7C`` because
-        ``|`` is always structural.
+        The segments after the path are format hints, options, or operations
+        that the class declares. Hints may also be given as `hint:a,b`. An
+        option value written in brackets, as in `key:[path|hint]`, is a nested
+        specification. Colons have a special meaning only in the segments after
+        the path, and only the first colon of a segment separates the option
+        name from its value, so a URI scheme in the path or in a value is kept
+        intact. A literal pipe is written `%7C`.
+
+        Raises
+        ------
+        ValueError
+            If the path is missing, a segment is empty, or an option is unnamed
+            or repeated.
         """
         segments = _split_top_level(text)
         if not segments or not segments[0]:
@@ -90,60 +110,104 @@ class SourceSpec(Magic, frozen=True):
 
     @classmethod
     def _parse_operation(cls, segment: str) -> tx.Optional["OperationSpec"]:
-        """Parse a class-owned operation, if this spec type declares it."""
+        """Parse a segment as a declared operation, or return `None`."""
         return None
 
 
 class ImageSpec(SourceSpec, frozen=True):
-    """A structured source specification for an image."""
+    """Source specification of an image."""
 
 
 class OperationSpec(Magic, frozen=True):
-    """A validated operation attached to a structured source."""
+    """A named operation applied to a loaded source."""
 
     name: str
 
     @classmethod
     def from_arg(cls, text: str) -> tx.Self:
-        """Parse this operation's segment from a source argument."""
+        """Parse the segment of this operation.
+
+        Raises
+        ------
+        ValueError
+            If the segment gives the operation a value.
+        """
         if ":" in text:
             name = text.split(":", 1)[0]
             raise ValueError(f"Operation {name!r} takes no value.")
         return cls(name=text.lower())
 
     def apply(self, value: tx.Any) -> tx.Any:
-        """Apply this operation to a loaded source value."""
+        """Apply the operation to a loaded value."""
         raise NotImplementedError
 
 
 class TransformationSpec(SourceSpec, frozen=True):
-    """A transformation source with validated transformation operations."""
+    """Source specification of a transformation, with optional operations.
+
+    The hint `svf` is shorthand for `displacements|log:true`, which reads a
+    displacement field as the stationary velocity field of the transformation,
+    as in `warp.nii.gz|svf|steps:6`. Operations such as `inv` are applied to
+    the loaded transformation in the order in which they are written.
+    """
 
     operations: tx.Tuple[OperationSpec, ...] = ()
     _OPERATIONS: tx.ClassVar[tx.Dict[str, tx.Type[OperationSpec]]] = {}
 
     @classmethod
+    def from_arg(cls, text: str) -> tx.Self:
+        """Parse a source argument, expanding the `svf` alias.
+
+        The syntax is that of [`SourceSpec.from_arg`][].
+        """
+        return _expand_svf(super().from_arg(text))
+
+    @classmethod
     def register_operation(
         cls, name: str
     ) -> tx.Callable[[tx.Type[OperationSpec]], tx.Type[OperationSpec]]:
-        """Register an operation understood by this source-spec class."""
+        """Register an operation under `name` for this class and subclasses.
+
+        Each class keeps its own registry, which is created the first
+        time an operation is registered on that class. An operation
+        registered on a subclass is therefore not recognised by its
+        parent classes or by its sibling classes.
+        """
 
         def decorator(
             operation: tx.Type[OperationSpec],
         ) -> tx.Type[OperationSpec]:
+            if "_OPERATIONS" not in vars(cls):
+                cls._OPERATIONS = {}
             cls._OPERATIONS[name.lower()] = operation
             return operation
 
         return decorator
 
     @classmethod
+    def _lookup_operation(
+        cls, name: str
+    ) -> tx.Optional[tx.Type[OperationSpec]]:
+        """Return the operation registered under `name`, or `None`.
+
+        The registries are searched along the method resolution order,
+        so an operation registered on a class takes precedence over an
+        operation of the same name registered on one of its parents.
+        """
+        for klass in cls.__mro__:
+            registry = vars(klass).get("_OPERATIONS")
+            if registry is not None and name in registry:
+                return registry[name]
+        return None
+
+    @classmethod
     def _parse_operation(cls, segment: str) -> tx.Optional[OperationSpec]:
         name = segment.split(":", 1)[0].lower()
-        operation = cls._OPERATIONS.get(name)
+        operation = cls._lookup_operation(name)
         return operation.from_arg(segment) if operation else None
 
     def apply_operations(self, value: tx.Any) -> tx.Any:
-        """Apply registered operations in their written order."""
+        """Apply the operations in the order in which they were written."""
         for operation in self.operations:
             value = operation.apply(value)
         return value
@@ -151,10 +215,28 @@ class TransformationSpec(SourceSpec, frozen=True):
 
 @TransformationSpec.register_operation("inv")
 class InvertOperation(OperationSpec, frozen=True):
-    """Invert a loaded transformation."""
+    """Invert a loaded transformation, written `inv` in a specification."""
 
     def apply(self, value: tx.Any) -> tx.Any:
         return value.inverse()
+
+
+def _expand_svf(spec: TransformationSpec) -> TransformationSpec:
+    # The svf hint already implies log:true, so it cannot be combined with an
+    # explicit log option.
+    if "svf" not in spec.hints:
+        return spec
+    if "log" in spec.options:
+        raise ValueError(
+            "The hint svf already means log:true, so it cannot be combined "
+            "with a log: option."
+        )
+    hints = ("displacements" if hint == "svf" else hint for hint in spec.hints)
+    return replace(
+        spec,
+        hints=tuple(dict.fromkeys(hints)),
+        options={**spec.options, "log": "true"},
+    )
 
 
 def _parse_hints(value: str) -> tx.List[str]:
@@ -165,17 +247,17 @@ def _parse_hints(value: str) -> tx.List[str]:
 
 
 def _decode_pipe(value: str) -> str:
-    """Decode the one percent escape reserved by the source grammar."""
+    """Decode `%7C`, the only escape of the grammar, into a pipe."""
     return re.sub("%7c", "|", value, flags=re.IGNORECASE)
 
 
 def _split_top_level(text: str) -> tx.List[str]:
-    """Split on pipes outside bracketed option values.
+    """Split on the pipes outside nested specifications.
 
-    A bracket is structural only when ``[`` immediately follows an option
-    tag in a modifier segment. Its matching ``]`` must end that source value:
-    it is followed by a pipe, the end of an enclosing source, or the end of
-    the argument. Other brackets are ordinary path characters.
+    A bracket opens a nested specification only when it directly follows an
+    option name `key:`, other than `hint:`, in a segment after the path. The
+    matching bracket must then end the option value. Every other bracket is
+    part of a path.
     """
     parts: tx.List[str] = []
     start = 0
@@ -221,7 +303,7 @@ def _split_top_level(text: str) -> tx.List[str]:
 def _starts_nested_source(
     text: str, segment_start: int, bracket: int, segment_number: int
 ) -> bool:
-    """Whether ``text[bracket]`` opens a bracketed option value."""
+    """Return whether `text[bracket]` opens a nested specification."""
     if segment_number == 0:
         return False
     tag = text[segment_start:bracket]
@@ -232,7 +314,7 @@ def _starts_nested_source(
 
 
 def _ends_nested_source(text: str, bracket: int) -> bool:
-    """Whether a closing bracket is at a nested-source boundary."""
+    """Return whether `text[bracket]` closes a nested specification."""
     return bracket + 1 == len(text) or text[bracket + 1] in "|]"
 
 
@@ -242,7 +324,7 @@ _PARSERS: tx.Dict[tx.Hashable, tx.Any] = {}
 def register_parser(
     target: tx.Hashable,
 ) -> tx.Callable[[tx.Any], tx.Any]:
-    """Register a default parser for ``target`` as a class decorator."""
+    """Register a decorated parser as the default for `target`."""
 
     def decorator(parser: tx.Any) -> tx.Any:
         _PARSERS[target] = parser
@@ -251,8 +333,37 @@ def register_parser(
     return decorator
 
 
+_TRUE = frozenset({"true", "yes", "on", "1"})
+_FALSE = frozenset({"false", "no", "off", "0"})
+
+
+@register_parser(bool)
+def parse_bool(spec: SourceSpec) -> bool:
+    """Parse a boolean option such as `log:true`.
+
+    A dedicated parser is needed because every non-empty string is truthy, so
+    `log:false` would otherwise read as true. The values `true`, `yes`, `on`
+    and `1` and their opposites are accepted, in any letter case.
+
+    Raises
+    ------
+    ValueError
+        If the value is anything else, or if hints or options are given.
+    """
+    text = str(spec.path).strip().lower()
+    if spec.hints or spec.options or (text not in _TRUE | _FALSE):
+        raise ValueError(
+            f"Expected a boolean option (true or false), not {str(spec)!r}."
+        )
+    return text in _TRUE
+
+
 def parser_for(annotation: tx.Any) -> tx.Optional[tx.Any]:
-    """Resolve explicit parser metadata or the best registered parser."""
+    """Return the explicit or registered parser for an annotation, or `None`.
+
+    For a union, the parser of its members is used when the members that have
+    a parser all share the same one.
+    """
     annotation, explicit = _unwrap_annotated(annotation)
     if explicit is not None:
         value = explicit.value
@@ -294,7 +405,13 @@ def _unwrap_annotated(
 
 
 def _hint_paths(cls: type) -> tx.Set[tx.Tuple[str, ...]]:
-    """Build namespace paths along individual inheritance branches."""
+    """Return the hint paths of `cls` along each inheritance branch.
+
+    A hint path lists the hints declared along an inheritance branch, from the
+    most general to the most specific. [`format_hints`][] joins each path into
+    a dotted hint such as `itk.displacements`. Each hint that `cls` declares
+    also forms a path on its own.
+    """
     declared = tuple(
         str(hint).lower() for hint in cls.__dict__.get("HINTS", ())
     )
@@ -312,7 +429,10 @@ def _hint_paths(cls: type) -> tx.Set[tx.Tuple[str, ...]]:
 
 
 def format_hints(cls: type) -> tx.FrozenSet[str]:
-    """Collect leaf and qualified hints along semantic inheritance branches."""
+    """Return the plain and dotted hints of a format.
+
+    For example, a format may answer to `itk` and `itk.displacements`.
+    """
     paths: tx.Set[tx.Tuple[str, ...]] = set()
     for base in cls.__mro__:
         paths.update(_hint_paths(base))

@@ -1,21 +1,26 @@
-"""Tests for `smartproperty` and `lazyproperty`: when the getter computes
-the value (`unset`), what the setter stores, and the cache."""
+"""Tests of `smartproperty`, `lazyproperty` and `smartsetter`."""
 
 import pytest
 import typing_extensions as tx
 
-from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.properties import (
+    InvalidatorInAttribute,
+    drop_cache,
+    lazyproperty,
+    smartproperty,
+    smartsetter,
+)
 
 
 def _box(unset: tx.Any = None, cache: bool = False) -> type:
-    # A plain class with one property, `value`, stored under `_value`, whose
-    # computed value counts how often it was computed.
+    # A class with one property `value`, stored as `_value`, that counts how
+    # often its value is computed.
     class Box:
         computed = 0
 
         def __init__(self, value: tx.Any = None) -> None:
-            # A constructor that writes its argument, the default included,
-            # through the setter -- as a data model does.
+            # The constructor writes its argument, including the default,
+            # through the setter, as a data model does.
             self.value = value
 
         @smartproperty(unset=unset, cache=cache)
@@ -33,30 +38,19 @@ def _odd(value: tx.Any) -> bool:
 @pytest.mark.parametrize(
     "unset, stored, computed",
     [
-        # `None` (the default): a stored `None` only.
+        # By default, only a stored None is unset.
         (None, None, True),
         (None, [], False),
         (None, 0, False),
-        # "empty": an empty container only -- not `None`.
-        ("empty", [], True),
-        ("empty", (), True),
-        ("empty", {}, True),
-        ("empty", set(), True),
-        ("empty", frozenset(), True),
-        ("empty", [0], False),
-        ("empty", "", False),
-        ("empty", None, False),
-        # A predicate.
+        # A predicate decides which values are unset.
         (_odd, 3, True),
         (_odd, 2, False),
         (_odd, None, False),
-        # A tuple: any of them.
-        ((None, "empty"), None, True),
-        ((None, "empty"), [], True),
-        ((None, "empty"), [1], False),
+        # With a tuple, any member may match.
         ((None, _odd), 1, True),
         ((None, _odd), None, True),
-        (("empty", _odd), 2, False),
+        ((None, _odd), 2, False),
+        ((None, _odd), [], False),
     ],
 )
 def test_unset_says_when_the_getter_runs(
@@ -73,46 +67,45 @@ def test_the_default_is_a_stored_none() -> None:
     assert _box()([]).value == []
 
 
-@pytest.mark.parametrize("unset", [None, "empty", (None, "empty"), _odd])
+@pytest.mark.parametrize("unset", [None, (None, _odd), _odd])
 def test_the_setter_stores_the_value_as_given(unset: tx.Any) -> None:
     for value in (None, [], 3, [1]):
         box = _box(unset)(value)
         assert box._value is value
 
 
-def test_an_unset_value_written_by_the_constructor_is_computed() -> None:
-    # The case `unset=(None, "empty")` is for: a constructor that writes an
-    # empty default through the setter does not shadow the getter.
-    box = _box((None, "empty"))([])
+def test_an_empty_value_is_used_as_it_is() -> None:
+    # Only `None` reads as unset, so an empty container is a value.
+    box = _box()(None)
     assert box.value == "computed"
-    box.value = ["given"]
-    assert box.value == ["given"]
     box.value = []
+    assert box.value == []
+    box.value = None
     assert box.value == "computed"
 
 
 def test_the_cache_and_its_invalidation() -> None:
-    cls = _box((None, "empty"), cache=True)
-    box = cls([])
+    cls = _box(cache=True)
+    box = cls(None)
     assert box.value == "computed" and cls.computed == 1
-    assert box.value == "computed" and cls.computed == 1  # cached
-    # A set value is served, and setting clears the cache.
+    assert box.value == "computed" and cls.computed == 1
+    # A value that is set is served as is, and setting clears the cache.
     box.value = ["given"]
     assert box.value == ["given"] and not hasattr(box, "_cache_value")
-    box.value = []
+    box.value = None
     assert box.value == "computed" and cls.computed == 2
-    # A predicate caches the same way.
+    # A predicate caches in the same way.
     cls = _box(_odd, cache=True)
     box = cls(1)
     assert box.value == "computed" and box.value == "computed"
     assert cls.computed == 1
 
 
-def test_lazyproperty_takes_unset() -> None:
+def test_lazyproperty_computes_once_and_reads_a_stored_value() -> None:
     class Lazy:
         computed = 0
 
-        @lazyproperty(unset=(None, "empty"))
+        @lazyproperty
         def value(self) -> str:
             type(self).computed += 1
             return "computed"
@@ -120,16 +113,23 @@ def test_lazyproperty_takes_unset() -> None:
     lazy = Lazy()
     assert lazy.value == "computed" and lazy.value == "computed"
     assert Lazy.computed == 1
+    with pytest.raises(AttributeError):
+        lazy.value = "given"
+    # A value that a constructor stores in the private attribute is read.
+    lazy = Lazy()
+    lazy._value = "stored"
+    assert lazy.value == "stored" and Lazy.computed == 1
 
 
 @pytest.mark.parametrize(
     "unset, error, match",
     [
-        ("blank", ValueError, "'empty'"),
-        ((None, "nothing"), ValueError, "'empty'"),
+        # No string names a form.
+        ("blank", TypeError, "not a str"),
+        ((None, "nothing"), TypeError, "not a str"),
         ((), ValueError, "no form"),
         (0, TypeError, "not a int"),
-        ([None, "empty"], TypeError, "not a list"),
+        ([None, _odd], TypeError, "not a list"),
         ((None, 1.0), TypeError, "not a float"),
     ],
 )
@@ -138,11 +138,253 @@ def test_a_bad_unset_is_refused_when_declared(
 ) -> None:
     with pytest.raises(error, match=match):
         smartproperty(unset=unset)
-    with pytest.raises(error, match=match):
-        lazyproperty(unset=unset)
 
 
 def test_the_former_options_are_gone() -> None:
     for option in ("empty_as_unset", "informative", "missing"):
         with pytest.raises(TypeError):
             smartproperty(**{option: True})
+    # A lazy property is always computed when nothing is stored, so it
+    # takes no unset, and no predicate reads every stored value as unset.
+    with pytest.raises(TypeError):
+        lazyproperty(unset=None)
+    from brainhops._core import properties
+
+    assert not hasattr(properties, "always_unset")
+
+
+def _views_box() -> type:
+    # `value` is computed from `_source`, and its setter is given with the
+    # `setter` decorator. `twice` is a cached view that depends on `value`.
+    class Box:
+        def __init__(self, source: int) -> None:
+            self._source = source
+
+        @smartproperty(cache=True, invalidates="twice")
+        def value(self) -> int:
+            return self._source
+
+        @value.setter
+        def value(self, value: int) -> None:
+            self._source = value
+
+        @smartproperty(cache=True, fset=False)
+        def twice(self) -> int:
+            return 2 * self.value
+
+    return Box
+
+
+def test_a_setter_given_with_the_decorator_keeps_the_invalidation() -> None:
+    box = _views_box()(1)
+    assert box.value == 1 and box.twice == 2
+    assert box._cache_value == 1 and box._cache_twice == 2
+    box.value = 3
+    assert "_cache_value" not in box.__dict__
+    assert "_cache_twice" not in box.__dict__
+    assert box.value == 3 and box.twice == 6
+
+
+def test_the_getter_and_deleter_decorators_keep_the_invalidation() -> None:
+    class Box:
+        def __init__(self) -> None:
+            self.deleted = False
+
+        @smartproperty(cache=True, invalidates="other")
+        def value(self) -> int:
+            return 1
+
+        @value.deleter
+        def value(self) -> None:
+            self.deleted = True
+
+        @value.setter
+        def value(self, value: int) -> None:
+            self._value = value
+
+    box = Box()
+    assert box.value == 1 and box._cache_value == 1
+    box._cache_other = "stale"
+    box.value = 2
+    assert "_cache_value" not in box.__dict__ and box.value == 2
+    assert "_cache_other" not in box.__dict__
+    del box.value
+    assert box.deleted
+    # A getter replaced after the declaration keeps the invalidation too.
+    replaced = Box.value.getter(lambda self: 5)
+    assert replaced.invalidates == ("other",) and replaced.cache
+
+
+def _cached_box(how: str) -> type:
+    # `value` is cached, and its setter, given with `fset=` or with the
+    # `setter` decorator, stores the value in `_source`, which the getter
+    # reads.
+    def store(self: tx.Any, value: int) -> None:
+        self._source = value
+
+    class Box:
+        def __init__(self, source: int) -> None:
+            self._source = source
+
+        if how == "fset":
+
+            @smartproperty(cache=True, fset=store)
+            def value(self) -> int:
+                return self._source
+
+        elif how == "setter":
+
+            @smartproperty(cache=True)
+            def value(self) -> int:
+                return self._source
+
+            value = value.setter(store)
+
+        else:
+
+            @lazyproperty
+            def value(self) -> int:
+                return self._source
+
+            value = value.setter(store)
+
+    return Box
+
+
+@pytest.mark.parametrize("how", ["fset", "setter", "lazy"])
+def test_every_setter_drops_the_cache_of_its_property(how: str) -> None:
+    box = _cached_box(how)(1)
+    assert box.value == 1 and box._cache_value == 1
+    box.value = 3
+    assert box.value == 3
+
+
+def test_a_setter_may_fill_its_own_cache() -> None:
+    # The cache is dropped before the setter runs, so a setter that caches
+    # the value it was given keeps it, as the `values` setter of a field
+    # does.
+    class Box:
+        def __init__(self) -> None:
+            self._source = 1
+
+        @lazyproperty(invalidates="other")
+        def value(self) -> int:
+            return self._source
+
+        @value.setter
+        def value(self, value: int) -> None:
+            self._source = None
+            self._cache_value = value
+
+    box = Box()
+    assert box.value == 1
+    box._cache_other = "stale"
+    box.value = 3
+    assert box._cache_value == 3 and box.value == 3
+    assert "_cache_other" not in box.__dict__
+
+
+def test_invalidates_mixes_names_and_invalidators() -> None:
+    class Box:
+        views = ("twice",)
+
+        def __init__(self) -> None:
+            self._cache_twice = "stale"
+            self._cache_other = "stale"
+            self._cache_kept = "kept"
+
+        value = smartproperty(
+            "value", invalidates=("other", InvalidatorInAttribute("views"))
+        )
+
+    box = Box()
+    box.value = 1
+    assert box.value == 1
+    assert "_cache_twice" not in box.__dict__
+    assert "_cache_other" not in box.__dict__
+    assert box._cache_kept == "kept"
+    assert Box.value.invalidates[0] == "other"
+
+
+def test_invalidates_refuses_other_items() -> None:
+    with pytest.raises(TypeError, match="not a int"):
+        smartproperty("value", invalidates=("other", 1))
+
+
+def test_drop_cache_deletes_the_cached_values_it_names() -> None:
+    box = _cached_box("setter")(1)
+    assert box.value == 1
+    box._source = 2
+    assert box.value == 1
+    drop_cache(box, "value", "never_cached")
+    assert box.value == 2
+
+
+# smartsetter
+
+
+# --- smartsetter ------------------------------------------------------
+
+
+def _setter_box() -> type:
+    # `value` reads `_value`, named after its setter, and counts its calls;
+    # `other` reads the given `_stored`.
+    class Box:
+        calls = 0
+
+        @smartsetter
+        def value(self, value: tx.Any) -> None:
+            type(self).calls += 1
+            self._value = value
+
+        @smartsetter("stored")
+        def other(self, value: tx.Any) -> None:
+            self._stored = value * 2
+
+    return Box
+
+
+def test_smartsetter_takes_its_name_from_the_function() -> None:
+    box = _setter_box()()
+    assert isinstance(type(box).value, property)
+    assert box.value is None
+    box.value = 3
+    assert box.value == 3 and box._value == 3
+    assert type(box).calls == 1
+
+
+def test_smartsetter_takes_a_name() -> None:
+    box = _setter_box()()
+    assert isinstance(type(box).other, property)
+    assert box.other is None
+    box.other = 3
+    assert box.other == 6 and box._stored == 6
+
+
+def test_smartsetter_reads_the_private_attribute() -> None:
+    box = _setter_box()()
+    box._value = "stored"
+    assert box.value == "stored"
+    assert type(box).calls == 0
+
+
+def test_smartsetter_on_a_magic_class_with_a_private_field() -> None:
+    # As in the transformations: the field is stored privately, the constructor
+    # takes the public name, and assignment runs the setter.
+    from bagof.magic import Magic
+
+    class Model(Magic):
+        _data: tx.Optional[int] = None
+        assigned: tx.ClassVar[int] = 0
+
+        @smartsetter
+        def data(self, value: tx.Optional[int]) -> None:
+            self._data = value
+            type(self).assigned += 1
+
+    model = Model(data=4)
+    assert model.data == 4 and model._data == 4
+    before = Model.assigned
+    model.data = 5
+    assert model.data == 5 and Model.assigned == before + 1
+    assert Model().data is None

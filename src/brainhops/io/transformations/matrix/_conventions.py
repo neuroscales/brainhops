@@ -1,34 +1,24 @@
 """
-Turn a bare matrix, read with no convention attached, into an affine.
+Conversion of a bare matrix into an affine transformation.
 
-A plain matrix file says nothing about what its matrix means. The caller
-states it, and the functions here apply those statements, in this order:
-
-1. **vector convention** -- a row-vector matrix (`y = x @ A`) is
-   transposed to the column-vector form (`y = A @ x`) the data model
-   uses;
-2. **shape** -- the matrix is completed to a homogeneous
-   `(N + 1, N + 1)` matrix;
-3. **direction** -- an inverse matrix is inverted;
-4. **index base** -- a 1-based voxel endpoint is shifted to the 0-based
-   index space of the data model (#201: 0-based, integer = voxel centre);
-5. **images** -- a voxel endpoint whose image is given is mapped to that
-   image's world space.
+The conventions stated by the caller are applied in this order: a row-vector
+matrix is transposed, the matrix is completed to homogeneous form, an inverse
+matrix is inverted, 1-based voxel indices are shifted to the 0-based indices
+of the data model, and a voxel endpoint that comes with an image is mapped to
+the world space of that image. In the 0-based indices of the data model, an
+integer index is the centre of a voxel (see #201).
 """
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# internals
 from brainhops.datamodel import systems as _systems
 
 _SpaceLike = tx.Union[str, _systems.CoordinateSystem, None]
 _BaseLike = tx.Union[int, tx.Tuple[int, int]]
 
-# Accepted shapes of the column-vector matrix, mapped to the number of
-# spatial dimensions. `(3, 3)` is ambiguous (a 3-D linear map or a 2-D
-# homogeneous affine) and resolved by `ndim`.
+# A (3, 3) matrix is either a 3-D linear map or a 2-D homogeneous affine, so
+# the ndim argument decides between the two.
 _SHAPES = {(2, 3): 2, (3, 4): 3, (4, 4): 3, (3, 3): None}
 
 VECTORS = ("column", "row")
@@ -42,7 +32,7 @@ SPACES = ("voxel", "pixel", "index", "ras", "lps", "unnamed")
 
 
 def check_vector(vector: str) -> str:
-    """Normalize the vector convention (`"column"` or `"row"`)."""
+    """Normalize a vector convention to `"column"` or `"row"`."""
     vector = str(vector).lower()
     if vector in ("col", "columns"):
         vector = "column"
@@ -54,7 +44,7 @@ def check_vector(vector: str) -> str:
 
 
 def check_direction(direction: str) -> str:
-    """Normalize the direction (`"forward"` or `"inverse"`)."""
+    """Normalize a direction to `"forward"` or `"inverse"`."""
     direction = str(direction).lower()
     if direction in ("fwd",):
         direction = "forward"
@@ -68,7 +58,7 @@ def check_direction(direction: str) -> str:
 
 
 def check_index_base(index_base: _BaseLike) -> tx.Tuple[int, int]:
-    """Normalize the index base to an `(input, output)` pair of 0/1."""
+    """Normalize an index base to an `(input, output)` pair of 0 or 1."""
     if isinstance(index_base, (tuple, list)):
         bases = tuple(int(b) for b in index_base)
     else:
@@ -82,7 +72,7 @@ def check_index_base(index_base: _BaseLike) -> tx.Tuple[int, int]:
 
 
 def column_matrix(raw: np.ndarray, vector: str = "column") -> np.ndarray:
-    """The matrix in column-vector form, as a float array."""
+    """Return a 2-D matrix in the column-vector convention."""
     matrix = np.asarray(raw, dtype=np.float64)
     if matrix.ndim != 2:
         raise ValueError(f"Expected a 2-D matrix, got shape {matrix.shape}.")
@@ -92,7 +82,7 @@ def column_matrix(raw: np.ndarray, vector: str = "column") -> np.ndarray:
 
 
 def spatial_ndim(shape: tx.Tuple[int, ...], ndim: tx.Optional[int]) -> int:
-    """The number of spatial dimensions a column-vector matrix acts on."""
+    """Return the number of spatial dimensions that a matrix acts on."""
     shape = tuple(shape)
     if shape not in _SHAPES:
         raise ValueError(
@@ -102,7 +92,6 @@ def spatial_ndim(shape: tx.Tuple[int, ...], ndim: tx.Optional[int]) -> int:
         )
     known = _SHAPES[shape]
     if known is None:
-        # (3, 3): a 3-D linear map unless told it is a 2-D affine.
         known = 3 if ndim is None else int(ndim)
         if known not in (2, 3):
             raise ValueError(f"ndim must be 2 or 3, got {ndim!r}.")
@@ -114,19 +103,15 @@ def spatial_ndim(shape: tx.Tuple[int, ...], ndim: tx.Optional[int]) -> int:
 
 
 def homogeneous(matrix: np.ndarray, ndim: tx.Optional[int]) -> np.ndarray:
-    """
-    Complete a column-vector matrix to a `(N + 1, N + 1)` homogeneous one.
-
-    Raises if a square homogeneous matrix has a projective last row.
-    """
+    """Complete a column-vector matrix to homogeneous `(N + 1, N + 1)` form."""
     n = spatial_ndim(matrix.shape, ndim)
     rows, cols = matrix.shape
     out = np.eye(n + 1)
-    if (rows, cols) == (n, n):  # linear
+    if (rows, cols) == (n, n):
         out[:n, :n] = matrix
-    elif (rows, cols) == (n, n + 1):  # affine, last row implied
+    elif (rows, cols) == (n, n + 1):
         out[:n] = matrix
-    else:  # homogeneous
+    else:
         last = np.zeros(n + 1)
         last[-1] = 1
         if not np.allclose(matrix[-1], last, atol=1e-6):
@@ -141,7 +126,7 @@ def homogeneous(matrix: np.ndarray, ndim: tx.Optional[int]) -> np.ndarray:
 def is_affine_matrix(
     raw: np.ndarray, vector: str = "column", ndim: tx.Optional[int] = None
 ) -> bool:
-    """Whether `raw` reads as a finite affine matrix under a convention."""
+    """Return whether `raw` reads as a finite affine matrix."""
     try:
         if not np.all(np.isfinite(raw)):
             return False
@@ -157,7 +142,7 @@ def is_affine_matrix(
 
 
 def make_system(space: _SpaceLike, ndim: int) -> _systems.CoordinateSystem:
-    """The coordinate system named by `space`, with `ndim` dimensions."""
+    """Return the `ndim`-dimensional coordinate system named by `space`."""
     if isinstance(space, _systems.CoordinateSystem):
         return space
     name = "unnamed" if space is None else str(space).lower()
@@ -182,7 +167,7 @@ def make_system(space: _SpaceLike, ndim: int) -> _systems.CoordinateSystem:
 
 
 def is_index_system(system: _systems.CoordinateSystem) -> bool:
-    """Whether a coordinate system is an index (voxel/pixel) space."""
+    """Return whether a coordinate system is a voxel or pixel space."""
     return isinstance(system, _systems.ArrayCoordinateSystem)
 
 
@@ -201,11 +186,11 @@ def image_to_world(
     image: tx.Any,
 ) -> tx.Tuple[np.ndarray, _systems.CoordinateSystem]:
     """
-    The homogeneous voxel-to-world matrix of an image, and its world space.
+    Return the voxel-to-world matrix of an image and its world space.
 
-    A nibabel image or header gives its best (sform, else qform) affine,
-    mapping to RAS. A brainhops image gives its preferred transformation,
-    which must be an affine, and that transformation's output space.
+    For a `nibabel` image or header, the world space is RAS. For a brainhops
+    image, the transformation must be an affine, and the world space is its
+    output.
     """
     xform = getattr(image, "transformations", None)
     if xform is not None and not hasattr(image, "get_best_affine"):
@@ -257,19 +242,22 @@ def to_affine(
     tx.Tuple[int, int],
 ]:
     """
-    Apply the caller's conventions to a raw matrix.
+    Apply the conventions stated by the caller to a raw matrix.
 
-    See [`MatrixAffine`][brainhops.io.transformations.matrix.MatrixAffine]
-    for the meaning of each argument.
+    The conventions are described in
+    [`MatrixAffine`][brainhops.io.transformations.matrix.MatrixAffine].
 
     Returns
     -------
-    matrix : (N, N + 1) ndarray
-        The affine, column-vector, 0-based, mapping `input` to `output`.
-    input, output : CoordinateSystem
-    index_base : (int, int)
-        The index base applied to the input and output (0 for an
-        endpoint that is not a voxel space).
+    matrix : np.ndarray
+        The `(N, N + 1)` column-vector matrix from input to output, with
+        0-based voxel indices.
+    input : CoordinateSystem
+        The space that the matrix maps from.
+    output : CoordinateSystem
+        The space that the matrix maps to.
+    index_base : tuple of int
+        The index base applied to the input and to the output.
     """
     homog = homogeneous(column_matrix(raw, vector), ndim)
     n = homog.shape[0] - 1
@@ -277,8 +265,7 @@ def to_affine(
     if check_direction(direction) == "inverse":
         homog = np.linalg.inv(homog)
 
-    # A source (target) image places a voxel input (output); asking for
-    # one implies that end is a voxel space unless said otherwise.
+    # Passing an image implies that its endpoint is a voxel space.
     if input is None and source is not None:
         input = "voxel"
     if output is None and target is not None:
@@ -306,7 +293,8 @@ def to_affine(
             raise ValueError(
                 f"index_base is 1 for the {end}, which is not a voxel space."
             )
-    # x1 = x0 + 1, so a 1-based map M1 is S(-1) @ M1 @ S(+1) in 0-based.
+    # A 1-based index is x1 = x0 + 1, so a 1-based matrix M1 becomes
+    # S(-1) @ M1 @ S(+1) in 0-based indices, where S(t) shifts by t.
     if in_base:
         homog = homog @ _shift(n, 1.0)
     if out_base:

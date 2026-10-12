@@ -1,16 +1,15 @@
-"""
-Regression tests: the positional parameters of every transformation.
+"""Tests pinning the positional parameters of every transformation and image.
 
-bagof collects the fields of a class in MRO order, so the place of a
-parameter in `__init__` follows the order of the bases. Reordering them
-once turned the ITK formats' `(transformations, input, output)` into
-`(input, output, transformations)`, and `TfmTransform([scaling])` then
-silently read the list as the input coordinate system.
-
-The endpoints are therefore keyword-only on every transformation, and
-the positional parameters of each public class are pinned here: a change
-to a base that moves them fails this file instead of reaching users. An
-intended change updates `POSITIONAL`.
+Fields are collected in MRO order, so their position in `__init__`
+follows the order of the bases, and reordering the bases once made
+`TfmTransform([scaling])` read the list as the input coordinate system.
+Fields are therefore keyword-only by default, and only the defining
+fields, such as `data` or the parsed file of a reader, are positional.
+An image is defined by its `data` (or its `images`, for a pyramid) and
+its `transformations`, which are positional in that order. The fields
+that a reader of `brainhops.io.common` contributes, such as the opened
+Zarr `node`, stay positional, as they do on the transformations. An
+intended change of signature must update `POSITIONAL` or `IMAGES`.
 """
 
 import importlib
@@ -20,9 +19,11 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
-# Import every family, so that walking the subclasses finds them all.
+# Import every family so that the subclass walk finds all of them.
 import brainhops.datamodel.geometry  # noqa: F401
+import brainhops.io.images  # noqa: F401
 import brainhops.io.transformations  # noqa: F401
+from brainhops.datamodel.images import Image, SingleScaleImage
 from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
     Affine,
@@ -30,34 +31,46 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
+from brainhops.io.images.base import ImageFormat
 
-# The positional parameters of each public transformation class, in
-# order, keyed by the module that defines the class. Every other
-# parameter, `input` and `output` included, is keyword-only.
+# Positional parameters of each public transformation, in order, keyed by
+# the defining module. All other parameters are keyword-only.
 POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.concrete": {
-        "Affine": ("matrix",),
-        "CartesianField": ("shape", "degree", "bound", "coeff"),
+        "Affine": ("data",),
+        "CartesianField": ("shape",),
         "ConcreteTransformation": (),
-        "CoordinatesField": ("field", "degree", "bound", "coeff"),
-        "DisplacementField": ("field", "degree", "bound", "coeff"),
+        "CoordinatesField": ("data",),
+        "DisplacementField": ("data",),
         "Identity": (),
-        "Linear": ("matrix",),
-        "Permutation": ("permutation",),
-        "Rotation": ("matrix",),
-        "Scaling": ("scale",),
-        "TransformationField": ("field", "degree", "bound", "coeff"),
-        "Translation": ("translation",),
+        "Linear": ("data",),
+        "Permutation": ("data",),
+        "Rotation": ("data",),
+        "Scaling": ("data",),
+        "TransformationField": ("data",),
+        "Translation": ("data",),
+    },
+    "brainhops.datamodel._transformations.tangents": {
+        "AffineExponential": ("data",),
+        "LinearExponential": ("data",),
+        "RotationExponential": ("data",),
+        "ScalingExponential": ("data",),
+        "StationaryVelocityField": ("data",),
     },
     "brainhops.datamodel._transformations.inverse": {
         "Inverse": ("forward",),
         "InverseAffine": ("forward",),
+        "InverseAffineExponential": ("forward",),
         "InverseCoordinatesField": ("forward",),
         "InverseDisplacementField": ("forward",),
         "InverseLinear": ("forward",),
+        "InverseLinearExponential": ("forward",),
         "InversePermutation": ("forward",),
         "InverseRotation": ("forward",),
+        "InverseRotationExponential": ("forward",),
         "InverseScaling": ("forward",),
+        "InverseScalingExponential": ("forward",),
+        "InverseStationaryVelocityField": ("forward",),
         "InverseTranslation": ("forward",),
     },
     "brainhops.datamodel._transformations.meta": {
@@ -73,6 +86,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.multiscale": {
         "MultiscaleField": ("scales",),
     },
+    "brainhops.datamodel._transformations.operators": {
+        "Operation": ("forward",),
+        "Sqrt": ("forward",),
+        "SqrtAffine": ("forward",),
+        "SqrtLinear": ("forward",),
+        "SqrtRotation": ("forward",),
+        "SqrtScaling": ("forward",),
+        "SqrtTranslation": ("forward",),
+    },
     "brainhops.datamodel._transformations.sequence": {
         "ImmutableSequence": ("transformations",),
         "MutableSequence": ("transformations",),
@@ -81,65 +103,45 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel.geometry": {
         "Geometry": ("transformations", "shape", "grid", "transformation"),
     },
-    "brainhops.io.transformations.base._base": {
-        "FileBasedTransformation": (),
-        "WritableFileBasedTransformation": (),
-    },
     "brainhops.io.transformations.base.affines": {
-        "LPSToVoxel": ("matrix",),
-        "RASToRAS": ("matrix",),
-        "RASToVoxel": ("matrix",),
-        "VoxelToLPS": ("matrix",),
-        "VoxelToRAS": ("matrix",),
+        "LPSToVoxel": ("data",),
+        "RASToRAS": ("data",),
+        "RASToVoxel": ("data",),
+        "VoxelToLPS": ("data",),
+        "VoxelToRAS": ("data",),
     },
     "brainhops.io.transformations.base.fields": {
-        "LPSCoordinatesField": ("field", "degree", "bound", "coeff"),
-        "RASCoordinatesField": ("field", "degree", "bound", "coeff"),
+        "LPSCoordinatesField": ("data",),
+        "RASCoordinatesField": ("data",),
     },
     "brainhops.io.transformations.elastix._xform": {
-        "ElastixParameterTransform": (
-            "transformations",
-            "parameter_map",
-            "initial",
-        ),
-        "ElastixTomlTransform": (
-            "transformations",
-            "parameter_map",
-            "initial",
-        ),
-        "ElastixTransform": ("transformations", "parameter_map", "initial"),
+        "ElastixParameterTransform": ("transformations",),
+        "ElastixTomlTransform": ("transformations",),
+        "ElastixTransform": ("transformations",),
     },
     "brainhops.io.transformations.freesurfer.lta._xforms": {
-        "LtaTransformation": ("matrix", "struct"),
-        "LtaTransformationPhysToPhys": ("matrix", "struct"),
-        "LtaTransformationRASToRAS": ("matrix", "struct"),
-        "LtaTransformationVoxToVox": ("matrix", "struct"),
+        "LtaTransformation": ("data",),
+        "LtaTransformationPhysToPhys": ("data",),
+        "LtaTransformationRASToRAS": ("data",),
+        "LtaTransformationVoxToVox": ("data",),
     },
     "brainhops.io.transformations.freesurfer.m3z._xform": {
-        "M3zMorph": ("transformations", "struct"),
+        "M3zMorph": ("transformations",),
     },
     "brainhops.io.transformations.fsl._affines": {
-        "ScaledMmToScaledMm": ("matrix",),
-        "ScaledMmToVoxel": ("matrix",),
-        "VoxelToScaledMm": ("matrix",),
+        "ScaledMmToScaledMm": ("data",),
+        "ScaledMmToVoxel": ("data",),
+        "VoxelToScaledMm": ("data",),
     },
     "brainhops.io.transformations.fsl._fields": {
-        "RASToWarpField": ("matrix",),
-        "WarpFieldToRAS": ("matrix",),
+        "RASToWarpField": ("data",),
+        "WarpFieldToRAS": ("data",),
     },
     "brainhops.io.transformations.fsl.flirt._xform": {
         "FlirtTransform": ("flirt_matrix", "moving", "reference"),
     },
     "brainhops.io.transformations.fsl.fnirt._base": {
-        # The format's own fields come before `transformations` here.
-        "FnirtWarpField": (
-            "moving",
-            "reference",
-            "deformation_type",
-            "image",
-            "header",
-            "transformations",
-        ),
+        "FnirtWarpField": ("transformations",),
     },
     "brainhops.io.transformations.itk._common": {
         "ItkAffineBase": ("transformations",),
@@ -172,22 +174,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "MatTransform": ("transformations",),
     },
     "brainhops.io.transformations.itk.nifti._fields": {
-        "ItkNiftiCoordinatesField": ("transformations", "image", "header"),
-        "ItkNiftiDisplacementField": ("transformations", "image", "header"),
-        "ItkNiftiField": ("transformations", "image", "header"),
+        "ItkNiftiCoordinatesField": ("transformations",),
+        "ItkNiftiDisplacementField": ("transformations",),
+        "ItkNiftiField": ("transformations",),
     },
     "brainhops.io.transformations.itk.tfm._xform": {
         "TfmTransform": ("transformations",),
     },
     "brainhops.io.transformations.matrix._xform": {
-        name: (
-            "raw_matrix",
-            "variable",
-            "vector",
-            "direction",
-            "index_base",
-            "matrix",
-        )
+        name: ("data",)
         for name in (
             "CsvMatrixAffine",
             "Mat73MatrixAffine",
@@ -200,49 +195,33 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
             "TxtMatrixAffine",
         )
     },
-    "brainhops.io.transformations.mrtrix._linear": {
-        "MrtrixLinearTransform": ("matrix",),
+    "brainhops.io.transformations.nifti._affines": {
+        "NiftiRASToVoxel": ("data",),
+        "NiftiVoxelToRAS": ("data",),
     },
-    "brainhops.io.transformations.mrtrix._warps": {
-        "MrtrixDeformationField": ("transformations", "header", "dataobj"),
-        "MrtrixDisplacementField": ("transformations", "header", "dataobj"),
-        "MrtrixWarp": ("header", "dataobj"),
-        "MrtrixWarpFull": ("transformations", "header", "dataobj"),
+    "brainhops.io.transformations.nifti._base": {
+        "NiftiBasedTransformation": (),
     },
-    "brainhops.io.transformations.nifti.affines": {
-        "NiftiRASToVoxel": ("matrix", "image", "header"),
-        "NiftiVoxelToRAS": ("matrix", "image", "header"),
-    },
-    "brainhops.io.transformations.nifti.base": {
-        "NiftiBasedTransformation": ("image", "header"),
-    },
-    "brainhops.io.transformations.nifti.fields": {
-        "NiftiRASCoordinatesField": (
-            "field",
-            "degree",
-            "bound",
-            "coeff",
-            "image",
-            "header",
-        ),
-        "NiftiRASDisplacementField": ("transformations", "image", "header"),
+    "brainhops.io.transformations.nifti._fields": {
+        "NiftiRASCoordinatesField": ("data",),
+        "NiftiRASDisplacementField": ("transformations",),
     },
     "brainhops.io.transformations.niftyreg._affine": {
-        "NiftyRegAffine": ("matrix",),
+        "NiftyRegAffine": ("data",),
     },
     "brainhops.io.transformations.niftyreg._fields": {
-        # The format's own fields come before `transformations` here.
-        "NiftyRegControlPointGrid": ("image", "header", "transformations"),
-        "NiftyRegDeformationField": ("image", "header", "transformations"),
-        "NiftyRegDisplacementField": ("image", "header", "transformations"),
-        "NiftyRegField": ("image", "header"),
-        "NiftyRegSequence": ("image", "header", "transformations"),
-        "NiftyRegVelocity": ("image", "header"),
-        "NiftyRegVelocityField": ("image", "header"),
-        "NiftyRegVelocityGrid": ("image", "header"),
+        # The fields of the format precede `transformations`.
+        "NiftyRegControlPointGrid": ("transformations",),
+        "NiftyRegDeformationField": ("transformations",),
+        "NiftyRegDisplacementField": ("transformations",),
+        "NiftyRegField": (),
+        "NiftyRegSequence": ("transformations",),
+        "NiftyRegVelocity": ("transformations",),
+        "NiftyRegVelocityField": ("transformations",),
+        "NiftyRegVelocityGrid": ("transformations",),
     },
-    "brainhops.io.transformations.spm.y": {
-        "SpmCoordinatesField": ("transformations", "image", "header"),
+    "brainhops.io.transformations.spm._fields": {
+        "SpmCoordinatesField": ("transformations",),
     },
     "brainhops.io.transformations.x5._blocks": {
         "X5BSplineField": ("transformations",),
@@ -250,14 +229,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "X5DisplacementField": ("transformations",),
     },
     "brainhops.io.transformations.x5._xform": {
-        "X5Transform": (
-            "transformations",
-            "header",
-            "nodes",
-            "chain",
-            "position",
-            "file",
-        ),
+        "X5Transform": ("transformations",),
     },
     "brainhops.io.transformations.zarr._xforms": {
         "OmeZarrField": (
@@ -275,7 +247,98 @@ PINNED = [
     (module, name) for module in POSITIONAL for name in POSITIONAL[module]
 ]
 
-# The parameters that are keyword-only on every transformation.
+# Positional parameters of each public image, in order, keyed by the
+# defining module. All other parameters are keyword-only.
+IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
+    "brainhops.datamodel.images": {
+        "Image": (),
+        "MultiScaleImage": ("images", "transformations"),
+        "SingleScaleImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.afni._image": {
+        "AfniImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.base._base": {
+        "ImageFormat": (),
+    },
+    "brainhops.io.images.freesurfer.mgh._image": {
+        "MghImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.minc._image": {
+        name: ("data", "transformations")
+        for name in ("Minc1Image", "Minc2Image", "MincImage")
+    },
+    "brainhops.io.images.mrtrix._image": {
+        "MrtrixImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.nifti._image": {
+        "NiftiImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.nrrd._image": {
+        name: ("data", "transformations")
+        for name in ("AttachedNrrdImage", "DetachedNrrdImage", "NrrdImage")
+    },
+    "brainhops.io.images.openslide._base": {
+        "OpenSlideImage": ("data", "transformations"),
+        "OpenSlideMultiScaleImage": ("images", "transformations"),
+    },
+    "brainhops.io.images.openslide._formats": {
+        **{
+            f"{vendor}Image": ("data", "transformations")
+            for vendor in (
+                "Aperio",
+                "DicomWsi",
+                "GenericTiff",
+                "Hamamatsu",
+                "Leica",
+                "Mirax",
+                "Philips",
+                "Sakura",
+                "Trestle",
+                "Ventana",
+                "Zeiss",
+            )
+        },
+        **{
+            f"{vendor}MultiScaleImage": ("images", "transformations")
+            for vendor in (
+                "Aperio",
+                "DicomWsi",
+                "GenericTiff",
+                "Hamamatsu",
+                "Leica",
+                "Mirax",
+                "Philips",
+                "Sakura",
+                "Trestle",
+                "Ventana",
+                "Zeiss",
+            )
+        },
+    },
+    "brainhops.io.images.pillow._image": {
+        "PillowImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.tiff._image": {
+        "TiffImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.tiff._multiscale": {
+        "TiffMultiScaleImage": ("images", "transformations"),
+    },
+    "brainhops.io.images.zarr._image": {
+        "ZarrImage": ("data", "transformations", "node"),
+    },
+    "brainhops.io.images.zarr._multiscale": {
+        "OmeZarrImage": ("images", "transformations", "node"),
+        "OmeZarrLevel": ("data", "transformations", "node"),
+    },
+}
+
+PINNED_IMAGES = [
+    (module, name) for module in IMAGES for name in IMAGES[module]
+]
+
+# Parameters that are keyword-only on every transformation.
 KEYWORD_ONLY = ("input", "output")
 
 
@@ -289,8 +352,8 @@ def _subclasses(cls: type) -> tx.List[type]:
     return out
 
 
-# Every transformation class that the package defines and that the
-# imports above register. The classes that tests define are left out.
+# Every transformation class defined by the package, but none defined by
+# tests.
 ALL = sorted(
     (
         cls
@@ -300,13 +363,28 @@ ALL = sorted(
     key=lambda cls: (cls.__module__, cls.__qualname__),
 )
 
-# The classes whose name is public. A parameterized class
-# (`Inverse[Affine]`) is reached through the class it parameterizes.
+# A parameterized class such as `Inverse[Affine]` is reached through its
+# origin class.
 PUBLIC = [
     cls
     for cls in ALL
     if not cls.__name__.startswith("_") and cls.__name__.isidentifier()
 ]
+
+
+# Every image class defined by the package, but none defined by tests.
+ALL_IMAGES = sorted(
+    (
+        cls
+        for cls in {Image, ImageFormat}.union(
+            _subclasses(Image), _subclasses(ImageFormat)
+        )
+        if cls.__module__.startswith("brainhops.")
+    ),
+    key=lambda cls: (cls.__module__, cls.__qualname__),
+)
+
+PUBLIC_IMAGES = [cls for cls in ALL_IMAGES if not cls.__name__.startswith("_")]
 
 
 def _parameters(cls: type) -> tx.List[inspect.Parameter]:
@@ -331,7 +409,7 @@ def _id(cls: type) -> str:
 def test_the_positional_parameters_are_pinned(module: str, name: str) -> None:
     try:
         mod = importlib.import_module(module)
-    except ImportError as e:  # an optional dependency is missing
+    except ImportError as e:  # An optional dependency is missing.
         pytest.skip(str(e))
     assert _positional(getattr(mod, name)) == POSITIONAL[module][name]
 
@@ -346,9 +424,9 @@ def test_every_public_transformation_is_pinned(cls: type) -> None:
 
 @pytest.mark.parametrize("cls", ALL, ids=_id)
 def test_the_endpoints_are_keyword_only(cls: type) -> None:
-    # bagof does not carry `KwOnly` over to a field that a subclass
-    # declares again, so a subclass that gives an endpoint a default of
-    # its own has to write `KwOnly[...]` too.
+    # A subclass that declares an endpoint again inherits `kw_only=True`,
+    # unless its first base is a file reader that is not keyword-only, in
+    # which case the subclass must write `KwOnly[...]` itself.
     kinds = {p.name: p.kind for p in _parameters(cls)}
     for name in KEYWORD_ONLY:
         if name in kinds:
@@ -360,6 +438,23 @@ def test_a_positional_endpoint_is_refused() -> None:
         Affine(np.eye(4), RASmm())
 
 
+def test_a_field_declared_again_inherits_kw_only() -> None:
+    # The formats rely on this: they declare `raw` and `_metadata` without
+    # `KwOnly[...]`, and some redeclare an endpoint with a new default.
+    from bagof.magic import Magic
+
+    class Base(Magic, kw_only=True):
+        _input: tx.Optional[int] = None
+
+    class Redeclared(Base):
+        _input: tx.Optional[int] = 1
+        extra: tx.Optional[int] = None
+
+    kinds = {p.name: p.kind for p in _parameters(Redeclared)}
+    assert kinds["input"] is inspect.Parameter.KEYWORD_ONLY
+    assert kinds["extra"] is inspect.Parameter.KEYWORD_ONLY
+
+
 def test_a_list_of_transformations_is_the_first_argument() -> None:
     tfm = pytest.importorskip("brainhops.io.transformations.itk.tfm")
     scaling = Scaling(scale=np.array([2.0, 3.0, 4.0]))
@@ -367,3 +462,51 @@ def test_a_list_of_transformations_is_the_first_argument() -> None:
         xform = cls([scaling])
         assert xform.input is None
         assert len(xform.transformations) == 1
+
+
+# --- images -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "module, name",
+    PINNED_IMAGES,
+    ids=[f"{m}.{n}" for m, n in PINNED_IMAGES],
+)
+def test_the_positional_parameters_of_an_image_are_pinned(
+    module: str, name: str
+) -> None:
+    try:
+        mod = importlib.import_module(module)
+    except ImportError as e:  # An optional dependency is missing.
+        pytest.skip(str(e))
+    assert _positional(getattr(mod, name)) == IMAGES[module][name]
+
+
+@pytest.mark.parametrize("cls", PUBLIC_IMAGES, ids=_id)
+def test_every_public_image_is_pinned(cls: type) -> None:
+    assert cls.__name__ in IMAGES.get(cls.__module__, {}), (
+        f"{_id(cls)} is missing from IMAGES; its positional "
+        f"parameters are {_positional(cls)!r}."
+    )
+
+
+def test_a_field_of_an_image_subclass_is_keyword_only() -> None:
+    # The `kw_only=True` option of `Image` is inherited, so a field that a
+    # subclass declares without `KwOnly[...]` is keyword-only, and so is a
+    # field declared again without `NotKwOnly`.
+    class Labelled(SingleScaleImage):
+        label: str = ""
+
+    class Redeclared(SingleScaleImage):
+        transformations: tx.List[Transformation] = ()
+
+    assert _positional(Labelled) == ("data", "transformations")
+    assert _positional(Redeclared) == ("data",)
+    kinds = {p.name: p.kind for p in _parameters(Labelled)}
+    assert kinds["label"] is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_a_positional_metadata_field_is_refused() -> None:
+    tiff = pytest.importorskip("brainhops.io.images.tiff")
+    with pytest.raises(TypeError):
+        tiff.TiffImage(np.zeros((2, 2)), [], "ome")

@@ -1,25 +1,55 @@
+"""The MGH image format."""
+
+# stdlib
+import gzip
+from io import BytesIO
+
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import Inherit, NoRepr, replace
+from nibabel.arrayproxy import ArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
+from nibabel.volumeutils import array_from_file, array_to_file
 
 # internals
 from brainhops._core import path
+from brainhops._core.properties import smartproperty
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.orientation import Orientation
+from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
-from brainhops.datamodel.units import MilliMeter, MilliSecond
+from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base.mgh import _MRI_PARAMS, MghParser
-from brainhops.io.base.nifti import (
-    _scale_spatial,
-    _unit_scale,
-    _voxel_to_ras,
+from brainhops.io.base._utils_files import same_file, write_file
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    BinaryFileWriter,
+    ParserExistsError,
+    UnrepresentableTransformationError,
+    WriterError,
 )
-from brainhops.io.base.parsers import WriterError
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.common._geometry import (
+    Arrangement,
+    arrange_voxel_to_ras,
+    declared_axes,
+    same_transformations,
+)
+from brainhops.io.common.freesurfer import FreesurferFormat
+from brainhops.io.common.freesurfer._geometry import fs_geometry_from_vox2ras
+from brainhops.io.common.mgh import MghMetadata, MghRaw
+from brainhops.io.common.mgh._constants import _MGH_AXES, _MRI_PARAMS
+from brainhops.io.common.mgh._raw import (
+    _compressed_name,
+    encode_mgh,
+    read_mgh,
+)
+from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
+from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 _SCANNER = "scanner"
 """Name of the scanner RAS space, the preferred world space."""
@@ -36,7 +66,6 @@ _RAS_ORIENTATION = {
     "z": "inferior-to-superior",
 }
 
-# The voxel types MGH stores, by numpy dtype.
 _MGH_DTYPES = {
     np.dtype(np.uint8),
     np.dtype(np.int16),
@@ -46,121 +75,526 @@ _MGH_DTYPES = {
 
 
 @register_format
-class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
-    """
-    An image that is encoded by a FreeSurfer MGH or MGZ file.
+class MghImage(
+    ImageFormat,
+    SingleScaleImage,
+    FreesurferFormat,
+    BinaryFileReader,
+    BinaryFileWriter,
+):
+    """An image stored in a FreeSurfer MGH or MGZ file.
 
-    The voxels are stored x fastest (F order), so `data` has shape
-    `(x, y, z)` or, for a multi-frame volume, `(x, y, z, frames)`, with
-    the frames read as a time axis.
+    An MGH image holds everything that its file stores beside the voxels
+    as [`MghMetadata`][], whose record is an [`MghRaw`][], and the voxels
+    as stored in `raw`. When the image is read from a file, `raw` is a
+    nibabel proxy, which reads the voxels only when they are needed, and
+    `data` is decoded from it on first access. The voxels are in Fortran
+    order, and the data are indexed `(x, y, z)` or `(x, y, z, frames)`,
+    where the frames form a time axis.
 
-    The transformations are, in order:
+    The transformations are decoded from the record on first access,
+    unless other transformations are assigned. They are, in order, a
+    [`Scaling`][] to `"physical"` by the voxel size in millimeters and the
+    TR in milliseconds, an [`Affine`][] to `"tkr"` (`MghRaw.vox2tkr`), and
+    the preferred [`Affine`][] to `"scanner"` (`MghRaw.vox2ras`).
 
-    1. a [`Scaling`][brainhops.datamodel.transformations.Scaling] from
-       voxels to the scaled voxel space `"physical"`: the voxel size in
-       mm, and, for a multi-frame volume, the repetition time in ms (or 1,
-       with no unit, when the footer records none);
-    2. the voxel-to-tkr (surface) RAS affine, whose output is named
-       `"tkr"` (`header.get_vox2ras_tkr()`);
-    3. the voxel-to-scanner RAS affine, whose output is named
-       `"scanner"` (`header.get_vox2ras()`). It is the last one, so it is
-       the preferred transformation.
+    `raw` and the record describe the file as it was read, or as the image
+    was last consolidated. Data that are assigned are pending until
+    [`consolidate`][] encodes them into a copy, or until the image is
+    written, which writes such a copy and leaves the image as it was. The
+    transformations, read or assigned, are compared at [`consolidate`][]
+    with those that the record decodes to, and the geometry of the record
+    is kept when they are the same.
 
-    FreeSurfer-specific header content -- the MRI acquisition parameters
-    of the footer, the raw `goodRASFlag` and the trailing tags -- is kept
-    on the object ([`mri_params`][brainhops.io.base.mgh.MghParser.
-    mri_params], the private `_good_ras` and
-    [`tags`][brainhops.io.base.mgh.MghParser.tags]) and written back.
+    When the image is consolidated, the record of its metadata is the base
+    of the new record, as [`consolidate`][] describes, so the acquisition
+    parameters of the footer, the trailing tags and the other header
+    fields are kept. An image that is read and written again without
+    changes gives the same bytes, after decompression for an `.mgz` file.
+    They are lost when the image is converted to another format.
 
     !!! note "`goodRASFlag`"
-        When the header's `goodRASFlag` is not positive, FreeSurfer
-        ignores the stored geometry and uses 1 mm voxels, coronal (LIA)
-        direction cosines and a zero centre. So does this reader. A file
-        written back always records its geometry, with `goodRASFlag = 1`.
-
-    !!! note "Why the bases are in this order"
-        As for [`NiftiImage`][brainhops.io.images.nifti.NiftiImage]:
-        `SingleScaleImage.data` has no default, so it comes last, and
-        `MghParser` leads so that its lazy `data`/`system` properties win.
+        When the flag is not positive, FreeSurfer and the reader assume 1
+        mm voxels, LIA direction cosines and a zero centre. A file whose
+        geometry is kept is written back with its flag, and a file whose
+        geometry is encoded from the image sets the flag.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (
-        ".mgh",
-        ".mgz",
-        ".mgh.gz",
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mgh", "mgz")
+
+    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    """The voxels as the file stores them, or `None` without data.
+
+    After a read, `raw` is a nibabel proxy. `raw` describes the file as it
+    was read, or as the image was last consolidated, so assigning `data`
+    leaves it as it is.
+    """
+
+    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    """The data given to the image, or `None` to decode it from `raw`.
+
+    The image takes over the `data` field of [`SingleScaleImage`][] to
+    store it under this private name. The constructor still takes `data`
+    in the same place, and the property of the same name reads it. An
+    array stored here is pending: it is encoded into `raw` only by
+    [`consolidate`][] or by a write.
+    """
+
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
     )
+    """The transformations of the image, or `None` when never read or set.
+
+    The image takes over the `transformations` field of
+    [`SingleScaleImage`][] to store it under this private name. The
+    constructor still takes `transformations` in the same place, and the
+    property of the same name reads it. `None`, the default, means that
+    the transformations have been neither read nor assigned, so the
+    record is kept as it is. The property stores here the list that it
+    decodes, and an assigned list, even an empty one, is stored as it is.
+    """
+
+    _metadata: NoRepr[tx.Optional[MghMetadata]] = None
+
+    metadata = smartproperty("metadata")
+    """The metadata of the file, which holds its record, or `None`.
+
+    An image built from data has no metadata. Assigning other metadata
+    drops the transformations that the image holds, read or assigned, so
+    that they are decoded from the new record.
+    """
+
+    @metadata.setter
+    def metadata(self, value: tx.Optional[MghMetadata]) -> None:
+        self._metadata = value
+        self._transformations = None
+
+    @smartproperty(cache=True)
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The image data, assigned or decoded from `raw`.
+
+        An array assigned to the image is returned as it is, and stays
+        pending until [`consolidate`][] or a write encodes it. Otherwise
+        the data is decoded from `raw` on first access and cached. Data
+        decoded from a file is read-only, because changing it in place
+        would not change `raw`, which is what the image writes. To change
+        the voxels, assign `data`. Assigning `None` decodes `raw` again.
+        """
+        if self.raw is None:
+            return None
+        return _image_to_model(self.raw)
+
+    @smartproperty
+    def transformations(self) -> tx.List[Transformation]:
+        """Voxel-to-world transformations, decoded from the record.
+
+        The list is decoded on first access and stored in the image, so
+        `img.transformation is img.transformation`, and a change made to
+        the list in place, such as an appended transformation, is kept.
+        Assigning other metadata drops the list. An image without
+        metadata has no transformations.
+
+        Assigning a list replaces the stored one. In both cases, the list
+        is compared at [`consolidate`][], and by a write, with the list
+        that the record decodes to, exactly. An empty list means that the
+        image has no geometry, and the image is then written as an image
+        built from data alone. Assigning `None` decodes the record again.
+        """
+        self._transformations = _record_transformations(self.metadata)
+        return self._transformations
 
     @property
-    def transformations(self) -> tx.List[Transformation]:
-        """The voxel-to-world transformations recorded by the header,
-        decoded on first access unless set explicitly.
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the data, read without reading the voxels.
 
-        An image built from data alone has no header, so it records no
-        transformation and the list is empty.
+        The shape is that of the assigned data, or else of `raw`: the data
+        is `raw` as the file stores it, so the two have the same shape,
+        and a proxy knows its shape from the header. An image without data
+        raises as [`SingleScaleImage`][] does.
         """
-        if getattr(self, "_transformations", None):
-            return self._transformations
-        if self.header is None:
-            return list(getattr(self, "_transformations", None) or [])
-        return _mgh_to_transformations(self)
+        if self._data is not None:
+            return tuple(int(d) for d in self._data.shape)
+        if self.raw is None:
+            return self.data.shape
+        return tuple(int(d) for d in self.raw.shape)
 
-    @transformations.setter
-    def transformations(self, value: tx.List[Transformation]) -> None:
-        self._transformations = value
+    @property
+    def system(self) -> tx.Optional[CoordinateSystem]:
+        """The voxel coordinate system described by the record.
+
+        The axes are `x`, `y` and `z`, and `t` for a file with frames, in
+        Fortran order. An image without metadata has no system.
+        """
+        if self.metadata is None or self.metadata.raw is None:
+            return None
+        return _mgh_system(self.metadata.raw)
+
+    # --- reading ------------------------------------------------------
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a stream holds an MGH image.
+
+        The stream is tested with [`MghRaw.sniff_fileobj`][].
+
+        Parameters
+        ----------
+        file : IO
+            The stream, which is read from its current position.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no MGH header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        return MghRaw.sniff_fileobj(file, error=error, **kwargs)
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        data: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that bytes hold an MGH image.
+
+        Parameters
+        ----------
+        data : bytes
+            The content of a file, or its first bytes.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the bytes hold no MGH header.
+        **kwargs : Any
+            Options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
+
+    @classmethod
+    def from_filename(
+        cls, filename: path.FilenameLike, **kwargs
+    ) -> "MghImage":
+        """Read an image from the path of an MGH or MGZ file.
+
+        A local file whose name matches its content is handed to nibabel
+        by name, so that nibabel opens it whenever the voxels are read and
+        can memory-map them. Any other file is read into memory.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Options of the nibabel proxy, which are `mmap` and
+            `keep_file_open`. Other options are refused.
+
+        Returns
+        -------
+        MghImage
+            The image, whose voxels are read lazily.
+
+        Raises
+        ------
+        TypeError
+            If another option is given.
+        ParserExistsError
+            If the path does not exist.
+        """
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+        if not path.exists(filename):
+            raise ParserExistsError(f"No such file: {filename}")
+        raw, proxy = read_mgh(filename, **kwargs)
+        return cls(raw=proxy, metadata=MghMetadata.from_raw(raw))
+
+    @classmethod
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MghImage":
+        """Read an image from an open MGH or MGZ stream.
+
+        The record is read at once, and the proxy reads the voxels from
+        the stream when they are needed, so the stream must stay open
+        while the data may be read. A stream that cannot seek is first
+        read into memory.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream, which may be compressed with gzip.
+        **kwargs : Any
+            Options of the nibabel proxy, which are `mmap` and
+            `keep_file_open`. Other options are refused.
+
+        Returns
+        -------
+        MghImage
+            The image, whose voxels are read lazily.
+
+        Raises
+        ------
+        TypeError
+            If another option is given.
+        """
+        raw, proxy = read_mgh(file, **kwargs)
+        return cls(raw=proxy, metadata=MghMetadata.from_raw(raw))
+
+    @classmethod
+    def from_nibabel(
+        cls, mgh: tx.Union[_mgh.MGHImage, _mgh.MGHHeader], **kwargs
+    ) -> "MghImage":
+        """Build an image from a nibabel MGH image or header.
+
+        The voxels of an image become `raw` as they are, and a copy of its
+        header becomes the record of the metadata, without tags. A header
+        alone gives an image without data.
+
+        Parameters
+        ----------
+        mgh : nibabel.freesurfer.mghformat.MGHImage or MGHHeader
+            The nibabel image or header.
+        **kwargs : Any
+            Other fields of the image.
+
+        Returns
+        -------
+        MghImage
+            The image.
+
+        Raises
+        ------
+        TypeError
+            If `mgh` is neither an MGH image nor an MGH header.
+        """
+        if isinstance(mgh, _mgh.MGHImage):
+            raw, header = mgh.dataobj, mgh.header
+        elif isinstance(mgh, _mgh.MGHHeader):
+            raw, header = None, mgh
+        else:
+            raise TypeError(
+                f"Expected an MGH image or header, got {type(mgh)}"
+            )
+        metadata = MghMetadata.from_raw(MghRaw(header=header).copy())
+        return cls(raw=raw, metadata=metadata, **kwargs)
+
+    # --- writing ------------------------------------------------------
+
+    def consolidate(
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+    ) -> "MghImage":
+        """Encode the pending data and geometry into `raw` and the record.
+
+        The record is encoded in a fixed order. The base is a copy of the
+        record of the metadata, or a new record for an image without
+        metadata. The dimensions and the voxel type follow the data. The
+        geometry comes from the transformations, as described in
+        [`to_nibabel`][]: the voxel size, the cosines, the centre and the
+        `goodRASFlag` of the base are kept when the voxel-to-scanner matrix
+        and the spatial dimensions are those of the base, and they are
+        encoded again otherwise. The MRI parameters of `like` are copied
+        next, then a TR stated by the transformations, and the `overrides`
+        are applied last. The tags and the other fields of the base are
+        kept. The new record is held by new metadata, the record held
+        before is never changed, and the data becomes `raw`, in the axis
+        order of the file. Nothing is pending afterwards, so the
+        transformations are decoded from the new record, with the
+        precision of the file.
+
+        When this encoding changes nothing, the metadata is kept as it is,
+        so that an image that was read and not changed writes the record
+        that it read. The transformations that the image holds, read or
+        assigned, are compared with those that the record decodes to,
+        exactly, and an image with a record, no pending data, and the
+        transformations of its record or none read, consolidated without
+        options, is left as it is: the copy shares `raw` and the metadata.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this image rather than a copy.
+        like : path, nibabel MGH image or header, or MGH object, optional
+            Template whose MRI parameters override those of this image. A
+            TR stated by the transformations overrides both.
+        **overrides : Any
+            Header fields set last. `dtype` sets the stored voxel type,
+            which by default is the type of the data if MGH can store it
+            (uint8, int16, int32, float32), or else the nearest one. The
+            fields `dims` and `type` are refused, because the dimensions
+            follow the data and the voxel type is set by `dtype`.
+
+        Returns
+        -------
+        MghImage
+            The consolidated copy, or this image with `inplace=True`.
+
+        Raises
+        ------
+        WriterError
+            If there is no data, the data have more than four dimensions,
+            the voxel type cannot be stored, or `dims` or `type` is
+            overridden.
+        UnrepresentableTransformationError
+            If the transformation has no affine form, has a second
+            non-spatial axis, or shifts or scales frames in a way that MGH
+            cannot store.
+        """
+        # The record is kept when the transformations were never read, or
+        # are the same as those that it decodes to.
+        kept = self._transformations is None or same_transformations(
+            self._transformations, _record_transformations(self.metadata)
+        )
+        if (
+            self._data is None
+            and kept
+            and like is None
+            and not overrides
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            if not inplace:
+                return replace(self, transformations=None)
+            self.transformations = None
+            return self
+        record, raw = _encoded(self, like, overrides)
+        if self.metadata is not None and record is self.metadata.raw:
+            metadata = self.metadata
+        elif self.metadata is None:
+            metadata = MghMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                data=None,
+                transformations=None,
+                raw=raw,
+                metadata=metadata,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        return self
 
     def to_nibabel(self, like: tx.Any = None, **overrides) -> _mgh.MGHImage:
+        """Build the nibabel MGH image that encodes this image.
+
+        The voxel-to-scanner matrix comes from the `"scanner"`
+        transformation, or else from the preferred one unless it maps to
+        tkr RAS, which MGH cannot store. Without a transformation, the
+        voxels are 1 mm along the RAS axes. The data are transposed to put
+        the spatial axes first and at most one frame axis after them (see
+        [`plan_axes`][brainhops.io.common._geometry.plan_axes]). The TR of
+        a time axis is stored in milliseconds.
+
+        The image is consolidated with the options, as by
+        [`consolidate`][], into a copy. The header of the nibabel image
+        starts from the header of the record of that copy, and nibabel
+        encodes the geometry again from `MghRaw.vox2ras`. The geometry is
+        therefore the one that FreeSurfer reads, with the FreeSurfer
+        defaults for a record whose `goodRASFlag` is not positive, and the
+        flag is set. A nibabel image has no place for the trailing tags,
+        which are left out. The image itself is not changed.
+
+        Parameters
+        ----------
+        like : path, nibabel MGH image or header, or MGH object, optional
+            Template whose MRI parameters override those of this image. A
+            TR stated by the transformation overrides both.
+        **overrides : Any
+            Header fields set last, as for [`consolidate`][].
+
+        Returns
+        -------
+        nibabel.freesurfer.mghformat.MGHImage
+            The encoded image.
+
+        Raises
+        ------
+        WriterError
+            If there is no data, the data have more than four dimensions,
+            or the voxel type cannot be stored.
+        UnrepresentableTransformationError
+            If the transformation cannot be stored, as for
+            [`consolidate`][].
         """
-        Build the `nibabel` image that encodes this image.
+        image = self.consolidate(like=like, **overrides)
+        record, raw = _mgh_written(image)
+        return _mgh.MGHImage(raw, record.vox2ras, header=record.header)
 
-        The image data becomes the voxels. The voxel-to-scanner RAS
-        matrix is taken from the transformation whose output is named
-        `"scanner"`, or else from the preferred transformation unless it
-        maps to tkr RAS (which MGH cannot store, as it follows from the
-        shape and the voxel size). It is converted to millimetres and
-        decomposed into voxel sizes, direction cosines and a centre. An
-        image with no transformation is written with 1 mm voxels and RAS
-        axes. A transformation with no affine representation raises
-        `UnrepresentableTransformationError`.
+    def to_bytes(self, compress: bool = False, **kwargs) -> bytes:
+        """Return the MGH encoding: header, voxels, footer and tags.
 
-        The MRI parameters of the footer (`tr`, `flip_angle`, `te`, `ti`,
-        `fov`) are copied from this image's header, then from `like` when
-        it is given (a path to an MGH/MGZ file, a `nibabel` MGH image or
-        header, or another object read from MGH), then from the keyword
-        arguments. `dtype` sets the stored voxel type. Without it, the
-        array's type is kept when MGH can store it (uint8, int16, int32,
-        float32), and otherwise converted to the nearest one MGH can:
-        booleans to uint8, other floats to float32, other integers to
-        int16 or int32. Integers that int32 cannot hold raise
-        `WriterError`.
+        The image is consolidated into a copy with the keyword arguments,
+        as by [`consolidate`][], and the record and `raw` of the copy are
+        written. A proxy that reaches the writer unchanged is written as
+        the file stores it, so that an untouched image gives the bytes of
+        its file. The image itself is not changed.
+
+        Parameters
+        ----------
+        compress : bool, default=False
+            Whether to gzip the result into MGZ.
+        **kwargs : Any
+            The template `like` and the header overrides of
+            [`consolidate`][].
+
+        Returns
+        -------
+        bytes
+            The content of the file.
+
+        Raises
+        ------
+        WriterError
+            If the image cannot be encoded, as in [`consolidate`][].
         """
-        data = self.data
-        if data is None:
-            raise WriterError(
-                "This image has no data, so there is nothing to write."
-            )
-        ndim = len(getattr(data, "shape", ()))
-        if not 1 <= ndim <= 4:
-            raise WriterError(
-                f"MGH stores volumes of up to four dimensions "
-                f"(x, y, z, frames), not {ndim}."
-            )
+        content = encode_mgh(*_mgh_written(self.consolidate(**kwargs)))
+        return gzip.compress(content) if compress else content
 
-        overrides = dict(overrides)
-        dtype = overrides.pop("dtype", None)
-        dtype = _mgh_dtype(data, dtype)
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """Write the image to a path.
 
-        header = _mgh.MGHHeader()
-        for source in (self.header, _like_header(like)):
-            if source is None:
-                continue
-            for name in _MRI_PARAMS:
-                header[name] = source[name]
-        for name, value in overrides.items():
-            header[name] = value
-        header.set_data_dtype(dtype)
+        The file is gzipped when its name ends with `.mgz` or `.gz`, unless
+        `compress` says otherwise. The other keyword arguments are those of
+        [`consolidate`][]. The content is encoded before the file is
+        written, and a local file is replaced at once, so an image can be
+        written over the file that it was read from. The image is then
+        consolidated in place, so that it holds what the file holds
+        (#426), and its lazy array reads the new file.
 
-        vox2ras = _scanner_matrix(self.transformations)
-        return _mgh.MGHImage(data, vox2ras, header=header)
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Arguments of [`to_bytes`][], which are `compress` and the
+            options of [`consolidate`][].
+        """
+        compress = kwargs.pop("compress", _compressed_name(filename))
+        if not _reads_file(self.raw, filename):
+            write_file(filename, self.to_bytes(compress=compress, **kwargs))
+            return
+        self.consolidate(inplace=True, **kwargs)
+        content = encode_mgh(*_mgh_written(self))
+        write_file(filename, gzip.compress(content) if compress else content)
+        # The image holds what the file holds, and its lazy array reads the
+        # new file, since the lazy array of the old file describes how that
+        # file stored the voxels.
+        self.raw = read_mgh(filename)[1]
+        self.data = None
 
 
 # ----------------------------------------------------------------------
@@ -168,22 +602,36 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
 # ----------------------------------------------------------------------
 
 
-def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
-    """
-    Convert the header of an MGH image to its list of transformations:
-    voxel-to-physical scaling, voxel-to-tkr RAS and voxel-to-scanner RAS.
-    """
-    voxel_space = image.system
-    axes = list(voxel_space.axes)
-    tr = image.mri_params["tr"]
+def _record_transformations(
+    metadata: tx.Optional[MghMetadata],
+) -> tx.List[Transformation]:
+    """Decode the transformations of the record of some metadata.
 
-    # >> Physical space: the same axes, in mm (and ms for the frames,
-    # when the repetition time is known -- it is never invented).
-    units = {"space": MilliMeter(), "time": MilliSecond() if tr > 0 else None}
+    Metadata without a record gives no transformation.
+    """
+    if metadata is None or metadata.raw is None:
+        return []
+    return _mgh_to_transformations(metadata.raw)
+
+
+def _mgh_system(record: MghRaw) -> CoordinateSystem:
+    """Return the voxel coordinate system of a record."""
+    axes = _MGH_AXES[: len(record.shape)]
+    return CoordinateSystem(name="voxel", axes=axes, order="F")
+
+
+def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
+    """Return the scaling, tkr RAS and scanner RAS transformations."""
+    voxel_space = _mgh_system(record)
+    axes = list(voxel_space.axes)
+    tr = record.mri_params["tr"]
+
+    # Frames are in milliseconds only when the TR is known; a unit is
+    # never invented.
+    units = {"space": "mm", "time": "ms" if tr > 0 else None}
     phys_axes = [replace(axis, unit=units.get(axis.type)) for axis in axes]
     phys_space = CoordinateSystem(name=_PHYSICAL, axes=phys_axes)
 
-    # >> RAS space: the spatial axes run along R, A, S.
     ras_axes = [
         replace(
             axis,
@@ -197,7 +645,7 @@ def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
     ]
     ras_space = CoordinateSystem(name="RAS", axes=ras_axes)
 
-    zooms = list(image.voxel_size)
+    zooms = list(record.voxel_size)
     if len(axes) > 3:
         zooms.append(tr if tr > 0 else 1.0)
     vox2phys = Scaling(
@@ -213,8 +661,8 @@ def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
 
     return [
         vox2phys,
-        _affine(image.vox2tkr, _TKR),
-        _affine(image.vox2ras, _SCANNER),
+        _affine(record.vox2tkr, _TKR),
+        _affine(record.vox2ras, _SCANNER),
     ]
 
 
@@ -223,15 +671,140 @@ def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
 # ----------------------------------------------------------------------
 
 
-def _scanner_matrix(
-    transformations: tx.Sequence[Transformation],
-) -> np.ndarray:
-    """
-    The `(4, 4)` voxel-to-scanner RAS matrix, in mm, to store.
+_LAYOUT_FIELDS = frozenset({"dims", "type"})
+"""Header fields that describe the stored voxels, which the data sets."""
 
-    The transformation named `"scanner"` wins; failing that, the
-    preferred one, unless it maps to tkr RAS, in which case the last
-    transformation that does not. No transformation gives the identity.
+
+def _encoded(
+    image: MghImage, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+) -> tx.Tuple[MghRaw, ArrayProtocol]:
+    """Return the record and the voxels that consolidating an image stores.
+
+    The record is encoded as [`MghImage.consolidate`][] describes, and the
+    voxels are the assigned data, or else `raw`, arranged in the axis order
+    of the file when the transformations declare another order. The held
+    record is returned when the encoding changes nothing. Voxels of
+    another type than the stored one are converted as the writer converts
+    them, with `_stored_voxels`.
+    """
+    if image._data is not None:
+        source = _image_to_disk(image._data)
+    else:
+        source = image.raw
+    if source is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    overrides = dict(overrides)
+    refused = sorted(_LAYOUT_FIELDS.intersection(overrides))
+    if refused:
+        raise WriterError(
+            f"The header fields {refused} cannot be overridden: the "
+            f"dimensions come from the data, and the voxel type is set "
+            f"with dtype=."
+        )
+    dtype = overrides.pop("dtype", None)
+    # The list of the image is read without being stored, so that a write
+    # leaves the image as it was.
+    transformations = image._transformations
+    if transformations is None:
+        transformations = _record_transformations(image.metadata)
+    vox2ras, layout, tr = _scanner_geometry(transformations, source)
+    data = source if layout is None else layout.apply(image.data)
+    shape = _mgh_shape(data)
+
+    # The base is a copy of the record, or a new record.
+    held = None if image.metadata is None else image.metadata.raw
+    record = MghRaw() if held is None else held.copy()
+    header = record.header
+
+    # The layout of the voxels and the geometry come from the image.
+    header["dims"] = shape + (1,) * (4 - len(shape))
+    header.set_data_dtype(_mgh_dtype(data, dtype))
+    if held is None or not _same_geometry(held, vox2ras, shape):
+        _set_geometry(header, vox2ras, shape)
+
+    # The template comes next, then the TR of the image, then the
+    # overrides.
+    template = _like_header(like)
+    if template is not None:
+        for name in _MRI_PARAMS:
+            header[name] = template[name]
+    if tr is not None:
+        header["tr"] = tr
+    for name, value in overrides.items():
+        header[name] = value
+
+    # The voxels are converted as the writer converts them, so that `raw`
+    # holds what the file holds.
+    data = _stored_voxels(data, header.get_data_dtype())
+    if record == held:
+        return held, data
+    return record, data
+
+
+def _mgh_shape(data: ArrayProtocol) -> tx.Tuple[int, ...]:
+    """Return the shape that MGH stores for an array, with at least 3 axes.
+
+    Raises
+    ------
+    WriterError
+        If the array has more than four dimensions, or none.
+    """
+    shape = tuple(int(d) for d in data.shape)
+    if not 1 <= len(shape) <= 4:
+        raise WriterError(
+            f"MGH stores volumes of up to four dimensions "
+            f"(x, y, z, frames), not {len(shape)}."
+        )
+    return shape + (1,) * max(0, 3 - len(shape))
+
+
+def _same_geometry(
+    record: MghRaw, vox2ras: np.ndarray, shape: tx.Tuple[int, ...]
+) -> bool:
+    """Tell whether a record already stores a geometry.
+
+    The geometry is the same when the spatial dimensions are those of the
+    record and the voxel-to-scanner matrix is the one that the record
+    decodes to, exactly. A record read from a file and transformations
+    decoded from it therefore keep the stored fields, which encoding them
+    again could round differently.
+    """
+    dims = tuple(int(d) for d in record.header["dims"][:3])
+    return dims == shape[:3] and np.array_equal(record.vox2ras, vox2ras)
+
+
+def _set_geometry(
+    header: _mgh.MGHHeader, vox2ras: np.ndarray, shape: tx.Tuple[int, ...]
+) -> None:
+    """Encode a voxel-to-scanner matrix in the geometry fields of a header.
+
+    The voxel size, the direction cosines and the centre are recovered
+    from the matrix, and the `goodRASFlag` is set so that FreeSurfer reads
+    them.
+    """
+    voxel_size, xras, yras, zras, cras = fs_geometry_from_vox2ras(
+        vox2ras, shape[:3]
+    )
+    header["delta"] = voxel_size
+    header["Mdc"] = (xras, yras, zras)
+    header["Pxyz_c"] = cras
+    header["goodRASFlag"] = 1
+
+
+_MGH_POLICY = dict(fill_space=True, max_nonspatial=1)
+"""Placement of axes in MGH files: three spatial axes, then frames."""
+
+
+def _scanner_transformation(
+    transformations: tx.Sequence[Transformation],
+) -> tx.Optional[Transformation]:
+    """Pick the transformation that gives the voxel-to-scanner matrix.
+
+    A transformation named `"scanner"` wins. Otherwise the last
+    transformation that does not map to tkr RAS is used, or `None` if
+    there is none.
     """
     transformations = list(transformations or [])
     chosen = None
@@ -244,15 +817,76 @@ def _scanner_matrix(
             if name != _TKR:
                 chosen = xform
                 break
+    return chosen
+
+
+def _scanner_geometry(
+    transformations: tx.Sequence[Transformation], data: tx.Any
+) -> tx.Tuple[np.ndarray, tx.Any, tx.Optional[float]]:
+    """Return the scanner matrix, the axis layout and the TR to store.
+
+    The matrix is in millimeters and the TR in milliseconds (see
+    [`MghImage.to_nibabel`][]). Without a transformation, the result is
+    the identity, no layout and no TR.
+    """
+    chosen = _scanner_transformation(transformations)
     if chosen is None:
-        return np.eye(4)
-    matrix = _voxel_to_ras(chosen)
+        return np.eye(4), None, None
+    ndim = len(getattr(data, "shape", ()) or ())
+    voxel_axes = declared_axes(getattr(chosen, "input", None), ndim)
+    arranged = arrange_voxel_to_ras(
+        chosen, voxel_axes, "MGH", "scanner", **_MGH_POLICY
+    )
     output = getattr(chosen, "output", None)
-    return _scale_spatial(matrix, _unit_scale(output, "mm"))
+    matrix = _scale_spatial(arranged.matrix, _unit_scale(output, "mm"))
+    return matrix, arranged.layout, _frame_tr(arranged)
+
+
+def _frame_tr(arranged: Arrangement) -> tx.Optional[float]:
+    """Return the TR in milliseconds of the frame axis, or `None`.
+
+    A time axis that still counts frames, with a scale of one and no time
+    unit, states no TR. Frames that are not time can be neither scaled
+    nor shifted.
+    """
+    if not arranged.others:
+        return None
+    scale, offset = arranged.others[0]
+    groups = [
+        g[3]
+        for g in (arranged.voxel_groups, arranged.world_groups)
+        if g is not None and len(g) > 3
+    ]
+    if any(g != "time" for g in groups):
+        if (scale, offset) != (1.0, 0.0):
+            raise UnrepresentableTransformationError(
+                "MGH stores no spacing or origin for frames that are not "
+                f"time, so a map that scales or shifts them ({scale}, "
+                f"{offset}) cannot be written."
+            )
+        return None
+    if offset != 0:
+        raise UnrepresentableTransformationError(
+            f"MGH stores no origin for the time axis, so a map that "
+            f"shifts it ({offset}) cannot be written."
+        )
+    if scale <= 0:
+        raise UnrepresentableTransformationError(
+            f"MGH stores the repetition time as a positive number, so a "
+            f"map that scales time by {scale} cannot be written."
+        )
+    axes = list(getattr(arranged.world, "axes", None) or [])
+    unit = getattr(axes[3], "unit", None) if len(axes) > 3 else None
+    if is_physicalunit(unit) and is_timeunit(unit):
+        return float(scale) * float(unit.scale) * 1000.0
+    if scale == 1.0:
+        # Still a frame index, as read from a file without a TR.
+        return None
+    return float(scale)
 
 
 def _mgh_dtype(data: tx.Any, dtype: tx.Any = None) -> np.dtype:
-    """The voxel type to store an array as (see `MghImage.to_nibabel`)."""
+    """Return the voxel type to store (see [`MghImage.to_nibabel`][])."""
     if dtype is not None:
         dtype = np.dtype(dtype)
         if dtype not in _MGH_DTYPES:
@@ -290,16 +924,64 @@ def _mgh_dtype(data: tx.Any, dtype: tx.Any = None) -> np.dtype:
 
 
 def _like_header(like: tx.Any) -> tx.Optional[_mgh.MGHHeader]:
-    """Resolve a `like` template to the MGH header to copy fields from."""
+    """Resolve a `like` template to the MGH header to copy fields from.
+
+    The template is a nibabel MGH header or image, an [`MghRaw`][] record,
+    MGH metadata, an MGH image, or the path of an MGH file, whose record
+    alone is read. Any other template gives `None`.
+    """
     if like is None:
         return None
     if isinstance(like, _mgh.MGHHeader):
         return like
     if isinstance(like, _mgh.MGHImage):
         return like.header
-    header = getattr(like, "header", None)
-    if isinstance(header, _mgh.MGHHeader):
-        return header
+    if isinstance(like, MghImage):
+        like = like.metadata
+    if isinstance(like, MghMetadata):
+        like = like.raw
     if isinstance(like, (str, path.PathLike)):
-        return MghImage.from_file(like).header
+        like = MghRaw.from_filename(like)
+    if isinstance(like, MghRaw):
+        return like.header
     return None
+
+
+def _mgh_written(image: MghImage) -> tx.Tuple[MghRaw, ArrayProtocol]:
+    """Return the record and the voxels of a consolidated image.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data.
+    """
+    if image.raw is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    return image.metadata.raw, image.raw
+
+
+def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
+    """Tell whether a lazy array of voxels reads a file by its name."""
+    return isinstance(raw, ArrayProxy) and same_file(raw.file_like, file)
+
+
+def _stored_voxels(data: ArrayProtocol, dtype: np.dtype) -> ArrayProtocol:
+    """Return voxels in the type that the file stores, as written.
+
+    The writer, `encode_mgh`, writes the voxels with nibabel's
+    `array_to_file`, which rounds floating-point values and clips them to
+    the range of an integer type. Voxels of another type are written to
+    memory and read back in the same way, so that they are the values of
+    the file, in its type and byte order. Voxels of the stored type, in
+    either byte order, are returned as they are, so that a proxy or a
+    lazy array is not read.
+    """
+    if np.dtype(data.dtype).newbyteorder("=") == dtype.newbyteorder("="):
+        return data
+    shape = tuple(int(d) for d in data.shape)
+    buffer = BytesIO()
+    array_to_file(np.asarray(data), buffer, dtype, order="F")
+    buffer.seek(0)
+    return array_from_file(shape, dtype, buffer, order="F")

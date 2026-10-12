@@ -1,13 +1,11 @@
-__all__ = ["FileBasedImage", "WritableFileBasedImage"]
+__all__ = ["ImageFormat"]
 
-# dependencies
 import typing_extensions as tx
 
-# internals
+from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import (
-    FileBasedObject,
-    WritableFileBasedObject,
+    Format,
     _FileBasedModelMixin,
     format_registry,
 )
@@ -16,25 +14,24 @@ from brainhops.io.base.specs import register_parser
 
 @register_parser(Image)
 @format_registry
-class FileBasedImage(_FileBasedModelMixin, Image, FileBasedObject):
-    """
-    An image that is stored in a file.
+class ImageFormat(
+    _FileBasedModelMixin, DataModelBase, Format, eq=False, kw_only=True
+):
+    """Format dispatcher and common base for stored images.
 
-    This is the dispatcher for image formats: concrete readers inherit
-    from it and opt in with `@register_format`, which is what makes
-    `brainhops.io.images.load` work without a hand-maintained table.
+    [`ImageFormat`][] is the common base of the image formats, and it
+    chooses which format reads a given file. A concrete reader inherits
+    from this class and registers itself with `@register_format`, so that
+    [`load`][brainhops.io.images.load] finds the reader without a
+    hand-maintained table of formats.
     """
 
     PRIORITY: tx.ClassVar[int] = 10
+    """Precedence of images over other kinds of object, used to break ties.
+
+    When a file could be read as several kinds of object, the readers that
+    score their input, for example by the NIfTI intent code, normally
+    decide first, and this priority matters only when nothing else does.
+    A NIfTI file, for instance, is both an image and a set of affines, and
+    it is read as an image when nothing else separates the two.
     """
-    Kind precedence, used only to break ties that confidence could not.
-
-    A NIfTI file is legitimately both an image and a set of affines, so
-    when nothing else separates them the image wins. Scoring sniffers
-    (e.g. NIfTI intent codes) normally decide well before this matters.
-    """
-
-
-@format_registry
-class WritableFileBasedImage(FileBasedImage, WritableFileBasedObject):
-    """An image that is stored in a file and can be written to disk."""

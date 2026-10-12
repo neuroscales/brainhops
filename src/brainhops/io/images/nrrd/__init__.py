@@ -1,90 +1,76 @@
-"""
-Readers and writers for images stored in NRRD files.
+"""NRRD images.
 
 NRRD ("Nearly Raw Raster Data", <https://teem.sourceforge.net/nrrd/>) is
-the native format of 3D Slicer and teem, and is read and written by ITK.
-It is parsed by [`brainhops.io.base.nrrd`][brainhops.io.base.nrrd], with
-no dependency beyond numpy:
+the native format of 3D Slicer and teem, and is also handled by ITK. Files
+are parsed by [`brainhops.io.common.nrrd`][brainhops.io.common.nrrd] with
+numpy alone.
 
-| Class                     | Extension | Hints                       |
-| ------------------------- | --------- | --------------------------- |
-| [`AttachedNrrdImage`][]   | `.nrrd`   | `nrrd`, `nrrd.attached`     |
-| [`DetachedNrrdImage`][]   | `.nhdr`   | `nrrd`, `nhdr`, `nrrd.nhdr` |
+| Class                   | Extension | Hints              |
+| ----------------------- | --------- | ------------------ |
+| [`AttachedNrrdImage`][] | `.nrrd`   | `attached`         |
+| [`DetachedNrrdImage`][] | `.nhdr`   | `nhdr`, `detached` |
 
-Both derive from [`NrrdImage`][], read either kind of file (the content
-decides which class does: a header that names a `data file` is
-detached), and write the kind the file name asks for.
+Both classes answer to the format hint `nrrd`, the format name that can
+be attached to a path to choose its reader. Their own hints can also be
+qualified, as in `nrrd.attached` or `nrrd.nhdr`. Both classes derive from
+[`NrrdImage`][] and read either kind of file, because the content decides
+the kind: a header that names a `data file` is detached. When an image
+is written, the file name decides which kind is produced.
 
 ```python
 import brainhops.io as io
 
 image = io.load("dwi.nhdr")            # a DetachedNrrdImage
-image.data                             # [x, y, z, c], F order, a view
+image.data                             # [x, y, z, c], F order
 image.transformation                   # index -> LPS mm (Affine)
-image.header.keyvalue["DWMRI_b-value"] # key/value pairs, as text
-image.save("dwi.nrrd")                 # attached, gzip by default
+image.metadata.raw.keyvalue["DWMRI_b-value"]  # key/value pairs, as text
+image.save("dwi.nrrd")                 # attached, in the source encoding
 io.save(image, "dwi.nii.gz")           # or any other image format
 ```
 
-**Axes.** NRRD stores its first axis fastest, so the values are read in
-F order. The image axes are the spatial axes first (`x`, `y`, `z`), then
-the time (`t`), channel (`c`) and other (`dim<i>`) axes, each group in the
-order of the file; this is a transposed *view* of the stored values
-(`dataobj`). An axis is spatial when it has a `space direction` (or, in a
-header without them, when its kind is `domain` or `space`, or, when the
-header has no `kinds`, when it is one of the first three). A `time` axis
-is temporal. An axis of kind `vector`, `list`, `point`,
-`covariant-vector`, `normal`, `N-vector`, `RGB-color` (and the other
-colours), `complex`, `quaternion` or a matrix kind is a channel axis. Any
-other (`scalar`, `stub`, `none`) is an untyped axis.
+An image holds the header of its file as [`NrrdMetadata`][], whose
+record is an [`NrrdRaw`][], and its samples in `raw`, a lazy array that
+reads them only when `data` is first needed. The first NRRD axis varies
+fastest, so the data are in Fortran order. The lazy array presents the
+axes of the file with spatial axes (`x`, `y`, `z`) first, then time
+(`t`), channels (`c`) and other axes (`dim<i>`), each group in file
+order. An axis is spatial if it
+has a `space direction`. In a header without directions, an axis is
+spatial if its kind is `domain` or `space`, or, when there are no `kinds`
+at all, if it is one of the first three. Vector, colour, complex,
+quaternion and matrix kinds give channel axes.
 
-**Coordinate systems.** The transformations are, in order:
+An image with a world space carries a `Scaling` to `"physical"` by the
+length of each space direction, and the preferred `Affine` to the world,
+whose columns are the space directions and whose translation is the
+`space origin`. The `space origin` is the centre of the first sample,
+whatever the axis `centers`. The world follows `space`: RAS, LAS and LPS
+(which Slicer and ITK write) are anatomically oriented, while
+`scanner-xyz` and the 3D handed spaces are not, and the `-time` variants
+add a time axis. Without a world space, a single transformation to
+`"physical"` is built from `spacings`, `axis mins` and `axis maxs`.
 
-1. index -> `"physical"`: a `Scaling` by the length of each space
-   direction (and the `spacings` of the other axes);
-2. index -> world: the `Affine` whose columns are the space directions,
-   and whose translation is the `space origin`.
-
-The world space follows `space`: `right-anterior-superior` (`"RAS"`),
-`left-anterior-superior` (`"LAS"`) and `left-posterior-superior`
-(`"LPS"`, what 3D Slicer and ITK write) have anatomically oriented axes,
-so they convert to one another (and to NIfTI's RAS) from the axes alone;
-`scanner-xyz` and `3D-right-handed` / `3D-left-handed` have unoriented
-ones; the `-time` variants add a time axis. Their unit is the `space
-units`, or millimetres (but for the `3D-*-handed` spaces). A header with
-only a `space dimension` has an unoriented `"world"`. A header with no
-world space has a single index -> `"physical"` map from the `spacings`,
-`axis mins` / `axis maxs` and `units` of its axes.
-
-**Index space and centering.** An integer index is the centre of a
-sample, as everywhere in brainhops. NRRD's `space origin` is the position
-of the centre of the first sample, whatever the axis `centers`, so the
-world `Affine` needs no shift. The `centers` only matter for the `axis
-mins` / `axis maxs` fallback: a `cell`-centred axis (the default, as in
-teem) spans `size` samples from the edge of the first to the edge of the
-last, so its first sample is centred at `min + spacing / 2`; a
-`node`-centred axis has samples at `min` and `max` exactly.
-
-**Writing.** The preferred transformation becomes `space directions` and
-`space origin`. When its world is anatomical, it is written in the
-`space` of the source header, else in the one it maps to (RAS, LAS or
-LPS), else in RAS; the `space` writer option chooses one. An unoriented
-world is written with a `space dimension`, but a scaling onto unoriented
-axes of an image whose source had no world space goes back to `spacings`
-and `axis mins`. An image read from NRRD whose shape has not changed is
-written in the axis order, and with the `kinds`, of its file; any other in
-its own order, with kinds `domain`, `time`, `vector` and `none`. The
-writer options are `encoding` (default: the source's, else `gzip`),
-`endian`, `datatype`, `space`, `keyvalue` (merged into the source's; a
-value of `None` removes a key) and `data_file` (the data file of a
-detached header; default: the header's name with `.raw`, `.raw.gz`,
-`.raw.bz2`, `.txt` or `.hex`). The source header's key/value pairs,
-`content`, `measurement frame` (converted to the new `space`), `sample
-units`, `old min` / `old max`, and its `centers`, `labels`, `thicknesses`
-and the `units`, `spacings` and `axis mins` / `maxs` of the non-spatial
-axes, are written back.
+When an image is written, the record of its metadata is the base of the
+new header. The preferred transformation becomes the `space directions`
+and `space origin`, unless it is the geometry that the record already
+stores. These fields are expressed in the `space` of the source header,
+or else in the anatomical space that the transformation maps to, and in
+RAS by default. The `encoding`, `endian`, `datatype`, `space`,
+`keyvalue` and `data_file` options control the output. Key/value pairs
+and other descriptive fields of the source header, such as `content` and
+the `measurement frame`, are written back. An image that is read and
+written again without changes keeps its bytes, and both files of a
+detached image are kept when it is written under the same name.
 """
 
-__all__ = ["AttachedNrrdImage", "DetachedNrrdImage", "NrrdImage"]
+__all__ = [
+    "AttachedNrrdImage",
+    "DetachedNrrdImage",
+    "NrrdImage",
+    "NrrdMetadata",
+    "NrrdRaw",
+]
+
+from brainhops.io.common.nrrd import NrrdMetadata, NrrdRaw
 
 from ._image import AttachedNrrdImage, DetachedNrrdImage, NrrdImage

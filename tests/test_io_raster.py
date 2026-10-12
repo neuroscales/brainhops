@@ -1,10 +1,8 @@
-"""
-Tests for the conventions shared by headerless raster image formats.
+"""Tests of the conventions shared by headerless raster formats.
 
-`brainhops.io.images.base._utils_raster` is backend-agnostic: it turns a
-C-ordered array, its storage axes and whatever pixel size a file records
-into the F-ordered data and the pixel-to-physical scaling every raster
-reader returns, and back again for writers.
+The backend-agnostic helpers turn a C-ordered array, its storage axes and a
+recorded pixel size into the F-ordered data and pixel-to-physical scaling
+that readers return, and back for writers.
 """
 
 import numpy as np
@@ -14,7 +12,7 @@ import typing_extensions as tx
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling
-from brainhops.datamodel.units import is_sampleunit
+from brainhops.datamodel.units import is_indexunit
 from brainhops.io.images.base import _utils_raster as raster
 
 # ----------------------------------------------------------------------
@@ -33,7 +31,7 @@ def test_storage_axes_codes() -> None:
         "space",
         "channel",
     ]
-    assert all(is_sampleunit(a.unit) for a in axes)
+    assert all(is_indexunit(a.unit) for a in axes)
 
 
 def test_storage_axes_samples_are_the_channel_axis() -> None:
@@ -136,6 +134,25 @@ def test_default_axes() -> None:
     assert axes[-1].type == "channel"
 
 
+@pytest.mark.parametrize("ndim", [1, 4, 5, 6, 7, 8])
+def test_default_axes_channel_names_are_unique(ndim: int) -> None:
+    # From six dimensions on, the channel axis `c` used to appear
+    # twice.
+    axes = raster.default_axes(ndim, channel=True)
+    names = [a.name for a in axes]
+    assert len(names) == ndim
+    assert len(set(names)) == ndim
+    assert names[-1] == "c"
+    assert [a.type for a in axes].count("channel") == 1
+
+
+def test_default_axes_channel_names() -> None:
+    names = [a.name for a in raster.default_axes(7, channel=True)]
+    assert names == ["x", "y", "z", "t", "dim4", "dim5", "c"]
+    names = [a.name for a in raster.default_axes(7)]
+    assert names == ["x", "y", "z", "t", "c", "dim5", "dim6"]
+
+
 def test_image_axes() -> None:
     axes = raster.default_axes(2)
     system = CoordinateSystem(axes=axes)
@@ -154,7 +171,7 @@ def test_pixel_and_voxel_systems() -> None:
     system = raster.pixel_system(axes)
     assert system.name == "pixel"
     assert system.order == "F"
-    assert all(is_sampleunit(a.unit) for a in system.axes)
+    assert all(is_indexunit(a.unit) for a in system.axes)
     _, axes = raster.to_canonical(np.zeros((2, 3, 4)), "ZYX")
     assert raster.pixel_system(axes).name == "voxel"
 
@@ -204,7 +221,7 @@ AXES2 = raster.default_axes(2)
 
 def test_resolve_nothing_known() -> None:
     assert raster.resolve_pixel_size(AXES2) == {}
-    # A unit alone does not make up a size.
+    # A unit alone is not a size.
     assert raster.resolve_pixel_size(AXES2, unit="mm") == {}
 
 
@@ -241,7 +258,7 @@ def test_resolve_pixel_size_keyword(
     meta = {"x": (0.1, "mm"), "y": (0.2, "mm")}
     out = raster.resolve_pixel_size(AXES2, meta, pixel_size=pixel_size)
     assert {k: v for k, (v, _) in out.items()} == expected
-    # The metadata's unit is kept when none is given.
+    # The unit from the metadata is kept when no unit is given.
     assert all(str(u) == "millimeter" for _, u in out.values())
 
 

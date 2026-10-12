@@ -1,4 +1,4 @@
-"""Tests for structured I/O source specifications."""
+"""Tests of structured I/O source specifications."""
 
 import pytest
 import typing_extensions as tx
@@ -8,13 +8,14 @@ from brainhops._core.path import Path
 from brainhops.datamodel.images import Image
 from brainhops.io.base import (
     ImageSpec,
+    OperationSpec,
     Parser,
     SourceSpec,
     TransformationSpec,
     format_hints,
     parser_for,
 )
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 
 def test_source_spec_is_a_magic_model_with_a_path() -> None:
@@ -161,21 +162,49 @@ def test_parameterless_operation_rejects_a_value() -> None:
         TransformationSpec.from_arg("warp|inv:other.nii")
 
 
+def test_operation_registered_on_a_subclass_stays_in_that_subclass() -> None:
+    # Each subclass keeps its own registry of operations. All classes
+    # used to share a single registry.
+    class WarpSpec(TransformationSpec, frozen=True):
+        pass
+
+    class SiblingSpec(TransformationSpec, frozen=True):
+        pass
+
+    class LeafSpec(WarpSpec, frozen=True):
+        pass
+
+    @WarpSpec.register_operation("halve")
+    class HalveOperation(OperationSpec, frozen=True):
+        def apply(self, value: tx.Any) -> tx.Any:
+            return value / 2
+
+    for spec_class in (WarpSpec, LeafSpec):
+        spec = spec_class.from_arg("warp|halve|inv")
+        assert [type(op) for op in spec.operations][0] is HalveOperation
+        assert [op.name for op in spec.operations] == ["halve", "inv"]
+    for spec_class in (TransformationSpec, SiblingSpec):
+        spec = spec_class.from_arg("warp|halve")
+        assert spec.operations == ()
+        assert spec.hints == ("halve",)
+    assert "halve" not in vars(TransformationSpec)["_OPERATIONS"]
+
+
 def test_registered_parser_is_inherited_by_subclasses() -> None:
     class DerivedImage(Image):
         pass
 
-    assert parser_for(DerivedImage) is FileBasedImage
+    assert parser_for(DerivedImage) is ImageFormat
 
 
 def test_explicit_parser_wins_for_a_union() -> None:
     annotation = tx.Annotated[tx.Union[Image, str], Parser(Image)]
-    assert parser_for(annotation) is FileBasedImage
+    assert parser_for(annotation) is ImageFormat
 
 
 def test_unique_registered_union_parser_is_found_automatically() -> None:
     annotation = tx.Union[object, Image]
-    assert parser_for(annotation) is FileBasedImage
+    assert parser_for(annotation) is ImageFormat
 
 
 def test_hints_are_qualified_along_individual_inheritance_branches() -> None:
@@ -222,12 +251,69 @@ def test_qualification_distinguishes_ambiguous_leaf_hints() -> None:
 
 
 def test_builtin_formats_expose_semantic_hint_namespaces() -> None:
+    # The FSL and NIfTI formats are only registered with nibabel.
+    pytest.importorskip("nibabel")
+
     from brainhops.io.transformations.fsl.flirt import FlirtTransform
     from brainhops.io.transformations.itk.tfm import TfmTransform
-    from brainhops.io.transformations.nifti.affines import NiftiVoxelToRAS
+    from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
     assert {"flirt", "fsl.flirt", "affine.flirt"} <= format_hints(
         FlirtTransform
     )
     assert {"tfm", "itk.tfm", "xform.itk.tfm"} <= format_hints(TfmTransform)
     assert {"nifti", "affine.nifti"} <= format_hints(NiftiVoxelToRAS)
+
+
+# ----------------------------------------------------------------------
+#   VELOCITIES: the `svf` alias and boolean options
+# ----------------------------------------------------------------------
+
+
+def test_svf_is_an_alias_of_displacements_with_log() -> None:
+    spec = TransformationSpec.from_arg("warp.nii.gz|svf")
+    assert spec.hints == ("displacements",)
+    assert spec.options == {"log": "true"}
+    assert spec == TransformationSpec.from_arg(
+        "warp.nii.gz|displacements|log:true"
+    )
+    spec = TransformationSpec.from_arg("warp.nii.gz|svf|steps:6")
+    assert spec.hints == ("displacements",)
+    assert spec.options == {"steps": "6", "log": "true"}
+
+
+def test_svf_refuses_a_log_option() -> None:
+    with pytest.raises(ValueError, match="svf already means log:true"):
+        TransformationSpec.from_arg("warp.nii.gz|svf|log:false")
+
+
+@pytest.mark.parametrize(
+    "text, value",
+    [
+        ("true", True),
+        ("True", True),
+        ("yes", True),
+        ("on", True),
+        ("1", True),
+        ("false", False),
+        ("FALSE", False),
+        ("no", False),
+        ("off", False),
+        ("0", False),
+    ],
+)
+def test_a_boolean_option_is_parsed(text: str, value: bool) -> None:
+    from brainhops.io.base.specs import parse_bool
+
+    assert parser_for(bool) is parse_bool
+    assert parser_for(tx.Annotated[bool, "doc"]) is parse_bool
+    assert parse_bool(SourceSpec(path=text)) is value
+
+
+def test_a_boolean_option_refuses_other_text() -> None:
+    from brainhops.io.base.specs import parse_bool
+
+    with pytest.raises(ValueError, match="boolean"):
+        parse_bool(SourceSpec(path="maybe"))
+    with pytest.raises(ValueError, match="boolean"):
+        parse_bool(SourceSpec.from_arg("true|nifti"))
