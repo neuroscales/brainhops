@@ -1399,6 +1399,47 @@ def test_reader_reads_parameters_stored_in_an_array(tmp_path: Path) -> None:
     )
 
 
+def test_writer_refuses_a_placement_that_is_not_affine(
+    tmp_path: Path,
+) -> None:
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "plane", "axes": _space("yx")}],
+        [
+            {
+                "type": "projectAxis",
+                "droppedInputs": [0],
+                "input": {"name": "intrinsic"},
+                "output": {"name": "plane"},
+            }
+        ],
+    )
+    pyramid = OmeZarrImage.from_store(path)
+    with pytest.raises(WriterError):
+        pyramid.save(str(tmp_path / "resaved.zarr"))
+
+
+def test_writer_writes_an_inverted_placement_forward(tmp_path: Path) -> None:
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "world", "axes": _space("zyx")}],
+        [
+            {
+                "type": "scale",
+                "scale": [2.0, 4.0, 8.0],
+                "input": {"name": "world"},
+                "output": {"name": "intrinsic"},
+            }
+        ],
+    )
+    target = str(tmp_path / "resaved.zarr")
+    OmeZarrImage.from_store(path).save(target)
+    block = abczarr.open(target, mode="r").ome.to_json()["multiscales"][0]
+    (common,) = block["coordinateTransformations"]
+    assert common["output"] == {"name": "world"}
+    np.testing.assert_allclose(common["scale"], [0.5, 0.25, 0.125])
+
+
 def _displacement_group(
     group: tx.Any, path: str, vector: tx.List[float]
 ) -> None:
