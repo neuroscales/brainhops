@@ -16,19 +16,13 @@ _Getter = tx.Callable[[tx.Self], tx.Any]
 _Setter = tx.Callable[[tx.Self, tx.Any], None]
 _Deleter = tx.Callable[[tx.Self], None]
 _IsUnset = tx.Callable[[tx.Any], bool]
-_UnsetForm = tx.Union[None, tx.Literal["empty"], _IsUnset]
+_UnsetForm = tx.Union[None, _IsUnset]
 UnsetLike = tx.Union[_UnsetForm, tx.Tuple[_UnsetForm, ...]]
 """Accepted values of the `unset` argument of [`smartproperty`][].
 
-The value decides when a stored value reads as unset. It is `None`,
-`"empty"`, a predicate, or a tuple of these forms.
+The value decides when a stored value reads as unset. It is `None`, a
+predicate, or a tuple of these forms.
 """
-
-
-# The containers listed here read as unset under unset="empty" when they
-# are empty. Arrays are not listed, because the truth value of an array is
-# ambiguous and testing it would raise an error.
-_EMPTY_TYPES = (list, tuple, dict, set, frozenset)
 
 _Names: tx.TypeAlias = tx.Union[str, tx.Iterable[str]]
 
@@ -255,17 +249,15 @@ def smartproperty(
         Docstring of the property.
     unset : UnsetLike, optional
         Values that read as unset. By default, only a stored `None` reads
-        as unset. With `"empty"`, an empty list, tuple, dict, set or
-        frozenset reads as unset, and with a callable, any value for which
-        the callable returns true does. A tuple of these forms matches a
+        as unset. With a callable, any value for which the callable
+        returns true reads as unset. A tuple of these forms matches a
         value when any of its forms matches. A property that stands in for
-        an inherited field whose default is an empty container needs
-        `unset=(None, "empty")`, because the constructor writes that
-        default through the setter. An empty container assigned on purpose
-        then reads as unset as well. A class that must tell the two apart
-        takes the field over under a private name instead, with
+        an inherited field whose default is an empty container takes the
+        field over under a private name, with
         `_x: ... = Inherit("x", default=None)` from
         [`bagof.magic`][bagof.magic], and keeps the default `unset=None`.
+        The constructor then stores `None` when nothing is given, and an
+        empty container assigned on purpose is used as it is.
     cache : bool, default=False
         Whether to cache the computed value.
     invalidates : str or Invalidator or tuple, default=()
@@ -284,7 +276,7 @@ def smartproperty(
     Raises
     ------
     ValueError
-        If `unset` is an empty tuple or a string other than `"empty"`.
+        If `unset` is an empty tuple.
     TypeError
         If `unset` has any other invalid type, or if an item of
         `invalidates` is neither a name nor an `Invalidator`.
@@ -657,15 +649,15 @@ def _unset_predicate(unset: UnsetLike) -> _IsUnset:
     Raises
     ------
     ValueError
-        If the tuple is empty or a string other than `"empty"` is given.
+        If the tuple is empty.
     TypeError
-        If a form is neither `None`, a string, nor callable.
+        If a form is neither `None` nor callable.
     """
     forms = unset if isinstance(unset, tuple) else (unset,)
     if not forms:
         raise ValueError(
-            "unset=() names no form: give None, 'empty', a predicate, or a "
-            "tuple of them."
+            "unset=() names no form: give None, a predicate, or a tuple of "
+            "them."
         )
     tests = tuple(_unset_form(form) for form in forms)
     if len(tests) == 1:
@@ -680,24 +672,13 @@ def _unset_predicate(unset: UnsetLike) -> _IsUnset:
 def _unset_form(form: tx.Any) -> _IsUnset:
     if form is None:
         return _is_none
-    if isinstance(form, str):
-        if form == "empty":
-            return _is_empty
-        raise ValueError(
-            f"unset={form!r} is not a form of unset: the one string it takes "
-            f"is 'empty'."
-        )
     if callable(form):
         return form
     raise TypeError(
-        f"unset takes None, 'empty', a predicate `(value) -> bool`, or a "
-        f"tuple of them, not a {type(form).__name__}."
+        f"unset takes None, a predicate `(value) -> bool`, or a tuple of "
+        f"them, not a {type(form).__name__}."
     )
 
 
 def _is_none(value: tx.Any) -> bool:
     return value is None
-
-
-def _is_empty(value: tx.Any) -> bool:
-    return isinstance(value, _EMPTY_TYPES) and len(value) == 0

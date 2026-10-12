@@ -92,7 +92,7 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
 
     # --- attributes ---------------------------------------------------
 
-    scales: NotKwOnly[tx.List[Sequence]] = ()
+    scales: ... = ()
     """Scales, from finest to coarsest.
 
     Each scale is a sequence that maps the input space to the output space,
