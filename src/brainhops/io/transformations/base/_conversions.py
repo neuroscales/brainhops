@@ -17,11 +17,12 @@ bridge does not exist, nothing is approximated: the converter raises a
 built by [`unrepresentable`][], that says what cannot be held.
 
 These helpers only take apart and check. Each converter decides, in one
-place, whether what they return is held exactly by its format. A format
-that has converters builds itself from another transformation through
-them ([`converts_to`][] and [`convert_instance`][]), so that
-`Format.from_any(t)`, `Format.from_instance(t)` and `t.to(Format)` are
-one conversion.
+place, whether what they return is held exactly by its format. Every
+format builds itself from another transformation by converting it
+([`converts_to`][] and [`convert_instance`][], which
+`TransformationFormat.from_any` and `TransformationFormat.from_instance`
+call), so that `Format.from_any(t)`, `Format.from_instance(t)` and
+`t.to(Format)` are one conversion.
 
 The converters of the data model, which know nothing of file formats,
 rebuild a transformation as whatever class they are asked for and keep
@@ -32,11 +33,24 @@ transformation between other systems cannot be relabelled as that
 format. The exact converters of such a format, one for each family of
 transformations, bridge the endpoints before they build the format.
 
-A format that derives its coordinate systems from the content it holds
-has no endpoints to check. Its converters refuse every family with
-[`no_exact_conversion`][] until exact converters are written for it
-(#312). A format that is converted to its own class is changed by the
-rules of its family, as any other transformation of that family is.
+The formats that derive their coordinate systems from what they hold,
+such as LTA, FNIRT and the NiftyReg, ITK and OME-Zarr fields, have no
+exact converter yet (#312). Such a format registers, for each family
+that it holds, one shared converter
+([`relabelling`][brainhops.io.transformations.base._converters.relabelling])
+that relabels a transformation as the format, and it does so only when
+the endpoints of the transformation are not known or are compatible
+with the coordinate systems of the format, as the bound classes check
+them. Otherwise it raises the error that [`unrepresentable`][] builds.
+Each registration names its format and a family, as an exact converter
+does, so it is more specific than the converters of the data model. The
+M3Z format still refuses every family with [`no_exact_conversion`][], in
+converters of its own. A format that has no coordinate systems of its
+own and registers no converter, such as a bare matrix or an ITK chain,
+is rebuilt by the converters of the data model, which keep the
+parameters and the endpoints of the transformation. A format that is
+converted to its own class is changed by the rules of its family, as
+any other transformation of that family is.
 """
 
 __all__ = [
@@ -132,6 +146,18 @@ def converts_to(cls: type, other: tx.Any) -> bool:
     It does for any transformation that is not already of that format: an
     instance of the format is copied, and anything else (a file, a
     mapping) is read as the format's bases read it.
+
+    Parameters
+    ----------
+    cls : type
+        The format.
+    other : Any
+        The value that the format is built from.
+
+    Returns
+    -------
+    bool
+        Whether `other` is converted.
     """
     return isinstance(other, _xforms.Transformation) and not isinstance(
         other, cls
@@ -140,11 +166,34 @@ def converts_to(cls: type, other: tx.Any) -> bool:
 
 def convert_instance(cls: type, other: tx.Any, *args, **kwargs) -> tx.Any:
     """
-    `other` converted to the format `cls`, exactly as `other.to(cls)`.
+    Return `other` converted to the format `cls`, as `other.to(cls)` does.
 
-    This is what `from_any` and `from_instance` of a format with
-    converters return for another transformation (see [`converts_to`][]),
-    so the three give the same result and raise the same errors.
+    This is what `from_any` and `from_instance` of every format return
+    for another transformation (see [`converts_to`][]), so the three give
+    the same result and raise the same errors.
+
+    Parameters
+    ----------
+    cls : type
+        The format.
+    other : Any
+        The transformation to convert.
+    *args : Any
+        Positional arguments, which a conversion does not take.
+    **kwargs : Any
+        Options of the conversion.
+
+    Returns
+    -------
+    Any
+        The converted transformation, an instance of `cls`.
+
+    Raises
+    ------
+    TypeError
+        If positional arguments are given.
+    ConversionError
+        If the format cannot hold `other`.
     """
     if args:
         raise TypeError(

@@ -29,7 +29,7 @@ The format classes can also be used directly:
 from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.transformations.freesurfer.lta import LtaTransformation
 from brainhops.io.transformations.nifti import NiftiRASDisplacementField
-from brainhops.io.transformations.spm.y import SpmCoordinatesField
+from brainhops.io.transformations.spm import SpmCoordinatesField
 
 src = NiftiImage.load("source.nii.gz")
 dst = NiftiImage.load("dest.nii.gz")
@@ -132,9 +132,14 @@ Every family with an affine form, such as a `Scaling` or a
 coordinate systems, such as `VoxelToRAS`, accepts only endpoints that
 are compatible with those systems. A transformation between other
 systems is therefore refused with a `ConversionError`, rather than given
-the class with its parameters unchanged. A format that has no exact
-conversion yet, and no systems to check, refuses `t.to(Format)` in the
-same way.
+the class with its parameters unchanged. A format that reads its
+coordinate systems from what it holds, such as LTA, and has no exact
+conversion yet (#312) is given the parameters of the transformation
+unchanged, which is called relabelling, but only when the coordinate
+systems of the transformation are not known or are compatible with
+those of the format. `t.to(Format)`, `Format.from_any(t)` and
+`Format.from_instance(t)` give the same result, or raise the same
+error.
 
 An LTA file states which coordinate systems its affine maps between. A
 general `Affine` is therefore written to an LTA file only if its `input`

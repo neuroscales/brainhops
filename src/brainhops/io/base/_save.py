@@ -16,6 +16,7 @@ from bagof.magic import fields
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.transformations import Transformation
+from brainhops.errors import ConversionError
 from brainhops.io.base._base import Format
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
@@ -69,17 +70,17 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     !!! note "Two passes, one conversion"
         Steps 3 and 4 are two passes only until every writable
         transformation format has exact converters (#312). Until then,
-        step 3 writes a transformation to a format without exact
-        converters by copying it into a file-backed version of its data
-        model. Step 4 refuses to rebuild a transformation as such a
-        format with the same parameters, because the result could mean
-        a different map. For the formats that have exact converters
-        (`NiftiVoxelToRAS`, `NiftiRASToVoxel`,
-        `NiftiRASDisplacementField`, `NiftiRASCoordinatesField`,
-        `SpmCoordinatesField`), `from_instance` is `obj.to(Format)`, so
-        both passes run the same conversion. `NiftyRegAffine` converts
-        an affine between world spaces, or between unknown spaces, in
-        step 4.
+        a format without an exact converter holds a transformation only
+        by relabelling it, that is, by being rebuilt from its
+        parameters, when the coordinate systems allow it. Step 3 writes
+        a transformation in such a format only if the format is a
+        file-backed version of its data model. Step 4 converts it only
+        to the formats that convert it exactly, so that the formats
+        that would only relabel it do not make the choice ambiguous.
+        For every transformation format, `from_instance` is
+        `obj.to(Format)`, so both passes run the same conversion.
+        `NiftyRegAffine` converts an affine between world spaces, or
+        between unknown spaces, in step 4.
 
     Parameters
     ----------
@@ -163,7 +164,23 @@ def _copy(obj: tx.Any, fmt: type) -> tx.Any:
 
 
 def _convert(obj: Transformation, fmt: type) -> tx.Any:
-    """`obj` converted to `fmt`, as `obj.to(fmt)` converts it."""
+    """`obj` converted exactly to `fmt`, as `obj.to(fmt)` converts it.
+
+    A format without an exact converter for `obj` may relabel it (#312).
+    Such a format is not chosen by this pass, so that a format that
+    converts `obj` exactly is not made ambiguous by the formats that
+    would only relabel it.
+    """
+    # The transformation formats import this package, so their helper is
+    # imported when it is used.
+    from brainhops.io.transformations.base._converters import relabels
+
+    if relabels(obj, fmt):
+        raise ConversionError(
+            f"{fmt.__name__} has no exact converter for a "
+            f"{type(obj).__name__} (#312), and a transformation is saved "
+            f"by relabelling it only in a format of its own data model."
+        )
     return obj.to(fmt)
 
 

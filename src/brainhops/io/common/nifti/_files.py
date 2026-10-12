@@ -3,15 +3,18 @@
 # stdlib
 import gzip
 import inspect
-from io import BytesIO
 from urllib.parse import urlsplit
 
 # dependencies
 import nibabel as nb
+import numpy as np
 import typing_extensions as tx
+from nibabel.arrayproxy import ArrayProxy
 
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
+from brainhops._core.typing import ArrayProtocol
+from brainhops.backends import get_array_backend
 
 # ----------------------------------------------------------------------
 #   READING AND WRITING THROUGH A PATH
@@ -156,37 +159,6 @@ def _nifti_from_stream(
         raise
 
 
-def _load_nifti(
-    file: path.FilenameLike, **kwargs
-) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """Load a NIfTI image from a local or remote path.
-
-    A local file is opened by nibabel and memory-mapped. A remote file is read
-    into memory, because the voxels would otherwise be read after the stream is
-    closed.
-    """
-    if _is_local(file):
-        filename = str(path.Path(file))
-        with open(filename, "rb") as f:
-            image_class = _NIFTI_IMAGES[_nifti_version(f)]
-        read = image_class.from_filename
-        return read(filename, **_accepted(read, kwargs))
-    with path.Path(file).open("rb") as f:
-        buffer = BytesIO(f.read())
-    return _nifti_from_stream(buffer, **kwargs)
-
-
-def _load_nifti_header(
-    file: path.FilenameLike,
-) -> tx.Union[nb.Nifti1Header, nb.Nifti2Header]:
-    """Read the header of a NIfTI file without reading the voxels."""
-    if _is_local(file):
-        return _load_nifti(file).header
-    with path.Path(file).open("rb") as f:
-        header_class = _NIFTI_HEADERS[_nifti_version(f)]
-        return header_class.from_fileobj(open_compressed(f))
-
-
 def _save_nifti(
     image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], file: path.FilenameLike
 ) -> None:
@@ -209,26 +181,29 @@ def _save_nifti(
             _image_to_stream(image, f)
 
 
-def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
-    """Return the header to copy from a `like` template, or `None`.
+# ----------------------------------------------------------------------
+#   READING THE VOXELS
+# ----------------------------------------------------------------------
+# The views of the NIfTI-based formats convert between `raw`, the array as
+# the file stores it, and `data`, the array that the data model exposes.
+# They are defined beside each format, and they all read the stored array
+# with the function below.
 
-    The template is a nibabel header or image, an object with a header, an
-    object whose metadata holds a NIfTI record, such as a `NiftiImage`, or
-    the path of a NIfTI file.
+
+def _read(raw: ArrayProtocol) -> ArrayProtocol:
+    """Return an array from a stored array, which may be a nibabel proxy.
+
+    A nibabel proxy, which reads the voxels lazily, is read with the array
+    backend, which loads it with NumPy and keeps it lazy with Dask. The
+    NumPy array that it gives is made read-only, because it is a view that
+    the writer does not read back: the writer writes `raw`, so an edit in
+    place would be lost. Any other array is returned as it is, so that a
+    Dask array stays lazy and an array that was set as data stays the
+    array of `raw`.
     """
-    if like is None:
-        return None
-    if isinstance(like, (nb.Nifti1Header, nb.Nifti2Header)):
-        return like
-    if isinstance(like, (nb.Nifti1Image, nb.Nifti2Image)):
-        return like.header
-    record = getattr(getattr(like, "metadata", None), "raw", None)
-    header = getattr(record, "header", None)
-    if isinstance(header, (nb.Nifti1Header, nb.Nifti2Header)):
-        return header
-    header = getattr(like, "header", None)
-    if header is not None:
-        return header
-    if isinstance(like, (str, path.PathLike)):
-        return _load_nifti_header(like)
-    return None
+    if not isinstance(raw, ArrayProxy):
+        return raw
+    data = get_array_backend().asarray(raw)
+    if isinstance(data, np.ndarray):
+        data.flags.writeable = False
+    return data

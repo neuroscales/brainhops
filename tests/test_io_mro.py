@@ -21,13 +21,13 @@ from brainhops.io.base.parsers import (
 
 nb = pytest.importorskip("nibabel")
 
-from brainhops.io.common.nifti import NiftiReaderWriter  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
+    NiftiBasedTransformation,
     NiftiRASCoordinatesField,
     NiftiVoxelToRAS,
 )
-from brainhops.io.transformations.spm.y import (  # noqa: E402
+from brainhops.io.transformations.spm import (  # noqa: E402
     SpmCoordinatesField,
 )
 
@@ -38,22 +38,10 @@ NIFTI_FORMATS = [
     SpmCoordinatesField,
 ]
 
-# The NIfTI transformations are still built on NiftiReaderWriter.
-NIFTI_TRANSFORMATIONS = NIFTI_FORMATS[1:]
-
-# Methods that NiftiReaderWriter specializes; the generic ladder re-dispatches
-# into them.
+# Methods that each NIfTI format specializes, in `NiftiImage` or in
+# `NiftiBasedTransformation` and the formats below it. The generic
+# `from_file` and `from_bytes` of the ladder reach them.
 SPECIALIZED = [
-    "from_file",
-    "from_fileobj",
-    "from_bytes",
-    "sniff_fileobj",
-    "sniff_bytes",
-]
-
-# Methods that NiftiImage defines itself. The generic `from_file` and
-# `from_bytes` of the ladder reach them.
-SPECIALIZED_IMAGE = [
     "from_filename",
     "from_fileobj",
     "sniff_fileobj",
@@ -65,17 +53,11 @@ def _owner(cls: type, name: str) -> type:
     return next(c for c in cls.__mro__ if name in c.__dict__)
 
 
-@pytest.mark.parametrize(
-    "cls", NIFTI_TRANSFORMATIONS, ids=lambda c: c.__name__
-)
+@pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
 @pytest.mark.parametrize("method", SPECIALIZED)
 def test_the_format_specific_reader_wins(cls: type, method: str) -> None:
-    assert _owner(cls, method) is NiftiReaderWriter
-
-
-@pytest.mark.parametrize("method", SPECIALIZED_IMAGE)
-def test_the_nifti_image_reader_wins(method: str) -> None:
-    assert _owner(NiftiImage, method) is NiftiImage
+    owner = _owner(cls, method)
+    assert issubclass(owner, (NiftiImage, NiftiBasedTransformation))
 
 
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
@@ -157,6 +139,20 @@ def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noq
     loaded = NiftiImage.from_file(target)
     assert isinstance(loaded.raw, ArrayProxy), "the voxels were read"
     assert loaded.shape == (3, 4, 5)
+
+
+def test_loading_a_nifti_field_keeps_the_array_lazy(tmp_path) -> None:  # noqa: ANN001
+    """NiftiBasedTransformation.from_file keeps a nibabel proxy as well."""
+    import numpy as np
+    from nibabel.arrayproxy import ArrayProxy
+
+    field = NiftiRASCoordinatesField(field=np.zeros((3, 4, 5, 3)))
+    target = tmp_path / "field.nii"
+    field.save(target)
+
+    loaded = NiftiRASCoordinatesField.from_file(target)
+    assert isinstance(loaded.raw, ArrayProxy), "the array was read"
+    assert loaded.data.shape == (3, 4, 5, 3)
 
 
 # ----------------------------------------------------------------------

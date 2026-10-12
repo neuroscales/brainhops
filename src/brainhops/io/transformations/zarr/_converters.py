@@ -1,16 +1,15 @@
 """
 Private converters into the OME-Zarr field format.
 
-These converters make a conversion into the format, such as
-`t.to(OmeZarrField)`, fail with a reason instead of building a wrong
-object. The format derives its coordinate systems from the content it
-holds, so it has no endpoints to check. Without these converters, the
-converters of the data model would rebuild a transformation as an
-`OmeZarrField` with the same parameters, and the result would not be the
-map that the format says it holds. Each family that would be rebuilt in
-this way is refused until an exact conversion is written (#312). An
-`OmeZarrField` that is converted to its own class is changed by the
-rules of its family, as any other transformation of that family is.
+OME-Zarr stores a pyramid of fields on the axes of its store, and no
+exact conversion into it is written yet (#312). A chain is therefore
+relabelled as an `OmeZarrField` by the converter
+[`relabelling`][brainhops.io.transformations.base._converters.relabelling],
+which this module registers. It keeps the parameters of the chain only
+when its coordinate systems are not known or are compatible with those
+of the format. An `OmeZarrField` that is converted to its own class is
+changed by the rules of its family, as any other transformation of that
+family is.
 """
 
 import typing_extensions as tx
@@ -20,18 +19,13 @@ from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
-from brainhops.io.transformations.base._conversions import no_exact_conversion
+from brainhops.io.transformations.base._converters import relabelling
 
 from ._xforms import OmeZarrField
 
-
-@converter
-def _(
-    t: _xforms.Sequence, cls: tx.Type[OmeZarrField], **kwargs
-) -> OmeZarrField:
-    # OME-Zarr stores a pyramid of fields on the axes of its store, and
-    # no exact conversion into it is written yet.
-    raise no_exact_conversion(t, cls)
+# OME-Zarr stores a pyramid of fields on the axes of its store, and no
+# exact conversion into it is written yet, so a chain is relabelled.
+converter(_xforms.Sequence, OmeZarrField)(relabelling)
 
 
 @converter

@@ -65,11 +65,49 @@ try:
     import nibabel as nb
     from nibabel.arrayproxy import ArrayProxy
 
-    from brainhops.io.common.nifti._views import (
+    from brainhops.datamodel.transformations import (
+        DisplacementField,
+        Sequence,
+    )
+    from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
+    from brainhops.io.images.nifti._views import (
         _image_to_disk,
         _image_to_model,
     )
-    from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
+    from brainhops.io.transformations.base.affines import (
+        RASToVoxel,
+        VoxelToRAS,
+    )
+    from brainhops.io.transformations.base.fields import RASCoordinatesField
+    from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
+    from brainhops.io.transformations.itk.nifti import (
+        ItkNiftiCoordinatesField,
+        ItkNiftiDisplacementField,
+    )
+    from brainhops.io.transformations.itk.nifti._views import (
+        _itk_field_to_disk,
+        _itk_field_to_model,
+    )
+    from brainhops.io.transformations.nifti import (
+        NiftiRASCoordinatesField,
+        NiftiRASDisplacementField,
+        NiftiRASToVoxel,
+        NiftiVoxelToRAS,
+    )
+    from brainhops.io.transformations.nifti._views import (
+        _affine_to_disk,
+        _affine_to_model,
+        _field_to_disk,
+        _field_to_model,
+    )
+    from brainhops.io.transformations.niftyreg import (
+        NiftyRegControlPointGrid,
+        NiftyRegDeformationField,
+        NiftyRegDisplacementField,
+        NiftyRegVelocityField,
+        NiftyRegVelocityGrid,
+    )
+    from brainhops.io.transformations.spm import SpmCoordinatesField
 except ImportError:
     nb = None
 
@@ -486,8 +524,9 @@ def _register_the_toy_format() -> tx.Iterator[None]:
 class Exemplar(tx.NamedTuple):
     """What the checks need to know about a format that follows the design.
 
-    The format is built with `cls(data=sample())` and written to a file
-    with the given suffix, which is the file that the checks read.
+    The format is built from `sample()`, with `build` or else with
+    `cls(data=...)`, and written to a file with the given suffix, which is
+    the file that the checks read.
     """
 
     metadata: type
@@ -520,8 +559,19 @@ class Exemplar(tx.NamedTuple):
     change_geometry: tx.Callable[[tx.Any], None]
     """Function that changes the geometry of an object in place."""
 
-    foreign: tx.Callable[[tx.Any], tx.Any]
-    """Function that builds an object of another format from data."""
+    foreign: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+    """Function that builds an object of another format from data.
+
+    It is `None` for a format that refuses every conversion from another
+    format, as NiftyReg, ITK and FNIRT do until #312.
+    """
+
+    build: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+    """Function that builds an object of the format from data alone.
+
+    It is needed by a format whose data model is a chain, which has no
+    `data` argument, and `cls(data=...)` is used otherwise.
+    """
 
     options: tx.FrozenSet[str] = frozenset()
     """Reader options that the format declares as fields."""
@@ -531,6 +581,22 @@ class Exemplar(tx.NamedTuple):
 
     binary: bool = True
     """Whether the format is read in binary mode."""
+
+    prefix: str = ""
+    """Prefix of the names of the files that the checks write.
+
+    A format that is told from others by the names of its files, such as
+    SPM by `y_`, needs it so that the generic writer chooses it.
+    """
+
+    stored: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+    """Function that returns the data of an object as its file stores it.
+
+    It is `None` for a format whose `raw` holds the stored data. The
+    matrix of a NIfTI affine lives in the header of its file, so a
+    consolidated affine has no `raw` array, and the checks read the matrix
+    of its header with this function instead.
+    """
 
     storage: tx.Optional[tx.Dict[str, tx.Any]] = None
     """Options of `consolidate` that change how the data is stored.
@@ -554,11 +620,90 @@ def _nifti_change_geometry(image: tx.Any) -> None:
     image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
 
 
+def _header_matrix(xform: tx.Any) -> tx.Optional[np.ndarray]:
+    # A NIfTI affine stores its matrix as the best affine of its header.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.header.get_best_affine()
+
+
+def _matrix_geometry(xform: tx.Any) -> np.ndarray:
+    return np.asarray(xform.matrix, dtype=float)
+
+
+def _matrix_change_geometry(xform: tx.Any) -> None:
+    xform.data = np.diag([2.0, 3.0, 4.0, 1.0])[:3]
+
+
+def _data_geometry(xform: tx.Any) -> np.ndarray:
+    # A format whose model holds no grid of its own, such as a field of
+    # coordinates, has its data as its geometry.
+    return np.asarray(xform.data, dtype=float)
+
+
+def _data_change_geometry(xform: tx.Any) -> None:
+    xform.data = np.asarray(xform.data) * 2 + 1
+
+
+def _chain_geometry(xform: tx.Any) -> np.ndarray:
+    # The first link of each chain maps the world to the voxels of the grid.
+    return np.asarray(xform.transformations[0].homogeneous_matrix)
+
+
+def _chain_change_geometry(xform: tx.Any) -> None:
+    # The grid of the chain is replaced by a scaled one, around the same
+    # field.
+    grid = np.diag([2.0, 3.0, 4.0, 1.0])
+    chain = list(xform.transformations)
+    first, last = chain[0], chain[-1]
+    chain[0] = type(first)(
+        matrix=np.linalg.inv(grid)[:-1],
+        input=first.input,
+        output=first.output,
+    )
+    if len(chain) == 3:
+        chain[-1] = type(last)(
+            matrix=grid[:-1], input=last.input, output=last.output
+        )
+    xform.transformations = tuple(chain)
+
+
+_VOXEL_TO_RAS = np.array(
+    [[2.0, 0.0, 0.0, 1.0], [0.0, 4.0, 0.0, 2.0], [0.0, 0.0, 8.0, 3.0]]
+)
+"""An affine whose inverse is exact in single precision, as NIfTI stores
+it."""
+
+
+def _vectors() -> np.ndarray:
+    # Whole numbers, so that adding and removing the grid of a field that
+    # stores positions is exact in single precision.
+    return np.arange(72, dtype="float32").reshape(2, 3, 4, 3)
+
+
+def _ras_displacements(data: np.ndarray) -> tx.Any:
+    return Sequence(
+        [
+            RASToVoxel(matrix=np.eye(4)[:-1]),
+            DisplacementField(
+                data, input=RASToVoxel().output, output=RASToVoxel().output
+            ),
+            VoxelToRAS(matrix=np.eye(4)[:-1]),
+        ]
+    )
+
+
+def _spm_coordinates(data: np.ndarray) -> tx.Any:
+    return Sequence(
+        [RASToVoxel(matrix=np.eye(4)[:-1]), RASCoordinatesField(field=data)]
+    )
+
+
 EXEMPLARS: tx.Dict[type, Exemplar] = {}
 """The registered formats that follow the design."""
 
 if nb is not None:
-    EXEMPLARS[NiftiImage] = Exemplar(
+    _NIFTI = Exemplar(
         metadata=NiftiMetadata,
         suffix=".nii",
         proxies=(ArrayProxy,),
@@ -569,7 +714,75 @@ if nb is not None:
         record_edited=lambda raw: raw.header["descrip"].item() == b"edited",
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
+    )
+    _NIFTI_FIELD = _NIFTI._replace(
+        to_model=_field_to_model,
+        to_disk=_field_to_disk,
+        sample=_vectors,
+        geometry=_chain_geometry,
+        change_geometry=_chain_change_geometry,
+        derived=("transformations",),
+        storage={"dtype": "int16"},
+    )
+    _NIFTYREG = _NIFTI_FIELD
+    _ITK = _NIFTI_FIELD._replace(
+        to_model=_itk_field_to_model, to_disk=_itk_field_to_disk
+    )
+
+    EXEMPLARS[NiftiImage] = _NIFTI._replace(
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        storage={"dtype": "int16"},
+    )
+    EXEMPLARS[NiftiVoxelToRAS] = _NIFTI._replace(
+        # The matrix of an affine lives in the header, so a read affine has
+        # no array.
+        proxies=(type(None),),
+        to_model=_affine_to_model,
+        to_disk=_affine_to_disk,
+        sample=lambda: _VOXEL_TO_RAS,
+        geometry=_matrix_geometry,
+        change_geometry=_matrix_change_geometry,
+        foreign=lambda data: Affine(data),
+        derived=("homogeneous_matrix",),
+        stored=_header_matrix,
+    )
+    EXEMPLARS[NiftiRASCoordinatesField] = _NIFTI_FIELD._replace(
+        geometry=_data_geometry,
+        change_geometry=_data_change_geometry,
+        foreign=lambda data: RASCoordinatesField(field=data),
+        derived=("values",),
+    )
+    EXEMPLARS[NiftiRASDisplacementField] = _NIFTI_FIELD._replace(
+        build=lambda data: NiftiRASDisplacementField(raw=_field_to_disk(data)),
+        foreign=_ras_displacements,
+        options=frozenset({"log", "steps"}),
+    )
+    EXEMPLARS[SpmCoordinatesField] = _NIFTI_FIELD._replace(
+        build=lambda data: SpmCoordinatesField(raw=_field_to_disk(data)),
+        foreign=_spm_coordinates,
+        prefix="y_",
+    )
+    for _cls in (
+        NiftyRegControlPointGrid,
+        NiftyRegDeformationField,
+        NiftyRegDisplacementField,
+        NiftyRegVelocityField,
+        NiftyRegVelocityGrid,
+    ):
+        EXEMPLARS[_cls] = _NIFTYREG._replace(
+            build=lambda data, cls=_cls: cls(raw=_field_to_disk(data))
+        )
+    for _cls in (ItkNiftiCoordinatesField, ItkNiftiDisplacementField):
+        EXEMPLARS[_cls] = _ITK._replace(
+            build=lambda data, cls=_cls: cls(raw=_itk_field_to_disk(data))
+        )
+    EXEMPLARS[FnirtWarpField] = _NIFTI._replace(
+        sample=_vectors,
+        # FNIRT holds no grid that the model encodes, so its data stands in.
+        geometry=_data_geometry,
+        change_geometry=_data_change_geometry,
+        build=lambda data: FnirtWarpField(raw=data),
+        options=frozenset({"moving", "reference", "deformation_type"}),
         storage={"dtype": "int16"},
     )
 
@@ -613,11 +826,8 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.transformations.freesurfer.lta.LtaTransformation",
     "brainhops.io.transformations.freesurfer.m3z.M3zMorph",
     "brainhops.io.transformations.fsl.flirt.FlirtTransform",
-    "brainhops.io.transformations.fsl.fnirt.FnirtWarpField",
     "brainhops.io.transformations.itk.h5.H5Transform",
     "brainhops.io.transformations.itk.mat.MatTransform",
-    "brainhops.io.transformations.itk.nifti.ItkNiftiCoordinatesField",
-    "brainhops.io.transformations.itk.nifti.ItkNiftiDisplacementField",
     "brainhops.io.transformations.itk.tfm.TfmTransform",
     "brainhops.io.transformations.matrix.CsvMatrixAffine",
     "brainhops.io.transformations.matrix.Mat73MatrixAffine",
@@ -626,16 +836,7 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.transformations.matrix.NpzMatrixAffine",
     "brainhops.io.transformations.matrix.TsvMatrixAffine",
     "brainhops.io.transformations.matrix.TxtMatrixAffine",
-    "brainhops.io.transformations.nifti.NiftiRASCoordinatesField",
-    "brainhops.io.transformations.nifti.NiftiRASDisplacementField",
-    "brainhops.io.transformations.nifti.NiftiVoxelToRAS",
     "brainhops.io.transformations.niftyreg.NiftyRegAffine",
-    "brainhops.io.transformations.niftyreg.NiftyRegControlPointGrid",
-    "brainhops.io.transformations.niftyreg.NiftyRegDeformationField",
-    "brainhops.io.transformations.niftyreg.NiftyRegDisplacementField",
-    "brainhops.io.transformations.niftyreg.NiftyRegVelocityField",
-    "brainhops.io.transformations.niftyreg.NiftyRegVelocityGrid",
-    "brainhops.io.transformations.spm.y.SpmCoordinatesField",
     "brainhops.io.transformations.x5.X5Transform",
     "brainhops.io.transformations.zarr.OmeZarrField",
 )
@@ -671,6 +872,13 @@ if nb is not None:
             "NiftiImage-gz",
             NiftiImage,
             EXEMPLARS[NiftiImage]._replace(suffix=".nii.gz"),
+        )
+    )
+    VARIANTS.append(
+        (
+            "NiftiRASDisplacementField-gz",
+            NiftiRASDisplacementField,
+            EXEMPLARS[NiftiRASDisplacementField]._replace(suffix=".nii.gz"),
         )
     )
 
@@ -718,12 +926,31 @@ def _write_header(path: tx.Any, header: bytes) -> None:
         file.write(header)
 
 
+def _path(tmp_path: tx.Any, exemplar: Exemplar, name: str) -> tx.Any:
+    """Return the path of a file that a check writes."""
+    return tmp_path / (exemplar.prefix + name + exemplar.suffix)
+
+
+def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
+    """Return the data of an object as its file stores it."""
+    if exemplar.stored is None:
+        return obj.raw
+    return exemplar.stored(obj)
+
+
+def _built(cls: type, exemplar: Exemplar, data: tx.Any) -> tx.Any:
+    """Build an object of the format from data alone."""
+    if exemplar.build is None:
+        return cls(data=data)
+    return exemplar.build(data)
+
+
 def _saved(
     cls: type, exemplar: Exemplar, tmp_path: tx.Any, name: str = "src"
 ) -> tx.Any:
     """Write a new object of the format and return the path of its file."""
-    path = tmp_path / (name + exemplar.suffix)
-    cls(data=exemplar.sample()).save(path)
+    path = _path(tmp_path, exemplar, name)
+    _built(cls, exemplar, exemplar.sample()).save(path)
     return path
 
 
@@ -771,12 +998,18 @@ def test_the_metadata_registry_is_isolated() -> None:
 # ----------------------------------------------------------------------
 
 
+def _init_names(klass: type) -> tx.Set[str]:
+    """Return the names of the fields that the constructor takes."""
+    return {field.public_name for field in fields(klass) if field.init}
+
+
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
-    def names(klass: type) -> tx.Set[str]:
-        return {field.public_name for field in fields(klass) if field.init}
-
-    allowed = names(_model(cls)) | {"raw", "metadata"} | exemplar.options
+    names = _init_names
+    # A format whose data model is a chain may still take its stored data
+    # as `data`, which is pending until the object is consolidated.
+    allowed = names(_model(cls)) | {"raw", "metadata", "data"}
+    allowed |= exemplar.options
     assert names(cls) <= allowed
     assert not names(cls) & _PARSER_STATE
     assert names(exemplar.metadata) <= names(Metadata) | {"raw"}
@@ -821,9 +1054,8 @@ def test_03_assigned_data_is_pending(
     # Consolidating encodes the data into the `raw` of a copy.
     consolidated = loaded.consolidate()
     assert consolidated._data is None
-    assert np.array_equal(
-        np.asarray(consolidated.raw), exemplar.to_disk(value)
-    )
+    stored = np.asarray(_stored(exemplar, consolidated))
+    assert np.array_equal(stored, exemplar.to_disk(value))
     assert np.array_equal(np.asarray(consolidated.data), value)
     assert loaded.raw is raw
     assert loaded._data is value
@@ -844,11 +1076,11 @@ def test_05_untouched_save_is_byte_identical(
     tmp_path,  # noqa: ANN001
 ) -> None:
     source = _saved(cls, exemplar, tmp_path)
-    target = tmp_path / ("copy" + exemplar.suffix)
+    target = _path(tmp_path, exemplar, "copy")
     cls.load(source).save(target)
     assert _decompressed(target) == _decompressed(source)
     # The generic writer copies the object with `from_instance` first.
-    target = tmp_path / ("generic" + exemplar.suffix)
+    target = _path(tmp_path, exemplar, "generic")
     io.save(cls.load(source), target)
     assert _decompressed(target) == _decompressed(source)
 
@@ -862,7 +1094,7 @@ def test_06_metadata_never_reads_data(
     metadata = exemplar.metadata.load(_saved(cls, exemplar, tmp_path))
     header = metadata.to_bytes()
     # The file is cut after its header, so reading any data would fail.
-    truncated = tmp_path / ("header" + exemplar.suffix)
+    truncated = _path(tmp_path, exemplar, "header")
     _write_header(truncated, header)
     assert exemplar.metadata.load(truncated).to_bytes() == header
     dispatched = MetadataFormat.load(truncated)
@@ -889,17 +1121,15 @@ def test_08_an_object_built_from_data_saves(
     tmp_path,  # noqa: ANN001
 ) -> None:
     value = exemplar.sample()
-    built = cls(data=value)
+    built = _built(cls, exemplar, value)
     assert built.metadata is None
-    assert built.raw is None
-    assert np.array_equal(built.data, value)
+    assert np.array_equal(np.asarray(built.data), value)
     # Consolidating encodes the data and a new record.
     consolidated = built.consolidate()
     assert isinstance(consolidated.metadata, exemplar.metadata)
-    assert np.array_equal(
-        np.asarray(consolidated.raw), exemplar.to_disk(value)
-    )
-    path = tmp_path / ("built" + exemplar.suffix)
+    stored = np.asarray(_stored(exemplar, consolidated))
+    assert np.array_equal(stored, exemplar.to_disk(value))
+    path = _path(tmp_path, exemplar, "built")
     built.save(path)
     assert np.array_equal(np.asarray(cls.load(path).data), value)
 
@@ -932,17 +1162,23 @@ def test_09_copies_keep_raw_and_metadata(
     assert copy.raw is loaded.raw
     assert copy._data is value
     # The record and the stored array of another format mean nothing to
-    # this format, so they are reset, and the data of the other format is
-    # pending.
+    # this format, so they are reset. A model that holds data keeps it
+    # pending, and a model that holds a chain keeps the chain, which
+    # consolidating encodes.
+    if exemplar.foreign is None:
+        return
     value = exemplar.sample()
     converted = cls.from_instance(exemplar.foreign(value))
     assert converted.metadata is None
-    assert converted.raw is None
-    assert np.array_equal(np.asarray(converted.data), value)
-    consolidated = converted.consolidate()
-    assert np.array_equal(
-        np.asarray(consolidated.raw), exemplar.to_disk(value)
-    )
+    if "data" in _init_names(_model(cls)):
+        assert converted.raw is None
+        assert np.array_equal(np.asarray(converted.data), value)
+        consolidated = converted.consolidate()
+        stored = np.asarray(_stored(exemplar, consolidated))
+        assert np.array_equal(stored, exemplar.to_disk(value))
+    path = _path(tmp_path, exemplar, "converted")
+    converted.save(path)
+    assert np.array_equal(np.asarray(cls.load(path).data), value)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -957,7 +1193,7 @@ def test_10_record_edits_survive_and_geometry_wins(
     loaded.metadata = exemplar.metadata.from_raw(edited)
     exemplar.change_geometry(loaded)
     header = loaded.metadata.to_bytes()
-    target = tmp_path / ("edited" + exemplar.suffix)
+    target = _path(tmp_path, exemplar, "edited")
     loaded.save(target)
     # Writing encodes into a copy of the record, never into the record.
     assert loaded.metadata.to_bytes() == header
@@ -1079,23 +1315,33 @@ def test_15_consolidating_an_untouched_object_changes_nothing(
     assert loaded.metadata is metadata
 
 
+def _changed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
+    """Load an object and give it new data and a new geometry."""
+    loaded = cls.load(_saved(cls, exemplar, tmp_path))
+    loaded.data = exemplar.sample() + 1
+    exemplar.change_geometry(loaded)
+    return loaded
+
+
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_16_consolidate_is_idempotent(
     cls: type,
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    loaded = cls.load(_saved(cls, exemplar, tmp_path))
-    raw, metadata = loaded.raw, loaded.metadata
-    value = exemplar.sample() + 1
-    loaded.data = value
-    exemplar.change_geometry(loaded)
+    loaded = _changed(cls, exemplar, tmp_path)
+    raw, metadata, pending = loaded.raw, loaded.metadata, loaded._data
     once = loaded.consolidate()
-    # Nothing is pending in the copy, whose record is new.
+    # Nothing is pending in the copy, whose record is new, and the copy
+    # holds what a file written from the object holds.
     assert once._data is None
-    assert once._transformations is None
+    assert getattr(once, "_transformations", None) is None
     assert once.metadata is not metadata
-    assert np.array_equal(np.asarray(once.data), value)
+    target = _path(tmp_path, exemplar, "written")
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.array_equal(np.asarray(once.data), np.asarray(back.data))
+    assert np.allclose(exemplar.geometry(once), exemplar.geometry(back))
     assert np.allclose(exemplar.geometry(once), exemplar.geometry(loaded))
     # A second consolidation changes nothing.
     twice = once.consolidate()
@@ -1104,11 +1350,11 @@ def test_16_consolidate_is_idempotent(
     # The object itself keeps its pending state.
     assert loaded.raw is raw
     assert loaded.metadata is metadata
-    assert loaded._data is value
+    assert loaded._data is pending
     # In place, the object holds the consolidated state.
     assert loaded.consolidate(inplace=True) is loaded
     assert loaded._data is None
-    assert loaded._transformations is None
+    assert getattr(loaded, "_transformations", None) is None
     raw, metadata = loaded.raw, loaded.metadata
     loaded.consolidate(inplace=True)
     assert loaded.raw is raw
@@ -1147,14 +1393,12 @@ def test_17_save_writes_the_consolidated_copy(
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    loaded = cls.load(_saved(cls, exemplar, tmp_path))
-    raw, metadata = loaded.raw, loaded.metadata
-    value = exemplar.sample() + 1
-    loaded.data = value
-    exemplar.change_geometry(loaded)
+    loaded = _changed(cls, exemplar, tmp_path)
+    raw, metadata, pending = loaded.raw, loaded.metadata, loaded._data
+    chain = getattr(loaded, "_transformations", None)
     (tmp_path / "saved").mkdir()
     (tmp_path / "consolidated").mkdir()
-    name = "copy" + exemplar.suffix
+    name = exemplar.prefix + "copy" + exemplar.suffix
     loaded.save(tmp_path / "saved" / name)
     loaded.consolidate().save(tmp_path / "consolidated" / name)
     assert _decompressed(tmp_path / "saved" / name) == _decompressed(
@@ -1163,8 +1407,8 @@ def test_17_save_writes_the_consolidated_copy(
     # Saving leaves the object as it was.
     assert loaded.raw is raw
     assert loaded.metadata is metadata
-    assert loaded._data is value
-    assert loaded._transformations is not None
+    assert loaded._data is pending
+    assert getattr(loaded, "_transformations", None) is chain
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1421,3 +1665,22 @@ def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: AN
     assert loaded.transformation is not first
     expected = np.diag([2.0, 2.0, 2.0, 1.0])[:3]
     assert np.allclose(_nifti_geometry(loaded), expected)
+
+
+@needs_nibabel
+def test_an_untouched_ras_to_voxel_affine_is_saved_byte_for_byte(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The inverse of `NiftiVoxelToRAS` is not registered, since a file
+    # cannot tell the two apart, so the checks of the registered formats
+    # do not reach it.
+    source = tmp_path / "source.nii"
+    NiftiRASToVoxel(_VOXEL_TO_RAS).save(source)
+    loaded = NiftiRASToVoxel.load(source)
+    assert loaded.raw is None
+    np.testing.assert_array_equal(loaded.data, _VOXEL_TO_RAS)
+    target = tmp_path / "copy.nii"
+    NiftiRASToVoxel.from_instance(loaded).save(target)
+    assert _decompressed(target) == _decompressed(source)
+    # The inverse of an affine read from a header reads the same header.
+    assert loaded.inverse().metadata is loaded.metadata

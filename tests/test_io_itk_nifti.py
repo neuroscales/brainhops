@@ -619,10 +619,26 @@ def test_itks_encoding_is_written(itk_warp, tmp_path, ndim) -> None:  # noqa: AN
     )
 
 
-def test_a_dispvect_file_is_written_back_as_lps_vectors(tmp_path) -> None:  # noqa: ANN001
+def test_a_dispvect_file_is_written_back_as_read(tmp_path) -> None:  # noqa: ANN001
     path = _write(tmp_path / "ras.nii.gz", _ramp(3) * _flip(3), DISPVECT)
     out = tmp_path / "out.nii.gz"
-    ItkNiftiDisplacementField.from_file(path).to_file(out)
+    field = ItkNiftiDisplacementField.from_file(path)
+    field.to_file(out)
+    img = nb.load(str(out))
+    assert int(img.header["intent_code"]) == DISPVECT
+    np.testing.assert_array_equal(
+        np.asarray(img.dataobj), np.asarray(nb.load(str(path)).dataobj)
+    )
+
+
+def test_a_dispvect_field_with_a_new_chain_is_written_as_lps_vectors(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = _write(tmp_path / "ras.nii.gz", _ramp(3) * _flip(3), DISPVECT)
+    out = tmp_path / "out.nii.gz"
+    field = ItkNiftiDisplacementField.from_file(path)
+    field.transformations = tuple(field.transformations)
+    field.to_file(out)
     img = nb.load(str(out))
     assert int(img.header["intent_code"]) == VECTOR
     np.testing.assert_allclose(

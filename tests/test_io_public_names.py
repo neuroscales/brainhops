@@ -37,7 +37,6 @@ PACKAGES: tx.Dict[str, Package] = {
             {
                 "NiftiMetadata",
                 "NiftiRaw",
-                "NiftiReaderWriter",
                 "NiftiUnitWarning",
             }
         ),
@@ -51,13 +50,38 @@ PACKAGES: tx.Dict[str, Package] = {
         names=frozenset(
             {
                 "NiftiBasedTransformation",
+                "NiftiMetadata",
                 "NiftiRASCoordinatesField",
                 "NiftiRASDisplacementField",
                 "NiftiRASToVoxel",
+                "NiftiRaw",
                 "NiftiVoxelToRAS",
             }
         ),
-        public_modules=frozenset({"affines", "base", "fields"}),
+        needs=("nibabel",),
+    ),
+    "brainhops.io.transformations.spm": Package(
+        names=frozenset({"SpmCoordinatesField"}),
+        needs=("nibabel",),
+    ),
+    "brainhops.io.transformations.fsl.fnirt": Package(
+        names=frozenset({"FnirtWarpField"}),
+        needs=("nibabel",),
+    ),
+    "brainhops.io.transformations.niftyreg": Package(
+        names=frozenset(
+            {
+                "NiftyRegAffine",
+                "NiftyRegControlPointGrid",
+                "NiftyRegDeformationField",
+                "NiftyRegDisplacementField",
+                "NiftyRegField",
+                "NiftyRegSequence",
+                "NiftyRegVelocity",
+                "NiftyRegVelocityField",
+                "NiftyRegVelocityGrid",
+            }
+        ),
         needs=("nibabel",),
     ),
     "brainhops.io.transformations.freesurfer.lta": Package(

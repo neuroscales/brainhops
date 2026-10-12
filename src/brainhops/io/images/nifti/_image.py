@@ -8,7 +8,6 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
-from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core import path
@@ -41,16 +40,14 @@ from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
 )
-from brainhops.io.common.nifti._geometry import (
-    _image_with_geometry,
-    _stores_proxy,
-    _written_nifti,
-)
+from brainhops.io.common.nifti._geometry import _image_with_geometry
 from brainhops.io.common.nifti._header import (
     _nifti_intent,
     _nifti_shape,
     _nifti_to_axes,
     _NiftiObject,
+    _stored_parts,
+    _written_nifti,
 )
 from brainhops.io.common.nifti._raw import (
     _sniffed_header,
@@ -58,8 +55,10 @@ from brainhops.io.common.nifti._raw import (
     write_nifti,
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
-from brainhops.io.common.nifti._views import _image_to_disk, _image_to_model
 from brainhops.io.images.base import ImageFormat
+
+# this format
+from ._views import _image_to_disk, _image_to_model
 
 
 @register_format
@@ -794,8 +793,8 @@ def _nifti_encoded(
     of the record, and the geometry fields of the record are copied over
     the new header when the data have the shape that it records, so that
     they are kept as they are stored. When an override changes the data
-    type or the scaling, the encoded image is written to bytes and read
-    again, and `raw` is a proxy of those bytes.
+    type or the scaling, `raw` is a proxy of the voxels as the file
+    stores them, as `_stored_parts` returns it.
 
     Raises
     ------
@@ -811,9 +810,9 @@ def _nifti_encoded(
             "This image has no data, so there is nothing to encode."
         )
     if image.metadata is None or image.metadata.raw is None:
-        base = None
+        header = None
     else:
-        base = image.metadata.raw.copy()
+        header = image.metadata.raw.copy().header
     transformations = image._transformations
     if transformations is None:
         transformations = _header_transformations(image.metadata)
@@ -822,22 +821,13 @@ def _nifti_encoded(
         source,
         preferred,
         transformations,
-        base=base,
+        header=header,
         like=like,
         overrides=overrides,
     )
-    if kept and base is not None:
+    if kept and header is not None:
         _keep_geometry(nifti.header, image.metadata.raw.header, overrides)
-    if not _stores_array(nifti.header, nifti.dataobj):
-        # The header stores the voxels in another type or with a scaling,
-        # as a storage override asks, and nibabel converts and scales them
-        # only when it writes them. The image is written to bytes and read
-        # again, so that `raw` is a proxy of the voxels as the file stores
-        # them and the record holds the header that was written, with its
-        # scaling.
-        record, proxy = read_nifti(BytesIO(nifti.to_bytes()))
-        return proxy, record
-    return nifti.dataobj, NiftiRaw(header=nifti.header)
+    return _stored_parts(nifti)
 
 
 def _nifti_written(
@@ -855,23 +845,6 @@ def _nifti_written(
             "This image has no data, so there is nothing to write."
         )
     return _written_nifti(image.raw, image.metadata.raw)
-
-
-def _stores_array(header: nb.Nifti1Header, array: ArrayProtocol) -> bool:
-    """Tell whether a header stores an array as it is.
-
-    A proxy is stored as it is when the header has its stored data type
-    and its scaling. Any other array is stored as it is when the header
-    has its data type and no scaling.
-    """
-    if isinstance(array, ArrayProxy):
-        return _stores_proxy(header, array)
-    slope, inter = header.get_slope_inter()
-    return (
-        header.get_data_dtype() == array.dtype
-        and slope is None
-        and inter is None
-    )
 
 
 def _header_transformations(

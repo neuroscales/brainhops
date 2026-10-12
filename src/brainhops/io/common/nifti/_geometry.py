@@ -34,13 +34,15 @@ from ._constants import (
     _QFORM_NAME,
 )
 from ._header import (
+    _STORAGE_OVERRIDES,
     _apply_like,
     _apply_overrides,
     _new_nifti,
     _NiftiObject,
+    _reset_structural_fields,
     _set_other_axes,
+    _stored_scaling,
 )
-from ._raw import NiftiRaw
 from ._units import nifti_unit_meters, unit_to_nifti
 
 
@@ -288,90 +290,23 @@ def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
     return scaled
 
 
-# Fields of a header that describe how the voxels are laid out and stored,
-# and the geometry that the model encodes. A record used as the base of a
-# header has these fields reset, and the writer sets them again. The other
-# fields, such as the description, the intent, the calibration range, the
-# slice timing, `toffset` and the extensions, are kept from the record.
-_STRUCTURAL_FIELDS = (
-    "dim",
-    "pixdim",
-    "datatype",
-    "bitpix",
-    "vox_offset",
-    "scl_slope",
-    "scl_inter",
-    "magic",
-    "xyzt_units",
-    "qform_code",
-    "sform_code",
-    "quatern_b",
-    "quatern_c",
-    "quatern_d",
-    "qoffset_x",
-    "qoffset_y",
-    "qoffset_z",
-    "srow_x",
-    "srow_y",
-    "srow_z",
-)
-
-
-# Overrides that change how the voxels are stored, so that a proxy cannot be
-# copied as it is stored.
-_STORAGE_OVERRIDES = frozenset({"dtype", "scl_slope", "scl_inter"})
-
-
-def _reset_structural_fields(header: nb.Nifti1Header) -> None:
-    """Give the structural fields of a header their values in a new header.
-
-    The fields are listed in [`_STRUCTURAL_FIELDS`][]. A header reset in
-    this way keeps everything else that its file recorded, and the writer
-    then encodes the layout of the data and the geometry over it.
-    """
-    fresh = type(header)()
-    for name in _STRUCTURAL_FIELDS:
-        header[name] = fresh[name]
-
-
-def _stored_scaling(
-    header: tx.Optional[nb.Nifti1Header], proxy: ArrayProxy
-) -> tx.Tuple[tx.Any, tx.Any]:
-    """Return the `scl_slope` and `scl_inter` to write with unscaled voxels.
-
-    The voxels of a proxy are written as they are stored, so the file needs
-    the slope and the intercept that the proxy applies when it reads them.
-    The values of the record are kept when they mean the same scaling, so
-    that a slope of zero, which means that the voxels are not scaled, is
-    written as zero again rather than as one.
-    """
-    if header is not None:
-        slope, inter = header.get_slope_inter()
-        slope = 1.0 if slope is None else slope
-        inter = 0.0 if inter is None else inter
-        if (slope, inter) == (proxy.slope, proxy.inter):
-            # A field of a header is a view, which a reset would change.
-            return header["scl_slope"].item(), header["scl_inter"].item()
-    return proxy.slope, proxy.inter
-
-
 def _image_with_geometry(
     data: ArrayProtocol,
     transformation: Transformation,
     transformations: tx.Sequence[Transformation],
-    base: tx.Optional[NiftiRaw] = None,
+    header: tx.Optional[nb.Nifti1Header] = None,
     like: tx.Any = None,
     overrides: tx.Optional[tx.Mapping] = None,
 ) -> _NiftiObject:
     """Build a NIfTI image from data and their voxel-to-world geometry.
 
-    The header is built in a fixed order. The record `base`, when it is
-    given, is the starting point: its structural fields are reset with
-    [`_reset_structural_fields`][], and its other fields and extensions are
-    kept. The record is changed in place, so the caller passes a copy.
-    Without a record, the header starts empty. The geometry is then encoded
-    over the header, header fields are copied from `like`, and the
-    `overrides` are applied last.
+    The header is built in a fixed order. The `header` of a record, when
+    it is given, is the starting point: its structural fields are reset
+    with [`_reset_structural_fields`][], and its other fields and
+    extensions are kept. The header is changed in place, so the caller
+    passes a copy. Without a header, the header starts empty. The geometry
+    is then encoded over the header, header fields are copied from `like`,
+    and the `overrides` are applied last.
 
     The preferred transformation provides the sform, the spacing of the
     later axes and the units, and the qform comes from
@@ -389,12 +324,11 @@ def _image_with_geometry(
     The array of the image is the data, laid out as NIfTI stores it. A
     nibabel proxy keeps the data type, the slope and the intercept that
     its file stored, so the header records how the proxy is stored and
-    [`_written_nifti`][] writes it unscaled, byte for byte. An override of
+    `_written_nifti` writes it unscaled, byte for byte. An override of
     the data type or of the scaling resets the scaling instead, and the
     proxy is then read and scaled again when it is written.
     """
     overrides = dict(overrides or {})
-    header = None if base is None else base.header
 
     preferred_output = getattr(transformation, "output", None)
     space, time = _xyzt_labels(preferred_output)
@@ -432,46 +366,4 @@ def _image_with_geometry(
     _apply_overrides(image, overrides)
     if scaling is not None:
         image.header["scl_slope"], image.header["scl_inter"] = scaling
-    return image
-
-
-def _stores_proxy(header: nb.Nifti1Header, proxy: ArrayProxy) -> bool:
-    """Tell whether a header stores the voxels of a proxy as they are.
-
-    The header must have the data type of the stored voxels, and a slope
-    and an intercept that mean the scaling that the proxy applies.
-    """
-    if header.get_data_dtype() != proxy.dtype:
-        return False
-    slope, inter = header.get_slope_inter()
-    slope = 1.0 if slope is None else slope
-    inter = 0.0 if inter is None else inter
-    return (slope, inter) == (proxy.slope, proxy.inter)
-
-
-def _written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> _NiftiObject:
-    """Build the nibabel image that writes an array over its record.
-
-    The record is written as it is, since it already encodes the layout
-    of the array and the geometry, and nibabel writes a copy of it, so
-    the record is not changed. nibabel chooses the offset of the voxels
-    again, as for a new header. A proxy
-    that the header stores as it is, as [`_image_with_geometry`][] leaves
-    an untouched proxy, is written unscaled, so that its voxels are copied
-    byte for byte. Any other array is written with the data type of the
-    header, and nibabel scales it when the header has no scaling.
-    """
-    header = record.header
-    if isinstance(raw, ArrayProxy) and _stores_proxy(header, raw):
-        raw = raw.get_unscaled()
-    image_cls = nb.Nifti1Image
-    if isinstance(header, nb.Nifti2Header):
-        image_cls = nb.Nifti2Image
-    # nibabel copies the header, and keeps its geometry since the affine is
-    # the one that the header gives. It resets the scaling, which is set
-    # again, so that a proxy is written unscaled with the scaling that its
-    # file stored.
-    image = image_cls(raw, header.get_best_affine(), header)
-    image.header["scl_slope"] = header["scl_slope"]
-    image.header["scl_inter"] = header["scl_inter"]
     return image

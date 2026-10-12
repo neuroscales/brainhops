@@ -30,7 +30,7 @@ from brainhops.io.transformations.itk.nifti import (  # noqa: E402
     ItkNiftiCoordinatesField,
     ItkNiftiDisplacementField,
 )
-from brainhops.io.transformations.spm.y import (  # noqa: E402
+from brainhops.io.transformations.spm import (  # noqa: E402
     SpmCoordinatesField,
 )
 

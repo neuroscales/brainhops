@@ -1,24 +1,36 @@
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Alias
+from bagof.magic import Alias, KwOnly, NoRepr, replace
 
+from brainhops._core.properties import smartproperty
+from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.nifti import NiftiReaderWriter
+from brainhops.io.base.parsers import (
+    Confidence,
+    UnrepresentableTransformationError,
+    WriterError,
+)
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
+    _header,
     _nifti_intent,
-    _nifti_vector_field,
     _NiftiObject,
+    _record_image,
+    _stored_parts,
 )
-from brainhops.io.transformations.base import TransformationFormat
+from brainhops.io.images.nifti._views import (
+    _image_to_disk,
+    _image_to_model,
+)
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
+from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._base import _consolidated_metadata
+from brainhops.io.transformations.nifti._views import _field_to_model
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
@@ -61,23 +73,10 @@ _SPLINE_DEGREE = {
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
-class _WritableNifti(TransformationFormat, NiftiReaderWriter):
-    """
-    A transformation read from or written to a NIfTI file.
-
-    It is a class of its own rather than two bases of `FnirtWarpField`, because
-    no order of those bases keeps the constructor's positional parameters
-    (`moving`, `reference`, `deformation_type`, `image`, `header`,
-    `transformations`).
-    """
-
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
-
-
 @register_format
 class FnirtWarpField(
     FslTransformationFormat,
-    _WritableNifti,
+    NiftiBasedTransformation,
     _xforms.ImmutableSequence,
 ):
     """Non-linear transformation stored in an FSL FNIRT NIfTI file.
@@ -136,6 +135,27 @@ class FnirtWarpField(
     infer it from the data. Coefficient fields ignore it.
     """
 
+    _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    """The array given to the field, or `None` to decode it from `raw`.
+
+    An array stored here is pending until [`consolidate`][] or a write
+    encodes it into `raw`.
+    """
+
+    @smartproperty(cache=True)
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the file, as FSL stores it.
+
+        A deformation field has shape (X, Y, Z, 3), and a coefficient field
+        holds the coefficients on its knot grid. An array that is assigned
+        is returned as it is, and stays pending until [`consolidate`][] or
+        a write encodes it. Otherwise the array is decoded from `raw`. The
+        chain is built again from a new array.
+        """
+        if self.raw is None:
+            return None
+        return _image_to_model(self.raw)
+
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
         if _nifti_intent(header) in _FNIRT_INTENTS:
@@ -143,8 +163,8 @@ class FnirtWarpField(
         return Confidence.NO
 
     # --- image keyword handling ---------------------------------------
-    # `NiftiReaderWriter.from_file` forwards keywords to `nibabel.load`,
-    # which rejects `moving=` and `reference=`, so these are set after parsing.
+    # The readers forward their keywords to nibabel, which ignores
+    # `moving=` and `reference=`, so these are set after parsing.
 
     @classmethod
     def _pop_images(
@@ -168,69 +188,136 @@ class FnirtWarpField(
         return obj
 
     @classmethod
-    def from_file(cls, file: tx.Any, **kwargs) -> tx.Self:
+    def from_filename(cls, filename: tx.Any, **kwargs) -> tx.Self:
+        """Read a FNIRT field from the path of a NIfTI file.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            The `moving` and `reference` images, under any of their
+            aliases, and the options of the nibabel readers.
+
+        Returns
+        -------
+        FnirtWarpField
+            The field, whose array is read lazily.
+        """
         moving, reference = cls._pop_images(kwargs)
-        obj = super().from_file(file, **kwargs)
+        obj = super().from_filename(filename, **kwargs)
         return cls._with_images(obj, moving, reference)
 
     @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
+        """Read a FNIRT field from an open NIfTI stream.
+
+        Parameters
+        ----------
+        fileobj : BinaryIO
+            The stream, which must stay open while the data may be read.
+        **kwargs : Any
+            The `moving` and `reference` images, under any of their
+            aliases, and the options of the nibabel readers.
+
+        Returns
+        -------
+        FnirtWarpField
+            The field, whose array is read lazily.
+        """
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_fileobj(fileobj, **kwargs)
         return cls._with_images(obj, moving, reference)
 
-    @classmethod
-    def from_bytes(cls, data: bytes, **kwargs) -> tx.Self:
-        moving, reference = cls._pop_images(kwargs)
-        obj = super().from_bytes(data, **kwargs)
-        return cls._with_images(obj, moving, reference)
+    def consolidate(
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+    ) -> tx.Self:
+        """Encode the pending array into `raw` and a new header.
 
-    def to_nibabel(self, like: tx.Any = None, **overrides) -> tx.Any:
-        """Build the NIfTI image while preserving the FNIRT header intent."""
-        if self.data is None or self.header is None:
-            raise WriterError(
-                "A FNIRT file needs both its field data and header to be "
-                "written."
+        FNIRT writes the field and the parameters of its spline in the
+        header, which no other transformation can be converted to, so the
+        array is kept under a copy of the header of the metadata, with its
+        intent. A field built from an array alone is encoded as a
+        deformation field (intent 2006) whose voxel-to-world affine is the
+        identity. FNIRT cannot encode a chain, so consolidating a field
+        whose chain was assigned raises an error. Non-encoding header fields
+        are copied from `like`, and `overrides` are applied last. A field
+        that has a header and nothing pending, consolidated without
+        options, is left as it is.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this field rather than a copy.
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        Self
+            The consolidated copy, or this field with `inplace=True`.
+
+        Raises
+        ------
+        WriterError
+            If the field has no array.
+        UnrepresentableTransformationError
+            If a chain was assigned to the field.
+        """
+        if (
+            self._data is None
+            and self._transformations is None
+            and like is None
+            and not overrides
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            return self if inplace else replace(self)
+        raw, record = _stored_parts(_fnirt_encoded(self, like, overrides))
+        metadata = _consolidated_metadata(self, record)
+        if not inplace:
+            return replace(
+                self,
+                raw=raw,
+                metadata=metadata,
+                data=None,
             )
-        data = self.data
-        image_type = (
-            nb.Nifti2Image
-            if isinstance(self.header, nb.Nifti2Header)
-            else nb.Nifti1Image
-        )
-        image = image_type(
-            data,
-            self.header.get_best_affine(),
-            header=self.header.copy(),
-        )
-        _apply_like(image, like)
-        _apply_overrides(image, overrides)
-        return image
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        return self
 
     # --- exposed parameters -------------------------------------------
 
     @property
     def degree(self) -> tx.Optional[int]:
         """The B-spline degree, or `None` for DCT fields."""
-        if self.header is None:
+        header = _header(self)
+        if header is None:
             return None
-        return _SPLINE_DEGREE.get(_nifti_intent(self.header))
+        return _SPLINE_DEGREE.get(_nifti_intent(header))
 
     @property
     def store(self) -> tx.Optional[StoreEnum]:
         """Whether the field stores spline coefficients or values."""
-        if self.header is None:
+        header = _header(self)
+        if header is None:
             return None
         return StoreEnum.from_coefficients(
-            _nifti_intent(self.header) in _COEFFICIENT_INTENTS
+            _nifti_intent(header) in _COEFFICIENT_INTENTS
         )
 
     # --- intent-driven behaviour --------------------------------------
 
     def _intent(self) -> tx.Optional[int]:
-        if self.header is None:
+        header = _header(self)
+        if header is None:
             return None
-        return _nifti_intent(self.header)
+        return _nifti_intent(header)
 
     def _is_coeff(self) -> bool:
         return self._intent() in _COEFFICIENT_INTENTS
@@ -257,12 +344,12 @@ class FnirtWarpField(
 
     def _stored_knot_spacing(self) -> np.ndarray:
         """Knot spacing as stored in the pixdims."""
-        zooms = self.header.get_zooms()[:3]
+        zooms = _header(self).get_zooms()[:3]
         return np.abs(np.asarray(zooms, dtype=np.float64))
 
     def _reference_pixdim(self) -> np.ndarray:
         """Reference voxel sizes, stored in the intent parameters."""
-        header = self.header
+        header = _header(self)
         return np.array(
             [
                 float(header["intent_p1"]),
@@ -299,7 +386,7 @@ class FnirtWarpField(
         """
         if not self._is_coeff():
             return np.eye(4, dtype=np.float64)
-        sform = np.asarray(self.header.get_sform(), dtype=np.float64)
+        sform = np.asarray(_header(self).get_sform(), dtype=np.float64)
         if not np.all(np.isfinite(sform)):
             return np.eye(4, dtype=np.float64)
         return np.linalg.inv(sform)
@@ -315,13 +402,13 @@ class FnirtWarpField(
                     "reference=... when loading, or set it on the "
                     "transformation."
                 )
-            reference = self.header
+            reference = _header(self)
         return _ImageGeometry(reference)
 
     def _raw_field(self) -> tx.Any:
-        backend = get_array_backend(self.data)
-        # Collapse 5-D vector fields to `(*grid, 3)`.
-        return _nifti_vector_field(backend.asarray(self.data))
+        # A 5-D vector field in the layout of the NIfTI standard is
+        # collapsed to `(*grid, 3)`.
+        return _field_to_model(self.data)
 
     def _field_array(self, ref: _ImageGeometry) -> tx.Any:
         """The field on its own grid, as scaled millimetre displacements.
@@ -352,7 +439,7 @@ class FnirtWarpField(
     # --- the chain ----------------------------------------------------
 
     def _resolvable(self) -> bool:
-        if self.header is None or self.moving is None:
+        if _header(self) is None or self.moving is None:
             return False
         if self._intent() == FSL_DCT_COEFFICIENTS:
             return False
@@ -395,14 +482,14 @@ class FnirtWarpField(
         """The transformations from reference RAS to moving RAS.
 
         The chain is built from the warp and both geometries, and raises when a
-        required image is missing. It is cached until the images, the header or
-        `deformation_type` change, and it is a tuple so that the cache cannot
-        be edited in place.
+        required image is missing. It is cached until the images, the
+        metadata, the array or `deformation_type` change, and it is a tuple
+        so that the cache cannot be edited in place.
         """
-        explicit = getattr(self, "_transformations", None)
+        explicit = self._transformations
         if explicit is not None:
             return explicit
-        if self.header is None:
+        if _header(self) is None:
             return ()
         key = self._chain_key()
         cached = getattr(self, "_chain_cache", None)
@@ -422,7 +509,9 @@ class FnirtWarpField(
         return (
             id(self.moving),
             id(self.reference),
-            id(self.header),
+            id(self.metadata),
+            id(self.raw),
+            id(self._data),
             self.deformation_type,
         )
 
@@ -435,7 +524,7 @@ class FnirtWarpField(
         an empty tuple when it cannot be built, so that inspection never
         raises.
         """
-        explicit = getattr(self, "_transformations", None)
+        explicit = self._transformations
         if explicit is not None:
             return explicit
         if not self._resolvable():
@@ -458,6 +547,38 @@ class FnirtWarpField(
         self, index: tx.Union[int, slice]
     ) -> _xforms.Transformation:
         return self._cached_transformations()[index]
+
+
+def _fnirt_encoded(
+    field: FnirtWarpField, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+) -> tx.Any:
+    """Encode the array of a FNIRT field over a copy of its record.
+
+    Raises
+    ------
+    WriterError
+        If the field has no array.
+    UnrepresentableTransformationError
+        If a chain was assigned to the field.
+    """
+    if field._transformations is not None:
+        raise UnrepresentableTransformationError(
+            "A FNIRT file stores a warp field and the parameters of its "
+            "spline, so a chain assigned to the field cannot be written. "
+            "Assign the field data instead."
+        )
+    if field._data is not None:
+        stored = _image_to_disk(field._data)
+    else:
+        stored = field.raw
+    if stored is None:
+        raise WriterError("A FNIRT file needs its field data to be written.")
+    image = _record_image(stored, field._record(), overrides=overrides)
+    if _header(field) is None:
+        image.header.set_intent(FSL_FNIRT_DISPLACEMENT_FIELD)
+    _apply_like(image, like)
+    _apply_overrides(image, overrides)
+    return image
 
 
 # ----------------------------------------------------------------------

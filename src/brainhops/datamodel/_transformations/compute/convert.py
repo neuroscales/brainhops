@@ -133,6 +133,33 @@ def convert(x: FROM, cls: tx.Type[TO], **kwargs: tx.Any) -> TO:
     return result
 
 
+def find_converter(x: Transformation, cls: type) -> tx.Optional[Converter]:
+    """Return the converter that `convert(x, cls)` runs.
+
+    The converter is chosen as [`convert`][] chooses it, but it is not
+    run. A caller can thus tell which kind of conversion a request would
+    make, for example whether a file format has a converter of its own
+    for `x`.
+
+    Parameters
+    ----------
+    x : Transformation
+        Transformation to convert.
+    cls : type of Transformation
+        Requested transformation type.
+
+    Returns
+    -------
+    Converter or None
+        The converter, or `None` if no converter applies or several
+        apply equally.
+    """
+    try:
+        return _convert.dispatch(x, cls).function
+    except (NoMethodError, AmbiguousMethodError):
+        return None
+
+
 def _key_from_func(func: Converter) -> tx.Tuple[type, type]:
     """Read the input and output types from the hints of a converter.
 
