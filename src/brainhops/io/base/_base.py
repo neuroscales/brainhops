@@ -612,11 +612,10 @@ class _FileBasedModelMixin:
             kwargs.setdefault(field.public_name, default)
         # The fields `_data` and `_transformations` of another class, if it
         # has them, are its own stored values, so the decoded views are
-        # read instead.
-        if not isinstance(other, cls) and any(
-            field.name == "_data" and field.public_name == "data"
-            for field in fields(cls)
-        ):
+        # read instead. A transformation model stores its data as `_data`
+        # itself, and its own `from_instance` converts the data of another
+        # class, so only a format that takes `data` over reads it here.
+        if not isinstance(other, cls) and _takes_over(cls, "data"):
             data = getattr(other, "data", None)
             if data is not None:
                 kwargs.setdefault("data", data)
@@ -676,6 +675,30 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
             isinstance(other, k) for k in owners.get(field.public_name, ())
         )
     ]
+
+
+def _takes_over(cls: type, name: str) -> bool:
+    """Tell whether a format stores a field of its data model privately.
+
+    A format takes a field over when it declares the field `_<name>` with
+    the public name `name`, while its data model, the first class in its
+    MRO that is a data model but not a parser, declares the field under
+    the name `name`. An image format that takes `data` over is an example.
+    A transformation model declares `_data` itself, so a transformation
+    format does not take `data` over.
+    """
+    if not any(
+        field.name == "_" + name and field.public_name == name
+        for field in fields(cls)
+    ):
+        return False
+    for klass in cls.__mro__:
+        if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
+            continue
+        if issubclass(klass, (Format, FileReader, FileWriter)):
+            continue
+        return any(field.name == name for field in fields(klass))
+    return False
 
 
 def _is_file_or_content(other: tx.Any) -> bool:
