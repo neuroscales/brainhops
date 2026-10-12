@@ -7,7 +7,7 @@ from io import BytesIO
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -90,6 +90,20 @@ class NiftiImage(
     the header when it is read. Setting `data` stores the new array here.
     """
 
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+    """The transformations given to the image, or `None` to decode them.
+
+    The image takes over the `transformations` field of
+    [`SingleScaleImage`][brainhops.datamodel.images.SingleScaleImage] to
+    store it under this private name. The constructor still takes
+    `transformations` in the same place, and the property of the same
+    name reads it. `None`, the default, means that the transformations
+    are decoded from the header, while a list, even an empty one, is used
+    as it is.
+    """
+
     _metadata: KwOnly[NoRepr[tx.Optional[NiftiMetadata]]] = None
 
     metadata = smartproperty("metadata", invalidates="transformations")
@@ -121,16 +135,20 @@ class NiftiImage(
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self.raw = None if value is None else _image_to_disk(value)
 
-    @smartproperty(cache=True, unset=(None, "empty"))
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the header.
 
         The decoded list is cached, so `img.transformation is
         img.transformation`, and a transformation appended to the list in
-        place is kept. Assigning a list replaces the decoded one, and
-        assigning other metadata drops it. A header modified in place is
-        not noticed, so a modified copy should be assigned as new metadata
-        instead.
+        place is kept. Assigning other metadata drops the decoded list. A
+        header modified in place is not noticed, so a modified copy should
+        be assigned as new metadata instead.
+
+        Assigning a list replaces the decoded one. An empty list means that
+        the image has no geometry, and the image is then written as an
+        image built from data alone. Assigning `None` decodes the header
+        again.
         """
         if self.metadata is None or self.metadata.raw is None:
             return []
