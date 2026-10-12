@@ -157,6 +157,17 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.transformations.freesurfer.regdat": Package(
+        names=frozenset(
+            {
+                "RegisterDatMetadata",
+                "RegisterDatRaw",
+                "RegisterDatTkrSystem",
+                "RegisterDatTransformation",
+                "RegisterDatTransformationRASToRAS",
+            }
+        ),
+    ),
     "brainhops.io.transformations.freesurfer.m3z": Package(
         names=frozenset(
             {

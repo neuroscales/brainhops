@@ -121,6 +121,11 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
 )
+from brainhops.io.transformations.freesurfer.regdat import (
+    RegisterDatMetadata,
+    RegisterDatTkrSystem,
+    RegisterDatTransformation,
+)
 
 try:
     import nibabel as nb
@@ -1004,6 +1009,51 @@ _LTA = Exemplar(
     stored=_lta_stored,
 )
 EXEMPLARS[LtaTransformation] = _LTA
+
+
+def _regdat_stored(xform: tx.Any) -> tx.Any:
+    # The matrix of a register.dat file lives in the record, as the matrix
+    # of an LTA file does.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+def _regdat_edit_record(record: tx.Any) -> tx.Any:
+    record.subject = "edited"
+    return record
+
+
+# A register.dat file is parsed in one pass, as an LTA file is, so the
+# checks read the matrix of the record. The file holds no geometry, and
+# the geometries `reference` and `moving` are options of the reader that
+# are never written. The view `RegisterDatTransformationRASToRAS` is not
+# a variant here, because it reads no matrix without both geometries,
+# which the checks do not give when they load a file. Its tests are in
+# `test_io_regdat.py`. Check 6 is vacuous, as it is for LTA, because the
+# file has no data beside its record.
+_REGDAT = Exemplar(
+    metadata=RegisterDatMetadata,
+    suffix=".dat",
+    proxies=(tuple,),
+    to_model=_matrix_to_model,
+    to_disk=_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_regdat_edit_record,
+    record_edited=lambda raw: raw.subject == "edited",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(
+        data,
+        input=RegisterDatTkrSystem(name="reference"),
+        output=RegisterDatTkrSystem(name="moving"),
+    ),
+    options=frozenset({"reference", "moving"}),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_regdat_stored,
+)
+EXEMPLARS[RegisterDatTransformation] = _REGDAT
 
 
 # The model of an X5 file is a chain, whose first element here is a field
