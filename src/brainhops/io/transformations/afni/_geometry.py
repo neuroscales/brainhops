@@ -124,21 +124,23 @@ def cardinal_to_real_matrix(image: tx.Any) -> np.ndarray:
 
 def cardinal_to_real(image: tx.Any) -> _xforms.Affine:
     """
-    The affine from an image's cardinal DICOM coordinates to its true
-    ones, in LPS millimetres.
+    Return the affine from the cardinal DICOM coordinates of an image to
+    its true coordinates, in LPS millimetres.
 
     AFNI programs ignore the obliquity of a dataset: they compute on its
-    *cardinal* grid, the closest grid whose axes run along the DICOM
-    axes. A point of the image has cardinal coordinates (what AFNI's
-    matrices and warps are expressed in) and true coordinates (where it
-    is in the scanner, or template, space). This affine maps the former
-    to the latter: it is the identity for an image that is not oblique.
+    *cardinal* grid, which is the closest grid whose axes run along the
+    DICOM axes. A point of the image has cardinal coordinates, in which
+    the matrices and the warps of AFNI are expressed, and true
+    coordinates, which say where it lies in the scanner or template
+    space. This affine maps the former to the latter, and it is the
+    identity for an image that is not oblique.
 
-    Compose it with an AFNI transformation to place it in true
-    coordinates, as
-    [`AfniAffine`][brainhops.io.transformations.afni.AfniAffine] does
-    when given its `base` and `source` images. For a warp `W` from
-    the cardinal space of the base to that of the source:
+    The affine is composed with an AFNI transformation to place it in
+    true coordinates, as
+    [`AfniAffine`][brainhops.io.transformations.afni.AfniAffine] does when
+    it is given its `base` and `source` images. For a warp `W` from the
+    cardinal space of the base to that of the source, the map between
+    true coordinates is the following.
 
     ```python
     from brainhops.datamodel.transformations import Sequence

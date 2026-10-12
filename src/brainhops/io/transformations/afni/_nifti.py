@@ -120,6 +120,19 @@ class AfniNiftiWarp(
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
 
+    PRIORITY: tx.ClassVar[int] = -1
+    """
+    Priority below the NIfTI field of RAS displacements.
+
+    A `.nii.gz` name cannot tell an AFNI warp from a NIfTI `DISPVECT`
+    field, and both hold a field of RAS displacements exactly. `io.save`
+    writes such a field as a
+    [`NiftiRASDisplacementField`][brainhops.io.transformations.nifti.NiftiRASDisplacementField],
+    unless it already is an AFNI warp, which is built with
+    `AfniNiftiWarp.from_any(t)`. A file is read as an AFNI warp from its
+    extension, whose score decides before the priority.
+    """
+
     degree: tx.ClassVar[int] = 1
     """The spline degree of the interpolation."""
 

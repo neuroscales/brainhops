@@ -29,9 +29,11 @@ class AfniWarp(AfniTransformationFormat):
     """A nonlinear warp stored in an AFNI format, as `3dQwarp` writes it.
 
     This class is the family of the AFNI warps and answers to the hint
-    `"afni.warp"`. It is not a format itself: [`AfniBrikWarp`][] reads and
-    writes a warp stored as an AFNI dataset, and [`AfniNiftiWarp`][] a warp
-    stored as a NIfTI file.
+    `"afni.warp"`. It is not a format itself:
+    [`AfniBrikWarp`][brainhops.io.transformations.afni.AfniBrikWarp] reads
+    and writes a warp stored as an AFNI dataset, and
+    [`AfniNiftiWarp`][brainhops.io.transformations.afni.AfniNiftiWarp] a
+    warp stored as a NIfTI file.
 
     A warp has three sub-bricks of displacements, in DICOM (LPS)
     millimetres. The value at a point `x` of the grid of the base is the
