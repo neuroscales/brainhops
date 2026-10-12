@@ -1190,3 +1190,35 @@ def test_an_attribute_must_be_latin1_text(tmp_path) -> None:  # noqa: ANN001
         image.save(
             tmp_path / "out+orig.HEAD", attributes={"HISTORY_NOTE": "\u2713"}
         )
+
+
+def test_an_image_whose_transformations_are_emptied_has_no_geometry(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """An empty list is honoured, and `None` decodes the record again.
+
+    The writer encodes an image without transformations as it encodes an
+    image built from data alone: the voxel axes map to the DICOM (LPS)
+    coordinates of AFNI by the identity, so the decoded voxel-to-RAS
+    matrix flips the first two axes.
+    """
+    matrix = np.diag([2.0, 3.0, 4.0, 1.0])[:3]
+    matrix[:, 3] = [5.0, 6.0, 7.0]
+    data = np.zeros((2, 3, 4), "f4")
+    source = tmp_path / "placed+orig.HEAD"
+    AfniImage(data, [Affine(matrix=matrix)]).save(source)
+    image = AfniImage.load(source)
+    decoded = image.transformation.to(Affine).matrix
+    image.transformations = []
+    assert image.transformations == []
+    target = tmp_path / "emptied+orig.HEAD"
+    image.save(target)
+    bare = tmp_path / "bare+orig.HEAD"
+    AfniImage(data).save(bare)
+    written = AfniImage.load(target).transformation.to(Affine).matrix
+    assert np.allclose(written, np.diag([-1.0, -1.0, 1.0, 1.0])[:3])
+    assert np.allclose(
+        written, AfniImage.load(bare).transformation.to(Affine).matrix
+    )
+    image.transformations = None
+    assert np.allclose(image.transformation.to(Affine).matrix, decoded)
