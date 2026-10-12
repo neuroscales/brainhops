@@ -1,7 +1,5 @@
 """AFNI nonlinear warps stored as NIfTI files (`3dQwarp -prefix x.nii`)."""
 
-__all__ = ["AfniNiftiWarp"]
-
 # stdlib
 import re
 
@@ -9,33 +7,64 @@ import re
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import KwOnly, NoRepr, replace
 
 # internals
+from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.datamodel import systems as _systems
+from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._transformations.compute.convert import converter
+from brainhops.datamodel._transformations.compute.converters import (
+    smart_replace,
+)
+from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.io.base._base import register_format
-from brainhops.io.base.afni import DICOM_TO_RAS
-from brainhops.io.base.nifti import (
+from brainhops.io.base.parsers import (
+    Confidence,
+    WriterError,
+)
+from brainhops.io.common.afni._constants import DICOM_TO_RAS
+from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
-    _new_nifti,
+    _header,
     _nifti_shape,
     _NiftiObject,
+    _record_image,
+    _stored_parts,
 )
-from brainhops.io.base.parsers import Confidence, ParserContentError
-from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
+from brainhops.io.images.afni import AfniImage
+from brainhops.io.transformations.base._conversions import format_options
+from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._base import _consolidated_metadata
+from brainhops.io.transformations.nifti._views import (
+    _field_to_disk,
+    _field_to_model,
+)
 
-from ._utils import _nifti_matrix, nifti_cardinal_matrix
-from ._warp import WARP_LABELS, AfniWarp, is_warp_labels
+# this format
+from ._converters import _afni_displacement
+from ._formats import AfniWarp
+from ._geometry import _nifti_matrix, nifti_cardinal_matrix
+from ._warp import (
+    WARP_LABELS,
+    _check_ras,
+    _dicom_chain,
+    _dicom_field,
+    _dicom_vectors,
+    is_warp_labels,
+)
 
 _NIFTI_ECODE_AFNI = 4
-"""The code of AFNI's NIfTI header extension (`NIFTI_ECODE_AFNI`)."""
+"""The code of the NIfTI header extension of AFNI (`NIFTI_ECODE_AFNI`)."""
 
-_NIFTI_FLOAT32 = 16
-"""The NIfTI datatype code of `float32`, as written in `NIfTI_nums`."""
+_WHAT = "An AFNI NIfTI warp"
+"""The name of the format in the messages of its errors."""
 
 _XFORM_SCANNER_ANAT = 1
-"""The sform and qform code written when none is known."""
+"""The code of the sform and the qform that are written when none is
+known."""
 
 _BRICK_LABS = re.compile(
     r"atr_name\s*=\s*[\"']BRICK_LABS[\"'][^>]*>\s*[\"']([^\"']*)[\"']"
@@ -43,8 +72,329 @@ _BRICK_LABS = re.compile(
 _NIFTI_NUMS = re.compile(r"NIfTI_nums\s*=\s*[\"']([^\"']*)[\"']")
 
 
+@register_format
+class AfniNiftiWarp(
+    _xforms.ImmutableSequence, AfniWarp, NiftiBasedTransformation
+):
+    """
+    An AFNI nonlinear warp stored as a NIfTI file, such as the
+    `<prefix>_WARP.nii.gz` of `3dQwarp`.
+
+    AFNI writes a dataset of three sub-bricks as a `(X, Y, Z, 1, 3)` NIfTI
+    array without an intent code, with its usual voxel-to-RAS sform and
+    qform, and with the displacements unchanged: they are in DICOM (LPS)
+    millimetres, `x`, `y` and `z`, and not in RAS, unlike a NIfTI
+    `DISPVECT` field. See [`AfniWarp`][] for what they mean. The grid is
+    the cardinal grid that AFNI derives from the qform, or else the sform,
+    as `3dNwarpApply` does when it reads the file. It is the stored grid
+    unless that grid is oblique.
+
+    The warp holds the header of its file as
+    [`NiftiMetadata`][brainhops.io.common.nifti.NiftiMetadata] and the
+    array of the file in `raw`, as every NIfTI transformation does. The
+    data is the array without its singleton axis, and the chain is
+    decoded from it and from the header on first access. Values and chains
+    that are assigned are pending until [`consolidate`][] encodes them
+    into a copy, or until the warp is written.
+
+    The header has nothing that says "AFNI warp" but the AFNI extension
+    that AFNI writes into every NIfTI file, unless `AFNI_NIFTI_NOEXT` is
+    set. When the labels of the sub-bricks in that extension are
+    `x_delta`, `y_delta` and `z_delta`, the file is claimed with
+    certainty. Without them, the same array is also what other software
+    writes, such as a field of RAS coordinates or displacements or an ITK
+    field, so the file is not claimed, and it is read with
+    `hint="afni.warp"` or `hint="afni.warp.nifti"`, or with this class
+    directly.
+
+    A warp is written with its displacements in the layout of AFNI. The
+    AFNI extension of the header is kept when it still describes the
+    file, since AFNI warns when its `NIfTI_nums` do not match the file,
+    and a minimal extension with the labels of a warp replaces it
+    otherwise.
+    """
+
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
+
+    degree: tx.ClassVar[int] = 1
+    """The spline degree of the interpolation."""
+
+    bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
+    """The boundary condition outside the field of view."""
+
+    _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    """The sub-bricks given to the warp, or `None` to decode them.
+
+    Sub-bricks stored here are pending until [`consolidate`][] or a write
+    encodes them into `raw`.
+    """
+
+    @smartproperty(cache=True, invalidates="transformations")
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The sub-bricks as an (X, Y, Z, n) array, in DICOM millimetres.
+
+        Sub-bricks that are assigned are returned as they are, and stay
+        pending until [`consolidate`][] or a write encodes them. Otherwise
+        they are decoded from `raw`: AFNI stores the sub-bricks with shape
+        (X, Y, Z, 1, n), and the singleton axis is dropped. Assigning the
+        data drops the chain decoded from the previous data.
+        """
+        if self.raw is None:
+            return None
+        return _field_to_model(self.raw)
+
+    metadata = smartproperty("metadata", invalidates="transformations")
+    """The metadata of the file, which holds its header, or `None`.
+
+    Assigning other metadata drops the chain decoded from the previous
+    header.
+    """
+
+    # --- reading ------------------------------------------------------
+
+    @classmethod
+    def _score_nibabel(cls, header: _NiftiObject) -> float:
+        """Score a header as an AFNI warp.
+
+        The layout of AFNI, with an AFNI extension that labels the
+        sub-bricks as those of a warp, scores `Confidence.CERTAIN`, and
+        any other header `Confidence.NO`.
+        """
+        bricks = _bricks(_nifti_shape(header))
+        if bricks is None or bricks < 3:
+            return Confidence.NO
+        if is_warp_labels(_extension_labels(header)):
+            return Confidence.CERTAIN
+        return Confidence.NO
+
+    # --- endpoints ----------------------------------------------------
+
+    @smartproperty(cache=True)
+    def input(self) -> tx.Optional[_systems.CoordinateSystem]:
+        """The space that the warp maps from: the RAS world of the base."""
+        return _systems.RASmm()
+
+    @smartproperty(cache=True)
+    def output(self) -> tx.Optional[_systems.CoordinateSystem]:
+        """The space that the warp maps to: the RAS world of the source."""
+        return _systems.RASmm()
+
+    # --- chain --------------------------------------------------------
+
+    @smartproperty(cache=True)
+    def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
+        """The chain of transformations that the warp encodes.
+
+        The chain is decoded from the cardinal grid that AFNI derives from
+        the header and from the first three sub-bricks on first access,
+        and cached. Its displacements in voxel units are read-only.
+        Assigning a chain overrides the decoded one, and the chain is
+        pending until [`consolidate`][] or a write encodes it.
+        """
+        return _dicom_chain(_dicom_vectors(self.data), _vox2dicom(self))
+
+    @property
+    def ras2voxel(self) -> _xforms.Transformation:
+        """The affine from RAS world coordinates to the warp's voxels."""
+        return self.transformations[0]
+
+    @property
+    def displacement(self) -> _xforms.Transformation:
+        """The displacement field, in the voxel units of its grid."""
+        return self.transformations[1]
+
+    @property
+    def voxel2ras(self) -> _xforms.Transformation:
+        """The affine from the warp's voxels back to RAS world."""
+        return self.transformations[2]
+
+    def to_image(self) -> AfniImage:
+        """Return the warp as an AFNI image, which is what AFNI stores.
+
+        The image has three `float32` sub-bricks, the `x`, `y` and `z`
+        displacements in DICOM (LPS) millimetres, on the cardinal grid of
+        the warp, labelled `x_delta`, `y_delta` and `z_delta`. Saved as an
+        AFNI dataset, it is read back as a warp.
+
+        Returns
+        -------
+        AfniImage
+            The consolidated image.
+
+        Raises
+        ------
+        WriterError
+            If the chain is not a displacement field between two affines.
+        UnrepresentableTransformationError
+            If the grid of the chain is oblique, since AFNI places a warp
+            on a cardinal grid.
+        """
+        vox2dicom, vectors = _dicom_field(self.transformations, _WHAT)
+        affine = _xforms.Affine(
+            matrix=vox2dicom[:3],
+            input=_systems.VoxelCoordinateSystem(),
+            output=_systems.LPSmm(name="orig"),
+        )
+        image = AfniImage(
+            data=np.asarray(vectors, dtype=np.float32),
+            transformations=[affine],
+        )
+        labels = {"BRICK_LABS": "\0".join(WARP_LABELS)}
+        return image.consolidate(datatype="float", attributes=labels)
+
+    # --- writing ------------------------------------------------------
+
+    def consolidate(
+        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+    ) -> "AfniNiftiWarp":
+        """Encode the pending sub-bricks or chain into `raw` and a header.
+
+        A warp whose chain was not assigned keeps its sub-bricks, assigned
+        or read, under a copy of the header of its metadata, whose
+        geometry is kept. A warp whose chain was assigned is encoded from
+        the chain: its displacements are written in DICOM millimetres as a
+        `float32` `(X, Y, Z, 1, 3)` array, with the cardinal grid of the
+        chain as sform and qform, whose codes are kept from the header,
+        or else are scanner-anatomical. Non-encoding header fields are
+        copied from `like`, and `overrides` are applied last. The AFNI
+        extension of the header is then kept if it still describes the
+        file, and replaced by a minimal one that labels the sub-bricks
+        otherwise. A warp that has a header and nothing pending,
+        consolidated without options, is left as it is.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this warp rather than a copy.
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`, such as `dtype`.
+
+        Returns
+        -------
+        AfniNiftiWarp
+            The consolidated copy, or this warp with `inplace=True`.
+
+        Raises
+        ------
+        WriterError
+            If the warp has no values, or its chain is not a displacement
+            field between two affines.
+        UnrepresentableTransformationError
+            If the chain, or an assigned `input` or `output`, does not map
+            RAS to RAS, or the grid of the chain is oblique.
+        """
+        declared = self._input is not None or self._output is not None
+        if declared:
+            _check_ras(self.input, self.output, _WHAT)
+        if (
+            self._data is None
+            and self._transformations is None
+            and not declared
+            and like is None
+            and not overrides
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            return self if inplace else replace(self)
+        raw, record = _stored_parts(_encoded(self, like, overrides))
+        metadata = _consolidated_metadata(self, record)
+        if not inplace:
+            return replace(
+                self,
+                raw=raw,
+                metadata=metadata,
+                data=None,
+                transformations=None,
+                input=None,
+                output=None,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        self.input = None
+        self.output = None
+        return self
+
+
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+
+def _vox2dicom(xform: AfniNiftiWarp) -> np.ndarray:
+    """Return the cardinal voxel-to-DICOM matrix that AFNI reads.
+
+    The matrix is derived from the qform, or else the sform, of the
+    header, and is the identity for a warp without a header.
+    """
+    header = _header(xform)
+    if header is None:
+        return np.eye(4)
+    real = DICOM_TO_RAS @ _nifti_matrix(header)
+    return nifti_cardinal_matrix(real)
+
+
+def _encoded(
+    xform: AfniNiftiWarp, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    """Encode a warp over a copy of its record.
+
+    The stored sub-bricks, assigned or read, are kept when the chain was
+    not assigned, and the chain is encoded otherwise.
+
+    Raises
+    ------
+    WriterError
+        If the warp has no values.
+    """
+    if xform._transformations is None:
+        if xform._data is not None:
+            stored = _field_to_disk(xform._data)
+        else:
+            stored = xform.raw
+        if stored is None:
+            raise WriterError(
+                "This warp has no values, so there is nothing to write."
+            )
+        image = _record_image(stored, xform._record(), overrides=overrides)
+    else:
+        vox2dicom, vectors = _dicom_field(xform.transformations, _WHAT)
+        spatial = tuple(int(d) for d in vectors.shape[:3])
+        data = np.asarray(vectors, dtype=np.float32).reshape(spatial + (1, 3))
+        vox2ras = DICOM_TO_RAS @ vox2dicom
+        record = xform._record()
+        scode, qcode = _xform_codes(None if record is None else record.header)
+        image = _record_image(data, record, vox2ras, overrides)
+        image.header.set_sform(vox2ras, code=scode)
+        image.header.set_qform(vox2ras, code=qcode)
+        image.header.set_xyzt_units("mm")
+    _apply_like(image, like)
+    _apply_overrides(image, overrides)
+    _set_afni_extension(image.header)
+    return image
+
+
+def _xform_codes(header: tx.Any) -> tx.Tuple[int, int]:
+    """Return the codes of the sform and the qform to store.
+
+    The codes of the header are kept, and a header without one gets the
+    scanner-anatomical code for both.
+    """
+    if header is not None and hasattr(header, "get_sform"):
+        _, scode = header.get_sform(coded=True)
+        _, qcode = header.get_qform(coded=True)
+        if scode or qcode:
+            return int(scode or qcode), int(qcode or scode)
+    return _XFORM_SCANNER_ANAT, _XFORM_SCANNER_ANAT
+
+
 def _afni_extension(header: _NiftiObject) -> tx.Optional[str]:
-    """The text of AFNI's extension (NIML attributes), or `None`."""
+    """Return the text of the AFNI extension of a header, or `None`."""
     for extension in getattr(header, "extensions", None) or ():
         try:
             if int(extension.get_code()) != _NIFTI_ECODE_AFNI:
@@ -59,8 +409,11 @@ def _afni_extension(header: _NiftiObject) -> tx.Optional[str]:
 
 
 def _extension_labels(header: _NiftiObject) -> tx.Optional[tx.List[str]]:
-    """The sub-brick labels stored in AFNI's extension (`BRICK_LABS`,
-    NUL characters written as `~`), or `None`."""
+    """Return the sub-brick labels that the AFNI extension stores, or `None`.
+
+    The labels are the `BRICK_LABS` attribute, in which the NUL
+    characters are written as `~`.
+    """
     text = _afni_extension(header)
     match = _BRICK_LABS.search(text) if text else None
     if match is None:
@@ -69,13 +422,13 @@ def _extension_labels(header: _NiftiObject) -> tx.Optional[tx.List[str]]:
 
 
 def _bricks(shape: tx.Optional[tx.Sequence[int]]) -> tx.Optional[int]:
-    """
-    The number of sub-bricks of a NIfTI file in AFNI's layout, or `None`.
+    """Return the number of sub-bricks of a NIfTI file of AFNI, or `None`.
 
     AFNI writes a dataset of several sub-bricks that is not a time series
-    with `dim[0] = 5` and its sub-bricks in `dim[5]`: `(X, Y, Z, 1, n)`
-    (`thd_niftiwrite.c`). A file whose sub-bricks are on the time axis,
-    `(X, Y, Z, n)`, is read the same way by AFNI, and here.
+    with `dim[0] = 5` and its sub-bricks in `dim[5]`, which gives a shape
+    `(X, Y, Z, 1, n)` (`thd_niftiwrite.c`). A file whose sub-bricks are on
+    the time axis, `(X, Y, Z, n)`, is read in the same way by AFNI, and
+    here.
     """
     if shape is None:
         return None
@@ -87,16 +440,53 @@ def _bricks(shape: tx.Optional[tx.Sequence[int]]) -> tx.Optional[int]:
     return None
 
 
-def _niml_extension(shape: tx.Sequence[int]) -> bytes:
-    """
-    A minimal AFNI extension, with the labels of a warp's sub-bricks.
+def _nifti_nums(header: nb.Nifti1Header) -> str:
+    """Return the `NIfTI_nums` of AFNI that describe a header.
 
-    AFNI warps when the extension's `NIfTI_nums`
-    (`nx,ny,nz,nt,nu,datatype`) do not match the file
-    (`thd_niftiread.c`), so they are written. The geometry is never
+    They are `nx,ny,nz,nt,nu,datatype`, which AFNI compares with the file
+    that it reads.
+    """
+    shape = tuple(int(d) for d in header.get_data_shape())
+    shape = (shape + (1,) * 5)[:5]
+    return ",".join(str(d) for d in shape + (int(header["datatype"]),))
+
+
+def _set_afni_extension(header: nb.Nifti1Header) -> None:
+    """Keep the AFNI extension of a header if it describes it, or replace it.
+
+    An extension whose `NIfTI_nums` match the header and that labels the
+    sub-bricks of a warp is kept, and any other AFNI extension is
+    replaced by a minimal one that holds those labels.
+    """
+    text = _afni_extension(header)
+    nums = _nifti_nums(header)
+    if text:
+        match = _NIFTI_NUMS.search(text)
+        if (
+            match
+            and match.group(1).replace(" ", "") == nums
+            and is_warp_labels(_extension_labels(header))
+        ):
+            return
+    kept = [
+        extension
+        for extension in header.extensions
+        if int(extension.get_code()) != _NIFTI_ECODE_AFNI
+    ]
+    header.extensions[:] = kept
+    header.extensions.append(
+        nb.nifti1.Nifti1Extension(_NIFTI_ECODE_AFNI, _niml_extension(nums))
+    )
+
+
+def _niml_extension(nums: str) -> bytes:
+    """Return a minimal AFNI extension, which labels the sub-bricks of a
+    warp.
+
+    AFNI warns when the `NIfTI_nums` of the extension do not match the
+    file (`thd_niftiread.c`), so they are written. The geometry is never
     taken from the extension, only from the NIfTI header.
     """
-    nums = ",".join(str(int(d)) for d in (*shape[:3], 1, 3, _NIFTI_FLOAT32))
     labels = "~".join(WARP_LABELS)
     text = (
         "<?xml version='1.0' ?>\n"
@@ -114,138 +504,33 @@ def _niml_extension(shape: tx.Sequence[int]) -> bytes:
     return text.encode("latin-1") + b"\0"
 
 
-@register_format
-class AfniNiftiWarp(AfniWarp, NiftiBasedTransformation):
-    """
-    An AFNI nonlinear warp stored as a NIfTI file, such as `3dQwarp`'s
-    `<prefix>_WARP.nii.gz`.
+# ----------------------------------------------------------------------
+#   CONVERTERS
+# ----------------------------------------------------------------------
+# The converters into this format live with it, because the format needs
+# nibabel and the other AFNI formats do not. They are those of
+# `AfniBrikWarp`, described in `brainhops.io.transformations.afni.
+# _converters`.
 
-    AFNI writes a three-sub-brick dataset as a `(X, Y, Z, 1, 3)` NIfTI
-    array with no intent code, its usual voxel-to-RAS sform and qform,
-    and the displacements unchanged: in DICOM (LPS) millimetres, `x`,
-    `y`, `z` -- not RAS, unlike a NIfTI `DISPVECT` field. See
-    [`AfniWarp`][] for what they mean. The grid is the cardinal grid
-    AFNI derives from the qform (else the sform), as `3dNwarpApply` does
-    when it reads the file; it is the stored grid unless that grid is
-    oblique.
 
-    **Telling it from other NIfTI fields.** The header has nothing that
-    says "AFNI warp" but the AFNI extension AFNI writes into every NIfTI
-    file (unless `AFNI_NIFTI_NOEXT` is set): when its sub-brick labels
-    are `x_delta`, `y_delta`, `z_delta`, the file is claimed with
-    certainty. Without them, the same array is also what other software
-    writes (a field of RAS coordinates or displacements, an ITK field),
-    so the file is not claimed: read it with `hint="afni.warp"` (or
-    `"afni.warp.nifti"`), or with this class directly.
+@converter(_xforms.CoordinatesField, AfniNiftiWarp)
+@converter(_xforms.Sequence, AfniNiftiWarp)
+@converter
+def _(
+    t: _xforms.DisplacementField, cls: tx.Type[AfniNiftiWarp], **kwargs
+) -> AfniNiftiWarp:
+    # Exactly, or raise: one field of displacements, between a world-to-grid
+    # affine and its inverse, on a cardinal grid, sampled as AFNI stores
+    # it.
+    cls = AfniNiftiWarp
+    format_options(t, cls, kwargs)
+    return cls(transformations=_afni_displacement(t, cls))
 
-    **Writing** stores the displacements as `float32` in AFNI's
-    `(X, Y, Z, 1, 3)` layout, with the cardinal grid as sform and qform
-    (codes kept from the header read, else scanner-anatomical), and the
-    AFNI extension of the header read when it still describes the file,
-    else a minimal one holding the sub-brick labels.
-    """
 
-    HINTS = ("nifti",)
-
-    # --- reading ------------------------------------------------------
-
-    @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
-        """`CERTAIN` for AFNI's layout with an AFNI extension that
-        labels the sub-bricks as a warp's; `NO` otherwise."""
-        bricks = _bricks(_nifti_shape(header))
-        if bricks is None or bricks < 3:
-            return Confidence.NO
-        if is_warp_labels(_extension_labels(header)):
-            return Confidence.CERTAIN
-        return Confidence.NO
-
-    @classmethod
-    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
-        """Build the warp from a `nibabel` header or image, refusing one
-        that does not hold at least three sub-bricks."""
-        header = nifti.header if isinstance(nifti, nb.Nifti1Image) else nifti
-        shape = _nifti_shape(header)
-        bricks = _bricks(shape)
-        if bricks is None or bricks < 3:
-            raise ParserContentError(
-                f"An AFNI warp is stored as a (X, Y, Z, 1, 3) array, not "
-                f"as an array of shape {shape}."
-            )
-        return super().from_nibabel(nifti, **kwargs)
-
-    def _vox2dicom(self) -> np.ndarray:
-        if self.header is None:
-            raise ParserContentError(
-                "This warp has no NIfTI header to read its grid from."
-            )
-        real = DICOM_TO_RAS @ _nifti_matrix(self.header)
-        return nifti_cardinal_matrix(real)
-
-    def _dicom_vectors(self) -> ArrayProtocol:
-        data = self.data
-        if data is None:
-            raise ParserContentError("This warp has no data to read.")
-        backend = get_array_backend(data)
-        data = backend.asarray(data)
-        shape = tuple(int(d) for d in data.shape)
-        bricks = shape[-1]
-        data = backend.reshape(data, (*shape[:3], bricks))
-        return data[..., :3]
-
-    # --- writing ------------------------------------------------------
-
-    def _xform_codes(self) -> tx.Tuple[int, int]:
-        """The sform and qform codes to store."""
-        header = self.header
-        if header is not None and hasattr(header, "get_sform"):
-            _, scode = header.get_sform(coded=True)
-            _, qcode = header.get_qform(coded=True)
-            if scode or qcode:
-                return int(scode or qcode), int(qcode or scode)
-        return _XFORM_SCANNER_ANAT, _XFORM_SCANNER_ANAT
-
-    def _extension(self, shape: tx.Sequence[int]) -> bytes:
-        """The AFNI extension to write: the one read, if it labels a warp
-        and its `NIfTI_nums` still describe the file (AFNI warps when
-        they do not), else a minimal one."""
-        header = self.header
-        text = None if header is None else _afni_extension(header)
-        if text:
-            match = _NIFTI_NUMS.search(text)
-            nums = (*shape[:3], 1, 3, _NIFTI_FLOAT32)
-            expected = ",".join(str(int(d)) for d in nums)
-            if match and match.group(1).replace(" ", "") == expected:
-                if is_warp_labels(_extension_labels(header)):
-                    content = text.encode("latin-1")
-                    return (
-                        content if content.endswith(b"\0") else content + b"\0"
-                    )
-        return _niml_extension(shape)
-
-    def to_nibabel(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """
-        Build the `nibabel` image AFNI would write for this warp.
-
-        When `like` is given, non-encoding header fields are copied from
-        it. Keyword arguments override header fields last.
-        """
-        vox2dicom, vectors = self._dicom_field()
-        spatial = tuple(int(d) for d in vectors.shape[:3])
-        data = np.asarray(vectors, dtype=np.float32).reshape((*spatial, 1, 3))
-        vox2ras = DICOM_TO_RAS @ vox2dicom
-        image = _new_nifti(data, vox2ras)
-        scode, qcode = self._xform_codes()
-        image.header.set_sform(vox2ras, code=scode)
-        image.header.set_qform(vox2ras, code=qcode)
-        image.header.set_xyzt_units("mm")
-        image.header.extensions.append(
-            nb.nifti1.Nifti1Extension(
-                _NIFTI_ECODE_AFNI, self._extension(spatial)
-            )
-        )
-        _apply_like(image, like)
-        _apply_overrides(image, overrides)
-        return image
+@converter
+def _(
+    t: AfniNiftiWarp, cls: tx.Type[AfniNiftiWarp], **kwargs
+) -> AfniNiftiWarp:
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type.
+    return smart_replace(t, cls, **kwargs)

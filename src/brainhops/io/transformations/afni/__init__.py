@@ -120,16 +120,24 @@ Not supported
 
 __all__ = [
     "AfniAffine",
+    "AfniAffineMetadata",
+    "AfniAffineRaw",
     "AfniBrikWarp",
+    "AfniMetadata",
+    "AfniRaw",
     "AfniWarp",
     "cardinal_to_real",
 ]
 
 from brainhops.io.base._dispatch import register_missing_format
+from brainhops.io.common.afni import AfniMetadata, AfniRaw
 
 from ._affine import AfniAffine
-from ._utils import cardinal_to_real
-from ._warp import AfniBrikWarp, AfniWarp
+from ._formats import AfniWarp
+from ._geometry import cardinal_to_real
+from ._metadata import AfniAffineMetadata
+from ._raw import AfniAffineRaw
+from ._warp import AfniBrikWarp
 
 try:
     from ._nifti import AfniNiftiWarp
@@ -137,3 +145,8 @@ try:
     __all__ += ["AfniNiftiWarp"]
 except ImportError:  # nibabel is optional
     register_missing_format(["afni.warp.nifti"], "nibabel", "nibabel")
+
+# Importing the private converters registers them with the data model, so
+# that a conversion into one of these formats, such as `t.to(Format)`,
+# holds the very map or fails with a reason.
+from . import _converters  # noqa: E402, F401  isort: skip
