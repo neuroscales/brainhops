@@ -66,8 +66,8 @@ class SingleScaleImage(Image):
     `data` and `transformations` are the parameters most often given
     to the constructor, and they can be passed by position in this order.
     The other parameters are keyword-only, except those that a file
-    reader from `brainhops.io.common` adds, such as the parsed `header` of
-    a NIfTI image, which follow `transformations`.
+    reader from `brainhops.io.common` adds, such as the opened Zarr `node`
+    of a plain Zarr array, which follow `transformations`.
     """
 
     data: tx.Annotated[

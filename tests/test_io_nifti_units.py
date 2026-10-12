@@ -159,10 +159,26 @@ def test_every_code_survives_a_file_round_trip(
     assert written == (space, time)
 
 
-def test_an_unknown_file_is_written_back_in_millimetres(tmp_path) -> None:  # noqa: ANN001
+def test_an_unknown_file_is_read_in_millimetres_and_kept_unknown(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The header of the file is the base of the written header, and an
+    # unknown spatial unit means millimetres, so the label is kept.
     image, written = _round_trip(tmp_path, "unknown", "unknown")
     world = image.transformations[-1].output
     assert all(
         axis.unit is Unit("mm") for axis in world.axes if axis.type == "space"
     )
-    assert written == ("mm", "unknown")
+    assert written == ("unknown", "unknown")
+
+
+def test_an_unknown_file_is_written_in_millimetres_once_converted(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # Without the header of the file, millimetres are written as such.
+    from brainhops.io.images.nifti import NiftiImage
+
+    image, _ = _round_trip(tmp_path, "unknown", "unknown")
+    target = tmp_path / "converted.nii"
+    NiftiImage(image.data, image.transformations).save(target)
+    assert nb.load(str(target)).header.get_xyzt_units() == ("mm", "unknown")

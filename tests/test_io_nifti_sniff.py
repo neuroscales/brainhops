@@ -19,7 +19,8 @@ from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     SnifferContentError,
 )
-from brainhops.io.common.nifti import NiftiReaderWriter  # noqa: E402
+from brainhops.io.common.nifti import NiftiRaw  # noqa: E402
+from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 
 DATA = Path(__file__).parent / "data"
 
@@ -122,14 +123,14 @@ def test_the_nifti_sniffer_declines_a_non_nifti_quietly(
     name: str,
 ) -> None:
     data = make(tmp_path, name).read_bytes()
-    assert not _no_warnings(NiftiReaderWriter.sniff_bytes, data)
+    assert not _no_warnings(NiftiRaw.sniff_bytes, data)
 
 
 def test_a_header_sized_without_magic_is_declined() -> None:
     header = bytearray(nb.Nifti1Header().binaryblock)
     header[344:348] = b"xxx\0"
-    assert not NiftiReaderWriter.sniff_bytes(bytes(header))
-    assert not NiftiReaderWriter.sniff_bytes(gzip.compress(bytes(header)))
+    assert not NiftiRaw.sniff_bytes(bytes(header))
+    assert not NiftiRaw.sniff_bytes(gzip.compress(bytes(header)))
 
 
 # ----------------------------------------------------------------------
@@ -153,7 +154,7 @@ def test_a_nifti_is_still_sniffed_and_loaded(
 ) -> None:
     file = tmp_path / name
     nb.save(cls(_volume(), np.eye(4)), str(file))
-    assert NiftiReaderWriter.sniff_bytes(file.read_bytes())
+    assert NiftiRaw.sniff_bytes(file.read_bytes())
     image = _no_warnings(io.images.load, file)
     np.testing.assert_array_equal(np.asarray(image.data), _volume())
 
@@ -163,7 +164,7 @@ def test_the_header_of_a_pair_is_sniffed(tmp_path: Path, cls: type) -> None:
     """The .hdr file of a pair carries the ni1 or ni2 magic."""
     file = tmp_path / "x.hdr"
     nb.save(cls(_volume(), np.eye(4)), str(file))
-    assert _no_warnings(NiftiReaderWriter.sniff_bytes, file.read_bytes())
+    assert _no_warnings(NiftiRaw.sniff_bytes, file.read_bytes())
 
 
 @pytest.mark.parametrize("version", [1, 2])
@@ -173,7 +174,7 @@ def test_the_magic_is_found_in_either_byte_order(
 ) -> None:
     cls = {1: nb.Nifti1Header, 2: nb.Nifti2Header}[version]
     header = cls(endianness=order)
-    assert NiftiReaderWriter.sniff_bytes(header.binaryblock)
+    assert NiftiRaw.sniff_bytes(header.binaryblock)
 
 
 def _mgh() -> "nb.MGHImage":
@@ -182,27 +183,39 @@ def _mgh() -> "nb.MGHImage":
 
 @pytest.mark.parametrize(
     "make",
-    [_mgh, lambda: _mgh().header, nb.AnalyzeHeader],
+    [
+        lambda: _mgh().to_bytes(),
+        lambda: _mgh().header.binaryblock,
+        lambda: nb.AnalyzeHeader().binaryblock,
+    ],
     ids=["MGHImage", "MGHHeader", "AnalyzeHeader"],
 )
-def test_sniff_nibabel_rejects_other_objects(
-    make: "Callable[[], object]",
+def test_other_headers_are_declined_with_the_requested_error(
+    make: "Callable[[], bytes]",
 ) -> None:
-    """A non-NIfTI object gives the requested error."""
-    obj = make()
-    name = type(obj).__name__
-    assert NiftiReaderWriter.sniff_nibabel(obj) == Confidence.NO
-    with pytest.raises(
-        SnifferContentError, match=f"Not a NIfTI header: {name}"
-    ):
-        NiftiReaderWriter.sniff_nibabel(obj, error=True)
-    with pytest.raises(KeyError, match=name):
-        NiftiReaderWriter.sniff_nibabel(obj, error=KeyError)
+    """A header of another format gives the requested error."""
+    data = make()
+    assert NiftiRaw.sniff_bytes(data) == Confidence.NO
+    with pytest.raises(SnifferContentError, match="not a valid NIfTI"):
+        NiftiRaw.sniff_bytes(data, error=True)
+    with pytest.raises(KeyError, match="NIfTI-1 or NIfTI-2"):
+        NiftiRaw.sniff_bytes(data, error=KeyError)
 
 
-def test_sniff_nibabel_reports_a_wrong_header_size() -> None:
+def test_a_wrong_header_size_is_declined() -> None:
     header = nb.Nifti1Header()
     header["sizeof_hdr"] = 540
-    assert NiftiReaderWriter.sniff_nibabel(header) == Confidence.NO
-    with pytest.raises(SnifferContentError, match="header size: 540 != 348"):
-        NiftiReaderWriter.sniff_nibabel(header, error=True)
+    data = header.binaryblock
+    assert NiftiRaw.sniff_bytes(data) == Confidence.NO
+    with pytest.raises(SnifferContentError, match="NIfTI-1 file"):
+        NiftiRaw.sniff_bytes(data, error=True, version=1)
+
+
+def test_an_image_scores_its_header() -> None:
+    plain = nb.Nifti1Header()
+    plain.set_data_shape((2, 3, 4))
+    field = nb.Nifti1Header()
+    field.set_data_shape((2, 3, 4, 1, 3))
+    field.set_intent("vector")
+    assert NiftiImage.sniff_bytes(plain.binaryblock) == Confidence.LIKELY
+    assert NiftiImage.sniff_bytes(field.binaryblock) == Confidence.WEAK

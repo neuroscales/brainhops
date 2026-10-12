@@ -104,7 +104,13 @@ def test_the_sform_code_follows_the_world_space(tmp_path) -> None:  # noqa: ANN0
 
 
 def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa: ANN001
-    """With only an sform, the rigid part is still written as the qform."""
+    """With only an sform, the rigid part is still written as the qform.
+
+    An untouched image is written with the header of its file, which has
+    no qform, and so is an image whose transformations are those of the
+    header. Once its transformations differ, they are encoded again, and
+    the qform is then the rigid part of the sform.
+    """
     data = np.zeros((3, 4, 5), dtype="float32")
     img = nb.Nifti1Image(data, AFFINE)
     img.header.set_sform(AFFINE, code=2)
@@ -112,12 +118,42 @@ def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa
     source = tmp_path / "sform_only.nii"
     nb.save(img, str(source))
 
+    image = io.images.load(source)
+    target = tmp_path / "untouched.nii"
+    image.save(target)
+    assert int(nb.load(str(target)).header["qform_code"]) == 0
+
+    image.transformations = image.transformations
+    target = tmp_path / "same.nii"
+    image.save(target)
+    assert int(nb.load(str(target)).header["qform_code"]) == 0
+
+    image.transformations = [Affine(matrix=AFFINE[:3])]
     target = tmp_path / "out.nii"
-    io.images.load(source).save(target)
+    image.save(target)
 
     header = nb.load(str(target)).header
     assert int(header["qform_code"]) != 0
     assert np.allclose(header.get_qform(), AFFINE, atol=1e-5)
+
+
+def test_a_transformation_appended_in_place_is_written(tmp_path) -> None:  # noqa: ANN001
+    """The stored list is compared at a write, so an append is written.
+
+    The appended transformation is the preferred one, which becomes the
+    sform, and an image whose list is only read is written as it was.
+    """
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    image = NiftiImage.load(source)
+    assert len(image.transformations) > 0
+    image.save(tmp_path / "read.nii")
+    with open(source, "rb") as a, open(tmp_path / "read.nii", "rb") as b:
+        assert a.read() == b.read()
+    scaled = np.diag([2.0, 3.0, 4.0, 1.0])[:3]
+    image.transformations.append(Affine(matrix=scaled))
+    image.save(tmp_path / "appended.nii")
+    header = nb.load(str(tmp_path / "appended.nii")).header
+    assert np.allclose(header.get_best_affine()[:3], scaled)
 
 
 def test_a_scaling_geometry_is_representable(tmp_path) -> None:  # noqa: ANN001
@@ -240,6 +276,30 @@ def test_an_image_built_from_data_alone_is_written(tmp_path) -> None:  # noqa: A
     written = nb.load(str(target))
     assert np.array_equal(np.asarray(written.dataobj), data)
     assert np.allclose(written.affine, np.eye(4))
+
+
+def test_an_image_whose_transformations_are_emptied_has_no_geometry(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """An empty list is honoured, and `None` decodes the header again.
+
+    The writer encodes an image without transformations as it encodes an
+    image built from data alone: the qform and the sform are the identity
+    under the code `aligned` (2), and the voxel size is one.
+    """
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    image = NiftiImage.load(source)
+    image.transformations = []
+    assert image.transformations == []
+    target = tmp_path / "bare.nii"
+    image.save(target)
+    header = nb.load(str(target)).header
+    assert int(header["qform_code"]) == 2
+    assert int(header["sform_code"]) == 2
+    assert np.allclose(header.get_best_affine(), np.eye(4))
+    assert np.allclose(header.get_zooms(), 1.0)
+    image.transformations = None
+    assert np.allclose(image.to_nibabel().affine, AFFINE)
 
 
 # ----------------------------------------------------------------------
@@ -1016,3 +1076,146 @@ def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
     axes = _nifti_to_axes(image.header)
     assert len(axes) == len(shape)
     assert all(isinstance(axis.unit, IndexUnit) for axis in axes)
+
+
+# ----------------------------------------------------------------------
+#   THE HEADER OF THE FILE IS THE BASE OF THE WRITTEN HEADER
+# ----------------------------------------------------------------------
+
+
+def test_like_and_overrides_take_precedence_over_the_record(tmp_path) -> None:  # noqa: ANN001
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    image = NiftiImage.load(source)
+    record = image.metadata.raw.copy()
+    record.header["descrip"] = b"from the record"
+    record.header["aux_file"] = b"kept"
+    image.metadata = type(image.metadata).from_raw(record)
+
+    template = nb.Nifti1Header()
+    template["descrip"] = b"from the template"
+    header = image.to_nibabel(like=template).header
+    assert header["descrip"].item() == b"from the template"
+    assert header["aux_file"].item() == b"kept"
+    header = image.to_nibabel(like=template, descrip="overridden").header
+    assert header["descrip"].item() == b"overridden"
+    assert image.to_nibabel().header["descrip"].item() == b"from the record"
+
+
+def test_a_nifti2_file_is_written_back_as_nifti2(tmp_path) -> None:  # noqa: ANN001
+    nifti = nb.Nifti2Image(np.zeros((3, 4, 5), "f4"), AFFINE)
+    nifti.header.set_sform(AFFINE, code=2)
+    nifti.header.set_qform(AFFINE, code=1)
+    source = tmp_path / "source.nii"
+    nb.save(nifti, str(source))
+    target = tmp_path / "copy.nii"
+    NiftiImage.load(source).save(target)
+    assert isinstance(nb.load(str(target)), nb.Nifti2Image)
+    assert target.read_bytes() == source.read_bytes()
+
+
+def test_read_data_is_read_only_and_assigned_data_is_written(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    from brainhops.backends import backend
+
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    target = tmp_path / "copy.nii"
+    with backend("numpy"):
+        image = NiftiImage.load(source)
+        with pytest.raises(ValueError, match="read-only"):
+            image.data[0, 0, 0] = 7.0
+        edited = np.array(image.data)
+        edited[0, 0, 0] = 7.0
+        image.data = edited
+        image.save(target)
+    assert nb.load(str(target)).get_fdata()[0, 0, 0] == 7.0
+
+
+def test_a_nibabel_image_becomes_a_proxy_and_a_record(tmp_path) -> None:  # noqa: ANN001
+    source = _write_image(tmp_path, "source.nii", np.ones((3, 4, 5), "f4"))
+    nifti = nb.load(str(source))
+    image = NiftiImage.from_nibabel(nifti)
+    assert image.raw is nifti.dataobj
+    assert image.metadata.raw.header is not nifti.header
+    assert np.allclose(image.to_nibabel().affine, nifti.affine)
+    empty = NiftiImage.from_nibabel(nifti.header)
+    assert empty.raw is None
+    assert empty.data is None
+    with pytest.raises(TypeError):
+        NiftiImage.from_nibabel(np.zeros(3))
+
+
+def test_a_dtype_override_scales_an_untouched_image_again(tmp_path) -> None:  # noqa: ANN001
+    values = np.linspace(-3.0, 7.0, 60, dtype="f4").reshape(3, 4, 5)
+    source = _write_image(tmp_path, "source.nii", values)
+    target = tmp_path / "int16.nii"
+    NiftiImage.load(source).save(target, dtype="int16")
+    written = nb.load(str(target))
+    assert written.get_data_dtype() == np.dtype("int16")
+    assert np.allclose(written.get_fdata(), values, atol=1e-3)
+
+
+def test_consolidating_encodes_the_writer_options(tmp_path) -> None:  # noqa: ANN001
+    values = np.linspace(-3.0, 7.0, 60, dtype="f4").reshape(3, 4, 5)
+    source = _write_image(tmp_path, "source.nii", values)
+    image = NiftiImage.load(source)
+    consolidated = image.consolidate(dtype="int16", descrip="consolidated")
+    header = consolidated.metadata.raw.header
+    assert header.get_data_dtype() == np.dtype("int16")
+    assert header["descrip"].item() == b"consolidated"
+    # The image itself is not changed, and the copy writes what the image
+    # writes with the same options.
+    assert image.metadata.raw.header.get_data_dtype() == np.dtype("f4")
+    image.save(tmp_path / "saved.nii", dtype="int16", descrip="consolidated")
+    consolidated.save(tmp_path / "consolidated.nii")
+    saved = nb.load(str(tmp_path / "saved.nii"))
+    written = nb.load(str(tmp_path / "consolidated.nii"))
+    assert saved.header == written.header
+    assert np.array_equal(saved.get_fdata(), written.get_fdata())
+
+
+def test_consolidated_geometry_has_the_precision_of_the_file() -> None:
+    matrix = np.array(
+        [[1.1, 0.1, 0.0, 10.3], [0.0, 1.2, 0.0, 20.7], [0.0, 0.0, 1.3, 30.1]]
+    )
+    image = NiftiImage(
+        np.zeros((3, 4, 5), "f4"), transformations=[Affine(matrix=matrix)]
+    )
+    assert np.array_equal(image.transformation.matrix, matrix)
+    consolidated = image.consolidate()
+    assert consolidated._transformations is None
+    decoded = consolidated.transformation.to(Affine).matrix
+    # The sform is stored in single precision.
+    assert np.allclose(decoded, matrix, atol=1e-5)
+    assert np.array_equal(decoded, matrix.astype("f4"))
+
+
+def test_an_assigned_array_is_pending(tmp_path) -> None:  # noqa: ANN001
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    image = NiftiImage.load(source)
+    proxy = image.raw
+    image.data = np.ones((3, 4, 5), "f4")
+    assert image.raw is proxy
+    assert np.array_equal(np.asarray(image.data), np.ones((3, 4, 5)))
+    image.save(tmp_path / "ones.nii")
+    assert image.raw is proxy
+    assert np.all(nb.load(str(tmp_path / "ones.nii")).get_fdata() == 1)
+    # Assigning `None` decodes the file again.
+    image.data = None
+    assert np.array_equal(np.asarray(image.data), np.zeros((3, 4, 5)))
+
+
+@pytest.mark.parametrize("suffix", [".nii", ".nii.gz"])
+def test_metadata_is_compressed_by_the_name_of_its_file(
+    tmp_path,  # noqa: ANN001
+    suffix: str,
+) -> None:
+    from brainhops.io.images.nifti import NiftiMetadata
+
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    metadata = NiftiMetadata.load(source)
+    target = tmp_path / ("header" + suffix)
+    metadata.save(target)
+    compressed = target.read_bytes()[:2] == b"\x1f\x8b"
+    assert compressed == suffix.endswith(".gz")
+    assert NiftiMetadata.load(target).to_bytes() == metadata.to_bytes()

@@ -287,7 +287,7 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "MrtrixImage": ("data", "transformations", "header", "dataobj"),
     },
     "brainhops.io.images.nifti._image": {
-        "NiftiImage": ("data", "transformations", "image", "header"),
+        "NiftiImage": ("data", "transformations"),
     },
     "brainhops.io.images.nrrd._image": {
         name: ("data", "transformations", "header", "dataobj")

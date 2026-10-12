@@ -601,7 +601,7 @@ def test_conversion_does_not_carry_nibabel_objects(tmp_path) -> None:  # noqa: A
     """Conversion copies the data model, not the nibabel image or header."""
     mgh = MghImage.from_file(_write(tmp_path, "vol.mgz", _data()))
     nii = NiftiImage.from_instance(mgh)
-    assert nii.image is None and nii.header is None
+    assert nii.metadata is None
     assert np.array_equal(np.asarray(nii.data), _data())
     back = MghImage.from_instance(nii)
     assert back.image is None and back.header is None

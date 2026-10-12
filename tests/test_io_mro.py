@@ -38,6 +38,9 @@ NIFTI_FORMATS = [
     SpmCoordinatesField,
 ]
 
+# The NIfTI transformations are still built on NiftiReaderWriter.
+NIFTI_TRANSFORMATIONS = NIFTI_FORMATS[1:]
+
 # Methods that NiftiReaderWriter specializes; the generic ladder re-dispatches
 # into them.
 SPECIALIZED = [
@@ -48,15 +51,31 @@ SPECIALIZED = [
     "sniff_bytes",
 ]
 
+# Methods that NiftiImage defines itself. The generic `from_file` and
+# `from_bytes` of the ladder reach them.
+SPECIALIZED_IMAGE = [
+    "from_filename",
+    "from_fileobj",
+    "sniff_fileobj",
+    "sniff_bytes",
+]
+
 
 def _owner(cls: type, name: str) -> type:
     return next(c for c in cls.__mro__ if name in c.__dict__)
 
 
-@pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
+@pytest.mark.parametrize(
+    "cls", NIFTI_TRANSFORMATIONS, ids=lambda c: c.__name__
+)
 @pytest.mark.parametrize("method", SPECIALIZED)
 def test_the_format_specific_reader_wins(cls: type, method: str) -> None:
     assert _owner(cls, method) is NiftiReaderWriter
+
+
+@pytest.mark.parametrize("method", SPECIALIZED_IMAGE)
+def test_the_nifti_image_reader_wins(method: str) -> None:
+    assert _owner(NiftiImage, method) is NiftiImage
 
 
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)
@@ -127,15 +146,16 @@ def test_the_generic_ladder_redispatches_through_cls() -> None:
 
 
 def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noqa: ANN001
-    """NiftiReaderWriter.from_file keeps the nibabel handle and lazy voxels."""
+    """NiftiImage.from_file keeps the voxels lazy behind a nibabel proxy."""
     import numpy as np
+    from nibabel.arrayproxy import ArrayProxy
 
     img = nb.Nifti1Image(np.zeros((3, 4, 5), "float32"), np.eye(4))
     target = tmp_path / "scan.nii"
     nb.save(img, str(target))
 
     loaded = NiftiImage.from_file(target)
-    assert loaded.image is not None, "nibabel handle was not kept"
+    assert isinstance(loaded.raw, ArrayProxy), "the voxels were read"
     assert loaded.shape == (3, 4, 5)
 
 
