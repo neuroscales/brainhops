@@ -33,8 +33,15 @@ from brainhops.io.common.nifti._units import nifti_to_unit
 from brainhops.io.images.base import ImageFormat
 
 
+# `kw_only=True` is repeated here because bagof takes each class option
+# from the first base in the method resolution order, whether that base
+# sets the option or keeps the default. That base is `NiftiReaderWriter`,
+# which keeps the default, so the fields declared by this class would
+# otherwise be positional.
 @register_format
-class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
+class NiftiImage(
+    NiftiReaderWriter, ImageFormat, SingleScaleImage, kw_only=True
+):
     """An image stored in a NIfTI file.
 
     !!! note "Why the bases are in this order"
