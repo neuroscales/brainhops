@@ -42,26 +42,15 @@ def _odd(value: tx.Any) -> bool:
         (None, None, True),
         (None, [], False),
         (None, 0, False),
-        # With "empty", only an empty container is unset, not None.
-        ("empty", [], True),
-        ("empty", (), True),
-        ("empty", {}, True),
-        ("empty", set(), True),
-        ("empty", frozenset(), True),
-        ("empty", [0], False),
-        ("empty", "", False),
-        ("empty", None, False),
         # A predicate decides which values are unset.
         (_odd, 3, True),
         (_odd, 2, False),
         (_odd, None, False),
         # With a tuple, any member may match.
-        ((None, "empty"), None, True),
-        ((None, "empty"), [], True),
-        ((None, "empty"), [1], False),
         ((None, _odd), 1, True),
         ((None, _odd), None, True),
-        (("empty", _odd), 2, False),
+        ((None, _odd), 2, False),
+        ((None, _odd), [], False),
     ],
 )
 def test_unset_says_when_the_getter_runs(
@@ -78,32 +67,32 @@ def test_the_default_is_a_stored_none() -> None:
     assert _box()([]).value == []
 
 
-@pytest.mark.parametrize("unset", [None, "empty", (None, "empty"), _odd])
+@pytest.mark.parametrize("unset", [None, (None, _odd), _odd])
 def test_the_setter_stores_the_value_as_given(unset: tx.Any) -> None:
     for value in (None, [], 3, [1]):
         box = _box(unset)(value)
         assert box._value is value
 
 
-def test_an_unset_value_written_by_the_constructor_is_computed() -> None:
-    # An empty default written by the constructor must not hide the getter.
-    box = _box((None, "empty"))([])
+def test_an_empty_value_is_used_as_it_is() -> None:
+    # Only `None` reads as unset, so an empty container is a value.
+    box = _box()(None)
     assert box.value == "computed"
-    box.value = ["given"]
-    assert box.value == ["given"]
     box.value = []
+    assert box.value == []
+    box.value = None
     assert box.value == "computed"
 
 
 def test_the_cache_and_its_invalidation() -> None:
-    cls = _box((None, "empty"), cache=True)
-    box = cls([])
+    cls = _box(cache=True)
+    box = cls(None)
     assert box.value == "computed" and cls.computed == 1
     assert box.value == "computed" and cls.computed == 1
     # A value that is set is served as is, and setting clears the cache.
     box.value = ["given"]
     assert box.value == ["given"] and not hasattr(box, "_cache_value")
-    box.value = []
+    box.value = None
     assert box.value == "computed" and cls.computed == 2
     # A predicate caches in the same way.
     cls = _box(_odd, cache=True)
@@ -135,11 +124,12 @@ def test_lazyproperty_computes_once_and_reads_a_stored_value() -> None:
 @pytest.mark.parametrize(
     "unset, error, match",
     [
-        ("blank", ValueError, "'empty'"),
-        ((None, "nothing"), ValueError, "'empty'"),
+        # No string names a form.
+        ("blank", TypeError, "not a str"),
+        ((None, "nothing"), TypeError, "not a str"),
         ((), ValueError, "no form"),
         (0, TypeError, "not a int"),
-        ([None, "empty"], TypeError, "not a list"),
+        ([None, _odd], TypeError, "not a list"),
         ((None, 1.0), TypeError, "not a float"),
     ],
 )
