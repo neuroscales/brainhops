@@ -407,9 +407,11 @@ class MghImage(
 
         When this encoding changes nothing, the metadata is kept as it is,
         so that an image that was read and not changed writes the record
-        that it read. An image with a record and nothing pending,
-        consolidated without options, is left as it is: the copy shares
-        `raw` and the metadata.
+        that it read. The transformations that the image holds, read or
+        assigned, are compared with those that the record decodes to,
+        exactly, and an image with a record, no pending data, and the
+        transformations of its record or none read, consolidated without
+        options, is left as it is: the copy shares `raw` and the metadata.
 
         Parameters
         ----------
