@@ -1,150 +1,159 @@
 """
-JPEG 2000 images -- JP2 files (`.jp2`, `.jpx`, `.jpf`) and raw codestreams
-(`.j2k`, `.j2c`, `.jpc`) -- as multiscale images, read and written with
-[Pillow](https://python-pillow.org), which wraps
-[OpenJPEG](https://www.openjpeg.org).
+JPEG 2000 images, read as multiscale images and written with Pillow.
 
-This reader requires the `pillow` extra (`pip install brainhops[pillow]`).
+JPEG 2000 files are either JP2 files (`.jp2`, `.jpx`, `.jpf`) or raw
+codestreams (`.j2k`, `.j2c`, `.jpc`). They are decoded and encoded by
+[Pillow](https://python-pillow.org), which wraps
+[OpenJPEG](https://www.openjpeg.org), so this module needs the `pillow`
+extra (`pip install brainhops[pillow]`).
 
 ```python
 from brainhops.io.images import load
 from brainhops.io import save
 
-pyramid = load("slide.jp2")          # Jp2MultiScaleImage
+pyramid = load("slide.jp2")          # Jpeg2000MultiScaleImage
 pyramid.images[2].data.shape         # level 2, reduced by 4: (x, y[, c])
-level = load("slide.jp2", level=2)   # Jp2Image, decoding level 2 only
-save(level, "copy.j2k")              # raw codestream, lossless
+level = load("slide.jp2", level=2)   # Jpeg2000Image, which reads level 2
+pyramid.metadata.raw.n_levels        # the record of the file
+save(level, "copy.j2k")              # a raw codestream, lossless
 ```
 
 ## Resolution levels
 
-A JPEG 2000 codestream is a wavelet decomposition: an image coded with
-`N` decomposition levels can be decoded at `N + 1` resolutions, the full
-one and reductions by 2, 4, ..., `2**N`. Such a file is read as a
-multiscale image
-([`Jp2MultiScaleImage`][brainhops.io.images.jpeg2000.Jp2MultiScaleImage]
-or [`J2kMultiScaleImage`][brainhops.io.images.jpeg2000.J2kMultiScaleImage]),
-whose levels are single-scale images
-([`Jp2Image`][brainhops.io.images.jpeg2000.Jp2Image] or
-[`J2kImage`][brainhops.io.images.jpeg2000.J2kImage]), finest first. A
-level is decoded -- at its own, reduced, resolution -- only when its data
-is first accessed. `load(file, level=r)` reads a single level as a
-single-scale image, and a file with a single resolution is read as one.
+A JPEG 2000 codestream is a wavelet decomposition, so an image coded
+with `N` decomposition levels can be decoded at `N + 1` resolutions: the
+full one, and reductions by 2, 4, up to `2**N`. Such a file is read as
+a [`Jpeg2000MultiScaleImage`][], whose levels are [`Jpeg2000Image`][]
+objects, finest first. A level is decoded at its own resolution, and
+only when its data is first needed. `load(file, level=r)` reads a single
+level as a [`Jpeg2000Image`][], and a file with a single resolution is
+read as one.
 
-The size of level `r` is the one the codestream defines: `ceil(X1 / 2**r)
-- ceil(X0 / 2**r)`, where `X0` and `X1` are the edges of the image area on
-the reference grid (`XOsiz` and `Xsiz`), which is `ceil(width / 2**r)`
-when the image area has no offset.
+The size of level `r` is the size that the codestream defines,
+`ceil(X1 / 2**r) - ceil(X0 / 2**r)`, where `X0` and `X1` are the edges
+of the image area on the reference grid of the codestream. This is
+`ceil(width / 2**r)` when the image area has no offset.
 
 !!! note "No region decoding"
-    Pillow decodes a whole level at once: there is no decoding of a
-    region of interest, and no access to the quality layers (every layer
-    is decoded).
+    Pillow decodes a whole level at once. A region of a level cannot be
+    decoded alone, and every quality layer is decoded.
 
 !!! note "Image offsets"
     Pillow cannot decode a reduced level of an image whose area has an
-    offset on the reference grid (`XOsiz` or `YOsiz` not zero): such a file
-    is read at full resolution, as a single-scale image, and asking for
-    one of its reduced levels raises an error.
+    offset on the reference grid, so such a file is read at full
+    resolution, as a [`Jpeg2000Image`][], and reading the data of one of
+    its reduced levels raises an error.
 
 !!! warning "Decompression bombs"
-    Pillow checks the size of the *full-resolution* image when it opens a
-    file, and refuses one of more than twice `PIL.Image.MAX_IMAGE_PIXELS`
-    pixels, even when only a coarse level is asked for. To read a larger
-    image you trust, raise the limit: `PIL.Image.MAX_IMAGE_PIXELS = None`.
+    Pillow checks the size of the full-resolution image when it opens a
+    file, and refuses an image of more than twice
+    `PIL.Image.MAX_IMAGE_PIXELS` pixels, even when only a coarse level is
+    asked for. To read a larger image that you trust, raise the limit
+    with `PIL.Image.MAX_IMAGE_PIXELS = None`.
 
 ## Data
 
-The pixels are returned F-ordered, as a view of what Pillow decodes:
-`(x, y)` for a single component, and `(x, y, c)` with a channel axis
-when there are several (grey + alpha, RGB, RGBA). The values are those
-the codestream holds: an image of 1 to 8 bits per component is read as
-`uint8` (`int8` if signed), and one of 9 to 16 bits as `uint16` (`int16`)
--- Pillow's scaling of other bit depths to 8 or 16 bits, and its offset of
-signed samples, are undone. Pillow reads colour images of more than 8
-bits per component only at 8 bits, so they are refused rather than read
-at a lower precision.
+An image holds the samples of its level in `raw`, a lazy array that
+Pillow decodes as `(rows, columns)`, or `(rows, columns, samples)` for
+several samples per pixel. Its `data` is a read-only view of these
+samples, indexed `(x, y)` or `(x, y, c)` in Fortran order, as for every
+raster image. The values are those that the codestream holds. A
+component of 1 to 8 bits is read as `uint8` (`int8` if it is signed),
+and a component of 9 to 16 bits as `uint16` (`int16`), because the
+scaling of Pillow to 8 or 16 bits and its offset of signed samples are
+undone. Pillow reads colour images of more than 8 bits per component at
+8 bits only, so they are refused rather than read at a lower precision.
+A palette is looked up, which gives RGB or RGBA data.
 
 ## Geometry
 
-The index space is 0-based, an integer index is the *centre* of a pixel,
-and the first row is the top of the picture (`y` points down), as for
+The index space is 0-based, an integer index is the centre of a pixel,
+and the first row is the top of the picture, so `y` points down, as for
 every raster image.
 
-The image carries one transformation onto a `"physical"` system. At full
-resolution it is a scaling by the pixel size. The pixel size is taken
-from the resolution box of a JP2 file (`res `): the *capture* resolution
-(`resc`), or else the default *display* resolution (`resd`), in grid
-points per metre, converted to millimetres. A placeholder -- 72 or 96
-dots per inch, or one per inch -- is unknown, as is an absent box; the
-scaling is then the identity, onto axes with no unit. `pixel_size=` and
-`unit=` override it, as for every raster image.
+An image has one transformation onto a `"physical"` system. At full
+resolution, it is a scaling by the pixel size. The pixel size is taken
+from the resolution box of a JP2 file: from the capture resolution, or
+else from the default display resolution, converted from grid points
+per metre to millimetres. A placeholder, 72 or 96 dots per inch or one
+per inch, gives no size, nor does a file without the box. The scaling is
+then the identity, onto axes without a unit. The options `pixel_size=`
+and `unit=` override the pixel size, as for every raster image, and the
+transformations that they give are assigned to the image.
 
-Level `r` is reduced by `f = 2**r`. The low-pass samples the wavelet
-transform keeps are the even samples of each level, so the pyramid is
-aligned on its first pixel, not on its extent: pixel `i` of level `r` is
-centred on the full-resolution pixel `f * i + s`, where `s = f *
-ceil(X0 / f) - X0` is zero unless the image area has an offset `X0` that
-is not a multiple of `f`. Its transformation is a scaling by `f` times
-the pixel size, with a translation of `s` pixels when `s` is not zero.
-(The levels of a TIFF pyramid are, instead, aligned on their extent.)
-The offset of the image area itself is kept in the header, and is not a
-translation: the first full-resolution pixel is at the origin.
+Level `r` is reduced by `f = 2**r`. The wavelet keeps the even samples of
+each level, so the pyramid is aligned on its first pixel rather than on
+its extent: pixel `i` of level `r` is centred on the full-resolution
+pixel `f * i + s`. The shift `s = f * ceil(X0 / f) - X0` is zero unless
+the image area has an offset `X0` that is not a multiple of `f`. The
+transformation of the level is a scaling by `f` times the pixel size,
+with a translation of `s` pixels when `s` is not zero. The levels of a
+TIFF pyramid, by contrast, are aligned on their extent. The offset of
+the image area itself is kept in the record, and is not a translation,
+so the first full-resolution pixel is at the origin.
 
 ## Metadata
 
-What the file records besides the pixels is kept in `header`, a
-`Jpeg2000Header`: the container (`"jp2"` or `"j2k"`), the size and offset
-of the image area and of the tiles, the bit depth, signedness and
-subsampling of each component, the number of resolution levels and
-quality layers, whether the wavelet is the reversible (lossless) one, the
-comments, the capture and display resolutions, and the top-level XML
-(GMLJP2, ...), UUID (GeoJP2, XMP, ...) and UUID info boxes. They are not
-interpreted, but are written back.
+What the file says beside the coded image is held in the
+[`Jpeg2000Metadata`][] of the image, whose record is a
+[`Jpeg2000Raw`][]. The record holds the container, the size and the
+offset of the image area and of the tiles, the bit depth, the signedness
+and the subsampling of each component, the number of resolution levels
+and of quality layers, whether the wavelet is the reversible one, the
+comments, the capture and display resolutions, the palette, and the
+top-level XML, UUID and UUID info boxes, such as GMLJP2, GeoJP2 and XMP.
+These boxes are not interpreted, but they are written back. The two
+classes of the record are defined in
+[`brainhops.io.common.jpeg2000`][brainhops.io.common.jpeg2000] and
+exported here as well.
 
 ## Writing
 
-An image is written with Pillow, **losslessly** by default (the
-reversible 5-3 wavelet, one quality layer), as a JP2 file
-([`Jp2Image`][brainhops.io.images.jpeg2000.Jp2Image], `.jp2`) or a raw
-codestream ([`J2kImage`][brainhops.io.images.jpeg2000.J2kImage], `.j2k`).
-Pillow writes 8-bit grey, grey + alpha, RGB and RGBA images, and 16-bit
-grey ones. The number of resolution levels is that of the file the image
-was read from, or else six (OpenJPEG's default), fewer if the image is too
-small; `num_resolutions=` sets it. Other keywords go to Pillow
-(`quality_mode`, `quality_layers`, `irreversible`, `tile_size`, ...).
+`raw` and the record describe the file as it was read. Data that are
+assigned are pending until the image is consolidated or written, as for
+every image format. A full-resolution image or a pyramid that is read and
+written again without changes gives the same bytes. When only the
+comments, the pixel size, the boxes or the container change, the coded
+image of the file is copied as it is, and only the boxes and the comments
+are written again.
+
+Otherwise the image is encoded with Pillow, losslessly by default, with
+the reversible 5-3 wavelet and one quality layer, as a JP2 file or a raw
+codestream, as the name of the file says. Pillow writes 8-bit grey, grey
+and alpha, RGB and RGBA images, and 16-bit grey images. The number of
+resolution levels is that of the file that the image was read from, or
+else six, which is the default of OpenJPEG, or fewer for a small image.
+The option `num_resolutions=` sets it. The other options of the JPEG
+2000 writer of Pillow are passed on, such as `quality_mode`,
+`quality_layers`, `irreversible` and `tile_size`.
 
 In a JP2 file, the pixel size is written as the capture resolution, when
-it is known; the resolutions, XML and UUID boxes and the comment of the
-file the image was read from are written back. A raw codestream stores
-none of these.
+it is known. The comments and the boxes of the record are written into
+the new file. A raw codestream stores no resolution and no box, so it
+stores the comments alone, and its pixel size is lost.
 
-A multiscale image is written as its full-resolution level, with as many
-resolution levels as it has: the codec computes the coarser levels again,
-so they must have the shapes it gives them.
+A pyramid is written as its full-resolution level, with as many
+resolution levels as it has. The codec computes the coarser levels
+again, so they must have the shapes that it gives them, and their data
+are not written.
 
 ## Pillow
 
 The Pillow raster reader
-([`PillowImage`][brainhops.io.images.pillow.PillowImage]) also reads JPEG
-2000 files, at full resolution only. It scores them `WEAK`, below these
-readers, and does not claim their extensions; `hint="pillow"` asks for it.
+([`PillowImage`][brainhops.io.images.pillow.PillowImage]) also reads
+JPEG 2000 files, at full resolution only. It scores them `WEAK`, below
+these readers, and does not claim their extensions, so `hint="pillow"`
+asks for it.
 """
 
 __all__ = [
     "Jpeg2000Image",
-    "Jp2Image",
-    "J2kImage",
+    "Jpeg2000Metadata",
     "Jpeg2000MultiScaleImage",
-    "Jp2MultiScaleImage",
-    "J2kMultiScaleImage",
+    "Jpeg2000Raw",
 ]
 
-from ._image import (
-    J2kImage,
-    J2kMultiScaleImage,
-    Jp2Image,
-    Jp2MultiScaleImage,
-    Jpeg2000Image,
-    Jpeg2000MultiScaleImage,
-)
+from brainhops.io.common.jpeg2000 import Jpeg2000Metadata, Jpeg2000Raw
+
+from ._image import Jpeg2000Image
+from ._multiscale import Jpeg2000MultiScaleImage
