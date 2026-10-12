@@ -12,11 +12,7 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import (
-    drop_cache,
-    lazyproperty,
-    smartproperty,
-)
+from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -28,7 +24,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.datamodel.units import Unit, is_indexunit
-from brainhops.io.base._base import register_format, store_data_argument
+from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import same_file as _same_file
 from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base._utils_files import write_file
@@ -349,9 +345,15 @@ class NrrdImage(
     `"physical"` and, with a world space, the preferred [`Affine`][] to
     the world, named after `space`.
 
-    When the image is written, the record of its metadata is the base of
-    the new header, as [`to_raw`][] describes, so the fields and the
-    key/value pairs that the data model has no place for, such as the
+    `raw` and the record describe the file as it was read, or as the image
+    was last consolidated. Data and transformations that are assigned are
+    pending until [`consolidate`][] encodes them into a copy, or until the
+    image is written, which writes such a copy and leaves the image as it
+    was.
+
+    When the image is consolidated, the record of its metadata is the base
+    of the new header, as [`consolidate`][] describes, so the fields and
+    the key/value pairs that the data model has no place for, such as the
     `measurement frame` or `DWMRI_b-value`, are kept. An image that is
     read and written again without changes gives the same bytes, and a
     detached image keeps both of its files when it is written under the
@@ -365,8 +367,19 @@ class NrrdImage(
     """The samples as the file stores them, or `None` without data.
 
     After a read, `raw` is a lazy array, which presents the samples in
-    the axis order of the image. Setting `data` stores the new array
-    here.
+    the axis order of the image. `raw` describes the file as it was read,
+    or as the image was last consolidated, so assigning `data` leaves it
+    as it is.
+    """
+
+    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    """The data given to the image, or `None` to decode it from `raw`.
+
+    The image takes over the `data` field of [`SingleScaleImage`][] to
+    store it under this private name. The constructor still takes `data`
+    in the same place, and the property of the same name reads it. An
+    array stored here is pending: it is encoded into `raw` only by
+    [`consolidate`][] or by a write.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -391,27 +404,20 @@ class NrrdImage(
     drops the transformations decoded from the previous record.
     """
 
-    def __post_init__(self, arguments: tx.Any) -> None:
-        # The default of `raw`, assigned after `data`, erases the array
-        # stored by `data=`, so the array is stored again.
-        store_data_argument(self, arguments)
-
-    @lazyproperty
+    @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, decoded from `raw` on first access and cached.
+        """The image data, assigned or decoded from `raw`.
 
-        Data decoded from a file is read-only, because changing it in
-        place would not change `raw`, which is what the image writes. To
-        change the samples, assign `data`: setting it stores the new array
-        in `raw` and drops the cached value.
+        An array assigned to the image is returned as it is, and stays
+        pending until [`consolidate`][] or a write encodes it. Otherwise
+        the data is decoded from `raw` on first access and cached. Data
+        decoded from a file is read-only, because changing it in place
+        would not change `raw`, which is what the image writes. To change
+        the samples, assign `data`. Assigning `None` decodes `raw` again.
         """
         if self.raw is None:
             return None
         return _image_to_model(self.raw)
-
-    @data.setter
-    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self.raw = None if value is None else _image_to_disk(value)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -421,10 +427,11 @@ class NrrdImage(
         img.transformation`. Assigning other metadata drops the decoded
         list. An image without metadata has no transformations.
 
-        Assigning a list replaces the decoded one. An empty list means that
-        the image has no geometry, and the image is then written as an
-        image built from data alone. Assigning `None` decodes the record
-        again.
+        Assigning a list replaces the decoded one, and the list stays
+        pending until [`consolidate`][] or a write encodes it. An empty
+        list means that the image has no geometry, and the image is then
+        written as an image built from data alone. Assigning `None`
+        decodes the record again.
         """
         if self.metadata is None or self.metadata.raw is None:
             return []
@@ -432,13 +439,15 @@ class NrrdImage(
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the data, read from `raw` without reading the samples.
+        """The shape of the data, read without reading the samples.
 
-        The data is `raw` as the lazy array presents it, so the two have
-        the same shape, and the lazy array knows its shape from the
-        record. An image without data raises as [`SingleScaleImage`][]
-        does.
+        The shape is that of the assigned data, or else of `raw`: the data
+        is `raw` as the lazy array presents it, so the two have the same
+        shape, and the lazy array knows its shape from the record. An image
+        without data raises as [`SingleScaleImage`][] does.
         """
+        if self._data is not None:
+            return tuple(int(d) for d in self._data.shape)
         if self.raw is None:
             return self.data.shape
         return tuple(int(d) for d in self.raw.shape)
@@ -599,18 +608,21 @@ class NrrdImage(
 
     # --- writing ------------------------------------------------------
 
-    def to_raw(
+    def consolidate(
         self,
+        inplace: bool = False,
         encoding: tx.Optional[str] = None,
         endian: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         space: tx.Optional[str] = None,
         keyvalue: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-    ) -> NrrdRaw:
-        """Return the [`NrrdRaw`][] record that writing the image stores.
+    ) -> "NrrdImage":
+        """Encode the pending data and geometry into `raw` and the record.
 
-        The record is encoded in a fixed order. The base is the record of
-        the metadata, or a new header for an image without metadata.
+        Consolidating makes `raw` and the record describe the image, as a
+        file written from it would. The record is encoded in a fixed order.
+        The base is the record of the metadata, or a new header for an
+        image without metadata.
 
         1. The fields that describe how the samples are stored (`type`,
            `dimension`, `sizes`, `endian`, `encoding` and the skips)
@@ -641,13 +653,22 @@ class NrrdImage(
            samples are new. The key/value pairs of the base are kept, and
            `keyvalue` is merged into them last.
 
-        The data files of the base are kept. When this encoding gives the
-        header of the base, the record of the metadata is returned as it
-        is, without a copy, so that an image that was read and not changed
-        writes the header that it read.
+        The data files of the base are kept, and a writer sets those of the
+        files that it writes. When this encoding gives the header of the
+        base, the metadata is kept as it is, so that an image that was
+        read and not changed writes the header that it read. Otherwise,
+        the new record is held by new metadata, and the record held before
+        is never changed. The samples to write become `raw`, which keeps a
+        lazy array, and nothing is pending afterwards, so the
+        transformations are decoded from the new record, with the
+        precision of the file. An image with a record and nothing pending,
+        consolidated without options, is left as it is: the copy shares
+        `raw` and the metadata.
 
         Parameters
         ----------
+        inplace : bool, default=False
+            Whether to change this image rather than a copy.
         encoding : {"raw", "gzip", "bzip2", "ascii", "hex"}, optional
             The encoding of the samples.
         endian : {"little", "big"}, optional
@@ -663,8 +684,8 @@ class NrrdImage(
 
         Returns
         -------
-        NrrdRaw
-            The record of the file.
+        NrrdImage
+            The consolidated copy, or this image with `inplace=True`.
 
         Raises
         ------
@@ -682,19 +703,47 @@ class NrrdImage(
             space=space,
             keyvalue=keyvalue,
         )
-        return _encoded(self, options, None)[0]
+        if (
+            self._data is None
+            and self._transformations is None
+            and all(value is None for value in options.values())
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            return self if inplace else replace(self)
+        record, raw = _encoded(self, options, None)
+        if self.metadata is not None and record is self.metadata.raw:
+            metadata = self.metadata
+        elif self.metadata is None:
+            metadata = NrrdMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                data=None,
+                transformations=None,
+                raw=raw,
+                metadata=metadata,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        return self
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of a NRRD file with attached samples.
 
-        The header is the record of [`to_raw`][], which receives the
-        keyword arguments. A lazy array that reaches the writer unchanged
-        is written as the file stores it.
+        The image is consolidated into a copy with the keyword arguments,
+        as by [`consolidate`][], and the header and `raw` of the copy are
+        written. A lazy array that reaches the writer unchanged is written
+        as the file stores it. The image itself is not changed.
 
         Parameters
         ----------
         **kwargs : Any
-            Arguments of [`to_raw`][].
+            The options of [`consolidate`][].
 
         Returns
         -------
@@ -706,8 +755,9 @@ class NrrdImage(
         TypeError
             If an unknown option is given.
         """
-        record, copied, order = _encoded(self, _options(kwargs), ())
-        return record.to_bytes() + _payload(self, record, copied, order)
+        image = self.consolidate(**_options(kwargs))
+        record = _nrrd_written(image, ())
+        return record.to_bytes() + _payload(image, record)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write a NRRD file with attached samples to a stream.
@@ -717,7 +767,7 @@ class NrrdImage(
         file : IO
             The stream.
         **kwargs : Any
-            Arguments of [`to_raw`][].
+            The options of [`consolidate`][].
 
         Raises
         ------
@@ -737,13 +787,15 @@ class NrrdImage(
         The samples are written to a separate data file when the name ends
         with `.nhdr` or `data_file` is given. The data file is named after
         the header, with the extension of its encoding, such as
-        `.raw.gz`, unless `data_file` names it. The other keyword
-        arguments are those of [`to_raw`][]. The content is encoded before
-        any file is written, and each local file is replaced at once, so
-        an image can be written over the files that it was read from.
-        When the lazy array of the image reads a file that is written,
-        `raw` is then pointed at the new file, which holds the same
-        samples, and the cached data is dropped.
+        `.raw.gz`, unless `data_file` names it. The image is consolidated
+        into a copy with the other keyword arguments, as by
+        [`consolidate`][], which is written, and the image itself is not
+        changed. The content is encoded before any file is written, and
+        each local file is replaced at once, so an image can be written
+        over the files that it was read from. When the lazy array of the
+        image reads a file that is written, the image is consolidated in
+        place instead, so that it holds what the files hold (#426), and
+        its lazy array reads the new files.
 
         Parameters
         ----------
@@ -752,7 +804,7 @@ class NrrdImage(
         data_file : str, optional
             The name of the data file, beside the header.
         **kwargs : Any
-            Arguments of [`to_raw`][].
+            The options of [`consolidate`][].
 
         Raises
         ------
@@ -763,26 +815,35 @@ class NrrdImage(
             filename = path.Path(filename)
         options = _options(kwargs)
         name = filename.name
-        nhdr = name.lower().endswith(".nhdr")
-        if not nhdr and data_file is None:
-            stale = _reads_from(self.raw, [filename])
-            write_file(filename, self.to_bytes(**options))
-            if stale:
-                _reread(self, filename)
-            return
-        if data_file is None:
+        attached = data_file is None and not name.lower().endswith(".nhdr")
+        if data_file is None and not attached:
             held = None if self.metadata is None else self.metadata.raw
             encoding = _target_encoding(held, options["encoding"])
             data_file = name[: -len(".nhdr")] + _DATA_EXTENSIONS[encoding]
-        record, copied, order = _encoded(self, options, (data_file,))
-        header = record.to_bytes()
-        data = _payload(self, record, copied, order)
-        target = _sibling(filename, data_file)
-        stale = _reads_from(self.raw, [filename, target])
-        write_file(target, data)
-        write_file(filename, header)
-        if stale:
-            _reread(self, filename)
+        if attached:
+            written = [filename]
+        else:
+            written = [filename, _sibling(filename, data_file)]
+        reading = _reads_from(self.raw, written)
+        if reading:
+            mmap = self.raw.mmap
+            image = self.consolidate(inplace=True, **options)
+        else:
+            image = self.consolidate(**options)
+        if attached:
+            record = _nrrd_written(image, ())
+            write_file(filename, record.to_bytes() + _payload(image, record))
+        else:
+            record = _nrrd_written(image, (data_file,))
+            header, data = record.to_bytes(), _payload(image, record)
+            write_file(written[1], data)
+            write_file(filename, header)
+        if reading:
+            # The image holds what the files hold, and its lazy array reads
+            # the new files, since the lazy array of the old files describes
+            # how they stored the samples.
+            self.raw = read_nrrd(filename, mmap=mmap)[1]
+            self.data = None
 
 
 # ----------------------------------------------------------------------
@@ -832,15 +893,15 @@ def _encoded(
     image: NrrdImage,
     options: tx.Mapping[str, tx.Any],
     data_files: tx.Optional[tx.Tuple[str, ...]],
-) -> tx.Tuple[NrrdRaw, bool, tx.List[int]]:
-    """Return the record that writing an image stores, and how to store it.
+) -> tx.Tuple[NrrdRaw, ArrayProtocol]:
+    """Return the record and the samples that consolidating an image stores.
 
-    The record is encoded as [`NrrdImage.to_raw`][] describes. The result
-    also tells whether `raw` is a lazy array whose samples are copied as
-    the file stores them, and gives the order of the image axes in the
-    file. The `data_files` are those of the header: an empty tuple for
-    attached samples, one name for a detached header, or `None` to keep
-    those of the base.
+    The record is encoded as [`NrrdImage.consolidate`][] describes, and the
+    held record is returned when the encoding changes nothing. The samples
+    are the assigned data, or else `raw`, in the order of the image. The
+    `data_files` are those of the header: an empty tuple for attached
+    samples, one name for a detached header, or `None` to keep those of
+    the base.
 
     Raises
     ------
@@ -848,7 +909,10 @@ def _encoded(
         If there is no data, or an option or the geometry cannot be
         written.
     """
-    raw = image.raw
+    if image._data is not None:
+        raw = _image_to_disk(image._data)
+    else:
+        raw = image.raw
     if raw is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
@@ -939,10 +1003,10 @@ def _encoded(
         data_files=tuple(data_files),
     )
     if held is not None and record == held:
-        return held, copied, order
+        return held, raw
     if version < 4:
         record = replace(record, version=4)
-    return record, copied, order
+    return record, raw
 
 
 def _storage_order(
@@ -1192,19 +1256,16 @@ def _merged_keyvalue(
     return merged
 
 
-def _payload(
-    image: NrrdImage,
-    record: NrrdRaw,
-    copied: bool,
-    order: tx.Sequence[int],
-) -> bytes:
-    """Return the bytes of the samples that a header describes.
+def _payload(image: NrrdImage, record: NrrdRaw) -> bytes:
+    """Return the bytes of the samples that the header of an image describes.
 
-    A lazy array that is copied gives the bytes that the file stores, from
-    the start of its samples. Any other array is put in the order of the
-    file and encoded.
+    A lazy array that the header stores as its own record does, in one
+    file, gives the bytes that the file stores, from the start of its
+    samples. Any other array is put in the order of the file and encoded.
     """
-    if copied:
+    order = image_order(record)
+    storage = {"datatype": record.dtype, "endian": record.endian}
+    if _copies_samples(image.raw, order, record.encoding, storage):
         return image.raw.read_stored()
     # A lazy array is read here rather than through `data`, so that no
     # cached view of the old file outlives a write over that file.
@@ -1215,15 +1276,27 @@ def _payload(
     return encode_data(record, values.transpose(np.argsort(order)))
 
 
-def _reread(image: NrrdImage, filename: tx.Any) -> None:
-    """Point the lazy array of an image at the file that it was written to.
+def _nrrd_written(image: NrrdImage, data_files: tx.Tuple[str, ...]) -> NrrdRaw:
+    """Return the header that a writer writes for a consolidated image.
 
-    The image was written over a file that its lazy array reads, so the
-    lazy array reads the new file, which holds the same samples, and the
-    cached data, which may be a lazy view of the old file, is dropped.
+    The header is the record of the image, which names the data files that
+    the writer writes: none for attached samples, or one name for a
+    detached header. A copy of the record names other files when they
+    differ.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data.
     """
-    image.raw = read_nrrd(filename, mmap=image.raw.mmap)[1]
-    drop_cache(image, "data")
+    if image.raw is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    record = image.metadata.raw
+    if tuple(record.data_files) != tuple(data_files):
+        record = replace(record, data_files=tuple(data_files))
+    return record
 
 
 def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:

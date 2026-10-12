@@ -1834,9 +1834,11 @@ def test_08_an_object_built_from_data_saves(
     built = _built(cls, exemplar, value)
     assert built.metadata is None
     assert np.array_equal(np.asarray(_data(exemplar, built)), value)
-    # Consolidating encodes the data and a new record.
+    # Consolidating encodes the data and a new record, which a format
+    # that cannot write cannot encode.
     consolidated = built.consolidate()
-    assert isinstance(consolidated.metadata, exemplar.metadata)
+    if exemplar.source is None:
+        assert isinstance(consolidated.metadata, exemplar.metadata)
     stored = np.asarray(_stored(exemplar, consolidated))
     assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "built")
@@ -2059,6 +2061,9 @@ def test_16_consolidate_is_idempotent(
 ) -> None:
     loaded = _changed(cls, exemplar, tmp_path)
     raw, metadata, pending = _raw(loaded), loaded.metadata, _pending(loaded)
+    if exemplar.source is not None:
+        _check_data_only(exemplar, loaded)
+        return
     once = loaded.consolidate()
     # Nothing is pending in the copy, whose record is new, and the copy
     # holds what a file written from the object holds.
@@ -2089,12 +2094,33 @@ def test_16_consolidate_is_idempotent(
     assert loaded.metadata is metadata
 
 
+def _check_data_only(exemplar: Exemplar, loaded: tx.Any) -> None:
+    """Check the consolidation of a format that cannot write.
+
+    No record can be encoded, so only the pending data is moved into
+    `raw`, and the metadata and the assigned transformations are kept.
+    """
+    data, chain = _pending(loaded)
+    once = loaded.consolidate()
+    assert once._data is None
+    assert once._transformations is chain
+    assert once.metadata is loaded.metadata
+    assert np.array_equal(
+        np.asarray(_stored(exemplar, once)), exemplar.to_disk(data)
+    )
+    twice = once.consolidate()
+    assert _raw(twice) is _raw(once)
+    assert loaded._data is data
+
+
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_17_save_writes_the_consolidated_copy(
     cls: type,
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
+    if exemplar.source is not None:
+        pytest.skip("The format cannot write.")
     loaded = _changed(cls, exemplar, tmp_path)
     raw, metadata, pending = _raw(loaded), loaded.metadata, _pending(loaded)
     saved = _path(tmp_path, exemplar, "saved")
@@ -2124,25 +2150,25 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    if cls not in TEST_EXEMPLARS:
-        pytest.skip("The formats write over their own files from #427.")
     path = _saved(cls, exemplar, tmp_path)
-    # An untouched object is written over the file that it reads.
     loaded = cls.load(path)
+    if exemplar.source is not None or _raw(loaded) is None:
+        pytest.skip("Only an object whose `raw` reads its file is affected.")
+    # An untouched object is written over the file that it reads.
     loaded.save(path)
     assert np.array_equal(np.asarray(loaded.data), exemplar.sample())
     assert np.array_equal(np.asarray(cls.load(path).data), exemplar.sample())
     # A changed object is consolidated in place, and then holds what the
-    # file holds (#426).
-    value = exemplar.sample() + 1
-    loaded.data = value
-    exemplar.change_geometry(loaded)
+    # file holds (#426): its `raw` reads the new file.
+    loaded = _changed(cls, exemplar, tmp_path)
+    path = _path(tmp_path, exemplar, "src")
+    expected = np.asarray(loaded.data)
     loaded.save(path)
-    assert loaded._data is None
-    assert loaded._transformations is None
+    assert all(field is None for field in _pending(loaded))
+    assert isinstance(_raw(loaded), exemplar.proxies)
     back = cls.load(path)
-    assert np.array_equal(np.asarray(loaded.data), value)
-    assert np.array_equal(np.asarray(back.data), value)
+    assert np.array_equal(np.asarray(loaded.data), np.asarray(back.data))
+    assert np.allclose(np.asarray(back.data), expected)
     assert np.allclose(exemplar.geometry(loaded), exemplar.geometry(back))
 
 
