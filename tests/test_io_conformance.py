@@ -32,6 +32,7 @@ import os
 import pickle
 import struct
 from copy import deepcopy
+from io import BytesIO
 
 import numpy as np
 import pytest
@@ -68,6 +69,7 @@ from brainhops.io.common.afni._data import _BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
 from brainhops.io.common.mrtrix._data import _MrtrixProxy
+from brainhops.io.common.nrrd._data import _NrrdProxy
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.afni._views import (
     _image_to_disk as _afni_to_disk,
@@ -82,6 +84,17 @@ from brainhops.io.images.mrtrix._views import (
 )
 from brainhops.io.images.mrtrix._views import (
     _image_to_model as _mrtrix_to_model,
+)
+from brainhops.io.images.nrrd import (
+    AttachedNrrdImage,
+    DetachedNrrdImage,
+    NrrdMetadata,
+)
+from brainhops.io.images.nrrd._views import (
+    _image_to_disk as _nrrd_to_disk,
+)
+from brainhops.io.images.nrrd._views import (
+    _image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
@@ -157,6 +170,23 @@ try:
     from brainhops.io.transformations.spm import SpmCoordinatesField
 except ImportError:
     nb = None
+
+try:
+    from scipy.io import netcdf_file
+
+    from brainhops.io.common.minc._data import _MincProxy
+    from brainhops.io.common.minc._netcdf import read_netcdf_header
+    from brainhops.io.images.minc import Minc1Image, Minc2Image, MincMetadata
+    from brainhops.io.images.minc._views import (
+        _image_to_disk as _minc_to_disk,
+    )
+    from brainhops.io.images.minc._views import (
+        _image_to_model as _minc_to_model,
+    )
+
+    minc_needs = netcdf_file
+except ImportError:
+    minc_needs = None
 
 try:
     import h5py
@@ -713,6 +743,23 @@ class Exemplar(tx.NamedTuple):
     the file, which the checks then compare.
     """
 
+    source: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
+    """Function that writes a file of a format that cannot write itself.
+
+    The function receives a path and data. It is `None` for a format that
+    writes its own files. MINC cannot be written, so the checks write its
+    files with this function, and the checks of writing make sure that
+    the format refuses to write instead of checking what it writes.
+    """
+
+    renamed: bool = True
+    """Whether a copy of a file under another name keeps its bytes.
+
+    A header that names its data file, such as a detached NRRD header,
+    changes in that line when it is written under another name, so only
+    its copies under the same name, in another directory, are compared.
+    """
+
     header_file: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
     """Function that returns the header file of an object of several files.
 
@@ -1022,8 +1069,8 @@ def _x5_header(metadata: tx.Any) -> tx.Any:
     return metadata.raw.header, nodes
 
 
-def _x5_cut(source: tx.Any, target: tx.Any) -> None:
-    """Copy an X5 file whose fields cannot be read.
+def _hdf5_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy an HDF5 file, such as an X5 file, whose arrays cannot be read.
 
     Every group and attribute is copied, and so is every dataset of at
     most two dimensions. A larger dataset is declared in an external file
@@ -1072,7 +1119,7 @@ if h5py is not None:
         view="transformations",
         data=_x5_data,
         set_data=_x5_set_data,
-        cut=_x5_cut,
+        cut=_hdf5_cut,
         header=_x5_header,
     )
 
@@ -1228,11 +1275,127 @@ _MRTRIX = Exemplar(
 )
 EXEMPLARS[MrtrixImage] = _MRTRIX
 
+# A NRRD image is checked as an attached `.nrrd` file and as a detached
+# `.nhdr` header with its `.raw.gz` data file, both gzipped by default.
+# The samples of both stay compressed in the file, and an untouched copy
+# keeps the compressed bytes. A detached header names its data file, so
+# its copies are compared under the same name, in another directory,
+# where both files must be identical. The data file named by the copy of
+# a detached header that the metadata check writes is the data file of
+# the source, which exists, so that check only shows that the metadata
+# reads the header alone, as for M3Z.
+
+
+def _nrrd_edit_record(record: tx.Any) -> tx.Any:
+    record.keyvalue["comment"] = "edited"
+    return record
+
+
+_NRRD = Exemplar(
+    metadata=NrrdMetadata,
+    suffix=".nrrd",
+    proxies=(_NrrdProxy,),
+    to_model=_nrrd_to_model,
+    to_disk=_nrrd_to_disk,
+    sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+    edit_record=_nrrd_edit_record,
+    record_edited=lambda record: record.keyvalue.get("comment") == "edited",
+    geometry=_nifti_geometry,
+    change_geometry=_nifti_change_geometry,
+    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    storage={"datatype": "int16"},
+)
+EXEMPLARS[AttachedNrrdImage] = _NRRD
+EXEMPLARS[DetachedNrrdImage] = _NRRD._replace(
+    suffix=".nhdr", renamed=False, header_file=lambda path: path
+)
+
+# MINC files cannot be written, so the checks write them as the MINC
+# specification describes, with h5py for MINC2 and with the NetCDF writer
+# of scipy for MINC1, which may be gzipped. The voxels are stored as
+# floats, which nibabel does not scale. The checks of writing make sure
+# that MINC refuses to write. A MINC1 copy that the metadata check reads
+# is the file cut after its NetCDF header, and a MINC2 copy keeps every
+# group and attribute of the file but not its image. The record is
+# compared as it is, since the metadata cannot write bytes.
+
+
+def _minc_dimensions(data: tx.Any) -> tx.Tuple[str, ...]:
+    """Name the dimensions of data in Fortran order, slowest first."""
+    return ("zspace", "yspace", "xspace")[3 - np.ndim(data) :]
+
+
+def _write_minc1(path: tx.Any, data: tx.Any) -> None:
+    stored = np.asarray(data, dtype="float32").T
+    names = _minc_dimensions(data)
+    plain = str(path)[: -len(".gz")] if str(path).endswith(".gz") else path
+    f = netcdf_file(str(plain), "w", version=1)
+    for name, length in zip(names, stored.shape):
+        f.createDimension(name, length)
+    for name in names:
+        variable = f.createVariable(name, "i", ())
+        variable.spacing = b"regular__"
+        variable.step = 2.0
+    f.createVariable("image", "f", names)[:] = stored
+    for name in ("image-min", "image-max"):
+        f.createVariable(name, "d", (names[0],))[:] = 0.0
+    f.close()
+    if plain != path:
+        with open(plain, "rb") as file:
+            content = file.read()
+        os.remove(plain)
+        with open(path, "wb") as file:
+            file.write(gzip.compress(content))
+
+
+def _write_minc2(path: tx.Any, data: tx.Any) -> None:
+    stored = np.asarray(data, dtype="float32").T
+    names = _minc_dimensions(data)
+    with h5py.File(path, "w") as f:
+        root = f.create_group("minc-2.0")
+        group = root.create_group("dimensions")
+        for name, length in zip(names, stored.shape):
+            dataset = group.create_dataset(name, data=np.int32(0))
+            dataset.attrs["length"] = np.int32(length)
+            dataset.attrs["step"] = 2.0
+        image = root.create_group("image/0")
+        dataset = image.create_dataset("image", data=stored)
+        dataset.attrs["dimorder"] = np.bytes_(",".join(names).encode())
+        for name in ("image-min", "image-max"):
+            image.create_dataset(name, data=np.zeros(stored.shape[0]))
+
+
+def _minc1_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy a MINC1 file cut after its NetCDF header."""
+    content = _decompressed(source)
+    size = read_netcdf_header(BytesIO(content)).size
+    _write_header(target, content[:size])
+
+
+if minc_needs is not None:
+    _MINC = Exemplar(
+        metadata=MincMetadata,
+        suffix=".mnc",
+        proxies=(_MincProxy,),
+        to_model=_minc_to_model,
+        to_disk=_minc_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=lambda record: replace(record, datatype="<f8"),
+        record_edited=lambda record: record.datatype == "<f8",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        cut=_minc1_cut,
+        header=lambda metadata: metadata.raw,
+        source=_write_minc1,
+    )
+    EXEMPLARS[Minc1Image] = _MINC
+    if h5py is not None:
+        EXEMPLARS[Minc2Image] = _MINC._replace(
+            cut=_hdf5_cut, source=_write_minc2
+        )
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
-    "brainhops.io.images.minc.Minc1Image",
-    "brainhops.io.images.minc.Minc2Image",
-    "brainhops.io.images.nrrd.AttachedNrrdImage",
-    "brainhops.io.images.nrrd.DetachedNrrdImage",
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
     "brainhops.io.images.openslide.DicomWsiImage",
@@ -1373,6 +1536,12 @@ VARIANTS.append(
     ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
 )
 
+# A MINC1 file may be gzipped.
+if minc_needs is not None:
+    VARIANTS.append(
+        ("Minc1Image-gz", Minc1Image, _MINC._replace(suffix=".mnc.gz"))
+    )
+
 CASES = [
     pytest.param(cls, exemplar, id=cls.__name__)
     for cls, exemplar in {**EXEMPLARS, **TEST_EXEMPLARS}.items()
@@ -1500,18 +1669,32 @@ def _saved(
 ) -> tx.Any:
     """Write a new object of the format and return the path of its file."""
     path = _path(tmp_path, exemplar, name)
-    _built(cls, exemplar, exemplar.sample()).save(path)
+    if exemplar.source is not None:
+        exemplar.source(path, exemplar.sample())
+    else:
+        _built(cls, exemplar, exemplar.sample()).save(path)
     return path
+
+
+def _refuses_writing(obj: tx.Any, target: tx.Any) -> None:
+    """Check that a format that cannot write refuses to write an object."""
+    assert not hasattr(obj, "save")
+    with pytest.raises(WriterError):
+        io.save(obj, target)
 
 
 def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
     """Write a new object of the format with a geometry and return its path.
 
     The geometry is the one that `exemplar.change_geometry` assigns, so
-    that it differs from the geometry of an object built from data.
+    that it differs from the geometry of an object built from data. A
+    format that cannot write keeps the geometry that `exemplar.source`
+    writes.
     """
-    path = tmp_path / ("placed" + exemplar.suffix)
-    obj = cls(data=exemplar.sample())
+    if exemplar.source is not None:
+        return _saved(cls, exemplar, tmp_path, "placed")
+    path = _path(tmp_path, exemplar, "placed")
+    obj = _built(cls, exemplar, exemplar.sample())
     exemplar.change_geometry(obj)
     obj.save(path)
     return path
@@ -1629,13 +1812,29 @@ def test_05_untouched_save_is_byte_identical(
     tmp_path,  # noqa: ANN001
 ) -> None:
     source = _saved(cls, exemplar, tmp_path)
-    target = _path(tmp_path, exemplar, "copy")
-    cls.load(source).save(target)
-    assert _decompressed(target) == _decompressed(source)
-    # The generic writer copies the object with `from_instance` first.
-    target = _path(tmp_path, exemplar, "generic")
-    io.save(cls.load(source), target)
-    assert _decompressed(target) == _decompressed(source)
+    if exemplar.source is not None:
+        _refuses_writing(cls.load(source), _path(tmp_path, exemplar, "copy"))
+        return
+    if exemplar.renamed:
+        target = _path(tmp_path, exemplar, "copy")
+        cls.load(source).save(target)
+        assert _decompressed(target) == _decompressed(source)
+        # The generic writer copies the object with `from_instance` first.
+        target = _path(tmp_path, exemplar, "generic")
+        io.save(cls.load(source), target)
+        assert _decompressed(target) == _decompressed(source)
+    # Every file of a copy under the same name, in another directory, is
+    # the file of the same name beside the source.
+    for name, write in (("same", cls.load(source).save), ("io", None)):
+        directory = tmp_path / name
+        directory.mkdir()
+        if write is None:
+            io.save(cls.load(source), directory / source.name)
+        else:
+            write(directory / source.name)
+        for copied in directory.iterdir():
+            original = tmp_path / copied.name
+            assert _decompressed(copied) == _decompressed(original), copied
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1666,7 +1865,11 @@ def test_07_metadata_pickles(
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
     clone = pickle.loads(pickle.dumps(loaded.metadata))
     assert type(clone) is type(loaded.metadata)
-    assert clone.to_bytes() == loaded.metadata.to_bytes()
+    if exemplar.source is None:
+        assert clone.to_bytes() == loaded.metadata.to_bytes()
+    else:
+        # Metadata that cannot be written is compared through its summary.
+        assert _header(exemplar, clone) == _header(exemplar, loaded.metadata)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1679,12 +1882,17 @@ def test_08_an_object_built_from_data_saves(
     built = _built(cls, exemplar, value)
     assert built.metadata is None
     assert np.array_equal(np.asarray(_data(exemplar, built)), value)
-    # Consolidating encodes the data and a new record.
+    # Consolidating encodes the data and a new record, which a format
+    # that cannot write cannot encode.
     consolidated = built.consolidate()
-    assert isinstance(consolidated.metadata, exemplar.metadata)
+    if exemplar.source is None:
+        assert isinstance(consolidated.metadata, exemplar.metadata)
     stored = np.asarray(_stored(exemplar, consolidated))
     assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "built")
+    if exemplar.source is not None:
+        _refuses_writing(built, path)
+        return
     built.save(path)
     assert np.array_equal(np.asarray(_data(exemplar, cls.load(path))), value)
 
@@ -1731,6 +1939,9 @@ def test_09_copies_keep_raw_and_metadata(
         stored = np.asarray(_stored(exemplar, consolidated))
         assert np.array_equal(stored, exemplar.to_disk(value))
     path = _path(tmp_path, exemplar, "converted")
+    if exemplar.source is not None:
+        _refuses_writing(converted, path)
+        return
     converted.save(path)
     assert np.array_equal(np.asarray(_data(exemplar, cls.load(path))), value)
 
@@ -1746,8 +1957,12 @@ def test_10_record_edits_survive_and_geometry_wins(
     edited = exemplar.edit_record(deepcopy(loaded.metadata.raw))
     loaded.metadata = exemplar.metadata.from_raw(edited)
     exemplar.change_geometry(loaded)
-    header = loaded.metadata.to_bytes()
     target = _path(tmp_path, exemplar, "edited")
+    if exemplar.source is not None:
+        assert exemplar.record_edited(loaded.metadata.raw)
+        _refuses_writing(loaded, target)
+        return
+    header = loaded.metadata.to_bytes()
     loaded.save(target)
     # Writing encodes into a copy of the record, never into the record.
     assert loaded.metadata.to_bytes() == header
@@ -1820,13 +2035,17 @@ def test_13_transformations_are_decoded_unless_assigned(
     assert loaded.transformations == []
     assert replace(loaded).transformations == []
     assert cls.from_instance(loaded).transformations == []
-    # The image is then written as an image built from data alone.
-    target = tmp_path / ("empty" + exemplar.suffix)
-    loaded.save(target)
-    bare = cls.load(_saved(cls, exemplar, tmp_path, "bare"))
-    assert np.allclose(
-        exemplar.geometry(cls.load(target)), exemplar.geometry(bare)
-    )
+    # The image is then written as an image built from data alone, by a
+    # format that can write.
+    target = _path(tmp_path, exemplar, "empty")
+    if exemplar.source is not None:
+        _refuses_writing(loaded, target)
+    else:
+        loaded.save(target)
+        bare = cls.load(_saved(cls, exemplar, tmp_path, "bare"))
+        assert np.allclose(
+            exemplar.geometry(cls.load(target)), exemplar.geometry(bare)
+        )
     # Assigning `None` decodes the record again.
     loaded.transformations = None
     assert np.allclose(exemplar.geometry(loaded), decoded)
@@ -1893,6 +2112,9 @@ def test_16_consolidate_is_idempotent(
 ) -> None:
     loaded = _changed(cls, exemplar, tmp_path)
     raw, metadata, pending = _raw(loaded), loaded.metadata, _pending(loaded)
+    if exemplar.source is not None:
+        _check_data_only(exemplar, loaded)
+        return
     once = loaded.consolidate()
     # Nothing is pending in the copy, whose record is new, and the copy
     # holds what a file written from the object holds.
@@ -1923,6 +2145,25 @@ def test_16_consolidate_is_idempotent(
     assert loaded.metadata is metadata
 
 
+def _check_data_only(exemplar: Exemplar, loaded: tx.Any) -> None:
+    """Check the consolidation of a format that cannot write.
+
+    No record can be encoded, so only the pending data is moved into
+    `raw`, and the metadata and the assigned transformations are kept.
+    """
+    data, chain = _pending(loaded)
+    once = loaded.consolidate()
+    assert once._data is None
+    assert once._transformations is chain
+    assert once.metadata is loaded.metadata
+    assert np.array_equal(
+        np.asarray(_stored(exemplar, once)), exemplar.to_disk(data)
+    )
+    twice = once.consolidate()
+    assert _raw(twice) is _raw(once)
+    assert loaded._data is data
+
+
 @pytest.mark.parametrize("cls, exemplar", CASES)
 def test_16_a_storage_override_holds_what_the_file_holds(
     cls: type,
@@ -1936,13 +2177,16 @@ def test_16_a_storage_override_holds_what_the_file_holds(
     # them changes them, as the writer of the format does.
     loaded.data = (exemplar.sample() + 1) / 7
     once = loaded.consolidate(**exemplar.storage)
-    path = tmp_path / ("stored" + exemplar.suffix)
+    # The file has the name of the source, in another directory, since a
+    # header may name its data file.
+    (tmp_path / "stored").mkdir()
+    path = _path(tmp_path / "stored", exemplar, "src")
     once.save(path)
     back = cls.load(path)
     # The copy holds the data and the header of the file exactly.
     assert np.asarray(once.data).dtype == np.asarray(back.data).dtype
     assert np.array_equal(np.asarray(once.data), np.asarray(back.data))
-    assert once.metadata.to_bytes() == back.metadata.to_bytes()
+    assert _header(exemplar, once.metadata) == _header(exemplar, back.metadata)
     # Nothing is pending in the copy.
     twice = once.consolidate()
     assert twice.raw is once.raw
@@ -1955,6 +2199,8 @@ def test_17_save_writes_the_consolidated_copy(
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
+    if exemplar.source is not None:
+        pytest.skip("The format cannot write.")
     loaded = _changed(cls, exemplar, tmp_path)
     raw, metadata, pending = _raw(loaded), loaded.metadata, _pending(loaded)
     saved = _path(tmp_path, exemplar, "saved")
@@ -1984,38 +2230,48 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    if cls not in TEST_EXEMPLARS:
-        pytest.skip("The formats write over their own files from #427.")
     path = _saved(cls, exemplar, tmp_path)
-    # An untouched object is written over the file that it reads.
     loaded = cls.load(path)
+    if exemplar.source is not None or _raw(loaded) is None:
+        pytest.skip("Only an object whose `raw` reads its file is affected.")
+    # An untouched object is written over the file that it reads.
     loaded.save(path)
-    assert np.array_equal(np.asarray(loaded.data), exemplar.sample())
-    assert np.array_equal(np.asarray(cls.load(path).data), exemplar.sample())
-    # A changed object is consolidated in place, and then holds what the
-    # file holds (#426).
-    value = exemplar.sample() + 1
-    loaded.data = value
-    exemplar.change_geometry(loaded)
-    loaded.save(path)
-    assert loaded._data is None
-    assert loaded._transformations is None
-    assert isinstance(loaded.raw, exemplar.proxies)
     back = cls.load(path)
-    assert np.array_equal(np.asarray(loaded.data), value)
-    assert np.array_equal(np.asarray(back.data), value)
+    assert np.array_equal(np.asarray(loaded.data), exemplar.sample())
+    assert np.array_equal(np.asarray(back.data), exemplar.sample())
+    assert _header(exemplar, loaded.metadata) == _header(
+        exemplar, back.metadata
+    )
+    # A changed object is consolidated in place, and then holds what the
+    # file holds (#426): its `raw` reads the new file.
+    loaded = _changed(cls, exemplar, tmp_path)
+    path = _path(tmp_path, exemplar, "src")
+    expected = np.asarray(_data(exemplar, loaded.consolidate()))
+    loaded.save(path)
+    assert all(field is None for field in _pending(loaded))
+    assert isinstance(_raw(loaded), exemplar.proxies)
+    back = cls.load(path)
+    assert np.array_equal(np.asarray(loaded.data), np.asarray(back.data))
+    assert np.allclose(np.asarray(back.data), expected)
     assert np.allclose(exemplar.geometry(loaded), exemplar.geometry(back))
+    # Its record is the header of the new file.
+    assert _header(exemplar, loaded.metadata) == _header(
+        exemplar, back.metadata
+    )
 
 
 def _compared(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
     """Return the path of a file of an image whose list is compared.
 
     Only images take `transformations` over as a list that is compared
-    at `consolidate`, and the check is skipped for any other format.
+    at `consolidate`, and the check is skipped for any other format, and
+    for a format that cannot write, such as MINC, which keeps its list.
     """
     path = _saved(cls, exemplar, tmp_path)
     if not isinstance(cls.load(path), ImageFormat):
         pytest.skip("Only an image takes its transformations over as a list.")
+    if exemplar.source is not None:
+        pytest.skip("A format that cannot write encodes no list.")
     return path
 
 

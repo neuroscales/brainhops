@@ -52,6 +52,7 @@ from brainhops.io.common.nifti._header import (
 from brainhops.io.common.nifti._raw import (
     _sniffed_header,
     read_nifti,
+    reads_file,
     write_nifti,
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
@@ -322,14 +323,30 @@ class NiftiImage(
 
         A local file is handed to nibabel by name, so that nibabel opens
         it whenever the voxels are read and can memory-map them. A remote
-        file is read into memory instead. The keyword arguments are passed
-        to nibabel.
+        file is read into memory instead. The keyword arguments `mmap` and
+        `keep_file_open` are passed to nibabel.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Options of the nibabel readers, which are `mmap` and
+            `keep_file_open`. Other options are refused.
+
+        Returns
+        -------
+        NiftiImage
+            The image, whose voxels are read lazily.
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserExistsError
             If the path does not exist.
         """
+        _nibabel_options(kwargs)
         if isinstance(filename, str):
             filename = path.Path(filename)
         if not path.exists(filename):
@@ -343,8 +360,28 @@ class NiftiImage(
 
         The proxy reads the voxels from the stream when they are needed,
         so the stream must stay open while the data may be read. The
-        keyword arguments are passed to nibabel.
+        keyword arguments `mmap` and `keep_file_open` are passed to
+        nibabel, which ignores them for a stream.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream, which may be compressed with gzip.
+        **kwargs : Any
+            Options of the nibabel readers, which are `mmap` and
+            `keep_file_open`. Other options are refused.
+
+        Returns
+        -------
+        NiftiImage
+            The image, whose voxels are read lazily.
+
+        Raises
+        ------
+        TypeError
+            If another option is given.
         """
+        _nibabel_options(kwargs)
         raw, proxy = read_nifti(file, **kwargs)
         return cls(raw=proxy, metadata=NiftiMetadata.from_raw(raw))
 
@@ -516,7 +553,11 @@ class NiftiImage(
         """Write the image to a path, compressed if its name ends with `.gz`.
 
         The image is consolidated into a copy, which is written, and the
-        image itself is not changed.
+        image itself is not changed. A local file is replaced at once, so
+        an image can be written over the file that it was read from. The
+        image is then consolidated in place, so that it holds what the
+        file holds (#426): its lazy array reads the new file, and its
+        record is the header of that file.
 
         Parameters
         ----------
@@ -531,7 +572,20 @@ class NiftiImage(
         WriterError
             If the image cannot be encoded, as in [`consolidate`][].
         """
-        write_nifti(self.to_nibabel(**kwargs), filename)
+        if not reads_file(self.raw, filename):
+            write_nifti(self.to_nibabel(**kwargs), filename)
+            return
+        self.consolidate(inplace=True, **kwargs)
+        write_nifti(_nifti_written(self), filename)
+        # The image holds what the file holds: its lazy array reads the new
+        # file, since the lazy array of the old file describes how that
+        # file stored the voxels, and its record is the header of the new
+        # file.
+        record, proxy = read_nifti(filename)
+        self.raw = proxy
+        self.metadata = replace(self.metadata, raw=record)
+        self.data = None
+        self.transformations = None
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
         """Write the image to a stream as an uncompressed NIfTI file.
@@ -860,6 +914,25 @@ def _nifti_written(
             "This image has no data, so there is nothing to write."
         )
     return _written_nifti(image.raw, image.metadata.raw)
+
+
+_NIBABEL_OPTIONS = ("mmap", "keep_file_open")
+"""The options of the nibabel readers that a NIfTI image accepts."""
+
+
+def _nibabel_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+    """Refuse the reader options that nibabel does not take.
+
+    Raises
+    ------
+    TypeError
+        If another option is given.
+    """
+    unknown = [name for name in kwargs if name not in _NIBABEL_OPTIONS]
+    if unknown:
+        raise TypeError(
+            f"Unknown NIfTI reader option(s): {', '.join(unknown)}"
+        )
 
 
 def _header_transformations(

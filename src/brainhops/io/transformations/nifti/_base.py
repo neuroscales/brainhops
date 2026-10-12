@@ -28,6 +28,7 @@ from brainhops.io.common.nifti._header import (
 from brainhops.io.common.nifti._raw import (
     _sniffed_header,
     read_nifti,
+    reads_file,
     write_nifti,
 )
 from brainhops.io.transformations.base import TransformationFormat
@@ -316,7 +317,13 @@ class NiftiBasedTransformation(
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a path.
 
-        The file is compressed when its name ends with `.gz`.
+        The file is compressed when its name ends with `.gz`. The
+        transformation is consolidated into a copy, which is written, and
+        the transformation itself is not changed. A local file is replaced
+        at once, so a transformation can be written over the file that it
+        was read from. The transformation is then consolidated in place,
+        so that it holds what the file holds (#426): its lazy array reads
+        the new file, and its record is the header of that file.
 
         Parameters
         ----------
@@ -325,7 +332,18 @@ class NiftiBasedTransformation(
         **kwargs : Any
             The writer options of [`consolidate`][].
         """
-        write_nifti(self.to_nibabel(**kwargs), filename)
+        if not reads_file(self.raw, filename):
+            write_nifti(self.to_nibabel(**kwargs), filename)
+            return
+        self.consolidate(inplace=True, **kwargs)
+        write_nifti(self.to_nibabel(), filename)
+        # The lazy array of the old file describes how that file stored
+        # the values, so the transformation reads the new file, holds the
+        # record of its header, and drops the views decoded before.
+        record, proxy = read_nifti(filename)
+        self.raw = proxy
+        self.metadata = replace(self.metadata, raw=record)
+        self.data = None
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
         """Write the transformation to a stream as an uncompressed file.

@@ -26,15 +26,22 @@ The module follows the NRRD specification and supports every encoding, every
 scalar type except `block`, and all three forms of the `data file` field. Raw
 data in a single local file are memory-mapped when read from a path.
 
+The header is held as an [`NrrdRaw`][] record, and [`NrrdMetadata`][] reads
+and writes that record without the samples.
+[`NrrdImage`][brainhops.io.images.nrrd.NrrdImage] holds such metadata and a
+lazy array of the samples. The record keeps the bytes of the header as well
+as its fields, so that an image that is read and written again without
+changes keeps its bytes, comments included.
+
 !!! note "Why not pynrrd"
     pynrrd supports neither `LIST` or pattern data files nor `hex`, and it
     always loads the data into memory.
 """
 
 __all__ = [
-    "NrrdReaderWriter",
-    "NrrdHeader",
+    "NrrdMetadata",
+    "NrrdRaw",
 ]
 
-from ._header import NrrdHeader
-from ._parsers import NrrdReaderWriter
+from ._metadata import NrrdMetadata
+from ._raw import NrrdRaw

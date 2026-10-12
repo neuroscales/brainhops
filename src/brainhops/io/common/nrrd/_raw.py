@@ -1,16 +1,24 @@
-"""The NRRD header."""
+"""The record of a NRRD image: its header."""
 
 # stdlib
 import math
 import re
+from io import BytesIO
 
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, Magic
+from bagof.magic import Factory, Magic, NoRepr
 
 # internals
-from brainhops.io.base.parsers import ParserContentError
+from brainhops._core.streams import preserve_position
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    BinaryFileWriter,
+    Confidence,
+    ParserContentError,
+    SnifferContentError,
+)
 
 # this format
 from ._codecs import (
@@ -33,13 +41,30 @@ from ._constants import (
 )
 
 # ----------------------------------------------------------------------
-#   HEADER
+#   RECORD
 # ----------------------------------------------------------------------
 
 
-class NrrdHeader(Magic, frozen=True):
-    """The header of a NRRD file, with the fields kept as text so that they are
-    written back as read.
+class NrrdRaw(
+    Magic, BinaryFileReader, BinaryFileWriter, frozen=True, eq=False
+):
+    """The header of a NRRD image, as the file stores it.
+
+    A NRRD image is a text header followed by the samples, either in the
+    same `.nrrd` file or in the data files that a `.nhdr` header names.
+    The record holds the header: the fields as text, by their canonical
+    name, the key/value pairs, and the names of the data files. The
+    properties decode the fields that describe the samples and the
+    geometry. The record also keeps the bytes that the header was read
+    from, so that a header that is read and written again keeps its
+    bytes, comments included.
+
+    The record knows where the samples lie and how they are encoded, but
+    it never reads them. It is held by
+    [`NrrdMetadata`][brainhops.io.common.nrrd.NrrdMetadata], which never
+    changes it in place: a writer works on the copy that [`copy`][]
+    returns, or builds a new record. Two records are equal when they
+    format to the same text, whatever bytes they were read from.
     """
 
     version: int = 5
@@ -53,6 +78,17 @@ class NrrdHeader(Magic, frozen=True):
 
     data_files: tx.Tuple[str, ...] = ()
     """Detached data files in order; empty when the data are attached."""
+
+    stored: NoRepr[tx.Optional[bytes]] = None
+    """The bytes that the header was read from, or `None`.
+
+    The bytes run from the magic line to the empty line that ends the
+    header, or to the end of a detached header that has no empty line.
+    They are written back as they are while they still describe the
+    record, whichever program wrote them, and the record is formatted as
+    the writer spells it otherwise. The bytes are `None` for a record
+    that was not read from a file.
+    """
 
     def _field(self, name: str) -> tx.Optional[str]:
         value = self.fields.get(name)
@@ -282,8 +318,24 @@ class NrrdHeader(Magic, frozen=True):
     @classmethod
     def from_lines(
         cls, lines: tx.Iterable[str], version: int = 5
-    ) -> "NrrdHeader":
-        """Build a header from the lines that follow the magic line.
+    ) -> "NrrdRaw":
+        """Build a record from the lines that follow the magic line.
+
+        The record keeps no bytes, since lines do not say how the header
+        was spelled.
+
+        Parameters
+        ----------
+        lines : iterable of str
+            The lines of the header after the magic line, without their
+            line breaks.
+        version : int, default=5
+            The version that the magic line states.
+
+        Returns
+        -------
+        NrrdRaw
+            The record.
 
         Raises
         ------
@@ -335,37 +387,112 @@ class NrrdHeader(Magic, frozen=True):
         )
 
     @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO) -> tx.Tuple["NrrdHeader", int]:
-        """Read a header from a binary stream positioned at the magic line.
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NrrdRaw":
+        """Read the header of a NRRD stream, positioned at the magic line.
 
-        Return the header and the number of bytes read, which is where attached
-        data begin.
+        The samples are not read, and the position of the stream is
+        restored. The record keeps the bytes of the header, whose length
+        is where attached samples begin. The record has no options.
+
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        **kwargs : Any
+            Refused, since the record has no option.
+
+        Returns
+        -------
+        NrrdRaw
+            The record.
+
+        Raises
+        ------
+        TypeError
+            If an option is given.
+        ParserContentError
+            If the stream does not hold a NRRD header.
         """
-        start = file.tell()
-        magic = file.readline(64)
-        if not (
-            magic[:7] == NRRD_MAGIC
-            and magic[7:8].isdigit()
-            and magic[8:].strip() == b""
-        ):
-            raise ParserContentError("Not a NRRD file (no NRRD000X magic).")
-        version = int(magic[7:8])
-        lines = []
-        for _ in range(_MAX_HEADER_LINES):
-            line = file.readline()
-            if not line or line in (b"\n", b"\r\n"):
-                break
-            try:
-                lines.append(line.decode("utf-8"))
-            except UnicodeDecodeError:
-                lines.append(line.decode("latin-1"))
-        else:
-            raise ParserContentError("The NRRD header does not end.")
-        header = cls.from_lines(lines, version=version)
-        return header, file.tell() - start
+        _no_options(kwargs)
+        with preserve_position(file):
+            return _read_header(file)
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a stream holds a NRRD header.
+
+        The header is parsed, and the position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream to test, open in binary mode.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no header.
+            With `True`, the error is a `SnifferContentError`, and an
+            exception class is raised instead when one is given.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            `Confidence.LIKELY` or `Confidence.NO`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the stream holds no header and `error` is `True`.
+        """
+        raw, failure = _sniffed_raw(file)
+        if raw is not None:
+            return Confidence.LIKELY
+        return _declined(error, failure)
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that bytes start with a NRRD header.
+
+        Parameters
+        ----------
+        content : bytes
+            The content to test.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content holds no header, as
+            in [`sniff_fileobj`][].
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            `Confidence.LIKELY` or `Confidence.NO`.
+
+        Raises
+        ------
+        SnifferContentError
+            If the content holds no header and `error` is `True`.
+        """
+        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     def to_text(self) -> str:
-        """Return the header text, without the empty line that ends it."""
+        """Return the header text, without the empty line that ends it.
+
+        Returns
+        -------
+        str
+            The text, from the magic line to the last field.
+        """
         lines = [f"NRRD000{self.version}"]
         for name in _FIELDS:
             if name in self.fields and name != "data file":
@@ -379,6 +506,145 @@ class NrrdHeader(Magic, frozen=True):
                 lines.append("data file: LIST")
                 lines.extend(self.data_files)
         return "\n".join(lines) + "\n"
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Return the header as the file stores it.
+
+        The bytes that the header was read from are returned while they
+        still describe the record. Otherwise, the header is its text, and
+        the header of attached samples ends with an empty line, after
+        which the samples begin.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        bytes
+            The header.
+        """
+        if self.stored is not None and _parsed(self.stored) == self:
+            return self.stored
+        text = self.to_text()
+        if not self.data_files:
+            text += "\n"
+        return text.encode("utf-8")
+
+    def copy(self) -> "NrrdRaw":
+        """Return a copy of the record that can be changed freely.
+
+        The fields and the key/value pairs are copied into new
+        dictionaries. The bytes that the header was read from are kept,
+        since [`to_bytes`][] writes them only while they still describe
+        the record.
+
+        Returns
+        -------
+        NrrdRaw
+            The copy.
+        """
+        return NrrdRaw(
+            version=self.version,
+            fields=dict(self.fields),
+            keyvalue=dict(self.keyvalue),
+            data_files=tuple(self.data_files),
+            stored=self.stored,
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, NrrdRaw):
+            return NotImplemented
+        return self.to_text() == other.to_text()
+
+    __hash__ = None
+
+
+def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+    """Refuse the options of a reader that takes none.
+
+    Raises
+    ------
+    TypeError
+        If an option is given.
+    """
+    if kwargs:
+        raise TypeError(f"Unknown NRRD reader option(s): {', '.join(kwargs)}")
+
+
+def _read_header(file: tx.BinaryIO) -> NrrdRaw:
+    """Read a header from a stream positioned at its magic line.
+
+    The stream is left just after the empty line that ends the header,
+    where attached samples begin. The record keeps the bytes it was read
+    from, empty line included.
+
+    Raises
+    ------
+    ParserContentError
+        If the stream does not hold a NRRD header.
+    """
+    magic = file.readline(64)
+    if not (
+        magic[:7] == NRRD_MAGIC
+        and magic[7:8].isdigit()
+        and magic[8:].strip() == b""
+    ):
+        raise ParserContentError("Not a NRRD file (no NRRD000X magic).")
+    version = int(magic[7:8])
+    stored = [magic]
+    lines = []
+    for _ in range(_MAX_HEADER_LINES):
+        line = file.readline()
+        stored.append(line)
+        if not line or line in (b"\n", b"\r\n"):
+            break
+        try:
+            lines.append(line.decode("utf-8"))
+        except UnicodeDecodeError:
+            lines.append(line.decode("latin-1"))
+    else:
+        raise ParserContentError("The NRRD header does not end.")
+    record = NrrdRaw.from_lines(lines, version=version)
+    return NrrdRaw(
+        version=record.version,
+        fields=record.fields,
+        keyvalue=record.keyvalue,
+        data_files=record.data_files,
+        stored=b"".join(stored),
+    )
+
+
+def _parsed(stored: bytes) -> NrrdRaw:
+    """Parse the bytes of a header."""
+    return _read_header(BytesIO(stored))
+
+
+def _sniffed_raw(
+    file: tx.IO,
+) -> tx.Tuple[tx.Optional[NrrdRaw], tx.Optional[Exception]]:
+    """Read the record of a stream for sniffing.
+
+    The position of the stream is restored. The result is the record, or
+    `None` with the error that refused it.
+    """
+    try:
+        return NrrdRaw.from_fileobj(file), None
+    except Exception as e:  # noqa: BLE001
+        return None, e
+
+
+def _declined(
+    error: tx.Union[bool, tx.Type[Exception]],
+    failure: tx.Optional[Exception],
+) -> float:
+    """Decline a sniffed input, raising the requested error if any."""
+    if error:
+        if error is True:
+            error = SnifferContentError
+        raise error("Content is not a NRRD image") from failure
+    return Confidence.NO
 
 
 def _data_files(value: str) -> tx.Tuple[tx.List[str], bool]:

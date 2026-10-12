@@ -54,6 +54,36 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.images.mrtrix": Package(
         names=frozenset({"MrtrixImage", "MrtrixMetadata", "MrtrixRaw"}),
     ),
+    "brainhops.io.common.minc": Package(
+        names=frozenset({"MincDimension", "MincMetadata", "MincRaw"}),
+        needs=("nibabel",),
+    ),
+    "brainhops.io.images.minc": Package(
+        names=frozenset(
+            {
+                "Minc1Image",
+                "Minc2Image",
+                "MincImage",
+                "MincMetadata",
+                "MincRaw",
+            }
+        ),
+        needs=("nibabel",),
+    ),
+    "brainhops.io.common.nrrd": Package(
+        names=frozenset({"NrrdMetadata", "NrrdRaw"}),
+    ),
+    "brainhops.io.images.nrrd": Package(
+        names=frozenset(
+            {
+                "AttachedNrrdImage",
+                "DetachedNrrdImage",
+                "NrrdImage",
+                "NrrdMetadata",
+                "NrrdRaw",
+            }
+        ),
+    ),
     "brainhops.io.common.mgh": Package(
         names=frozenset({"MghMetadata", "MghRaw"}),
         needs=("nibabel",),

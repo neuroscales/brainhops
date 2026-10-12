@@ -8,6 +8,7 @@ from io import BytesIO
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
+from nibabel.arrayproxy import ArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
 from nibabel.volumeutils import array_from_file, array_to_file
 
@@ -21,6 +22,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._utils_files import same_file, write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -290,9 +292,7 @@ class MghImage(
 
         A local file whose name matches its content is handed to nibabel
         by name, so that nibabel opens it whenever the voxels are read and
-        can memory-map them. Any other file is read into memory. The
-        keyword arguments `mmap` and `keep_file_open` are passed to the
-        nibabel proxy, and the others are ignored.
+        can memory-map them. Any other file is read into memory.
 
         Parameters
         ----------
@@ -300,7 +300,7 @@ class MghImage(
             The path of the file.
         **kwargs : Any
             Options of the nibabel proxy, which are `mmap` and
-            `keep_file_open`. Other options are ignored.
+            `keep_file_open`. Other options are refused.
 
         Returns
         -------
@@ -309,6 +309,8 @@ class MghImage(
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserExistsError
             If the path does not exist.
         """
@@ -334,12 +336,17 @@ class MghImage(
             The stream, which may be compressed with gzip.
         **kwargs : Any
             Options of the nibabel proxy, which are `mmap` and
-            `keep_file_open`. Other options are ignored.
+            `keep_file_open`. Other options are refused.
 
         Returns
         -------
         MghImage
             The image, whose voxels are read lazily.
+
+        Raises
+        ------
+        TypeError
+            If another option is given.
         """
         raw, proxy = read_mgh(file, **kwargs)
         return cls(raw=proxy, metadata=MghMetadata.from_raw(raw))
@@ -562,7 +569,11 @@ class MghImage(
 
         The file is gzipped when its name ends with `.mgz` or `.gz`, unless
         `compress` says otherwise. The other keyword arguments are those of
-        [`consolidate`][].
+        [`consolidate`][]. The content is encoded before the file is
+        written, and a local file is replaced at once, so an image can be
+        written over the file that it was read from. The image is then
+        consolidated in place, so that it holds what the file holds
+        (#426), and its lazy array reads the new file.
 
         Parameters
         ----------
@@ -572,12 +583,18 @@ class MghImage(
             Arguments of [`to_bytes`][], which are `compress` and the
             options of [`consolidate`][].
         """
-        kwargs.setdefault("compress", _compressed_name(filename))
-        content = self.to_bytes(**kwargs)
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        with filename.open("wb") as f:
-            f.write(content)
+        compress = kwargs.pop("compress", _compressed_name(filename))
+        if not _reads_file(self.raw, filename):
+            write_file(filename, self.to_bytes(compress=compress, **kwargs))
+            return
+        self.consolidate(inplace=True, **kwargs)
+        content = encode_mgh(*_mgh_written(self))
+        write_file(filename, gzip.compress(content) if compress else content)
+        # The image holds what the file holds, and its lazy array reads the
+        # new file, since the lazy array of the old file describes how that
+        # file stored the voxels.
+        self.raw = read_mgh(filename)[1]
+        self.data = None
 
 
 # ----------------------------------------------------------------------
@@ -943,6 +960,11 @@ def _mgh_written(image: MghImage) -> tx.Tuple[MghRaw, ArrayProtocol]:
             "This image has no data, so there is nothing to write."
         )
     return image.metadata.raw, image.raw
+
+
+def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
+    """Tell whether a lazy array of voxels reads a file by its name."""
+    return isinstance(raw, ArrayProxy) and same_file(raw.file_like, file)
 
 
 def _stored_voxels(data: ArrayProtocol, dtype: np.dtype) -> ArrayProtocol:

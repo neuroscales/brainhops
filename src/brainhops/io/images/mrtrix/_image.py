@@ -28,7 +28,9 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._utils_files import same_file as _same_file
 from brainhops.io.base._utils_files import sibling as _sibling
+from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -60,7 +62,11 @@ from brainhops.io.common.mrtrix._geometry import (
     split_voxel_to_scanner,
     voxel_to_ras,
 )
-from brainhops.io.common.mrtrix._raw import _declined, _sniffed_raw
+from brainhops.io.common.mrtrix._raw import (
+    _declined,
+    _no_options,
+    _sniffed_raw,
+)
 from brainhops.io.images.base import ImageFormat
 
 # this format
@@ -319,7 +325,7 @@ class MrtrixImage(
         """Read an image from the path of a `.mif`, `.mif.gz` or `.mih` file.
 
         The record is read from the header, and the lazy array reads the
-        voxels when they are needed. Other keyword arguments are ignored.
+        voxels when they are needed.
 
         Parameters
         ----------
@@ -329,28 +335,42 @@ class MrtrixImage(
             Whether the lazy array memory-maps local data that is not
             compressed.
         **kwargs : Any
-            Ignored.
+            Refused, since MRtrix has no other option.
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserExistsError
             If the file or the data file that its header names does not
             exist.
         ParserContentError
             If the file is not an MRtrix image, or its data is too short.
         """
+        _no_options(kwargs)
         raw, proxy = read_mrtrix(filename, mmap=mmap)
         return cls(raw=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
     @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MrtrixImage":
+    def from_fileobj(
+        cls, file: tx.BinaryIO, mmap: bool = False, **kwargs
+    ) -> "MrtrixImage":
         """Read an image from an open MRtrix file, gzipped or not.
 
         The record is read at once, and the lazy array reads the voxels
         from the stream when they are needed, so the stream must stay open
         while the data may be read. A separate data file is found from the
-        name of the stream. The position of the stream is restored, and
-        the keyword arguments are ignored.
+        name of the stream. The position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream of the file, open in binary mode.
+        mmap : bool, default=False
+            Accepted for the readers of paths, and without effect: the
+            voxels of a stream are never memory-mapped.
+        **kwargs : Any
+            Refused, since MRtrix has no other option.
 
         Parameters
         ----------
@@ -366,10 +386,13 @@ class MrtrixImage(
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserContentError
             If the stream is not an MRtrix image, or its header names a
             separate data file and the stream has no name.
         """
+        _no_options(kwargs)
         raw, proxy = read_mrtrix(file, mmap=False)
         return cls(raw=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
@@ -550,8 +573,11 @@ class MrtrixImage(
         file. The image is consolidated into a copy with the keyword
         arguments, as by [`consolidate`][], which is written, and the image
         itself is not changed. The content is encoded before any file is
-        opened, so an image can be written over the file that it was read
-        from.
+        written, and each local file is replaced at once, so an image can
+        be written over the files that it was read from. When the lazy
+        array of the image reads a file that is written, the image is
+        consolidated in place instead, so that it holds what the files
+        hold (#426), and its lazy array reads the new files.
 
         Parameters
         ----------
@@ -568,21 +594,36 @@ class MrtrixImage(
         if isinstance(filename, str):
             filename = path.Path(filename)
         options = _options(kwargs)
-        if str(filename).lower().endswith(".mih"):
+        detached = str(filename).lower().endswith(".mih")
+        if detached:
             base = filename.name[: -len(".mih")]
+            target = _sibling(filename, base + ".dat")
+            written = [filename, target]
+        else:
+            written = [filename]
+        reading = _reads_from(self.raw, written)
+        if reading:
+            mmap = self.raw.mmap
+            image = self.consolidate(inplace=True, **options)
+        else:
             image = self.consolidate(**options)
+        if detached:
             record, source = _mrtrix_written(image, base + ".dat")
             header, data = record.to_bytes(), _payload(record, source)
-            with _sibling(filename, base + ".dat").open("wb") as f:
-                f.write(data)
-            with filename.open("wb") as f:
-                f.write(header)
-            return
-        content = self.to_bytes(**options)
-        if str(filename).lower().endswith(".gz"):
-            content = gzip.compress(content)
-        with filename.open("wb") as f:
-            f.write(content)
+            write_file(target, data)
+            write_file(filename, header)
+        else:
+            record, source = _mrtrix_written(image, ".")
+            content = record.to_bytes() + _payload(record, source)
+            if str(filename).lower().endswith(".gz"):
+                content = gzip.compress(content)
+            write_file(filename, content)
+        if reading:
+            # The image holds what the files hold, and its lazy array reads
+            # the new files, since the lazy array of the old files describes
+            # how they stored the voxels.
+            self.raw = read_mrtrix(filename, mmap=mmap)[1]
+            self.data = None
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write to a path or a stream.
@@ -686,7 +727,9 @@ def _encoded(
         shape, strides = raw.record.dim, raw.record.layout
         stored_type, stored_scaling = raw.record.datatype, raw.record.scaling
     else:
-        source = image.data if isinstance(raw, _MrtrixProxy) else raw
+        # A lazy array is read here rather than through `data`, so that no
+        # cached view of the old file outlives a write over that file.
+        source = np.asarray(raw) if isinstance(raw, _MrtrixProxy) else raw
         if moved:
             source = arranged.layout.apply(source)
         shape = tuple(int(d) for d in np.shape(source))
@@ -756,6 +799,13 @@ def _stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
         return source
     content = BytesIO(_payload(record, source))
     return _MrtrixProxy(content, 0, 0, record, mmap=False)
+
+
+def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
+    """Tell whether a lazy array reads one of the files just written."""
+    if not isinstance(raw, _MrtrixProxy):
+        return False
+    return any(_same_file(raw.source, file) for file in written)
 
 
 def _keeps_storage(

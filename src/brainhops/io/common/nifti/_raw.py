@@ -15,6 +15,7 @@ from nibabel.arrayproxy import ArrayProxy
 # internals
 from brainhops._core import path
 from brainhops._core.streams import open_compressed, preserve_position
+from brainhops.io.base._utils_files import is_local, same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -30,7 +31,6 @@ from ._files import (
     _accepted,
     _has_nifti_magic,
     _image_to_stream,
-    _is_local,
     _nifti_from_stream,
     _nifti_version,
     _save_nifti,
@@ -142,17 +142,34 @@ class NiftiRaw(Magic, BinaryFileReader, BinaryFileWriter):
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NiftiRaw":
+    def from_fileobj(
+        cls, file: tx.BinaryIO, check: bool = True, **kwargs
+    ) -> "NiftiRaw":
         """Read the header at the start of a NIfTI stream.
 
         The stream may be compressed with gzip. Only the header and its
-        extensions are read, so the stream may end before the voxels. The
-        keyword arguments that the nibabel reader of headers accepts, such
-        as `check`, are passed to it, and the others are ignored.
+        extensions are read, so the stream may end before the voxels.
+
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        check : bool, default=True
+            Whether nibabel checks the header.
+        **kwargs : Any
+            Refused, since the record has no other option.
+
+        Raises
+        ------
+        TypeError
+            If another option is given.
         """
+        if kwargs:
+            raise TypeError(
+                f"Unknown NIfTI header option(s): {', '.join(kwargs)}"
+            )
         read = _NIFTI_HEADERS[_nifti_version(file)].from_fileobj
-        header = read(open_compressed(file), **_accepted(read, kwargs))
-        return cls(header=header)
+        return cls(header=read(open_compressed(file), check=check))
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header and its extensions as a NIfTI file stores them.
@@ -246,12 +263,12 @@ def read_nifti(
         file = path.Path(file)
     if not isinstance(file, path.PathLike):
         return _read_nifti_stream(file, **kwargs)
-    if not _is_local(file):
+    if not is_local(file):
         with file.open("rb") as stream:
             return _read_nifti_stream(BytesIO(stream.read()), **kwargs)
     filename = str(file)
     with open(filename, "rb") as stream:
-        raw = NiftiRaw.from_fileobj(stream, **kwargs)
+        raw = NiftiRaw.from_fileobj(stream)
     version = 2 if isinstance(raw.header, nb.Nifti2Header) else 1
     read = _NIFTI_IMAGES[version].from_filename
     image = read(filename, **_accepted(read, kwargs))
@@ -267,8 +284,17 @@ def _read_nifti_stream(
     so that nibabel reads the same header before it builds the proxy.
     """
     with preserve_position(fileobj):
-        raw = NiftiRaw.from_fileobj(fileobj, **kwargs)
+        raw = NiftiRaw.from_fileobj(fileobj)
     return raw, _nifti_from_stream(fileobj, **kwargs).dataobj
+
+
+def reads_file(raw: tx.Any, file: tx.Any) -> bool:
+    """Tell whether a lazy array of voxels reads a file by its name.
+
+    An image written over that file must then read the new file, since
+    nibabel opens the file by name each time it reads the voxels.
+    """
+    return isinstance(raw, ArrayProxy) and same_file(raw.file_like, file)
 
 
 def write_nifti(image: _NibabelImage, file: path.FileLike) -> None:
@@ -276,7 +302,9 @@ def write_nifti(image: _NibabelImage, file: path.FileLike) -> None:
 
     nibabel writes the header first and the voxels after it. A path is
     compressed when its name ends with `.gz`, and a stream receives an
-    uncompressed file.
+    uncompressed file. A local file is written beside the target and
+    moved over it, so that the voxels of a lazy image are read from the
+    old file even when the image is written over the file that it reads.
 
     Parameters
     ----------

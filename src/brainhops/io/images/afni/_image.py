@@ -31,6 +31,7 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import local_path as _local_path
+from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -64,6 +65,7 @@ from brainhops.io.common.afni._raw import (
     _declined,
     _format_attributes,
     _looks_like_head,
+    _no_options,
     _sniffed_raw,
     _sniffed_raw_at,
 )
@@ -445,7 +447,6 @@ class AfniImage(
 
         The record is read from the `.HEAD` file, and the BRIK is checked
         but not read: the lazy array reads it when the voxels are needed.
-        Other keyword arguments are ignored.
 
         Parameters
         ----------
@@ -455,28 +456,42 @@ class AfniImage(
             Whether the lazy array memory-maps a local BRIK that is not
             compressed and whose sub-bricks share a type.
         **kwargs : Any
-            Ignored.
+            Refused, since AFNI has no other option.
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserExistsError
             If the `.HEAD` or the `.BRIK` file does not exist.
         ParserContentError
             If the header is invalid, or the BRIK cannot be read.
         """
+        _no_options(kwargs)
         raw, proxy = read_afni(filename, mmap=mmap)
         return cls(raw=proxy, metadata=AfniMetadata.from_raw(raw))
 
     @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "AfniImage":
+    def from_fileobj(
+        cls, file: tx.BinaryIO, mmap: bool = False, **kwargs
+    ) -> "AfniImage":
         """Read an image from an open `.HEAD` or `.BRIK` file.
 
         The other file of the dataset is found from the name of the
         stream, which must have one, and the BRIK is opened by name when
         the voxels are needed, without memory mapping. A stream that does
         not start like a header is taken to be the BRIK, which is not
-        read. The position of the stream is restored, and the keyword
-        arguments are ignored.
+        read. The position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream of the `.HEAD` or the `.BRIK` file.
+        mmap : bool, default=False
+            Accepted for the readers of paths, and without effect: the
+            BRIK of a stream is never memory-mapped.
+        **kwargs : Any
+            Refused, since AFNI has no other option.
 
         Parameters
         ----------
@@ -492,9 +507,12 @@ class AfniImage(
 
         Raises
         ------
+        TypeError
+            If another option is given.
         ParserContentError
             If the stream has no file name.
         """
+        _no_options(kwargs)
         name = getattr(file, "name", None)
         named = isinstance(name, (str, bytes, os.PathLike))
         with preserve_position(file):
@@ -690,12 +708,14 @@ class AfniImage(
         As AFNI does, a sibling BRIK with another suffix is removed, so
         that it cannot shadow the new one.
 
-        The lazy array of an image may read the BRIK that is removed, for
-        example when an image read from `x+orig.BRIK` is saved as
-        `x+orig.BRIK.gz`. The image is then written over its own dataset,
-        so it is consolidated in place with the options, and it holds what
-        the dataset holds (#426): its lazy array reads the new BRIK, and
-        its data is decoded again from that file when it is next read.
+        Each local file is written beside its target and moved over it.
+        The lazy array of an image may read the BRIK that is written over
+        or removed, for example when an image read from `x+orig.BRIK` is
+        saved as `x+orig.BRIK.gz`. The image is then written over its own
+        dataset, so it is consolidated in place with the options, and it
+        holds what the dataset holds (#426): its lazy array reads the new
+        BRIK, and its data is decoded again from that file when it is next
+        read.
 
         Parameters
         ----------
@@ -738,7 +758,9 @@ class AfniImage(
                     stale.append((sibling, local))
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
-        reading = any(_reads_brik(self, sibling) for sibling, _ in stale)
+        reading = _reads_brik(self, brik) or any(
+            _reads_brik(self, sibling) for sibling, _ in stale
+        )
         if reading:
             mmap = self.raw.mmap
             image = self.consolidate(inplace=True, **options)
@@ -746,13 +768,13 @@ class AfniImage(
             image = self.consolidate(**options)
         record, data = _afni_written(image)
         write_brik(record, data, brik)
-        with head.open("wb") as f:
-            f.write(record.to_bytes())
+        write_file(head, record.to_bytes())
         for _, local in stale:
             os.remove(local)
         if reading:
             # The image holds what the dataset holds, and its lazy array
-            # reads the new BRIK, since the one that it read is removed.
+            # reads the new BRIK, since the lazy array of the old BRIK
+            # describes how that BRIK stored the voxels.
             self.raw = brik_proxy(record, brik, mmap)
             self.data = None
 
@@ -967,7 +989,9 @@ def _stored_data(
         native = [dtype.newbyteorder("=") for dtype in raw.record.dtypes]
         if all(dtype == stored for dtype in native):
             return raw
-        raw = image.data
+        # The lazy array is read here rather than through `data`, so that
+        # no cached view of the old file outlives a write over that file.
+        raw = np.asarray(raw)
     ndim = len(np.shape(raw))
     if ndim == 0 or ndim > 4:
         raise WriterError(

@@ -98,14 +98,15 @@ class MrtrixMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Read the metadata from an MRtrix stream, gzipped or not.
 
         The record is read with [`MrtrixRaw.from_fileobj`][], which
-        receives the keyword arguments.
+        receives the keyword arguments and refuses them.
 
         Parameters
         ----------
         file : BinaryIO
             The stream, which may be gzipped.
         **kwargs : Any
-            Options of [`MrtrixRaw.from_fileobj`][].
+            Options of the reader, which [`MrtrixRaw.from_fileobj`][]
+            refuses.
 
         Returns
         -------

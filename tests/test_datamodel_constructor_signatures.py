@@ -7,8 +7,8 @@ Fields are therefore keyword-only by default, and only the defining
 fields, such as `data` or the parsed file of a reader, are positional.
 An image is defined by its `data` (or its `images`, for a pyramid) and
 its `transformations`, which are positional in that order. The fields
-that a reader of `brainhops.io.common` contributes, such as the parsed
-`header`, stay positional, as they do on the transformations. An
+that a reader of `brainhops.io.common` contributes, such as the opened
+Zarr `node`, stay positional, as they do on the transformations. An
 intended change of signature must update `POSITIONAL` or `IMAGES`.
 """
 
@@ -265,7 +265,7 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "MghImage": ("data", "transformations"),
     },
     "brainhops.io.images.minc._image": {
-        name: ("data", "transformations", "dimensions", "source")
+        name: ("data", "transformations")
         for name in ("Minc1Image", "Minc2Image", "MincImage")
     },
     "brainhops.io.images.mrtrix._image": {
@@ -275,7 +275,7 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "NiftiImage": ("data", "transformations"),
     },
     "brainhops.io.images.nrrd._image": {
-        name: ("data", "transformations", "header", "dataobj")
+        name: ("data", "transformations")
         for name in ("AttachedNrrdImage", "DetachedNrrdImage", "NrrdImage")
     },
     "brainhops.io.images.openslide._base": {

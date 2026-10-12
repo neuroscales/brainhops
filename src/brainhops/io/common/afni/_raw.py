@@ -179,6 +179,18 @@ def _format_attributes(attributes: tx.Mapping[str, _Value]) -> str:
 # ----------------------------------------------------------------------
 
 
+def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+    """Refuse the options of a reader that takes none.
+
+    Raises
+    ------
+    TypeError
+        If an option is given.
+    """
+    if kwargs:
+        raise TypeError(f"Unknown AFNI reader option(s): {', '.join(kwargs)}")
+
+
 class AfniRaw(
     Magic, BinaryFileReader, BinaryFileWriter, frozen=True, eq=False
 ):
@@ -483,7 +495,7 @@ class AfniRaw(
         text : str
             The text of the file.
         **kwargs : Any
-            Ignored.
+            Refused, since the record has no option.
 
         Returns
         -------
@@ -492,23 +504,27 @@ class AfniRaw(
 
         Raises
         ------
+        TypeError
+            If an option is given, since the record has none.
         ParserContentError
             If the text is not an AFNI header.
         """
+        _no_options(kwargs)
         return cls(attributes=_parse_attributes(text), text=text)
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> "AfniRaw":
         """Parse the content of a `.HEAD` file.
 
-        The content is decoded as Latin-1, as AFNI reads it.
+        The content is decoded as Latin-1, as AFNI reads it. An option is
+        refused with `TypeError`, since the record has none.
 
         Parameters
         ----------
         content : bytes
             The content of the file.
         **kwargs : Any
-            Ignored.
+            Refused, since the record has no option.
 
         Returns
         -------
@@ -517,9 +533,12 @@ class AfniRaw(
 
         Raises
         ------
+        TypeError
+            If an option is given, since the record has none.
         ParserContentError
             If the content is not an AFNI header.
         """
+        _no_options(kwargs)
         return cls.from_text(bytes(content).decode("latin-1"))
 
     @classmethod
@@ -536,7 +555,7 @@ class AfniRaw(
         file : file object
             The stream, open in binary mode.
         **kwargs : Any
-            Ignored.
+            Refused, since the record has no option.
 
         Returns
         -------
@@ -545,10 +564,13 @@ class AfniRaw(
 
         Raises
         ------
+        TypeError
+            If an option is given, since the record has none.
         ParserContentError
             If the stream is not a header and has no file name, or if the
             header is not valid.
         """
+        _no_options(kwargs)
         with preserve_position(file):
             start = file.read(256)
             if isinstance(start, str):
@@ -580,7 +602,7 @@ class AfniRaw(
             The path of the `.HEAD` file, of the `.BRIK` file, or of the
             dataset without an extension.
         **kwargs : Any
-            Ignored.
+            Refused, since the record has no option.
 
         Returns
         -------
@@ -589,11 +611,14 @@ class AfniRaw(
 
         Raises
         ------
+        TypeError
+            If an option is given, since the record has none.
         ParserExistsError
             If the `.HEAD` file does not exist.
         ParserContentError
             If the file is not an AFNI header.
         """
+        _no_options(kwargs)
         head, _, _ = afni_dataset_files(filename)
         if not path.exists(head):
             raise ParserExistsError(f"No such file: {head}")
