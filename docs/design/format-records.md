@@ -865,8 +865,8 @@ its status.
     the same way (item 51), and the problem is older than this work.
     Status: open.
 66. Check 6 of the conformance test is vacuous for the formats that are
-    parsed in one pass, which are LTA and M3Z, because the truncated
-    copy is the whole file. Status: accepted in pass 2c.
+    parsed in one pass, which are LTA, M3Z and `register.dat`, because
+    the truncated copy is the whole file. Status: accepted in pass 2c.
 67. The record of an MGH image keeps the geometry of a file whose
     `goodRASFlag` is 0 as it is stored, although the reader ignores it.
     nibabel overwrites that geometry when it builds or copies a header,
@@ -1131,3 +1131,11 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+115. A `register.dat` file holds no volume geometry, so the geometries
+     of the reference and the movable volume are options of the reader,
+     `reference=` and `moving=`, which are kept on the transformation and
+     never written (`io/transformations/freesurfer/regdat/_xforms.py`).
+     The view `RegisterDatTransformationRASToRAS` reads no matrix without
+     them, and the conformance checks load files without options, so the
+     view is not one of their variants and is tested in
+     `tests/test_io_regdat.py` instead. Status: accepted.
