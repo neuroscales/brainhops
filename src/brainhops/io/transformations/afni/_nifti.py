@@ -11,6 +11,7 @@ from bagof.magic import KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core.properties import smartproperty
+from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -22,9 +23,11 @@ from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
+    ParserContentError,
     WriterError,
 )
 from brainhops.io.common.afni._constants import DICOM_TO_RAS
+from brainhops.io.common.nifti import NiftiRaw
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -34,6 +37,7 @@ from brainhops.io.common.nifti._header import (
     _record_image,
     _stored_parts,
 )
+from brainhops.io.common.nifti._raw import _sniffed_header
 from brainhops.io.images.afni import AfniImage
 from brainhops.io.transformations.base._conversions import format_options
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
@@ -151,6 +155,121 @@ class AfniNiftiWarp(
     """
 
     # --- reading ------------------------------------------------------
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a stream holds an AFNI warp.
+
+        A stream that starts with a NIfTI header in the layout of AFNI is
+        read again with its extensions, which the labels of the
+        sub-bricks are in, and scored with `_score_nibabel`. Any other
+        NIfTI header scores `Confidence.NO`, and a stream that holds no
+        NIfTI header is declined by
+        [`NiftiRaw.sniff_fileobj`][brainhops.io.common.nifti.NiftiRaw.sniff_fileobj].
+        The position of the stream is restored.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, which is read from its current position.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no NIfTI
+            header.
+        **kwargs : Any
+            Options of the reader. The NIfTI version is read from
+            `version`.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        header = _sniffed_header(file, kwargs.get("version"))
+        if header is None:
+            return NiftiRaw.sniff_fileobj(file, error=error, **kwargs)
+        bricks = _bricks(_nifti_shape(header))
+        if bricks is None or bricks < 3:
+            return Confidence.NO
+        try:
+            with preserve_position(file):
+                record = NiftiRaw.from_fileobj(file, check=False)
+        except Exception:  # noqa: BLE001
+            return Confidence.NO
+        return cls._score_nibabel(record.header)
+
+    @classmethod
+    def from_filename(cls, filename: tx.Any, **kwargs) -> "AfniNiftiWarp":
+        """Read a warp from the path of a NIfTI file.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Options of the nibabel readers, such as `mmap`.
+
+        Returns
+        -------
+        AfniNiftiWarp
+            The warp, whose array is read lazily.
+
+        Raises
+        ------
+        ParserContentError
+            If the file does not hold at least three sub-bricks.
+        """
+        return _checked(super().from_filename(filename, **kwargs))
+
+    @classmethod
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "AfniNiftiWarp":
+        """Read a warp from an open NIfTI stream.
+
+        Parameters
+        ----------
+        file : BinaryIO
+            The stream, which must stay open while the data may be read.
+        **kwargs : Any
+            Options of the nibabel readers.
+
+        Returns
+        -------
+        AfniNiftiWarp
+            The warp, whose array is read lazily.
+
+        Raises
+        ------
+        ParserContentError
+            If the file does not hold at least three sub-bricks.
+        """
+        return _checked(super().from_fileobj(file, **kwargs))
+
+    @classmethod
+    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> "AfniNiftiWarp":
+        """Build a warp from a nibabel image or header.
+
+        Parameters
+        ----------
+        nifti : nibabel.Nifti1Image or nibabel.Nifti1Header
+            The nibabel image or header.
+        **kwargs : Any
+            Other fields of the warp.
+
+        Returns
+        -------
+        AfniNiftiWarp
+            The warp.
+
+        Raises
+        ------
+        ParserContentError
+            If the image does not hold at least three sub-bricks.
+        """
+        return _checked(super().from_nibabel(nifti, **kwargs))
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -324,6 +443,25 @@ class AfniNiftiWarp(
 # ----------------------------------------------------------------------
 #   HELPERS
 # ----------------------------------------------------------------------
+
+
+def _checked(xform: AfniNiftiWarp) -> AfniNiftiWarp:
+    """Return a warp read from a file that holds at least three sub-bricks.
+
+    Raises
+    ------
+    ParserContentError
+        If the file does not hold at least three sub-bricks in the layout
+        of AFNI.
+    """
+    shape = _nifti_shape(_header(xform))
+    bricks = _bricks(shape)
+    if bricks is None or bricks < 3:
+        raise ParserContentError(
+            f"An AFNI warp is stored as a (X, Y, Z, 1, 3) array, not as an "
+            f"array of shape {shape}."
+        )
+    return xform
 
 
 def _vox2dicom(xform: AfniNiftiWarp) -> np.ndarray:

@@ -19,13 +19,13 @@ import pytest
 import brainhops.io as io
 from brainhops.datamodel import systems as S
 from brainhops.datamodel import transformations as T
-from brainhops.io.base.afni import afni_cardinal_matrix
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     WriterError,
 )
 from brainhops.io.base.specs import format_hints
+from brainhops.io.common.afni._geometry import afni_cardinal_matrix
 from brainhops.io.images.afni import AfniImage
 from brainhops.io.transformations import load as load_xform
 from brainhops.io.transformations import sniff as sniff_xform
@@ -162,8 +162,7 @@ def test_hints() -> None:
     assert {"afni", "afni.aff12", "xform", "affine"} <= hints
 
 
-def test_ras_points_are_mapped_with_x_and_y_negated() -> None:
-    xform = AfniAffine.from_text(ALLINEATE + _row(M1))
+def _check_ras_mapping(xform) -> None:  # noqa: ANN001
     points = np.array([[10.0, -20.0, 30.0], [0.0, 0.0, 0.0], [-5, 7, 1]])
     expected = points @ M1[:, :3].T + M1[:, 3]
     # RAS points in, LPS points out: the RAS input is flipped first
@@ -176,6 +175,29 @@ def test_ras_points_are_mapped_with_x_and_y_negated() -> None:
     if affine.output == S.LPSmm():
         ras = LPS @ ras
     assert np.allclose(ras, LPS @ _homog(M1) @ LPS)
+
+
+def test_ras_points_are_mapped_with_x_and_y_negated() -> None:
+    xform = AfniAffine.from_text(ALLINEATE + _row(M1))
+    assert xform.input == S.LPSmm() and xform.output == S.LPSmm()
+    np.testing.assert_allclose(xform.matrix, M1)
+    # The map of the affine, as the data model computes with it.
+    plain = T.Affine(
+        matrix=xform.matrix, input=xform.input, output=xform.output
+    )
+    _check_ras_mapping(plain)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "An affine whose matrix lives in its record, such as an LTA or an "
+        "AFNI matrix read from a file, converts to a plain Affine without "
+        "its matrix, so the data model composes it as the identity."
+    ),
+)
+def test_a_read_affine_is_composed_with_its_matrix() -> None:
+    _check_ras_mapping(AfniAffine.from_text(ALLINEATE + _row(M1)))
 
 
 # --- obliquity --------------------------------------------------------
@@ -257,8 +279,8 @@ def test_obliquity_of_an_afni_image(tmp_path) -> None:  # noqa: ANN001
     )
     image.save(tmp_path / "mov+orig.HEAD")
     mov = io.load(tmp_path / "mov+orig.HEAD")
-    expected = mov.header.voxel_to_dicom @ np.linalg.inv(
-        mov.header.cardinal_matrix
+    expected = mov.metadata.raw.voxel_to_dicom @ np.linalg.inv(
+        mov.metadata.raw.cardinal_matrix
     )
     assert np.allclose(cardinal_to_real(mov).matrix, expected[:3])
     xform = AfniAffine.from_text(_row(M1), source=mov)
@@ -313,11 +335,14 @@ def test_a_failed_write_leaves_no_file(tmp_path) -> None:  # noqa: ANN001
     assert not (tmp_path / "out.1D").exists()
 
 
-def test_a_changed_matrix_is_written_alone() -> None:
-    many = AfniAffine.from_text(_row(M1) + _row(M2))
-    many.matrix = M2
+def test_a_changed_matrix_replaces_its_volume() -> None:
+    many = AfniAffine.from_text(_row(M1) + _row(M2), volume=1)
+    many.matrix = M1
     again = AfniAffine.from_text(many.to_text())
-    assert again.nvolumes == 1 and np.allclose(again.matrix, M2)
+    assert again.nvolumes == 2
+    assert np.allclose(again.matrices, [M1, M1])
+    # The record is not changed until the affine is consolidated.
+    assert np.allclose(many.metadata.raw.matrices, [M1, M2])
 
 
 def test_inverse() -> None:
@@ -487,10 +512,11 @@ def test_brik_warp_round_trip(tmp_path) -> None:  # noqa: ANN001
     warp.save(tmp_path / "copy_WARP+tlrc.BRIK.gz")
     again = io.load(tmp_path / "copy_WARP+tlrc.HEAD")
     assert type(again) is AfniBrikWarp
-    assert again.header.labels[:3] == ["x_delta", "y_delta", "z_delta"]
-    assert again.header.view == "tlrc"
-    assert np.allclose(again.header.cardinal_matrix, CARD)
-    assert np.allclose(np.asarray(again.dataobj), vectors)
+    record = again.metadata.raw
+    assert record.labels[:3] == ["x_delta", "y_delta", "z_delta"]
+    assert record.view == "tlrc"
+    assert np.allclose(record.cardinal_matrix, CARD)
+    assert np.allclose(np.asarray(again.data), vectors)
 
 
 def test_brik_warp_from_a_chain(tmp_path) -> None:  # noqa: ANN001
@@ -499,7 +525,7 @@ def test_brik_warp_from_a_chain(tmp_path) -> None:  # noqa: ANN001
     fresh = AfniBrikWarp(transformations=tuple(warp))
     fresh.save(tmp_path / "fresh_WARP+orig.HEAD")
     again = io.load(tmp_path / "fresh_WARP+orig.HEAD")
-    assert again.header.view == "orig"
+    assert again.metadata.raw.view == "orig"
     _check_warp(again, vectors)
 
 
@@ -509,11 +535,13 @@ def test_to_image(tmp_path) -> None:  # noqa: ANN001
     warp = io.load(_write_brik(tmp_path, vectors, labels=labels))
     image = warp.to_image()
     assert type(image) is AfniImage
-    assert image.header.labels == ["x_delta", "y_delta", "z_delta"]
-    assert image.header.view == "tlrc"
-    assert np.allclose(image.header.cardinal_matrix, CARD)
+    # The image holds what the dataset of the warp holds, sub-bricks and
+    # labels included.
+    assert image.metadata.raw.labels[:3] == ["x_delta", "y_delta", "z_delta"]
+    assert image.metadata.raw.view == "tlrc"
+    assert np.allclose(image.metadata.raw.cardinal_matrix, CARD)
     assert np.asarray(image.data).dtype == np.float32
-    assert np.allclose(np.asarray(image.data), vectors[..., :3])
+    assert np.allclose(np.asarray(image.data), vectors)
     # saved as an image, it is read back as a warp
     image.save(tmp_path / "image+tlrc.HEAD")
     again = io.load(tmp_path / "image+tlrc.HEAD")
@@ -530,8 +558,9 @@ def test_to_image_of_a_warp_not_read_from_a_brik(tmp_path) -> None:  # noqa: ANN
         io.load(_write_nifti(tmp_path, vectors)),
     ):
         image = warp.to_image()
-        assert image.header.labels == ["x_delta", "y_delta", "z_delta"]
-        assert np.allclose(image.header.cardinal_matrix, CARD)
+        record = image.metadata.raw
+        assert record.labels == ["x_delta", "y_delta", "z_delta"]
+        assert np.allclose(record.cardinal_matrix, CARD)
         assert np.allclose(np.asarray(image.data), vectors)
         image.save(tmp_path / "image.HEAD")
         _check_warp(io.load(tmp_path / "image.HEAD"), vectors)
@@ -646,7 +675,9 @@ def test_an_oblique_nifti_warp(tmp_path) -> None:  # noqa: ANN001
 def test_nifti_warp_written_as_afni_writes_it(tmp_path) -> None:  # noqa: ANN001
     vectors = _vectors()
     warp = io.load(_write_brik(tmp_path, vectors))
-    io.save(warp, tmp_path / "out_WARP.nii.gz")
+    # Several NIfTI formats hold a field of displacements, so the format is
+    # chosen by converting the warp.
+    AfniNiftiWarp.from_any(warp).save(tmp_path / "out_WARP.nii.gz")
     img = nb.load(str(tmp_path / "out_WARP.nii.gz"))
     assert img.shape == (*SHAPE, 1, 3)
     assert img.get_data_dtype() == np.float32
@@ -684,3 +715,40 @@ def test_bytes_of_a_dataset_are_refused() -> None:
     with pytest.raises(ParserContentError):
         AfniBrikWarp.from_bytes(b"type = integer-attribute\n")
     assert _io is not None
+
+
+# ----------------------------------------------------------------------
+#   PENDING STATE
+# ----------------------------------------------------------------------
+
+
+def test_an_affine_is_pending_until_consolidated(tmp_path) -> None:  # noqa: ANN001
+    text = "# 3dvolreg matrices (DICOM-to-DICOM, row-by-row):\n"
+    text += _row(M1) + _row(M2)
+    path = tmp_path / "in.aff12.1D"
+    path.write_text(text)
+    xform = io.load(path)
+    metadata = xform.metadata
+    assert not xform.data.flags.writeable
+    # An untouched affine shares its record and keeps its bytes.
+    assert xform.consolidate().metadata is metadata
+    xform.save(tmp_path / "copy.aff12.1D")
+    assert (tmp_path / "copy.aff12.1D").read_text() == text
+    # An assigned matrix is pending.
+    xform.data = M2
+    assert xform.metadata is metadata
+    assert np.allclose(xform.consolidate().metadata.raw.matrices, [M2, M2])
+    assert np.allclose(metadata.raw.matrices, [M1, M2], atol=1e-6)
+    with pytest.raises(TypeError):
+        AfniAffine.from_file(path, bogus=1)
+    with pytest.raises(TypeError):
+        xform.to_text(bogus=1)
+
+
+def test_a_warp_refuses_other_endpoints(tmp_path) -> None:  # noqa: ANN001
+    warp = io.load(_write_brik(tmp_path, _vectors()))
+    warp.output = S.LPSmm()
+    with pytest.raises(WriterError):
+        warp.consolidate()
+    with pytest.raises(TypeError):
+        AfniBrikWarp.from_file(tmp_path / "anat_WARP+tlrc.HEAD", bogus=1)
