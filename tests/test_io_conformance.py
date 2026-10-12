@@ -389,7 +389,13 @@ def _toy_encoded(
         base = ToyRaw()
     else:
         base = image.metadata.raw
-    spacing = _toy_spacing(image.transformation, len(raw.shape))
+    # The list of the image is read without being stored, so that a write
+    # leaves the image as it was.
+    transformations = image._transformations
+    if transformations is None:
+        transformations = _toy_to_transformations(image.metadata)
+    preferred = transformations[-1] if transformations else Identity()
+    spacing = _toy_spacing(preferred, len(raw.shape))
     record = replace(
         base,
         shape=tuple(int(n) for n in raw.shape),
