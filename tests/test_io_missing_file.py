@@ -1,12 +1,7 @@
-"""
-A `str` given where a file is expected is a path (issue #121).
+"""A missing file raises FileNotFoundError with its path (#121).
 
-`FileParser.load("missing.nii")` used to raise `ParserTypeError: Cannot
-parse file of type str`, while `load(Path("missing.nii"))` raised
-`FileNotFoundError`. Dispatchers such as `io.load` reported either
-spelling as a list of parsers that each failed to read the file. A
-missing file now raises `FileNotFoundError`, with the path in the
-message, through every entry point and whichever way the path is spelled.
+A string given where a file is expected is a path, through every entry
+point and spelling.
 """
 
 import io as _io
@@ -16,6 +11,8 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
+from brainhops.io.base.parsers import TextFileReader
+
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
@@ -23,8 +20,7 @@ from brainhops.cli._errors import CliError  # noqa: E402
 from brainhops.cli._io import load_image, load_transform  # noqa: E402
 from brainhops.io.base import ImageSpec  # noqa: E402
 from brainhops.io.base._base import (  # noqa: E402
-    FileBasedObject,
-    TextFileBasedObject,
+    Format,
     format_registry,
     register_format,
 )
@@ -34,15 +30,14 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
     ParserExistsError,
     SnifferExistsError,
-    TextFileParser,
 )
-from brainhops.io.images import FileBasedImage  # noqa: E402
+from brainhops.io.images import ImageFormat  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
-from brainhops.io.transformations import FileBasedTransformation  # noqa: E402
+from brainhops.io.transformations import TransformationFormat  # noqa: E402
 
 
-class Greeting(TextFileParser):
-    """A one-line text format, which can also be read from memory."""
+class Greeting(TextFileReader):
+    """A one-line text format that can also be read from memory."""
 
     EXTENSIONS = (".greet",)
 
@@ -123,7 +118,7 @@ def test_dispatched_load_of_a_missing_file(missing, entry) -> None:  # noqa: ANN
 
 
 @pytest.mark.parametrize(
-    "dispatcher", [FileBasedObject, FileBasedImage, FileBasedTransformation]
+    "dispatcher", [Format, ImageFormat, TransformationFormat]
 )
 def test_dispatched_from_file_of_a_missing_file(missing, dispatcher) -> None:  # noqa: ANN001
     for source in _spellings(missing):
@@ -139,7 +134,7 @@ def test_dispatched_load_of_a_missing_spec(missing) -> None:  # noqa: ANN001
 
 
 def test_dispatched_load_of_an_unknown_extension(tmp_path) -> None:  # noqa: ANN001
-    # No parser claims the name, so nothing is even tried.
+    # No parser claims the name, so none is tried.
     missing = tmp_path / "missing.unknown"
     with pytest.raises(ParserExistsError) as excinfo:
         io.load(str(missing))
@@ -176,7 +171,7 @@ def test_concrete_sniff_of_a_missing_file(missing, as_str) -> None:  # noqa: ANN
 
 @pytest.mark.parametrize(
     "entry",
-    [FileBasedObject.sniff, FileBasedObject.sniff_file],
+    [Format.sniff, Format.sniff_file],
     ids=["sniff", "sniff_file"],
 )
 def test_dispatched_sniff_of_a_missing_file(tmp_path, entry) -> None:  # noqa: ANN001
@@ -189,8 +184,7 @@ def test_dispatched_sniff_of_a_missing_file(tmp_path, entry) -> None:  # noqa: A
 
 
 def test_dispatched_sniff_still_predicts_from_the_name(missing) -> None:  # noqa: ANN001
-    # `sniff` is a prediction of what `load` would reach for, and a name
-    # is evidence of that even before the file exists.
+    # The name is evidence even before the file exists.
     assert io.images.sniff(str(missing)) is NiftiImage
     assert io.images.sniff(missing) is NiftiImage
 
@@ -203,7 +197,7 @@ def test_dispatched_sniff_still_predicts_from_the_name(missing) -> None:  # noqa
 @pytest.fixture
 def greeting_root() -> tx.Iterator[type]:
     @format_registry
-    class Root(TextFileBasedObject):
+    class Root(Format, TextFileReader):
         pass
 
     fmt = register_format(
@@ -220,8 +214,7 @@ def greeting_root() -> tx.Iterator[type]:
     try:
         yield Root
     finally:
-        FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
+        Format._REGISTRY.discard(fmt)
 
 
 def test_dispatched_text_is_content_not_a_path(greeting_root) -> None:  # noqa: ANN001
@@ -248,9 +241,7 @@ def test_a_source_str_is_a_path_unless_wrapped_as_content(
 
 
 def test_text_content_is_not_matched_by_extension() -> None:
-    # A `str` of content used to be read as a file name too, so text that
-    # happened to end in ".nii" was described as a file and matched by
-    # extension.
+    # String content must not be matched by an extension such as '.nii'.
     assert Source("image.nii").name == "image.nii"
     assert Source.content("image.nii").name is None
     assert repr(Source.content("HELLO world")) == "input content"

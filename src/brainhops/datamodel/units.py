@@ -1,630 +1,693 @@
-"""Units of time and space, and the SI prefixes that scale them.
+"""Units of measurement.
 
-Each concrete unit, such as [`Meter`][] or [`Hour`][], is a singleton
-instance of a [`Unit`][] subclass. An SI unit, such as [`Meter`][], also
-exposes a prefixed variant for every SI prefix, so `Millimeter` and
-`Kilometer` exist alongside it without being spelled out individually.
+A [`Unit`][] is created from a name, for example `Unit("mm")` or
+`Unit("s/mm^2")`. Units are immutable, hashable and picklable. They are also
+interned: any two spellings of the same unit, such as `"mm"` and
+`"millimeter"`, produce the same object.
+
+Names are parsed by a private [pint](https://pint.readthedocs.io)
+registry, which adds index units (`index`, `voxel` and `pixel`), the
+arbitrary unit (`a.u.`) and the Hounsfield unit (`HU`) to pint's defaults.
+The registry is built the first time a name needs pint, not when brainhops
+is imported. Pint types appear only through [`Unit.to_pint`][] and
+[`Unit.from_pint`][].
+
+## Units restricted to a dimension
+
+A subclass of [`Unit`][] can be restricted to a dimension, in which case it
+only builds units of that dimension. [`SpaceUnit`][], [`TimeUnit`][] and
+[`IndexUnit`][] are declared in this way:
+
+```python
+class SpaceUnit(Unit, dimension="length"): ...
+```
+
+Subscripting [`Unit`][] builds and caches the class of any other dimension:
+
+```python
+DiffusionUnit = Unit["time / length ** 2"]
+DiffusionUnit("s/mm^2")   # 'second / millimeter ** 2'
+DiffusionUnit("mm")       # ValueError: 'millimeter' is not a ...
+```
+
+These classes are the types that field annotations use. For example, a
+field typed `Optional[Union[SpaceUnit, IndexUnit]]` holds a length unit, an
+index unit or nothing. A dimension is written in terms of pint's base
+dimensions and the additional `index` dimension, with or without brackets.
+`Unit(name)` returns an instance of the class declared for the dimension of
+the unit, so `isinstance(Unit("mm"), SpaceUnit)` is true.
+
+!!! note "Angles"
+    As in pint, angles are dimensionless, so a degree is compatible with a
+    percent.
 """
 
-# TODO: This is all overly complicated and fiddly.
-#       But I am happy with the API for now.
-#       I'll revisit the implementation at some point.
+# TODO: a dedicated `angle` dimension, so that degrees and percent differ.
 
 __all__ = [
-    "PrefixName",
-    "UnitName",
-    "UnitSIName",
-    "SpaceUnitName",
-    "TimeUnitName",
     "Unit",
-    "UnitSI",
-    "TimeUnit",
-    "TimeUnitSI",
-    "Second",
-    "Minute",
-    "Hour",
-    "Day",
     "SpaceUnit",
-    "SpaceUnitSI",
-    "Meter",
-    "Inch",
-    "Foot",
-    "Yard",
-    "Mile",
-    "Angstrom",
-    "Parsec",
-    "SampleUnit",
-    "is_sampleunit",
+    "TimeUnit",
+    "IndexUnit",
+    "is_indexunit",
     "is_physicalunit",
     "is_spaceunit",
     "is_timeunit",
 ]
 
-# stdlib
-from math import log10
+import math
+import re
+import threading
 
-# externals
 import typing_extensions as tx
-from bagof.magic import ClassVar, Magic, MetaMagic
 
-# core
-from brainhops._core.enum import StrEnum
+from brainhops._core import dependencies as _dependencies
 from brainhops._core.typing import is_instance_or_subclass
 
+if tx.TYPE_CHECKING:  # pragma: no cover
+    import pint
 
-def _make_enum(name: str, d: tx.Dict[str, tx.Tuple]) -> StrEnum:
-    return StrEnum(
-        name,
-        [
-            (value, key)
-            for key, values in d.items()
-            for value in reversed(values)
-            if isinstance(value, str) and value
-        ],
-    )
+# ----------------------------------------------------------------------
+#   THE PRIVATE REGISTRY (built on first use)
+# ----------------------------------------------------------------------
 
-
-_MU1 = "\u00b5"
-_MU2 = "\u03bc"
-
-PREFIX_SI = {
-    "quetta": (30, "Q", "quetta"),
-    "ronna": (27, "R", "ronna"),
-    "yotta": (24, "Y", "yotta"),
-    "zetta": (21, "Z", "zetta"),
-    "exa": (18, "E", "exa"),
-    "peta": (15, "P", "peta"),
-    "tera": (12, "T", "tera"),
-    "giga": (9, "G", "giga"),
-    "mega": (6, "M", "mega"),
-    "kilo": (3, "k", "K", "kilo"),
-    "hecto": (2, "h", "H", "hecto"),
-    "deca": (1, "da", "D", "deca"),
-    "": (0, ""),
-    "deci": (-1, "d", "deci"),
-    "centi": (-2, "c", "centi"),
-    "milli": (-3, "m", "milli"),
-    "micro": (-6, _MU2, _MU1, "u", "mc", "mic", "micro"),
-    "nano": (-9, "n", "nano"),
-    "pico": (-12, "p", "pico"),
-    "femto": (-15, "f", "femto"),
-    "atto": (-18, "a", "atto"),
-    "zepto": (-21, "z", "zepto"),
-    "yocto": (-24, "y", "yocto"),
-    "ronto": (-27, "r", "ronto"),
-    "quecto": (-30, "q", "quecto"),
-}
-PrefixName = _make_enum("PrefixName", PREFIX_SI)
-"""The SI prefixes, from `quetta` (the largest) to `quecto` (the smallest)."""
-
-
-UNITS_TIME = {
-    # SI
-    "second": (1, "s", "sec", "second", "seconds"),
-    # Other
-    "minute": (60, "min", "minute", "minutes"),
-    "hour": (60 * 60, "h", "hour", "hours"),
-    "day": (24 * 60 * 60, "d", "day", "days"),
-    "week": (7 * 24 * 60 * 60, "w", "week", "weeks"),
-    "year": (52 * 7 * 24 * 60 * 60, "y", "yr", "year", "years"),
-    "decade": (10 * 52 * 7 * 24 * 60 * 60, "decade", "decades"),
-    "century": (100 * 52 * 7 * 24 * 60 * 60, "century", "centuries"),
-    "millennium": (1000 * 52 * 7 * 24 * 60 * 60, "millennium", "millennia"),
-}
-TimeUnitName = _make_enum("TimeUnitName", UNITS_TIME)
-"""The recognized names of units of time, from `second` to `millennium`."""
-
-UNITS_SPACE = {
-    # SI
-    "meter": (1, "m", "metre", "meter", "metres", "meters"),
-    # Imperial
-    "inch": (0.0254, '"', "in", "inch", "inches"),
-    "foot": (0.3048, "'", "ft", "foot", "feet"),
-    "yard": (0.9144, "yd", "yard", "yards"),
-    "mile": (1609.344, "mi", "mile", "miles"),
-    # Other
-    "angstrom": (1e-10, "Å", "angstrom", "angstroms"),
-    "parsec": (3.085677581491367e16, "pc", "parsec", "parsecs"),
-    "light year": (
-        9.4607304725808e15,
-        "ly",
-        "lyr",
-        "light year",
-        "light years",
-    ),
-}
-SpaceUnitName = _make_enum("SpaceUnitName", UNITS_SPACE)
-"""The recognized names of units of length, from `meter` to `light year`."""
-
-UNITS = {**UNITS_TIME, **UNITS_SPACE}
-UnitName = _make_enum("UnitName", UNITS)
-"""The recognized names of every unit of time and length."""
-
-UNITS_SI = dict(
-    [next(iter(UNITS_SPACE.items())), next(iter(UNITS_TIME.items()))]
+_DEFINITIONS = (
+    # Index units count array elements.
+    "index = [index] = idx = indices",
+    "voxel = index = vox = voxels",
+    # This definition replaces pint's `pixel`, whose dimension is
+    # [printing_unit].
+    "pixel = index = _ = pixels",
+    # The following imaging units are dimensionless.
+    "arbitrary_unit = [] = a.u. = au = arbitrary_units",
+    "hounsfield_unit = [] = HU = hounsfield_units",
+    # Pint lacks this spelling of the light year.
+    "@alias light_year = lyr",
 )
-UnitSIName = _make_enum("UnitSIName", UNITS_SI)
-"""The names of the base SI units of time and length, `second` and `meter`."""
+"""Definitions added to pint's default registry."""
+
+_registry_instance: tx.Optional["pint.UnitRegistry"] = None
+_registry_lock = threading.Lock()
 
 
-def _parse_unit_name(
-    name: str,
-) -> tx.Tuple[tx.Optional[PrefixName], UnitName]:  # type: ignore
-    if name in UnitName.__members__:
-        return None, UnitName[name]
-    for prefix in PrefixName:
-        if name.startswith(prefix):
-            base_name = name[len(prefix) :]
-            if base_name in UnitSIName.__members__:
-                return PrefixName[prefix], UnitSIName[base_name]
-    for _, *prefixes in PREFIX_SI.values():
-        for _, *suffixes in UNITS_SI.values():
-            for prefix in prefixes:
-                for suffix in suffixes:
-                    if name == prefix + suffix:
-                        return PrefixName[prefix], UnitSIName[suffix]
-    return None, name
+def _registry() -> "pint.UnitRegistry":
+    """Return the private registry, built on first use."""
+    global _registry_instance
+    if _registry_instance is None:
+        with _registry_lock:
+            if _registry_instance is None:
+                _registry_instance = _build_registry()
+    return _registry_instance
+
+
+def _build_registry() -> "pint.UnitRegistry":
+    pint = _dependencies.pint
+    if pint is None:
+        raise ImportError(
+            "Units are parsed by pint, a dependency of brainhops that is "
+            "not installed: `pip install pint`."
+        )
+    registry = pint.UnitRegistry(on_redefinition="ignore")
+    for definition in _DEFINITIONS:
+        registry.define(definition)
+    # A redefined unit, such as pixel, keeps its cached dimension until the
+    # cache is rebuilt.
+    build_cache = getattr(registry, "_build_cache", None)
+    if build_cache is not None:
+        build_cache()
+    return registry
 
 
 # ----------------------------------------------------------------------
-#   DECORATOR TO REGISTER SINGLETON UNITS
+#   PARSING
 # ----------------------------------------------------------------------
-_REGISTERED_UNITS = {}
+
+_ALIASES: tx.Dict[str, str] = {
+    # Pint splits names on ".", so it would read "a.u." as the product of
+    # the atomic mass unit and the year.
+    "a.u.": "arbitrary_unit",
+    "a.u": "arbitrary_unit",
+    "A.U.": "arbitrary_unit",
+    "A.U": "arbitrary_unit",
+    # Pint reads these as unterminated strings.
+    "'": "foot",
+    '"': "inch",
+}
+"""Names pint cannot parse, replaced before parsing."""
+
+_EQUIVALENTS: tx.Dict[str, str] = {
+    # Pint's micron equals the micrometer in size but not in identity,
+    # and cannot be redefined as an alias.
+    "micron": "micrometer",
+}
+"""Pint units replaced after parsing by the unit they equal."""
+
+_PINT_FREE: tx.Dict[str, tx.Tuple[str, str]] = {
+    "index": ("index", "[index]"),
+    "mm": ("millimeter", "[length]"),
+    "millimeter": ("millimeter", "[length]"),
+}
+"""Names resolved without pint, as (canonical name, dimension).
+
+The axes of the default coordinate systems use these units at import time,
+so resolving them here keeps `import brainhops` from importing pint. A test
+checks that each entry matches the registry.
+"""
+
+_SUPERSCRIPTS = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻", "0123456789-")
+_SUPERSCRIPT_RUN = re.compile("[⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+")
+# Only recent pint versions know "mc" as the micro prefix.
+_MIC_PREFIX = re.compile(r"^(?:mic|mc)(?!ro)(?=[a-zA-Z])")
 
 
-def register(cls: type) -> type:
-    """Register the class as a singleton unit.
-
-    An instance of `cls` is created and stored, and is returned every
-    time `cls` is subsequently instantiated. The class itself is
-    returned unchanged.
-    """
-    _REGISTERED_UNITS[cls] = cls()
-    return cls
+def _normalize(name: str) -> str:
+    """Rewrite superscript exponents and `mic` or `mc` prefixes for pint."""
+    name = _SUPERSCRIPT_RUN.sub(
+        lambda match: "**" + match.group(0).translate(_SUPERSCRIPTS), name
+    )
+    return _MIC_PREFIX.sub("micro", name)
 
 
-def siunit(globals: dict) -> tx.Callable[[type], type]:
-    """Register the base SI unit and generate one prefixed class per prefix.
-
-    The decorated class becomes the singleton unit with no prefix.
-    A subclass is also created and registered for every member of
-    [`PrefixName`][], such as `MilliMeter` for `Meter`, and each is
-    written into `globals` under its own name.
-    """
-
-    def decorator(cls: type) -> type:
-
-        base = register(cls)
-        if "." in cls.__qualname__:
-            qualprefix = cls.__qualname__.rsplit(".")[0] + "."
-        else:
-            qualprefix = ""
-
-        for prefix in PrefixName:
-            name = prefix.capitalize() + base.__name__
-            kls = type(
-                name,
-                cls.__bases__,
-                {
-                    "prefix": prefix,
-                    "base": base.base,
-                    "__module__": cls.__module__,
-                    "__qualname__": qualprefix + name,
-                },
+def _parse(name: str) -> "pint.Unit":
+    """Return the pint unit for a name, or raise ValueError."""
+    spelled = _ALIASES.get(name, name)
+    spelled = _normalize(spelled)
+    try:
+        unit = _registry().parse_units(spelled)
+    except Exception as e:
+        # Malformed names can raise various exceptions, such as a TypeError
+        # for "ms-1" or an AssertionError.
+        raise ValueError(
+            f"{name!r} is not a unit brainhops recognizes. Spell it as "
+            f"pint does, such as 'mm', 'micrometer', 'ms', 's/mm^2' or "
+            f"'voxel'."
+        ) from e
+    factors = dict(unit._units)
+    if any(factor in _EQUIVALENTS for factor in factors):
+        unit = _registry().parse_units(
+            _format_factors(
+                {_EQUIVALENTS.get(n, n): e for n, e in factors.items()}
             )
-            globals[name] = kls
-            register(kls)
-            __all__.append(name)
-
-        return base
-
-    return decorator
+        )
+    return unit
 
 
-def _lookup_unit(name: tx.Any) -> tx.Optional["Unit"]:
-    """The registered unit a name stands for, or `None`."""
-    if not name or not isinstance(name, str):
-        return None
-    prefix, base = _parse_unit_name(name)
-    cls_name = str(base).capitalize()
-    if prefix:
-        cls_name = str(prefix).capitalize() + cls_name
-    kls = globals().get(cls_name)
-    return _REGISTERED_UNITS.get(kls)
+def _canonical_name(unit: "pint.Unit") -> str:
+    """Return a spelling-independent full name, with sorted factors."""
+    return _format_factors(dict(unit._units))
+
+
+def _format_factors(factors: tx.Mapping[str, tx.Any]) -> str:
+    """Return the full name of a product of factors, spelled as pint does."""
+
+    def term(name: str, exponent: tx.Any) -> str:
+        if exponent == 1:
+            return name
+        if float(exponent).is_integer():
+            exponent = int(exponent)
+        return f"{name} ** {exponent}"
+
+    factors = sorted(factors.items())
+    numerator = [term(n, e) for n, e in factors if e > 0]
+    denominator = [term(n, -e) for n, e in factors if e < 0]
+    if not numerator and not denominator:
+        return "dimensionless"
+    name = " * ".join(numerator) if numerator else "1"
+    for factor in denominator:
+        name += f" / {factor}"
+    return name
+
+
+_MICRO_SIGN = "µ"
+_GREEK_MU = "μ"
+
+
+def _normalize_symbol(symbol: str) -> str:
+    """Write the micro prefix as mu (U+03BC), whatever pint itself uses."""
+    return symbol.replace(_MICRO_SIGN, _GREEK_MU)
+
+
+_BARE_DIMENSION = re.compile(r"(?<![\[\w])([A-Za-z_]\w*)(?![\]\w])")
+
+
+def _normalize_dimension(dimension: str) -> str:
+    """Normalize `"time / length ** 2"` to `"[time]/[length]**2"`."""
+    dimension = "".join(dimension.split())
+    if dimension == "dimensionless":
+        return ""
+    return _BARE_DIMENSION.sub(r"[\1]", dimension)
+
+
+def _bare_dimension(dimension: tx.Any) -> str:
+    """Write a dimension without brackets."""
+    return str(dimension).replace("[", "").replace("]", "")
 
 
 # ----------------------------------------------------------------------
-#   BASE CLASSES
+#   UNIT
 # ----------------------------------------------------------------------
 
+_INTERNED: tx.Dict[tx.Tuple[type, str], "Unit"] = {}
+"""The interned units, one per pair of class and canonical name."""
 
-class Unit(
-    Magic, convert=True, repr=False, slots=True, init=False, mapping=False
-):
-    """A unit of time or of length.
+_DECLARED: tx.Dict[str, tx.Type["Unit"]] = {}
+"""The declared unit classes, indexed by normalized dimension."""
 
-    Every recognized unit is a singleton: constructing a unit by name
-    returns the same instance every time that name is passed, rather
-    than a new object.
+_PARAMETRIZED: tx.Dict[str, tx.Type["Unit"]] = {}
+"""The classes built by `Unit[dimension]`, by normalized dimension."""
+
+_KIND_NAMES = {"length": "space"}
+
+
+class Unit:
+    """A unit of measurement.
+
+    The name is parsed as pint parses it, as in `"mm"`, `"µm"`, `"Hz"`,
+    `"s/mm^2"` or `"voxel"`. The result is a [`SpaceUnit`][],
+    [`TimeUnit`][] or [`IndexUnit`][] for a length, a duration or an
+    index, and a plain [`Unit`][] otherwise. Called without a name,
+    [`IndexUnit`][] returns `index`.
+
+    Parameters
+    ----------
+    name : str or Unit
+        The name of a unit, or an existing unit.
+
+    Raises
+    ------
+    TypeError
+        If `name` is neither a string nor a unit.
+    ValueError
+        If `name` is empty or unknown, or if its dimension is one that the
+        class does not accept.
     """
 
-    name: ClassVar[tx.Optional[str]] = None
-    scale: ClassVar[float] = 1.0
-    type: ClassVar[tx.Literal["time", "space"]]
+    __slots__ = ("_name", "_pint")
 
-    def __new__(cls, *args, **kwargs) -> tx.Self:
-        # A unit is built from a name or from another unit, and the result
-        # is always an instance of the class asked for: `SpaceUnit("s")`
-        # and `SampleUnit(Second())` are refused rather than handed back a
-        # second, or the sample. That is what makes a field typed
-        # `SpaceUnit` (whose converter calls `SpaceUnit(value)`) hold a
-        # unit of space and nothing else.
-        name = kwargs.get("name", args[0] if args else None)
-        found = name if isinstance(name, Unit) else _lookup_unit(name)
+    dimension: tx.ClassVar[tx.Optional[str]] = None
+    """The dimension the class is restricted to, or `None`."""
+
+    _default: tx.ClassVar[tx.Optional[str]] = None
+
+    def __init_subclass__(
+        cls, dimension: tx.Optional[str] = None, **kwargs: tx.Any
+    ) -> None:
+        super().__init_subclass__(**kwargs)
+        if dimension is None:
+            return
+        cls.dimension = dimension
+        if not cls.__dict__.get("_parametrized", False):
+            _DECLARED.setdefault(_normalize_dimension(dimension), cls)
+
+    def __class_getitem__(cls, dimension: str) -> tx.Type["Unit"]:
+        """Return the class of units of a dimension.
+
+        The class is built once per dimension: `Unit["length"]` is
+        [`SpaceUnit`][].
+        """
+        if cls is not Unit:
+            raise TypeError(
+                f"{cls.__name__} is already restricted to a dimension; "
+                f"subscript `Unit` instead."
+            )
+        if not isinstance(dimension, str):
+            raise TypeError(
+                f"A dimension is a string such as 'length', not {dimension!r}."
+            )
+        key = _normalize_dimension(dimension)
+        found = _DECLARED.get(key) or _PARAMETRIZED.get(key)
         if found is not None:
-            if not isinstance(found, cls):
-                raise ValueError(f"{found!r} is not a {cls.__name__}.")
             return found
-        if cls in _REGISTERED_UNITS:
-            if name:
-                raise ValueError(f"{name!r} is not a {cls.__name__}.")
-            return _REGISTERED_UNITS[cls]
-        return super().__new__(cls)
+        name = f"Unit[{dimension!r}]"
+        kls = type(
+            name,
+            (Unit,),
+            {
+                "__slots__": (),
+                "__module__": __name__,
+                "__qualname__": name,
+                "__doc__": f"A unit of dimension `{dimension}`.",
+                "_parametrized": True,
+            },
+            dimension=dimension,
+        )
+        return _PARAMETRIZED.setdefault(key, kls)
 
-    def __init__(self, *args, **kwargs) -> None:
-        # Do nothing, so to not trigger Magic.__init__
+    # ------------------------------------------------------------------
+    #   CONSTRUCTION
+    # ------------------------------------------------------------------
+
+    def __new__(cls, *args: tx.Any, **kwargs: tx.Any) -> tx.Self:
+        if len(args) + len(kwargs) > 1 or (kwargs and "name" not in kwargs):
+            raise TypeError(f"{cls.__name__}() takes a single unit name.")
+        value = kwargs["name"] if kwargs else args[0] if args else None
+        if value is None:
+            if cls._default is None:
+                raise TypeError(
+                    f"{cls.__name__}() needs the name of a unit, such as 'mm'."
+                )
+            value = cls._default
+        if isinstance(value, Unit):
+            if isinstance(value, cls):
+                return value
+            dimension = type(value).dimension
+            if dimension is not None and (
+                _SIMPLE_DIMENSION.match(_normalize_dimension(dimension))
+                and _excludes(cls, _normalize_dimension(dimension))
+            ):
+                # The mismatch is detected without pint, for example when
+                # an index unit is given where a length is expected.
+                raise ValueError(
+                    f"{value!r} is not a {cls.__name__}: it is a unit of "
+                    f"{_bare_dimension(dimension)}, not of "
+                    f"{_bare_dimension(cls.dimension)}."
+                )
+            return cls._intern(value._name, value._pint, value)
+        if not isinstance(value, str):
+            raise TypeError(
+                f"A {cls.__name__} is built from a name or a unit, not "
+                f"{type(value).__name__} {value!r}."
+            )
+        name = value.strip()
+        if not name:
+            raise ValueError(
+                "An empty name is not a unit; leave the unit unspecified "
+                "(None) or name it, such as 'mm' or 'dimensionless'."
+            )
+        known = _PINT_FREE.get(name)
+        if known is not None:
+            canonical, dimension = known
+            target = cls._target_for(dimension)
+            if target is not None:
+                return target._lookup(canonical, None)
+            if _excludes(cls, dimension):
+                raise ValueError(
+                    f"{value!r} is not a {cls.__name__}: it is a unit of "
+                    f"{_bare_dimension(dimension)}, not of "
+                    f"{_bare_dimension(cls.dimension)}."
+                )
+        return cls._intern(None, _parse(name), value)
+
+    def __init__(self, *args: tx.Any, **kwargs: tx.Any) -> None:
         pass
 
-    def __str__(self) -> str:
-        """The unit's name, such as `"meter"`."""
-        return getattr(type(self), "name", "<unknown unit>")
-
-    def __repr__(self) -> str:
-        """The unit's name, quoted."""
-        return f"'{self.__str__()}'"
-
-
-class _MetaUnitSI(MetaMagic):
-    @property
-    def name(cls) -> str:
-        prefix = cls.prefix or ""
-        return f"{prefix}{cls.base}"
-
-    @property
-    def prefixsymbol(cls) -> tx.Optional[str]:
-        if cls.prefix is None:
-            return None
-        return PREFIX_SI[cls.prefix][1]
-
-    @property
-    def basesymbol(cls) -> str:
-        return UNITS_SI[cls.base][1]
-
-    @property
-    def symbol(cls) -> str:
-        prefixsymbol = cls.prefixsymbol or ""
-        return f"{prefixsymbol}{cls.basesymbol}"
-
-    @property
-    def log10_scale(cls) -> int:
-        return PREFIX_SI[cls.prefix or ""][0]
-
-    @property
-    def scale(cls) -> float:
-        return 10 ** (cls.log10_scale)
-
-
-class UnitSI(Unit, metaclass=_MetaUnitSI):
-    """An SI unit, optionally scaled by an SI prefix.
-
-    An instance combines a base unit, such as `second` or `meter`, with
-    an optional prefix, such as `milli`. Its name, symbol and scale
-    relative to the base unit are derived from the two.
-    """
-
-    base: ClassVar[UnitSIName] = "second"
-    prefix: ClassVar[tx.Optional[PrefixName]] = None
+    @classmethod
+    def _target_for(cls, dimension: str) -> tx.Optional[tx.Type["Unit"]]:
+        """Return the class for a dimension, or `None` if pint must decide."""
+        key = _normalize_dimension(dimension)
+        if cls is Unit:
+            return _DECLARED.get(key, Unit)
+        if cls.dimension is not None and (
+            _normalize_dimension(cls.dimension) == key
+        ):
+            return cls
+        return None
 
     @classmethod
-    def _parse_name(cls, *args, **kwargs) -> PrefixName:  # type: ignore
-        name = cls.name
-        if args:
-            name = args[0]
-        prefix, base = _parse_unit_name(name)
-        if "prefix" in kwargs:
-            prefix = kwargs["prefix"]
-        if prefix:
-            prefix = PrefixName[prefix]
-        if "base" in kwargs:
-            base = kwargs["base"]
-        if base in UnitSIName.__members__:
-            base = UnitSIName[base]
-        return (prefix or "") + base
+    def _lookup(
+        cls, canonical: str, unit: tx.Optional["pint.Unit"]
+    ) -> tx.Self:
+        """Return the interned unit of this class."""
+        found = _INTERNED.get((cls, canonical))
+        if found is None:
+            found = object.__new__(cls)
+            object.__setattr__(found, "_name", canonical)
+            object.__setattr__(found, "_pint", unit)
+            found = _INTERNED.setdefault((cls, canonical), found)
+        return found
 
-    def __new__(cls, *args, **kwargs) -> tx.Self:
-        name = cls._parse_name(*args, **kwargs)
-        args = (name,) + args[1:]
-        kwargs.pop("name", None)
-        return super().__new__(cls, *args, **kwargs)
+    @classmethod
+    def _intern(
+        cls,
+        canonical: tx.Optional[str],
+        unit: tx.Optional["pint.Unit"],
+        source: tx.Any,
+    ) -> tx.Self:
+        """Return the interned unit, checking its dimension."""
+        if unit is None:
+            unit = _registry().parse_units(canonical)
+        if canonical is None:
+            canonical = _canonical_name(unit)
+        if cls is Unit:
+            return _class_of(unit)._lookup(canonical, unit)
+        if cls.dimension is not None:
+            expected = _dimensionality(cls.dimension)
+            if unit.dimensionality != expected:
+                raise ValueError(
+                    f"{source!r} is not a {cls.__name__}: it is a unit of "
+                    f"{_bare_dimension(unit.dimensionality)}, not of "
+                    f"{_bare_dimension(cls.dimension)}."
+                )
+        return cls._lookup(canonical, unit)
+
+    @classmethod
+    def from_pint(cls, unit: tx.Any) -> tx.Self:
+        """Build a unit from a pint unit of any registry.
+
+        Raises
+        ------
+        TypeError
+            If `unit` is not a pint unit.
+        """
+        if not hasattr(unit, "_units") or not hasattr(unit, "dimensionality"):
+            raise TypeError(f"{unit!r} is not a pint unit.")
+        return cls(_canonical_name(unit))
+
+    # ------------------------------------------------------------------
+    #   VALUE SEMANTICS
+    # ------------------------------------------------------------------
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Unit):
+            return self._name == other._name
+        return NotImplemented
+
+    def __ne__(self, other: object) -> bool:
+        if isinstance(other, Unit):
+            return self._name != other._name
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash((Unit, self._name))
+
+    def __reduce__(self) -> tx.Tuple[tx.Any, ...]:
+        kls = type(self)
+        if kls.__dict__.get("_parametrized", False):
+            return (_restore, (kls.dimension, self._name))
+        return (_restore, (kls, self._name))
+
+    def __copy__(self) -> tx.Self:
+        return self
+
+    def __deepcopy__(self, memo: tx.Any) -> tx.Self:
+        return self
+
+    def __setattr__(self, name: str, value: tx.Any) -> None:
+        raise AttributeError(f"A {type(self).__name__} is immutable.")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"A {type(self).__name__} is immutable.")
+
+    def __str__(self) -> str:
+        """Return the name, such as `"millimeter"`."""
+        return self._name
+
+    def __repr__(self) -> str:
+        """Return the quoted name."""
+        return repr(self._name)
+
+    # ------------------------------------------------------------------
+    #   PROPERTIES
+    # ------------------------------------------------------------------
+
+    def to_pint(self) -> "pint.Unit":
+        """Return the unit in the private pint registry.
+
+        This is the converse of [`from_pint`][].
+        """
+        unit = self._pint
+        if unit is None:
+            unit = _registry().parse_units(self._name)
+            object.__setattr__(self, "_pint", unit)
+        return unit
 
     @property
     def name(self) -> str:
-        """The unit's name, its prefix followed by its base unit's name."""
-        return type(self).name
-
-    @property
-    def prefixsymbol(self) -> tx.Optional[str]:
-        """The symbol of the unit's SI prefix, or `None` if it has none."""
-        return type(self).prefixsymbol
-
-    @property
-    def basesymbol(self) -> str:
-        """The symbol of the unit's base unit, without its prefix."""
-        return type(self).basesymbol
+        """The full name, such as `"millimeter"` or
+        `"second / millimeter ** 2"`."""
+        return self._name
 
     @property
     def symbol(self) -> str:
-        """The unit's symbol, its prefix symbol followed by its base symbol."""
-        return type(self).symbol
+        """The symbol, such as `"mm"`, `"μm"` or `"s / mm ** 2"`."""
+        return _normalize_symbol(format(self.to_pint(), "~"))
 
     @property
-    def log10_scale(self) -> int:
-        """The base-10 logarithm of the unit's scale relative to its
-        base unit."""
-        return type(self).log10_scale
+    def dimensionality(self) -> str:
+        """The dimension without brackets, such as `"length"` or
+        `"1 / time"`."""
+        return _bare_dimension(self.to_pint().dimensionality)
 
     @property
-    def scale(self) -> float:
-        """The unit's scale relative to its base unit."""
-        return type(self).scale
+    def type(self) -> str:
+        """The kind of quantity, such as `"space"`, `"time"` or `"index"`.
 
-
-class _MetaKnownUnit(MetaMagic):
-    @property
-    def prefix(cls) -> None:
-        return None
-
-    @property
-    def symbol(cls) -> str:
-        return UNITS[cls.name][1]
+        For any other unit, the type is its dimension. Units of the same type
+        convert into one another.
+        """
+        dimension = self.dimensionality
+        return _KIND_NAMES.get(dimension, dimension)
 
     @property
-    def scale(cls) -> float:
-        return float(UNITS[cls.name][0])
-
-    @property
-    def log10_scale(cls) -> float:
-        return log10(cls.scale)
-
-
-class KnownUnit(Unit, metaclass=_MetaKnownUnit):
-    """A named unit with no SI prefix, such as `inch` or `hour`.
-
-    A unit of this kind has a fixed scale relative to the SI base unit of
-    its kind (`0.0254` for the inch, in meters; `3600.0` for the hour, in
-    seconds), read from the `UNITS` table, and is not one of the
-    SI-prefixed units generated for [`UnitSI`][].
-    """
-
-    @property
-    def prefix(self) -> None:
-        """`None`. A known unit never carries an SI prefix."""
-        return type(self).prefix
-
-    @property
-    def symbol(self) -> str:
-        """The unit's symbol, for example `"in"` for `Inch`."""
-        return type(self).symbol
+    def prefix(self) -> tx.Optional[str]:
+        """The SI prefix, such as `"milli"`, or `None`."""
+        factors = dict(self.to_pint()._units)
+        if len(factors) != 1:
+            return None
+        ((name, exponent),) = factors.items()
+        if exponent != 1:
+            return None
+        parsed = _registry().parse_unit_name(name)
+        if not parsed:
+            return None
+        return parsed[0][0] or None
 
     @property
     def scale(self) -> float:
-        """The unit's scale relative to the SI base unit of its kind."""
-        return type(self).scale
+        """The size of the unit in base units, such as meters or seconds.
+
+        The scale of an index unit is 1.0. Reading the scale of a
+        non-multiplicative unit raises a ValueError.
+        """
+        factor, _ = _registry().get_base_units(self.to_pint())
+        if factor is None:
+            raise ValueError(
+                f"{self!r} is not a multiplicative unit, so it has no scale."
+            )
+        return float(factor)
 
     @property
-    def log10_scale(self) -> float:
-        """The base-10 logarithm of the unit's scale."""
-        return type(self).log10_scale
+    def log10_scale(self) -> tx.Union[int, float]:
+        """The base-10 logarithm of [`scale`][], an int for a power of ten."""
+        value = math.log10(self.scale)
+        rounded = round(value)
+        if abs(value - rounded) < 1e-9:
+            return int(rounded)
+        return value
+
+    def is_compatible_with(self, other: tx.Union["Unit", str]) -> bool:
+        """Return whether the unit converts into `other`, a unit or a name."""
+        if not isinstance(other, Unit):
+            other = Unit(other)
+        return self.to_pint().dimensionality == other.to_pint().dimensionality
+
+
+_SIMPLE_DIMENSION = re.compile(r"^\[\w+\]$")
+
+
+def _excludes(cls: tx.Type[Unit], dimension: str) -> bool:
+    """Return whether a class rejects a simple dimension, without pint."""
+    if cls.dimension is None:
+        return False
+    own = _normalize_dimension(cls.dimension)
+    return bool(_SIMPLE_DIMENSION.match(own)) and own != dimension
+
+
+_DIMENSIONALITIES: tx.Dict[str, tx.Any] = {}
+
+
+def _dimensionality(dimension: str) -> tx.Any:
+    """Return the pint dimensionality of a dimension string."""
+    found = _DIMENSIONALITIES.get(dimension)
+    if found is None:
+        try:
+            found = _registry().get_dimensionality(
+                _normalize_dimension(dimension)
+            )
+        except Exception as e:
+            raise ValueError(f"{dimension!r} is not a dimension.") from e
+        _DIMENSIONALITIES[dimension] = found
+    return found
+
+
+def _class_of(unit: "pint.Unit") -> tx.Type[Unit]:
+    """Return the declared class for the dimension of a pint unit."""
+    dimensionality = unit.dimensionality
+    for kls in _DECLARED.values():
+        if _dimensionality(kls.dimension) == dimensionality:
+            return kls
+    return Unit
+
+
+def _restore(kls: tx.Union[tx.Type[Unit], str], name: str) -> Unit:
+    """Rebuild a pickled unit."""
+    if isinstance(kls, str):
+        kls = Unit[kls]
+    return kls(name)
 
 
 # ----------------------------------------------------------------------
-#   TIME UNITS
+#   UNITS OF A DIMENSION
 # ----------------------------------------------------------------------
 
 
-class TimeUnit(Unit):
-    """A unit of time."""
+class SpaceUnit(Unit, dimension="length"):
+    """A unit of length, such as the millimeter."""
 
-    type: ClassVar[tx.Literal["time"]] = "time"
-
-
-class TimeUnitSI(UnitSI, TimeUnit):
-    """A unit of time expressed in seconds, optionally SI-prefixed."""
-
-    base: ClassVar[TimeUnitName] = TimeUnitName.second
+    __slots__ = ()
 
 
-@siunit(globals())
-class Second(TimeUnitSI):
-    """The second, the SI base unit of time.
+class TimeUnit(Unit, dimension="time"):
+    """A unit of time, such as the second."""
 
-    Prefixed variants, such as `Millisecond`, are also generated and
-    registered under their own names.
-    """
-
-    prefix: ClassVar[None] = None
+    __slots__ = ()
 
 
-@register
-class Minute(KnownUnit, TimeUnit):
-    """The minute, equal to 60 seconds."""
+class IndexUnit(Unit, dimension="index"):
+    """A unit of coordinates that count array elements.
 
-    name: ClassVar[TimeUnitName] = TimeUnitName.minute
-
-
-@register
-class Hour(KnownUnit, TimeUnit):
-    """The hour, equal to 60 minutes."""
-
-    name: ClassVar[TimeUnitName] = TimeUnitName.hour
-
-
-@register
-class Day(KnownUnit, TimeUnit):
-    """The day, equal to 24 hours."""
-
-    name: ClassVar[TimeUnitName] = TimeUnitName.day
-
-
-@register
-class Week(KnownUnit, TimeUnit):
-    """The week, equal to 7 days."""
-
-    name: ClassVar[TimeUnitName] = TimeUnitName.week
-
-
-@register
-class Year(KnownUnit, TimeUnit):
-    """The year, equal to 52 weeks."""
-
-    name: ClassVar[TimeUnitName] = TimeUnitName.year
-
-
-def is_timeunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
-    """Whether `unit` is a unit of time (an instance or a class)."""
-    return is_instance_or_subclass(unit, TimeUnit)
-
-
-# ----------------------------------------------------------------------
-#   SPACE UNITS
-# ----------------------------------------------------------------------
-
-
-class SpaceUnit(Unit):
-    """A unit of length."""
-
-    type: ClassVar[tx.Literal["space"]] = "space"
-
-
-class SpaceUnitSI(UnitSI, SpaceUnit):
-    """A unit of length expressed in meters, optionally SI-prefixed."""
-
-    base: ClassVar[SpaceUnitName] = SpaceUnitName.meter
-
-
-@siunit(globals())
-class Meter(SpaceUnitSI):
-    """The meter, the SI base unit of length.
-
-    Prefixed variants, such as `Millimeter`, are also generated and
-    registered under their own names.
-    """
-
-    prefix: ClassVar[None] = None
-
-
-@register
-class Inch(KnownUnit, SpaceUnit):
-    """The inch, equal to 0.0254 meters."""
-
-    name: ClassVar[SpaceUnitName] = SpaceUnitName.inch
-
-
-@register
-class Foot(KnownUnit, SpaceUnit):
-    """The foot, equal to 12 inches."""
-
-    name: ClassVar[SpaceUnitName] = SpaceUnitName.foot
-
-
-@register
-class Yard(KnownUnit, SpaceUnit):
-    """The yard, equal to 3 feet."""
-
-    name: ClassVar[SpaceUnitName] = SpaceUnitName.yard
-
-
-@register
-class Mile(KnownUnit, SpaceUnit):
-    """The mile, equal to 1760 yards."""
-
-    name: ClassVar[SpaceUnitName] = SpaceUnitName.mile
-
-
-@register
-class Angstrom(KnownUnit, SpaceUnit):
-    """The angstrom, equal to 1e-10 meters."""
-
-    name: ClassVar[SpaceUnitName] = SpaceUnitName.angstrom
-
-
-@register
-class Parsec(KnownUnit, SpaceUnit):
-    """The parsec, a unit of astronomical distance equal to about
-    3.09e16 meters."""
-
-    name: ClassVar[SpaceUnitName] = SpaceUnitName.parsec
-
-
-# ----------------------------------------------------------------------
-#   SAMPLES
-# ----------------------------------------------------------------------
-
-
-@register
-class SampleUnit(Unit):
-    """The sample: coordinates count samples rather than measure a quantity.
-
-    An axis whose unit is the sample is an *array* axis -- its coordinates
-    are sample positions, so they run `0` to `N-1` over a finite number of
-    samples, and reversing it shifts the origin by one less than its extent
-    rather than flipping a sign about it. This is the convention OME-Zarr
-    writes down by giving such an axis no unit at all, and the scale
-    transformation is what converts the samples to a physical unit.
+    The index units are `index`, `voxel` and `pixel`, which convert into
+    one another with a factor of 1. An axis with an index unit is an array
+    axis: its coordinates are positions 0 to N-1, so reversing it shifts
+    the origin by N-1 instead of flipping the sign. OME-Zarr gives such an
+    axis no unit.
 
     !!! note
-
-        This is deliberately distinct from `unit=None`, which means the
-        unit is *unspecified* -- nothing is claimed either way, and no
-        conversion and no origin shift follow from it. It is also distinct
-        from a dimensionless physical unit, which would be a real,
-        convertible unit; `SampleUnit` is not a unit of anything, carries
-        no `type` and no meaningful `scale`, and never takes part in a
-        conversion. See [`is_sampleunit`][].
+        An index unit differs from `unit=None`, which makes no claim about
+        the axis and allows no conversion. An index unit also differs from
+        dimensionless physical units such as the percent, because an index
+        unit never converts into a physical unit.
     """
 
-    name: ClassVar[str] = "sample"
+    __slots__ = ()
+    _default = "index"
 
 
-# `Unit` resolves a name by capitalizing it and looking the result up in
-# this module, so `Unit("sample")` finds the class under this alias and
-# returns its singleton.
-Sample = SampleUnit
+# ----------------------------------------------------------------------
+#   PREDICATES
+# ----------------------------------------------------------------------
 
 
-def is_sampleunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
-    """Whether `unit` is the sample unit, i.e. the axis is an array axis."""
-    return is_instance_or_subclass(unit, SampleUnit)
+def is_indexunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Return whether a unit, or a unit class, is an index unit."""
+    return is_instance_or_subclass(unit, IndexUnit)
 
 
 def is_physicalunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
-    """Whether `unit` measures a physical quantity.
+    """Return whether a unit measures a physical quantity.
 
-    True for a real unit such as a millimetre or a second. False for
-    `None`, which leaves the unit *unspecified*, and false for
-    [`SampleUnit`][], which says the coordinates count samples rather than
-    measure anything -- so a conversion factor to another physical unit
-    exists exactly when this is true of both.
+    The result is false for `None`, for an [`IndexUnit`][] and for a
+    class. Two units have a conversion factor exactly when both are
+    physical and share a dimension.
     """
-    if not is_instance_or_subclass(unit, Unit) or is_sampleunit(unit):
-        return False
-    # A unit measures something when it has a name. A class has one when
-    # it is a concrete unit (`Meter`, not the abstract `Unit` or
-    # `SpaceUnit`); an instance has none when `Unit` -- liberal on purpose
-    # -- was built from a name it does not recognise.
-    return isinstance(getattr(unit, "name", None), str)
+    return isinstance(unit, Unit) and not isinstance(unit, IndexUnit)
 
 
 def is_spaceunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
-    """Whether `unit` is a unit of space, a length (an instance or a class)."""
+    """Return whether a unit, or a unit class, is a unit of length."""
     return is_instance_or_subclass(unit, SpaceUnit)
+
+
+def is_timeunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Return whether a unit, or a unit class, is a unit of time."""
+    return is_instance_or_subclass(unit, TimeUnit)

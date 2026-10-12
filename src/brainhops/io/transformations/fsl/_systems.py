@@ -1,20 +1,18 @@
-# externals
 import typing_extensions as tx
 
-# internals
 from brainhops.datamodel import axes as _axes
 from brainhops.datamodel.systems import SpatialCoordinateSystem3D
 
 
 class FslCoordinateSystem(SpatialCoordinateSystem3D):
-    """The FSL "scaled-mm" coordinate system of an image.
+    """FSL "scaled millimetre" coordinate system of one image.
 
-    Coordinates are voxel indices scaled by the pixel sizes, with the
-    x-axis flipped when the voxel-to-world affine has a positive
-    determinant. FLIRT and FNIRT express their transformations in this
-    coordinate system. Each image has its own scaled-mm system, because
-    the scaling and the flip depend on that image's pixel sizes and
-    shape.
+    Coordinates are voxel indices multiplied by the voxel sizes, with the
+    x-axis flipped when the voxel-to-world affine has a positive determinant.
+    FLIRT and FNIRT express their transformations in this coordinate system.
+    Because the scaling and the flip depend on the voxel sizes, the shape and
+    the orientation of the image, every image has its own FSL coordinate
+    system.
     """
 
     name: str = "fsl"

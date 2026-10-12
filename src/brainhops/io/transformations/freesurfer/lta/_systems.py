@@ -5,19 +5,16 @@ __all__ = [
     "LtaPhysicalSystem",
 ]
 
-# externals
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
-# internals
 from brainhops.datamodel import axes as _axes
-from brainhops.datamodel import orientation as _orientation
+from brainhops.datamodel import orientations as _orientation
 from brainhops.datamodel import systems as _systems
 
-# local
 from ._matrix_utils import _get_orient
-from ._struct import LtaStruct
+from ._raw import LtaRaw
 
-# type hints
 _3SpatialAxes = tx.Tuple[
     _axes.SpaceAxis,
     _axes.SpaceAxis,
@@ -40,117 +37,146 @@ def _make_axes(
     )
 
 
-def _name(struct: LtaStruct.VolumeInfo) -> tx.Dict[str, str]:
-    """The name a volume gives its system, as keyword arguments.
+def _name(raw: LtaRaw.VolumeInfo) -> tx.Dict[str, str]:
+    """Return the name that a volume gives its system, as keyword arguments.
 
-    The file name of the volume, or else the role of the volume in the
-    transform (`"src"` or `"dst"`). A volume with neither -- a bare
-    `VolumeInfo` with no file name -- gives nothing, and the system keeps
-    the name of its class.
+    The name is the file name of the volume, or else its role (`"src"` or
+    `"dst"`). A bare `VolumeInfo` with neither gives nothing, and the system
+    keeps the default name of its class.
     """
-    name = struct.filename or getattr(struct, "NAME", None)
+    name = raw.filename or getattr(raw, "NAME", None)
     return {"name": name} if name else {}
 
 
-# A voxel space counts samples; the scaled and physical spaces are in
-# millimetres.
-_SAMPLE = "sample"
+# Voxel coordinates count samples, whereas scaled and physical coordinates
+# are in millimetres.
+_INDEX = "index"
 _MM = "mm"
 
 
-class LtaCoordinateSystem(
-    _systems.SpatialCoordinateSystem3D,
-    reverse=False,  # We want `struct` to be the last field.
-):
-    """Base class for coordinate systems specific to LTA files.
+class LtaCoordinateSystem(_systems.SpatialCoordinateSystem3D):
+    """Base class of the coordinate systems specific to LTA files.
 
-    Concrete subclasses
-    -------------------
-    LtaVoxelSystem
-        Voxel space (unitless) of a volume.
-        Coordinate (0,0,0) is the center of the first (corner) voxel.
-        Axes correspond to the F-ordered dimensions of the volume,
-        where the first axis is the fastest changing in memory.
-    LtaScaledSystem
-        Scaled voxel space (in mm) of a volume.
-        Coordinate (0,0,0) is the center of the first (corner) voxel.
-        Axes correspond to the F-ordered dimensions of the volume,
-        where the first axis is the fastest changing in memory.
-    LtaPhysicalSystem
-        Physical space of a volume (source or destination).
-        Coordinate (0,0,0) is the center of volume.
-        Axes correspond to the F-ordered dimensions of the volume,
-        where the first axis is the fastest changing in memory.
+    There are three concrete systems, which all have axes that follow the
+    dimensions of the volume in Fortran order (the first axis is the fastest
+    in memory). [`LtaVoxelSystem`][] is the unitless voxel space, whose origin
+    is the center of the first corner voxel. [`LtaScaledSystem`][] is the
+    voxel space scaled to millimetres, with the same origin.
+    [`LtaPhysicalSystem`][] is the physical space of the source or
+    destination volume, whose origin is the center of the volume.
+
+    A system built from the geometry block of an LTA file keeps that block
+    in `raw`, so that a transformation between two such systems can write
+    the block back to a file.
     """
 
     ...
 
 
 class LtaVoxelSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
-    """Voxel space (unscaled) of a volume (source or destination)."""
+    """Unscaled voxel space of a source or destination volume."""
 
-    name: tx.Optional[str] = "voxel"
-    axes: _3SpatialAxes = _make_axes(("i", "j", "k"), unit=_SAMPLE)
-    struct: tx.Optional[LtaStruct.VolumeInfo] = None
+    name: ... = "voxel"
+    axes: _3SpatialAxes = _make_axes(("i", "j", "k"), unit=_INDEX)
+    raw: KwOnly[tx.Optional[LtaRaw.VolumeInfo]] = None
+    """The geometry block of the volume, or `None` without one."""
 
     @classmethod
-    def from_struct(
+    def from_raw(
         cls,
-        struct: LtaStruct.VolumeInfo,
+        raw: LtaRaw.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("i", "j", "k"),
     ) -> tx.Self:
-        """Build the voxel system of the volume described by `struct`."""
+        """Return the voxel system of the volume described by `raw`.
+
+        Parameters
+        ----------
+        raw : LtaRaw.VolumeInfo
+            The geometry block of the volume, which the system keeps.
+        names : tuple of str, default=("i", "j", "k")
+            The names of the three axes.
+
+        Returns
+        -------
+        Self
+            The system, named after the file of the volume or its role.
+        """
         return cls(
-            **_name(struct),
-            axes=_make_axes(
-                names, unit=_SAMPLE, orientation=_get_orient(struct)
-            ),
-            struct=struct,
+            **_name(raw),
+            axes=_make_axes(names, unit=_INDEX, orientation=_get_orient(raw)),
+            raw=raw,
         )
 
 
 class LtaScaledSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
-    """Voxel space (scaled) of a volume (source or destination)."""
+    """Voxel space of a volume, scaled to millimetres."""
 
-    name: tx.Optional[str] = "scaled"
+    name: ... = "scaled"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
-    struct: tx.Optional[LtaStruct.VolumeInfo] = None
+    raw: KwOnly[tx.Optional[LtaRaw.VolumeInfo]] = None
+    """The geometry block of the volume, or `None` without one."""
 
     @classmethod
-    def from_struct(
+    def from_raw(
         cls,
-        struct: LtaStruct.VolumeInfo,
+        raw: LtaRaw.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
-        """Build the scaled voxel system of the volume described by
-        `struct`."""
+        """Return the scaled system of the volume described by `raw`.
+
+        Parameters
+        ----------
+        raw : LtaRaw.VolumeInfo
+            The geometry block of the volume, which the system keeps.
+        names : tuple of str, default=("x", "y", "z")
+            The names of the three axes.
+
+        Returns
+        -------
+        Self
+            The system, named after the file of the volume or its role.
+        """
         return cls(
-            **_name(struct),
-            axes=_make_axes(names, unit=_MM, orientation=_get_orient(struct)),
-            struct=struct,
+            **_name(raw),
+            axes=_make_axes(names, unit=_MM, orientation=_get_orient(raw)),
+            raw=raw,
         )
 
 
 class LtaPhysicalSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
-    """Physical space of a volume (source or destination).
+    """Physical space of a volume.
 
-    This is the scaled voxel space, with an additional shift such that
-    the origin is at the center of the volume rather than the corner.
+    The physical space is the scaled voxel space, shifted so that its origin
+    lies at the center of the volume rather than at its corner.
     """
 
-    name: tx.Optional[str] = "physical"
+    name: ... = "physical"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
-    struct: tx.Optional[LtaStruct.VolumeInfo] = None
+    raw: KwOnly[tx.Optional[LtaRaw.VolumeInfo]] = None
+    """The geometry block of the volume, or `None` without one."""
 
     @classmethod
-    def from_struct(
+    def from_raw(
         cls,
-        struct: LtaStruct.VolumeInfo,
+        raw: LtaRaw.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
-        """Build the physical system of the volume described by `struct`."""
+        """Return the physical system of the volume described by `raw`.
+
+        Parameters
+        ----------
+        raw : LtaRaw.VolumeInfo
+            The geometry block of the volume, which the system keeps.
+        names : tuple of str, default=("x", "y", "z")
+            The names of the three axes.
+
+        Returns
+        -------
+        Self
+            The system, named after the file of the volume or its role.
+        """
         return cls(
-            **_name(struct),
-            axes=_make_axes(names, unit=_MM, orientation=_get_orient(struct)),
-            struct=struct,
+            **_name(raw),
+            axes=_make_axes(names, unit=_MM, orientation=_get_orient(raw)),
+            raw=raw,
         )

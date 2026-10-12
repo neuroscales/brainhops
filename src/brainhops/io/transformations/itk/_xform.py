@@ -1,22 +1,19 @@
-# io
 from brainhops.datamodel import transformations as _xforms
-from brainhops.io.transformations.base import FileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 
 
-class ItkTransform(_xforms.Sequence, FileBasedTransformation):
-    """
-    A transformation that is stored in an ITK file.
+class ItkTransform(_xforms.MutableSequence, TransformationFormat):
+    """Base class for transformations stored in ITK files.
 
-    ITK transforms are chains of transform blocks, so this class is a
-    `Sequence`. Each block that a parser reads is itself a
-    `Transformation` -- an [`ItkAffineBase`][] or an
-    [`ItkDisplacementBase`][] -- so the parser stores the blocks
-    directly in `transformations`, and nothing has to be converted
-    afterwards.
-
-    Abstract: it is not decorated with `@register_format`, so it never
-    takes part in dispatch. Concrete ITK transformations inherit from it
-    and register themselves.
+    An ITK file holds a chain of blocks, and the parser turns each block
+    directly into a transformation, such as an
+    [`ItkAffineBase`][brainhops.io.transformations.itk.ItkAffineBase] or an
+    [`ItkDisplacementBase`][brainhops.io.transformations.itk.ItkDisplacementBase].
+    A file may hold any number of blocks in any order, so the chain can be
+    edited and the class is a
+    [`MutableSequence`][brainhops.datamodel.transformations.MutableSequence].
+    The class itself is not registered as a format, but its concrete
+    subclasses are.
     """
 
     HINTS = ("itk", "ants")

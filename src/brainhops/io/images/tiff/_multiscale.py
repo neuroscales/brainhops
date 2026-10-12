@@ -1,18 +1,17 @@
-"""The multiscale TIFF image: a pyramidal series, one level per image."""
+"""Multiscale TIFF images: pyramidal series with one image per level."""
 
-# dependencies
 import typing_extensions as tx
 
-# internals
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel.images import MultiScaleImage
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     WriterError,
 )
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.tiff import _utils as backend
 from brainhops.io.images.tiff._image import (
     TiffImage,
@@ -22,8 +21,8 @@ from brainhops.io.images.tiff._image import (
     _write_geometry,
 )
 
-# A vendor whole-slide pyramid: between LIKELY (a single-scale TIFF image)
-# and CERTAIN (the dedicated OpenSlide reader of that vendor).
+# A vendor whole-slide pyramid scores above a single-scale TIFF (LIKELY) and
+# below the dedicated OpenSlide reader (CERTAIN).
 _WHOLE_SLIDE = 0.9
 
 # ----------------------------------------------------------------------
@@ -33,26 +32,27 @@ _WHOLE_SLIDE = 0.9
 
 @register_format
 class TiffMultiScaleImage(
-    _TiffMixin, BinaryFileParserWriter, WritableFileBasedImage, MultiScaleImage
+    _TiffMixin,
+    BinaryFileReader,
+    BinaryFileWriter,
+    ImageFormat,
+    MultiScaleImage,
 ):
-    """
-    A pyramidal TIFF series -- OME-TIFF or plain TIFF with SubIFDs, or any
-    pyramid tifffile recognizes (`series.levels`) -- as a multiscale image.
+    """A pyramidal TIFF series, read as a multiscale image.
 
-    Each level is a [`TiffImage`][brainhops.io.images.tiff.TiffImage],
-    finest first, whose pixels are read when its data is first accessed.
-    Every level maps its pixels onto the same `"physical"` system, so the
-    pyramid's own transformations are empty (the identity), as for an
-    OME-Zarr pyramid that declares no common transformation.
+    The series is an OME-TIFF or plain TIFF with SubIFD levels, or any other
+    pyramid that tifffile recognises. Each level is a [`TiffImage`][], finest
+    first, whose pixels are read on first access. All levels map to the same
+    `"physical"` system, so the pyramid has no transformation of its own, like
+    an OME-Zarr pyramid that declares no common transformation.
 
-    A level's pixel size is the base pixel size times its downsampling
-    factor, the ratio of the base shape to its own along each axis. Levels
-    are aligned by their *extent*: the edges of a level's first and last
-    pixels coincide with those of the base level, so pixel `i` of a level
-    downsampled by `f` is centred on the base level's pixel coordinate
-    `f * i + (f - 1) / 2`, the centre of the block of base pixels it
-    summarizes. This is the convention of block-averaged pyramids (and of
-    OME-Zarr pyramids whose levels carry the matching translation).
+    The pixel size of a level is the pixel size of the base level multiplied
+    by the downsampling factor of the level. Along each axis, this factor is
+    the base shape divided by the shape of the level. The levels are aligned by
+    their extent, so pixel `i` of a level downsampled by `f` is centred on the
+    base coordinate `f * i + (f - 1) / 2`. This coordinate is the centre of the
+    block of base pixels that the pixel summarises, as in block-averaged and
+    OME-Zarr pyramids.
     """
 
     dialect: tx.Annotated[
@@ -98,18 +98,14 @@ class TiffMultiScaleImage(
         level: tx.Optional[int] = None,
         **kwargs,
     ) -> float:
-        """
-        Score how confident the class is that an open file holds a
-        pyramid: `CERTAIN` when the series asked for (the first by
-        default) has several levels and no `level` is asked for, and `NO`
-        otherwise.
+        """Return the confidence that an open file holds a pyramid.
 
-        A whole-slide image of a microscope vendor (Aperio SVS, Hamamatsu
-        NDPI, Philips, Leica SCN, Ventana BIF) scores a little less than
-        `CERTAIN` (still more than a single-scale
-        [`TiffImage`][brainhops.io.images.tiff.TiffImage]), so that the
-        dedicated OpenSlide reader of that vendor, when it is installed,
-        takes it (see [`brainhops.io.images.openslide`][]).
+        The score is `CERTAIN` when the requested series (the first by default)
+        has several levels and no level is requested, and `NO` otherwise. A
+        vendor whole-slide image (Aperio SVS, Hamamatsu NDPI, Philips, Leica
+        SCN or Ventana BIF) scores slightly less (0.9), still above
+        [`TiffImage`][], so that the dedicated reader of
+        [`brainhops.io.images.openslide`][] takes it when installed.
         """
         if level is not None:
             return Confidence.NO
@@ -141,10 +137,14 @@ class TiffMultiScaleImage(
         lazy: tx.Optional[bool] = None,
         **kwargs,
     ) -> tx.Self:
-        """
-        Read every level of one series of a TIFF file. The options are
-        those of [`TiffImage`][brainhops.io.images.tiff.TiffImage]
-        `.from_source`, but for `level`.
+        """Read every level of one series.
+
+        The options are those of [`TiffImage.from_source`][], except `level`.
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
         """
         if kwargs:
             raise TypeError(
@@ -194,12 +194,13 @@ class TiffMultiScaleImage(
         bigtiff: tx.Optional[bool] = None,
         **options,
     ) -> tx.Callable[[tx.Any], None]:
-        """
-        Write the pyramid: the full-resolution level as the main image,
-        and the others as its SubIFDs, in OME-TIFF or plain TIFF (ImageJ
-        stores no pyramid). The pixel size is that of the full-resolution
-        level; the other levels' placement is not stored, and is derived
-        again from their shapes when the file is read.
+        """Return a function that writes the pyramid in OME-TIFF or plain TIFF,
+        since ImageJ cannot store pyramids.
+
+        The full-resolution level is the main image, and the other levels are
+        its SubIFDs. The pixel size is the one of the full-resolution level,
+        and the placement of the other levels is derived again from their
+        shapes on reading.
         """
         tf = backend._require_tifffile()
         images = list(self.images or [])

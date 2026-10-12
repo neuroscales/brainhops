@@ -1,33 +1,30 @@
-"""Unit tests for the file-format registry and its dispatch rules."""
+"""Unit tests of the format registry and its dispatch rules."""
 
 import pytest
 import typing_extensions as tx
 
 from brainhops.io.base._base import (
-    FileBasedObject,
-    TextFileBasedObject,
+    Format,
     format_registry,
+    is_format_registry,
     register_format,
 )
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     Confidence,
     ParserContentError,
+    TextFileReader,
 )
 
 
 @pytest.fixture
 def root() -> type:
-    """
-    An isolated dispatcher, so tests never touch the real registries.
-
-    Formats registered in a test would otherwise stay in
-    `FileBasedObject._REGISTRY` for the rest of the session and leak into
-    every later test.
+    """An isolated dispatcher, so that test formats do not leak into the
+    global registry.
     """
 
     @format_registry
-    class Root(TextFileBasedObject):
+    class Root(Format, TextFileReader):
         pass
 
     return Root
@@ -58,28 +55,24 @@ def _format(root: type, name: str, **attrs: tx.Any) -> type:
 
 
 def test_format_registry_gives_a_class_its_own_registry(root: type) -> None:
-    assert "_REGISTRY" in root.__dict__
+    assert is_format_registry(root)
     assert root._REGISTRY == set()
 
 
 def test_register_format_fills_every_ancestor_registry(root: type) -> None:
     fmt = _format(root, "A", EXTENSIONS=(".a",))
     assert fmt in root._REGISTRY
-    assert fmt in FileBasedObject._REGISTRY
-    assert fmt in TextFileBasedObject._REGISTRY
-    # keep the real registries clean for the rest of the session
-    for base in (FileBasedObject, TextFileBasedObject):
-        base._REGISTRY.discard(fmt)
+    assert fmt in Format._REGISTRY
+    # Keep the real registries clean.
+    Format._REGISTRY.discard(fmt)
 
 
 def test_dispatchers_are_not_registered_as_formats(root: type) -> None:
-    # `root` dispatches; it must not appear in the registry it feeds into
-    assert root not in FileBasedObject._REGISTRY
+    assert root not in Format._REGISTRY
 
 
 def test_registering_a_dispatcher_is_an_error(root: type) -> None:
-    # Doing so would try every format below it twice, and make `from_`
-    # recurse into itself.
+    # A registered dispatcher would try each format twice and recurse.
     with pytest.raises(TypeError, match="owns a registry"):
         register_format(root)
 
@@ -89,8 +82,7 @@ def test_registering_twice_is_a_no_op(root: type) -> None:
     before = len(root._REGISTRY)
     register_format(fmt)
     assert len(root._REGISTRY) == before
-    FileBasedObject._REGISTRY.discard(fmt)
-    TextFileBasedObject._REGISTRY.discard(fmt)
+    Format._REGISTRY.discard(fmt)
 
 
 # ----------------------------------------------------------------------
@@ -99,27 +91,20 @@ def test_registering_twice_is_a_no_op(root: type) -> None:
 
 
 def test_sniff_on_a_dispatcher_names_the_format(root: type) -> None:
-    """
-    A dispatcher has already compared the scores, so it answers the
-    question they were compared to settle: *which* format is it.
-    """
+    """Sniffing on a dispatcher names the winning format."""
     fmt = _format(root, "A", EXTENSIONS=(".a",), marker="AAA")
     assert root.sniff_line("AAA hello") is fmt
     assert root.sniff_line("zzz") is None
 
 
 def test_sniff_on_a_concrete_format_still_scores(root: type) -> None:
-    """The number is still there; ask the format itself for it."""
     fmt = _format(root, "A", EXTENSIONS=(".a",), marker="AAA")
     assert fmt.sniff_line("AAA hello") == Confidence.CERTAIN
     assert fmt.sniff_line("zzz") == Confidence.NO
 
 
 def test_sniff_agrees_with_what_load_actually_picks(root: type) -> None:
-    """
-    The two share their ranking, so an identification that disagreed
-    with the parser eventually used would be a bug.
-    """
+    """sniff and load share one ranking."""
     _format(root, "A", EXTENSIONS=(".a",), marker="AAA")
     _format(root, "B", EXTENSIONS=(".b",), marker="BBB")
     identified = root.sniff_line("BBB x")
@@ -135,7 +120,7 @@ def test_dispatch_picks_the_format_that_sniffs_highest(root: type) -> None:
 
 
 def test_longest_matching_extension_wins(root: type, tmp_path) -> None:  # noqa: ANN001
-    """`.nii.gz` is a more specific claim than `.gz`."""
+    """For example, .nii.gz is more specific than .gz."""
 
     @classmethod
     def sniff_line(cls, line, error=False, **kwargs) -> float:  # noqa: ANN001
@@ -167,15 +152,14 @@ def test_longest_matching_extension_wins(root: type, tmp_path) -> None:  # noqa:
     scan.write_text("content\n")
     assert root.from_file(scan) == "narrow"
     for fmt in (broad, narrow):
-        FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
+        Format._REGISTRY.discard(fmt)
 
 
 def test_a_prefix_constraint_beats_an_unconstrained_format(
     root: type,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """SPM's `y_` convention is the only thing separating two formats."""
+    """A prefix constraint, such as the SPM y_, beats no constraint."""
 
     @classmethod
     def sniff_line(cls, line, error=False, **kwargs) -> float:  # noqa: ANN001
@@ -209,12 +193,11 @@ def test_a_prefix_constraint_beats_an_unconstrained_format(
         target.write_text("content\n")
         assert root.from_file(target) == expected
     for fmt in (generic, spm):
-        FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
+        Format._REGISTRY.discard(fmt)
 
 
 def test_a_subclass_outranks_its_own_base(root: type) -> None:
-    """The `singledispatch` rule: the more derived format is preferred."""
+    """As in singledispatch, the more derived format is preferred."""
     base = _format(root, "Base", EXTENSIONS=(".x",), marker="X")
     derived = register_format(
         type(
@@ -227,15 +210,13 @@ def test_a_subclass_outranks_its_own_base(root: type) -> None:
     )
     assert root.from_line("X hello") == "derived"
     for fmt in (base, derived):
-        FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
+        Format._REGISTRY.discard(fmt)
 
 
 def test_indistinguishable_formats_raise_rather_than_guess(
     root: type,
 ) -> None:
-    """Two formats with nothing to tell them apart is a bug, not a coin
-    flip: returning one at random would silently give the wrong type."""
+    """Indistinguishable formats raise instead of being picked at random."""
     _format(root, "Twin1", EXTENSIONS=(".t",), marker="T")
     _format(root, "Twin2", EXTENSIONS=(".t",), marker="T")
     with pytest.raises(AmbiguousFormatError, match=r"Twin1[^\n]*\n.*Twin2"):
@@ -245,7 +226,7 @@ def test_indistinguishable_formats_raise_rather_than_guess(
 def test_an_apparent_tie_that_only_one_format_can_read_is_not_an_error(
     root: type,
 ) -> None:
-    """Equal scores are fine as long as only one actually parses."""
+    """Equal scores are fine when only one format parses."""
 
     @classmethod
     def sniff_line(cls, line, error=False, **kwargs) -> float:  # noqa: ANN001
@@ -280,7 +261,7 @@ def test_an_apparent_tie_that_only_one_format_can_read_is_not_an_error(
 def test_failure_reports_what_each_parser_complained_about(
     root: type,
 ) -> None:
-    """A bug in the right reader must not surface as 'cannot parse'."""
+    """Every reader's failure is reported, not only 'cannot parse'."""
     _format(root, "A", EXTENSIONS=(".a",), marker="AAA")
     with pytest.raises(ParserContentError) as excinfo:
         root.from_line("zzz")
@@ -293,7 +274,7 @@ def test_an_empty_registry_says_so(root: type) -> None:
 
 
 def test_brute_force_is_opt_in(root: type) -> None:
-    """A reader that declines to sniff is only run when asked."""
+    """A reader that declines to sniff only runs on request."""
     register_format(
         type(
             "Silent",
@@ -315,7 +296,7 @@ def test_a_longer_required_prefix_is_more_specific(
     root: type,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """Specificity is the length of the prefix that actually matched."""
+    """Specificity is the length of the prefix actually matched."""
 
     @classmethod
     def sniff_line(cls, line, error=False, **kwargs) -> float:  # noqa: ANN001
@@ -349,19 +330,14 @@ def test_a_longer_required_prefix_is_more_specific(
     target.write_text("content\n")
     assert root.from_file(target) == "long"
     for fmt in (short, long_):
-        FileBasedObject._REGISTRY.discard(fmt)
-        TextFileBasedObject._REGISTRY.discard(fmt)
+        Format._REGISTRY.discard(fmt)
 
 
 def test_declaring_more_prefixes_does_not_buy_specificity(
     root: type,
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """
-    Declaring more prefixes is a *broader* claim, not a narrower one. It
-    used to win ties, which had it exactly backwards; now the two are
-    indistinguishable and dispatch says so.
-    """
+    """Declaring more prefixes is a broader claim, not a tie-breaker."""
 
     @classmethod
     def sniff_line(cls, line, error=False, **kwargs) -> float:  # noqa: ANN001
@@ -395,7 +371,7 @@ def test_declaring_more_prefixes_does_not_buy_specificity(
 
 
 def _twins(root: type) -> tx.Tuple[type, type]:
-    """Two formats nothing tells apart, each with a hint of its own."""
+    """Two indistinguishable formats, each with its own hint."""
     first = _format(
         root,
         "Raw",
@@ -431,7 +407,7 @@ def test_the_ambiguity_message_gives_the_hint_that_selects_each_format(
 def test_the_hints_in_the_message_resolve_the_ambiguity(
     root: type, hint: str
 ) -> None:
-    """Following the advice of the message does choose that format."""
+    """The hint suggested by the message selects that format."""
     _twins(root)
     with pytest.raises(AmbiguousFormatError, match=f'hint="{hint}"'):
         root.from_line("T hello")
@@ -440,7 +416,7 @@ def test_the_hints_in_the_message_resolve_the_ambiguity(
 
 
 def test_the_ambiguity_message_is_written_for_users(root: type) -> None:
-    """How to fix the formats is for their maintainers, not the user."""
+    """Tie-breaking advice is for maintainers, not users."""
     _twins(root)
     with pytest.raises(AmbiguousFormatError) as info:
         root.from_line("T hello")
@@ -452,10 +428,7 @@ def test_the_ambiguity_message_is_written_for_users(root: type) -> None:
 def test_a_format_no_hint_selects_is_read_with_its_own_load(
     root: type,
 ) -> None:
-    """
-    When every hint a format answers to is shared with the other, the
-    message points at the format's own `load` instead.
-    """
+    """When every hint is shared, the message points to the format's load."""
     _format(root, "Plain", EXTENSIONS=(".t",), marker="T", HINTS=("t",))
     _format(
         root, "Fancy", EXTENSIONS=(".t",), marker="T", HINTS=("t", "fancy")
@@ -468,10 +441,7 @@ def test_a_format_no_hint_selects_is_read_with_its_own_load(
 
 
 def test_a_hint_that_only_settles_the_tie_is_offered(root: type) -> None:
-    """
-    A hint shared with a format that did not tie still settles the tie,
-    so it is offered.
-    """
+    """A shared hint that still settles the tie is offered."""
     _format(root, "Left", EXTENSIONS=(".t",), marker="T", HINTS=("side",))
     _format(root, "Right", EXTENSIONS=(".t",), marker="T", HINTS=("r",))
     _format(root, "Other", EXTENSIONS=(".o",), marker="O", HINTS=("side",))
@@ -492,13 +462,11 @@ def test_sniff_reports_an_ambiguity_with_the_same_hints(root: type) -> None:
 
 
 def test_a_format_without_a_docstring_is_not_described() -> None:
-    """
-    A data model without a docstring is given one that only lists its
-    fields, under an `Attributes` heading. That describes nothing, so
-    the message names the format without a description.
-    """
+    """A generated docstring of fields does not describe a format."""
+    pytest.importorskip("nibabel")
+
     from brainhops.io.base._dispatch import _ambiguity_message, _describe
-    from brainhops.io.transformations.nifti.base import (
+    from brainhops.io.transformations.nifti import (
         NiftiBasedTransformation,
     )
 
@@ -508,12 +476,12 @@ def test_a_format_without_a_docstring_is_not_described() -> None:
     class Documented(NiftiBasedTransformation):
         """A documented format.
 
-        More detail.
+        A detail line that the description leaves out.
         """
 
         HINTS = ("documented",)
 
-    # The generated docstring is the class's own, not an inherited one.
+    # The generated docstring belongs to the class itself.
     assert "Attributes" in Undocumented.__dict__["__doc__"]
     assert _describe(Undocumented) == ""
     assert _describe(Documented) == "A documented format"
@@ -522,3 +490,22 @@ def test_a_format_without_a_docstring_is_not_described() -> None:
     assert "Attributes" not in message
     assert '  - Undocumented: hint="undocumented"' in message
     assert '  - Documented (A documented format): hint="documented"' in message
+
+
+def test_isolated_registry_stops_registration_at_its_boundary() -> None:
+    @format_registry(isolated=True)
+    class MetadataFormat(Format):
+        pass
+
+    @format_registry
+    class HeaderFormat(MetadataFormat):
+        pass
+
+    @register_format
+    class Header(HeaderFormat):
+        pass
+
+    assert Header in HeaderFormat._REGISTRY
+    assert Header in MetadataFormat._REGISTRY
+    assert Header not in Format._REGISTRY
+    assert HeaderFormat not in MetadataFormat._REGISTRY
