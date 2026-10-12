@@ -694,7 +694,7 @@ def test_an_untouched_oblique_file_keeps_its_bytes(tmp_path, name) -> None:  # n
     data = _data((3, 4, 5, 2), "int16")
     source = _write(tmp_path, name, data, tr=2300.0, tags=TAGS)
     loaded = MghImage.load(source)
-    assert loaded.to_raw() is loaded.metadata.raw
+    assert loaded.consolidate().metadata.raw is loaded.metadata.raw
     targets = {
         "save": lambda target: loaded.save(target),
         "io.save": lambda target: io.save(MghImage.load(source), target),
@@ -731,7 +731,7 @@ def test_a_file_without_valid_geometry_keeps_its_flag(tmp_path) -> None:  # noqa
     assert np.allclose(again.vox2ras, AFFINE, atol=1e-5)
 
 
-def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
+def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     """Each public knob is either written or leaves the record as read."""
     source = _write(tmp_path, "vol.mgh", _data(), tr=900.0, tags=TAGS)
 
@@ -740,11 +740,11 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
 
     image = loaded()
     record = image.metadata.raw
-    assert image.to_raw() is record
+    assert image.consolidate().metadata.raw is record
 
     # New voxels of the same shape and type are written under the record.
     image.data = _data() + 1
-    assert image.to_raw() is record
+    assert image.consolidate().metadata.raw is record
     assert np.array_equal(
         np.asarray(MghImage.from_bytes(image.to_bytes()).data), _data() + 1
     )
@@ -752,7 +752,7 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     # Another type changes the stored voxel type only.
     image = loaded()
     image.data = _data(dtype="int16")
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert written is not record
     assert written.header.get_data_dtype() == np.dtype(">i2")
     assert np.array_equal(written.header["Mdc"], record.header["Mdc"])
@@ -761,7 +761,7 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     # Another number of frames keeps the stored geometry.
     image = loaded()
     image.data = _data((4, 5, 6, 3))
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert written.shape == (4, 5, 6, 3)
     assert np.array_equal(written.header["delta"], record.header["delta"])
     assert np.array_equal(written.header["Pxyz_c"], record.header["Pxyz_c"])
@@ -769,7 +769,7 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     # Another spatial shape keeps the corner, so the centre moves.
     image = loaded()
     image.data = _data((2, 5, 6))
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert written.shape == (2, 5, 6)
     assert np.allclose(written.vox2ras, record.vox2ras, atol=1e-4)
     assert not np.allclose(written.header["Pxyz_c"], record.header["Pxyz_c"])
@@ -777,27 +777,34 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     # Assigned transformations give the geometry.
     image = loaded()
     image.transformations = [Scaling(scale=[2.0, 3.0, 4.0])]
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert np.allclose(np.diag(written.vox2ras), [2, 3, 4, 1])
     assert written.tags == TAGS
     assert written.mri_params["tr"] == pytest.approx(900.0)
 
     # Other metadata gives its record and its geometry.
     image = loaded()
-    edited = image.metadata.to_raw()
+    edited = image.metadata.raw.copy()
     edited.tags = b"other"
     image.metadata = MghMetadata.from_raw(edited)
-    assert image.to_raw() is edited
+    assert image.consolidate().metadata.raw is edited
 
     # `like` and the overrides are written, the overrides last.
     template = _write(tmp_path, "template.mgh", _data(), tr=777.0)
     image = loaded()
-    assert image.to_raw(like=template).mri_params["tr"] == pytest.approx(777.0)
-    written = image.to_raw(like=template, tr=55.0, dtype="uint8")
+    assert image.consolidate(like=template).metadata.raw.mri_params[
+        "tr"
+    ] == pytest.approx(777.0)
+    written = image.consolidate(
+        like=template, tr=55.0, dtype="uint8"
+    ).metadata.raw
     assert written.mri_params["tr"] == pytest.approx(55.0)
     assert written.header.get_data_dtype() == np.dtype("u1")
     held = image.metadata.raw
-    assert image.to_raw(te=3.5, flip_angle=0.15, tr=900.0) is held
+    assert (
+        image.consolidate(te=3.5, flip_angle=0.15, tr=900.0).metadata.raw
+        is held
+    )
 
     # The record of the metadata is never changed.
     assert record == MghImage.load(source).metadata.raw
@@ -824,8 +831,9 @@ def test_metadata_reads_and_writes_the_record(tmp_path) -> None:  # noqa: ANN001
     assert metadata.raw.mri_params["tr"] == pytest.approx(900.0)
     assert metadata.raw == MghImage.load(source).metadata.raw
     assert pickle.loads(pickle.dumps(metadata)).raw == metadata.raw
-    assert metadata.to_raw() == metadata.raw
-    assert metadata.to_raw() is not metadata.raw
+    assert metadata.raw.copy() == metadata.raw
+    assert metadata.raw.copy() is not metadata.raw
+    assert metadata.consolidate().raw is metadata.raw
     # Writing the metadata alone writes the fixed header, without the
     # footer and the tags that a file stores after the voxels.
     target = tmp_path / "header.mgz"
@@ -910,4 +918,4 @@ def test_the_layout_of_the_voxels_cannot_be_overridden(
     with pytest.raises(WriterError, match="dtype="):
         image.to_bytes(**{field: value})
     with pytest.raises(WriterError):
-        MghImage(data=_data()).to_raw(**{field: value})
+        MghImage(data=_data()).consolidate(**{field: value})

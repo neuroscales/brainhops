@@ -40,16 +40,6 @@ class MghMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     raw: NoRepr[tx.Optional[MghRaw]] = None
     """The record of the file, or `None` for metadata without a record."""
 
-    def to_raw(self) -> tx.Optional[MghRaw]:
-        """Return a copy of the record that the caller is free to change.
-
-        Returns
-        -------
-        MghRaw or None
-            A copy of `raw`, or `None` when no record is held.
-        """
-        return None if self.raw is None else self.raw.copy()
-
     @classmethod
     def sniff_fileobj(
         cls,
