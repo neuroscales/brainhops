@@ -1881,14 +1881,21 @@ def test_17_save_writes_the_consolidated_copy(
 ) -> None:
     loaded = _changed(cls, exemplar, tmp_path)
     raw, metadata, pending = _raw(loaded), loaded.metadata, _pending(loaded)
-    (tmp_path / "saved").mkdir()
-    (tmp_path / "consolidated").mkdir()
-    name = exemplar.prefix + "copy" + exemplar.suffix
-    loaded.save(tmp_path / "saved" / name)
-    loaded.consolidate().save(tmp_path / "consolidated" / name)
-    assert _decompressed(tmp_path / "saved" / name) == _decompressed(
-        tmp_path / "consolidated" / name
+    saved = _path(tmp_path, exemplar, "saved")
+    consolidated = _path(tmp_path, exemplar, "consolidated")
+    loaded.save(saved)
+    loaded.consolidate().save(consolidated)
+    # The files are compared as they are read, since a format may give a
+    # new identity to each dataset that it encodes, as AFNI does.
+    saved, consolidated = cls.load(saved), cls.load(consolidated)
+    assert np.array_equal(
+        np.asarray(_data(exemplar, saved)),
+        np.asarray(_data(exemplar, consolidated)),
     )
+    assert np.allclose(
+        exemplar.geometry(saved), exemplar.geometry(consolidated)
+    )
+    assert np.allclose(exemplar.geometry(saved), exemplar.geometry(loaded))
     # Saving leaves the object as it was.
     assert _raw(loaded) is raw
     assert loaded.metadata is metadata

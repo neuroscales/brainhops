@@ -50,16 +50,6 @@ class AfniMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     raw: NoRepr[tx.Optional[AfniRaw]] = None
     """The record of the dataset, or `None` for metadata without a record."""
 
-    def to_raw(self) -> tx.Optional[AfniRaw]:
-        """Return a copy of the record that the caller is free to change.
-
-        Returns
-        -------
-        AfniRaw or None
-            A copy of `raw`, or `None` when no record is held.
-        """
-        return None if self.raw is None else self.raw.copy()
-
     @classmethod
     def sniff_fileobj(
         cls,

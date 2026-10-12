@@ -693,7 +693,7 @@ def _scaled_source(tmp_path, name="source.mif"):  # noqa: ANN001, ANN202
 def test_an_untouched_image_keeps_its_bytes(tmp_path, name) -> None:  # noqa: ANN001
     source = _scaled_source(tmp_path, name)
     loaded = MrtrixImage.load(source)
-    assert loaded.to_raw() is loaded.metadata.raw
+    assert loaded.consolidate().metadata.raw is loaded.metadata.raw
     suffix = name[len("source") :]
     writers = {
         "save": lambda target: loaded.save(target),
@@ -748,7 +748,7 @@ def test_an_image_saved_over_itself_keeps_its_voxels(tmp_path) -> None:  # noqa:
     assert source.read_bytes() == before
 
 
-def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
+def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     """Each public knob is either written or leaves the record as read."""
     source = _scaled_source(tmp_path)
 
@@ -757,16 +757,16 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
 
     image = loaded()
     record = image.metadata.raw
-    assert image.to_raw() is record
+    assert image.consolidate().metadata.raw is record
     # Options that name what the file stores keep the record and the
     # stored voxels.
     same = dict(layout="-0,+2,+1", datatype="UInt16LE", scaling=(-1, 0.5))
-    assert image.to_raw(**same) is record
+    assert image.consolidate(**same).metadata.raw is record
     assert image.to_bytes(**same) == source.read_bytes()
 
     # New voxels are stored with their own type and without scaling.
     image.data = np.asarray(image.data) * 2
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert written is not record
     assert written.datatype == "Float32LE" and written.scaling is None
     assert written.layout == record.layout
@@ -776,7 +776,9 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
 
     # Other options decode the voxels and store them again.
     image = loaded()
-    written = image.to_raw(datatype="Int16BE", layout="+0,+1,+2")
+    written = image.consolidate(
+        datatype="Int16BE", layout="+0,+1,+2"
+    ).metadata.raw
     assert written.datatype == "Int16BE" and written.layout == (1, 2, 3)
     back = MrtrixImage.from_bytes(image.to_bytes(scaling=(0, 0.25)))
     assert back.metadata.raw.scaling == (0.0, 0.25)
@@ -785,7 +787,7 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     # Assigned transformations give the geometry.
     image = loaded()
     image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert written.vox == (2.0, 3.0, 4.0)
     assert np.array_equal(written.transform, np.eye(3, 4))
 
@@ -794,16 +796,18 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     edited = record.copy()
     edited.keyval["comments"] = "edited"
     image.metadata = MrtrixMetadata.from_raw(edited)
-    assert image.to_raw() is edited
+    assert image.consolidate().metadata.raw is edited
 
     # The keys are merged last, and those that the other options, the data
     # and the geometry decide are refused.
     image = loaded()
-    written = image.to_raw(keyval={"command_history": None, "x": "y"})
+    written = image.consolidate(
+        keyval={"command_history": None, "x": "y"}
+    ).metadata.raw
     assert written.keyval == {"x": "y"}
     for key in ("dim", "Vox", "transform", "scaling", "file"):
         with pytest.raises(WriterError, match="keyval="):
-            image.to_raw(keyval={key: "1"})
+            image.consolidate(keyval={key: "1"})
 
     # The record of the metadata is never changed.
     assert record == MrtrixImage.load(source).metadata.raw
@@ -819,12 +823,12 @@ def test_metadata_reads_and_writes_the_header(tmp_path) -> None:  # noqa: ANN001
     metadata = MrtrixMetadata.load(source)
     assert metadata.raw.keyval["command_history"] == "mrconvert in.nii out.mif"
     assert pickle.loads(pickle.dumps(metadata)).raw == metadata.raw
-    assert metadata.to_raw() == metadata.raw
-    assert metadata.to_raw() is not metadata.raw
+    assert metadata.raw.copy() == metadata.raw
+    assert metadata.raw.copy() is not metadata.raw
     offset = metadata.raw.file[1]
     assert metadata.to_bytes() == _content(source)[:offset]
     # A stale copy of the bytes is not written.
-    edited = metadata.to_raw()
+    edited = metadata.raw.copy()
     edited.keyval["x"] = "y"
     assert b"x: y" in edited.to_bytes()
     assert b"a comment" not in edited.to_bytes()
@@ -865,7 +869,7 @@ def test_nothing_but_the_data_reads_the_voxels(
     repr(image)
     assert image.transformations
     assert image.system is not None
-    assert image.to_raw() is image.metadata.raw
+    assert image.consolidate().metadata.raw is image.metadata.raw
     pickle.loads(pickle.dumps(image))
     MrtrixImage.from_bytes(source.read_bytes())
     assert reads.count == 0

@@ -912,7 +912,7 @@ def test_an_untouched_dataset_keeps_the_bytes_of_both_files(
     stored = pathlib.Path(_nibabel_data(brik))
     view = name.split("+")[1].split(".")[0]
     loaded = AfniImage.load(source)
-    assert loaded.to_raw() is loaded.metadata.raw
+    assert loaded.consolidate().metadata.raw is loaded.metadata.raw
     writers = {
         "save": lambda target: loaded.save(target),
         "io.save": lambda target: io.save(AfniImage.load(source), target),
@@ -940,7 +940,7 @@ def test_a_dataset_saved_over_itself_keeps_its_voxels(tmp_path) -> None:  # noqa
     assert np.array_equal(np.asarray(AfniImage.load(path).data), DATA)
 
 
-def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
+def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     """Each public knob is either written or leaves the record as read."""
     real = np.array(
         [
@@ -961,14 +961,19 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
 
     image = loaded()
     record = image.metadata.raw
-    assert image.to_raw() is record
+    assert image.consolidate().metadata.raw is record
     # Options that change nothing keep the record.
-    assert image.to_raw(view="orig", datatype="float") is record
-    assert image.to_raw(attributes={"HISTORY_NOTE": "kept"}) is record
+    assert (
+        image.consolidate(view="orig", datatype="float").metadata.raw is record
+    )
+    assert (
+        image.consolidate(attributes={"HISTORY_NOTE": "kept"}).metadata.raw
+        is record
+    )
 
     # New voxels are written with their own layout and a new identity.
     image.data = np.asarray(image.data) + 1
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert written is not record
     assert written["BRICK_STATS"] == (
         float(DATA.min() + 1),
@@ -980,14 +985,14 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
 
     # Another stored type decodes the voxels and stores them again.
     image = loaded()
-    written = image.to_raw(datatype="short")
+    written = image.consolidate(datatype="short").metadata.raw
     assert written.brick_types == (1,)
     assert written["ORIGIN"] == record["ORIGIN"]
 
     # Assigned transformations give the geometry.
     image = loaded()
     image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
-    written = image.to_raw()
+    written = image.consolidate().metadata.raw
     assert np.allclose(written.voxel_to_dicom, np.diag([-2.0, -3.0, 4.0, 1.0]))
     assert written["HISTORY_NOTE"] == "kept"
 
@@ -995,15 +1000,19 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     image = loaded()
     edited = record.replace(HISTORY_NOTE="edited")
     image.metadata = AfniMetadata.from_raw(edited)
-    assert image.to_raw() is edited
+    assert image.consolidate().metadata.raw is edited
 
     # The view and the attributes are written, the attributes last.
     image = loaded()
-    assert image.to_raw(view="tlrc").view == "tlrc"
-    written = image.to_raw(attributes={"HISTORY_NOTE": None, "X": "y"})
+    assert image.consolidate(view="tlrc").metadata.raw.view == "tlrc"
+    written = image.consolidate(
+        attributes={"HISTORY_NOTE": None, "X": "y"}
+    ).metadata.raw
     assert "HISTORY_NOTE" not in written and written["X"] == "y"
     assert written["IDCODE_STRING"] != "XYZ_original"
-    kept = image.to_raw(attributes={"IDCODE_STRING": "mine", "X": "y"})
+    kept = image.consolidate(
+        attributes={"IDCODE_STRING": "mine", "X": "y"}
+    ).metadata.raw
     assert kept["IDCODE_STRING"] == "mine"
     image.save(tmp_path / "out+tlrc.HEAD")
     assert (
@@ -1013,7 +1022,7 @@ def test_to_raw_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     # The attributes of the BRIK layout follow the data and are refused.
     for name in ("DATASET_DIMENSIONS", "BRICK_TYPES", "BRICK_FLOAT_FACS"):
         with pytest.raises(WriterError, match="datatype="):
-            image.to_raw(attributes={name: None})
+            image.consolidate(attributes={name: None})
 
     # The record of the metadata is never changed.
     assert record.attributes == AfniImage.load(source).metadata.raw.attributes
@@ -1040,7 +1049,7 @@ def test_metadata_reads_and_writes_the_header(tmp_path) -> None:  # noqa: ANN001
         metadata = AfniMetadata.load(tmp_path / name)
         assert metadata.raw["HISTORY_NOTE"] == "kept"
     assert pickle.loads(pickle.dumps(metadata)).raw.text == metadata.raw.text
-    copy = metadata.to_raw()
+    copy = metadata.raw.copy()
     assert copy is not metadata.raw
     assert copy.attributes == metadata.raw.attributes
     # The header alone is written, and no BRIK.
@@ -1102,7 +1111,7 @@ def test_nothing_but_the_data_reads_the_voxels(
     repr(image)
     assert image.transformations
     assert image.system is not None
-    image.to_raw()
+    image.consolidate()
     pickle.loads(pickle.dumps(image))
     with open(tmp_path / "dset+orig.BRIK", "rb") as f:
         AfniImage.load(f)
@@ -1162,7 +1171,7 @@ def test_an_untouched_dataset_with_a_nan_attribute_keeps_its_bytes(
 ) -> None:
     path = _source(tmp_path, MARKS_XYZ=(float("nan"), 1.0, 2.0))
     image = AfniImage.load(path)
-    assert image.to_raw() is image.metadata.raw
+    assert image.consolidate().metadata.raw is image.metadata.raw
     image.save(tmp_path / "copy+orig.HEAD")
     assert (tmp_path / "copy+orig.HEAD").read_bytes() == path.read_bytes()
 
@@ -1181,7 +1190,7 @@ def test_an_untouched_dataset_with_a_nan_attribute_keeps_its_bytes(
 def test_the_geometry_attributes_cannot_be_set(tmp_path, name) -> None:  # noqa: ANN001
     image = AfniImage.load(_source(tmp_path))
     with pytest.raises(WriterError, match="transformations"):
-        image.to_raw(attributes={name: (1.0, 2.0, 3.0)})
+        image.consolidate(attributes={name: (1.0, 2.0, 3.0)})
 
 
 def test_an_attribute_must_be_latin1_text(tmp_path) -> None:  # noqa: ANN001
