@@ -34,8 +34,8 @@ format. The exact converters of such a format, one for each family of
 transformations, bridge the endpoints before they build the format.
 
 The formats that derive their coordinate systems from what they hold,
-such as LTA, FNIRT and the NiftyReg, ITK and OME-Zarr fields, have no
-exact converter yet (#312). Such a format registers, for each family
+such as LTA, FNIRT, M3Z and the NiftyReg, ITK and OME-Zarr fields, have
+no exact converter yet (#312). Such a format registers, for each family
 that it holds, one shared converter
 ([`relabelling`][brainhops.io.transformations.base._converters.relabelling])
 that relabels a transformation as the format, and it does so only when
@@ -43,14 +43,13 @@ the endpoints of the transformation are not known or are compatible
 with the coordinate systems of the format, as the bound classes check
 them. Otherwise it raises the error that [`unrepresentable`][] builds.
 Each registration names its format and a family, as an exact converter
-does, so it is more specific than the converters of the data model. The
-M3Z format still refuses every family with [`no_exact_conversion`][], in
-converters of its own. A format that has no coordinate systems of its
-own and registers no converter, such as a bare matrix or an ITK chain,
-is rebuilt by the converters of the data model, which keep the
-parameters and the endpoints of the transformation. A format that is
-converted to its own class is changed by the rules of its family, as
-any other transformation of that family is.
+does, so it is more specific than the converters of the data model. A
+format that has no coordinate systems of its own and registers no
+converter, such as a bare matrix or an ITK chain, is rebuilt by the
+converters of the data model, which keep the parameters and the
+endpoints of the transformation. A format that is converted to its own
+class is changed by the rules of its family, as any other
+transformation of that family is.
 """
 
 __all__ = [
@@ -59,7 +58,6 @@ __all__ = [
     "convert_instance",
     "converts_to",
     "format_options",
-    "no_exact_conversion",
     "split_field_chain",
     "undoes",
     "unrepresentable",
@@ -101,41 +99,6 @@ def unrepresentable(
     return ConversionError(
         f"This {type(t).__name__} cannot be held exactly by a "
         f"{cls.__name__}: {reason}"
-    )
-
-
-def no_exact_conversion(
-    t: _xforms.Transformation, cls: type
-) -> ConversionError:
-    """
-    Return the error that a format without an exact converter raises.
-
-    Some formats derive their coordinate systems from the content they
-    hold. Such a format may be able to hold some transformations of the
-    family of `t`, but an exact converter, which is not written yet,
-    must decide which ones and how (#312). Until that converter exists,
-    the format refuses `t` with this error. If `t` were relabelled as
-    the format instead, the result would not be the map that the format
-    says it holds.
-
-    Parameters
-    ----------
-    t : Transformation
-        The transformation being converted.
-    cls : type
-        The format it is converted to.
-
-    Returns
-    -------
-    ConversionError
-        The error, for the converter to raise.
-    """
-    return unrepresentable(
-        t,
-        cls,
-        "no exact conversion into this format is implemented yet (#312), "
-        "and a transformation is not relabelled as a format. Build the "
-        "format from its own parameters instead.",
     )
 
 
