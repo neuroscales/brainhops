@@ -130,7 +130,8 @@ metadata reads the whole file.
 A morph that has not been modified is written back byte for byte, apart
 from differences in the gzip compression. A morph whose chain was
 assigned, either to change its field or to build a morph from scratch,
-is written from the chain, as described in [`M3zMorph.to_raw`][]. The
+is consolidated and written from the chain, as described in
+[`M3zMorph.consolidate`][]. The
 atlas geometry is then rebuilt from the first affine of the chain, and
 the source geometry from the last affine when the positions are voxel
 coordinates. Whatever the chain does not describe, such as the original

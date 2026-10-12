@@ -8,9 +8,10 @@ described in [`brainhops.io.transformations.itk.nifti`][].
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import KwOnly, NoRepr, replace
 
 from brainhops._core import affines as _affines
-from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
@@ -23,6 +24,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
+from brainhops.io.common.nifti import NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
@@ -43,6 +45,7 @@ from brainhops.io.common.nifti._header import (
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.base.fields import LPSCoordinatesField
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._base import _consolidated
 
 from .._systems import _make_system
 from ._views import _itk_field_to_disk, _itk_field_to_model
@@ -162,23 +165,28 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
     # --- data ---------------------------------------------------------
 
-    @lazyproperty(invalidates="transformations")
+    _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    """The vectors given to the field, or `None` to decode them from `raw`.
+
+    Vectors stored here are pending until [`consolidate`][] or a write
+    encodes them into `raw`.
+    """
+
+    @smartproperty(cache=True, invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The stored vectors, as an (X, Y, Z, 3) or (X, Y, 2) array.
 
-        The vectors are decoded from `raw` without the singleton axes of the
-        ITK layout, and they are those of the file, before the frame of a
-        `DISPVECT` file is converted. Setting the data stores it in `raw` in
-        the ITK layout and drops the chain decoded from the previous data.
+        Vectors that are assigned are returned as they are, and stay
+        pending until [`consolidate`][] or a write encodes them. Otherwise
+        they are decoded from `raw` without the singleton axes of the ITK
+        layout, and they are those of the file, before the frame of a
+        `DISPVECT` file is converted. Assigning the data drops the chain
+        decoded from the previous data.
         """
         if self.raw is None:
             return None
         return _itk_field_to_model(self.raw)
-
-    @data.setter
-    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self.raw = None if value is None else _itk_field_to_disk(value)
 
     metadata = smartproperty(
         "metadata", invalidates=("transformations", "input", "output")
@@ -198,7 +206,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         """Return the spatial dimension without decoding the data.
 
         The dimension is read from the header, or else from an assigned
-        chain, or else from the shape of `raw`.
+        chain, or else from the shape of assigned vectors or of `raw`.
         """
         header = _header(self)
         if header is not None:
@@ -207,6 +215,8 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         if chain:
             # The first slot maps LPS to voxels, with one row per dimension.
             return int(np.asarray(chain[0].matrix).shape[0])
+        if self._data is not None:
+            return int(self._data.shape[-1])
         if self.raw is not None:
             return _itk_ndim(tuple(self.raw.shape))
         return None
@@ -287,6 +297,62 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
     # --- writing ------------------------------------------------------
 
+    def consolidate(
+        self, inplace: bool = False, like: tx.Any = None, **overrides
+    ) -> tx.Self:
+        """Encode the pending vectors or chain into `raw` and a header.
+
+        A field whose chain is decoded from its file keeps its stored
+        vectors, assigned or read, under a copy of the header of its
+        metadata. Otherwise, each type encodes its chain as ITK would
+        write it. Non-encoding header fields are copied from `like`, and
+        `overrides` are applied last. A field that has a header and
+        nothing pending, consolidated without options, is left as it is.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this field rather than a copy.
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        Self
+            The consolidated copy, or this field with `inplace=True`.
+        """
+        if (
+            self._data is None
+            and self._transformations is None
+            and like is None
+            and not overrides
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            return self if inplace else replace(self)
+        image = self._encoded(like, **overrides)
+        return _consolidated(
+            self,
+            inplace,
+            image.dataobj,
+            NiftiRaw(header=image.header),
+            data=None,
+            transformations=None,
+        )
+
+    def _encoded(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+        """Encode the field over a copy of its record.
+
+        Each registered type encodes its chain as ITK writes it.
+        """
+        raise NotImplementedError
+
     def _xform_codes(self) -> tx.Tuple[int, int]:
         """
         Return the sform and qform codes to store.
@@ -306,18 +372,23 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         self, like: tx.Any = None, **overrides
     ) -> tx.Optional[tx.Union[nb.Nifti1Image, nb.Nifti2Image]]:
         """
-        Return the NIfTI image of the field as it was read, or `None`.
+        Return the NIfTI image of the stored vectors, or `None`.
 
-        A field whose chain is decoded from its file is written back as it
-        is stored, under a copy of the header of its metadata, so that a
-        `DISPVECT` file stays one. `None` is returned when the field has no
-        metadata or no array, or when its chain was assigned.
+        A field whose chain is decoded from its file keeps its stored
+        vectors, assigned or read, under a copy of the header of its
+        metadata, so that a `DISPVECT` file stays one. `None` is returned
+        when the field has no metadata or no vectors, or when its chain
+        was assigned.
         """
-        if self.metadata is None or self.raw is None:
+        if self._data is not None:
+            stored = _itk_field_to_disk(self._data)
+        else:
+            stored = self.raw
+        if self.metadata is None or stored is None:
             return None
         if self._transformations is not None:
             return None
-        image = _record_image(self.raw, self._record(), overrides=overrides)
+        image = _record_image(stored, self._record(), overrides=overrides)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
@@ -472,16 +543,16 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 
     # --- writing ------------------------------------------------------
 
-    def to_nibabel(
+    def _encoded(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the `nibabel` image that ITK would write for this field.
+        Encode the field as ITK would write it.
 
-        The displacements are rotated back to LPS millimetres and written
+        The displacements are rotated back to LPS millimetres and encoded
         unconverted under the `VECTOR` intent. The voxel-to-LPS affine becomes
-        the voxel-to-RAS sform and qform. A field read from a file is written
-        back as read. Non-encoding header fields are copied from `like`, and
+        the voxel-to-RAS sform and qform. A field read from a file keeps its
+        stored vectors. Non-encoding header fields are copied from `like`, and
         `overrides` are applied last.
 
         Parameters
@@ -591,15 +662,15 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
 
     # --- writing ------------------------------------------------------
 
-    def to_nibabel(
+    def _encoded(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the `nibabel` image of the coordinates field.
+        Encode the coordinates field.
 
-        The coordinates are written unconverted under the `VECTOR` intent, and
+        The coordinates are encoded unconverted under the `VECTOR` intent, and
         the inverse of the `lps2voxel` affine becomes the voxel-to-RAS sform
-        and qform. A field read from a file is written back as read.
+        and qform. A field read from a file keeps its stored coordinates.
         Non-encoding header fields are copied from `like`, and `overrides` are
         applied last.
 

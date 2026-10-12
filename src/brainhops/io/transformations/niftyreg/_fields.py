@@ -8,8 +8,9 @@ in [`brainhops.io.transformations.niftyreg`][].
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import KwOnly, NoRepr, replace
 
-from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
@@ -24,6 +25,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
 )
+from brainhops.io.common.nifti import NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
@@ -50,6 +52,7 @@ from brainhops.io.transformations.base.fields import (
     voxel_grid_coordinates,
 )
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._base import _consolidated
 from brainhops.io.transformations.nifti._views import (
     _field_to_disk,
     _field_to_model,
@@ -281,24 +284,28 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         if header is not None:
             _check_shape(header)
 
-    @lazyproperty(invalidates="transformations")
+    _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    """The vectors given to the field, or `None` to decode them from `raw`.
+
+    Vectors stored here are pending until [`consolidate`][] or a write
+    encodes them into `raw`.
+    """
+
+    @smartproperty(cache=True, invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
-        The stored vectors as an (X, Y, Z, 3) array, decoded from `raw`.
+        The stored vectors as an (X, Y, Z, 3) array.
 
-        NiftyReg stores a field with shape (X, Y, Z, 1, 3), and the
-        singleton axis is dropped. The vectors are positions or
-        displacements, as the type of the file says. Setting the data
-        stores it in `raw` and drops the chain decoded from the previous
-        data.
+        Vectors that are assigned are returned as they are, and stay
+        pending until [`consolidate`][] or a write encodes them. Otherwise
+        they are decoded from `raw`: NiftyReg stores a field with shape
+        (X, Y, Z, 1, 3), and the singleton axis is dropped. The vectors are
+        positions or displacements, as the type of the file says.
+        Assigning the data drops the chain decoded from the previous data.
         """
         if self.raw is None:
             return None
         return _field_to_model(self.raw)
-
-    @data.setter
-    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self.raw = None if value is None else _field_to_disk(value)
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -333,10 +340,11 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         if data is None:
             raise ParserContentError("This field has no data to read.")
         if len(data.shape) != _NDIM + 1 or int(data.shape[-1]) != _NDIM:
-            shape = tuple(int(d) for d in self.raw.shape)
+            shape = tuple(int(d) for d in data.shape)
             raise ParserContentError(
                 f"A three-dimensional NiftyReg field is stored as a "
-                f"(X, Y, Z, 1, 3) array, not as an array of shape {shape}."
+                f"(X, Y, Z, 1, 3) array, and its vectors have the shape "
+                f"{shape}."
             )
         return data
 
@@ -397,6 +405,63 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
 
     _WHAT: tx.ClassVar[str] = "A NiftyReg field"
 
+    def consolidate(
+        self, inplace: bool = False, like: tx.Any = None, **overrides
+    ) -> tx.Self:
+        """Encode the pending vectors or chain into `raw` and a header.
+
+        A field whose chain is decoded from a NiftyReg file of its own type
+        keeps its stored vectors, assigned or read, under a copy of the
+        header of its metadata, extensions included. Otherwise, each type
+        encodes its chain as NiftyReg would write it. Non-encoding header
+        fields are copied from `like`, and `overrides` are applied last. A
+        field that has a header and nothing pending, consolidated without
+        options, is left as it is.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this field rather than a copy.
+        like : path, nibabel image or header, or NIfTI object, optional
+            Template whose header fields that do not encode the
+            transformation are copied.
+        **overrides : Any
+            Header fields that take precedence over the derived values and
+            `like`.
+
+        Returns
+        -------
+        Self
+            The consolidated copy, or this field with `inplace=True`.
+        """
+        if (
+            self._data is None
+            and self._transformations is None
+            and like is None
+            and not overrides
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            return self if inplace else replace(self)
+        image = self._encoded(like, **overrides)
+        return _consolidated(
+            self,
+            inplace,
+            image.dataobj,
+            NiftiRaw(header=image.header),
+            data=None,
+            transformations=None,
+        )
+
+    def _encoded(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+        """Encode the field over a copy of its record.
+
+        Each registered type encodes its chain as NiftyReg writes it.
+        """
+        raise NotImplementedError
+
     def _split(
         self, chain: tx.Sequence[_xforms.Transformation]
     ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
@@ -417,18 +482,23 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         self, like: tx.Any = None, **overrides
     ) -> tx.Optional[tx.Union[nb.Nifti1Image, nb.Nifti2Image]]:
         """
-        Return the NIfTI image of the field as it was read, or `None`.
+        Return the NIfTI image of the stored vectors, or `None`.
 
         A field whose chain is decoded from a NiftyReg file of its own type
-        is written back as it is stored, under a copy of the header of its
-        metadata, extensions included. `None` is returned when the field
-        was not read from such a file, or when its chain was assigned.
+        keeps its stored vectors, assigned or read, under a copy of the
+        header of its metadata, extensions included. `None` is returned
+        when the field was not read from such a file, or when its chain
+        was assigned.
         """
-        if self.raw is None or self.niftyreg_type not in type(self).TYPES:
+        if self._data is not None:
+            stored = _field_to_disk(self._data)
+        else:
+            stored = self.raw
+        if stored is None or self.niftyreg_type not in type(self).TYPES:
             return None
         if self._transformations is not None:
             return None
-        image = _record_image(self.raw, self._record(), overrides=overrides)
+        image = _record_image(stored, self._record(), overrides=overrides)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
@@ -487,13 +557,13 @@ class NiftyRegDisplacementField(NiftyRegSequence):
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset({DISP_FIELD})
     _WHAT: tx.ClassVar[str] = "A NiftyReg displacement field"
 
-    def to_nibabel(
+    def _encoded(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """Build the NIfTI image that NiftyReg would write for this field.
+        """Encode the field as NiftyReg would write it.
 
-        A field read from a file is written back as read. Otherwise, the
-        displacements of the chain are written.
+        A field read from a file keeps its stored vectors. Otherwise, the
+        displacements of the chain are encoded.
 
         Parameters
         ----------
@@ -539,13 +609,13 @@ class NiftyRegDeformationField(NiftyRegSequence):
         )
         return positions - backend.asarray(grid, dtype=positions.dtype)
 
-    def to_nibabel(
+    def _encoded(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the NIfTI image of this field, with displacements as positions.
+        Encode the field, with displacements as positions.
 
-        A field read from a file is written back as read.
+        A field read from a file keeps its stored vectors.
 
         Parameters
         ----------
@@ -651,14 +721,14 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         chain = self.transformations
         return chain[0] if len(chain) == 4 else None
 
-    def to_nibabel(
+    def _encoded(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the NIfTI image of this grid, with coefficients as positions.
+        Encode the grid, with coefficients as positions.
 
-        A grid read from a file is written back as read. Otherwise, a
-        leading affine is written to the header extension that NiftyReg
+        A grid read from a file keeps its stored positions. Otherwise, a
+        leading affine is encoded in the header extension that NiftyReg
         reads.
 
         Parameters
@@ -808,13 +878,13 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
         )
         return positions - backend.asarray(grid, dtype=positions.dtype)
 
-    def to_nibabel(
+    def _encoded(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the NIfTI image of this velocity grid.
+        Encode the velocity grid.
 
-        A grid read from a file is written back as read. Otherwise, the
+        A grid read from a file keeps its stored positions. Otherwise, the
         coefficients are turned into positions, and the squaring steps are
         stored in `intent_p2`.
 
@@ -873,14 +943,14 @@ class NiftyRegVelocityField(NiftyRegVelocity):
         )
         return vectors - backend.asarray(grid, dtype=vectors.dtype)
 
-    def to_nibabel(
+    def _encoded(
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Build the NIfTI image of this velocity field.
+        Encode the velocity field.
 
-        A field read from a file is written back as read. Otherwise, it is
-        written as positions, the type that NiftyReg integrates, with the
+        A field read from a file keeps its stored vectors. Otherwise, it is
+        encoded as positions, the type that NiftyReg integrates, with the
         squaring steps in `intent_p2`.
 
         Parameters

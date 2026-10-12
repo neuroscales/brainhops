@@ -39,16 +39,6 @@ class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     raw: NoRepr[tx.Optional[NiftiRaw]] = None
     """The header of the file, or `None` for metadata without a record."""
 
-    def to_raw(self) -> tx.Optional[NiftiRaw]:
-        """Return a copy of the record that the caller is free to change.
-
-        Returns
-        -------
-        NiftiRaw or None
-            A copy of `raw`, or `None` when no record is held.
-        """
-        return None if self.raw is None else self.raw.copy()
-
     @classmethod
     def sniff_fileobj(
         cls,

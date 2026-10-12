@@ -135,6 +135,17 @@ class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage):
         ".brik.bz2",
     )
 
+    _data: tx.Optional[tx.Any] = Inherit("data", default=None)
+    """The data given to the image, or `None` to decode it.
+
+    The image takes over the `data` field of [`SingleScaleImage`][] to
+    store it under this private name. The constructor still takes `data`
+    in the same place, and the property of the same name reads it.
+    `None`, the default, means that the data is decoded from the stored
+    sub-bricks, so that a copy of the image made with `replace` keeps
+    the lazy sub-bricks rather than a decoded array.
+    """
+
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
@@ -172,13 +183,14 @@ class AfniImage(AfniReaderWriter, ImageFormat, SingleScaleImage):
 
     # --- data model ---------------------------------------------------
 
-    @smartproperty
+    @smartproperty(cache=True)
     def data(self) -> tx.Optional[tx.Any]:
-        """Scaled image data, unless set explicitly."""
-        data = self._scaled_data()
-        if data is not None and data is not getattr(self, "dataobj", None):
-            self._data = data
-        return data
+        """Image data, scaled from the stored sub-bricks unless assigned.
+
+        The data decoded from the sub-bricks is cached. Assigning an array
+        replaces it, and assigning `None` decodes the sub-bricks again.
+        """
+        return self._scaled_data()
 
     @smartproperty
     def system(self) -> tx.Optional[CoordinateSystem]:
