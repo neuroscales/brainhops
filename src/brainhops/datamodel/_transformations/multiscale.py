@@ -1,10 +1,10 @@
 import typing_extensions as tx
-from bagof.magic import NotKwOnly, replace
+from bagof.magic import Forget, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
 from brainhops._core.affines import inv as _affine_inv
 from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol, Derived
+from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.base import DataModelBase
 from brainhops.errors import ConversionError
@@ -100,9 +100,9 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
     """
 
     # `transformations` is served from the finest scale rather than stored, so
-    # it is not a constructor field. Declaring the storage slot of `Sequence`
-    # as derived keeps it out of `__init__`, `fields()` and `replace()`.
-    _transformations: Derived[tx.Tuple[Transformation, ...]]
+    # it is not a constructor field. Forgetting the storage field of
+    # `Sequence` keeps it out of `__init__`, `fields()` and `replace()`.
+    _transformations: Forget
 
     @property
     def transformations(self) -> tx.Tuple[Transformation, ...]:

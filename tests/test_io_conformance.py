@@ -27,7 +27,7 @@ import struct
 import numpy as np
 import pytest
 import typing_extensions as tx
-from bagof.magic import KwOnly, Magic, NoRepr, fields, replace
+from bagof.magic import Inherit, KwOnly, Magic, NoRepr, fields, replace
 
 import brainhops.io as io
 from brainhops._core.properties import lazyproperty, smartproperty
@@ -283,6 +283,12 @@ class ToyImage(
     raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
     metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
 
+    # The image takes the `transformations` field over under a private
+    # name, where `None` means that they are decoded from the record.
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+
     def __post_init__(self, arguments: tx.Any) -> None:
         # The default of `raw`, assigned after `data`, erases the array
         # stored by `data=`, so the array is stored again.
@@ -298,10 +304,10 @@ class ToyImage(
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self.raw = None if value is None else _toy_to_disk(value)
 
-    @smartproperty(unset=(None, "empty"))
+    @smartproperty
     def transformations(self) -> tx.List[Transformation]:
         # The geometry is decoded from the record each time, unless a list
-        # of transformations has been assigned.
+        # of transformations, which may be empty, has been assigned.
         if self.metadata is None or self.metadata.raw is None:
             return []
         return [Scaling(list(reversed(self.metadata.raw.spacing)))]
@@ -787,6 +793,19 @@ def _saved(
     return path
 
 
+def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
+    """Write a new object of the format with a geometry and return its path.
+
+    The geometry is the one that `exemplar.change_geometry` assigns, so
+    that it differs from the geometry of an object built from data.
+    """
+    path = tmp_path / ("placed" + exemplar.suffix)
+    obj = cls(data=exemplar.sample())
+    exemplar.change_geometry(obj)
+    obj.save(path)
+    return path
+
+
 # ----------------------------------------------------------------------
 #   REGISTRY
 # ----------------------------------------------------------------------
@@ -1021,6 +1040,63 @@ def test_12_adapter_contract(
     assert np.array_equal(np.asarray(data), exemplar.sample())
     metadata = exemplar.metadata.from_bytes(content)
     assert isinstance(metadata, exemplar.metadata)
+
+
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_13_transformations_are_decoded_unless_assigned(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    loaded = cls.load(_placed(cls, exemplar, tmp_path))
+    decoded = exemplar.geometry(loaded)
+    # After a read, the image stores no transformations, so they are
+    # decoded from the record. The copies within the format store none
+    # either, so they decode the same record.
+    assert loaded._transformations is None
+    for copy in (replace(loaded), cls.from_instance(loaded)):
+        assert copy._transformations is None
+        assert np.allclose(exemplar.geometry(copy), decoded)
+    # An empty list is kept, and the copies keep it.
+    loaded.transformations = []
+    assert loaded.transformations == []
+    assert replace(loaded).transformations == []
+    assert cls.from_instance(loaded).transformations == []
+    # The image is then written as an image built from data alone.
+    target = tmp_path / ("empty" + exemplar.suffix)
+    loaded.save(target)
+    bare = cls.load(_saved(cls, exemplar, tmp_path, "bare"))
+    assert np.allclose(
+        exemplar.geometry(cls.load(target)), exemplar.geometry(bare)
+    )
+    # Assigning `None` decodes the record again.
+    loaded.transformations = None
+    assert np.allclose(exemplar.geometry(loaded), decoded)
+
+
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_14_copies_between_classes_carry_the_decoded_transformations(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    loaded = cls.load(_placed(cls, exemplar, tmp_path))
+    decoded = exemplar.geometry(loaded)
+    # The data model and another format read the decoded transformations,
+    # since the record of this format means nothing to them.
+    for copy in (
+        _model(cls).from_instance(loaded),
+        _ForeignImage.from_instance(loaded),
+    ):
+        assert np.allclose(exemplar.geometry(copy), decoded)
+    # This format stores the transformations of another class as given.
+    foreign = exemplar.foreign(exemplar.sample())
+    exemplar.change_geometry(foreign)
+    converted = cls.from_instance(foreign)
+    assert converted._transformations is not None
+    assert np.allclose(
+        exemplar.geometry(converted), exemplar.geometry(foreign)
+    )
 
 
 # ----------------------------------------------------------------------

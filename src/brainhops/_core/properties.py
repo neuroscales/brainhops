@@ -261,7 +261,11 @@ def smartproperty(
         value when any of its forms matches. A property that stands in for
         an inherited field whose default is an empty container needs
         `unset=(None, "empty")`, because the constructor writes that
-        default through the setter.
+        default through the setter. An empty container assigned on purpose
+        then reads as unset as well. A class that must tell the two apart
+        takes the field over under a private name instead, with
+        `_x: ... = Inherit("x", default=None)` from
+        [`bagof.magic`][bagof.magic], and keeps the default `unset=None`.
     cache : bool, default=False
         Whether to cache the computed value.
     invalidates : str or Invalidator or tuple, default=()
