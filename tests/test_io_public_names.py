@@ -103,6 +103,22 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.transformations.x5": Package(
+        names=frozenset(
+            {
+                "X5BSplineField",
+                "X5CoordinatesField",
+                "X5DisplacementField",
+                "X5Domain",
+                "X5Header",
+                "X5Metadata",
+                "X5Node",
+                "X5Raw",
+                "X5Transform",
+            }
+        ),
+        needs=("h5py",),
+    ),
     "brainhops.io.transformations.itk": Package(
         names=frozenset(
             {

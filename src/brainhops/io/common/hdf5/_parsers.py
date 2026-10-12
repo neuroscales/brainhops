@@ -57,12 +57,54 @@ class Hdf5Reader(BinaryFileReader):
         h5file: h5py.File,
         error: tx.Union[bool, tx.Type[Exception]] = False,
     ) -> float:
-        """Return the confidence that an open HDF5 file is of this format."""
+        """Return the confidence that an open HDF5 file is of this format.
+
+        A concrete format implements this method.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The file, open for reading.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content is not of this
+            format. With `True`, the error is a `SnifferContentError`, and
+            an exception class is raised instead when one is given.
+
+        Returns
+        -------
+        float
+            The confidence that the content is of this format.
+
+        Raises
+        ------
+        NotImplementedError
+            If the format does not implement it.
+        """
         raise NotImplementedError
 
     @classmethod
     def from_h5(cls, h5file: h5py.File, **kwargs) -> tx.Self:
-        """Build an object from an open HDF5 file."""
+        """Build an object from an open HDF5 file.
+
+        A concrete format implements this method.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The file, open for reading.
+        **kwargs : Any
+            The options of the format.
+
+        Returns
+        -------
+        Self
+            The object.
+
+        Raises
+        ------
+        NotImplementedError
+            If the format does not implement it.
+        """
         raise NotImplementedError
 
     @classmethod
@@ -72,7 +114,30 @@ class Hdf5Reader(BinaryFileReader):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score a path, an open HDF5 file or a binary stream."""
+        """Score a path, an open HDF5 file or a binary stream.
+
+        Parameters
+        ----------
+        file : path-like, h5py.File or file object
+            The content to test.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content is not of this
+            format. With `True`, the error is a `SnifferContentError`, and
+            an exception class is raised instead when one is given.
+        **kwargs : Any
+            Options passed to [`sniff_filename`][] or
+            [`sniff_fileobj`][].
+
+        Returns
+        -------
+        float
+            The confidence that the content is of this format.
+
+        Raises
+        ------
+        SnifferError
+            If the content is not of this format and `error` is `True`.
+        """
         if isinstance(file, h5py.File):
             return cls.sniff_h5(file, error=error)
         if isinstance(file, (str, path.PathLike)):
@@ -86,7 +151,32 @@ class Hdf5Reader(BinaryFileReader):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score the HDF5 file at a path."""
+        """Score the HDF5 file at a path.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content is not of this
+            format. With `True`, the error is a `SnifferContentError`, and
+            an exception class is raised instead when one is given.
+        **kwargs : Any
+            Options passed to [`sniff_fileobj`][] when h5py cannot open
+            the path by name.
+
+        Returns
+        -------
+        float
+            The confidence that the content is of this format.
+
+        Raises
+        ------
+        SnifferExistsError
+            If the path does not exist and `error` is `True`.
+        SnifferContentError
+            If the file is not of this format and `error` is `True`.
+        """
         if isinstance(filename, str):
             filename = path.Path(filename)
         if not path.exists(filename):
@@ -114,7 +204,31 @@ class Hdf5Reader(BinaryFileReader):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score an open, seekable binary stream."""
+        """Score an open, seekable binary stream.
+
+        The position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream to test, open in binary mode.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content is not of this
+            format. With `True`, the error is a `SnifferContentError`, and
+            an exception class is raised instead when one is given.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence that the content is of this format.
+
+        Raises
+        ------
+        SnifferContentError
+            If the stream is not of this format and `error` is `True`.
+        """
         with preserve_position(file):
             try:
                 with h5py.File(file, "r") as f:
@@ -134,67 +248,120 @@ class Hdf5Reader(BinaryFileReader):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score the bytes of an HDF5 file."""
+        """Score the bytes of an HDF5 file.
+
+        Parameters
+        ----------
+        content : bytes
+            The content to test.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the content is not of this
+            format. With `True`, the error is a `SnifferContentError`, and
+            an exception class is raised instead when one is given.
+        **kwargs : Any
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence that the content is of this format.
+
+        Raises
+        ------
+        SnifferContentError
+            If the content is not of this format and `error` is `True`.
+        """
         return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
 
     @classmethod
-    def from_file(
-        cls,
-        file: H5Like,
-        keep_open: bool = False,
-        load: bool = True,
-        **kwargs,
-    ) -> tx.Self:
+    def from_file(cls, file: H5Like, **kwargs) -> tx.Self:
         """
         Build an object from a path, a binary stream or an open HDF5 file.
 
-        With `load`, large datasets are read into memory; otherwise they stay
-        on disk. With `keep_open`, the file stays open after loading; otherwise
-        it is closed, and a lazy dataset reopens it on each access.
+        The keyword arguments are the options of the format, which
+        `from_h5` receives. A file that this method opens is closed once
+        it is read, unless the option `keep_open` is true, which only the
+        formats that keep the file accept.
+
+        Parameters
+        ----------
+        file : path-like, h5py.File or file object
+            The content to read.
+        **kwargs : Any
+            The options of the format.
+
+        Returns
+        -------
+        Self
+            The object.
         """
         if isinstance(file, h5py.File):
-            return cls.from_h5(file, keep_open=keep_open, load=load, **kwargs)
+            return cls.from_h5(file, **kwargs)
         if isinstance(file, (str, path.PathLike)):
-            return cls.from_filename(
-                file, keep_open=keep_open, load=load, **kwargs
-            )
-        return cls.from_fileobj(file, keep_open=keep_open, load=load, **kwargs)
+            return cls.from_filename(file, **kwargs)
+        return cls.from_fileobj(file, **kwargs)
 
     @classmethod
     def from_filename(
-        cls,
-        filename: tx.Union[str, PathLike],
-        keep_open: bool = False,
-        load: bool = True,
-        **kwargs,
+        cls, filename: tx.Union[str, PathLike], **kwargs
     ) -> tx.Self:
-        """Build an object from the HDF5 file at a path."""
+        """Build an object from the HDF5 file at a path.
+
+        The file is opened by name, so that a dataset that is read later
+        can open the file again by the same name.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            The options of the format, which may include `keep_open`.
+
+        Returns
+        -------
+        Self
+            The object.
+
+        Raises
+        ------
+        ParserExistsError
+            If the path does not exist.
+        """
         if isinstance(filename, str):
             filename = path.Path(filename)
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         f = h5py.File(str(filename), "r")
         try:
-            return cls.from_h5(f, keep_open=keep_open, load=load, **kwargs)
+            return cls.from_h5(f, **kwargs)
         finally:
-            if not keep_open:
+            if not kwargs.get("keep_open", False):
                 f.close()
 
     @classmethod
-    def from_fileobj(
-        cls,
-        file: tx.IO,
-        keep_open: bool = False,
-        load: bool = True,
-        **kwargs,
-    ) -> tx.Self:
-        """Build an object from an open, seekable binary stream."""
+    def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
+        """Build an object from an open, seekable binary stream.
+
+        The position of the stream is restored.
+
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        **kwargs : Any
+            The options of the format, which may include `keep_open`.
+
+        Returns
+        -------
+        Self
+            The object.
+        """
         with preserve_position(file):
             f = h5py.File(file, "r")
             try:
-                return cls.from_h5(f, keep_open=keep_open, load=load, **kwargs)
+                return cls.from_h5(f, **kwargs)
             finally:
-                if not keep_open:
+                if not kwargs.get("keep_open", False):
                     f.close()
 
 
@@ -206,7 +373,22 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
     """
 
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
-        """Write the object into an empty HDF5 file open for writing."""
+        """Write the object into an empty HDF5 file open for writing.
+
+        A concrete format implements this method.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The file, empty and open for writing.
+        **kwargs : Any
+            The options of the writer.
+
+        Raises
+        ------
+        NotImplementedError
+            If the format does not implement it.
+        """
         raise NotImplementedError
 
     def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
@@ -219,23 +401,58 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
         return lambda h5file: self.to_h5(h5file, **kwargs)
 
     def to_file(self, file: H5Like, **kwargs) -> None:
-        """Write to a path, a binary stream or an open HDF5 file."""
+        """Write to a path, a binary stream or an open HDF5 file.
+
+        Parameters
+        ----------
+        file : path-like, h5py.File or file object
+            Where to write.
+        **kwargs : Any
+            The options of the writer.
+        """
         if isinstance(file, h5py.File):
             return self._h5_writer(**kwargs)(file)
         return super().to_file(file, **kwargs)
 
     def to_filename(self, filename: tx.Union[str, PathLike], **kwargs) -> None:
-        """Write to the file at a path, replacing it."""
+        """Write to the file at a path, replacing it.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            The options of the writer.
+        """
         writer = self._h5_writer(**kwargs)
         with h5py.File(str(filename), "w") as f:
             writer(f)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write to a binary stream open for writing."""
+        """Write to a binary stream open for writing.
+
+        Parameters
+        ----------
+        file : file object
+            The stream, open in binary mode.
+        **kwargs : Any
+            The options of the writer.
+        """
         file.write(self.to_bytes(**kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
-        """Return the bytes of an HDF5 file that encodes the object."""
+        """Return the bytes of an HDF5 file that encodes the object.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            The options of the writer.
+
+        Returns
+        -------
+        bytes
+            The content of the file.
+        """
         writer = self._h5_writer(**kwargs)
         buffer = BytesIO()
         with h5py.File(buffer, "w") as f:
@@ -254,6 +471,16 @@ def read_string(value: tx.Any) -> tx.Optional[str]:
 
     The value may be `str`, `bytes`, a NumPy scalar, or a one-element array
     or dataset wrapping one of these. `None` is returned unchanged.
+
+    Parameters
+    ----------
+    value : Any
+        The stored value.
+
+    Returns
+    -------
+    str or None
+        The decoded string.
 
     Raises
     ------
