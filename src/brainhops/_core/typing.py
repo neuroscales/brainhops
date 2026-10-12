@@ -49,22 +49,6 @@ def is_instance_or_subclass(
     return isinstance(obj, cls)
 
 
-Deactivated = tx.ClassVar
-"""Marker that deactivates an inherited field.
-
-A field redeclared with this marker in a subclass becomes inert. The
-field disappears from the signature of `__init__` and from the generated
-`__repr__`, but it is still listed by `fields(cls)`, with `init=False`
-and `var=False`.
-"""
-
-Derived = tx.ClassVar
-"""Marker for an inherited field that a subclass derives from other data.
-
-The marker behaves like [`Deactivated`][]. It is used when a field that is
-stored by a base class becomes virtual in a subclass.
-"""
-
 Const = tx.Annotated[T, Frozen(), NoInit()]
 """Field that is frozen and cannot be set through the constructor."""
 

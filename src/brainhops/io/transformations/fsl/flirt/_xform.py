@@ -1,8 +1,7 @@
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly
+from bagof.magic import Forget, KwOnly
 
-from brainhops._core.typing import Deactivated
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
@@ -48,10 +47,10 @@ class FlirtTransform(
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
     # The affine is computed on demand, so it is not a constructor field.
-    # Declaring `_data` as a ClassVar overrides the init field inherited from
-    # `Affine` and keeps `data` out of `__init__` and `fields()`.
-    _data: tx.ClassVar[tx.Optional[tx.Any]]
-    _matrix: Deactivated[None]
+    # Forgetting the fields `_data` and `_matrix` inherited from `Affine`
+    # keeps `data` and `matrix` out of `__init__` and `fields()`.
+    _data: Forget
+    _matrix: Forget
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)

@@ -15,7 +15,7 @@ __all__ = [
 from numbers import Integral, Real
 
 import typing_extensions as tx
-from bagof.magic import InitVar, NotKwOnly
+from bagof.magic import Forget, InitVar, NotKwOnly
 
 from brainhops._core.affines import inv as affine_inv
 from brainhops._core.affines import sqrtm as affine_sqrtm
@@ -32,7 +32,6 @@ from brainhops._core.properties import (
 from brainhops._core.typing import (
     ArrayLike,
     ArrayProtocol,
-    Deactivated,
     npmatrix,
     npvector,
 )
@@ -599,10 +598,10 @@ class CartesianField(CoordinatesField):
     # a grid is fully defined by its shape and takes neither `data=` nor
     # `field=`.
 
-    _data: Deactivated[tx.Optional[ArrayProtocol]]
-    _field: Deactivated[tx.Optional[ArrayProtocol]]
-    _values: Deactivated[tx.Optional[ArrayProtocol]]
-    _coefficients: Deactivated[tx.Optional[ArrayProtocol]]
+    _data: Forget
+    _field: Forget
+    _values: Forget
+    _coefficients: Forget
 
     # --- attribute views ----------------------------------------------
 
