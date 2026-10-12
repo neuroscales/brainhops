@@ -107,10 +107,15 @@ def test_the_matrix_comes_from_the_header_unless_it_is_set(cls) -> None:  # noqa
     np.testing.assert_allclose(t.matrix, expected[:3])
     # The inverse of a matrix read from the header reads the same header.
     assert t.inverse().metadata is t.metadata
-    # An explicit matrix wins over the header, and is stored in `raw`.
+    # An explicit matrix wins over the header, and is pending until the
+    # affine is consolidated, which encodes it in the header.
     explicit = cls(np.eye(4)[:3], metadata=_metadata())
     np.testing.assert_array_equal(explicit.matrix, np.eye(4)[:3])
-    np.testing.assert_array_equal(explicit.raw, np.eye(4))
+    assert explicit.raw is None
+    consolidated = explicit.consolidate()
+    assert consolidated._data is None
+    np.testing.assert_array_equal(consolidated.matrix, np.eye(4)[:3])
+    assert consolidated.metadata.raw is not explicit.metadata.raw
     # Other metadata gives another matrix.
     t.metadata = NiftiMetadata.from_raw(NiftiRaw(header=nb.Nifti1Header()))
     assert not np.allclose(t.matrix, expected[:3])

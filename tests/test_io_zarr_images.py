@@ -682,6 +682,33 @@ def test_a_copy_of_a_read_pyramid_stays_lazy(tmp_path: Path) -> None:
     assert OmeZarrImage.from_instance(back).transformations == []
 
 
+def test_a_copy_of_a_read_level_stays_lazy(tmp_path: Path) -> None:
+    path = str(tmp_path / "lazy.zarr")
+    _small_pyramid().save(path)
+    level = OmeZarrImage.from_store(path).images[0]
+    copy = replace(level)
+    # The copy keeps the node and the permutation, and reads no array.
+    assert copy._data is None
+    assert copy.node is level.node
+    assert copy._perm == level._perm
+    assert getattr(level, "_cache_data", None) is None
+    assert np.array_equal(np.asarray(copy.data), np.asarray(level.data))
+    # An assigned array is copied as it is.
+    level.data = np.zeros(level.data.shape)
+    assert replace(level).data is level.data
+
+
+def test_a_copy_of_a_read_array_stays_lazy(tmp_path: Path) -> None:
+    path = str(tmp_path / "plain.zarr")
+    data = np.arange(24.0).reshape(2, 3, 4)
+    ZarrImage(data).save(path)
+    image = ZarrImage.from_store(path)
+    copy = replace(image)
+    assert copy._data is None
+    assert getattr(image, "_cache_data", None) is None
+    assert np.array_equal(np.asarray(copy.data), data)
+
+
 def test_a_copy_from_a_data_model_pyramid_keeps_its_levels() -> None:
     model = MultiScaleImage(
         images=list(_small_pyramid().images),

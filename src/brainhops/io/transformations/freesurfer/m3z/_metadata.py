@@ -35,7 +35,7 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     The file is read and written by the record: [`from_fileobj`][] reads
     an [`M3zRaw`][] and wraps it, and [`to_bytes`][] encodes the record.
     The metadata keeps no open file. A copy of the record, as
-    [`to_raw`][] returns it, shares the arrays of the record, so that
+    [`M3zRaw.copy`][] returns it, shares the arrays of the record, so that
     copying metadata never duplicates the nodes.
     """
 
@@ -44,21 +44,6 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     raw: NoRepr[tx.Optional[M3zRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
-
-    def to_raw(self) -> tx.Optional[M3zRaw]:
-        """Return a copy of the record that the caller is free to replace.
-
-        The record is frozen, so a caller changes it with
-        [`replace`][bagof.magic.replace]. The copy shares the arrays of
-        the record, which are never changed in place, so that copying a
-        record does not duplicate the nodes.
-
-        Returns
-        -------
-        M3zRaw or None
-            A copy of `raw`, or `None` when no record is held.
-        """
-        return None if self.raw is None else self.raw.copy()
 
     # --- sniff --------------------------------------------------------
 

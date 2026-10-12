@@ -1,7 +1,7 @@
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
-from bagof.magic import Inherit, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
@@ -49,13 +49,19 @@ class OmeZarrLevel(ZarrImage):
     is read, so opening a pyramid reads no array data.
     """
 
+    _perm: KwOnly[NoRepr[tx.Optional[tx.Tuple[int, ...]]]] = None
+    """The permutation from the stored axes to the brainhops order.
+
+    The level keeps it as a field, so that a copy made with `replace`
+    keeps the node and still transposes the array that it reads.
+    """
+
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
         raw = super().data
         backend = get_array_backend(raw)
-        perm = getattr(self, "_perm", None)
-        if perm is not None:
-            raw = backend.transpose(raw, perm)
+        if self._perm is not None:
+            raw = backend.transpose(raw, self._perm)
         return raw
 
 
@@ -313,8 +319,9 @@ class OmeZarrImage(ZarrReaderWriter, ImageFormat, MultiScaleImage):
                 input=voxel_system,
                 output=intrinsic_system,
             )
-            level = OmeZarrLevel(transformations=[geometry], node=array)
-            level._perm = perm
+            level = OmeZarrLevel(
+                transformations=[geometry], node=array, perm=perm
+            )
             images.append(level)
 
         commons = common_transformations(

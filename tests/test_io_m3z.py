@@ -306,13 +306,13 @@ def test_an_unpickled_record_still_gives_a_read_only_field(
 def test_a_copy_of_the_record_shares_its_arrays(tmp_path: Path) -> None:
     morph = io.load(_write(tmp_path, _encode(_positions())))
     record = morph.metadata.raw
-    copy = morph.metadata.to_raw()
+    copy = record.copy()
     assert copy is not record
     assert copy.positions is record.positions
     assert copy.labels is record.labels
     assert copy.xform is record.xform
     # The record of an untouched morph is written as it is.
-    assert morph.to_raw() is record
+    assert morph.consolidate().metadata.raw is record
 
 
 def test_the_metadata_reads_and_writes_the_whole_file(tmp_path: Path) -> None:
@@ -363,7 +363,7 @@ def test_assigned_systems_must_be_ras(tmp_path: Path) -> None:
     record = morph.metadata.raw
     # A morph maps RAS to RAS, so declaring it keeps the record.
     morph.input = RASmm()
-    assert morph.to_raw() is record
+    assert morph.consolidate().metadata.raw is record
     morph.output = LPSmm()
     with pytest.raises(UnrepresentableTransformationError, match="RAS"):
         morph.save(tmp_path / "out.m3z")
@@ -389,7 +389,7 @@ def test_writing_a_chain_leaves_the_record_alone(tmp_path: Path) -> None:
         xforms.CoordinatesField(field=_positions(SHAPE[::-1])),
         vox2ras,
     ]
-    encoded = morph.to_raw()
+    encoded = morph.consolidate().metadata.raw
     assert morph.metadata.raw is record
     np.testing.assert_array_equal(record.positions, _positions())
     # A new grid gets new arrays, which are read-only as well.
@@ -631,3 +631,15 @@ def test_a_morph_compares_by_identity() -> None:
     assert {morph: 1}[morph] == 1
     assert M3zMorph.__eq__ is object.__eq__
     assert M3zRaw.__eq__ is object.__eq__
+
+
+def test_writer_options_are_those_of_consolidate(tmp_path: Path) -> None:
+    morph = io.load(_write(tmp_path, _encode(_positions())))
+    morph.transformations = list(morph)
+    consolidated = morph.consolidate(spacing=2)
+    assert consolidated.metadata.raw.spacing == 2
+    assert consolidated._transformations is None
+    morph.save(tmp_path / "spaced.m3z", spacing=2)
+    assert M3zMorph.load(tmp_path / "spaced.m3z").metadata.raw.spacing == 2
+    # The morph itself keeps its assigned chain.
+    assert morph._transformations is not None

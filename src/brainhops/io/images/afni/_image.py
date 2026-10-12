@@ -16,8 +16,6 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import (
-    drop_cache,
-    lazyproperty,
     smartproperty,
 )
 from brainhops._core.streams import preserve_position
@@ -30,7 +28,7 @@ from brainhops.datamodel.transformations import (
     Scaling,
     Transformation,
 )
-from brainhops.io.base._base import register_format, store_data_argument
+from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -197,11 +195,18 @@ class AfniImage(
     transformations are assigned. They lead to `physical`,
     `<view>-cardinal` and `<view>`, the last of which is preferred.
 
-    When the image is written, the record of its metadata is the base of
-    the new header, as [`to_raw`][] describes, so the attributes that the
-    data model has no place for, such as `HISTORY_NOTE` or `BRICK_LABS`,
-    are kept. An image that is read and written again without changes
-    gives the same bytes in both files, after decompression of the BRIK.
+    `raw` and the record describe the dataset as it was read, or as the
+    image was last consolidated. Data and transformations that are
+    assigned are pending until [`consolidate`][] encodes them into a copy,
+    or until the image is written, which writes such a copy and leaves the
+    image as it was.
+
+    When the image is consolidated, the record of its metadata is the base
+    of the new header, as [`consolidate`][] describes, so the attributes
+    that the data model has no place for, such as `HISTORY_NOTE` or
+    `BRICK_LABS`, are kept. An image that is read and written again
+    without changes gives the same bytes in both files, after
+    decompression of the BRIK.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (
@@ -220,8 +225,19 @@ class AfniImage(
     """The voxels as the BRIK stores them, or `None` without data.
 
     After a read, `raw` is a lazy array of the BRIK, which applies the
-    scale factors of the header when it is read. Setting `data` stores
-    the new array here.
+    scale factors of the header when it is read. `raw` describes the
+    dataset as it was read, or as the image was last consolidated, so
+    assigning `data` leaves it as it is.
+    """
+
+    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    """The data given to the image, or `None` to decode it from `raw`.
+
+    The image takes over the `data` field of [`SingleScaleImage`][] to
+    store it under this private name. The constructor still takes `data`
+    in the same place, and the property of the same name reads it. An
+    array stored here is pending: it is encoded into `raw` only by
+    [`consolidate`][] or by a write.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -246,27 +262,20 @@ class AfniImage(
     drops the transformations decoded from the previous record.
     """
 
-    def __post_init__(self, arguments: tx.Any) -> None:
-        # The default of `raw`, assigned after `data`, erases the array
-        # stored by `data=`, so the array is stored again.
-        store_data_argument(self, arguments)
-
-    @lazyproperty
+    @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, decoded from `raw` on first access and cached.
+        """The image data, assigned or decoded from `raw`.
 
-        Data decoded from a file is read-only, because changing it in
-        place would not change `raw`, which is what the image writes. To
-        change the voxels, assign `data`: setting it stores the new array
-        in `raw` and drops the cached value.
+        An array assigned to the image is returned as it is, and stays
+        pending until [`consolidate`][] or a write encodes it. Otherwise
+        the data is decoded from `raw` on first access and cached. Data
+        decoded from a file is read-only, because changing it in place
+        would not change `raw`, which is what the image writes. To change
+        the voxels, assign `data`. Assigning `None` decodes `raw` again.
         """
         if self.raw is None:
             return None
         return _image_to_model(self.raw)
-
-    @data.setter
-    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self.raw = None if value is None else _image_to_disk(value)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -276,10 +285,11 @@ class AfniImage(
         img.transformation`. Assigning other metadata drops the decoded
         list. An image without metadata has no transformations.
 
-        Assigning a list replaces the decoded one. An empty list means that
-        the image has no geometry, and the image is then written as an
-        image built from data alone. Assigning `None` decodes the record
-        again.
+        Assigning a list replaces the decoded one, and the list stays
+        pending until [`consolidate`][] or a write encodes it. An empty
+        list means that the image has no geometry, and the image is then
+        written as an image built from data alone. Assigning `None`
+        decodes the record again.
         """
         if self.metadata is None or self.metadata.raw is None:
             return []
@@ -287,13 +297,15 @@ class AfniImage(
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the data, read from `raw` without reading the voxels.
+        """The shape of the data, read without reading the voxels.
 
-        The data is `raw` as the lazy array presents it, so the two have
-        the same shape, and the lazy array knows its shape from the
-        record. An image without data raises as [`SingleScaleImage`][]
-        does.
+        The shape is that of the assigned data, or else of `raw`: the data
+        is `raw` as the lazy array presents it, so the two have the same
+        shape, and the lazy array knows its shape from the record. An image
+        without data raises as [`SingleScaleImage`][] does.
         """
+        if self._data is not None:
+            return tuple(int(d) for d in self._data.shape)
         if self.raw is None:
             return self.data.shape
         return tuple(int(d) for d in self.raw.shape)
@@ -538,16 +550,19 @@ class AfniImage(
 
     # --- writing ------------------------------------------------------
 
-    def to_raw(
+    def consolidate(
         self,
+        inplace: bool = False,
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-    ) -> AfniRaw:
-        """Return the [`AfniRaw`][] record that writing the image stores.
+    ) -> "AfniImage":
+        """Encode the pending data and geometry into `raw` and the record.
 
-        The record is encoded in a fixed order. The base is the record of
-        the metadata, or no attribute for an image without metadata.
+        Consolidating makes `raw` and the record describe the image, as a
+        dataset written from it would. The record is encoded in a fixed
+        order. The base is the record of the metadata, or no attribute for
+        an image without metadata.
 
         1. The attributes that describe how the BRIK stores the voxels
            (`DATASET_RANK`, `DATASET_DIMENSIONS`, `BRICK_TYPES`,
@@ -572,14 +587,22 @@ class AfniImage(
            changes, and `TEMPLATE_SPACE` when the view changes. The
            `attributes` are applied last.
 
-        When this encoding gives the attributes of the base, the record of
-        the metadata is returned as it is, without a copy, so that an
-        image that was read and not changed writes the header that it
-        read. Otherwise, the dataset gets a new `IDCODE_STRING` and
-        `IDCODE_DATE`, unless `attributes` sets them.
+        When this encoding gives the attributes of the base, the metadata
+        is kept as it is, so that an image that was read and not changed
+        writes the header that it read. Otherwise, the dataset gets a new
+        `IDCODE_STRING` and `IDCODE_DATE`, unless `attributes` sets them,
+        and the new record is held by new metadata. The record held before
+        is never changed. The voxels to write become `raw`, with at least
+        three axes, and nothing is pending afterwards, so the
+        transformations are decoded from the new record, with the
+        precision of the file. An image with a record and nothing pending,
+        consolidated without options, is left as it is: the copy shares
+        `raw` and the metadata.
 
         Parameters
         ----------
+        inplace : bool, default=False
+            Whether to change this image rather than a copy.
         view : {"orig", "acpc", "tlrc"}, optional
             The view of the dataset. Writing to a file whose name carries
             a view, such as `anat+tlrc.HEAD`, gives that view.
@@ -596,8 +619,8 @@ class AfniImage(
 
         Returns
         -------
-        AfniRaw
-            The record of the dataset.
+        AfniImage
+            The consolidated copy, or this image with `inplace=True`.
 
         Raises
         ------
@@ -610,7 +633,36 @@ class AfniImage(
         UnrepresentableTransformationError
             If the preferred transformation is not affine.
         """
-        return _encoded(self, view, datatype, attributes)[0]
+        if (
+            self._data is None
+            and self._transformations is None
+            and view is None
+            and datatype is None
+            and attributes is None
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            return self if inplace else replace(self)
+        record, raw = _encoded(self, view, datatype, attributes)
+        if self.metadata is not None and record is self.metadata.raw:
+            metadata = self.metadata
+        elif self.metadata is None:
+            metadata = AfniMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                data=None,
+                transformations=None,
+                raw=raw,
+                metadata=metadata,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        return self
 
     def to_filename(
         self,
@@ -623,30 +675,33 @@ class AfniImage(
         """Write the `.HEAD` and `.BRIK` files of a dataset.
 
         The path may name the `.HEAD` file, the `.BRIK` file (a `.gz` or
-        `.bz2` suffix compresses it) or the bare dataset. The header is
-        the record of [`to_raw`][], whose view defaults to the view in the
-        file name. The BRIK is written first, then the header. As AFNI
-        does, a sibling BRIK with another suffix is removed, so that it
-        cannot shadow the new one.
+        `.bz2` suffix compresses it) or the bare dataset. The image is
+        consolidated into a copy with the options, as by
+        [`consolidate`][], whose view defaults to the view in the file
+        name, and the header and `raw` of the copy are written. The image
+        itself is not changed. The BRIK is written first, then the header.
+        As AFNI does, a sibling BRIK with another suffix is removed, so
+        that it cannot shadow the new one.
 
         Each local file is written beside its target and moved over it.
         The lazy array of an image may read the BRIK that is written over
         or removed, for example when an image read from `x+orig.BRIK` is
-        saved as `x+orig.BRIK.gz`. The image then reads the new BRIK
-        instead, and its data is decoded again from that file when it is
-        next read. The values are the same unless `datatype` changed how
-        they are stored.
+        saved as `x+orig.BRIK.gz`. The image is then written over its own
+        dataset, so it is consolidated in place with the options, and it
+        holds what the dataset holds (#426): its lazy array reads the new
+        BRIK, and its data is decoded again from that file when it is next
+        read.
 
         Parameters
         ----------
         filename : path-like
             The `.HEAD` file, the `.BRIK` file or the bare dataset name.
         view : {"orig", "acpc", "tlrc"}, optional
-            The view of the dataset, as for [`to_raw`][].
+            The view of the dataset, as for [`consolidate`][].
         datatype : str or dtype, optional
-            The type of the stored values, as for [`to_raw`][].
+            The type of the stored values, as for [`consolidate`][].
         attributes : mapping, optional
-            Attributes set last, as for [`to_raw`][].
+            Attributes set last, as for [`consolidate`][].
         **kwargs : Any
             Unknown options, which are refused.
 
@@ -654,6 +709,8 @@ class AfniImage(
         ------
         TypeError
             If an unknown option is given.
+        WriterError
+            If the image cannot be encoded, as in [`consolidate`][].
         """
         if kwargs:
             raise TypeError(
@@ -667,18 +724,34 @@ class AfniImage(
         if ".BRIK" in filename.name.upper():
             suffix = _brik_suffix(filename)
         brik = filename.parent / (stem + brik_ext + suffix)
-        view = view or afni_view(filename)
-        record, data = _encoded(self, view, datatype, attributes)
+        stale = []
+        for other in _BRIK_SUFFIXES:
+            sibling = filename.parent / (stem + brik_ext + other)
+            if other != suffix and path.exists(sibling):
+                local = _local_path(sibling)
+                if local is not None:
+                    stale.append((sibling, local))
+        options = dict(view=view or afni_view(filename), datatype=datatype)
+        options["attributes"] = attributes
+        reading = _reads_brik(self, brik) or any(
+            _reads_brik(self, sibling) for sibling, _ in stale
+        )
+        if reading:
+            mmap = self.raw.mmap
+            image = self.consolidate(inplace=True, **options)
+        else:
+            image = self.consolidate(**options)
+        record, data = _afni_written(image)
         write_brik(record, data, brik)
         write_file(head, record.to_bytes())
-        _leave_brik(self, brik, record, brik)
-        for other in _BRIK_SUFFIXES:
-            stale = filename.parent / (stem + brik_ext + other)
-            if other != suffix and path.exists(stale):
-                local = _local_path(stale)
-                if local is not None:
-                    _leave_brik(self, stale, record, brik)
-                    os.remove(local)
+        for _, local in stale:
+            os.remove(local)
+        if reading:
+            # The image holds what the dataset holds, and its lazy array
+            # reads the new BRIK, since the lazy array of the old BRIK
+            # describes how that BRIK stored the voxels.
+            self.raw = brik_proxy(record, brik, mmap)
+            self.data = None
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write to a path; AFNI datasets cannot be written to a stream.
@@ -756,14 +829,16 @@ def _encoded(
     datatype: tx.Optional[tx.Any],
     attributes: tx.Optional[tx.Mapping[str, tx.Any]],
 ) -> tx.Tuple[AfniRaw, ArrayProtocol]:
-    """Return the record and the voxels that writing an image stores.
+    """Return the record and the voxels that consolidating an image stores.
 
-    The record is encoded as [`AfniImage.to_raw`][] describes. The voxels
-    are `raw` when it is a lazy array that is copied as the BRIK stores
-    it, and otherwise an array of at least three dimensions, which the
-    writer encodes with the types of the record.
+    The record is encoded as [`AfniImage.consolidate`][] describes, and
+    the held record is returned when the encoding changes nothing. The
+    voxels are `raw` when it is a lazy array that is copied as the BRIK
+    stores it, and otherwise the assigned data or the data, as an array
+    of at least three dimensions, which the writer encodes with the types
+    of the record.
     """
-    if image.raw is None:
+    if image._data is None and image.raw is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
         )
@@ -861,17 +936,20 @@ def _stored_data(
 ) -> ArrayProtocol:
     """Return the voxels to write, as a lazy array or as an array.
 
-    A lazy array of a BRIK is kept when `datatype` names the type of
-    every sub-brick or is not given, so that the BRIK is copied as it is
-    stored. Otherwise, the data are written, with three spatial axes and
-    an optional axis of sub-bricks.
+    A lazy array of a BRIK is kept when no data is pending and `datatype`
+    names the type of every sub-brick or is not given, so that the BRIK is
+    copied as it is stored. Otherwise, the data are written, with three
+    spatial axes and an optional axis of sub-bricks.
 
     Raises
     ------
     WriterError
         If the data have no dimension or more than four.
     """
-    raw = image.raw
+    if image._data is not None:
+        raw = _image_to_disk(image._data)
+    else:
+        raw = image.raw
     if isinstance(raw, _BrikProxy):
         if datatype is None:
             return raw
@@ -985,21 +1063,25 @@ def _is_latin1(value: str) -> bool:
     return True
 
 
-def _leave_brik(
-    image: AfniImage, stale: tx.Any, record: AfniRaw, brik: tx.Any
-) -> None:
-    """Stop an image from reading a BRIK that is replaced or removed.
+def _afni_written(image: AfniImage) -> tx.Tuple[AfniRaw, ArrayProtocol]:
+    """Return the record and the voxels of a consolidated image.
 
-    When the lazy array of the image reads that BRIK, it is replaced by a
-    lazy array of the new BRIK, which the new record describes, and the
-    cached data is dropped, since a lazy Dask array may still read the
-    old file.
+    Raises
+    ------
+    WriterError
+        If the image has no data.
     """
+    if image.raw is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    return image.metadata.raw, image.raw
+
+
+def _reads_brik(image: AfniImage, brik: tx.Any) -> bool:
+    """Tell whether the lazy array of an image reads a BRIK."""
     raw = image.raw
-    if not isinstance(raw, _BrikProxy) or not _same_file(raw.brik, stale):
-        return
-    image.raw = brik_proxy(record, brik, raw.mmap)
-    drop_cache(image, "data")
+    return isinstance(raw, _BrikProxy) and _same_file(raw.brik, brik)
 
 
 def _record(attrs: tx.Mapping[str, tx.Any]) -> AfniRaw:

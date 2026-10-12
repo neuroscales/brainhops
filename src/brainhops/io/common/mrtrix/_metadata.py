@@ -39,16 +39,6 @@ class MrtrixMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     raw: NoRepr[tx.Optional[MrtrixRaw]] = None
     """The record of the image, or `None` for metadata without a record."""
 
-    def to_raw(self) -> tx.Optional[MrtrixRaw]:
-        """Return a copy of the record that the caller is free to change.
-
-        Returns
-        -------
-        MrtrixRaw or None
-            A copy of `raw`, or `None` when no record is held.
-        """
-        return None if self.raw is None else self.raw.copy()
-
     @classmethod
     def sniff_fileobj(
         cls,

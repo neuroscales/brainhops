@@ -14,11 +14,7 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import (
-    drop_cache,
-    lazyproperty,
-    smartproperty,
-)
+from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -30,7 +26,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
-from brainhops.io.base._base import register_format, store_data_argument
+from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import same_file as _same_file
 from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base._utils_files import write_file
@@ -117,12 +113,18 @@ class MrtrixImage(
     `"physical"` by the voxel sizes and the preferred [`Affine`][] to
     scanner RAS+ in millimeters, `transform @ diag(vox)`.
 
-    When the image is written, the record of its metadata is the base of
-    the new header, as [`to_raw`][] describes, so header keys that the
-    data model has no place for, such as `dw_scheme`, are kept. An image
-    that is read and written again without changes gives the same bytes,
-    after decompression for a `.mif.gz` file. A `.mih` header names its
-    data file, so a copy under another name differs in that line only.
+    `raw` and the record describe the file as it was read, or as the image
+    was last consolidated. Data and transformations that are assigned are
+    pending until [`consolidate`][] encodes them into a copy, or until the
+    image is written, which writes such a copy and leaves the image as it
+    was.
+
+    When the image is consolidated, the record of its metadata is the base
+    of the new header, as [`consolidate`][] describes, so header keys that
+    the data model has no place for, such as `dw_scheme`, are kept. An
+    image that is read and written again without changes gives the same
+    bytes, after decompression for a `.mif.gz` file. A `.mih` header names
+    its data file, so a copy under another name differs in that line only.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
@@ -133,7 +135,18 @@ class MrtrixImage(
 
     After a read, `raw` is a lazy array, which presents the voxels in the
     axis order of the header and applies its intensity scaling when it is
-    read. Setting `data` stores the new array here.
+    read. `raw` describes the file as it was read, or as the image was
+    last consolidated, so assigning `data` leaves it as it is.
+    """
+
+    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    """The data given to the image, or `None` to decode it from `raw`.
+
+    The image takes over the `data` field of [`SingleScaleImage`][] to
+    store it under this private name. The constructor still takes `data`
+    in the same place, and the property of the same name reads it. An
+    array stored here is pending: it is encoded into `raw` only by
+    [`consolidate`][] or by a write.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -158,27 +171,20 @@ class MrtrixImage(
     drops the transformations decoded from the previous record.
     """
 
-    def __post_init__(self, arguments: tx.Any) -> None:
-        # The default of `raw`, assigned after `data`, erases the array
-        # stored by `data=`, so the array is stored again.
-        store_data_argument(self, arguments)
-
-    @lazyproperty
+    @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, decoded from `raw` on first access and cached.
+        """The image data, assigned or decoded from `raw`.
 
-        Data decoded from a file is read-only, because changing it in
-        place would not change `raw`, which is what the image writes. To
-        change the voxels, assign `data`: setting it stores the new array
-        in `raw` and drops the cached value.
+        An array assigned to the image is returned as it is, and stays
+        pending until [`consolidate`][] or a write encodes it. Otherwise
+        the data is decoded from `raw` on first access and cached. Data
+        decoded from a file is read-only, because changing it in place
+        would not change `raw`, which is what the image writes. To change
+        the voxels, assign `data`. Assigning `None` decodes `raw` again.
         """
         if self.raw is None:
             return None
         return _image_to_model(self.raw)
-
-    @data.setter
-    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self.raw = None if value is None else _image_to_disk(value)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -188,10 +194,11 @@ class MrtrixImage(
         img.transformation`. Assigning other metadata drops the decoded
         list. An image without metadata has no transformations.
 
-        Assigning a list replaces the decoded one. An empty list means that
-        the image has no geometry, and the image is then written as an
-        image built from data alone. Assigning `None` decodes the record
-        again.
+        Assigning a list replaces the decoded one, and the list stays
+        pending until [`consolidate`][] or a write encodes it. An empty
+        list means that the image has no geometry, and the image is then
+        written as an image built from data alone. Assigning `None`
+        decodes the record again.
         """
         if self.metadata is None or self.metadata.raw is None:
             return []
@@ -199,13 +206,15 @@ class MrtrixImage(
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the data, read from `raw` without reading the voxels.
+        """The shape of the data, read without reading the voxels.
 
-        The data is `raw` as the lazy array presents it, so the two have
-        the same shape, and the lazy array knows its shape from the
-        record. An image without data raises as [`SingleScaleImage`][]
-        does.
+        The shape is that of the assigned data, or else of `raw`: the data
+        is `raw` as the lazy array presents it, so the two have the same
+        shape, and the lazy array knows its shape from the record. An image
+        without data raises as [`SingleScaleImage`][] does.
         """
+        if self._data is not None:
+            return tuple(int(d) for d in self._data.shape)
         if self.raw is None:
             return self.data.shape
         return tuple(int(d) for d in self.raw.shape)
@@ -372,17 +381,20 @@ class MrtrixImage(
 
     # --- writing ------------------------------------------------------
 
-    def to_raw(
+    def consolidate(
         self,
+        inplace: bool = False,
         layout: tx.Optional[tx.Union[str, tx.Sequence[int]]] = None,
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-    ) -> MrtrixRaw:
-        """Return the [`MrtrixRaw`][] record that writing the image stores.
+    ) -> "MrtrixImage":
+        """Encode the pending data and geometry into `raw` and the record.
 
-        The record is encoded in a fixed order. The base is the record of
-        the metadata, or a new header for an image without metadata.
+        Consolidating makes `raw` and the record describe the image, as a
+        file written from it would. The record is encoded in a fixed order.
+        The base is the record of the metadata, or a new header for an
+        image without metadata.
 
         1. The keys that describe how the voxels are stored (`dim`,
            `layout`, `datatype` and `scaling`) follow `raw`. A lazy array
@@ -404,13 +416,21 @@ class MrtrixImage(
         3. The other keys of the base are kept, and `keyval` is merged
            into them last.
 
-        The `file` entry of the base is kept. When this encoding gives the
-        header of the base, the record of the metadata is returned as it
-        is, without a copy, so that an image that was read and not changed
-        writes the header that it read.
+        The `file` entry of the base is kept, and a writer sets the entry
+        of the file that it writes. When this encoding gives the header of
+        the base, the metadata is kept as it is, so that an image that was
+        read and not changed writes the header that it read. Otherwise,
+        the new record is held by new metadata, and the record held before
+        is never changed. The voxels to write become `raw`, and nothing is
+        pending afterwards, so the transformations are decoded from the
+        new record, with the precision of the file. An image with a record
+        and nothing pending, consolidated without options, is left as it
+        is: the copy shares `raw` and the metadata.
 
         Parameters
         ----------
+        inplace : bool, default=False
+            Whether to change this image rather than a copy.
         layout : str or sequence of int, optional
             Strides, in the MRtrix spelling (`"-0,-1,+2"`) or as signed
             one-based integers.
@@ -426,8 +446,8 @@ class MrtrixImage(
 
         Returns
         -------
-        MrtrixRaw
-            The record of the file.
+        MrtrixImage
+            The consolidated copy, or this image with `inplace=True`.
 
         Raises
         ------
@@ -442,19 +462,48 @@ class MrtrixImage(
         options = dict(
             layout=layout, datatype=datatype, scaling=scaling, keyval=keyval
         )
-        return _encoded(self, None, options)[0]
+        if (
+            self._data is None
+            and self._transformations is None
+            and all(value is None for value in options.values())
+            and self.metadata is not None
+            and self.metadata.raw is not None
+        ):
+            return self if inplace else replace(self)
+        record, raw = _encoded(self, None, options)
+        if self.metadata is not None and record is self.metadata.raw:
+            metadata = self.metadata
+        elif self.metadata is None:
+            metadata = MrtrixMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                data=None,
+                transformations=None,
+                raw=raw,
+                metadata=metadata,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.data = None
+        self.transformations = None
+        return self
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of a single-file, uncompressed `.mif` image.
 
-        The header is the record of [`to_raw`][], which receives the
-        keyword arguments, padded up to the first voxel. A lazy array that
-        reaches the writer unchanged is written as the file stores it.
+        The image is consolidated into a copy with the keyword arguments,
+        as by [`consolidate`][], and the header of the copy, padded up to
+        the first voxel, is written with its `raw`. A lazy array that
+        reaches the writer unchanged is written as the file stores it. The
+        image itself is not changed.
 
         Parameters
         ----------
         **kwargs : Any
-            Arguments of [`to_raw`][].
+            The options of [`consolidate`][].
 
         Returns
         -------
@@ -466,7 +515,8 @@ class MrtrixImage(
         TypeError
             If an unknown option is given.
         """
-        record, source = _encoded(self, ".", _options(kwargs))
+        image = self.consolidate(**_options(kwargs))
+        record, source = _mrtrix_written(image, ".")
         return record.to_bytes() + _payload(record, source)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
@@ -477,7 +527,7 @@ class MrtrixImage(
         file : IO
             The stream.
         **kwargs : Any
-            Arguments of [`to_raw`][].
+            The options of [`consolidate`][].
 
         Raises
         ------
@@ -491,19 +541,21 @@ class MrtrixImage(
 
         A `.mif` file holds the header and the data, gzipped for `.mif.gz`.
         A `.mih` header names its data, written next to it in a `.dat`
-        file. The keyword arguments are those of [`to_raw`][]. The content
-        is encoded before any file is written, and each local file is
-        replaced at once, so an image can be written over the files that
-        it was read from. When the lazy array of the image reads a file
-        that is written, `raw` is then pointed at the new file, which
-        holds the same voxels, and the cached data is dropped.
+        file. The image is consolidated into a copy with the keyword
+        arguments, as by [`consolidate`][], which is written, and the image
+        itself is not changed. The content is encoded before any file is
+        written, and each local file is replaced at once, so an image can
+        be written over the files that it was read from. When the lazy
+        array of the image reads a file that is written, the image is
+        consolidated in place instead, so that it holds what the files
+        hold (#426), and its lazy array reads the new files.
 
         Parameters
         ----------
         filename : path-like
             The path of the `.mif`, `.mif.gz` or `.mih` file.
         **kwargs : Any
-            Arguments of [`to_raw`][].
+            The options of [`consolidate`][].
 
         Raises
         ------
@@ -513,25 +565,36 @@ class MrtrixImage(
         if isinstance(filename, str):
             filename = path.Path(filename)
         options = _options(kwargs)
-        if str(filename).lower().endswith(".mih"):
+        detached = str(filename).lower().endswith(".mih")
+        if detached:
             base = filename.name[: -len(".mih")]
-            record, source = _encoded(self, base + ".dat", options)
-            header, data = record.to_bytes(), _payload(record, source)
             target = _sibling(filename, base + ".dat")
-            stale = _reads_from(self.raw, [filename, target])
+            written = [filename, target]
+        else:
+            written = [filename]
+        reading = _reads_from(self.raw, written)
+        if reading:
+            mmap = self.raw.mmap
+            image = self.consolidate(inplace=True, **options)
+        else:
+            image = self.consolidate(**options)
+        if detached:
+            record, source = _mrtrix_written(image, base + ".dat")
+            header, data = record.to_bytes(), _payload(record, source)
             write_file(target, data)
             write_file(filename, header)
         else:
-            content = self.to_bytes(**options)
+            record, source = _mrtrix_written(image, ".")
+            content = record.to_bytes() + _payload(record, source)
             if str(filename).lower().endswith(".gz"):
                 content = gzip.compress(content)
-            stale = _reads_from(self.raw, [filename])
             write_file(filename, content)
-        if stale:
-            # The lazy array reads the new file, and the cached data, which
-            # may be a lazy view of the old file, is dropped.
-            self.raw = read_mrtrix(filename, mmap=self.raw.mmap)[1]
-            drop_cache(self, "data")
+        if reading:
+            # The image holds what the files hold, and its lazy array reads
+            # the new files, since the lazy array of the old files describes
+            # how they stored the voxels.
+            self.raw = read_mrtrix(filename, mmap=mmap)[1]
+            self.data = None
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write to a path or a stream.
@@ -541,7 +604,7 @@ class MrtrixImage(
         file : path-like or IO
             The path or the stream.
         **kwargs : Any
-            Arguments of [`to_raw`][].
+            The options of [`consolidate`][].
         """
         if isinstance(file, str):
             file = path.Path(file)
@@ -580,16 +643,17 @@ def _encoded(
     file: tx.Optional[str],
     options: tx.Mapping[str, tx.Any],
 ) -> tx.Tuple[MrtrixRaw, ArrayProtocol]:
-    """Return the record and the voxels that writing an image stores.
+    """Return the record and the voxels that consolidating an image stores.
 
-    The record is encoded as [`MrtrixImage.to_raw`][] describes. The voxels
-    are `raw` when it is a lazy array that is copied as the file stores
-    it, and otherwise the array of the data in the axis order of the
-    header. The `file` argument names the data file of the header: `"."`
-    for a single-file image, a file name for a `.mih` header, or `None` to
-    keep the entry of the base.
+    The record is encoded as [`MrtrixImage.consolidate`][] describes, and
+    the held record is returned when the encoding changes nothing. The
+    voxels are `raw` when it is a lazy array that is copied as the file
+    stores it, and otherwise the array of the assigned data or of the
+    data, in the axis order of the header. The `file` argument names the
+    data file of the header: `"."` for a single-file image, a file name
+    for a `.mih` header, or `None` to keep the entry of the base.
     """
-    if image.raw is None:
+    if image._data is None and image.raw is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
         )
@@ -607,7 +671,10 @@ def _encoded(
             f"datatype= and scaling= options."
         )
     held = None if image.metadata is None else image.metadata.raw
-    raw = image.raw
+    if image._data is not None:
+        raw = _image_to_disk(image._data)
+    else:
+        raw = image.raw
     xform = image.transformation
     ndim = len(raw.shape)
     if ndim == 0:
@@ -874,3 +941,33 @@ def _mrtrix_to_transformations(
     matrix = vox2ras[:3][:, columns]
     vox2scanner = Affine(input=voxel_space, output=world, matrix=matrix)
     return [vox2phys, vox2scanner]
+
+
+def _mrtrix_written(
+    image: MrtrixImage, file: str
+) -> tx.Tuple[MrtrixRaw, ArrayProtocol]:
+    """Return the header and the voxels that a writer writes for a file.
+
+    The header is the record of a consolidated image, whose `file` entry
+    names the data file that the writer writes: `"."` for a single-file
+    image, or a file name for a `.mih` header. The entry of the record is
+    kept when it names the same kind of file, and a copy of the record
+    holds another entry.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data.
+    """
+    if image.raw is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    record = image.metadata.raw
+    entry = _file_entry(record, file)
+    if tuple(entry) != tuple(record.file or ()):
+        record = record.copy()
+        record.file = entry
+        if record.file[0] == ".":
+            record.file = (".", len(record.embedded()))
+    return record, image.raw
