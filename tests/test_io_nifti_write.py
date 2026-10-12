@@ -137,6 +137,25 @@ def test_a_qform_is_written_even_without_a_rigid_edge(tmp_path) -> None:  # noqa
     assert np.allclose(header.get_qform(), AFFINE, atol=1e-5)
 
 
+def test_a_transformation_appended_in_place_is_written(tmp_path) -> None:  # noqa: ANN001
+    """The stored list is compared at a write, so an append is written.
+
+    The appended transformation is the preferred one, which becomes the
+    sform, and an image whose list is only read is written as it was.
+    """
+    source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
+    image = NiftiImage.load(source)
+    assert len(image.transformations) > 0
+    image.save(tmp_path / "read.nii")
+    with open(source, "rb") as a, open(tmp_path / "read.nii", "rb") as b:
+        assert a.read() == b.read()
+    scaled = np.diag([2.0, 3.0, 4.0, 1.0])[:3]
+    image.transformations.append(Affine(matrix=scaled))
+    image.save(tmp_path / "appended.nii")
+    header = nb.load(str(tmp_path / "appended.nii")).header
+    assert np.allclose(header.get_best_affine()[:3], scaled)
+
+
 def test_a_scaling_geometry_is_representable(tmp_path) -> None:  # noqa: ANN001
     """A non-affine transformation that reduces to an affine is written."""
     image = NiftiImage(
