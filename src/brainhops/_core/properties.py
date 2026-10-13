@@ -5,10 +5,17 @@ the value when nothing is stored. A [`lazyproperty`][] computes its value
 on first access and caches it. Assigning either property, through any
 setter, deletes its own cached value, and the cached values that it
 names in `invalidates`. Code outside this module deletes a cached value
-with [`drop_cache`][].
+with [`drop_cache`][], and reads one without computing it with
+[`cached_value`][].
 """
 
-__all__ = ["drop_cache", "lazyproperty", "smartproperty", "UnsetLike"]
+__all__ = [
+    "cached_value",
+    "drop_cache",
+    "lazyproperty",
+    "smartproperty",
+    "UnsetLike",
+]
 
 import typing_extensions as tx
 
@@ -579,6 +586,31 @@ def drop_cache(obj: object, *names: str) -> None:
     """
     for name in names:
         obj.__dict__.pop("_cache_" + name, None)
+
+
+def cached_value(obj: object, name: str) -> tx.Any:
+    """Return the cached value of a property of an object, or `None`.
+
+    A cached [`smartproperty`][] or [`lazyproperty`][] stores the value
+    that it computes apart from a value that is assigned to it. This
+    function is for code that needs the computed value only when it has
+    already been computed, for example a writer that compares a decoded
+    view, which may have been changed in place, with a fresh decode,
+    without computing that view itself.
+
+    Parameters
+    ----------
+    obj : object
+        The object whose cached value is read.
+    name : str
+        The name of the property.
+
+    Returns
+    -------
+    Any
+        The cached value, or `None` when the property has cached nothing.
+    """
+    return obj.__dict__.get("_cache_" + name)
 
 
 # --- smartsetter ------------------------------------------------------

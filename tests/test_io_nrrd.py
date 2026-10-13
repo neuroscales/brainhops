@@ -1133,3 +1133,25 @@ def test_unknown_types_and_missing_directories_are_reported(
         image.consolidate(encoding="gzip").metadata.raw.fields["type"]
         == "short"
     )
+
+
+def test_a_unit_scaling_drops_the_spacings_of_the_base(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # A file without geometry decodes to the unit scaling. Writing that
+    # scaling over a record with spacings writes no geometry, rather than
+    # the geometry of the record.
+    data = np.arange(24, dtype="float32").reshape(2, 3, 4)
+    AttachedNrrdImage(data).save(tmp_path / "bare.nrrd")
+    placed = AttachedNrrdImage(data)
+    placed.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+    placed.save(tmp_path / "placed.nrrd")
+    image = AttachedNrrdImage.load(tmp_path / "placed.nrrd")
+    bare = AttachedNrrdImage.load(tmp_path / "bare.nrrd")
+    image.transformations = list(bare.transformations)
+    record = image.consolidate().metadata.raw
+    assert "spacings" not in record.fields
+    assert "axis mins" not in record.fields
+    image.save(tmp_path / "copy.nrrd")
+    back = AttachedNrrdImage.load(tmp_path / "copy.nrrd")
+    np.testing.assert_array_equal(back.transformation.data, [1.0, 1.0, 1.0])

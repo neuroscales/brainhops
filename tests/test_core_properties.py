@@ -5,6 +5,7 @@ import typing_extensions as tx
 
 from brainhops._core.properties import (
     InvalidatorInAttribute,
+    cached_value,
     drop_cache,
     lazyproperty,
     smartproperty,
@@ -318,6 +319,15 @@ def test_drop_cache_deletes_the_cached_values_it_names() -> None:
     assert box.value == 1
     drop_cache(box, "value", "never_cached")
     assert box.value == 2
+
+
+def test_cached_value_reads_a_cache_without_computing_it() -> None:
+    box = _cached_box("setter")(1)
+    assert cached_value(box, "value") is None
+    assert box.value == 1
+    assert cached_value(box, "value") == 1
+    drop_cache(box, "value")
+    assert cached_value(box, "value") is None
 
 
 # smartsetter
