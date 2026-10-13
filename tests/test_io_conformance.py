@@ -225,13 +225,13 @@ except ImportError:
 try:
     import tifffile
 
-    from brainhops.io.images.sequence import SequenceImage, SequenceMetadata
-    from brainhops.io.images.sequence._data import _SequenceProxy
-    from brainhops.io.images.sequence._views import (
-        _image_to_disk as _sequence_to_disk,
+    from brainhops.io.images.stack import StackImage, StackMetadata
+    from brainhops.io.images.stack._data import _StackProxy
+    from brainhops.io.images.stack._views import (
+        _image_to_disk as _stack_to_disk,
     )
-    from brainhops.io.images.sequence._views import (
-        _image_to_model as _sequence_to_model,
+    from brainhops.io.images.stack._views import (
+        _image_to_model as _stack_to_model,
     )
 except ImportError:
     tifffile = None
@@ -822,7 +822,7 @@ class Exemplar(tx.NamedTuple):
     folder: bool = False
     """Whether an object of the format is a folder of files.
 
-    An image sequence is a folder of numbered files, so its checks write
+    An image stack is a folder of numbered files, so its checks write
     and read a folder, whose path is the path of the other formats. Bytes
     and streams cannot hold a folder, so the format and its metadata must
     refuse them, and check 12 tests that they do instead of reading them.
@@ -1675,11 +1675,11 @@ if minc_needs is not None:
         )
 
 
-def _write_sequence(path: tx.Any, data: tx.Any) -> None:
+def _write_stack(path: tx.Any, data: tx.Any) -> None:
     """Write data `(x, y, z)` as a folder of TIFF files, one per slice.
 
     The files record a pixel size of 0.5 cm along x and 0.25 cm along y in
-    their resolution tags, so that the geometry of the sequence is not the
+    their resolution tags, so that the geometry of the stack is not the
     identity.
     """
     os.mkdir(path)
@@ -1692,7 +1692,7 @@ def _write_sequence(path: tx.Any, data: tx.Any) -> None:
         )
 
 
-def _sequence_cut(source: tx.Any, target: tx.Any) -> None:
+def _stack_cut(source: tx.Any, target: tx.Any) -> None:
     """Copy a folder of TIFF files, each cut before its pixels.
 
     tifffile writes the pixels of a page after its header, so each copy
@@ -1709,18 +1709,18 @@ def _sequence_cut(source: tx.Any, target: tx.Any) -> None:
 
 
 if tifffile is not None:
-    # An image sequence is a folder that cannot be written, as MINC files
+    # An image stack is a folder that cannot be written, as MINC files
     # cannot be. The checks of writing therefore check that it refuses to
     # write, and checks 16a, 17, 18 and 19 are skipped. Check 12 checks
     # that bytes and streams are refused, since they cannot hold a
     # folder, and check 6 cuts each file of the folder before its pixels
     # (items 121 to 125 of the memo on format records).
-    EXEMPLARS[SequenceImage] = Exemplar(
-        metadata=SequenceMetadata,
+    EXEMPLARS[StackImage] = Exemplar(
+        metadata=StackMetadata,
         suffix="",
-        proxies=(_SequenceProxy,),
-        to_model=_sequence_to_model,
-        to_disk=_sequence_to_disk,
+        proxies=(_StackProxy,),
+        to_model=_stack_to_model,
+        to_disk=_stack_to_disk,
         sample=lambda: np.arange(24, dtype="uint16").reshape(2, 3, 4),
         edit_record=lambda record: replace(record, pattern="slice_*.tif"),
         record_edited=lambda record: record.pattern == "slice_*.tif",
@@ -1728,9 +1728,9 @@ if tifffile is not None:
         change_geometry=_nifti_change_geometry,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
         options=frozenset({"pixel_size", "unit"}),
-        cut=_sequence_cut,
+        cut=_stack_cut,
         header=lambda metadata: metadata.raw,
-        source=_write_sequence,
+        source=_write_stack,
         folder=True,
     )
 

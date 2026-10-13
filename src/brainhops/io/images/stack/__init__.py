@@ -1,18 +1,18 @@
-r"""Image sequences: folders of numbered two-dimensional images.
+r"""Image stacks: folders of numbered two-dimensional images.
 
 Light-sheet microscopes, electron microscopes and many export tools write
 a volume as one image file per slice. This module reads such a folder as
 one three-dimensional image, a
-[`SequenceImage`][brainhops.io.images.sequence.SequenceImage]. The files
+[`StackImage`][brainhops.io.images.stack.StackImage]. The files
 are TIFF files, read with tifffile (the `tiff` extra), or images in a
 format that Pillow reads (the `pillow` extra), such as PNG or JPEG.
-Image sequences are read only.
+Image stacks are read only.
 
 ```python
 import brainhops.io as io
 
-image = io.load("slices/")                       # a SequenceImage
-image = io.load("slices/", hint="sequence")      # the same, explicitly
+image = io.load("slices/")                       # a StackImage
+image = io.load("slices/", hint="stack")      # the same, explicitly
 image = io.load("slices/", pattern="ch1_*.tif")  # a subset of the files
 image = io.load("slices/", pixel_size={"z": 2.0}, unit="um")
 image.data.shape                                 # (x, y, z) or (x, y, z, c)
@@ -22,7 +22,7 @@ io.save(image, "volume.nii.gz")                  # or any other format
 
 ## Files
 
-A sequence is a local folder. Its files are, by default, every file of
+A stack is a local folder. Its files are, by default, every file of
 the folder whose extension is that of a TIFF file or of a format that the
 Pillow reader claims, and subfolders are not searched. The option
 `pattern` gives a glob pattern relative to the folder instead, such as
@@ -31,7 +31,7 @@ an image file. A pattern cannot reach outside the folder. Hidden files,
 whose names start with a dot, are never taken. The format of a file is
 told from its extension, and TIFF files need tifffile while other images
 need Pillow. A folder that holds a Zarr store is never read as a
-sequence.
+stack.
 
 The names of the files must differ in one run of digits only, which is
 the number of the file, as in `z0.tif`, `z1.tif`, ..., `z10.tif`. The
@@ -92,34 +92,34 @@ as for a single TIFF or Pillow image.
 ## Metadata
 
 `image.metadata` is a
-[`SequenceMetadata`][brainhops.io.images.sequence.SequenceMetadata],
+[`StackMetadata`][brainhops.io.images.stack.StackMetadata],
 whose record, a
-[`SequenceRaw`][brainhops.io.images.sequence.SequenceRaw], lists the
-files as [`SequenceMember`][brainhops.io.images.sequence.SequenceMember]
+[`StackRaw`][brainhops.io.images.stack.StackRaw], lists the
+files as [`StackMember`][brainhops.io.images.stack.StackMember]
 objects, in order. Each member gives the name of its file relative to the
 folder, its number, its axes, shape and type, and its header: the
 `TiffMetadata` that the TIFF reader parses, with the tags, the OME-XML
 and the ImageJ metadata, or the `PillowHeader` of a Pillow file, with its
 mode and the `info` dictionary of Pillow. Reading the metadata alone,
-with `SequenceMetadata.load(folder)`, reads the header of every file but
+with `StackMetadata.load(folder)`, reads the header of every file but
 none of their pixels.
 
 ## Writing
 
-Image sequences are read only. A folder of files has no header that could
+Image stacks are read only. A folder of files has no header that could
 record what the image holds beyond its pixels, and writing it would mean
 replacing many files that the lazy array reads. An image is saved to
 another format instead, such as NIfTI or a multi-page TIFF, and
-[`save`][brainhops.io.save] refuses to write it as a sequence.
+[`save`][brainhops.io.save] refuses to write it as a stack.
 """
 
 __all__ = [
-    "SequenceImage",
-    "SequenceMember",
-    "SequenceMetadata",
-    "SequenceRaw",
+    "StackImage",
+    "StackMember",
+    "StackMetadata",
+    "StackRaw",
 ]
 
-from ._image import SequenceImage
-from ._metadata import SequenceMetadata
-from ._raw import SequenceMember, SequenceRaw
+from ._image import StackImage
+from ._metadata import StackMetadata
+from ._raw import StackMember, StackRaw

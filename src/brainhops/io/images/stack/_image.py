@@ -1,4 +1,4 @@
-"""The image sequence format, which is read only."""
+"""The image stack format, which is read only."""
 
 # stdlib
 import os
@@ -21,12 +21,12 @@ from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format
-from ._data import _SequenceProxy
-from ._metadata import SequenceMetadata
+from ._data import _StackProxy
+from ._metadata import StackMetadata
 from ._raw import (
     NOT_A_STREAM,
-    SequenceMember,
-    SequenceRaw,
+    StackMember,
+    StackRaw,
     refuse_options,
     refuse_stream,
     sniff_folder,
@@ -36,7 +36,7 @@ from ._views import _image_to_disk, _image_to_model, _permutation
 
 
 @register_format
-class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
+class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     """A volume stored as a folder of numbered two-dimensional images.
 
     Light-sheet microscopes, electron microscopes and many export tools
@@ -45,11 +45,11 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     The files are TIFF files, read with tifffile, or images in a format
     that Pillow reads, such as PNG. The folder is recognized when it is
     passed to [`load`][brainhops.io.load] (see
-    [`brainhops.io.images.sequence`][] for the rules), and the format hint
-    `"sequence"` selects this class.
+    [`brainhops.io.images.stack`][] for the rules), and the format hint
+    `"stack"` selects this class.
 
     The image holds the list of its files and their headers as
-    [`SequenceMetadata`][], whose record is a [`SequenceRaw`][], and its
+    [`StackMetadata`][], whose record is a [`StackRaw`][], and its
     pixels in `raw`, a lazy array that reads each file only when one of
     its pixels is needed. The files are stacked along the slowest axis,
     z, so the data are indexed `(x, y, z)`, or `(x, y, z, c)` for files
@@ -65,15 +65,15 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     `pixel_size` and `unit` set the sizes instead, so that
     `pixel_size={"z": 2.0}` gives the spacing of the slices.
 
-    Image sequences cannot be written, so the class has no writer: an
+    Image stacks cannot be written, so the class has no writer: an
     image is saved to another format, such as NIfTI or a multi-page TIFF,
-    and [`save`][brainhops.io.save] refuses to write it as a sequence.
+    and [`save`][brainhops.io.save] refuses to write it as a stack.
     Assigned data are pending until [`consolidate`][] moves them into
     `raw`, and the transformations that the image holds, read or
     assigned, are kept, since no record can be encoded.
     """
 
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("sequence",)
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("stack",)
 
     raw: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The pixels of the files stacked along a first axis, or `None`.
@@ -108,10 +108,10 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     empty one, is stored as it is.
     """
 
-    _metadata: NoRepr[tx.Optional[SequenceMetadata]] = None
+    _metadata: NoRepr[tx.Optional[StackMetadata]] = None
 
     metadata = smartproperty("metadata")
-    """The metadata of the sequence, which holds its record, or `None`.
+    """The metadata of the stack, which holds its record, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
     drops the transformations that the image holds, read or assigned, so
@@ -119,12 +119,12 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     """
 
     @metadata.setter
-    def metadata(self, value: tx.Optional[SequenceMetadata]) -> None:
+    def metadata(self, value: tx.Optional[StackMetadata]) -> None:
         self._metadata = value
         self._transformations = None
 
     pixel_size: tx.Optional[tx.Any] = None
-    """The size of a voxel given when the sequence was read, or `None`.
+    """The size of a voxel given when the stack was read, or `None`.
 
     It is one size for every spatial axis, one size per spatial axis in
     the order x, y and z, or a mapping that sets the named axes only, such
@@ -189,11 +189,11 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         stored = tuple(int(d) for d in self.raw.shape)
         return tuple(stored[i] for i in _permutation(len(stored)))
 
-    def consolidate(self, *, inplace: bool = False) -> "SequenceImage":
+    def consolidate(self, *, inplace: bool = False) -> "StackImage":
         """Move the pending data into `raw`.
 
-        Image sequences cannot be written, so no record can be encoded,
-        and consolidating a sequence is limited to its data: an assigned
+        Image stacks cannot be written, so no record can be encoded,
+        and consolidating a stack is limited to its data: an assigned
         array becomes `raw`, with its spatial axes reversed, and is no
         longer pending. The metadata is kept, and so are the
         transformations that the image holds, read or assigned. An image
@@ -207,7 +207,7 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
         Returns
         -------
-        SequenceImage
+        StackImage
             The consolidated copy, or this image with `inplace=True`.
         """
         if self._data is None:
@@ -229,7 +229,7 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         pattern: tx.Optional[str] = None,
         **kwargs,
     ) -> float:
-        """Return the confidence that a path is the folder of a sequence.
+        """Return the confidence that a path is the folder of a stack.
 
         A local folder that is not a Zarr store, and whose image files
         (or the files that `pattern` selects) are numbered without a gap,
@@ -243,9 +243,9 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             The path of the folder.
         error : bool or type[Exception], default=False
             Whether to raise an error when the path is not the folder of a
-            sequence.
+            stack.
         pattern : str, optional
-            The glob pattern that selects the files of the sequence.
+            The glob pattern that selects the files of the stack.
         **kwargs : Any
             Other options of the reader, which are ignored.
 
@@ -270,7 +270,7 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         file : IO
             The stream.
         error : bool or type[Exception], default=False
-            Whether to raise an error, since a stream is never a sequence.
+            Whether to raise an error, since a stream is never a stack.
         **kwargs : Any
             Options of the reader, which are ignored.
 
@@ -295,7 +295,7 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         content : bytes
             The bytes.
         error : bool or type[Exception], default=False
-            Whether to raise an error, since bytes are never a sequence.
+            Whether to raise an error, since bytes are never a stack.
         **kwargs : Any
             Options of the reader, which are ignored.
 
@@ -314,8 +314,8 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         pixel_size: tx.Optional[tx.Any] = None,
         unit: tx.Optional[tx.Any] = None,
         **kwargs,
-    ) -> "SequenceImage":
-        """Read the image sequence in a folder, without reading pixels.
+    ) -> "StackImage":
+        """Read the image stack in a folder, without reading pixels.
 
         The header of every file is read to check that the files can be
         stacked. The lazy array reads the pixels of a file, by name, when
@@ -327,7 +327,7 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             The path of a local folder.
         pattern : str, optional
             The glob pattern, relative to the folder, that selects the
-            files of the sequence, such as `"slice_*.tif"`. By default,
+            files of the stack, such as `"slice_*.tif"`. By default,
             every image file of the folder is taken. Hidden files are
             never taken.
         pixel_size : float or Sequence[float] or Mapping[str, float], optional
@@ -344,7 +344,7 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
         Returns
         -------
-        SequenceImage
+        StackImage
             The image, whose pixels are read lazily.
 
         Raises
@@ -356,27 +356,27 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         ParserExistsError
             If the folder does not exist.
         ParserContentError
-            If the folder does not hold a sequence that can be read: the
+            If the folder does not hold a stack that can be read: the
             names of its image files do not follow one numbering, a number
             is missing or repeated, or the files differ in format, shape,
             type or number of channels.
         """
         refuse_options(cls, kwargs)
-        record = SequenceRaw.from_folder(filename, pattern)
+        record = StackRaw.from_folder(filename, pattern)
         _check_options(record, pixel_size, unit)
         if isinstance(filename, str):
             filename = path.Path(filename)
         folder = os.path.abspath(os.fspath(filename))
         return cls(
-            raw=_SequenceProxy(folder, record),
-            metadata=SequenceMetadata.from_raw(record),
+            raw=_StackProxy(folder, record),
+            metadata=StackMetadata.from_raw(record),
             pixel_size=pixel_size,
             unit=unit,
         )
 
     @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> "SequenceImage":
-        """Refuse a stream, which cannot hold the files of a sequence.
+    def from_fileobj(cls, file: tx.IO, **kwargs) -> "StackImage":
+        """Refuse a stream, which cannot hold the files of a stack.
 
         Parameters
         ----------
@@ -388,7 +388,7 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         Raises
         ------
         ParserTypeError
-            Always, since a sequence is read from the path of its folder.
+            Always, since a stack is read from the path of its folder.
         """
         raise ParserTypeError(NOT_A_STREAM)
 
@@ -399,7 +399,7 @@ class SequenceImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
 
 def _check_options(
-    record: SequenceRaw, pixel_size: tx.Any, unit: tx.Any
+    record: StackRaw, pixel_size: tx.Any, unit: tx.Any
 ) -> None:
     """Check the options of the geometry against the axes of a record.
 
@@ -415,7 +415,7 @@ def _check_options(
 
 
 def _record_transformations(
-    metadata: tx.Optional[SequenceMetadata],
+    metadata: tx.Optional[StackMetadata],
     pixel_size: tx.Any,
     unit: tx.Any,
 ) -> tx.List[Transformation]:
@@ -426,13 +426,13 @@ def _record_transformations(
     """
     if metadata is None or metadata.raw is None or not metadata.raw.members:
         return []
-    return _sequence_transformations(metadata.raw, pixel_size, unit)
+    return _stack_transformations(metadata.raw, pixel_size, unit)
 
 
-def _sequence_transformations(
-    record: SequenceRaw, pixel_size: tx.Any, unit: tx.Any
+def _stack_transformations(
+    record: StackRaw, pixel_size: tx.Any, unit: tx.Any
 ) -> tx.List[Transformation]:
-    """Return the voxel-to-physical scaling of a sequence.
+    """Return the voxel-to-physical scaling of a stack.
 
     The sizes that every file records agree on are used, the options take
     precedence over them, and a negative ImageJ spacing flips z unless
@@ -456,16 +456,16 @@ def _sequence_transformations(
     return raster.raster_transformations(axes, scales)
 
 
-def _model_axes(record: SequenceRaw) -> tx.List[Axis]:
-    """Return the axes of the data of a sequence, `x, y, z[, c]`."""
+def _model_axes(record: StackRaw) -> tx.List[Axis]:
+    """Return the axes of the data of a stack, `x, y, z[, c]`."""
     axes = raster.storage_axes(record.axes)
     return [axes[p] for p in raster.canonical_permutation(axes)]
 
 
 def _recorded_scales(
-    record: SequenceRaw,
+    record: StackRaw,
 ) -> tx.Tuple[tx.Dict[str, raster.AxisScale], tx.Dict[str, float]]:
-    """Return the sizes and signs on which every file of a sequence agrees.
+    """Return the sizes and signs on which every file of a stack agrees.
 
     A TIFF file records the size of its pixels along x and y, as the TIFF
     reader reads it (`series_metadata`), and an ImageJ file may also
@@ -488,7 +488,7 @@ def _recorded_scales(
             continue
         if any(pair != found[0] for pair in found):
             warnings.warn(
-                f"The files of the sequence do not all record the same "
+                f"The files of the stack do not all record the same "
                 f"size along {name}, so that size is unknown. Pass "
                 f"pixel_size= to set it.",
                 stacklevel=3,
@@ -501,7 +501,7 @@ def _recorded_scales(
 
 
 def _file_scales(
-    member: SequenceMember,
+    member: StackMember,
 ) -> tx.Tuple[tx.Dict[str, raster.AxisScale], tx.Dict[str, float]]:
     """Return the sizes that one file records, and the signs of its steps.
 

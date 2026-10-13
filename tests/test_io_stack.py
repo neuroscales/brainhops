@@ -1,4 +1,4 @@
-"""Tests for image sequences: folders of numbered TIFF and Pillow images.
+"""Tests for image stacks: folders of numbered TIFF and Pillow images.
 
 The folders are written with tifffile and Pillow in each test, so that
 each test states the names, the layout and the metadata of its files.
@@ -35,14 +35,14 @@ from brainhops.io.images.pillow._utils import (  # noqa: E402
     read_pillow,
     read_pillow_header,
 )
-from brainhops.io.images.sequence import (  # noqa: E402
-    SequenceImage,
-    SequenceMember,
-    SequenceMetadata,
-    SequenceRaw,
+from brainhops.io.images.stack import (  # noqa: E402
+    StackImage,
+    StackMember,
+    StackMetadata,
+    StackRaw,
 )
-from brainhops.io.images.sequence import _data as sequence_data  # noqa: E402
-from brainhops.io.images.sequence._data import _SequenceProxy  # noqa: E402
+from brainhops.io.images.stack import _data as stack_data  # noqa: E402
+from brainhops.io.images.stack._data import _StackProxy  # noqa: E402
 from brainhops.io.images.tiff import TiffImage  # noqa: E402
 from brainhops.io.images.tiff import _utils as tiff_backend  # noqa: E402
 from brainhops.io.metadata import MetadataFormat  # noqa: E402
@@ -95,26 +95,26 @@ def _units(image: tx.Any) -> tx.List[tx.Optional[str]]:
 def test_a_folder_of_tiff_files_is_one_volume(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     image = io.load(folder)
-    assert isinstance(image, SequenceImage)
-    assert isinstance(image.raw, _SequenceProxy)
-    assert isinstance(image.metadata, SequenceMetadata)
+    assert isinstance(image, StackImage)
+    assert isinstance(image.raw, _StackProxy)
+    assert isinstance(image.metadata, StackMetadata)
     assert image.shape == (2, 3, 12)
     assert image.raw.shape == (12, 3, 2)
     assert np.array_equal(np.asarray(image.data), VOLUME.transpose(2, 1, 0))
     # The class, the hint and the image loader read it in the same way.
     for other in (
-        SequenceImage.load(folder),
-        io.load(str(folder), hint="sequence"),
+        StackImage.load(folder),
+        io.load(str(folder), hint="stack"),
         io.images.load(folder),
     ):
-        assert isinstance(other, SequenceImage)
+        assert isinstance(other, StackImage)
         assert np.array_equal(np.asarray(other.data), np.asarray(image.data))
 
 
 def test_numbers_are_sorted_as_integers(tmp_path: Path) -> None:
     # Unpadded numbers sort as 0, 1, 2, ..., 10, 11, not as 0, 1, 10, 11, 2.
     folder = _tiffs(tmp_path / "slices", name="z{}.tif")
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     names = image.metadata.raw.names
     assert names[:3] == ("z0.tif", "z1.tif", "z2.tif")
     assert names[-2:] == ("z10.tif", "z11.tif")
@@ -124,7 +124,7 @@ def test_numbers_are_sorted_as_integers(tmp_path: Path) -> None:
 
 def test_numbering_may_start_anywhere(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices", name="img{:04d}.tif", start=7)
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     assert image.metadata.raw.members[0].number == 7
     assert np.array_equal(np.asarray(image.raw), VOLUME)
 
@@ -132,7 +132,7 @@ def test_numbering_may_start_anywhere(tmp_path: Path) -> None:
 def test_a_folder_of_png_files_with_channels(tmp_path: Path) -> None:
     folder = _pngs(tmp_path / "rgb")
     image = io.load(folder)
-    assert isinstance(image, SequenceImage)
+    assert isinstance(image, StackImage)
     assert image.shape == (2, 3, 4, 3)
     assert image.metadata.raw.axes == "ZYXS"
     data = np.asarray(image.data)
@@ -155,7 +155,7 @@ def test_planar_tiff_channels_come_last(tmp_path: Path) -> None:
             photometric="rgb",
             planarconfig="separate",
         )
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     assert image.metadata.raw.members[0].axes == "SYX"
     assert np.array_equal(np.asarray(image.raw), COLOUR)
     assert np.array_equal(np.asarray(image.data), COLOUR.transpose(2, 1, 0, 3))
@@ -169,9 +169,9 @@ def test_a_pattern_selects_the_files(tmp_path: Path) -> None:
     (folder / ".hidden.tif").write_bytes(b"")
     # Without a pattern, the two channels are two numbers that vary.
     with pytest.raises(ParserContentError, match="2 numbers"):
-        SequenceImage.load(folder)
+        StackImage.load(folder)
     image = io.load(folder, pattern="ch2_*.tif")
-    assert isinstance(image, SequenceImage)
+    assert isinstance(image, StackImage)
     assert image.metadata.raw.pattern == "ch2_*.tif"
     assert np.array_equal(np.asarray(image.raw), VOLUME[5:9])
     metadata = MetadataFormat.load(folder, pattern="ch1_*.tif")
@@ -180,7 +180,7 @@ def test_a_pattern_selects_the_files(tmp_path: Path) -> None:
 
 def test_a_pattern_may_name_a_subfolder(tmp_path: Path) -> None:
     _pngs(tmp_path / "data" / "rgb")
-    image = SequenceImage.load(tmp_path / "data", pattern="rgb/*.png")
+    image = StackImage.load(tmp_path / "data", pattern="rgb/*.png")
     assert image.metadata.raw.names[0] == "rgb/s_000.png"
     assert np.array_equal(np.asarray(image.raw), COLOUR)
 
@@ -189,9 +189,9 @@ def test_a_pattern_selects_image_files_only(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     (folder / "z.txt").write_text("text")
     with pytest.raises(ParserContentError, match="'z.txt'"):
-        SequenceImage.load(folder, pattern="z*")
+        StackImage.load(folder, pattern="z*")
     with pytest.raises(ParserContentError, match="no image file"):
-        SequenceImage.load(folder, pattern="*.png")
+        StackImage.load(folder, pattern="*.png")
 
 
 def test_hidden_files_are_never_taken(tmp_path: Path) -> None:
@@ -199,7 +199,7 @@ def test_hidden_files_are_never_taken(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     tifffile.imwrite(folder / ".tmp.z12.tif", VOLUME[0])
     for pattern in (None, "*.tif", "*"):
-        image = SequenceImage.load(folder, pattern=pattern)
+        image = StackImage.load(folder, pattern=pattern)
         assert len(image.metadata.raw.members) == 12
 
 
@@ -207,9 +207,9 @@ def test_a_pattern_stays_in_the_folder(tmp_path: Path) -> None:
     _tiffs(tmp_path / "a")
     _tiffs(tmp_path / "b")
     with pytest.raises(ParserContentError, match="inside the folder"):
-        SequenceImage.load(tmp_path / "a", pattern="../b/*.tif")
+        StackImage.load(tmp_path / "a", pattern="../b/*.tif")
     with pytest.raises(ParserContentError, match="inside the folder"):
-        SequenceImage.load(tmp_path / "a", pattern=str(tmp_path / "b/*"))
+        StackImage.load(tmp_path / "a", pattern=str(tmp_path / "b/*"))
 
 
 # ----------------------------------------------------------------------
@@ -222,22 +222,22 @@ def test_a_gap_in_the_numbers_is_refused(tmp_path: Path) -> None:
     os.remove(folder / "z4.tif")
     os.remove(folder / "z7.tif")
     with pytest.raises(ParserContentError, match="numbered 4, 7"):
-        SequenceImage.load(folder)
-    assert SequenceImage.sniff(folder) == Confidence.NO
+        StackImage.load(folder)
+    assert StackImage.sniff(folder) == Confidence.NO
 
 
 def test_a_repeated_number_is_refused(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices", VOLUME[:3], name="z{}.tif")
     tifffile.imwrite(folder / "z01.tif", VOLUME[0])
     with pytest.raises(ParserContentError, match="same number"):
-        SequenceImage.load(folder)
+        StackImage.load(folder)
 
 
 def test_names_that_follow_no_pattern_are_refused(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices", VOLUME[:3])
     tifffile.imwrite(folder / "other.tif", VOLUME[0])
     with pytest.raises(ParserContentError, match="numbering pattern"):
-        SequenceImage.load(folder)
+        StackImage.load(folder)
 
 
 @pytest.mark.parametrize(
@@ -254,7 +254,7 @@ def test_files_that_differ_are_refused(
     folder = _tiffs(tmp_path / "slices", VOLUME[:3])
     tifffile.imwrite(folder / "z3.tif", plane)
     with pytest.raises(ParserContentError, match=f"same {what}.*'z3.tif'"):
-        SequenceImage.load(folder)
+        StackImage.load(folder)
 
 
 def test_files_with_and_without_channels_are_refused(tmp_path: Path) -> None:
@@ -262,14 +262,14 @@ def test_files_with_and_without_channels_are_refused(tmp_path: Path) -> None:
     grey = Image.fromarray(COLOUR[2, ..., 0])
     grey.save(folder / "s_002.png")
     with pytest.raises(ParserContentError, match="channels"):
-        SequenceImage.load(folder)
+        StackImage.load(folder)
 
 
 def test_a_stack_in_one_file_is_refused(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices", VOLUME[:2])
     tifffile.imwrite(folder / "z2.tif", VOLUME[:5])
     with pytest.raises(ParserContentError, match="one plane"):
-        SequenceImage.load(folder)
+        StackImage.load(folder)
 
 
 def test_an_animation_is_refused(tmp_path: Path) -> None:
@@ -279,24 +279,24 @@ def test_an_animation_is_refused(tmp_path: Path) -> None:
     frames[0].save(folder / "a0.gif", save_all=True, append_images=frames)
     frames[1].save(folder / "a1.gif")
     with pytest.raises(ParserContentError, match="frames"):
-        SequenceImage.load(folder)
+        StackImage.load(folder)
 
 
 def test_paths_that_are_not_folders_are_refused(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     with pytest.raises(ParserExistsError):
-        SequenceImage.load(tmp_path / "missing")
+        StackImage.load(tmp_path / "missing")
     with pytest.raises(ParserContentError, match="is a file"):
-        SequenceImage.load(folder / "z0.tif")
+        StackImage.load(folder / "z0.tif")
     (tmp_path / "empty").mkdir()
     with pytest.raises(ParserContentError, match="no image file"):
-        SequenceImage.load(tmp_path / "empty")
+        StackImage.load(tmp_path / "empty")
 
 
 def test_streams_and_bytes_are_refused(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     content = (folder / "z0.tif").read_bytes()
-    for cls in (SequenceImage, SequenceMetadata):
+    for cls in (StackImage, StackMetadata):
         assert cls.sniff(content) == Confidence.NO
         assert cls.sniff(BytesIO(content)) == Confidence.NO
         with pytest.raises(ParserError, match="folder"):
@@ -308,13 +308,13 @@ def test_streams_and_bytes_are_refused(tmp_path: Path) -> None:
 def test_unknown_options_are_refused(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     with pytest.raises(TypeError, match="frame"):
-        SequenceImage.load(folder, frame=1)
+        StackImage.load(folder, frame=1)
     with pytest.raises(TypeError, match="pixel_size"):
-        SequenceMetadata.load(folder, pixel_size=1.0)
+        StackMetadata.load(folder, pixel_size=1.0)
     with pytest.raises(ValueError, match="pixel_size"):
-        SequenceImage.load(folder, pixel_size=(1.0, 2.0))
+        StackImage.load(folder, pixel_size=(1.0, 2.0))
     with pytest.raises(ValueError, match="positive"):
-        SequenceImage.load(folder, pixel_size={"z": -1.0})
+        StackImage.load(folder, pixel_size={"z": -1.0})
 
 
 # ----------------------------------------------------------------------
@@ -325,22 +325,22 @@ def test_unknown_options_are_refused(tmp_path: Path) -> None:
 def test_only_folders_are_claimed(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     _pngs(tmp_path / "pngs")
-    assert io.sniff(folder) is SequenceImage
-    assert MetadataFormat.sniff(folder) is SequenceMetadata
+    assert io.sniff(folder) is StackImage
+    assert MetadataFormat.sniff(folder) is StackMetadata
     # A single file is left to the TIFF and Pillow readers.
-    assert SequenceImage.sniff(folder / "z0.tif") == Confidence.NO
+    assert StackImage.sniff(folder / "z0.tif") == Confidence.NO
     assert io.sniff(folder / "z0.tif") is TiffImage
     assert isinstance(io.load(folder / "z0.tif"), TiffImage)
     assert isinstance(io.load(tmp_path / "pngs" / "s_000.png"), PillowImage)
     with pytest.raises(ParserError):
-        io.load(folder / "z0.tif", hint="sequence")
+        io.load(folder / "z0.tif", hint="stack")
 
 
 def test_zarr_stores_are_not_claimed(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "store.zarr")
     (folder / "zarr.json").write_text("{}")
-    assert SequenceImage.sniff(folder) == Confidence.NO
-    assert SequenceMetadata.sniff(folder) == Confidence.NO
+    assert StackImage.sniff(folder) == Confidence.NO
+    assert StackMetadata.sniff(folder) == Confidence.NO
 
 
 def test_a_folder_without_numbered_images_is_not_claimed(
@@ -350,10 +350,10 @@ def test_a_folder_without_numbered_images_is_not_claimed(
     folder.mkdir()
     Image.fromarray(COLOUR[0]).save(folder / "cat.png")
     Image.fromarray(COLOUR[1]).save(folder / "dog.png")
-    assert SequenceImage.sniff(folder) == Confidence.NO
+    assert StackImage.sniff(folder) == Confidence.NO
     (tmp_path / "text").mkdir()
     (tmp_path / "text" / "a1.txt").write_text("1")
-    assert SequenceImage.sniff(tmp_path / "text") == Confidence.NO
+    assert StackImage.sniff(tmp_path / "text") == Confidence.NO
 
 
 # ----------------------------------------------------------------------
@@ -366,7 +366,7 @@ def test_the_pixel_size_comes_from_the_tags(tmp_path: Path) -> None:
     folder = _tiffs(
         tmp_path / "slices", resolution=(2.0, 4.0), resolutionunit="CENTIMETER"
     )
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     assert isinstance(image.transformation, Scaling)
     assert np.allclose(_scale(image), [0.5, 0.25, 1.0])
     # The spacing of the slices is not recorded, so it stays unknown.
@@ -378,13 +378,13 @@ def test_the_spacing_comes_from_the_options(tmp_path: Path) -> None:
     folder = _tiffs(
         tmp_path / "slices", resolution=(2.0, 4.0), resolutionunit="CENTIMETER"
     )
-    image = SequenceImage.load(folder, pixel_size={"z": 2.0})
+    image = StackImage.load(folder, pixel_size={"z": 2.0})
     assert np.allclose(_scale(image), [0.5, 0.25, 2.0])
     assert _units(image) == ["centimeter"] * 3
-    image = SequenceImage.load(folder, pixel_size={"z": 2.0}, unit="mm")
+    image = StackImage.load(folder, pixel_size={"z": 2.0}, unit="mm")
     assert np.allclose(_scale(image), [5.0, 2.5, 2.0])
     assert _units(image) == ["millimeter"] * 3
-    image = SequenceImage.load(folder, pixel_size=(1.0, 2.0, 3.0), unit="um")
+    image = StackImage.load(folder, pixel_size=(1.0, 2.0, 3.0), unit="um")
     assert np.allclose(_scale(image), [1.0, 2.0, 3.0])
     # The options are kept, so the transformations decoded again from the
     # record use them.
@@ -399,7 +399,7 @@ def test_the_spacing_comes_from_imagej(tmp_path: Path) -> None:
         resolution=(2.0, 2.0),
         metadata={"spacing": 1.5, "unit": "um"},
     )
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     assert np.allclose(_scale(image), [0.5, 0.5, 1.5])
     assert _units(image) == ["micrometer"] * 3
     # A negative spacing flips z, unless the option sets the spacing.
@@ -409,8 +409,8 @@ def test_the_spacing_comes_from_imagej(tmp_path: Path) -> None:
         resolution=(2.0, 2.0),
         metadata={"spacing": -1.5, "unit": "um"},
     )
-    assert np.allclose(_scale(SequenceImage.load(flipped)), [0.5, 0.5, -1.5])
-    image = SequenceImage.load(flipped, pixel_size={"z": 3.0})
+    assert np.allclose(_scale(StackImage.load(flipped)), [0.5, 0.5, -1.5])
+    image = StackImage.load(flipped, pixel_size={"z": 3.0})
     assert np.allclose(_scale(image), [0.5, 0.5, 3.0])
 
 
@@ -429,7 +429,7 @@ def test_slices_that_run_in_both_directions_disagree(
         imagej=True,
         metadata={"spacing": -1.5, "unit": "um"},
     )
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     with pytest.warns(UserWarning, match="along z"):
         assert np.allclose(_scale(image)[2], 1.0)
 
@@ -449,7 +449,7 @@ def test_sizes_on_which_the_files_disagree_are_unknown(
         resolution=(2.0, 5.0),
         resolutionunit="CENTIMETER",
     )
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     with pytest.warns(UserWarning, match="along y"):
         scale = _scale(image)
     assert np.allclose(scale, [0.5, 1.0, 1.0])
@@ -461,12 +461,12 @@ def test_pillow_files_have_no_size(tmp_path: Path) -> None:
     folder.mkdir()
     for k, plane in enumerate(COLOUR):
         Image.fromarray(plane).save(folder / f"s{k}.png", dpi=(300, 300))
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     # The resolution of a raster file describes a screen or a printer, so
-    # the Pillow reader ignores it by default, and so does the sequence.
+    # the Pillow reader ignores it by default, and so does the stack.
     assert np.allclose(_scale(image), [1.0, 1.0, 1.0, 1.0])
     assert _units(image) == [None, None, None, None]
-    image = SequenceImage.load(folder, pixel_size=0.1, unit="mm")
+    image = StackImage.load(folder, pixel_size=0.1, unit="mm")
     assert np.allclose(_scale(image)[:3], [0.1, 0.1, 0.1])
 
 
@@ -478,13 +478,13 @@ def test_pillow_files_have_no_size(tmp_path: Path) -> None:
 def _count_reads(monkeypatch: pytest.MonkeyPatch) -> tx.List[str]:
     """Record the name of every file that the lazy array decodes."""
     reads: tx.List[str] = []
-    original = sequence_data._read_file
+    original = stack_data._read_file
 
-    def counting(filename: str, member: SequenceMember) -> np.ndarray:
+    def counting(filename: str, member: StackMember) -> np.ndarray:
         reads.append(member.name)
         return original(filename, member)
 
-    monkeypatch.setattr(sequence_data, "_read_file", counting)
+    monkeypatch.setattr(stack_data, "_read_file", counting)
     return reads
 
 
@@ -493,7 +493,7 @@ def test_loading_reads_no_pixel(
 ) -> None:
     folder = _tiffs(tmp_path / "slices")
     reads = _count_reads(monkeypatch)
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     image.shape, image.transformations, repr(image)
     assert reads == []
     # An empty selection, which Dask reads to learn the type, reads nothing.
@@ -506,7 +506,7 @@ def test_a_selection_reads_only_its_files(
 ) -> None:
     folder = _tiffs(tmp_path / "slices")
     reads = _count_reads(monkeypatch)
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     assert np.array_equal(image.raw[5], VOLUME[5])
     assert np.array_equal(image.raw[2:8:3, 1], VOLUME[2:8:3, 1])
     assert np.array_equal(image.raw[-1, :, 0], VOLUME[-1, :, 0])
@@ -519,7 +519,7 @@ def test_dask_reads_one_file_per_chunk(
     folder = _tiffs(tmp_path / "slices")
     reads = _count_reads(monkeypatch)
     with backend("dask"):
-        data = SequenceImage.load(folder).data
+        data = StackImage.load(folder).data
     assert isinstance(data, da.Array)
     assert data.chunks == ((2,), (3,), (1,) * 12)
     assert reads == []
@@ -531,14 +531,14 @@ def test_dask_reads_one_file_per_chunk(
 def test_numpy_data_are_read_only(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     with backend("numpy"):
-        data = SequenceImage.load(folder).data
+        data = StackImage.load(folder).data
     assert isinstance(data, np.ndarray)
     assert not data.flags.writeable
 
 
 def test_a_file_changed_after_loading_is_refused(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     tifffile.imwrite(folder / "z3.tif", VOLUME[3, :2])
     with pytest.raises(ParserContentError, match="'z3.tif'"):
         np.asarray(image.raw)
@@ -560,9 +560,9 @@ def test_the_record_holds_the_headers_of_the_files(tmp_path: Path) -> None:
         resolution=(2.0, 4.0),
         resolutionunit="CENTIMETER",
     )
-    metadata = SequenceMetadata.load(folder)
+    metadata = StackMetadata.load(folder)
     record = metadata.raw
-    assert isinstance(record, SequenceRaw)
+    assert isinstance(record, StackRaw)
     assert record.shape == (3, 3, 2)
     assert record.dtype == np.dtype("uint16")
     assert record.format == "tiff"
@@ -575,14 +575,14 @@ def test_the_record_holds_the_headers_of_the_files(tmp_path: Path) -> None:
     assert clone.raw == record
 
 
-def test_sequences_are_not_written(tmp_path: Path) -> None:
+def test_stacks_are_not_written(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
-    image = SequenceImage.load(folder)
+    image = StackImage.load(folder)
     assert not hasattr(image, "save")
     assert not hasattr(image.metadata, "save")
     with pytest.raises(WriterError):
         io.save(image, tmp_path / "copy")
-    # A sequence is saved to another format, here a multi-page TIFF.
+    # A stack is saved to another format, here a multi-page TIFF.
     io.save(image, tmp_path / "volume.tif")
     back = io.load(tmp_path / "volume.tif")
     assert isinstance(back, TiffImage)
@@ -637,5 +637,5 @@ def test_no_file_is_left_open(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     with warnings.catch_warnings():
         warnings.simplefilter("error", ResourceWarning)
-        image = SequenceImage.load(folder)
+        image = StackImage.load(folder)
         np.asarray(image.raw)

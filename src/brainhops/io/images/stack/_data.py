@@ -1,4 +1,4 @@
-"""The pixels of an image sequence: the lazy array that reads its files."""
+"""The pixels of an image stack: the lazy array that reads its files."""
 
 # stdlib
 import os
@@ -12,16 +12,16 @@ import typing_extensions as tx
 from brainhops.io.base.parsers import ParserContentError
 
 # this format
-from ._raw import SequenceMember, SequenceRaw
+from ._raw import StackMember, StackRaw
 
 
-class _SequenceProxy:
-    """A lazy array of the pixels of an image sequence.
+class _StackProxy:
+    """A lazy array of the pixels of an image stack.
 
-    The proxy holds the path of the folder and the record of the sequence.
+    The proxy holds the path of the folder and the record of the stack.
     It presents the files stacked along a new first axis, in the order of
     the record, so its shape is `(files, rows, columns[, channels])`, as
-    `SequenceRaw.shape` gives it. Each file is read with the reader of its
+    `StackRaw.shape` gives it. Each file is read with the reader of its
     format, tifffile or Pillow, only when one of its pixels is selected,
     and no file is kept open. A selection along the first axis therefore
     reads only the files that it selects, which lets Dask read one file
@@ -32,11 +32,11 @@ class _SequenceProxy:
     permuted layouts of MRtrix do.
     """
 
-    def __init__(self, folder: str, record: SequenceRaw) -> None:
+    def __init__(self, folder: str, record: StackRaw) -> None:
         self.folder = folder
         """The path of the folder that holds the files."""
         self.record = record
-        """The record of the sequence, which lists the files in order."""
+        """The record of the stack, which lists the files in order."""
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -81,7 +81,7 @@ class _SequenceProxy:
         filename = os.path.join(self.folder, *member.name.split("/"))
         if not os.path.isfile(filename):
             raise ParserContentError(
-                f"The file {member.name!r} of the sequence in "
+                f"The file {member.name!r} of the stack in "
                 f"{self.folder!r} no longer exists."
             )
         values = _read_file(filename, member)
@@ -91,7 +91,7 @@ class _SequenceProxy:
             raise ParserContentError(
                 f"The file {member.name!r} holds an array of shape "
                 f"{tuple(values.shape)} and type {values.dtype}, but the "
-                f"sequence was read with shape {member.shape} and type "
+                f"stack was read with shape {member.shape} and type "
                 f"{member.dtype}."
             )
         return values.transpose(member.plane_order)
@@ -141,10 +141,10 @@ class _SequenceProxy:
         return np.asarray(self)[index]
 
     def __repr__(self) -> str:
-        return f"_SequenceProxy(shape={self.shape}, dtype={self.dtype})"
+        return f"_StackProxy(shape={self.shape}, dtype={self.dtype})"
 
 
-def _read_file(filename: str, member: SequenceMember) -> np.ndarray:
+def _read_file(filename: str, member: StackMember) -> np.ndarray:
     """Decode one file with the reader of its format.
 
     The readers are those of the single-file formats: `read_series` of the

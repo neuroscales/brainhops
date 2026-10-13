@@ -1,4 +1,4 @@
-"""The metadata of an image sequence."""
+"""The metadata of an image stack."""
 
 # dependencies
 import typing_extensions as tx
@@ -13,7 +13,7 @@ from brainhops.io.metadata import MetadataFormat
 # this format
 from ._raw import (
     NOT_A_STREAM,
-    SequenceRaw,
+    StackRaw,
     refuse_options,
     refuse_stream,
     sniff_folder,
@@ -22,27 +22,27 @@ from ._raw import (
 
 
 @register_format
-class SequenceMetadata(MetadataFormat, BinaryFileReader):
-    """Metadata of an image sequence, which is the list of its files.
+class StackMetadata(MetadataFormat, BinaryFileReader):
+    """Metadata of an image stack, which is the list of its files.
 
-    An image sequence is a folder of numbered two-dimensional images that
-    form one volume. Its metadata holds a [`SequenceRaw`][] record, which
+    An image stack is a folder of numbered two-dimensional images that
+    form one volume. Its metadata holds a [`StackRaw`][] record, which
     lists the files and holds the header of each one. Reading the metadata
     reads the header of every file, but never their pixels, and the
-    metadata keeps no open file. Image sequences cannot be written, so the
+    metadata keeps no open file. Image stacks cannot be written, so the
     metadata cannot be written either.
 
     A folder is recognized when it is not a Zarr store and its image
     files are numbered without a gap (see
-    [`brainhops.io.images.sequence`][]). A file, a stream or bytes are
+    [`brainhops.io.images.stack`][]). A file, a stream or bytes are
     never recognized, so this class never takes a file from the TIFF and
-    Pillow readers. The format hint `"sequence"` selects this class.
+    Pillow readers. The format hint `"stack"` selects this class.
     """
 
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("sequence",)
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("stack",)
 
-    raw: NoRepr[tx.Optional[SequenceRaw]] = None
-    """The record of the sequence, or `None` for metadata without a record.
+    raw: NoRepr[tx.Optional[StackRaw]] = None
+    """The record of the stack, or `None` for metadata without a record.
     """
 
     @classmethod
@@ -53,7 +53,7 @@ class SequenceMetadata(MetadataFormat, BinaryFileReader):
         pattern: tx.Optional[str] = None,
         **kwargs,
     ) -> float:
-        """Return the confidence that a path is the folder of a sequence.
+        """Return the confidence that a path is the folder of a stack.
 
         Only the names of the files are checked, so no file is opened.
 
@@ -63,16 +63,16 @@ class SequenceMetadata(MetadataFormat, BinaryFileReader):
             The path of the folder.
         error : bool or type[Exception], default=False
             Whether to raise an error when the path is not the folder of a
-            sequence.
+            stack.
         pattern : str, optional
-            The glob pattern that selects the files of the sequence.
+            The glob pattern that selects the files of the stack.
         **kwargs : Any
             Other options of the reader, which are ignored.
 
         Returns
         -------
         float
-            `LIKELY` for a folder that can hold a sequence, and `NO`
+            `LIKELY` for a folder that can hold a stack, and `NO`
             otherwise.
         """
         return sniff_score(sniff_folder(filename, pattern), error)
@@ -91,7 +91,7 @@ class SequenceMetadata(MetadataFormat, BinaryFileReader):
         file : IO
             The stream.
         error : bool or type[Exception], default=False
-            Whether to raise an error, since a stream is never a sequence.
+            Whether to raise an error, since a stream is never a stack.
         **kwargs : Any
             Options of the reader, which are ignored.
 
@@ -116,7 +116,7 @@ class SequenceMetadata(MetadataFormat, BinaryFileReader):
         content : bytes
             The bytes.
         error : bool or type[Exception], default=False
-            Whether to raise an error, since bytes are never a sequence.
+            Whether to raise an error, since bytes are never a stack.
         **kwargs : Any
             Options of the reader, which are ignored.
 
@@ -133,10 +133,10 @@ class SequenceMetadata(MetadataFormat, BinaryFileReader):
         filename: path.FilenameLike,
         pattern: tx.Optional[str] = None,
         **kwargs,
-    ) -> "SequenceMetadata":
-        """Read the metadata of the image sequence in a folder.
+    ) -> "StackMetadata":
+        """Read the metadata of the image stack in a folder.
 
-        The record is read with [`SequenceRaw.from_folder`][], which reads
+        The record is read with [`StackRaw.from_folder`][], which reads
         the header of every file but not their pixels.
 
         Parameters
@@ -145,15 +145,15 @@ class SequenceMetadata(MetadataFormat, BinaryFileReader):
             The path of the folder.
         pattern : str, optional
             The glob pattern, relative to the folder, that selects the
-            files of the sequence. By default, every image file of the
+            files of the stack. By default, every image file of the
             folder is taken.
         **kwargs : Any
             Other options, which are refused.
 
         Returns
         -------
-        SequenceMetadata
-            The metadata, which holds the record of the sequence.
+        StackMetadata
+            The metadata, which holds the record of the stack.
 
         Raises
         ------
@@ -162,14 +162,14 @@ class SequenceMetadata(MetadataFormat, BinaryFileReader):
         ParserExistsError
             If the folder does not exist.
         ParserContentError
-            If the folder does not hold a sequence that can be read.
+            If the folder does not hold a stack that can be read.
         """
         refuse_options(cls, kwargs)
-        return cls.from_raw(SequenceRaw.from_folder(filename, pattern))
+        return cls.from_raw(StackRaw.from_folder(filename, pattern))
 
     @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> "SequenceMetadata":
-        """Refuse a stream, which cannot hold the files of a sequence.
+    def from_fileobj(cls, file: tx.IO, **kwargs) -> "StackMetadata":
+        """Refuse a stream, which cannot hold the files of a stack.
 
         Parameters
         ----------
@@ -181,6 +181,6 @@ class SequenceMetadata(MetadataFormat, BinaryFileReader):
         Raises
         ------
         ParserTypeError
-            Always, since a sequence is read from the path of its folder.
+            Always, since a stack is read from the path of its folder.
         """
         raise ParserTypeError(NOT_A_STREAM)

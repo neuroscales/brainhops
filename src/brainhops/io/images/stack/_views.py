@@ -1,7 +1,7 @@
-"""How the data of an image sequence is decoded from the stacked files, and
+"""How the data of an image stack is decoded from the stacked files, and
 encoded back.
 
-The lazy array of a sequence stacks its files along a first axis, as
+The lazy array of a stack stacks its files along a first axis, as
 `(files, rows, columns[, channels])`, which tifffile spells `ZYX` or
 `ZYXS`. The data of the image are in the brainhops order, `(x, y, z[,
 c])`, so the two functions below reverse the three spatial axes and
@@ -22,7 +22,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 
 # this format
-from ._data import _SequenceProxy
+from ._data import _StackProxy
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
@@ -36,7 +36,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     permuted as it is, so that the data of an image whose data were set
     are a view of `raw`.
     """
-    if isinstance(raw, _SequenceProxy):
+    if isinstance(raw, _StackProxy):
         backend = get_array_backend()
         if da is not None and backend is da:
             # `name=False` gives a random name instead of a hash of the

@@ -1,4 +1,4 @@
-"""The record of an image sequence: the list of its files and their
+"""The record of an image stack: the list of its files and their
 headers."""
 
 # stdlib
@@ -29,7 +29,7 @@ from brainhops.io.base.parsers import (
 
 _ZARR_MARKERS = (".zarray", ".zgroup", ".zattrs", "zarr.json")
 """Files whose presence makes a folder a Zarr store, which is never read as
-a sequence."""
+a stack."""
 
 _CHANNELS = "SC"
 """The storage codes of a channel axis, as tifffile spells them: samples
@@ -44,8 +44,8 @@ _LISTED = 5
 # ----------------------------------------------------------------------
 
 
-class SequenceMember(Magic, frozen=True):
-    """One file of an image sequence, and what its header says.
+class StackMember(Magic, frozen=True):
+    """One file of an image stack, and what its header says.
 
     A member is a two-dimensional image, possibly with several channels,
     stored in a TIFF file or in a raster format that Pillow reads, such as
@@ -87,7 +87,7 @@ class SequenceMember(Magic, frozen=True):
 
     @property
     def plane_axes(self) -> str:
-        """The axes in which the sequence presents the file: `"YX"`, or
+        """The axes in which the stack presents the file: `"YX"`, or
         `"YXS"` for a file with channels."""
         return "YXS" if len(self.axes) == 3 else "YX"
 
@@ -109,10 +109,10 @@ class SequenceMember(Magic, frozen=True):
         return tuple(self.shape[i] for i in self.plane_order)
 
 
-class SequenceRaw(Magic, frozen=True):
-    """The record of an image sequence, which lists its files.
+class StackRaw(Magic, frozen=True):
+    """The record of an image stack, which lists its files.
 
-    An image sequence is a folder of numbered two-dimensional images, such
+    An image stack is a folder of numbered two-dimensional images, such
     as `slice_000.tif`, `slice_001.tif` and so on, which together form one
     volume. The folder has no header of its own, so the record is the
     list of its members, sorted by the number that their names carry, with
@@ -121,12 +121,12 @@ class SequenceRaw(Magic, frozen=True):
     without a gap. The record never reads pixels.
 
     The record is held by
-    [`SequenceMetadata`][brainhops.io.images.sequence.SequenceMetadata].
+    [`StackMetadata`][brainhops.io.images.stack.StackMetadata].
     It is frozen, and two records are equal when their fields are.
     """
 
-    members: tx.Tuple[SequenceMember, ...] = ()
-    """The files of the sequence, sorted by their numbers."""
+    members: tx.Tuple[StackMember, ...] = ()
+    """The files of the stack, sorted by their numbers."""
 
     pattern: tx.Optional[str] = None
     """The glob pattern that selected the files in the folder, or `None`
@@ -169,7 +169,7 @@ class SequenceRaw(Magic, frozen=True):
             return np.dtype("float64")
         return np.dtype(self.members[0].dtype)
 
-    def copy(self) -> "SequenceRaw":
+    def copy(self) -> "StackRaw":
         """Return a copy of the record.
 
         The record is frozen and its fields are tuples, so the copy shares
@@ -177,7 +177,7 @@ class SequenceRaw(Magic, frozen=True):
 
         Returns
         -------
-        SequenceRaw
+        StackRaw
             The copy.
         """
         return replace(self)
@@ -187,8 +187,8 @@ class SequenceRaw(Magic, frozen=True):
         cls,
         folder: path.FilenameLike,
         pattern: tx.Optional[str] = None,
-    ) -> "SequenceRaw":
-        """Read the record of the image sequence that a folder holds.
+    ) -> "StackRaw":
+        """Read the record of the image stack that a folder holds.
 
         The files are listed, their names are checked and sorted by the
         number that they carry, and the header of each file is read. The
@@ -200,14 +200,14 @@ class SequenceRaw(Magic, frozen=True):
             The path of a local folder.
         pattern : str, optional
             A glob pattern, relative to the folder, that selects the files
-            of the sequence, such as `"slice_*.tif"`. By default, every
+            of the stack, such as `"slice_*.tif"`. By default, every
             file of the folder whose extension is that of a TIFF file or
             of a format that Pillow reads is taken. Hidden files, whose
             names start with a dot, are never taken.
 
         Returns
         -------
-        SequenceRaw
+        StackRaw
             The record.
 
         Raises
@@ -237,10 +237,10 @@ class SequenceRaw(Magic, frozen=True):
 def sniff_folder(
     folder: tx.Any, pattern: tx.Optional[str] = None
 ) -> tx.Optional[str]:
-    """Tell why a path cannot be an image sequence, or `None` if it can.
+    """Tell why a path cannot be an image stack, or `None` if it can.
 
     Only the names of the files are checked, so no file is opened. A path
-    can hold a sequence if it is a local folder that is not a Zarr store,
+    can hold a stack if it is a local folder that is not a Zarr store,
     and if the files that `pattern` selects are image files whose names
     follow one numbering without a gap.
 
@@ -249,12 +249,12 @@ def sniff_folder(
     folder : path-like
         The path to check.
     pattern : str, optional
-        The glob pattern that selects the files of the sequence.
+        The glob pattern that selects the files of the stack.
 
     Returns
     -------
     str or None
-        The reason why the path is not a sequence, or `None`.
+        The reason why the path is not a stack, or `None`.
     """
     try:
         local = _local_folder(folder)
@@ -309,12 +309,12 @@ def _local_folder(folder: tx.Any) -> str:
         folder = path.Path(folder)
     if not isinstance(folder, (str, os.PathLike)):
         raise ParserContentError(
-            f"An image sequence is read from the path of a folder, not from "
+            f"An image stack is read from the path of a folder, not from "
             f"an object of type {type(folder).__name__}."
         )
     if not is_local(folder):
         raise ParserContentError(
-            f"Image sequences are read from local folders only, and "
+            f"Image stacks are read from local folders only, and "
             f"{str(folder)!r} is not local."
         )
     local = os.fspath(folder)
@@ -322,7 +322,7 @@ def _local_folder(folder: tx.Any) -> str:
         raise ParserExistsError(f"No such folder: {local}")
     if not os.path.isdir(local):
         raise ParserContentError(
-            f"An image sequence is a folder, and {local!r} is a file."
+            f"An image stack is a folder, and {local!r} is a file."
         )
     return local
 
@@ -405,7 +405,7 @@ def _numbered(names: tx.Sequence[str]) -> tx.List[tx.Tuple[int, str]]:
         if not same:
             raise ParserContentError(
                 f"The names {names[0]!r} and {name!r} do not follow one "
-                f"numbering pattern. The files of a sequence differ only "
+                f"numbering pattern. The files of a stack differ only "
                 f"in one number, as in 'slice_001.tif' and "
                 f"'slice_002.tif'. Select them with pattern=."
             )
@@ -444,16 +444,16 @@ def _numbered(names: tx.Sequence[str]) -> tx.List[tx.Tuple[int, str]]:
         shown = ", ".join(str(n) for n in missing[:_LISTED])
         more = " and others" if len(missing) > _LISTED else ""
         raise ParserContentError(
-            f"The sequence numbered from {numbers[0]} to {numbers[-1]} "
+            f"The stack numbered from {numbers[0]} to {numbers[-1]} "
             f"misses {len(missing)} file(s), numbered {shown}{more}. A "
-            f"sequence cannot have gaps, since the files would no longer "
+            f"stack cannot have gaps, since the files would no longer "
             f"be evenly spaced."
         )
     return numbered
 
 
-def _read_member(folder: str, name: str, number: int) -> SequenceMember:
-    """Read the header of one file of a sequence.
+def _read_member(folder: str, name: str, number: int) -> StackMember:
+    """Read the header of one file of a stack.
 
     Raises
     ------
@@ -468,8 +468,8 @@ def _read_member(folder: str, name: str, number: int) -> SequenceMember:
     return _read_pillow_member(filename, name, number)
 
 
-def _read_tiff_member(filename: str, name: str, number: int) -> SequenceMember:
-    """Read the header of a TIFF file of a sequence with tifffile."""
+def _read_tiff_member(filename: str, name: str, number: int) -> StackMember:
+    """Read the header of a TIFF file of a stack with tifffile."""
     if not HAS_TIFFFILE:
         raise ParserContentError(
             f"Reading {name!r} needs tifffile, which is not installed. "
@@ -483,7 +483,7 @@ def _read_tiff_member(filename: str, name: str, number: int) -> SequenceMember:
         if len(tif.series) != 1:
             raise ParserContentError(
                 f"The TIFF file {name!r} holds {len(tif.series)} series, "
-                f"but a file of a sequence holds one image."
+                f"but a file of a stack holds one image."
             )
         series = tif.series[0]
         axes = str(series.axes)
@@ -491,7 +491,7 @@ def _read_tiff_member(filename: str, name: str, number: int) -> SequenceMember:
         dtype = np.dtype(series.dtype).newbyteorder("=")
         header = tiff.series_metadata(tif, 0)
     _check_axes(name, axes)
-    return SequenceMember(
+    return StackMember(
         name=name,
         number=number,
         format="tiff",
@@ -504,8 +504,8 @@ def _read_tiff_member(filename: str, name: str, number: int) -> SequenceMember:
 
 def _read_pillow_member(
     filename: str, name: str, number: int
-) -> SequenceMember:
-    """Read the header of a raster file of a sequence with Pillow."""
+) -> StackMember:
+    """Read the header of a raster file of a stack with Pillow."""
     if not HAS_PILLOW:
         raise ParserContentError(
             f"Reading {name!r} needs Pillow, which is not installed. "
@@ -517,10 +517,10 @@ def _read_pillow_member(
     if header.n_frames != 1:
         raise ParserContentError(
             f"The file {name!r} holds {header.n_frames} frames, but a file "
-            f"of a sequence holds one image. Read it on its own with "
+            f"of a stack holds one image. Read it on its own with "
             f"`frame=`."
         )
-    return SequenceMember(
+    return StackMember(
         name=name,
         number=number,
         format="pillow",
@@ -543,14 +543,14 @@ def _check_axes(name: str, axes: str) -> None:
     if len(axes) - len(rest) == 2 and (rest == "" or rest in _CHANNELS):
         return
     raise ParserContentError(
-        f"The file {name!r} has the axes {axes!r}, but a file of a sequence "
+        f"The file {name!r} has the axes {axes!r}, but a file of a stack "
         f"holds one plane (Y and X), with at most one channel axis (S or "
         f"C). Read a stack or a hyperstack on its own."
     )
 
 
-def _check_alike(members: tx.Sequence[SequenceMember]) -> None:
-    """Check that the files of a sequence can be stacked.
+def _check_alike(members: tx.Sequence[StackMember]) -> None:
+    """Check that the files of a stack can be stacked.
 
     Raises
     ------
@@ -566,20 +566,20 @@ def _check_alike(members: tx.Sequence[SequenceMember]) -> None:
         ):
             if mine != theirs:
                 raise ParserContentError(
-                    f"The files of a sequence must have the same {what}, "
+                    f"The files of a stack must have the same {what}, "
                     f"but {first.name!r} has {theirs!r} and {member.name!r} "
                     f"has {mine!r}."
                 )
 
 
 NOT_A_STREAM = (
-    "An image sequence is a folder of files, so it is read from the path "
+    "An image stack is a folder of files, so it is read from the path "
     "of the folder and not from a stream or from bytes."
 )
 
 
 def sniff_score(reason: tx.Optional[str], error: tx.Any) -> float:
-    """Turn the reason why a path is not a sequence into a confidence.
+    """Turn the reason why a path is not a stack into a confidence.
 
     Raises
     ------
@@ -597,7 +597,7 @@ def sniff_score(reason: tx.Optional[str], error: tx.Any) -> float:
 
 
 def refuse_stream(error: tx.Any) -> float:
-    """Refuse a stream or bytes, which never hold a sequence.
+    """Refuse a stream or bytes, which never hold a stack.
 
     Raises
     ------
