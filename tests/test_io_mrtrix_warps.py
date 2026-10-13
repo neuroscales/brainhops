@@ -318,17 +318,106 @@ def test_a_displacement_moves_each_voxel_by_its_value(displacement) -> None:  # 
     )
 
 
-def test_a_displacement_without_history_is_read_by_hint(tmp_path) -> None:  # noqa: ANN001
+def test_a_displacement_without_history_is_sniffed_from_its_values(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """Displacements stay near zero, and coordinates follow the grid."""
     path = _write(tmp_path / "d.mif", _ramp())
+    assert MrtrixDisplacementField.sniff(path) == Confidence.MAYBE
+    assert MrtrixCoordinatesField.sniff(path) == Confidence.WEAK
+    assert type(io.load(path)) is MrtrixDisplacementField
+    path = _write(tmp_path / "c.mif", _grid_points() + _ramp())
+    assert MrtrixCoordinatesField.sniff(path) == Confidence.MAYBE
+    assert MrtrixDisplacementField.sniff(path) == Confidence.WEAK
+    assert type(io.load(path)) is MrtrixCoordinatesField
+
+
+def test_the_values_are_sniffed_through_a_mih_header(tmp_path) -> None:  # noqa: ANN001
+    warp = MrtrixDisplacementField(data=_ramp())
+    warp.consolidate(inplace=True, keyval={"brainhops_field_type": None})
+    warp.save(tmp_path / "d.mih")
+    assert type(io.load(tmp_path / "d.mih")) is MrtrixDisplacementField
+
+
+def test_a_displacement_is_read_by_hint_when_nothing_decides(tmp_path) -> None:  # noqa: ANN001
+    """A single voxel does not say whether it holds a position."""
+    path = _write(tmp_path / "d.mif", _ramp()[:1, :1, :1])
     assert type(io.load(path)) is MrtrixCoordinatesField
     for hint in ("mrtrix.disp", "mrtrix.field.displacement", "displacements"):
         warp = io.load(path, hint=hint)
         assert type(warp) is MrtrixDisplacementField
+    path = _write(tmp_path / "c.mif", _ramp())
+    for hint in ("mrtrix.coord", "mrtrix.field.coordinates"):
+        assert type(io.load(path, hint=hint)) is MrtrixCoordinatesField
     warp = MrtrixDisplacementField.from_file(path)
     points = _grid_points().reshape(-1, 3)
     np.testing.assert_allclose(
         _apply(warp, points), points + _ramp().reshape(-1, 3), atol=1e-4
     )
+
+
+@pytest.mark.parametrize(
+    "cls, kind",
+    [
+        (MrtrixCoordinatesField, "coordinates"),
+        (MrtrixDisplacementField, "displacement"),
+    ],
+)
+def test_brainhops_records_the_kind_of_warp(tmp_path, cls, kind) -> None:  # noqa: ANN001
+    """The values are made to look like the other kind, so that only the
+    key can decide."""
+    values = _ramp() if cls is MrtrixCoordinatesField else _grid_points()
+    path = tmp_path / "w.mif"
+    cls(data=values).save(path)
+    record = MrtrixRaw.from_file(path)
+    assert record.keyval["brainhops_field_type"] == kind
+    assert record.keyval["command_history"].startswith("brainhops  (version=")
+    assert cls.sniff(path) == Confidence.CERTAIN
+    assert type(io.load(path)) is cls
+    # Saving again does not repeat the `command_history` line.
+    io.load(path).consolidate(inplace=True, datatype="float64").save(path)
+    lines = MrtrixRaw.from_file(path).keyval["command_history"].split("\n")
+    assert len(lines) == 1
+
+
+def test_a_brainhops_key_under_a_later_command(tmp_path) -> None:  # noqa: ANN001
+    """MRtrix copies the key into the files that it derives, so a command
+    that changes the kind of warp decides, and another one leaves the key
+    likely."""
+    brainhops = "brainhops  (version=1.0)"
+    key = {"brainhops_field_type": "displacement"}
+    path = _write(
+        tmp_path / "c.mif",
+        _grid_points(),
+        keyval={
+            **key,
+            "command_history": brainhops
+            + "\nwarpconvert d.mif displacement2deformation c.mif"
+            + "  (version=3.0.4)",
+        },
+    )
+    assert MrtrixCoordinatesField.sniff(path) == Confidence.LIKELY
+    assert type(io.load(path)) is MrtrixCoordinatesField
+    path = _write(
+        tmp_path / "d.mif",
+        _grid_points(),
+        keyval={
+            **key,
+            "command_history": brainhops + "\nmrconvert d.mif d2.mif",
+        },
+    )
+    assert MrtrixDisplacementField.sniff(path) == Confidence.LIKELY
+    assert type(io.load(path)) is MrtrixDisplacementField
+
+
+def test_a_changed_mrtrix_displacement_keeps_its_kind(displacement) -> None:  # noqa: ANN001
+    """The history of `warpconvert` is kept, and brainhops writes last."""
+    warp = io.load(displacement)
+    warp.data = np.asarray(warp.data) + 1
+    warp.save(displacement)
+    history = MrtrixRaw.from_file(displacement).keyval["command_history"]
+    assert history.startswith(WARPCONVERT + "\nbrainhops  (version=")
+    assert MrtrixDisplacementField.sniff(displacement) == Confidence.CERTAIN
 
 
 def test_a_deformation_and_its_displacement_agree(
@@ -784,10 +873,14 @@ def test_a_warp_is_pending_until_consolidated(deformation, tmp_path) -> None:  #
     consolidated = warp.consolidate()
     assert consolidated._data is None
     np.testing.assert_array_equal(consolidated.raw, np.asarray(raw) + 1)
-    # The geometry and the keys of the record are kept.
+    # The geometry and the keys of the record are kept, and the kind of
+    # warp is recorded with a `command_history` line of brainhops.
     record = consolidated.metadata.raw
     np.testing.assert_array_equal(record.transform, metadata.raw.transform)
-    assert record.keyval == metadata.raw.keyval
+    added = set(record.keyval) - set(metadata.raw.keyval)
+    assert added == {"brainhops_field_type", "command_history"}
+    assert record.keyval["brainhops_field_type"] == "coordinates"
+    assert record.keyval["command_history"].startswith("brainhops  (version=")
     # Saving over its own file re-points the warp at the new file.
     warp.save(deformation)
     assert isinstance(warp.raw, _MrtrixProxy) and warp._data is None

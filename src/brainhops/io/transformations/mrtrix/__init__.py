@@ -16,19 +16,19 @@ Each class answers to the hint `"mrtrix"` followed by one of its own
 names. Long and short names are both accepted, as for the NiftyReg
 fields.
 
-| Class                         | Hints                                         |
-| ----------------------------- | --------------------------------------------- |
-| [`MrtrixCoordinatesField`][]  | `mrtrix.coordinates`, `mrtrix.coord`          |
-| [`MrtrixDisplacementField`][] | `mrtrix.displacement`, `mrtrix.disp`          |
-| [`MrtrixWarpFull`][]          | `mrtrix.warpfull`, `mrtrix.warp_full`         |
-| [`MrtrixLinearTransform`][]   | `mrtrix.linear`, `mrtrix.affine`              |
+| Class                         | Hints                                  |
+| ----------------------------- | -------------------------------------- |
+| [`MrtrixCoordinatesField`][]  | `mrtrix.coordinates`, `mrtrix.coord`   |
+| [`MrtrixDisplacementField`][] | `mrtrix.displacement`, `mrtrix.disp`   |
+| [`MrtrixWarpFull`][]          | `mrtrix.warpfull`, `mrtrix.warp_full`  |
+| [`MrtrixLinearTransform`][]   | `mrtrix.linear`, `mrtrix.affine`       |
 
 The three warps share the abstract [`MrtrixWarp`][], which answers to
 the hint `"mrtrix.field"`, so that `"mrtrix.field.coord"` and
-`"mrtrix.field.disp"` are accepted as well. They read the `.mif`, `.mif.gz` and `.mih`
-variants with the record and the lazy array of the MRtrix image, which
-are described in [`brainhops.io.common.mrtrix`][], and they need no
-dependency beyond NumPy.
+`"mrtrix.field.disp"` are accepted as well. They read the `.mif`,
+`.mif.gz` and `.mih` variants with the record and the lazy array of the
+MRtrix image, which are described in [`brainhops.io.common.mrtrix`][],
+and they need no dependency beyond NumPy.
 
 Each warp holds the header of its file as [`MrtrixMetadata`][], whose
 record is an [`MrtrixRaw`][], and the values of the file in `raw`, which
@@ -89,17 +89,47 @@ header has no transform.
   voxel units, and `voxel2ras`. The chain is built and split by the
   shared helpers of [`brainhops.io.transformations.base.fields`][].
 
-The header does not say which of the two a file holds. Every MRtrix
-command takes deformations (`mrtransform -warp`, `warpinvert` by
-default, and `mrregister -nl_init` through the 5-D format), so a warp is
-read as a deformation unless the last line of its `command_history`,
-which MRtrix appends to every image that it writes, names a command that
-writes displacements. These commands are `warpconvert` with
-`deformation2displacement` or `warpfull2displacement`, and `warpinvert
--displacement`. The values are never looked at. A file is read the other
-way when it is asked for, with `hint="mrtrix.displacement"` or
-`hint="mrtrix.deformation"`, or with
-`MrtrixDisplacementField.from_file(path)`.
+The header does not say which of the two a file holds, and MRtrix
+users do not say it either when they apply a warp: every MRtrix command
+takes a deformation (`mrtransform -warp`, `transformcompose`,
+`warpcorrect`, and `warpinvert` by default), and a displacement must
+first be converted with `warpconvert displacement2deformation`. Only
+`warpconvert`, by its conversion type, and `warpinvert`, by its
+`-displacement` option, are told which kind they read. A warp is
+therefore read from these clues, in this order.
+
+1. A field that brainhops wrote records its kind in the header key
+   `brainhops_field_type` (`coordinates` or `displacement`), and appends
+   `brainhops  (version=...)` to `command_history`, as MRtrix appends
+   each command that writes a file. MRtrix keeps the key without reading
+   it. While brainhops wrote the file last, the key decides, with
+   `Confidence.CERTAIN`.
+2. The last line of `command_history` decides, with
+   `Confidence.LIKELY`, when it names a command that writes one kind of
+   warp: `warpconvert` with `*2displacement` or `*2deformation`,
+   `warpinvert` with or without `-displacement`, `warpinit`,
+   `warpcorrect` and `mrregister`. MRtrix copies the key of brainhops
+   into the files that its commands derive, so such a command overrides
+   a key that it made stale.
+3. The key decides, with `Confidence.LIKELY`, under a later command that
+   does not change the kind of warp, such as `mrconvert`.
+4. The values decide, with `Confidence.MAYBE`. Coordinates follow the
+   scanner position of their voxel and spread across the field of view,
+   while displacements stay close to zero, so the warp is read as a
+   field of coordinates when its values spread more than their
+   difference from the scanner positions of the voxels. This is the
+   test that the FNIRT reader applies to tell absolute fields from
+   relative ones. A large warp is subsampled, and the values are not
+   read when the data file of a `.mih` header cannot be found.
+5. Otherwise, the warp is read as a field of coordinates, which is what
+   MRtrix takes.
+
+The values cannot decide for every field, for example a field of a
+single voxel or a displacement as large as the field of view, so a file
+may still need a hint: `hint="mrtrix.disp"` or `hint="mrtrix.coord"`,
+or `MrtrixDisplacementField.from_file(path)`. A hint always overrides
+the clues. A field may be written without the key, with
+`keyval={"brainhops_field_type": None}`.
 
 A 4-D image with three volumes, or a 5-D image of shape
 `(X, Y, Z, 3, 4)`, is also a valid MRtrix image. The image reader scores

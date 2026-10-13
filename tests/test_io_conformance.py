@@ -1287,8 +1287,11 @@ _MRTRIX = Exemplar(
 EXEMPLARS[MrtrixImage] = _MRTRIX
 
 # The MRtrix warps are MRtrix images, checked as `.mif` files, whose
-# models are chains. A deformation and a displacement are built on an
-# identity grid, which their chains replace to change the geometry. A
+# models are chains. A field of coordinates and a field of displacements
+# are built on an identity grid, which their chains replace to change the
+# geometry. A new record of either one records its kind in the header key
+# `brainhops_field_type`, with a `command_history` line of brainhops,
+# which an untouched save does not add. A
 # warpfull file holds its warps and its linear transforms, which no chain
 # can be split back into, so its data stands in for its geometry, as for
 # FNIRT, and it refuses every conversion from another format. Its grid is

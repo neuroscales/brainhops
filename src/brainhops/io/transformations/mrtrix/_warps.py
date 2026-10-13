@@ -10,6 +10,7 @@ described in the package docstring,
 # stdlib
 import math
 import os
+import warnings
 from collections import OrderedDict
 from io import BytesIO
 
@@ -23,6 +24,7 @@ from bagof.magic import KwOnly, NoRepr, replace
 from brainhops._core import affines as _affines
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
+from brainhops._core.streams import preserve_position
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
@@ -64,6 +66,7 @@ from brainhops.io.transformations.base.fields import (
     homogeneous_matrix,
     ras_displacement_chain,
     split_ras_displacement_chain,
+    voxel_grid_coordinates,
 )
 
 # this format
@@ -86,6 +89,36 @@ _HISTORY = "command_history"
 # last `command_history` line names the command that wrote the file.
 _DEFORMATION_COMMANDS = ("warpinit", "warpcorrect", "mrregister")
 _DEFORMATION, _DISPLACEMENT = "deformation", "displacement"
+
+_FIELD_TYPE = "brainhops_field_type"
+"""The header key in which brainhops records the kind of a 4-D warp.
+
+MRtrix keeps a header key that it does not know as free-form text
+(`core/formats/mrtrix_utils.h`), and copies it into the images that its
+commands derive from the file (`Header::create`, in `core/header.cpp`).
+"""
+
+# The values of `brainhops_field_type` that brainhops writes, and those
+# that it reads, mapped to the kind of warp.
+_FIELD_TYPE_VALUES = {
+    _DEFORMATION: "coordinates",
+    _DISPLACEMENT: _DISPLACEMENT,
+}
+_FIELD_TYPE_KINDS = {
+    "coordinates": _DEFORMATION,
+    "coord": _DEFORMATION,
+    "deformation": _DEFORMATION,
+    "displacement": _DISPLACEMENT,
+    "displacements": _DISPLACEMENT,
+    "disp": _DISPLACEMENT,
+}
+
+_BRAINHOPS = "brainhops"
+"""The command name that brainhops writes in `command_history`."""
+
+_SNIFF_VOXELS = 64**3
+"""The number of voxels, at most, that the content of a warp is sniffed
+on. A larger warp is subsampled with a regular step."""
 
 
 class MrtrixWarp(
@@ -138,11 +171,14 @@ class MrtrixWarp(
     # --- reading ------------------------------------------------------
 
     @classmethod
-    def _score_header(cls, header: MrtrixRaw) -> float:
+    def _score_header(
+        cls, header: MrtrixRaw, file: tx.Optional[tx.IO] = None
+    ) -> float:
         """Return how well a valid MRtrix header matches this class.
 
         Each concrete format overrides this method, and the base returns
-        `Confidence.NO`.
+        `Confidence.NO`. The stream of the file, when it is given, lets a
+        format look at the values when the header does not decide.
         """
         return Confidence.NO
 
@@ -178,7 +214,7 @@ class MrtrixWarp(
         raw, failure = _sniffed_raw(file)
         if raw is None:
             return _declined(error, failure)
-        return cls._score_header(raw)
+        return cls._score_header(raw, file)
 
     @classmethod
     def sniff_bytes(
@@ -436,10 +472,13 @@ class MrtrixCoordinatesField(
     | `ras2voxel`   | RAS world coordinates to the field's voxels |
     | `coordinates` | the field of RAS coordinates                |
 
-    Nothing in an MRtrix header tells a deformation from a displacement,
-    so a 4-D image with three volumes is read as a deformation, the kind
-    that every MRtrix command takes, unless the command that wrote it is
-    known to write displacements. See the package docstring.
+    An MRtrix header does not say whether a warp holds coordinates or
+    displacements. A 4-D image with three volumes is read as a field of
+    coordinates, the kind that every MRtrix command takes, unless the
+    header key `brainhops_field_type`, the command that wrote the file
+    or the values say otherwise, as the package docstring describes.
+    The field records `brainhops_field_type: coordinates` when it is
+    written.
     """
 
     HINTS = ("coordinates", "coord")
@@ -481,20 +520,24 @@ class MrtrixCoordinatesField(
     # --- reading ------------------------------------------------------
 
     @classmethod
-    def _score_header(cls, header: MrtrixRaw) -> float:
-        """Score an MRtrix header as a deformation.
+    def _score_header(
+        cls, header: MrtrixRaw, file: tx.Optional[tx.IO] = None
+    ) -> float:
+        """Score an MRtrix file as a field of coordinates.
 
         Any 4-D image with three volumes may be one, so it scores
         `Confidence.MAYBE`, which is more than an MRtrix image of that
-        shape scores (`Confidence.WEAK`). It scores `Confidence.LIKELY` if
-        the last command in its history writes deformations, and
-        `Confidence.WEAK` if it writes displacements.
+        shape scores (`Confidence.WEAK`). The header, and then the values,
+        may say more, as the package docstring describes: a field that
+        they show to hold coordinates scores the confidence that they
+        give, and one that they show to hold displacements scores
+        `Confidence.WEAK`.
         """
         if not _is_warp(header):
             return Confidence.NO
-        kind = _history_kind(header)
+        kind, confidence = _field_kind(header, file)
         if kind == _DEFORMATION:
-            return Confidence.LIKELY
+            return confidence
         if kind == _DISPLACEMENT:
             return Confidence.WEAK
         return Confidence.MAYBE
@@ -560,8 +603,12 @@ class MrtrixCoordinatesField(
         `Float32`) and no scaling. A lazy array that the options do not
         change is copied as the file stores it.
 
-        When this encoding gives the record of the metadata, the metadata
-        is kept. An `input` or `output` that was assigned must be scanner
+        The kind of warp is recorded in the header key
+        `brainhops_field_type`, and a `command_history` line names
+        brainhops, unless it is already the last one, so that the file is
+        read back as a field of coordinates. When
+        this encoding gives the record of the metadata, the metadata is
+        kept. An `input` or `output` that was assigned must be scanner
         RAS, which is what the file stores. A field that has a record and
         nothing pending, consolidated without options, is left as it is:
         the copy shares `raw` and the metadata.
@@ -578,9 +625,10 @@ class MrtrixCoordinatesField(
         scaling : (offset, scale), optional
             Intensity scaling to store.
         keyval : mapping, optional
-            Header keys merged into those of the base. A value of `None`
-            removes a key. The keys that the other options, the data and
-            the geometry decide are refused.
+            Header keys merged into those of the base, after the keys
+            that record the kind of warp. A value of `None` removes a
+            key. The keys that the other options, the data and the
+            geometry decide are refused.
 
         Returns
         -------
@@ -618,6 +666,7 @@ class MrtrixCoordinatesField(
             vox2ras = _vox2ras(self)
         else:
             vox2ras, source = _coordinates_parts(self.transformations, what)
+        options["keyval"] = _typed_keyval(_record(self), keyval, _DEFORMATION)
         record, raw = _encoded(_record(self), source, vox2ras, options)
         metadata = _consolidated_metadata(self, record)
         if not inplace:
@@ -662,10 +711,13 @@ class MrtrixDisplacementField(
     | `displacement` | the displacement field, in voxel units      |
     | `voxel2ras`    | the field's voxels back to RAS world        |
 
-    Nothing in an MRtrix header tells a displacement from a deformation,
-    so a file is read as a displacement only when the command that wrote
-    it is known to write displacements, or when it is asked for with
-    `hint="mrtrix.displacement"`.
+    An MRtrix header does not say whether a warp holds coordinates or
+    displacements, so a file is read as a displacement when the header
+    key `brainhops_field_type`, the command that wrote the file or the
+    values say so, as the package docstring describes, or when it is
+    asked for with `hint="mrtrix.disp"`. The field records
+    `brainhops_field_type: displacement` when it is written, so that it
+    is read back as a displacement.
     """
 
     HINTS = ("displacement", "disp", "displacements")
@@ -706,18 +758,22 @@ class MrtrixDisplacementField(
     # --- reading ------------------------------------------------------
 
     @classmethod
-    def _score_header(cls, header: MrtrixRaw) -> float:
-        """Score an MRtrix header as a displacement.
+    def _score_header(
+        cls, header: MrtrixRaw, file: tx.Optional[tx.IO] = None
+    ) -> float:
+        """Score an MRtrix file as a field of displacements.
 
         Any 4-D image with three volumes may be one, but MRtrix takes
-        deformations, so it scores only `Confidence.WEAK`, below a
-        deformation. It scores `Confidence.LIKELY` if the last command in
-        its history writes displacements.
+        fields of coordinates, so it scores only `Confidence.WEAK`, below
+        a field of coordinates, unless the header or the values say that
+        it holds displacements, as the package docstring describes. It
+        then scores the confidence that they give.
         """
         if not _is_warp(header):
             return Confidence.NO
-        if _history_kind(header) == _DISPLACEMENT:
-            return Confidence.LIKELY
+        kind, confidence = _field_kind(header, file)
+        if kind == _DISPLACEMENT:
+            return confidence
         return Confidence.WEAK
 
     # --- endpoints ----------------------------------------------------
@@ -781,7 +837,8 @@ class MrtrixDisplacementField(
         """Encode the pending displacements or chain into `raw` and a record.
 
         The encoding is that of [`MrtrixCoordinatesField.consolidate`][],
-        with RAS displacements in place of RAS coordinates. A chain that
+        with RAS displacements in place of RAS coordinates, and with
+        `brainhops_field_type: displacement` in the header. A chain that
         was assigned is split into its grid and its displacements, rotated
         back into RAS millimetres.
 
@@ -797,9 +854,10 @@ class MrtrixDisplacementField(
         scaling : (offset, scale), optional
             Intensity scaling to store.
         keyval : mapping, optional
-            Header keys merged into those of the base. A value of `None`
-            removes a key. The keys that the other options, the data and
-            the geometry decide are refused.
+            Header keys merged into those of the base, after the keys
+            that record the kind of warp. A value of `None` removes a
+            key. The keys that the other options, the data and the
+            geometry decide are refused.
 
         Returns
         -------
@@ -842,6 +900,7 @@ class MrtrixDisplacementField(
             vox2ras, source = split_ras_displacement_chain(
                 chain, what, ndim=_NDIM
             )
+        options["keyval"] = _typed_keyval(_record(self), keyval, _DISPLACEMENT)
         record, raw = _encoded(_record(self), source, vox2ras, options)
         metadata = _consolidated_metadata(self, record)
         if not inplace:
@@ -967,7 +1026,9 @@ class MrtrixWarpFull(
     # --- reading ------------------------------------------------------
 
     @classmethod
-    def _score_header(cls, header: MrtrixRaw) -> float:
+    def _score_header(
+        cls, header: MrtrixRaw, file: tx.Optional[tx.IO] = None
+    ) -> float:
         """Score an MRtrix header as a warpfull file.
 
         A 5-D image of shape `(X, Y, Z, 3, 4)` scores `Confidence.LIKELY`,
@@ -1333,6 +1394,129 @@ def _history_kind(header: MrtrixRaw) -> tx.Optional[str]:
     return None
 
 
+def _history_lines(header: tx.Optional[MrtrixRaw]) -> tx.List[str]:
+    """Return the lines of the `command_history` of a header."""
+    if header is None:
+        return []
+    history = header.keyval.get(_HISTORY)
+    if not history:
+        return []
+    return [line for line in str(history).split("\n") if line.strip()]
+
+
+def _brainhops_history() -> str:
+    """Return the `command_history` line that brainhops writes.
+
+    MRtrix appends the command line and its version to the
+    `command_history` of every file that it writes (`core/app.cpp`).
+    """
+    from brainhops import __version__
+
+    return f"{_BRAINHOPS}  (version={__version__})"
+
+
+def _written_by_brainhops(header: MrtrixRaw) -> bool:
+    """Tell whether the last `command_history` line names brainhops."""
+    lines = _history_lines(header)
+    if not lines:
+        return False
+    tokens = lines[-1].split()
+    return bool(tokens) and tokens[0] == _BRAINHOPS
+
+
+def _stored_kind(header: MrtrixRaw) -> tx.Optional[str]:
+    """Return the kind of warp that `brainhops_field_type` records."""
+    value = header.keyval.get(_FIELD_TYPE)
+    if value is None:
+        return None
+    return _FIELD_TYPE_KINDS.get(str(value).strip().lower())
+
+
+def _field_kind(
+    header: MrtrixRaw, file: tx.Optional[tx.IO] = None
+) -> tx.Tuple[tx.Optional[str], float]:
+    """Return what a 4-D warp holds, and how sure that is.
+
+    An MRtrix header does not say whether a warp holds coordinates (a
+    *deformation*) or displacements, so the clues are weighed in this
+    order:
+
+    1. The `brainhops_field_type` key, when brainhops wrote the file
+       last, which the last `command_history` line says. The kind that
+       the key records is then `Confidence.CERTAIN`.
+    2. The last `command_history` line, when it names an MRtrix command
+       that writes one kind of warp (`_history_kind`), which gives
+       `Confidence.LIKELY`. MRtrix copies the key of brainhops into the
+       files that it derives, so a command such as `warpconvert` makes
+       the key stale, and the command decides.
+    3. The `brainhops_field_type` key under a later command that does
+       not change the kind of warp, such as `mrconvert`, which gives
+       `Confidence.LIKELY`.
+    4. The values, when the stream of the file is given
+       (`_content_kind`), which give `Confidence.MAYBE`.
+
+    The kind is `"deformation"` or `"displacement"`, or `None` with
+    `Confidence.MAYBE` when nothing decides.
+    """
+    stored = _stored_kind(header)
+    if stored is not None and _written_by_brainhops(header):
+        return stored, Confidence.CERTAIN
+    kind = _history_kind(header)
+    if kind is not None:
+        return kind, Confidence.LIKELY
+    if stored is not None:
+        return stored, Confidence.LIKELY
+    if file is not None:
+        kind = _content_kind(header, file)
+        if kind is not None:
+            return kind, Confidence.MAYBE
+    return None, Confidence.MAYBE
+
+
+def _content_kind(header: MrtrixRaw, file: tx.IO) -> tx.Optional[str]:
+    """Guess from its values whether a 4-D warp holds coordinates.
+
+    Coordinates follow the scanner position of their voxel, so they
+    spread across the field of view, and displacements stay close to
+    zero. The warp is taken to hold coordinates when its values spread
+    more than their difference from the scanner position of their
+    voxels, as the FNIRT reader decides between absolute and relative
+    fields. Values of `nan`, which mark points outside the field of
+    view, are ignored, and a warp larger than `_SNIFF_VOXELS` voxels is
+    subsampled.
+
+    The stream is left where it was. `None` is returned when the values
+    cannot be read, for example when the data file of a `.mih` header
+    cannot be found from the stream, or when they do not decide, as on a
+    single voxel.
+    """
+    try:
+        with preserve_position(file):
+            _, proxy = read_mrtrix(file, mmap=False)
+            values = np.asarray(proxy, dtype=np.float64)
+    except Exception:  # noqa: BLE001
+        return None
+    spatial = values.shape[:_NDIM]
+    count = int(np.prod(spatial))
+    step = max(1, int(math.ceil((count / _SNIFF_VOXELS) ** (1 / _NDIM))))
+    values = values[::step, ::step, ::step]
+    vox2ras = header.voxel_to_scanner() @ np.diag([step] * _NDIM + [1])
+    grid = voxel_grid_coordinates(values.shape[:_NDIM], vox2ras)
+    axes = tuple(range(_NDIM))
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        # A component that is `nan` everywhere warns, and is then ignored.
+        warnings.simplefilter("ignore", RuntimeWarning)
+        spread = np.nansum(np.nanstd(values, axis=axes))
+        offset = np.nansum(np.nanstd(values - grid, axis=axes))
+    if not (np.isfinite(spread) and np.isfinite(offset)):
+        return None
+    if spread > offset:
+        return _DEFORMATION
+    if offset > spread:
+        return _DISPLACEMENT
+    return None
+
+
 def _warpfull_options(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Return the reader options of a warpfull file, refusing others.
 
@@ -1638,6 +1822,34 @@ def _encoded(
     )
     record = placed_record(record, held)
     return record, stored_voxels(record, source)
+
+
+def _typed_keyval(
+    held: tx.Optional[MrtrixRaw],
+    keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]],
+    kind: str,
+) -> tx.Dict[str, tx.Optional[str]]:
+    """Return the header keys that record what a 4-D warp holds.
+
+    MRtrix cannot tell a field of coordinates from a field of
+    displacements, so brainhops records the kind in
+    `brainhops_field_type`, which MRtrix keeps without reading it, and
+    appends its own line to `command_history`, as an MRtrix command
+    does, so that a sniffer knows that the key is current
+    (`_field_kind`). The line is not repeated when it is already the
+    last one. The keys given by the caller are merged last, so that
+    `keyval={"brainhops_field_type": None}` leaves the key out.
+    """
+    line = _brainhops_history()
+    lines = _history_lines(held)
+    if not lines or lines[-1] != line:
+        lines.append(line)
+    typed: tx.Dict[str, tx.Optional[str]] = {
+        _FIELD_TYPE: _FIELD_TYPE_VALUES[kind],
+        _HISTORY: "\n".join(lines),
+    }
+    typed.update(keyval or {})
+    return typed
 
 
 def _consolidated_metadata(
