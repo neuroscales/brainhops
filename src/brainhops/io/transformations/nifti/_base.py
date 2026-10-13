@@ -81,9 +81,10 @@ class NiftiBasedTransformation(
     metadata = smartproperty("metadata")
     """The metadata of the file, which holds its header, or `None`.
 
-    A transformation built from data has no metadata. A concrete format
-    that caches what it decodes from the header drops those values when
-    other metadata is assigned.
+    A transformation built from data has no metadata. Assigning other
+    metadata never changes the transformation: a concrete format whose
+    transformation depends on the header first decodes it from the
+    previous header, and then holds it as if it were assigned.
     """
 
     # --- reading ------------------------------------------------------
@@ -339,10 +340,12 @@ class NiftiBasedTransformation(
         write_nifti(self.to_nibabel(), filename)
         # The lazy array of the old file describes how that file stored
         # the values, so the transformation reads the new file, holds the
-        # record of its header, and drops the views decoded before.
+        # record of its header, and drops the views decoded before. The
+        # setter of `metadata` would keep the transformation, which is
+        # decoded from the new file instead, so it is bypassed.
         record, proxy = read_nifti(filename)
         self.raw = proxy
-        self.metadata = replace(self.metadata, raw=record)
+        self._metadata = replace(self.metadata, raw=record)
         self.data = None
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:

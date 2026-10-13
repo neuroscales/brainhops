@@ -9,7 +9,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import drop_cache, smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import ParserContentError
@@ -126,14 +126,27 @@ class X5Transform(
 
     _metadata: NoRepr[tx.Optional[X5Metadata]] = None
 
-    metadata = smartproperty(
-        "metadata", invalidates=("transformations", "decoded_nodes")
-    )
+    metadata = smartproperty("metadata", invalidates="decoded_nodes")
     """The metadata of the file, which holds the file as a record.
 
     A transformation built from a chain has no metadata. Assigning other
-    metadata drops the chain and the nodes decoded from the old record.
+    metadata keeps the chain. A chain that was never decoded is first
+    decoded from the old record, and the transformation then holds it as
+    if it were assigned, so that [`consolidate`][] encodes it into a
+    record based on the new one. The decoded nodes index the old record,
+    so they are dropped, and the elements of the chain are then encoded
+    again, without the content of their nodes that the data model does
+    not hold. Assigning `None` to `transformations` afterwards decodes the
+    chain from the new record instead.
     """
+
+    @metadata.setter
+    def metadata(self, value: tx.Optional[X5Metadata]) -> None:
+        # Other metadata never changes the chain, as the maintainer
+        # decided on 2026-10-13. Decoding the chain reads the fields that
+        # it selects, as its first access would.
+        self._transformations = self.transformations
+        self._metadata = value
 
     _chain: tx.Optional[int] = None
 
@@ -440,7 +453,11 @@ class X5Transform(
                 chain=None,
                 position=None,
             )
-        self.metadata = metadata
+        # The chain is decoded from the new record afterwards, so the
+        # setter of `metadata`, which would keep it, is bypassed, and the
+        # nodes decoded from the old record are dropped here.
+        self._metadata = metadata
+        drop_cache(self, "decoded_nodes")
         self.transformations = None
         self.input = None
         self.output = None

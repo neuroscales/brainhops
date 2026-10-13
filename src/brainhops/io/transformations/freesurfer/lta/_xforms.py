@@ -210,15 +210,33 @@ class LtaTransformation(
 
     _metadata: NoRepr[tx.Optional[LtaMetadata]] = None
 
-    metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
+    metadata = smartproperty("metadata")
     """The metadata of the file, which holds the file as a record.
 
     A transformation built from data alone has no metadata, and setting
-    its data does not create any. Assigning other metadata drops the
-    matrix decoded from the old record. A matrix that was assigned is
-    pending and is kept, and it wins over the matrix of the new record
-    until the transformation is consolidated.
+    its data does not create any. Assigning other metadata keeps the
+    matrix and the `input` and `output` systems. Those that are decoded
+    from the record are first decoded from the old record, and the
+    transformation then holds them as if they were assigned, so that
+    [`consolidate`][] encodes them into a record based on the new one.
+    Assigning `None` to `data`, `input` and `output` afterwards decodes
+    them from the new record instead.
     """
+
+    @metadata.setter
+    def metadata(self, value: tx.Optional[LtaMetadata]) -> None:
+        # Other metadata never changes the transformation, as the
+        # maintainer decided on 2026-10-13. Its systems are part of it,
+        # since the voxel and physical systems carry the geometry of the
+        # volumes. The record was read in one pass, so nothing is read
+        # here, and the views derived from the matrix stay right.
+        if self._data is None:
+            self._data = self.data
+        if self._input is None:
+            self._input = self.input
+        if self._output is None:
+            self._output = self.output
+        self._metadata = value
 
     @smartproperty
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
@@ -448,7 +466,10 @@ class LtaTransformation(
             return replace(
                 self, metadata=metadata, data=None, input=None, output=None
             )
-        self.metadata = metadata
+        # The matrix and the systems are decoded from the new record
+        # afterwards, so the setter of `metadata`, which would keep them,
+        # is bypassed.
+        self._metadata = metadata
         self.data = None
         self.input = None
         self.output = None

@@ -194,13 +194,25 @@ class M3zMorph(
 
     _metadata: NoRepr[tx.Optional[M3zMetadata]] = None
 
-    metadata = smartproperty("metadata", invalidates="transformations")
+    metadata = smartproperty("metadata")
     """The metadata of the file, which holds the file as a record.
 
     A morph built from a chain has no metadata. Assigning other metadata
-    drops the chain decoded from the old record, and a chain that was
-    assigned is kept.
+    keeps the chain. A chain that was never decoded is first decoded from
+    the old record, and the morph then holds it as if it were assigned,
+    so that [`consolidate`][] encodes it into a record based on the new
+    one. Assigning `None` to `transformations` afterwards decodes the
+    chain from the new record instead.
     """
+
+    @metadata.setter
+    def metadata(self, value: tx.Optional[M3zMetadata]) -> None:
+        # Other metadata never changes the chain, as the maintainer
+        # decided on 2026-10-13. The record was read in one pass, and
+        # the decoded chain holds views of its arrays, so nothing is read
+        # here.
+        self._transformations = self.transformations
+        self._metadata = value
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
@@ -446,7 +458,9 @@ class M3zMorph(
                 input=None,
                 output=None,
             )
-        self.metadata = metadata
+        # The chain is decoded from the new record afterwards, so the
+        # setter of `metadata`, which would keep it, is bypassed.
+        self._metadata = metadata
         self.transformations = None
         self.input = None
         self.output = None

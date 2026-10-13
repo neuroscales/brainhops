@@ -137,14 +137,22 @@ class NiftiImage(
 
     An image built from data has no metadata. The header describes the
     file as it was read, or as the image was last consolidated. Assigning
-    other metadata drops the transformations that the image holds, read
-    or assigned, so that they are decoded from the new header.
+    other metadata keeps the transformations that the image holds. Those
+    that were never read are first decoded from the previous header, and
+    the image then holds them as if they were assigned, so that
+    [`consolidate`][] compares them with the new header and encodes them
+    over it when they differ. Assigning `None` to `transformations`
+    afterwards takes the geometry of the new header instead.
     """
 
     @metadata.setter
     def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
+        # Other metadata never changes the transformations, as the
+        # maintainer decided on 2026-10-13. Those that were never
+        # read are decoded from the previous header first, which reads
+        # no voxel, and the image then holds them as assigned.
+        self._transformations = self.transformations
         self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -168,9 +176,10 @@ class NiftiImage(
         The list is decoded on first access and stored in the image, so
         `img.transformation is img.transformation`, and a change made to
         the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. A header modified in
-        place is not noticed, so a modified copy should be assigned as new
-        metadata instead.
+        Assigning other metadata keeps the list, which is first decoded
+        from the previous header when it was never read. A header modified
+        in place is not noticed either. To read the geometry of the header
+        again, assign `None`.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -511,7 +520,9 @@ class NiftiImage(
                 metadata=metadata,
             )
         self.raw = raw
-        self.metadata = metadata
+        # The transformations are decoded from the new record afterwards,
+        # so the setter of `metadata`, which would keep them, is bypassed.
+        self._metadata = metadata
         self.data = None
         self.transformations = None
         return self
@@ -583,7 +594,7 @@ class NiftiImage(
         # file.
         record, proxy = read_nifti(filename)
         self.raw = proxy
-        self.metadata = replace(self.metadata, raw=record)
+        self._metadata = replace(self.metadata, raw=record)
         self.data = None
         self.transformations = None
 

@@ -26,6 +26,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
+from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_NIFTYREG,
@@ -339,12 +340,24 @@ transformations.StationaryVelocityField].
             return None
         return _field_to_model(self.raw)
 
-    metadata = smartproperty("metadata", invalidates="transformations")
+    metadata = smartproperty("metadata")
     """The metadata of the file, which holds its header, or `None`.
 
-    Assigning other metadata drops the chain decoded from the previous
-    header.
+    Assigning other metadata keeps the chain. A chain that was never
+    decoded is first decoded from the previous header and the stored
+    vectors, and the field then holds it as if it were assigned, so that
+    [`consolidate`][] encodes it over the new header. Assigning `None` to
+    `transformations` afterwards decodes the chain from the new header
+    instead.
     """
+
+    @metadata.setter
+    def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
+        # Other metadata never changes the chain, as the maintainer
+        # decided on 2026-10-13. Decoding the chain reads the vectors,
+        # as its first access would.
+        self._transformations = self.transformations
+        self._metadata = value
 
     # --- reading ------------------------------------------------------
     # The readers hand their keyword arguments to nibabel, so the encoding
@@ -580,7 +593,9 @@ transformations.StationaryVelocityField].
                 log=log,
             )
         self.raw = raw
-        self.metadata = metadata
+        # The chain is decoded from the new header afterwards, so the
+        # setter of `metadata`, which would keep it, is bypassed.
+        self._metadata = metadata
         self.data = None
         self.transformations = None
         self.log = log
