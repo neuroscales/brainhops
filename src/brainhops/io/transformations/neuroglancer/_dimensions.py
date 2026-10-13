@@ -426,7 +426,9 @@ def encode_matrix(
 # ----------------------------------------------------------------------
 
 
-def _dimension(name: tx.Any, item: tx.Any, key: str, numeric: bool) -> Dimension:
+def _dimension(
+    name: tx.Any, item: tx.Any, key: str, numeric: bool
+) -> Dimension:
     # One dimension, as `coordinateSpaceFromJson` reads it.
     if not _valid_name(name, "input" if numeric else "output"):
         raise ParserContentError(

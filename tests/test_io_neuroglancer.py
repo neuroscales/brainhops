@@ -83,7 +83,11 @@ def test_a_gallery_transform_is_read_and_kept_byte_for_byte(tmp_path) -> None:  
     # the input only say how the source is scaled.
     np.testing.assert_array_equal(xform.matrix, np.eye(4)[:-1])
     assert [a.name for a in xform.output.axes] == ["x", "y", "c^"]
-    assert [a.unit for a in xform.output.axes] == [Unit("nm"), Unit("nm"), None]
+    assert [a.unit for a in xform.output.axes] == [
+        Unit("nm"),
+        Unit("nm"),
+        None,
+    ]
     assert [a.unit for a in xform.input.axes] == [Unit("nm"), Unit("nm"), None]
     xform.save(tmp_path / "copy.json")
     assert (tmp_path / "copy.json").read_bytes() == file.read_bytes()
@@ -254,10 +258,14 @@ def test_units_are_converted_exactly() -> None:
 
 
 def test_a_chain_of_affines_is_reduced_to_one() -> None:
-    first = Scaling([2.0, 3.0, 4.0], input=_systems.RASmm(), output=_systems.RASmm())
+    first = Scaling(
+        [2.0, 3.0, 4.0], input=_systems.RASmm(), output=_systems.RASmm()
+    )
     chain = Sequence([first, first])
     xform = NeuroglancerTransform.from_any(chain)
-    np.testing.assert_array_equal(xform.matrix, np.diag([4.0, 9.0, 16.0, 1.0])[:-1])
+    np.testing.assert_array_equal(
+        xform.matrix, np.diag([4.0, 9.0, 16.0, 1.0])[:-1]
+    )
 
 
 @pytest.mark.parametrize(
@@ -267,7 +275,11 @@ def test_a_chain_of_affines_is_reduced_to_one() -> None:
         (VoxelToRAS(MATRIX), "counts voxels"),
         (Affine(MATRIX, input=_system("inch"), output=_system("mm")), "inch"),
         (
-            Affine(MATRIX, input=_system("mm"), output=_system("mm", "x", "y", "x")),
+            Affine(
+                MATRIX,
+                input=_system("mm"),
+                output=_system("mm", "x", "y", "x"),
+            ),
             "distinct",
         ),
         (
@@ -331,7 +343,11 @@ def _loaded(tmp_path):  # noqa: ANN001, ANN202
         {
             "sourceRank": 2,
             "matrix": [[1, 0, 0, 5], [0, 1, 0, 6], [0, 0, 1, 7]],
-            "outputDimensions": {"x": [1e-09, "m"], "y": [1e-09, "m"], "z": [4e-08, "m"]},
+            "outputDimensions": {
+                "x": [1e-09, "m"],
+                "y": [1e-09, "m"],
+                "z": [4e-08, "m"],
+            },
             "comment": "kept",
         }
     )
@@ -376,7 +392,9 @@ def test_an_assigned_system_is_encoded(tmp_path, side: str) -> None:  # noqa: AN
 
 def test_assigned_metadata_is_read(tmp_path) -> None:  # noqa: ANN001
     xform = _loaded(tmp_path)
-    xform.matrix
+    np.testing.assert_array_equal(
+        xform.matrix, [[1, 0, 0, 5], [0, 1, 0, 6], [0, 0, 1, 7]]
+    )
     xform.metadata = NeuroglancerTransformMetadata.from_text(GALLERY)
     np.testing.assert_array_equal(xform.matrix, np.eye(4)[:-1])
     assert xform.consolidate().metadata is xform.metadata

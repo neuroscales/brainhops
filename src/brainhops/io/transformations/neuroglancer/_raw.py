@@ -47,7 +47,8 @@ class NeuroglancerTransformRaw(
     so the matrix of the transform lives in the record, as the matrix of
     an LTA file does. The record checks its content as Neuroglancer reads
     it (see [`brainhops.io.transformations.neuroglancer`][] for the
-    conventions and their sources), and it keeps keys that Neuroglancer does not read.
+    conventions and their sources), and it keeps the keys that
+    Neuroglancer does not read.
 
     A record is never changed in place, so that several objects can
     share it. It is held by
@@ -70,7 +71,8 @@ class NeuroglancerTransformRaw(
     content, so that a transform that is read and written again keeps
     its bytes, whichever program wrote it. Otherwise, and for a record
     built from its content alone, the content is written as JSON with
-    one key, or one row of the matrix, on each line. The text is `None` for a record built from its content.
+    one key, or one row of the matrix, on each line. The text is `None`
+    for a record built from its content.
     """
 
     def __post_init__(self) -> None:

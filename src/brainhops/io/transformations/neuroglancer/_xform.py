@@ -474,7 +474,11 @@ def _encoded(xform: NeuroglancerTransform) -> NeuroglancerTransformRaw:
                 f"{old.rank} dimensions. Set the input and output of the "
                 f"transformation to give the new dimensions."
             )
-        if set_output and not set_input and "inputDimensions" not in old.content:
+        if (
+            set_output
+            and not set_input
+            and "inputDimensions" not in old.content
+        ):
             # The input took the units of the old output, which it keeps.
             content["inputDimensions"] = old.content["outputDimensions"]
     if set_output:

@@ -151,7 +151,9 @@ class NeuroglancerTransformMetadata(
 # ----------------------------------------------------------------------
 
 
-def _record(metadata: NeuroglancerTransformMetadata) -> NeuroglancerTransformRaw:
+def _record(
+    metadata: NeuroglancerTransformMetadata,
+) -> NeuroglancerTransformRaw:
     # The record, which metadata built without one does not have.
     if metadata.raw is None:
         raise WriterError(
