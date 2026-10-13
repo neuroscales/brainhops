@@ -29,6 +29,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserExistsError,
     WriterError,
 )
+from brainhops.io.images.base import _utils_raster as raster  # noqa: E402
 from brainhops.io.images.pillow import PillowImage  # noqa: E402
 from brainhops.io.images.pillow._utils import (  # noqa: E402
     PillowHeader,
@@ -85,6 +86,19 @@ def _units(image: tx.Any) -> tx.List[tx.Optional[str]]:
         None if axis.unit is None else str(axis.unit)
         for axis in image.transformation.output.axes
     ]
+
+
+def _count_reads(monkeypatch: pytest.MonkeyPatch) -> tx.List[str]:
+    """Record the name of every file that the lazy array decodes."""
+    reads: tx.List[str] = []
+    original = stack_data._read_file
+
+    def counting(filename: str, member: StackMember) -> np.ndarray:
+        reads.append(member.name)
+        return original(filename, member)
+
+    monkeypatch.setattr(stack_data, "_read_file", counting)
+    return reads
 
 
 # ----------------------------------------------------------------------
@@ -217,15 +231,6 @@ def test_a_pattern_stays_in_the_folder(tmp_path: Path) -> None:
 # ----------------------------------------------------------------------
 
 
-def test_a_gap_in_the_numbers_is_refused(tmp_path: Path) -> None:
-    folder = _tiffs(tmp_path / "slices")
-    os.remove(folder / "z4.tif")
-    os.remove(folder / "z7.tif")
-    with pytest.raises(ParserContentError, match="numbered 4, 7"):
-        StackImage.load(folder)
-    assert StackImage.sniff(folder) == Confidence.NO
-
-
 def test_a_repeated_number_is_refused(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices", VOLUME[:3], name="z{}.tif")
     tifffile.imwrite(folder / "z01.tif", VOLUME[0])
@@ -305,16 +310,26 @@ def test_streams_and_bytes_are_refused(tmp_path: Path) -> None:
             cls.load(BytesIO(content))
 
 
-def test_unknown_options_are_refused(tmp_path: Path) -> None:
+def test_unknown_and_invalid_options_are_refused(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     with pytest.raises(TypeError, match="frame"):
         StackImage.load(folder, frame=1)
-    with pytest.raises(TypeError, match="pixel_size"):
-        StackMetadata.load(folder, pixel_size=1.0)
-    with pytest.raises(ValueError, match="pixel_size"):
-        StackImage.load(folder, pixel_size=(1.0, 2.0))
-    with pytest.raises(ValueError, match="positive"):
-        StackImage.load(folder, pixel_size={"z": -1.0})
+    # The fill value concerns the pixels, which metadata does not read.
+    with pytest.raises(TypeError, match="fill"):
+        StackMetadata.load(folder, fill=1)
+    for options, match in (
+        ({"pixel_size": (1.0, 2.0, 3.0)}, "pixel_size"),
+        ({"pixel_size": -1.0}, "pixel_size"),
+        ({"spacing": 0}, "spacing"),
+        ({"spacing": "far"}, "spacing"),
+        ({"unit": "s"}, "unit"),
+        ({"axis": "t"}, "stacking axis"),
+        ({"axis": 3}, "stacking axis"),
+        ({"fill": np.nan}, "fill"),
+        ({"fill": -1}, "fill"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            StackImage.load(folder, **options)
 
 
 # ----------------------------------------------------------------------
@@ -367,6 +382,12 @@ def test_the_pixel_size_comes_from_the_tags(tmp_path: Path) -> None:
         tmp_path / "slices", resolution=(2.0, 4.0), resolutionunit="CENTIMETER"
     )
     image = StackImage.load(folder)
+    record = image.metadata.raw
+    assert (record.pixel_size, record.spacing, record.unit) == (
+        (0.5, 0.25),
+        None,
+        "cm",
+    )
     assert isinstance(image.transformation, Scaling)
     assert np.allclose(_scale(image), [0.5, 0.25, 1.0])
     # The spacing of the slices is not recorded, so it stays unknown.
@@ -374,22 +395,30 @@ def test_the_pixel_size_comes_from_the_tags(tmp_path: Path) -> None:
     assert image.transformation.input.name == "voxel"
 
 
-def test_the_spacing_comes_from_the_options(tmp_path: Path) -> None:
+def test_the_options_set_the_fields_of_the_record(tmp_path: Path) -> None:
     folder = _tiffs(
         tmp_path / "slices", resolution=(2.0, 4.0), resolutionunit="CENTIMETER"
     )
-    image = StackImage.load(folder, pixel_size={"z": 2.0})
+    image = StackImage.load(folder, spacing=2.0)
+    assert image.metadata.raw.spacing == 2.0
     assert np.allclose(_scale(image), [0.5, 0.25, 2.0])
     assert _units(image) == ["centimeter"] * 3
-    image = StackImage.load(folder, pixel_size={"z": 2.0}, unit="mm")
+    # A unit converts the sizes that the files record.
+    image = StackImage.load(folder, spacing=2.0, unit="mm")
+    record = image.metadata.raw
+    assert np.allclose(record.pixel_size, (5.0, 2.5))
+    assert record.unit == "mm"
     assert np.allclose(_scale(image), [5.0, 2.5, 2.0])
     assert _units(image) == ["millimeter"] * 3
-    image = StackImage.load(folder, pixel_size=(1.0, 2.0, 3.0), unit="um")
-    assert np.allclose(_scale(image), [1.0, 2.0, 3.0])
-    # The options are kept, so the transformations decoded again from the
-    # record use them.
+    image = StackImage.load(folder, pixel_size=(1.0, 2.0), spacing=-3.0)
+    assert np.allclose(_scale(image), [1.0, 2.0, -3.0])
+    # The transformations decoded again from the record use the fields.
     image.transformations = None
-    assert np.allclose(_scale(image), [1.0, 2.0, 3.0])
+    assert np.allclose(_scale(image), [1.0, 2.0, -3.0])
+    # The metadata takes the same options.
+    metadata = StackMetadata.load(folder, pixel_size=0.1, unit="um")
+    assert metadata.raw.pixel_size == (0.1, 0.1)
+    assert metadata.raw.unit == "um"
 
 
 def test_the_spacing_comes_from_imagej(tmp_path: Path) -> None:
@@ -400,6 +429,7 @@ def test_the_spacing_comes_from_imagej(tmp_path: Path) -> None:
         metadata={"spacing": 1.5, "unit": "um"},
     )
     image = StackImage.load(folder)
+    assert image.metadata.raw.spacing == 1.5
     assert np.allclose(_scale(image), [0.5, 0.5, 1.5])
     assert _units(image) == ["micrometer"] * 3
     # A negative spacing flips z, unless the option sets the spacing.
@@ -410,8 +440,33 @@ def test_the_spacing_comes_from_imagej(tmp_path: Path) -> None:
         metadata={"spacing": -1.5, "unit": "um"},
     )
     assert np.allclose(_scale(StackImage.load(flipped)), [0.5, 0.5, -1.5])
-    image = StackImage.load(flipped, pixel_size={"z": 3.0})
+    image = StackImage.load(flipped, spacing=3.0)
     assert np.allclose(_scale(image), [0.5, 0.5, 3.0])
+
+
+def test_the_spacing_comes_from_ome(tmp_path: Path) -> None:
+    # The TIFF writer records the spacing of a volume of one slice as the
+    # PhysicalSizeZ of its OME-XML, and tifffile reads it as a plane.
+    folder = tmp_path / "slices"
+    folder.mkdir()
+    for k, plane in enumerate(VOLUME[:3]):
+        tifffile.imwrite(
+            folder / f"z{k}.tif",
+            plane,
+            ome=True,
+            metadata={
+                "axes": "YX",
+                "PhysicalSizeX": 0.5,
+                "PhysicalSizeY": 0.5,
+                "PhysicalSizeZ": 4.0,
+            },
+        )
+    record = StackMetadata.load(folder).raw
+    assert (record.pixel_size, record.spacing, record.unit) == (
+        (0.5, 0.5),
+        4.0,
+        "um",
+    )
 
 
 def test_slices_that_run_in_both_directions_disagree(
@@ -429,9 +484,10 @@ def test_slices_that_run_in_both_directions_disagree(
         imagej=True,
         metadata={"spacing": -1.5, "unit": "um"},
     )
-    image = StackImage.load(folder)
-    with pytest.warns(UserWarning, match="along z"):
-        assert np.allclose(_scale(image)[2], 1.0)
+    with pytest.warns(UserWarning, match="spacing"):
+        image = StackImage.load(folder)
+    assert image.metadata.raw.spacing is None
+    assert np.allclose(_scale(image)[2], 1.0)
 
 
 def test_sizes_on_which_the_files_disagree_are_unknown(
@@ -449,11 +505,11 @@ def test_sizes_on_which_the_files_disagree_are_unknown(
         resolution=(2.0, 5.0),
         resolutionunit="CENTIMETER",
     )
-    image = StackImage.load(folder)
-    with pytest.warns(UserWarning, match="along y"):
-        scale = _scale(image)
-    assert np.allclose(scale, [0.5, 1.0, 1.0])
-    assert _units(image) == ["centimeter", None, None]
+    with pytest.warns(UserWarning, match="pixel size"):
+        image = StackImage.load(folder)
+    assert image.metadata.raw.pixel_size is None
+    assert np.allclose(_scale(image), [1.0, 1.0, 1.0])
+    assert _units(image) == [None, None, None]
 
 
 def test_pillow_files_have_no_size(tmp_path: Path) -> None:
@@ -466,26 +522,99 @@ def test_pillow_files_have_no_size(tmp_path: Path) -> None:
     # the Pillow reader ignores it by default, and so does the stack.
     assert np.allclose(_scale(image), [1.0, 1.0, 1.0, 1.0])
     assert _units(image) == [None, None, None, None]
-    image = StackImage.load(folder, pixel_size=0.1, unit="mm")
-    assert np.allclose(_scale(image)[:3], [0.1, 0.1, 0.1])
+    image = StackImage.load(folder, pixel_size=0.1, spacing=0.2, unit="mm")
+    assert np.allclose(_scale(image)[:3], [0.1, 0.1, 0.2])
+
+
+# ----------------------------------------------------------------------
+#   STACKING AXIS
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "axis, codes, order",
+    [
+        ("z", "ZYX", (2, 1, 0)),
+        (2, "ZYX", (2, 1, 0)),
+        ("y", "YZX", (2, 0, 1)),
+        (1, "YZX", (2, 0, 1)),
+        ("x", "XZY", (0, 2, 1)),
+        (0, "XZY", (0, 2, 1)),
+    ],
+)
+def test_the_stacking_axis_places_the_files(
+    tmp_path: Path, axis: tx.Any, codes: str, order: tx.Tuple[int, ...]
+) -> None:
+    # VOLUME holds 12 files of 3 rows and 2 columns.
+    folder = _tiffs(
+        tmp_path / "slices", resolution=(2.0, 4.0), resolutionunit="CENTIMETER"
+    )
+    image = StackImage.load(folder, axis=axis, spacing=3.0, unit="cm")
+    assert image.metadata.raw.axes == codes
+    assert image.shape == tuple(VOLUME.shape[i] for i in order)
+    assert np.array_equal(np.asarray(image.data), VOLUME.transpose(order))
+    # The columns of a file lie along the first of the two other axes and
+    # its rows along the second, and the spacing scales the stacking axis.
+    name = "xyz"[axis] if isinstance(axis, int) else axis
+    expected = {"z": [0.5, 0.25, 3.0], "y": [0.5, 3.0, 0.25]}
+    expected["x"] = [3.0, 0.5, 0.25]
+    assert np.allclose(_scale(image), expected[name])
+
+
+def test_the_stacking_axis_keeps_channels_last(tmp_path: Path) -> None:
+    folder = _pngs(tmp_path / "rgb")
+    image = StackImage.load(folder, axis="y")
+    assert image.metadata.raw.axes == "YZXS"
+    assert np.array_equal(np.asarray(image.data), COLOUR.transpose(2, 0, 1, 3))
+
+
+# ----------------------------------------------------------------------
+#   MISSING SLICES
+# ----------------------------------------------------------------------
+
+
+def test_a_missing_number_is_a_missing_slice(tmp_path: Path) -> None:
+    folder = _tiffs(tmp_path / "slices")
+    os.remove(folder / "z4.tif")
+    os.remove(folder / "z7.tif")
+    assert StackImage.sniff(folder) == Confidence.LIKELY
+    image = StackImage.load(folder)
+    record = image.metadata.raw
+    assert record.missing == (4, 7)
+    assert record.numbers == tuple(range(12))
+    assert len(record.members) == 10
+    assert record.shape == (12, 3, 2)
+    expected = VOLUME.copy()
+    expected[[4, 7]] = 0
+    assert np.array_equal(np.asarray(image.raw), expected)
+    # A floating type is filled with NaN, and `fill` sets another value.
+    floats = _tiffs(tmp_path / "floats", VOLUME[:3].astype("float32"))
+    os.remove(floats / "z1.tif")
+    assert np.isnan(np.asarray(StackImage.load(floats).raw)[1]).all()
+    filled = StackImage.load(floats, fill=-1.5)
+    assert (np.asarray(filled.raw)[1] == -1.5).all()
+    assert (np.asarray(StackImage.load(folder, fill=9).raw)[4] == 9).all()
+
+
+def test_a_missing_slice_reads_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = _tiffs(tmp_path / "slices")
+    os.remove(folder / "z4.tif")
+    reads = _count_reads(monkeypatch)
+    image = StackImage.load(folder)
+    assert (image.raw[4] == 0).all()
+    assert reads == []
+    with backend("dask"):
+        data = StackImage.load(folder).data
+    assert np.array_equal(data[:, :, 3:6].compute(), VOLUME[3:6].T * [1, 0, 1])
+    # Dask may read the chunks in any order.
+    assert sorted(reads) == ["z3.tif", "z5.tif"]
 
 
 # ----------------------------------------------------------------------
 #   LAZINESS
 # ----------------------------------------------------------------------
-
-
-def _count_reads(monkeypatch: pytest.MonkeyPatch) -> tx.List[str]:
-    """Record the name of every file that the lazy array decodes."""
-    reads: tx.List[str] = []
-    original = stack_data._read_file
-
-    def counting(filename: str, member: StackMember) -> np.ndarray:
-        reads.append(member.name)
-        return original(filename, member)
-
-    monkeypatch.setattr(stack_data, "_read_file", counting)
-    return reads
 
 
 def test_loading_reads_no_pixel(
@@ -548,7 +677,7 @@ def test_a_file_changed_after_loading_is_refused(tmp_path: Path) -> None:
 
 
 # ----------------------------------------------------------------------
-#   METADATA AND WRITING
+#   METADATA
 # ----------------------------------------------------------------------
 
 
@@ -575,18 +704,207 @@ def test_the_record_holds_the_headers_of_the_files(tmp_path: Path) -> None:
     assert clone.raw == record
 
 
-def test_stacks_are_not_written(tmp_path: Path) -> None:
+# ----------------------------------------------------------------------
+#   WRITING
+# ----------------------------------------------------------------------
+
+
+def _bytes(folder: Path) -> tx.Dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in sorted(folder.iterdir())}
+
+
+def test_an_untouched_stack_is_copied_file_by_file(tmp_path: Path) -> None:
+    folder = _tiffs(tmp_path / "slices", description="slice")
+    os.remove(folder / "z4.tif")
+    image = StackImage.load(folder)
+    image.save(tmp_path / "copy")
+    # The missing slice is not written, and every other file is a copy.
+    assert _bytes(tmp_path / "copy") == _bytes(folder)
+    # Numbered names in the format of the files are copies too.
+    image.save(tmp_path / "named" / "out.tiff")
+    copied = _bytes(tmp_path / "named")
+    assert sorted(copied) == [f"out_{n:02d}.tiff" for n in range(12) if n != 4]
+    assert copied["out_05.tiff"] == (folder / "z5.tif").read_bytes()
+
+
+def test_numbered_names_come_from_the_path(tmp_path: Path) -> None:
+    image = StackImage(data=VOLUME[:3].transpose(2, 1, 0))
+    image.save(tmp_path / "out.tif")
+    image.save(tmp_path / "pngs" / "s.png")
+    names = sorted(p.name for p in tmp_path.iterdir() if p.is_file())
+    assert names == ["out_0.tif", "out_1.tif", "out_2.tif"]
+    assert sorted(os.listdir(tmp_path / "pngs")) == [
+        "s_0.png",
+        "s_1.png",
+        "s_2.png",
+    ]
+    back = StackImage.load(tmp_path / "pngs")
+    assert back.metadata.raw.format == "pillow"
+    assert np.array_equal(np.asarray(back.raw), VOLUME[:3])
+    back = StackImage.load(tmp_path, pattern="out_*.tif")
+    assert np.array_equal(np.asarray(back.raw), VOLUME[:3])
+
+
+def test_a_new_stack_is_a_folder_of_tiff_files(tmp_path: Path) -> None:
+    data = np.arange(2 * 3 * 11, dtype="float64").reshape(2, 3, 11)
+    StackImage(data=data).save(tmp_path / "volume")
+    names = sorted(os.listdir(tmp_path / "volume"))
+    assert names[:2] == ["slice_00.tif", "slice_01.tif"]
+    assert names[-1] == "slice_10.tif"
+    back = StackImage.load(tmp_path / "volume")
+    assert np.array_equal(np.asarray(back.data), data)
+    # Another axis cuts the volume into other files.
+    StackImage(data=data).save(tmp_path / "coronal", axis="y")
+    back = StackImage.load(tmp_path / "coronal", axis="y")
+    assert len(back.metadata.raw.members) == 3
+    assert np.array_equal(np.asarray(back.data), data)
+
+
+def test_the_geometry_is_written_to_the_files(tmp_path: Path) -> None:
+    image = StackImage(data=VOLUME.transpose(2, 1, 0))
+    axes = raster.default_axes(3)
+    image.transformations = raster.raster_transformations(
+        axes, {"x": (0.5, "mm"), "y": (0.25, "mm"), "z": (2.0, "mm")}
+    )
+    consolidated = image.consolidate()
+    record = consolidated.metadata.raw
+    assert (record.pixel_size, record.spacing, record.unit) == (
+        (0.5, 0.25),
+        2.0,
+        "millimeter",
+    )
+    image.save(tmp_path / "slices")
+    back = StackImage.load(tmp_path / "slices")
+    assert np.allclose(back.metadata.raw.pixel_size, (0.5, 0.25))
+    assert np.isclose(back.metadata.raw.spacing, 2.0)
+    assert np.allclose(_scale(back), [0.5, 0.25, 2.0])
+    assert _units(back) == ["millimeter"] * 3
+    # A plane with channels records no spacing, and Pillow records nothing.
+    colour = StackImage(data=COLOUR.transpose(2, 1, 0, 3))
+    colour.transformations = raster.raster_transformations(
+        raster.default_axes(4, channel=True),
+        {"x": (0.5, "mm"), "y": (0.25, "mm"), "z": (2.0, "mm")},
+    )
+    record = colour.consolidate().metadata.raw
+    assert (record.pixel_size, record.spacing) == ((0.5, 0.25), None)
+    colour.save(tmp_path / "rgb")
+    back = StackImage.load(tmp_path / "rgb")
+    assert back.metadata.raw.members[0].axes == "YXS"
+    assert np.array_equal(np.asarray(back.raw), COLOUR)
+    assert np.allclose(_scale(back)[:3], [0.5, 0.25, 1.0])
+    colour.save(tmp_path / "png" / "c.png")
+    record = StackMetadata.load(tmp_path / "png").raw
+    assert (record.pixel_size, record.spacing) == (None, None)
+
+
+def test_assigned_data_fills_every_slice(tmp_path: Path) -> None:
+    folder = _tiffs(tmp_path / "slices", name="z{:02d}.tif")
+    os.remove(folder / "z04.tif")
+    image = StackImage.load(folder)
+    image.data = np.asarray(image.data) + 1
+    record = image.consolidate().metadata.raw
+    # The data of the model takes precedence over the record: the missing
+    # slice gets a file, named after the others, and the files keep their
+    # names.
+    assert record.missing == ()
+    assert record.names == tuple(f"z{n:02d}.tif" for n in range(12))
+    assert all(member.header is None for member in record.members)
+    image.save(tmp_path / "copy")
+    back = StackImage.load(tmp_path / "copy")
+    expected = VOLUME + 1
+    expected[4] = 1
+    assert np.array_equal(np.asarray(back.raw), expected)
+
+
+def test_saving_leaves_the_image_unchanged(tmp_path: Path) -> None:
+    folder = _tiffs(tmp_path / "slices")
+    image = StackImage.load(folder, spacing=2.0)
+    raw, metadata = image.raw, image.metadata
+    image.data = np.asarray(image.data) * 2
+    pending = image._data
+    image.save(tmp_path / "copy")
+    assert image.raw is raw
+    assert image.metadata is metadata
+    assert image._data is pending
+
+
+def test_saving_over_its_own_folder_reads_the_new_files(
+    tmp_path: Path,
+) -> None:
     folder = _tiffs(tmp_path / "slices")
     image = StackImage.load(folder)
-    assert not hasattr(image, "save")
-    assert not hasattr(image.metadata, "save")
-    with pytest.raises(WriterError):
-        io.save(image, tmp_path / "copy")
-    # A stack is saved to another format, here a multi-page TIFF.
+    image.data = np.asarray(image.data) + 1
+    image.save(folder)
+    assert isinstance(image.raw, _StackProxy)
+    assert image._data is None
+    assert image.metadata.raw == StackMetadata.load(folder).raw
+    assert np.array_equal(np.asarray(image.raw), VOLUME + 1)
+    # Numbered names that the lazy array reads are replaced in the same
+    # way, and an untouched image keeps the fields of its record.
+    named = _tiffs(tmp_path / "named", name="z_{:02d}.tif")
+    image = StackImage.load(named, spacing=5.0)
+    image.save(named / "z.tif")
+    assert image.metadata.raw.spacing == 5.0
+    assert image.metadata.raw.pattern == "z_*.tif"
+    assert np.array_equal(np.asarray(image.raw), VOLUME)
+    assert sorted(os.listdir(named)) == [f"z_{n:02d}.tif" for n in range(12)]
+
+
+def test_only_a_folder_of_images_is_replaced(tmp_path: Path) -> None:
+    image = StackImage(data=VOLUME[:2].transpose(2, 1, 0))
+    folder = tmp_path / "data"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("keep me")
+    with pytest.raises(WriterError, match="notes.txt"):
+        image.save(folder)
+    assert (folder / "notes.txt").read_text() == "keep me"
+    (tmp_path / "file").write_text("")
+    with pytest.raises(WriterError, match="is a file"):
+        image.save(tmp_path / "file")
+    # A folder of images is replaced, and nothing is left beside it.
+    old = _tiffs(tmp_path / "old", VOLUME[:5])
+    image.save(old)
+    assert sorted(os.listdir(old)) == ["slice_0.tif", "slice_1.tif"]
+    assert sorted(os.listdir(tmp_path)) == ["data", "file", "old"]
+    # A folder from which a pattern read one channel keeps the other.
+    mixed = _tiffs(tmp_path / "mixed", VOLUME[:2], name="ch1_z{}.tif")
+    _tiffs(mixed, VOLUME[2:4], name="ch2_z{}.tif")
+    image = StackImage.load(mixed, pattern="ch1_*.tif")
+    with pytest.raises(WriterError, match="ch2_z0.tif"):
+        image.save(mixed)
+    assert len(os.listdir(mixed)) == 4
+
+
+def test_streams_bytes_and_bad_options_are_refused(tmp_path: Path) -> None:
+    image = StackImage(data=VOLUME[:2].transpose(2, 1, 0))
+    with pytest.raises(WriterError, match="folder"):
+        image.save(BytesIO())
+    with pytest.raises(WriterError, match="folder"):
+        image.to_bytes()
+    with pytest.raises(TypeError, match="compression"):
+        image.save(tmp_path / "copy", compression="zlib")
+    with pytest.raises(WriterError, match="stacking axis"):
+        image.save(tmp_path / "copy", axis="t")
+    with pytest.raises(WriterError, match="axes"):
+        StackImage(data=np.zeros((2, 3))).save(tmp_path / "flat")
+    with pytest.raises(WriterError, match="no data"):
+        StackImage().save(tmp_path / "empty")
+    assert not (tmp_path / "copy").exists()
+
+
+def test_a_stack_is_saved_to_other_formats(tmp_path: Path) -> None:
+    folder = _tiffs(tmp_path / "slices")
+    image = StackImage.load(folder)
+    # A stack is saved to another format by its extension, here a
+    # multi-page TIFF.
     io.save(image, tmp_path / "volume.tif")
     back = io.load(tmp_path / "volume.tif")
     assert isinstance(back, TiffImage)
     assert np.array_equal(np.asarray(back.data), np.asarray(image.data))
+    # Any image is saved as a stack with the format itself.
+    StackImage.from_instance(back).save(tmp_path / "again")
+    again = StackImage.load(tmp_path / "again")
+    assert np.array_equal(np.asarray(again.data), np.asarray(image.data))
 
 
 # ----------------------------------------------------------------------
