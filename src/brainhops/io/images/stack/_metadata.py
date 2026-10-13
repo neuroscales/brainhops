@@ -27,13 +27,15 @@ class StackMetadata(MetadataFormat, BinaryFileReader):
 
     An image stack is a folder of numbered two-dimensional images that
     form one volume. Its metadata holds a [`StackRaw`][] record, which
-    lists the files and holds the header of each one. Reading the metadata
-    reads the header of every file, but never their pixels, and the
-    metadata keeps no open file. Image stacks cannot be written, so the
-    metadata cannot be written either.
+    lists the files, holds the header of each one and the geometry of the
+    stack. Reading the metadata reads the header of every file, but never
+    their pixels, and the metadata keeps no open file. A folder of headers
+    alone would not be a stack, so the metadata is not written on its
+    own: it is written with the image, by
+    [`StackImage`][brainhops.io.images.stack.StackImage].
 
-    A folder is recognized when it is not a Zarr store and its image
-    files are numbered without a gap (see
+    A folder is recognized when it is not a Zarr store and the names of
+    its image files follow one numbering (see
     [`brainhops.io.images.stack`][]). A file, a stream or bytes are
     never recognized, so this class never takes a file from the TIFF and
     Pillow readers. The format hint `"stack"` selects this class.
@@ -132,12 +134,18 @@ class StackMetadata(MetadataFormat, BinaryFileReader):
         cls,
         filename: path.FilenameLike,
         pattern: tx.Optional[str] = None,
+        axis: tx.Optional[tx.Union[str, int]] = None,
+        pixel_size: tx.Optional[tx.Union[float, tx.Sequence[float]]] = None,
+        spacing: tx.Optional[float] = None,
+        unit: tx.Optional[tx.Any] = None,
         **kwargs,
     ) -> "StackMetadata":
         """Read the metadata of the image stack in a folder.
 
         The record is read with [`StackRaw.from_folder`][], which reads
-        the header of every file but not their pixels.
+        the header of every file but not their pixels. The options are
+        those of the reader of the image, except `fill`, which concerns
+        the pixels.
 
         Parameters
         ----------
@@ -147,6 +155,17 @@ class StackMetadata(MetadataFormat, BinaryFileReader):
             The glob pattern, relative to the folder, that selects the
             files of the stack. By default, every image file of the
             folder is taken.
+        axis : {"x", "y", "z", 0, 1, 2}, optional
+            The axis of the volume along which the files are stacked, z
+            by default.
+        pixel_size : float or Sequence[float], optional
+            The size of a pixel of the files, one size or a pair
+            `(columns, rows)`, which replaces the size that they record.
+        spacing : float, optional
+            The distance from one slice to the next, which replaces the
+            spacing that the files record.
+        unit : str or Unit, optional
+            The unit of length of `pixel_size` and `spacing`.
         **kwargs : Any
             Other options, which are refused.
 
@@ -159,13 +178,23 @@ class StackMetadata(MetadataFormat, BinaryFileReader):
         ------
         TypeError
             If an unknown option is given.
+        ValueError
+            If an option is not valid.
         ParserExistsError
             If the folder does not exist.
         ParserContentError
             If the folder does not hold a stack that can be read.
         """
         refuse_options(cls, kwargs)
-        return cls.from_raw(StackRaw.from_folder(filename, pattern))
+        record = StackRaw.from_folder(
+            filename,
+            pattern,
+            axis=axis,
+            pixel_size=pixel_size,
+            spacing=spacing,
+            unit=unit,
+        )
+        return cls.from_raw(record)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "StackMetadata":

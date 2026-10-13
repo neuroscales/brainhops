@@ -1,10 +1,10 @@
-"""The image stack format, which is read only."""
+"""The image stack format."""
 
 # stdlib
 import os
-import warnings
 
 # dependencies
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
@@ -12,21 +12,37 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import BinaryFileReader, ParserTypeError
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    BinaryFileWriter,
+    ParserTypeError,
+    WriterError,
+)
+from brainhops.io.common._geometry import same_transformations
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.images.base import _utils_raster as raster
 
 # this format
 from ._data import _StackProxy
+from ._files import (
+    DEFAULT_NAME,
+    name_parts,
+    numbered_names,
+    reads_from,
+    stack_target,
+    write_stack,
+)
+from ._geometry import encoded_geometry, stack_transformations, stored_geometry
 from ._metadata import StackMetadata
 from ._raw import (
     NOT_A_STREAM,
     StackMember,
     StackRaw,
+    checked_axis,
+    member_format,
+    read_record,
     refuse_options,
     refuse_stream,
     sniff_folder,
@@ -36,52 +52,51 @@ from ._views import _image_to_disk, _image_to_model, _permutation
 
 
 @register_format
-class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
+class StackImage(
+    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+):
     """A volume stored as a folder of numbered two-dimensional images.
 
     Light-sheet microscopes, electron microscopes and many export tools
     write a volume as one image file per slice, such as `z0000.tif`,
-    `z0001.tif` and so on. This class reads such a folder as one image.
-    The files are TIFF files, read with tifffile, or images in a format
-    that Pillow reads, such as PNG. The folder is recognized when it is
-    passed to [`load`][brainhops.io.load] (see
-    [`brainhops.io.images.stack`][] for the rules), and the format hint
-    `"stack"` selects this class.
+    `z0001.tif` and so on. This class reads such a folder as one image,
+    and writes an image as such a folder. The files are TIFF files, read
+    and written with tifffile, or images in a format that Pillow reads and
+    writes, such as PNG. The folder is recognized when it is passed to
+    [`load`][brainhops.io.load] (see [`brainhops.io.images.stack`][] for
+    the rules), and the format hint `"stack"` selects this class.
 
-    The image holds the list of its files and their headers as
-    [`StackMetadata`][], whose record is a [`StackRaw`][], and its
-    pixels in `raw`, a lazy array that reads each file only when one of
-    its pixels is needed. The files are stacked along the slowest axis,
-    z, so the data are indexed `(x, y, z)`, or `(x, y, z, c)` for files
-    with channels.
+    The image holds the list of its files, their headers and the geometry
+    of the stack as [`StackMetadata`][], whose record is a
+    [`StackRaw`][], and its pixels in `raw`, a lazy array that reads each
+    file only when one of its pixels is needed. A number that no file
+    carries is a missing slice, which the lazy array fills without reading
+    a file. The files are stacked along the axis that the record names, z
+    by default, so the data are indexed `(x, y, z)`, or `(x, y, z, c)` for
+    files with channels.
 
     The image has one transformation, a [`Scaling`][] from voxels to
-    `"physical"`. The size of a pixel along x and y is the one that every
-    TIFF file records, through OME-XML, ImageJ metadata or resolution
-    tags, and the spacing of the slices along z is the ImageJ `spacing`
-    that every file records. A size that the files do not record, or on
-    which they disagree, is unknown: the scaling is 1 along that axis,
-    without a unit, as for a single TIFF or Pillow image. The options
-    `pixel_size` and `unit` set the sizes instead, so that
-    `pixel_size={"z": 2.0}` gives the spacing of the slices.
+    `"physical"`, which the record decodes to: the size of the pixels of
+    the files scales the axes along their columns and rows, and the
+    spacing of the slices scales the stacking axis. A size that the record
+    does not know is 1, without a unit, as for a single TIFF or Pillow
+    image.
 
-    Image stacks cannot be written, so the class has no writer: an
-    image is saved to another format, such as NIfTI or a multi-page TIFF,
-    and [`save`][brainhops.io.save] refuses to write it as a stack.
-    Assigned data are pending until [`consolidate`][] moves them into
-    `raw`, and the transformations that the image holds, read or
-    assigned, are kept, since no record can be encoded.
+    Assigned data and transformations are pending until [`consolidate`][]
+    or a write encodes them. A write consolidates a copy, writes it, and
+    leaves the image as it is, except when it replaces files that the lazy
+    array reads (#426).
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("stack",)
 
     raw: NoRepr[tx.Optional[ArrayProtocol]] = None
-    """The pixels of the files stacked along a first axis, or `None`.
+    """The slices stacked along a first axis, or `None`.
 
-    After a read, `raw` is a lazy array of shape `(files, rows, columns[,
-    channels])`. Assigning `data` leaves `raw` as it is, and
+    After a read, `raw` is a lazy array of shape `(slices, rows,
+    columns[, channels])`. Assigning `data` leaves `raw` as it is, and
     [`consolidate`][] stores the assigned array here, with its spatial
-    axes reversed.
+    axes in the order of the stored volume.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
@@ -123,23 +138,6 @@ class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         self._metadata = value
         self._transformations = None
 
-    pixel_size: tx.Optional[tx.Any] = None
-    """The size of a voxel given when the stack was read, or `None`.
-
-    It is one size for every spatial axis, one size per spatial axis in
-    the order x, y and z, or a mapping that sets the named axes only, such
-    as `{"z": 2.0}`. It takes precedence over the sizes that the files
-    record, when the transformations are decoded from the record.
-    """
-
-    unit: tx.Optional[tx.Any] = None
-    """The unit of `pixel_size`, or the unit to which the sizes that the
-    files record are converted, or `None`.
-
-    Without a unit, `pixel_size` is in the unit that the files record, or
-    has no unit if they record none.
-    """
-
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The pixels as `(x, y, z[, c])`, assigned or decoded from `raw`.
@@ -149,28 +147,26 @@ class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         data is decoded from `raw` on first access and cached. With NumPy
         as the array backend, every file is read and the data is
         read-only. With Dask, the data is a Dask array with one chunk per
-        file, and each file is read when its chunk is computed. To change
+        slice, and each file is read when its chunk is computed. To change
         the pixels, assign `data`. Assigning `None` decodes `raw` again.
         """
         if self.raw is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.raw, _axis(self.metadata))
 
     @smartproperty
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The list is decoded on first access, with the options
-        `pixel_size` and `unit`, and stored in the image, so
+        The list is decoded on first access from the geometry fields of
+        the record, and stored in the image, so
         `img.transformation is img.transformation`, and a change made to
         the list in place, such as an appended transformation, is kept.
         Assigning other metadata drops the list. An image without metadata
         has no transformations. Assigning a list replaces the stored one,
         and assigning `None` decodes the record again.
         """
-        self._transformations = _record_transformations(
-            self.metadata, self.pixel_size, self.unit
-        )
+        self._transformations = _record_transformations(self.metadata)
         return self._transformations
 
     @property
@@ -178,8 +174,8 @@ class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         """The shape of the data, read without reading the files.
 
         The shape is that of the assigned data, or else the shape of `raw`
-        with its spatial axes reversed. The lazy array knows its shape
-        from the record. An image without data raises as
+        with its axes in the order of the data. The lazy array knows its
+        shape from the record. An image without data raises as
         [`SingleScaleImage`][] does.
         """
         if self._data is not None:
@@ -187,37 +183,212 @@ class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         if self.raw is None:
             return self.data.shape
         stored = tuple(int(d) for d in self.raw.shape)
-        return tuple(stored[i] for i in _permutation(len(stored)))
+        order = _permutation(len(stored), _axis(self.metadata))
+        return tuple(stored[i] for i in order)
 
-    def consolidate(self, *, inplace: bool = False) -> "StackImage":
-        """Move the pending data into `raw`.
+    # --- writing ------------------------------------------------------
 
-        Image stacks cannot be written, so no record can be encoded,
-        and consolidating a stack is limited to its data: an assigned
-        array becomes `raw`, with its spatial axes reversed, and is no
-        longer pending. The metadata is kept, and so are the
-        transformations that the image holds, read or assigned. An image
-        without pending data is left as it is: the copy shares `raw` and
-        the metadata.
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        axis: tx.Optional[tx.Union[str, int]] = None,
+    ) -> "StackImage":
+        """Encode the pending data and geometry into `raw` and the record.
+
+        Consolidating makes `raw` and the record describe the files that a
+        write of the image would write. The record is encoded as follows,
+        from the record of the metadata when there is one.
+
+        1. The stored volume follows the data. When data is pending, or
+           the stacking axis changes, the data is cut into slices along
+           the stacking axis and becomes `raw`. The slices keep the
+           numbers of the record when there are as many of them, and the
+           files keep their names. A slice that had no file, or a slice
+           of an image without a record, gets a name made of the name of
+           the first file with its number, or `slice_<number>.tif`. Every
+           slice then has a file, since the data of the model takes
+           precedence over the record. Otherwise, `raw` is kept, with its
+           missing slices.
+        2. The geometry comes from the preferred transformation. Only a
+           scaling onto axes with a unit of length is recorded, as the
+           pixel size along the columns and the rows of the files and the
+           spacing of the slices, and only as far as the files record it
+           (see the section on writing in [`brainhops.io.images.stack`][]).
+        3. The members of a record that is encoded have no header, since
+           the header of a file is known only once it is written.
+
+        An image with a record, no pending data, and the transformations
+        of its record or none read, consolidated without options or with
+        its own stacking axis, is left as it is: the copy shares `raw` and
+        the metadata. The transformations are compared with those that
+        the record decodes to, exactly. Otherwise, the new record is held
+        by new metadata, and the record held before is never changed. The
+        transformations are then decoded from the new record.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
+        axis : {"x", "y", "z", 0, 1, 2}, optional
+            The axis along which to cut the volume into files. By default,
+            it is the axis of the record, or z.
 
         Returns
         -------
         StackImage
             The consolidated copy, or this image with `inplace=True`.
+
+        Raises
+        ------
+        WriterError
+            If the image has no data, if its data does not have three
+            spatial axes and at most one channel axis, if a name has no
+            image extension, or if `axis` is not valid.
         """
-        if self._data is None:
-            return self if inplace else replace(self)
-        raw = _image_to_disk(self._data)
+        record = _record(self.metadata)
+        if axis is None:
+            axis = record.axis if record is not None else "z"
+        else:
+            try:
+                axis = checked_axis(axis)
+            except ValueError as e:
+                raise WriterError(str(e)) from None
+        kept = self._transformations is None or same_transformations(
+            self._transformations, _record_transformations(self.metadata)
+        )
+        if (
+            self._data is None
+            and kept
+            and record is not None
+            and axis == record.axis
+        ):
+            if not inplace:
+                return replace(self, transformations=None)
+            self.transformations = None
+            return self
+        record, raw = _encoded(self, axis)
+        if self.metadata is None:
+            metadata = StackMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
         if not inplace:
-            return replace(self, data=None, raw=raw)
+            return replace(
+                self,
+                data=None,
+                transformations=None,
+                raw=raw,
+                metadata=metadata,
+            )
         self.raw = raw
+        self.metadata = metadata
         self.data = None
         return self
+
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """Write the image as numbered files, in a folder or beside a name.
+
+        A path whose name ends with the extension of a TIFF file or of a
+        format that Pillow writes, such as `out.tif` or `out.png`, names
+        the files: the number of each slice is appended to the name, so
+        that the files are `out_0.tif`, `out_1.tif` and so on, padded with
+        zeros to the digits of the largest number, in the folder of the
+        path, whose other files are kept. Any other path is the folder of
+        the stack, whose files keep the names of the record, and which
+        replaces any folder of that name that holds only images.
+
+        The image is consolidated into a copy with the keyword arguments,
+        as by [`consolidate`][], which is written, and the image itself is
+        not changed. A slice without a file is not written. The files of an
+        image that was read and not changed are copied, byte for byte,
+        when they keep their format. Every file is written before any is
+        replaced. A folder from which the image reads some files is
+        replaced only if it holds no other file. When the lazy array of
+        the image reads a file that is replaced, the image is consolidated
+        in place instead, so that it holds what the files hold (#426), and
+        its lazy array reads the new files.
+
+        Parameters
+        ----------
+        filename : path-like
+            The local path of the folder, or the name of the files.
+        **kwargs : Any
+            The options of [`consolidate`][].
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
+        WriterError
+            If the path is not local, if the image cannot be encoded, or
+            if the folder to replace holds files that are not images.
+        """
+        axis = kwargs.pop("axis", None)
+        refuse_options(type(self), kwargs)
+        target = stack_target(filename)
+        read = []
+        if isinstance(self.raw, _StackProxy):
+            read = self.raw.filenames()
+        image = self.consolidate(axis=axis)
+        reading = reads_from(self.raw, target, image.metadata.raw)
+        if reading:
+            fill = self.raw.fill
+            image = self.consolidate(inplace=True, axis=axis)
+        written = write_stack(target, image.metadata.raw, image.raw, read)
+        if not reading:
+            return
+        # The image holds what the files hold, and its lazy array reads the
+        # new files. Copied files keep the geometry of the record, which
+        # the files may not record.
+        record = image.metadata.raw
+        fresh = read_record(
+            written.folder,
+            written.numbered,
+            pattern=written.pattern,
+            axis=record.axis,
+        )
+        if written.copied:
+            fresh = replace(
+                fresh,
+                pixel_size=record.pixel_size,
+                spacing=record.spacing,
+                unit=record.unit,
+            )
+        self.raw = _StackProxy(written.folder, fresh, fill)
+        self.metadata = StackMetadata.from_raw(fresh)
+        self.data = None
+
+    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
+        """Refuse a stream, which cannot hold the files of a stack.
+
+        Parameters
+        ----------
+        file : IO
+            The stream.
+        **kwargs : Any
+            Options of the writer, which are ignored.
+
+        Raises
+        ------
+        WriterError
+            Always, since a stack is written to the path of a folder.
+        """
+        raise WriterError(NOT_A_STREAM)
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Refuse to encode a stack as bytes, which cannot hold its files.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer, which are ignored.
+
+        Raises
+        ------
+        WriterError
+            Always, since a stack is written to the path of a folder.
+        """
+        raise WriterError(NOT_A_STREAM)
 
     # --- reading ------------------------------------------------------
 
@@ -232,10 +403,10 @@ class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         """Return the confidence that a path is the folder of a stack.
 
         A local folder that is not a Zarr store, and whose image files
-        (or the files that `pattern` selects) are numbered without a gap,
-        scores `LIKELY`. Only the names of the files are checked, so no
-        file is opened. A file never scores, so this class never takes a
-        file from the TIFF and Pillow readers.
+        (or the files that `pattern` selects) follow one numbering, scores
+        `LIKELY`. Only the names of the files are checked, so no file is
+        opened. A file never scores, so this class never takes a file from
+        the TIFF and Pillow readers.
 
         Parameters
         ----------
@@ -311,15 +482,20 @@ class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         cls,
         filename: path.FilenameLike,
         pattern: tx.Optional[str] = None,
-        pixel_size: tx.Optional[tx.Any] = None,
+        axis: tx.Optional[tx.Union[str, int]] = None,
+        pixel_size: tx.Optional[tx.Union[float, tx.Sequence[float]]] = None,
+        spacing: tx.Optional[float] = None,
         unit: tx.Optional[tx.Any] = None,
+        fill: tx.Optional[tx.Any] = None,
         **kwargs,
     ) -> "StackImage":
         """Read the image stack in a folder, without reading pixels.
 
         The header of every file is read to check that the files can be
         stacked. The lazy array reads the pixels of a file, by name, when
-        they are needed.
+        they are needed. The options `axis`, `pixel_size`, `spacing` and
+        `unit` set the fields of the record, which the transformations are
+        decoded from.
 
         Parameters
         ----------
@@ -327,18 +503,28 @@ class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             The path of a local folder.
         pattern : str, optional
             The glob pattern, relative to the folder, that selects the
-            files of the stack, such as `"slice_*.tif"`. By default,
-            every image file of the folder is taken. Hidden files are
-            never taken.
-        pixel_size : float or Sequence[float] or Mapping[str, float], optional
-            The size of a voxel, which takes precedence over the sizes that
-            the files record. It is one size for every spatial axis, one
-            size per spatial axis in the order x, y and z, or a mapping
-            that sets the named axes only, such as `{"z": 2.0}` for the
-            spacing of the slices.
+            files of the stack, such as `"slice_*.tif"`. By default, every
+            image file of the folder is taken. Hidden files are never
+            taken.
+        axis : {"x", "y", "z", 0, 1, 2}, optional
+            The axis of the volume along which the files are stacked, by
+            name or by its position in `(x, y, z)`. It is z by default, the
+            slowest axis.
+        pixel_size : float or Sequence[float], optional
+            The size of a pixel of the files, one size for the columns and
+            the rows or a pair `(columns, rows)`, which replaces the size
+            that the files record.
+        spacing : float, optional
+            The distance from one slice to the next, which replaces the
+            spacing that the files record. A negative spacing reverses the
+            stacking axis.
         unit : str or Unit, optional
-            The unit of `pixel_size`, or the unit to which the sizes that
-            the files record are converted.
+            The unit of length of `pixel_size` and `spacing`. The sizes
+            that the files record are converted to it.
+        fill : number, optional
+            The value of the pixels of a slice whose number no file
+            carries. It is NaN for a floating type and 0 for any other type
+            by default.
         **kwargs : Any
             Other options, which are refused.
 
@@ -352,26 +538,31 @@ class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         TypeError
             If an unknown option is given.
         ValueError
-            If `pixel_size` or `unit` is not valid.
+            If an option is not valid, or if `fill` cannot be stored in
+            the type of the files.
         ParserExistsError
             If the folder does not exist.
         ParserContentError
-            If the folder does not hold a stack that can be read: the
-            names of its image files do not follow one numbering, a number
-            is missing or repeated, or the files differ in format, shape,
-            type or number of channels.
+            If the folder does not hold a stack that can be read: the names
+            of its image files do not follow one numbering, a number is
+            repeated, or the files differ in format, shape, type or number
+            of channels.
         """
         refuse_options(cls, kwargs)
-        record = StackRaw.from_folder(filename, pattern)
-        _check_options(record, pixel_size, unit)
+        record = StackRaw.from_folder(
+            filename,
+            pattern,
+            axis=axis,
+            pixel_size=pixel_size,
+            spacing=spacing,
+            unit=unit,
+        )
         if isinstance(filename, str):
             filename = path.Path(filename)
         folder = os.path.abspath(os.fspath(filename))
         return cls(
-            raw=_StackProxy(folder, record),
+            raw=_StackProxy(folder, record, fill),
             metadata=StackMetadata.from_raw(record),
-            pixel_size=pixel_size,
-            unit=unit,
         )
 
     @classmethod
@@ -394,133 +585,165 @@ class StackImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
 
 # ----------------------------------------------------------------------
-#   GEOMETRY
+#   HELPERS
 # ----------------------------------------------------------------------
 
 
-def _check_options(
-    record: StackRaw, pixel_size: tx.Any, unit: tx.Any
-) -> None:
-    """Check the options of the geometry against the axes of a record.
+def _record(metadata: tx.Optional[StackMetadata]) -> tx.Optional[StackRaw]:
+    """Return the record of some metadata, or `None`."""
+    return None if metadata is None else metadata.raw
 
-    Raises
-    ------
-    ValueError
-        If a size is not positive and finite, if `pixel_size` does not
-        match the spatial axes, or if `unit` is not a unit.
-    """
-    raster.resolve_pixel_size(
-        _model_axes(record), pixel_size=pixel_size, unit=unit
-    )
+
+def _axis(metadata: tx.Optional[StackMetadata]) -> str:
+    """Return the stacking axis of the record of some metadata, or z."""
+    record = _record(metadata)
+    return "z" if record is None else record.axis
 
 
 def _record_transformations(
     metadata: tx.Optional[StackMetadata],
-    pixel_size: tx.Any,
-    unit: tx.Any,
 ) -> tx.List[Transformation]:
     """Decode the transformations of the record of some metadata.
 
     Metadata without a record, or a record without files, gives no
     transformation.
     """
-    if metadata is None or metadata.raw is None or not metadata.raw.members:
+    record = _record(metadata)
+    if record is None:
         return []
-    return _stack_transformations(metadata.raw, pixel_size, unit)
+    return stack_transformations(record)
 
 
-def _stack_transformations(
-    record: StackRaw, pixel_size: tx.Any, unit: tx.Any
-) -> tx.List[Transformation]:
-    """Return the voxel-to-physical scaling of a stack.
+def _encoded(image: StackImage, axis: str) -> tx.Tuple[StackRaw, tx.Any]:
+    """Encode the record and the stored volume of an image.
 
-    The sizes that every file records agree on are used, the options take
-    precedence over them, and a negative ImageJ spacing flips z unless
-    `pixel_size` sets z.
+    The encoders read the transformations without storing them, so that
+    a write leaves the image as it was.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data, or data of another number of axes.
     """
-    axes = _model_axes(record)
-    recorded, signs = _recorded_scales(record)
-    scales = raster.resolve_pixel_size(
-        axes, recorded, pixel_size=pixel_size, unit=unit
-    )
-    if isinstance(pixel_size, tx.Mapping):
-        overridden = set(pixel_size)
-    elif pixel_size is not None:
-        overridden = {axis.name for axis in raster.spatial_axes(axes)}
+    old = _record(image.metadata)
+    xforms = image._transformations
+    if xforms is None:
+        xforms = _record_transformations(image.metadata)
+    xform = xforms[0] if xforms else None
+    if (
+        image._data is None
+        and old is not None
+        and image.raw is not None
+        and axis == old.axis
+    ):
+        # Only the geometry changes, so the slices are those of `raw`.
+        raw = image.raw
+        ndim = len(old.axes)
+        members = tuple(replace(m, header=None) for m in old.members)
     else:
-        overridden = set()
-    for name, sign in signs.items():
-        if name in scales and name not in overridden:
-            size, size_unit = scales[name]
-            scales[name] = (sign * size, size_unit)
-    return raster.raster_transformations(axes, scales)
-
-
-def _model_axes(record: StackRaw) -> tx.List[Axis]:
-    """Return the axes of the data of a stack, `x, y, z[, c]`."""
-    axes = raster.storage_axes(record.axes)
-    return [axes[p] for p in raster.canonical_permutation(axes)]
-
-
-def _recorded_scales(
-    record: StackRaw,
-) -> tx.Tuple[tx.Dict[str, raster.AxisScale], tx.Dict[str, float]]:
-    """Return the sizes and signs on which every file of a stack agrees.
-
-    A TIFF file records the size of its pixels along x and y, as the TIFF
-    reader reads it (`series_metadata`), and an ImageJ file may also
-    record the spacing of its slices, which is the size along z. A Pillow
-    file records no size that the Pillow reader uses by default. A size
-    that some files do not record, or on which they disagree, is left
-    out, with a warning when some files record it.
-    """
-    per_file = [_file_scales(member) for member in record.members]
-    scales: tx.Dict[str, raster.AxisScale] = {}
-    signs: tx.Dict[str, float] = {}
-    for name in ("x", "y", "z"):
-        # A size is compared with its sign, so that files whose slices run
-        # in opposite directions disagree.
-        found = [
-            (file_scales.get(name), file_signs.get(name, 1.0))
-            for file_scales, file_signs in per_file
-        ]
-        if all(scale is None for scale, _ in found):
-            continue
-        if any(pair != found[0] for pair in found):
-            warnings.warn(
-                f"The files of the stack do not all record the same "
-                f"size along {name}, so that size is unknown. Pass "
-                f"pixel_size= to set it.",
-                stacklevel=3,
+        data = image._data
+        if data is None and image.raw is not None:
+            data = _image_to_model(image.raw, _axis(image.metadata))
+        if data is None:
+            raise WriterError(
+                "This image has no data, so there is nothing to write."
             )
-            continue
-        scales[name], sign = found[0]
-        if sign < 0:
-            signs[name] = sign
-    return scales, signs
+        ndim = len(data.shape)
+        if ndim not in (3, 4):
+            raise WriterError(
+                f"An image stack holds three spatial axes and at most one "
+                f"channel axis, but this image has {ndim} axes (shape "
+                f"{tuple(data.shape)})."
+            )
+        raw = _image_to_disk(data, axis)
+        members = _new_members(old, axis, tuple(raw.shape), raw.dtype)
+    fmt = members[0].format if members else None
+    pixel_size, spacing, unit = stored_geometry(
+        fmt, ndim == 4, encoded_geometry(xform, axis, ndim)
+    )
+    record = StackRaw(
+        members=members,
+        pattern=None if old is None else old.pattern,
+        axis=axis,
+        pixel_size=pixel_size,
+        spacing=spacing,
+        unit=unit,
+    )
+    return record, raw
 
 
-def _file_scales(
-    member: StackMember,
-) -> tx.Tuple[tx.Dict[str, raster.AxisScale], tx.Dict[str, float]]:
-    """Return the sizes that one file records, and the signs of its steps.
+def _new_members(
+    old: tx.Optional[StackRaw],
+    axis: str,
+    shape: tx.Tuple[int, ...],
+    dtype: tx.Any,
+) -> tx.Tuple[StackMember, ...]:
+    """Return the members of a stored volume of new slices.
 
-    The sizes along x and y are those that the TIFF reader takes from the
-    file, and the size along z is the ImageJ `spacing`, read with the
-    function that the TIFF reader uses for ImageJ hyperstacks.
+    The slices keep the numbers of the old record when it is cut along the
+    same axis into as many slices, and the files keep their names. A slice
+    that had no file, and every slice otherwise, is named after the first
+    file of the old record, or `slice_<number>.tif`, with its number.
+
+    Raises
+    ------
+    WriterError
+        If a name is not that of a TIFF file nor of an image that Pillow
+        writes.
     """
-    if member.format != "tiff":
-        return {}, {}
-    # A TIFF member exists only when tifffile is installed, so the TIFF
-    # package, which registers its formats when imported, can be imported.
-    from brainhops.io.images.tiff import _utils as tiff
+    count = shape[0]
+    first = old.members[0] if old is not None and old.members else None
+    if first is not None and old.axis == axis and len(old.numbers) == count:
+        numbers = list(old.numbers)
+        held = {member.number: member.name for member in old.members}
+    else:
+        start = 0 if first is None else first.number
+        numbers = list(range(start, start + count))
+        held = {}
+    prefix, suffix = DEFAULT_NAME if first is None else name_parts(first)
+    names = [
+        held.get(number, name)
+        for number, name in zip(
+            numbers, numbered_names(prefix, suffix, numbers)
+        )
+    ]
+    dtype = np.dtype(dtype).newbyteorder("=")
+    members = []
+    for number, name in zip(numbers, names):
+        fmt = member_format(name)
+        if fmt is None:
+            raise WriterError(
+                f"Cannot write {name!r}: it is not the name of a TIFF file "
+                f"nor of an image that Pillow writes (TIFF files need "
+                f"tifffile and other images need Pillow)."
+            )
+        axes, member_shape = _member_layout(fmt, shape[1:], dtype)
+        members.append(
+            StackMember(
+                name=name,
+                number=number,
+                format=fmt,
+                axes=axes,
+                shape=member_shape,
+                dtype=str(dtype),
+            )
+        )
+    return tuple(members)
 
-    header = member.header
-    scales = {
-        name: scale
-        for name, scale in header.scales.items()
-        if name in ("x", "y")
-    }
-    spacing, signs = tiff.imagej_scales(header.imagej, None, ("z",))
-    scales.update(spacing)
-    return scales, signs
+
+def _member_layout(
+    fmt: str, plane: tx.Tuple[int, ...], dtype: np.dtype
+) -> tx.Tuple[str, tx.Tuple[int, ...]]:
+    """Return the axes and the shape of a file that holds a plane.
+
+    A plane is `(rows, columns[, channels])`. Pillow stores the channels
+    of a pixel together, and so does the TIFF writer for the three or four
+    samples of an 8-bit RGB or RGBA image. The TIFF writer stores other
+    channels as separate planes, `(channels, rows, columns)`.
+    """
+    if len(plane) == 2:
+        return "YX", plane
+    rgb = dtype == np.uint8 and plane[2] in (3, 4)
+    if fmt == "pillow" or rgb:
+        return "YXS", plane
+    return "CYX", (plane[2], plane[0], plane[1])

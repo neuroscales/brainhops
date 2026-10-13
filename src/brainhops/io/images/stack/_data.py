@@ -1,6 +1,7 @@
 """The pixels of an image stack: the lazy array that reads its files."""
 
 # stdlib
+import math
 import os
 from numbers import Integral
 
@@ -19,24 +20,34 @@ class _StackProxy:
     """A lazy array of the pixels of an image stack.
 
     The proxy holds the path of the folder and the record of the stack.
-    It presents the files stacked along a new first axis, in the order of
-    the record, so its shape is `(files, rows, columns[, channels])`, as
-    `StackRaw.shape` gives it. Each file is read with the reader of its
+    It presents the slices stacked along a new first axis, in the order of
+    their numbers, so its shape is `(slices, rows, columns[, channels])`,
+    as `StackRaw.shape` gives it. Each file is read with the reader of its
     format, tifffile or Pillow, only when one of its pixels is selected,
     and no file is kept open. A selection along the first axis therefore
     reads only the files that it selects, which lets Dask read one file
-    per chunk (see `chunks`).
+    per chunk (see `chunks`). A slice whose number no file carries is
+    filled with `fill`, and reading it reads no file.
 
     Bringing the axes of a file into the order `(rows, columns[,
     channels])` depends on the record, so it happens in the proxy, as the
     permuted layouts of MRtrix do.
     """
 
-    def __init__(self, folder: str, record: StackRaw) -> None:
+    def __init__(
+        self, folder: str, record: StackRaw, fill: tx.Any = None
+    ) -> None:
         self.folder = folder
         """The path of the folder that holds the files."""
         self.record = record
         """The record of the stack, which lists the files in order."""
+        self.fill = fill_value(fill, record.dtype)
+        """The value of the pixels of a missing slice."""
+        first = record.members[0].number if record.members else 0
+        self._members = {
+            member.number - first: index
+            for index, member in enumerate(record.members)
+        }
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -58,18 +69,32 @@ class _StackProxy:
         """The shape of the block that one file fills: one plane."""
         return (1,) + self.shape[1:]
 
-    def read_member(self, index: int) -> np.ndarray:
-        """Return the pixels of one file, as `(rows, columns[, channels])`.
+    def filenames(self) -> tx.List[str]:
+        """Return the paths of the files that the proxy reads.
+
+        Returns
+        -------
+        list[str]
+            The path of each file of the record, in order.
+        """
+        return [
+            os.path.join(self.folder, *member.name.split("/"))
+            for member in self.record.members
+        ]
+
+    def read_member(self, position: int) -> np.ndarray:
+        """Return the pixels of one slice, as `(rows, columns[, channels])`.
 
         Parameters
         ----------
-        index : int
-            The position of the file in the record.
+        position : int
+            The position of the slice along the stacking axis.
 
         Returns
         -------
         numpy.ndarray
-            The pixels of the file.
+            The pixels of the file of the slice, or the fill value when
+            the slice has no file.
 
         Raises
         ------
@@ -77,6 +102,9 @@ class _StackProxy:
             If the file cannot be read, or if it no longer has the shape or
             the type that the record says.
         """
+        index = self._members.get(position)
+        if index is None:
+            return np.full(self.shape[1:], self.fill, self.dtype)
         member = self.record.members[index]
         filename = os.path.join(self.folder, *member.name.split("/"))
         if not os.path.isfile(filename):
@@ -96,23 +124,23 @@ class _StackProxy:
             )
         return values.transpose(member.plane_order)
 
-    def read_members(self, indices: tx.Sequence[int]) -> np.ndarray:
-        """Return the pixels of several files, stacked along a first axis.
+    def read_members(self, positions: tx.Sequence[int]) -> np.ndarray:
+        """Return the pixels of several slices, stacked along a first axis.
 
         Parameters
         ----------
-        indices : Sequence[int]
-            The positions of the files in the record.
+        positions : Sequence[int]
+            The positions of the slices along the stacking axis.
 
         Returns
         -------
         numpy.ndarray
-            The pixels, of shape `(len(indices), rows, columns[,
+            The pixels, of shape `(len(positions), rows, columns[,
             channels])`.
         """
-        out = np.empty((len(indices),) + self.shape[1:], self.dtype)
-        for k, index in enumerate(indices):
-            out[k] = self.read_member(index)
+        out = np.empty((len(positions),) + self.shape[1:], self.dtype)
+        for k, position in enumerate(positions):
+            out[k] = self.read_member(position)
         return out
 
     def __array__(
@@ -142,6 +170,40 @@ class _StackProxy:
 
     def __repr__(self) -> str:
         return f"_StackProxy(shape={self.shape}, dtype={self.dtype})"
+
+
+def fill_value(fill: tx.Any, dtype: np.dtype) -> tx.Any:
+    """Return the value of the pixels of a missing slice, of a given type.
+
+    By default, it is NaN for a floating or complex type, and zero for any
+    other type, such as an integer type or `bool`.
+
+    Raises
+    ------
+    ValueError
+        If `fill` cannot be stored exactly in `dtype`, such as NaN in an
+        integer type or 300 in `uint8`.
+    """
+    dtype = np.dtype(dtype)
+    if fill is None:
+        if dtype.kind in "fc":
+            return dtype.type(math.nan)
+        return dtype.type(0)
+    try:
+        with np.errstate(all="ignore"):
+            value = np.asarray(fill).astype(dtype)
+        same = value.shape == () and (
+            value == np.asarray(fill)
+            or (np.isnan(value) and np.isnan(np.asarray(fill)))
+        )
+    except (TypeError, ValueError):
+        same = False
+    if not same:
+        raise ValueError(
+            f"fill must be a value that the type {dtype} of the stack "
+            f"stores exactly, not {fill!r}."
+        )
+    return value[()]
 
 
 def _read_file(filename: str, member: StackMember) -> np.ndarray:
