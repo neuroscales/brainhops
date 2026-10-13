@@ -473,7 +473,7 @@ class MghImage(
         elif self.metadata is None:
             metadata = MghMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = type(self.metadata).from_raw(record)
         if not inplace:
             return replace(
                 self,

@@ -1,5 +1,5 @@
 """
-The trailing tags of an MGH/MGZ file, which `nibabel` does not read.
+The trailing tags of an MGH or MGZ file, which nibabel does not read.
 
 After the footer, FreeSurfer writes a sequence of tags: a big-endian
 `int32` tag id, a length, and the payload. The length is an `int64`,
