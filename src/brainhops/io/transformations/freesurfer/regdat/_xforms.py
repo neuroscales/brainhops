@@ -68,6 +68,20 @@ def _record(xform: "RegisterDatTransformation") -> tx.Optional[RegisterDatRaw]:
     return None if metadata is None else metadata.raw
 
 
+# The converters of the geometries are defined above the class, since
+# Python 3.14 evaluates its annotations when the class is built.
+
+
+def _as_reference_geometry(value: tx.Any) -> tx.Optional[Geometry]:
+    """Return the geometry of the reference volume, see `_as_geometry`."""
+    return _as_geometry(value, "the reference volume")
+
+
+def _as_moving_geometry(value: tx.Any) -> tx.Optional[Geometry]:
+    """Return the geometry of the movable volume, see `_as_geometry`."""
+    return _as_geometry(value, "the movable volume")
+
+
 # ----------------------------------------------------------------------
 #   FORMATS
 # ----------------------------------------------------------------------
@@ -152,18 +166,18 @@ class RegisterDatTransformation(
     _metadata: NoRepr[tx.Optional[RegisterDatMetadata]] = None
 
     # A geometry that is given, or assigned, is converted to a `Geometry`
-    # and checked by `_as_geometry`.
+    # and checked by `_as_reference_geometry` or `_as_moving_geometry`.
     _reference: KwOnly[
         tx.Annotated[
             tx.Optional[Geometry],
-            ConvertTo(lambda v: _as_geometry(v, "the reference volume")),
+            ConvertTo(_as_reference_geometry),
         ]
     ] = None
 
     _moving: KwOnly[
         tx.Annotated[
             tx.Optional[Geometry],
-            ConvertTo(lambda v: _as_geometry(v, "the movable volume")),
+            ConvertTo(_as_moving_geometry),
         ]
     ] = None
 
