@@ -18,16 +18,23 @@ from brainhops.io.base.parsers import (
 
 
 @pytest.fixture
-def root() -> type:
+def root() -> tx.Iterator[type]:
     """An isolated dispatcher, so that test formats do not leak into the
     global registry.
+
+    A format registered under the dispatcher is also registered in
+    `Format._REGISTRY`, so the formats of a test are removed from it when
+    the test ends. A format left there would claim the files that later
+    tests load, such as the MNI transform files of `test_io_xfm.py`.
     """
 
     @format_registry
     class Root(Format, TextFileReader):
         pass
 
-    return Root
+    yield Root
+    for fmt in list(Root._REGISTRY):
+        Format._REGISTRY.discard(fmt)
 
 
 def _format(root: type, name: str, **attrs: tx.Any) -> type:
