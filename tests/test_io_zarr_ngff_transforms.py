@@ -662,6 +662,74 @@ def test_a_transformation_into_the_intrinsic_space_is_read_inverted() -> None:
     np.testing.assert_allclose(np.diag(matrix[:, :3]), [1 / 8, 1 / 4, 1 / 2])
 
 
+def test_the_inverted_placement_of_the_conformance_case_is_read() -> None:
+    # ngff-spec tag 0.6, tests/attributes/strict/valid/image/
+    # multiscales_example.json, a valid case whose only transformation of
+    # the multiscale goes from `world` to `intrinsic`. Its datasets are
+    # reduced to the first one here.
+    def axes(units: tx.Dict[str, str]) -> tx.List[dict]:
+        types = {"t": "time", "c": "channel"}
+        return [
+            dict(
+                {"name": name, "type": types.get(name, "space")},
+                **({"unit": units[name]} if name in units else {}),
+            )
+            for name in "tczyx"
+        ]
+
+    units = {"t": "millisecond", "z": "micrometer"}
+    units.update(y="micrometer", x="micrometer")
+    block = {
+        "name": "example",
+        "coordinateSystems": [
+            {"name": "world", "axes": axes(units)},
+            {"name": "intrinsic", "axes": axes(units)},
+        ],
+        "datasets": [
+            {
+                "path": "s0",
+                "coordinateTransformations": [
+                    {
+                        "type": "scale",
+                        "scale": [1.0, 1.0, 0.5, 0.5, 0.5],
+                        "input": {"path": "s0"},
+                        "output": {"name": "intrinsic"},
+                    }
+                ],
+            }
+        ],
+        "coordinateTransformations": [
+            {
+                "type": "scale",
+                "scale": [0.1, 1.0, 1.0, 1.0, 1.0],
+                "input": {"name": "world"},
+                "output": {"name": "intrinsic"},
+            }
+        ],
+    }
+    ome = v6.OME.from_json({"version": "0.6", "multiscales": [block]})
+    tczyx = _system(block["coordinateSystems"][0]["axes"])
+    systems = {
+        name: CoordinateSystem(name=name) for name in ("intrinsic", "world")
+    }
+    (placement,) = _ome.common_transformations(
+        ome.multiscales[0],
+        {"intrinsic": tczyx.order, "world": tczyx.order},
+        tczyx.order,
+        input=systems["intrinsic"],
+        systems=systems,
+    )
+    assert placement.input.name == "intrinsic"
+    assert placement.output.name == "world"
+    world = _evaluate(
+        placement,
+        tczyx,
+        tczyx,
+        {"t": 1.0, "c": 0.0, "z": 1.0, "y": 1.0, "x": 1.0},
+    )
+    _assert_point(world, {"t": 10.0, "c": 0.0, "z": 1.0, "y": 1.0, "x": 1.0})
+
+
 def test_a_transformation_to_another_group_is_skipped() -> None:
     placements = _commons(
         [
@@ -826,3 +894,65 @@ def test_a_dataset_holds_a_scale_followed_by_a_translation(
     # ngff-spec 0.6, "Constraints": "a single scale, identity or sequence of
     # a scale followed by a translation transformation".
     assert _map.is_dataset_transform(entry) is allowed
+
+
+# ---- names of coordinate systems of other groups ---------------------
+
+
+@pytest.mark.parametrize(
+    "name, group, expected",
+    [
+        ("physical", "", "physical"),
+        ("physical", "labels/cells", "labels/cells//physical"),
+        ("a//b", "", "//a//b"),
+        ("/x", "labels", "labels///x"),
+        ("a//b", "labels", "labels//a//b"),
+    ],
+)
+def test_a_system_is_named_after_its_group(
+    name: str, group: str, expected: str
+) -> None:
+    # The systems of the root group keep their names, and the name splits
+    # back into its group path and its OME name.
+    assert _ome.system_name(name, group) == expected
+    assert _ome.split_system_name(expected) == (group, name)
+
+
+@pytest.mark.parametrize(
+    "group, path, expected",
+    [
+        ("", None, ""),
+        ("", ".", ""),
+        ("", "labels/cells/", "labels/cells"),
+        ("labels", "./cells", "labels/cells"),
+        ("images/a", "../b", "images/b"),
+        ("images/a", "labels/cells", "images/a/labels/cells"),
+    ],
+)
+def test_a_group_path_is_resolved_from_the_root(
+    group: str, path: tx.Optional[str], expected: str
+) -> None:
+    assert _ome.group_path(group, path) == expected
+
+
+@pytest.mark.parametrize("path", ["/labels", "labels//cells", "../up"])
+def test_a_group_path_must_stay_relative_and_inside_the_root(
+    path: str,
+) -> None:
+    with pytest.raises(ValueError):
+        _ome.group_path("", path)
+
+
+def test_a_transformation_to_the_same_group_by_path_is_read() -> None:
+    # A path that leads back to the group of the metadata refers to its own
+    # systems.
+    (placement,) = _commons(
+        [
+            dict(
+                _SCALE_TO_WORLD,
+                input={"name": "intrinsic", "path": "."},
+                output={"name": "world", "path": "labels/.."},
+            )
+        ]
+    )
+    assert placement.output.name == "world"

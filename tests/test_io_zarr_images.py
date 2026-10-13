@@ -600,6 +600,94 @@ def test_writer_writes_a_diagonal_level_as_a_scale_then_a_translation(
     )
 
 
+# ---- systems of other groups ------------------------------------------
+
+
+def _parent_and_labels(tmp_path: Path) -> tx.Any:
+    # Two pyramids whose systems have the same OME names: one in the root
+    # group, one in its labels group.
+    path = str(tmp_path / "parent.zarr")
+    data = np.zeros((3, 4, 5), "float32")
+    OmeZarrImage(images=[SingleScaleImage(data)], axes=_spatial_axes()).save(
+        path
+    )
+    root = abczarr.open_group(path, mode="a")
+    cells = root.create_group("labels").create_group("cells")
+    labels = OmeZarrImage(
+        images=[SingleScaleImage(data.astype("uint8"))], axes=_spatial_axes()
+    )
+    labels.to_node(cells)
+    return root
+
+
+def test_reader_names_the_systems_of_a_group_after_its_path(
+    tmp_path: Path,
+) -> None:
+    root = _parent_and_labels(tmp_path)
+
+    parent = OmeZarrImage.from_node(root)
+    labels = OmeZarrImage.from_node(root["labels/cells"], group="labels/cells")
+
+    parent_space = parent.images[0].transformation.output
+    labels_space = labels.images[0].transformation.output
+    assert parent_space.name == "physical"
+    assert labels_space.name == "labels/cells//physical"
+    assert parent_space != labels_space
+
+
+def test_reader_of_a_group_without_its_path_keeps_the_ome_names(
+    tmp_path: Path,
+) -> None:
+    # Without the path, which only the reader of the root knows, the labels
+    # are read as a root group, and their system cannot be told apart from
+    # the one of the parent (memo item 132).
+    root = _parent_and_labels(tmp_path)
+
+    parent = OmeZarrImage.from_node(root)
+    labels = OmeZarrImage.from_node(root["labels/cells"])
+
+    assert (
+        labels.images[0].transformation.output
+        == parent.images[0].transformation.output
+    )
+
+
+def test_writer_writes_the_ome_names_of_the_systems_of_its_group(
+    tmp_path: Path,
+) -> None:
+    # A pyramid read from a labels group is written under the OME names of
+    # its systems.
+    root = _parent_and_labels(tmp_path)
+    labels = OmeZarrImage.from_node(root["labels/cells"], group="labels/cells")
+    world = labels.images[0].transformation.output
+    placed = replace(
+        labels,
+        transformations=[Translation([1.0, 2.0, 3.0], output=world)],
+    )
+    path = str(tmp_path / "copy.zarr")
+
+    placed.save(path)
+
+    back = OmeZarrImage.from_store(path)
+    assert back.transformation.output.name == "physical"
+
+
+def test_writer_refuses_a_world_space_of_another_group(
+    tmp_path: Path,
+) -> None:
+    from brainhops.datamodel.systems import CoordinateSystem
+
+    other = CoordinateSystem(name="labels/cells//physical")
+    pyramid = OmeZarrImage(
+        images=[SingleScaleImage(np.zeros((3, 4, 5), "float32"))],
+        axes=_spatial_axes(),
+        transformations=[Translation([1.0, 2.0, 3.0], output=other)],
+    )
+
+    with pytest.raises(WriterError, match="labels/cells"):
+        pyramid.save(str(tmp_path / "other.zarr"))
+
+
 def test_reader_refuses_unsupported_coordinate_transformation(
     tmp_path: Path,
 ) -> None:
