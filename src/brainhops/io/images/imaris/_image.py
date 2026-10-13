@@ -467,17 +467,15 @@ def _record_transformations(
     return [_level_transformation(metadata.raw, level)]
 
 
-def _level_transformation(
-    record: ImarisRaw, level: int
-) -> Transformation:
+def _level_transformation(record: ImarisRaw, level: int) -> Transformation:
     """Return the voxel-to-physical transformation of one level.
 
     Every level spans the extent of the file. The voxel size of level 0
     is the size of the extent divided by the size of that level, and its
     first voxel is centered half a voxel inside the extent. A coarser
     level is placed as a level of every other brainhops pyramid, by the
-    ratio of the sizes ([`level_transformation`][brainhops.io.images.base._utils_raster.level_transformation]),
-    which gives the size of the extent divided by the size of the level.
+    ratio of the size of level 0 to its own size, which gives the size of
+    the extent divided by the size of the level.
 
     Parameters
     ----------

@@ -150,7 +150,7 @@ def single_file(tmp_path):  # noqa: ANN001, ANN201
 
 
 def expected(stack: np.ndarray) -> np.ndarray:
-    """Return the data of an image, `(x, y, z, t, c)`, from `(t, c, z, y, x)`."""
+    """Return the data `(x, y, z, t, c)` of an image from `(t, c, z, y, x)`."""
     return np.transpose(stack, (4, 3, 2, 0, 1))
 
 
@@ -425,7 +425,9 @@ def test_a_selection_reads_only_its_datasets(tmp_path, single_file) -> None:  # 
 
 def test_an_empty_selection_reads_nothing(tmp_path) -> None:  # noqa: ANN001
     record = ImarisRaw(
-        levels=(ImarisLevel(size=(4, 3, 2), stored=(2, 4, 4), datatype="<u2"),),
+        levels=(
+            ImarisLevel(size=(4, 3, 2), stored=(2, 4, 4), datatype="<u2"),
+        ),
         timepoints=1,
         channels=1,
     )
@@ -559,7 +561,9 @@ def test_the_official_minimal_file_layout(tmp_path) -> None:  # noqa: ANN001
     path = tmp_path / "minimal.ims"
     with h5py.File(path, "w") as f:
         f.attrs["ImarisVersion"] = text("5.5.0")
-        group = f.create_group("DataSet/ResolutionLevel 0/TimePoint 0/Channel 0")
+        group = f.create_group(
+            "DataSet/ResolutionLevel 0/TimePoint 0/Channel 0"
+        )
         for name, value in (("X", 128), ("Y", 128), ("Z", 1)):
             group.attrs["ImageSize" + name] = text(value)
         data = np.arange(128 * 128, dtype=np.uint16).reshape(1, 128, 128)
@@ -594,7 +598,9 @@ def test_imaris_files_cannot_be_written(tmp_path, pyramid_file) -> None:  # noqa
         with pytest.raises(WriterError):
             io.save(obj, tmp_path / "copy.ims")
     with pytest.raises(WriterError):
-        io.save(ImarisImage(data=np.zeros((2, 2, 2, 1, 1))), tmp_path / "x.ims")
+        io.save(
+            ImarisImage(data=np.zeros((2, 2, 2, 1, 1))), tmp_path / "x.ims"
+        )
 
 
 def test_a_level_converts_to_nifti(tmp_path, pyramid_file) -> None:  # noqa: ANN001

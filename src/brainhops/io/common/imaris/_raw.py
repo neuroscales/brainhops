@@ -465,7 +465,9 @@ def _read_info(group: h5py.Group) -> tx.Dict[str, tx.Dict[str, str]]:
     for name, child in group.items():
         if not isinstance(child, h5py.Group):
             continue
-        params = {key: attribute_text(value) for key, value in child.attrs.items()}
+        params = {
+            key: attribute_text(value) for key, value in child.attrs.items()
+        }
         for key, item in child.items():
             if (
                 isinstance(item, h5py.Dataset)
@@ -480,7 +482,9 @@ def _read_info(group: h5py.Group) -> tx.Dict[str, tx.Dict[str, str]]:
 def _decode_name(name: str) -> str:
     """Undo `EncodeName` of `writer/bpWriterHDF5.cxx`, which writes `%` as
     `%p` and `/` as `%s`."""
-    return re.sub(r"%([ps])", lambda m: "%" if m.group(1) == "p" else "/", name)
+    return re.sub(
+        r"%([ps])", lambda m: "%" if m.group(1) == "p" else "/", name
+    )
 
 
 def _extent(

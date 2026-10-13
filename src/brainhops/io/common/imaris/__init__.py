@@ -17,11 +17,11 @@ and two readers settle the convention: imaris-ims-file-reader
 Bio-Formats (commit `7daafcb9b33557a06fbd79d51cedc154ecdd5fce`).
 
 ```
-/DataSet/ResolutionLevel R/TimePoint T/Channel C/Data   voxels, z, y, x
-/DataSet/ResolutionLevel R/TimePoint T/Channel C        ImageSizeX, Y, Z
-/DataSetInfo/Image                                      ExtMin0..2, ExtMax0..2, Unit
-/DataSetInfo/Channel C                                  Name, Color, ...
-/DataSetInfo/TimeInfo                                   TimePoint1, ...
+/DataSet/ResolutionLevel R/TimePoint T/Channel C   ImageSizeX, Y and Z
+/DataSet/ResolutionLevel R/TimePoint T/Channel C/Data   voxels (z, y, x)
+/DataSetInfo/Image        ExtMin0..2, ExtMax0..2, Unit
+/DataSetInfo/Channel C    Name, Color, ...
+/DataSetInfo/TimeInfo     TimePoint1, TimePoint2, ...
 ```
 
 Each channel of each time point of each resolution level is a separate

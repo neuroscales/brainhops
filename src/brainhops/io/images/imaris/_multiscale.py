@@ -71,7 +71,10 @@ class ImarisMultiScaleImage(ImageFormat, MultiScaleImage, Hdf5Reader):
         float
             The confidence, between 0 and 1.
         """
-        if ImarisRaw.sniff_h5(h5file, error=error) and _level_count(h5file) > 1:
+        if (
+            ImarisRaw.sniff_h5(h5file, error=error)
+            and _level_count(h5file) > 1
+        ):
             return Confidence.CERTAIN
         return _declined(error, "The Imaris file has a single level.")
 
