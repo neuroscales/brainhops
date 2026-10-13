@@ -195,6 +195,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
             "TxtMatrixAffine",
         )
     },
+    "brainhops.io.transformations.minc._affine": {
+        "XfmAffine": ("data",),
+    },
+    "brainhops.io.transformations.minc._chain": {
+        "XfmTransform": ("transformations",),
+    },
+    "brainhops.io.transformations.minc._grid": {
+        "XfmGridTransform": ("transformations",),
+    },
     "brainhops.io.transformations.nifti._affines": {
         "NiftiRASToVoxel": ("data",),
         "NiftiVoxelToRAS": ("data",),

@@ -171,6 +171,18 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.transformations.minc": Package(
+        names=frozenset(
+            {
+                "XfmAffine",
+                "XfmFormat",
+                "XfmGridTransform",
+                "XfmMetadata",
+                "XfmRaw",
+                "XfmTransform",
+            }
+        ),
+    ),
     "brainhops.io.transformations.x5": Package(
         names=frozenset(
             {
