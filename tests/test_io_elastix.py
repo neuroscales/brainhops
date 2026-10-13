@@ -252,7 +252,10 @@ def test_toml_syntax() -> None:
 def test_toml_and_text_files_read_the_same() -> None:
     text = io.load(data_dir / "euler3d.txt")
     toml = io.load(data_dir / "euler3d.toml")
-    assert text.parameter_map.keys() == toml.parameter_map.keys()
+    assert (
+        text.metadata.raw.parameters.keys()
+        == toml.metadata.raw.parameters.keys()
+    )
     np.testing.assert_array_equal(text[0].parameters, toml[0].parameters)
 
 
@@ -303,7 +306,7 @@ def test_bspline_degree(degree: int) -> None:
 def test_bspline_grid_index_moves_the_first_coefficient() -> None:
     """The first coefficient lies GridIndex voxels from GridOrigin."""
     xform = io.load(FILES["bspline3d"])
-    pmap = xform.parameter_map
+    pmap = xform.metadata.raw.parameters
     spacing = np.asarray(pmap["GridSpacing"], float)
     index = np.asarray(pmap["GridIndex"], float)
     direction = np.asarray(pmap["GridDirection"], float).reshape(3, 3).T
@@ -405,7 +408,9 @@ def test_chain_is_initial_first() -> None:
 def test_chain_follows_the_deprecated_key() -> None:
     """The deprecated key InitialTransformParametersFileName is followed."""
     xform = io.load(FILES["chain3"])
-    assert "InitialTransformParametersFileName" in xform.parameter_map
+    assert (
+        "InitialTransformParametersFileName" in xform.metadata.raw.parameters
+    )
     assert len(xform) == 3
     assert len(xform.initial) == 2
     assert len(xform.initial.initial) == 1
@@ -492,12 +497,17 @@ def test_unmodified_files_round_trip(tmp_path: Path, filename: str) -> None:
     xform.save(out)
     again = io.load(out)
     assert type(again) is type(xform)
-    assert again.parameter_map.keys() == xform.parameter_map.keys()
-    for key, value in xform.parameter_map.items():
+    assert (
+        again.metadata.raw.parameters.keys()
+        == xform.metadata.raw.parameters.keys()
+    )
+    for key, value in xform.metadata.raw.parameters.items():
         if isinstance(value, np.ndarray):
-            np.testing.assert_array_equal(again.parameter_map[key], value)
+            np.testing.assert_array_equal(
+                again.metadata.raw.parameters[key], value
+            )
         else:
-            assert again.parameter_map[key] == value
+            assert again.metadata.raw.parameters[key] == value
 
 
 def test_a_chain_is_written_with_its_initial_file_name() -> None:
@@ -524,8 +534,8 @@ def test_an_affine_is_written_centered_on_the_origin(
     cls([xforms.Affine(matrix)]).save(out)
     again = io.load(out)
     assert type(again) is cls
-    assert again.parameter_map["Transform"] == ("AffineTransform",)
-    assert again.parameter_map["CenterOfRotationPoint"] == (0, 0, 0)
+    assert again.metadata.raw.parameters["Transform"] == ("AffineTransform",)
+    assert again.metadata.raw.parameters["CenterOfRotationPoint"] == (0, 0, 0)
     np.testing.assert_allclose(
         np.asarray(again.compute().to(xforms.Affine).matrix), matrix
     )
@@ -545,7 +555,10 @@ def test_a_block_is_written_as_its_elastix_transform(
     out = tmp_path / "out.txt"
     xform.save(out)
     again = io.load(out)
-    assert again.parameter_map["Transform"] == xform.parameter_map["Transform"]
+    assert (
+        again.metadata.raw.parameters["Transform"]
+        == xform.metadata.raw.parameters["Transform"]
+    )
     assert type(again[0]) is type(block)
     np.testing.assert_allclose(again[0].parameters, block.parameters)
     np.testing.assert_allclose(
@@ -570,7 +583,7 @@ def test_an_affine_chain_is_written_as_one_affine(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     xform.save(out)
     again = io.load(out)
-    assert again.parameter_map["Transform"] == ("AffineTransform",)
+    assert again.metadata.raw.parameters["Transform"] == ("AffineTransform",)
     assert again.initial is None
     points = _grid_points(expected["vox2lps"], expected["disp"].shape[:-1])
     np.testing.assert_allclose(

@@ -155,13 +155,23 @@ and 3-D.
 # ruff: enable[E501]
 
 __all__ = [
+    "ElastixMetadata",
     "ElastixParameterTransform",
+    "ElastixRaw",
     "ElastixTomlTransform",
     "ElastixTransform",
 ]
 
+from ._metadata import ElastixMetadata
+from ._raw import ElastixRaw
 from ._xform import (
     ElastixParameterTransform,
     ElastixTomlTransform,
     ElastixTransform,
 )
+
+# Importing the private converters registers them with the data model,
+# so that a conversion into one of these formats, such as
+# `t.to(Format)`, fails with a reason instead of building a wrong
+# object.
+from . import _converters  # noqa: E402, F401  isort: skip
