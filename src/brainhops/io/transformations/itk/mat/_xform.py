@@ -355,8 +355,8 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         precision : ItkPrecision or str, optional
             The precision of the parameters, `"double"` or `"float"`,
             which also appears in the name of each block. By default, each
-            block keeps its precision. The fixed parameters are always
-            written in double precision.
+            block keeps its precision. The fixed parameters of a block
+            that is encoded again are written in double precision.
 
         Returns
         -------
