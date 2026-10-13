@@ -86,8 +86,8 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.multiscale": {
         "MultiscaleField": ("scales",),
     },
-    "brainhops.datamodel._transformations.operators": {
-        "Operation": ("forward",),
+    "brainhops.datamodel._transformations.derived": {
+        "DerivedTransformation": ("forward",),
         "Sqrt": ("forward",),
         "SqrtAffine": ("forward",),
         "SqrtLinear": ("forward",),
@@ -102,6 +102,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     },
     "brainhops.datamodel.geometry": {
         "Geometry": ("transformations", "shape", "grid", "transformation"),
+    },
+    "brainhops.io.transformations.afni._affine": {
+        "AfniAffine": ("data",),
+    },
+    "brainhops.io.transformations.afni._nifti": {
+        "AfniNiftiWarp": ("transformations",),
+    },
+    "brainhops.io.transformations.afni._warp": {
+        "AfniBrikWarp": ("transformations",),
     },
     "brainhops.io.transformations.base.affines": {
         "LPSToVoxel": ("data",),
@@ -195,6 +204,24 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
             "TxtMatrixAffine",
         )
     },
+    "brainhops.io.transformations.minc._affine": {
+        "XfmAffine": ("data",),
+    },
+    "brainhops.io.transformations.minc._chain": {
+        "XfmTransform": ("transformations",),
+    },
+    "brainhops.io.transformations.minc._grid": {
+        "XfmGridTransform": ("transformations",),
+    },
+    "brainhops.io.transformations.mrtrix._linear": {
+        "MrtrixLinearTransform": ("data",),
+    },
+    "brainhops.io.transformations.mrtrix._warps": {
+        "MrtrixCoordinatesField": ("transformations",),
+        "MrtrixDisplacementField": ("transformations",),
+        "MrtrixWarp": (),
+        "MrtrixWarpFull": ("transformations",),
+    },
     "brainhops.io.transformations.nifti._affines": {
         "NiftiRASToVoxel": ("data",),
         "NiftiVoxelToRAS": ("data",),
@@ -264,6 +291,12 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.images.freesurfer.mgh._image": {
         "MghImage": ("data", "transformations"),
     },
+    "brainhops.io.images.imaris._image": {
+        "ImarisImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.imaris._multiscale": {
+        "ImarisMultiScaleImage": ("images", "transformations"),
+    },
     "brainhops.io.images.minc._image": {
         name: ("data", "transformations")
         for name in ("Minc1Image", "Minc2Image", "MincImage")
@@ -324,6 +357,12 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     },
     "brainhops.io.images.pillow._image": {
         "PillowImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.precomputed._image": {
+        "PrecomputedImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.precomputed._multiscale": {
+        "PrecomputedMultiScaleImage": ("images", "transformations"),
     },
     "brainhops.io.images.tiff._image": {
         "TiffImage": ("data", "transformations"),
