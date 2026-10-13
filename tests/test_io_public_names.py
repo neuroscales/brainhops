@@ -70,6 +70,15 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.common.bdv": Package(
+        names=frozenset({"BdvMetadata", "BdvRaw"}),
+    ),
+    "brainhops.io.images.bdv": Package(
+        names=frozenset(
+            {"BdvImage", "BdvMetadata", "BdvMultiScaleImage", "BdvRaw"}
+        ),
+        needs=("h5py",),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),
@@ -186,6 +195,9 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
         needs=("h5py",),
+    ),
+    "brainhops.io.transformations.bdv": Package(
+        names=frozenset({"BdvMetadata", "BdvRaw", "BdvViewRegistration"}),
     ),
     "brainhops.io.transformations.itk": Package(
         names=frozenset(

@@ -68,6 +68,7 @@ from brainhops.io.common._geometry import same_transformations
 from brainhops.io.common.afni._data import _BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
+from brainhops.io.common.bdv import BdvMetadata, BdvRaw
 from brainhops.io.common.mrtrix._data import _MrtrixProxy
 from brainhops.io.common.nrrd._data import _NrrdProxy
 from brainhops.io.images.afni import AfniImage, AfniMetadata
@@ -99,6 +100,13 @@ from brainhops.io.images.nrrd._views import (
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.bdv import BdvViewRegistration
+from brainhops.io.transformations.bdv._xform import (
+    _matrix_to_disk as _bdv_matrix_to_disk,
+)
+from brainhops.io.transformations.bdv._xform import (
+    _matrix_to_model as _bdv_matrix_to_model,
+)
 from brainhops.io.transformations.freesurfer.lta import (
     LtaMetadata,
     LtaPhysicalSystem,
@@ -191,7 +199,15 @@ except ImportError:
 try:
     import h5py
 
+    from brainhops.io.common.bdv._hdf5 import _BdvProxy
     from brainhops.io.common.hdf5 import DelayedH5Array
+    from brainhops.io.images.bdv import BdvImage
+    from brainhops.io.images.bdv._views import (
+        _image_to_disk as _bdv_to_disk,
+    )
+    from brainhops.io.images.bdv._views import (
+        _image_to_model as _bdv_to_model,
+    )
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
     )
@@ -1395,7 +1411,153 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+# A BigDataViewer dataset is an XML file, which lists the views and holds
+# their registrations, and an HDF5 file of voxels. The registration of a
+# view is a chain of affines whose values live in the record, which is
+# parsed in one pass, as LTA keeps its matrix. The exemplar is a chain of
+# one affine, whose stored data are the twelve values of its transform. A
+# record is frozen, so the edit of a record gives a new record, read from
+# edited bytes, which keeps the levels that an image read from the HDF5
+# file. The XML file is read as bytes, so that its CRLF line separators
+# are kept.
+
+
+def _bdv_stored(xform: tx.Any) -> tx.Any:
+    # The values of the transform live in the record, and a chain that
+    # was assigned is pending until it is encoded into a new record.
+    if xform.metadata is None:
+        return None
+    setup, timepoint = xform.view()
+    registration = xform.metadata.raw.registration(timepoint, setup)
+    return registration.transforms[0].affine
+
+
+def _bdv_edit_record(record: tx.Any) -> tx.Any:
+    stored = record.stored.replace(
+        b"<SpimData", b"<!-- edited -->\r\n<SpimData", 1
+    )
+    return replace(BdvRaw.from_bytes(stored), pyramids=record.pyramids)
+
+
+def _bdv_record_edited(record: tx.Any) -> bool:
+    return b"<!-- edited -->" in record.stored
+
+
+def _bdv_set_chain(xform: tx.Any, value: tx.Any) -> None:
+    xform.transformations = (Affine(value),)
+
+
+_BDV = Exemplar(
+    metadata=BdvMetadata,
+    suffix=".xml",
+    # The XML file is parsed in one pass, so the values of the transform
+    # are a tuple of the record just after a read. The metadata holds the
+    # whole file, so the check that metadata never reads data compares a
+    # full copy of the file, as for LTA.
+    proxies=(tuple,),
+    to_model=_bdv_matrix_to_model,
+    to_disk=_bdv_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_bdv_edit_record,
+    record_edited=_bdv_record_edited,
+    geometry=lambda xform: np.asarray(xform.transformations[0].matrix),
+    change_geometry=lambda xform: _bdv_set_chain(
+        xform, np.diag([2.0, 3.0, 4.0, 1.0])[:3]
+    ),
+    foreign=lambda data: Sequence([Affine(data)]),
+    build=lambda data: BdvViewRegistration([Affine(data)]),
+    options=frozenset({"setup", "timepoint"}),
+    stored=_bdv_stored,
+    view="transformations",
+    data=lambda xform: xform.transformations[0].matrix,
+    set_data=_bdv_set_chain,
+)
+EXEMPLARS[BdvViewRegistration] = _BDV
+
+# BigDataViewer images cannot be written, so the checks write their
+# datasets as BigDataViewer lays them out, with an XML file written by
+# hand and an HDF5 file written with h5py beside it. The XML file is the
+# header file of the dataset, and the bytes of the XML file alone cannot
+# hold an image. The voxels are stored as floats, which the `dataType`
+# attribute declares, and the view is registered by an affine, so that
+# the geometry of the image is not the identity.
+
+_BDV_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<SpimData version="0.2">
+  <BasePath type="relative">.</BasePath>
+  <SequenceDescription>
+    <ImageLoader format="bdv.hdf5">
+      <hdf5 type="relative">{hdf5}</hdf5>
+    </ImageLoader>
+    <ViewSetups>
+      <ViewSetup>
+        <id>0</id>
+        <name>0</name>
+        <size>{size}</size>
+        <voxelSize>
+          <unit>um</unit>
+          <size>0.5 0.5 2.0</size>
+        </voxelSize>
+      </ViewSetup>
+    </ViewSetups>
+    <Timepoints type="range">
+      <first>0</first>
+      <last>0</last>
+    </Timepoints>
+  </SequenceDescription>
+  <ViewRegistrations>
+    <ViewRegistration timepoint="0" setup="0">
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>{affine}</affine>
+      </ViewTransform>
+    </ViewRegistration>
+  </ViewRegistrations>
+</SpimData>
+"""
+
+
+def _write_bdv(path: tx.Any, data: tx.Any) -> None:
+    """Write a dataset of one view and one level, as BigDataViewer does."""
+    hdf5 = os.path.splitext(str(path))[0] + ".h5"
+    text = _BDV_XML.format(
+        hdf5=os.path.basename(hdf5),
+        size=" ".join(str(n) for n in np.shape(data)),
+        affine=" ".join(repr(float(v)) for v in _VOXEL_TO_RAS.reshape(-1)),
+    )
+    with open(path, "wb") as file:
+        file.write(text.replace("\n", "\r\n").encode())
+    with h5py.File(hdf5, "w") as f:
+        f.create_dataset("s00/resolutions", data=np.ones((1, 3)))
+        f.create_dataset("s00/subdivisions", data=np.full((1, 3), 4, "i4"))
+        f["s00"].attrs["dataType"] = "float32"
+        f.create_dataset(
+            "t00000/s00/0/cells", data=np.asarray(data, "float32").T
+        )
+
+
+if h5py is not None:
+    EXEMPLARS[BdvImage] = Exemplar(
+        metadata=BdvMetadata,
+        suffix=".xml",
+        proxies=(_BdvProxy,),
+        to_model=_bdv_to_model,
+        to_disk=_bdv_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=_bdv_edit_record,
+        record_edited=_bdv_record_edited,
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"setup", "timepoint", "level"}),
+        header_file=lambda path: path,
+        source=_write_bdv,
+    )
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
+    # A pyramid has no record yet (tension 15). Its levels are
+    # `BdvImage` objects, which follow the design.
+    "brainhops.io.images.bdv.BdvMultiScaleImage",
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
     "brainhops.io.images.openslide.DicomWsiImage",
