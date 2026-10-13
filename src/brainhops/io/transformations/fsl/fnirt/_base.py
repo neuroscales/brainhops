@@ -1,6 +1,6 @@
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Alias, KwOnly, NoRepr, replace
+from bagof.magic import Alias, Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
@@ -14,6 +14,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -117,6 +118,18 @@ class FnirtWarpField(
     """
 
     HINTS = ("fnirt",)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
+
+    metadata = smartproperty("metadata")
+    """The metadata of the file, which holds its header, or `None`.
+
+    A field built from data has no metadata. The field is decoded from
+    `raw` and from the header, and assigning other metadata keeps what
+    was decoded.
+    """
 
     moving: tx.Annotated[
         tx.Optional[_ImageLike], Alias(("moving", "mov", "src"))

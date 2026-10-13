@@ -36,6 +36,7 @@ from brainhops.io.transformations.freesurfer.lta import (
     LtaTransformation,
 )
 from brainhops.io.transformations.freesurfer.m3z import M3zMetadata, M3zMorph
+from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
 from brainhops.io.transformations.itk.nifti import ItkNiftiDisplacementField
 from brainhops.io.transformations.nifti import (
     NiftiRASCoordinatesField,
@@ -65,6 +66,7 @@ _FORMATS = [
     (NiftyRegDisplacementField, NiftiMetadata),
     (SpmCoordinatesField, NiftiMetadata),
     (ItkNiftiDisplacementField, NiftiMetadata),
+    (FnirtWarpField, NiftiMetadata),
 ]
 
 

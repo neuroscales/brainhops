@@ -1265,11 +1265,11 @@ its status.
      `Transformation` would allow it, but it would make the abstract
      `NiftyRegField` a data model, which `relabel` then no longer
      refuses as a family of formats. Status: decided in pass 5a. Each
-     of the seven concrete classes (`NiftiRASToVoxel`,
+     of the eight concrete classes (`NiftiRASToVoxel`,
      `NiftiVoxelToRAS`, `NiftiRASCoordinatesField`,
      `NiftiRASDisplacementField`, `NiftyRegSequence`,
-     `SpmCoordinatesField` and `ItkNiftiField`) takes `metadata` over
-     itself.
+     `SpmCoordinatesField`, `ItkNiftiField` and `FnirtWarpField`) takes
+     `metadata` over itself.
 401. The metadata of a format decodes its vocabulary at once, in
      `from_raw`, instead of in lazy properties: a field may be `None`,
      so a lazy field would need a sentinel or a flag, which is the state
