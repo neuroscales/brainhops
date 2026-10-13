@@ -1167,3 +1167,51 @@ its status.
      values with a zero boundary and the inverse of the data model. The
      two agree at the nodes of the grid only. Status: accepted and
      documented in `XfmGridTransform`.
+160. A Neuroglancer precomputed volume holds several scales, so it is read
+     as a pyramid, `PrecomputedMultiScaleImage`, whose levels are
+     `PrecomputedImage` objects (`io/images/precomputed`). Each level
+     follows this design: it holds the `info` file of the volume as its
+     record and the lazy array of its scale in `raw`, and it is an
+     exemplar of the conformance tests. The pyramid holds the same
+     metadata as its levels and has no `raw` of its own, and its
+     `consolidate` consolidates its levels. The rules for the levels and
+     the record of a pyramid are decided in the Zarr pass (item 15), so
+     the pyramid is listed with the other pyramids among the formats that
+     are not migrated. Status: open.
+161. Precomputed volumes are read and not written, as MINC (item 101).
+     A volume is a directory of files, local or remote, while the atomic
+     save of `io/base/_utils_files.py`, the save over the file that a
+     proxy reads (#426) and the untouched copy that is identical byte
+     for byte are defined for files. A writer would also encode a pyramid,
+     whose rules wait for the Zarr pass (item 160), and TensorStore,
+     which brainhops would write with, writes its own `info` file, with
+     other members, such as `jpeg_quality`, and other formatting. Status:
+     decided for the reader, and open for a writer.
+162. The specification of precomputed volumes does not say where the
+     centre of a voxel lies. The viewer rounds a position down to find
+     its voxel and subtracts half a voxel before it interpolates, so the
+     corner of a voxel sits at an integer coordinate, and the
+     transformation of a scale moves by `(voxel_offset + 0.5) *
+     resolution` nanometres (`io/images/precomputed/_image.py`, with the
+     sources in `io/images/precomputed/__init__.py`). Status: decided.
+163. The conformance exemplar of `PrecomputedImage` names a volume by its
+     `info` file, with the suffix `/info`, because checks 6 and 12 read
+     and copy the file that a case names, and a volume is a directory.
+     `Exemplar.header_file` is the identity, so that the bytes of the
+     `info` file are refused as a volume and read as its metadata. The
+     checks write the volume as `volume.md` describes it, without
+     TensorStore, and the tests of the format read volumes named by their
+     directory. Status: accepted.
+164. The readable encodings are those that TensorStore 0.1.45 decodes:
+     `raw`, `jpeg` and `compressed_segmentation`, sharded or not. The
+     list is fixed in `io/images/precomputed/_data.py`, so a scale in
+     `png`, `compresso`, `jxl` or `crackle` is refused when it is
+     loaded, even with a later TensorStore that decodes one of them.
+     TensorStore reads a missing chunk as zeros. Status: open, until the
+     list follows the version of TensorStore.
+165. A remote volume is read with the key-value stores of TensorStore,
+     which read `gs`, `http` and `https` URLs in version 0.1.45, and not
+     `s3`. The `precomputed://` prefix of Neuroglancer is not accepted,
+     because `bagof.paths.Path` merges the slashes of a nested URL. The
+     tests read a remote volume through a `file://` URL and use no
+     network. Status: accepted.
