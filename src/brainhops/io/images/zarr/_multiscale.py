@@ -14,7 +14,11 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import AxisList, CoordinateSystem
-from brainhops.datamodel.transformations import Identity, Transformation
+from brainhops.datamodel.transformations import (
+    Identity,
+    Sequence,
+    Transformation,
+)
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.common.zarr import StoreLike, ZarrReaderWriter
@@ -448,6 +452,31 @@ class OmeZarrImage(
         rich = False
         placements = list(self.transformations or [])
         moved_placement = False
+        # A dataset only holds a positive scale, and a flip is never written
+        # as a negative one (item 135). The flip that every level shares
+        # therefore goes before the placements of the pyramid, as a linear
+        # transformation, and each level keeps the rest of its geometry.
+        geometries = [image.transformation for image in images]
+        signs = _shared_flip(geometries, ndim)
+        if signs is not None:
+            geometries = [
+                _map.unflipped(geometry, signs, ndim)
+                for geometry in geometries
+            ]
+            linear = _map.flip(signs)
+            if placements:
+                placements = [
+                    Sequence(
+                        [linear, placement],
+                        input=getattr(placement, "input", None),
+                        output=getattr(placement, "output", None),
+                    )
+                    for placement in placements
+                ]
+            else:
+                output = getattr(images[0].transformation, "output", None)
+                placements = [replace(linear, output=output)]
+            moved_placement = True
         for index, image in enumerate(images):
             data = image.data
             if data is None:
@@ -456,7 +485,7 @@ class OmeZarrImage(
                 )
             try:
                 entry = _map.to_dataset_ome(
-                    image.transformation,
+                    geometries[index],
                     storage_perm,
                     len(data.shape),
                 )
@@ -481,7 +510,7 @@ class OmeZarrImage(
                         "the placement. Splitting it when writing is tracked "
                         "in neuroscales/brainhops#447."
                     )
-                placements.append(image.transformation)
+                placements.append(geometries[index])
                 entry = _map.to_ome(Identity(), storage_perm, len(data.shape))
                 moved_placement = True
             rich = rich or _map.needs_rich_version(entry)
@@ -585,3 +614,26 @@ def _default_canonical_axes(ndim: int) -> tx.List[Axis]:
         for i in range(extra)
     ]
     return spatial + non_spatial
+
+
+def _shared_flip(
+    geometries: tx.Sequence[Transformation], ndim: int
+) -> tx.Optional[tx.Any]:
+    # Return the signs of the flip that every level shares, or `None` when
+    # no level flips an axis or when a level does not only scale and
+    # translate, which the writer handles level by level. Levels that flip
+    # different axes cannot share one placement (#447).
+    signs = [_map.diagonal_signs(geometry, ndim) for geometry in geometries]
+    if any(sign is None for sign in signs):
+        return None
+    if not any(bool((sign < 0).any()) for sign in signs):
+        return None
+    if any(list(sign) != list(signs[0]) for sign in signs):
+        raise WriterError(
+            "The levels of this image flip different axes, so the flip "
+            "cannot be moved to a placement that they share, and an "
+            "OME-NGFF dataset only holds a positive scale. Splitting the "
+            "geometry of the levels when writing is tracked in "
+            "neuroscales/brainhops#447."
+        )
+    return signs[0]

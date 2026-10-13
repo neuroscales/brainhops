@@ -601,7 +601,8 @@ def to_dataset_ome(
     -------
     dict or None
         The JSON of the dataset transformation, or `None` when the geometry
-        is not diagonal, such as a rotation or a shear.
+        is not diagonal, such as a rotation or a shear, or when it flips an
+        axis, since a dataset only holds a positive scale.
 
     Raises
     ------
@@ -620,7 +621,92 @@ def to_dataset_ome(
     if decomposed is None:
         return None
     scale, translation = decomposed
-    return _scale_translation_entry(scale, translation)
+    # A flip makes the entry an affine, which a dataset cannot hold.
+    entry = _scale_translation_entry(scale, translation)
+    return entry if is_dataset_transform(entry) else None
+
+
+def diagonal_signs(
+    transform: Transformation, ndim: int
+) -> tx.Optional[np.ndarray]:
+    """Return the signs of the scale of a diagonal geometry.
+
+    A negative sign flips its axis. A flip cannot be written in the dataset
+    of a level, which only holds a positive scale, so the writer moves the
+    flip that every level shares to the placement of the pyramid, with
+    [`unflipped`][].
+
+    Parameters
+    ----------
+    transform : Transformation
+        The geometry of a level, in the brainhops axis order.
+    ndim : int
+        The number of axes of the level.
+
+    Returns
+    -------
+    ndarray or None
+        One sign per axis, `-1.0` or `1.0`, or `None` when the geometry is
+        not an affine that only scales and translates each axis.
+    """
+    affine = transform.to(Affine, error=None)
+    if affine is None:
+        return None
+    decomposed = scale_translation_from_affine(affine.matrix, ndim)
+    if decomposed is None:
+        return None
+    scale, _ = decomposed
+    return np.where(scale < 0, -1.0, 1.0)
+
+
+def unflipped(
+    transform: Transformation, signs: tx.Sequence[float], ndim: int
+) -> Affine:
+    """Remove a flip from a geometry that only scales and translates.
+
+    With `D` the diagonal matrix of `signs`, the result `G` satisfies
+    `transform = D @ G`, so the geometry is the flip applied after `G`.
+
+    Parameters
+    ----------
+    transform : Transformation
+        The geometry of a level, as accepted by [`diagonal_signs`][].
+    signs : sequence of float
+        The signs of the flip, as [`diagonal_signs`][] returns them.
+    ndim : int
+        The number of axes of the level.
+
+    Returns
+    -------
+    Affine
+        The geometry without the flip, with the systems of `transform`.
+    """
+    matrix = np.asarray(transform.to(Affine).matrix, dtype=float)
+    flipped = np.asarray(signs, dtype=float)[:, None] * matrix
+    return Affine(
+        matrix=flipped,
+        input=getattr(transform, "input", None),
+        output=getattr(transform, "output", None),
+    )
+
+
+def flip(signs: tx.Sequence[float]) -> Affine:
+    """Return the linear transformation that flips the axes of negative sign.
+
+    Parameters
+    ----------
+    signs : sequence of float
+        One sign per axis, as [`diagonal_signs`][] returns them.
+
+    Returns
+    -------
+    Affine
+        The diagonal affine of `signs`, without translation. It is written
+        as an OME `affine`, never as a negative `scale`.
+    """
+    signs = np.asarray(signs, dtype=float)
+    matrix = np.concatenate([np.diag(signs), np.zeros((len(signs), 1))], 1)
+    return Affine(matrix=matrix)
 
 
 def is_dataset_transform(entry: tx.Mapping[str, tx.Any]) -> bool:
@@ -687,9 +773,15 @@ def _scale_translation_entry(
     scale: tx.Any, translation: tx.Any
 ) -> tx.Dict[str, tx.Any]:
     # The leanest form is a scale alone when the translation is zero, and
-    # otherwise a sequence of a scale and a translation.
+    # otherwise a sequence of a scale and a translation. The schema of
+    # OME-NGFF 0.6 requires a positive scale, and a flip is never written as
+    # a negative one: a scale with an entry that is not positive is written
+    # as the equivalent affine (docs/design/format-records.md, item 135).
     scale = np.asarray(scale, dtype=float)
     translation = np.asarray(translation, dtype=float)
+    if bool((scale <= 0).any()):
+        matrix = np.concatenate([np.diag(scale), translation[:, None]], 1)
+        return {"type": "affine", "affine": _matrix_to_list(matrix)}
     scale_entry = {
         "type": "scale",
         "scale": [float(value) for value in scale],
@@ -740,10 +832,8 @@ def _(
     if transform.scale is None:
         scale, translation = scale_translation_from_affine(None, ndim)
         return _scale_translation_entry(scale, translation)
-    return {
-        "type": "scale",
-        "scale": permute_vector(transform.scale, storage_perm),
-    }
+    scale = permute_vector(transform.scale, storage_perm)
+    return _scale_translation_entry(scale, np.zeros(len(scale)))
 
 
 @_to_ome_for

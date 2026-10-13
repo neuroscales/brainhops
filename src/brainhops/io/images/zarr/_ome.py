@@ -741,7 +741,9 @@ def resolve_write_version(
         if version is not None:
             raise WriterError(
                 f"This image is placed by a transformation that OME-NGFF "
-                f"{version} cannot carry, such as a rotation or an affine. "
+                f"{version} cannot carry, such as a rotation, an affine or "
+                "a flip, since it only carries positive scales and "
+                "translations. "
                 f"Write it in version {NORMALIZED_VERSION} instead, which "
                 "carries the full placement."
             )

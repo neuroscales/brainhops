@@ -1350,11 +1350,17 @@ its status.
 135. The schema of version 0.6 requires every entry of a `scale` to be
      positive (`exclusiveMinimum` 0), while the prose of the
      specification only says that they SHOULD be non-zero. abczarr 0.2.3
-     accepts a negative scale. The writer writes an axis-aligned flip,
-     common in neuroimaging, as a `scale` with a negative entry, which the
-     schema refuses. Writing it as an `affine` instead would make such a
-     level a rotated level in the sense of item 131. Status: open, for the
-     maintainer.
+     accepts a negative scale. The maintainer decided on #433 that a flip
+     is never written as a negative `scale` but as a linear transformation.
+     A scale with an entry that is not positive is written as the
+     equivalent `affine` (`io/transformations/zarr/_map.py`,
+     `_scale_translation_entry`). A dataset only holds a positive scale, so
+     the flip that every level shares goes before the placements of the
+     pyramid as that linear transformation, and each level keeps a
+     positive scale (`io/images/zarr/_multiscale.py`, `to_node`). Levels
+     that flip different axes are refused, as in item 131 (#447), and
+     versions 0.4 and 0.5, which have no slot for an affine, refuse a
+     flip. Status: decided.
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,

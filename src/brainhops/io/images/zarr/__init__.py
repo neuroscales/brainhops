@@ -120,7 +120,11 @@ the level then keeps a unit scale. Any other level that rotates or
 shears is refused with a
 [`WriterError`][brainhops.io.base.parsers.WriterError]. Splitting its
 geometry into a diagonal part per level and a placement shared by all
-levels is tracked in issue #447 (item 131).
+levels is tracked in issue #447 (item 131). A flip is never written as
+a negative `scale`, which the schema of version 0.6 refuses, but as an
+`affine`. The flip that every level shares goes before the placements of
+the pyramid, so that each level keeps a positive scale, while levels that
+flip different axes are refused (item 135).
 """
 
 __all__ = ["ZarrImage", "OmeZarrImage", "OmeImageError"]
