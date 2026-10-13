@@ -14,6 +14,7 @@ __all__ = [
     "itk",
     "load",
     "matrix",
+    "minc",
     "mrtrix",
     "niftyreg",
     "sniff",

@@ -133,6 +133,17 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
 )
+from brainhops.io.transformations.minc import (
+    XfmAffine,
+    XfmMetadata,
+    XfmTransform,
+)
+from brainhops.io.transformations.minc._affine import (
+    _matrix_to_disk as _xfm_matrix_to_disk,
+)
+from brainhops.io.transformations.minc._affine import (
+    _matrix_to_model as _xfm_matrix_to_model,
+)
 from brainhops.io.transformations.mrtrix import (
     MrtrixCoordinatesField,
     MrtrixDisplacementField,
@@ -1206,6 +1217,74 @@ _M3Z = Exemplar(
     # that `M3zMetadata` and the dispatcher read the file alone.
 )
 EXEMPLARS[M3zMorph] = _M3Z
+
+# An MNI transform file is short and parsed in one pass, so the matrices
+# of its linear transforms live in the record, as the matrix of an LTA
+# file does. A file of one linear transform is an `XfmAffine`. The
+# exemplar of the chain, `XfmTransform`, is a chain of one affine, whose
+# matrix stands for its data: a grid transform names a MINC volume, which
+# brainhops cannot write, so the checks of writing cannot build one. The
+# metadata holds the whole file, so the check that metadata never reads
+# data compares a full copy of the file, as for LTA and M3Z. Its own test
+# module checks that the metadata never reads a displacement volume.
+
+
+def _xfm_stored(xform: tx.Any) -> tx.Any:
+    # The matrix of the first transform lives in the record. A
+    # transformation without a record stores nothing until it is
+    # consolidated.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.transforms[0].matrix
+
+
+def _xfm_edit_record(record: tx.Any) -> tx.Any:
+    # A record is frozen, so the edit is made with `replace`.
+    return replace(record, comments=("%edited",))
+
+
+def _xfm_affine(data: tx.Any) -> tx.Any:
+    return Affine(data, input=RASmm(), output=RASmm())
+
+
+def _xfm_data(xform: tx.Any) -> tx.Any:
+    return xform.transformations[0].data
+
+
+def _xfm_set_data(xform: tx.Any, value: tx.Any) -> None:
+    xform.transformations = (_xfm_affine(value),)
+
+
+_XFM = Exemplar(
+    metadata=XfmMetadata,
+    suffix=".xfm",
+    # The file is parsed in one pass and has no lazy data, so the checks
+    # read the matrix of the record, a tuple of rows, as for LTA.
+    proxies=(tuple,),
+    to_model=_xfm_matrix_to_model,
+    to_disk=_xfm_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_xfm_edit_record,
+    record_edited=lambda raw: raw.comments == ("%edited",),
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=_xfm_affine,
+    build=XfmAffine,
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_xfm_stored,
+)
+EXEMPLARS[XfmAffine] = _XFM
+EXEMPLARS[XfmTransform] = _XFM._replace(
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    foreign=lambda data: Sequence([_xfm_affine(data)]),
+    build=lambda data: XfmTransform([_xfm_affine(data)]),
+    derived=(),
+    view="transformations",
+    data=_xfm_data,
+    set_data=_xfm_set_data,
+)
 
 # An MGH file keeps its footer of acquisition parameters and its tags
 # after the voxels, and both belong to the record. The edit of the record

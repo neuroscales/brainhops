@@ -335,6 +335,19 @@ def to_ome(
         return _affine_to_ome(transform, storage_perm, ndim)
 
 
+def is_dataset_transform(entry: tx.Mapping[str, tx.Any]) -> bool:
+    """Return whether an OME transform is allowed on a 0.6 dataset."""
+    kind = entry.get("type")
+    if kind in ("identity", "scale"):
+        return True
+    if kind != "sequence":
+        return False
+    steps = entry.get("transformations", [])
+    return len(steps) == 2 and all(
+        step.get("type") in ("scale", "translation") for step in steps
+    )
+
+
 def scale_translation_from_affine(
     matrix: tx.Any, ndim: int
 ) -> tx.Optional[tx.Tuple[np.ndarray, np.ndarray]]:
