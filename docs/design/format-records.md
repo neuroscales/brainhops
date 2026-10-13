@@ -522,6 +522,11 @@ The move of MGH, called pass 3a, is pull request #424. The move of AFNI
 and MRtrix, called pass 3b, is pull request #425. The move of NRRD and
 MINC, called pass 3c, is in progress.
 
+The elastix parameter files move in the same way as M3Z, since a
+parameter file is parsed in one pass. Their record also holds the records
+of the files of their chain of initial transforms, as items 320 to 329
+describe.
+
 The fourth pass moves Zarr, with one record per resolution level, and
 FLIRT. The class variable workaround of FLIRT is removed once it is
 decided whether `moving` and `reference` belong to the format or to the
@@ -1820,3 +1825,81 @@ registrations of its views back into the XML file.
      metadata holds the whole file, as for LTA and M3Z (item 66), and
      check 18 does not apply, because the format has no `raw`. Status:
      accepted.
+320. An elastix parameter file may name an initial transform in another
+     file, and that file may name another. The record of each file of the
+     chain is read when the file that names it is read, and it is held in
+     the record of that file, in `ElastixRaw.initial`
+     (`io/transformations/elastix/_raw.py`). The record of the last file
+     therefore holds the whole chain, and so does its metadata. The files
+     are small text files, and reading them at once keeps the error of a
+     missing or looping file where the file is read, as before. The name in
+     the parameter map is kept as the file stores it. Status: proposed in
+     the elastix pass.
+321. A transformation whose chain was not assigned is written to a path
+     with the files of its chain. Each file whose name is relative is
+     written beside the file that names it, under that name, unless it
+     already holds the same bytes, and a file that holds other bytes is
+     never replaced: the writer raises `WriterError`, and so it does when a
+     file of the chain would be written over the new file
+     (`_place_initial` in `io/transformations/elastix/_xform.py`). A name
+     that is absolute is left as it is. The MINC transform files of #434
+     place their grid volumes in the same way, but replace a file that
+     holds other bytes. elastix looks for a relative name in the working
+     directory first, so a file of the same name there would be read
+     instead of the placed one. Status: open, for the maintainer to choose
+     one rule for both formats.
+322. The reader option `initial` of elastix selects what is read and
+     decoded. `initial=False` reads no file of the chain, and a file name
+     reads that file in place of the one that the map names. A
+     transformation given as `initial` is held in the private field
+     `_initial`, which copies keep, and it is not written, as for the X5
+     options of item 49. A consolidation that encodes an assigned chain
+     resets it, since the new record has no initial transform. Status:
+     proposed in the elastix pass.
+323. The elastix record keeps the text that it was read from and writes
+     it back while it still parses to the parameter map, as AFNI does
+     (item 84). A file is read as bytes and decoded, so that its line
+     endings and comments survive. A record read from lines keeps no text,
+     because the line endings are not known, and a stream that the caller
+     opened in text mode has already translated them. Status: proposed in
+     the elastix pass.
+324. One metadata class, `ElastixMetadata`, reads both syntaxes of
+     elastix. The syntax is a field of the record, which a file name gives
+     as elastix does (`.toml` or not), and which the content gives when
+     there is no name. Each format class passes its syntax explicitly to
+     the reader and to `consolidate`. A record in the other syntax, as
+     after a conversion between the two formats, is copied into a record
+     of the syntax of the class at consolidation, without its text, and
+     the converters between the two formats keep the metadata of an
+     untouched transformation. Status: proposed in the elastix pass.
+325. The transform parameters of an elastix record are a read-only array,
+     and the blocks decoded from the record hold read-only views of it
+     (`_read_only` in `io/transformations/elastix/_blocks.py`), so an edit
+     in place cannot change the record. SciPy refuses a read-only array, so
+     `AffineLogTransform` copies the matrix before its exponential. Status:
+     proposed in the elastix pass.
+326. The elastix pass removes the `parameter_map` field in favor of
+     `metadata.raw.parameters`, the `reverse=False` of the base class, the
+     class methods `_read_map` and `_format_map`, and the module function
+     `initial_filename` of the private `_xform` module, which moves to
+     `_raw`. The writers no longer accept unknown options, and an
+     untouched file keeps its bytes. These changes are to be announced
+     with item 13. Status: open, as for item 13.
+327. The block of an elastix transformation is a view of its record, and
+     not of its chain, so assigning a chain does not clear it, and
+     `xform.block` still describes the file while the chain is pending. In
+     the conformance tests, check 6 is vacuous, as for LTA and M3Z (item
+     66), and checks 18 and 19 do not apply, since the format has no `raw`
+     and is not an image. The chains of several files are checked in
+     `tests/test_io_elastix.py`, because the harness builds objects from
+     data alone. Status: proposed in the elastix pass.
+328. The elastix formats import private names of other packages: the ITK
+     block classes and `_make_system` from `io/transformations/itk`, and
+     `_compatible` from `io/transformations/base/affines.py`, which checks
+     an assigned system against LPS. ITK is moved to records at the same
+     time, so these imports may need to follow it. Status: open.
+329. An elastix transformation without a record and without a chain
+     raises `UnrepresentableTransformationError` when it is consolidated,
+     as it did when it was written, and `ElastixMetadata` without a record
+     raises `WriterError`, as M3Z does (item 61). LTA and X5 write an empty
+     record instead. Status: proposed in the elastix pass.

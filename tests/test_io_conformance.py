@@ -135,6 +135,16 @@ from brainhops.io.transformations.c3d._affine import (
 from brainhops.io.transformations.c3d._affine import (
     _matrix_to_model as _c3d_to_model,
 )
+from brainhops.io.transformations.elastix import (
+    ElastixMetadata,
+    ElastixParameterTransform,
+    ElastixTomlTransform,
+)
+from brainhops.io.transformations.elastix._blocks import (
+    _ElastixBSplineStruct,
+    _read_only,
+    _struct,
+)
 from brainhops.io.transformations.freesurfer.lta import (
     LtaMetadata,
     LtaPhysicalSystem,
@@ -1558,6 +1568,115 @@ _M3Z = Exemplar(
 )
 EXEMPLARS[M3zMorph] = _M3Z
 
+# The model of an elastix parameter file is a chain of ITK blocks, which
+# is the block of the file alone when the file names no initial transform.
+# A parameter file is parsed in one pass, so the transform parameters live
+# in the record, as a float64 array, and the data of the exemplar is the
+# parameters of the block, which are a read-only view of that array. The
+# exemplar is an affine whose center stands for its geometry, and a
+# variant is a B-spline whose grid origin stands for its geometry. The
+# chains of several files are checked in `test_io_elastix.py`, because
+# the checks build an object from data alone.
+
+
+def _elastix_affine(
+    data: tx.Any, center: tx.Sequence[float] = (0.0, 0.0, 0.0)
+) -> tx.Any:
+    return _struct("AffineTransform", 3, data, center)
+
+
+def _elastix_bspline(
+    data: tx.Any, origin: tx.Sequence[float] = (0.0, 0.0, 0.0)
+) -> tx.Any:
+    # A grid of 2 x 3 x 4 control points, with a unit spacing and the
+    # identity direction, stored as the ITK fixed parameters.
+    grid = np.concatenate(
+        [[2, 3, 4], origin, [1.0, 1.0, 1.0], np.eye(3).ravel()]
+    )
+    return _struct(
+        "BSplineTransform", 3, data, grid, cls=_ElastixBSplineStruct
+    )
+
+
+def _elastix_stored(xform: tx.Any) -> tx.Any:
+    # The transform parameters live in the record, and a chain that was
+    # assigned is pending until it is encoded into a new record.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.parameters["TransformParameters"]
+
+
+def _elastix_data(xform: tx.Any) -> tx.Any:
+    return xform.transformations[-1].parameters
+
+
+def _elastix_edit_record(record: tx.Any) -> tx.Any:
+    # A record is frozen, so the edit is made with `replace`, on a
+    # parameter that does not describe the transform.
+    parameters = {**record.parameters, "ResultImagePixelType": ("short",)}
+    return replace(record, parameters=parameters)
+
+
+def _elastix_edited(record: tx.Any) -> bool:
+    return record.parameters.get("ResultImagePixelType") == ("short",)
+
+
+def _elastix_center(xform: tx.Any) -> np.ndarray:
+    return np.asarray(xform.transformations[-1].fixed_parameters[:3])
+
+
+def _elastix_move_center(xform: tx.Any) -> None:
+    data = np.array(_elastix_data(xform))
+    xform.transformations = [_elastix_affine(data, (1.0, 2.0, 3.0))]
+
+
+def _elastix_origin(xform: tx.Any) -> np.ndarray:
+    return np.asarray(xform.transformations[-1].fixed_parameters[3:6])
+
+
+def _elastix_move_origin(xform: tx.Any) -> None:
+    data = np.array(_elastix_data(xform))
+    xform.transformations = [_elastix_bspline(data, (1.0, 2.0, 3.0))]
+
+
+def _elastix_exemplar(cls: type, suffix: str) -> Exemplar:
+    return Exemplar(
+        metadata=ElastixMetadata,
+        suffix=suffix,
+        # A parameter file is parsed in one pass and has no lazy data, so
+        # the transform parameters are an array of the record just after
+        # a read.
+        proxies=(np.ndarray,),
+        to_model=_read_only,
+        to_disk=lambda data: np.asarray(data, dtype=np.float64),
+        sample=lambda: np.arange(12.0),
+        edit_record=_elastix_edit_record,
+        record_edited=_elastix_edited,
+        geometry=_elastix_center,
+        change_geometry=_elastix_move_center,
+        foreign=lambda data: Sequence([_elastix_affine(data)]),
+        build=lambda data: cls([_elastix_affine(data)]),
+        options=frozenset({"initial"}),
+        binary=False,
+        stored=_elastix_stored,
+        view="transformations",
+        data=_elastix_data,
+        set_data=lambda xform, value: setattr(
+            xform, "transformations", [_elastix_affine(value)]
+        ),
+        # The metadata reads the whole file, which is parsed in one pass,
+        # so the check that metadata never reads data only shows that
+        # `ElastixMetadata` and the dispatcher read the file alone, as
+        # for LTA and M3Z.
+    )
+
+
+_ELASTIX = _elastix_exemplar(ElastixParameterTransform, ".txt")
+EXEMPLARS[ElastixParameterTransform] = _ELASTIX
+EXEMPLARS[ElastixTomlTransform] = _elastix_exemplar(
+    ElastixTomlTransform, ".toml"
+)
+
 # An MNI transform file is short and parsed in one pass, so the matrices
 # of its linear transforms live in the record, as the matrix of an LTA
 # file does. A file of one linear transform is an `XfmAffine`. The
@@ -2529,8 +2648,6 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.tiff.TiffMultiScaleImage",
     "brainhops.io.images.zarr.OmeZarrImage",
     "brainhops.io.images.zarr.ZarrImage",
-    "brainhops.io.transformations.elastix.ElastixParameterTransform",
-    "brainhops.io.transformations.elastix.ElastixTomlTransform",
     "brainhops.io.transformations.fsl.flirt.FlirtTransform",
     "brainhops.io.transformations.itk.h5.H5Transform",
     "brainhops.io.transformations.itk.mat.MatTransform",
@@ -2621,6 +2738,27 @@ VARIANTS.append(
 
 # A morph whose name ends in `.m3d` is written without compression.
 VARIANTS.append(("M3zMorph-m3d", M3zMorph, _M3Z._replace(suffix=".m3d")))
+
+# An elastix B-spline holds a grid of coefficients, which are its
+# transform parameters.
+VARIANTS.append(
+    (
+        "ElastixParameterTransform-bspline",
+        ElastixParameterTransform,
+        _ELASTIX._replace(
+            sample=lambda: np.arange(72.0),
+            geometry=_elastix_origin,
+            change_geometry=_elastix_move_origin,
+            foreign=lambda data: Sequence([_elastix_bspline(data)]),
+            build=lambda data: ElastixParameterTransform(
+                [_elastix_bspline(data)]
+            ),
+            set_data=lambda xform, value: setattr(
+                xform, "transformations", [_elastix_bspline(value)]
+            ),
+        ),
+    )
+)
 
 # An MGZ file is an MGH file compressed as a single gzip stream.
 if nb is not None:
