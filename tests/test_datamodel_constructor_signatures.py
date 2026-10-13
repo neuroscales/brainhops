@@ -160,7 +160,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "WarpFieldToRAS": ("data",),
     },
     "brainhops.io.transformations.fsl.flirt._xform": {
-        "FlirtTransform": ("flirt_matrix", "moving", "reference"),
+        "FlirtTransform": ("flirt_matrix",),
     },
     "brainhops.io.transformations.fsl.fnirt._base": {
         "FnirtWarpField": ("transformations",),
@@ -190,7 +190,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "ItkTransform": ("transformations",),
     },
     "brainhops.io.transformations.itk.h5._xform": {
-        "H5Transform": ("transformations", "file", "header"),
+        "H5Transform": ("transformations",),
     },
     "brainhops.io.transformations.itk.mat._xform": {
         "MatTransform": ("transformations",),

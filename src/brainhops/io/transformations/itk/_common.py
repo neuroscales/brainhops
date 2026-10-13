@@ -1,5 +1,4 @@
 import math
-from warnings import warn
 
 import numpy as np
 import typing_extensions as tx
@@ -13,7 +12,6 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
-from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 from ._systems import _make_system
@@ -794,66 +792,6 @@ class ItkBSplineStruct(
 # ----------------------------------------------------------------------
 #   UTILITIES
 # ----------------------------------------------------------------------
-
-
-def _application_order(
-    blocks: tx.List[tx.Any],
-    composites: tx.List[int],
-    position: tx.Optional[int] = None,
-) -> tx.List[tx.Any]:
-    """Return the blocks of an ITK file in application order.
-
-    ITK writes a `CompositeTransform` as a header followed by its queue of
-    transforms, from front to back, but it applies the queue from back to
-    front, so that a queue `[T0, T1]` maps `x` to `T0(T1(x))`. A
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
-    transformations in the order in which they apply, so the blocks of a
-    composite are reversed. In a file without a composite, every block is a
-    separate top-level transform. The first top-level transform is returned by
-    default, with a warning when the file holds several.
-
-    Parameters
-    ----------
-    blocks : list
-        The blocks in file order, without composite headers.
-    composites : list of int
-        The file positions of the skipped composite headers.
-    position : int, optional
-        The index of the top-level transform to return.
-
-    Raises
-    ------
-    ParserContentError
-        If a composite header is not the first block, or if there is no
-        top-level transform at `position`.
-    """
-    if composites:
-        if list(composites) != [0]:
-            raise ParserContentError(
-                "ITK only writes a CompositeTransform as the first block "
-                "of a file, and it cannot be nested."
-            )
-        transforms = [list(reversed(blocks))]
-    else:
-        transforms = [[block] for block in blocks]
-
-    if position is None:
-        if len(transforms) > 1:
-            warn(
-                f"This ITK file holds {len(transforms)} transforms and no "
-                f"composite, so only the first one is read. Pass "
-                f"`position=` to read another one.",
-                stacklevel=2,
-            )
-        position = 0
-    if not transforms and position == 0:
-        return []
-    if not 0 <= position < len(transforms):
-        raise ParserContentError(
-            f"This ITK file has {len(transforms)} transform(s), so it has "
-            f"no transform {position}."
-        )
-    return transforms[position]
 
 
 def _inverse_chain(
