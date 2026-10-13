@@ -28,6 +28,8 @@ as little code as possible.
 
 import gzip
 import importlib
+import json
+import math
 import os
 import pickle
 import struct
@@ -187,6 +189,22 @@ try:
     minc_needs = netcdf_file
 except ImportError:
     minc_needs = None
+
+try:
+    import tensorstore
+
+    from brainhops.io.common.n5._data import _N5Proxy
+    from brainhops.io.images.n5 import N5Image, N5Metadata
+    from brainhops.io.images.n5._views import (
+        _image_to_disk as _n5_to_disk,
+    )
+    from brainhops.io.images.n5._views import (
+        _image_to_model as _n5_to_model,
+    )
+
+    n5_needs = tensorstore
+except ImportError:
+    n5_needs = None
 
 try:
     import h5py
@@ -1395,7 +1413,101 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+# An N5 dataset is a directory that holds an `attributes.json` file and
+# its blocks, and it cannot be written, so the checks write a dataset as
+# the specification describes it, without TensorStore, and name it by its
+# `attributes.json` file. The blocks at the upper edges are smaller than
+# `blockSize`, as the Java tools write them. The bytes of the attributes
+# cannot hold the dataset, so `header_file` names that file itself. N5
+# datasets are sparse, so a copy without blocks would read as zeros: the
+# copy whose data cannot be read holds a block that cannot be decoded
+# instead. The record is compared as it is, since the metadata cannot
+# write bytes. The lazy array reads the blocks with TensorStore, so the
+# exemplar also checks the reader against the specification.
+
+_N5_BLOCK = (2, 2, 3)
+
+
+def _n5_writer(compression: str) -> tx.Callable[[tx.Any, tx.Any], None]:
+    """Return a function that writes an N5 dataset of one compression."""
+
+    def write(path: tx.Any, data: tx.Any) -> None:
+        directory = os.path.dirname(os.fspath(path))
+        values = np.asarray(data, dtype="float32")
+        attributes = {
+            "dimensions": list(values.shape),
+            "blockSize": list(_N5_BLOCK),
+            "dataType": "float32",
+            "compression": {"type": compression},
+            "pixelResolution": {"dimensions": [2, 3, 4], "unit": "um"},
+        }
+        os.makedirs(directory, exist_ok=True)
+        with open(path, "w") as file:
+            json.dump(attributes, file)
+        grid = [math.ceil(n / b) for n, b in zip(values.shape, _N5_BLOCK)]
+        for position in np.ndindex(*grid):
+            begin = [g * b for g, b in zip(position, _N5_BLOCK)]
+            block = values[
+                tuple(slice(i, i + b) for i, b in zip(begin, _N5_BLOCK))
+            ]
+            # A block is a big-endian header (mode, number of dimensions
+            # and size of the block), then the big-endian samples with the
+            # first dimension fastest.
+            header = struct.pack(">HH", 0, block.ndim)
+            header += struct.pack(f">{block.ndim}I", *block.shape)
+            samples = block.astype(">f4").tobytes(order="F")
+            if compression == "gzip":
+                samples = gzip.compress(samples)
+            name = os.path.join(directory, *map(str, position))
+            os.makedirs(os.path.dirname(name), exist_ok=True)
+            with open(name, "wb") as file:
+                file.write(header + samples)
+
+    return write
+
+
+def _n5_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy the attributes of a dataset beside a block that cannot be read."""
+    directory = os.path.dirname(os.fspath(target))
+    os.makedirs(os.path.join(directory, "0", "0"), exist_ok=True)
+    with open(source, "rb") as file:
+        content = file.read()
+    with open(target, "wb") as file:
+        file.write(content)
+    with open(os.path.join(directory, "0", "0", "0"), "wb") as file:
+        file.write(b"not a block")
+
+
+if n5_needs is not None:
+    _N5 = Exemplar(
+        metadata=N5Metadata,
+        suffix=os.sep + "attributes.json",
+        proxies=(_N5Proxy,),
+        to_model=_n5_to_model,
+        to_disk=_n5_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=lambda record: replace(
+            record, attributes={**record.attributes, "note": "edited"}
+        ),
+        record_edited=lambda record: record.attributes.get("note")
+        == "edited",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_n5_cut,
+        header=lambda metadata: metadata.raw,
+        source=_n5_writer("gzip"),
+        header_file=lambda path: path,
+    )
+    EXEMPLARS[N5Image] = _N5
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
+    # The levels of an N5 pyramid are `N5Image` exemplars, and the pyramid
+    # holds their shared metadata but no `raw`. The rules for the levels
+    # and the record of a pyramid are decided in the Zarr pass (item 15 of
+    # the memo), so the pyramid waits with the other pyramids (item 210).
+    "brainhops.io.images.n5.N5MultiScaleImage",
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
     "brainhops.io.images.openslide.DicomWsiImage",
@@ -1535,6 +1647,12 @@ VARIANTS.append(
 VARIANTS.append(
     ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
 )
+
+# The blocks of an N5 dataset may be uncompressed.
+if n5_needs is not None:
+    VARIANTS.append(
+        ("N5Image-raw", N5Image, _N5._replace(source=_n5_writer("raw")))
+    )
 
 # A MINC1 file may be gzipped.
 if minc_needs is not None:

@@ -16,7 +16,7 @@ import warnings
 import typing_extensions as tx
 
 # internals
-from brainhops.datamodel.units import Unit
+from brainhops.datamodel.units import Unit, is_physicalunit, is_spaceunit
 
 # this format
 from ._raw import N5Raw
@@ -203,11 +203,11 @@ def _numbers(
 
 
 def _unit(value: tx.Any) -> tx.Optional[str]:
-    """Return a unit that brainhops knows, or `None`.
+    """Return a length unit that brainhops knows, or `None`.
 
     A unit that n5-universe uses for sizes without a physical unit, such
-    as `"pixel"`, gives `None`. An unknown unit gives `None` with an
-    `N5AttributeWarning`.
+    as `"pixel"`, gives `None`. An unknown unit, or a unit that is not a
+    length, gives `None` with an `N5AttributeWarning`.
     """
     if value is None:
         return None
@@ -217,8 +217,10 @@ def _unit(value: tx.Any) -> tx.Optional[str]:
     if value.strip().lower() in _NO_UNIT:
         return None
     try:
-        Unit(value)
+        unit = Unit(value)
     except Exception:  # noqa: BLE001
+        unit = None
+    if unit is None or not (is_spaceunit(unit) and is_physicalunit(unit)):
         _ignored("unit", value)
         return None
     return value

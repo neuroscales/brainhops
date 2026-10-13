@@ -271,6 +271,12 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.images.mrtrix._image": {
         "MrtrixImage": ("data", "transformations"),
     },
+    "brainhops.io.images.n5._image": {
+        "N5Image": ("data", "transformations"),
+    },
+    "brainhops.io.images.n5._multiscale": {
+        "N5MultiScaleImage": ("images", "transformations"),
+    },
     "brainhops.io.images.nifti._image": {
         "NiftiImage": ("data", "transformations"),
     },

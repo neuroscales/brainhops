@@ -1131,3 +1131,73 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+210. An N5 pyramid, a group whose datasets are `s0`, `s1`, ..., is read
+     as `N5MultiScaleImage`, whose levels are `N5Image` objects
+     (`io/images/n5`). Each level follows this design: it holds the
+     attributes of the group and of its datasets as its record and the
+     lazy array of its dataset in `raw`, and it is an exemplar of the
+     conformance tests. The pyramid holds the same metadata as its levels
+     and has no `raw` of its own, and its `consolidate` consolidates its
+     levels. The rules for the levels and the record of a pyramid are
+     decided in the Zarr pass (item 15), so the pyramid is listed among
+     the formats that are not migrated. Status: open.
+211. N5 datasets are read and not written, as MINC (item 101). A dataset
+     is a directory of files, while the atomic save of
+     `io/base/_utils_files.py`, the save over the file that a proxy reads
+     (#426) and the untouched copy that is identical byte for byte are
+     defined for files. TensorStore, which brainhops would write with,
+     writes every block at its full size, while the Java tools truncate
+     the blocks at the upper edges, and it writes its own
+     `attributes.json`, so an untouched copy would not keep its bytes. A
+     writer would also encode a pyramid, whose rules wait for the Zarr
+     pass (item 210). Status: decided for the reader, and open for a
+     writer.
+212. The conformance exemplar of `N5Image` names a dataset by its
+     `attributes.json` file, because checks 6 and 12 read and copy the
+     file that a case names, and `Exemplar.header_file` is the identity.
+     An N5 dataset is sparse, so a copy without blocks would read as
+     zeros and check 6 would not show that the metadata reads no block.
+     The copy therefore holds a block that cannot be decoded. The checks
+     write the datasets as the specification describes them, without
+     TensorStore. Status: accepted.
+213. The readable compressions are those that TensorStore 0.1.45
+     decodes: `raw`, `gzip`, `bzip2`, `xz` and `blosc`. The list is fixed
+     in `io/common/n5/_data.py`, so a dataset compressed with `lz4` or
+     `zstd`, or described by the `compressionType` of version 0 of the
+     specification, is refused when it is loaded, although its record is
+     read. Status: open, until the list follows the version of
+     TensorStore.
+214. The specification of N5 defines no spatial attribute, and its tools
+     disagree on some points (`io/common/n5/__init__.py`). brainhops
+     reads the attributes of a dataset that is read on its own as
+     n5-universe does, and completes a level of a pyramid from its group
+     as Paintera and the deprecated layout of the n5-viewer do. It reads
+     a bare `pixelResolution` without a unit, as n5-universe does, where
+     the older n5-viewer assumed micrometres. It reads `resolution` and
+     `offset` in the order of `dimensions`, although Paintera can reverse
+     them for files whose tools wrote them in the reverse order. It does
+     not infer the factors `2**k` of a level from its name `s<k>`, which
+     n5-universe does. The axes are named `x`, `y`, `z`, `t` and `c` by
+     position, since the `axes` attribute of n5-universe is not read.
+     Status: decided, for the maintainer to confirm.
+215. A dataset that is read on its own, and the same dataset read as a
+     level of its pyramid, can have different transformations, because
+     the attributes of the group apply only to the levels of a pyramid.
+     Status: accepted.
+216. A spatial attribute of N5 that breaks the conventions, such as a
+     `pixelResolution` of the wrong length or a unit that is not a
+     length, is ignored with a new public warning, `N5AttributeWarning`,
+     when the transformations are decoded, instead of making the dataset
+     unreadable, since the attributes are not part of the specification.
+     Status: open, for the maintainer to choose between this and a
+     refusal.
+217. The lazy array of N5 translates NumPy indices for TensorStore,
+     which reads integers and slice bounds as absolute positions, in its
+     own helper `_basic_index` (`io/common/n5/_data.py`). Another reader
+     backed by TensorStore needs the same translation, which should then
+     move to a shared private module of `io/common`. Status: open.
+218. Only local N5 containers are read. A pyramid is found by reading
+     `s0`, `s1`, ... up to the first missing level, without listing the
+     directory, so a level after a gap is not read, and the channel
+     groups `c0`, `c1`, ... of the n5-viewer are read one at a time.
+     Status: open.

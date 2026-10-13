@@ -70,6 +70,15 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.common.n5": Package(
+        names=frozenset({"N5AttributeWarning", "N5Metadata", "N5Raw"}),
+    ),
+    "brainhops.io.images.n5": Package(
+        names=frozenset(
+            {"N5Image", "N5Metadata", "N5MultiScaleImage", "N5Raw"}
+        ),
+        needs=("tensorstore",),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),
