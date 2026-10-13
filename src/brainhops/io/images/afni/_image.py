@@ -30,7 +30,6 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -39,21 +38,27 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common._geometry import same_transformations
+from brainhops.io.common._geometry import (
+    held_transformations,
+    same_transformations,
+)
 from brainhops.io.common.afni import AfniFormat, AfniMetadata, AfniRaw
-from brainhops.io.common.afni._constants import _BRIK_SUFFIXES, AFNI_VIEWS
+from brainhops.io.common.afni._constants import AFNI_VIEWS
 from brainhops.io.common.afni._data import (
     _BrikProxy,
-    _same_file,
     brick_code,
     brick_dtype,
     brik_proxy,
     decode_bricks,
     encode_bricks,
     read_afni,
+    reads_brik,
     write_brik,
 )
-from brainhops.io.common.afni._files import _brik_suffix, afni_dataset_files
+from brainhops.io.common.afni._files import (
+    afni_dataset_files,
+    afni_written_files,
+)
 from brainhops.io.common.afni._geometry import (
     afni_cardinal_matrix,
     afni_geometry_from_matrix,
@@ -249,31 +254,27 @@ class AfniImage(
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
-    property of the same name reads it. `None`, the default, means that
-    the transformations have been neither read nor assigned, so the
-    record is kept as it is. The property stores here the list that it
-    decodes, and an assigned list, even an empty one, is stored as it is.
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the record and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
     _metadata: NoRepr[tx.Optional[AfniMetadata]] = None
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the dataset, which holds its record, or `None`.
 
-    An image built from data has no metadata. Assigning other metadata
-    drops the transformations that the image holds, read or assigned, so
-    that they are decoded from the new record.
+    An image built from data has no metadata. Assigning
+    other metadata drops the transformations decoded from the previous
+    record, so that they are decoded from the new one, and keeps the
+    transformations that were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[AfniMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -290,15 +291,19 @@ class AfniImage(
             return None
         return _image_to_model(self.raw)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. An image without
-        metadata has no transformations.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place, such as an appended
+        transformation, is kept.
+        Assigning other metadata drops the decoded list, so that it is
+        decoded from the new record, and keeps an assigned list. A change
+        made in place to a decoded list is therefore lost when other
+        metadata is assigned. An image without metadata has no
+        transformations.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -306,8 +311,7 @@ class AfniImage(
         image has no geometry, and the image is then written as an image
         built from data alone. Assigning `None` decodes the record again.
         """
-        self._transformations = _record_transformations(self.metadata)
-        return self._transformations
+        return _record_transformations(self.metadata)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -652,8 +656,9 @@ class AfniImage(
         """
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
-        kept = self._transformations is None or same_transformations(
-            self._transformations, _record_transformations(self.metadata)
+        held = held_transformations(self)
+        kept = held is None or same_transformations(
+            held, _record_transformations(self.metadata)
         )
         if (
             self._data is None
@@ -743,23 +748,11 @@ class AfniImage(
             )
         if isinstance(filename, str):
             filename = path.Path(filename)
-        head, _, stem = afni_dataset_files(filename)
-        brik_ext = ".brik" if head.name.endswith(".head") else ".BRIK"
-        suffix = ""
-        if ".BRIK" in filename.name.upper():
-            suffix = _brik_suffix(filename)
-        brik = filename.parent / (stem + brik_ext + suffix)
-        stale = []
-        for other in _BRIK_SUFFIXES:
-            sibling = filename.parent / (stem + brik_ext + other)
-            if other != suffix and path.exists(sibling):
-                local = _local_path(sibling)
-                if local is not None:
-                    stale.append((sibling, local))
+        head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
-        reading = _reads_brik(self, brik) or any(
-            _reads_brik(self, sibling) for sibling, _ in stale
+        reading = reads_brik(self.raw, brik) or any(
+            reads_brik(self.raw, sibling) for sibling, _ in stale
         )
         if reading:
             mmap = self.raw.mmap
@@ -895,7 +888,7 @@ def _encoded(
 
     # The list of the image is read without being stored, so that a write
     # leaves the image as it was.
-    transformations = image._transformations
+    transformations = held_transformations(image)
     if transformations is None:
         transformations = _record_transformations(image.metadata)
     preferred = transformations[-1] if transformations else Identity()
@@ -1133,12 +1126,6 @@ def _afni_written(image: AfniImage) -> tx.Tuple[AfniRaw, ArrayProtocol]:
             "This image has no data, so there is nothing to write."
         )
     return image.metadata.raw, image.raw
-
-
-def _reads_brik(image: AfniImage, brik: tx.Any) -> bool:
-    """Tell whether the lazy array of an image reads a BRIK."""
-    raw = image.raw
-    return isinstance(raw, _BrikProxy) and _same_file(raw.brik, brik)
 
 
 def _record(attrs: tx.Mapping[str, tx.Any]) -> AfniRaw:
