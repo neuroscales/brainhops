@@ -352,16 +352,16 @@ def _chain(
     **options: tx.Any,
 ) -> xforms.Sequence:
     voxel = RASToVoxel().output
-    settings = {"log": True, "steps": 6, "bound": "grid-wrap", **options}
-    if not settings["log"]:
+    settings = {"steps": 6, "bound": "grid-wrap", **options}
+    field_class = xforms.StationaryVelocityField
+    if settings.pop("displacement", False):
         # Only a velocity has squaring steps.
         del settings["steps"]
+        field_class = xforms.DisplacementField
     return xforms.Sequence(
         [
             RASToVoxel(matrix=np.linalg.inv(first)[:3]),
-            xforms.DisplacementField(
-                velocity, input=voxel, output=voxel, **settings
-            ),
+            field_class(velocity, input=voxel, output=voxel, **settings),
             VoxelToRAS(matrix=last[:3]),
         ]
     )
@@ -428,7 +428,7 @@ def test_an_assigned_velocity_is_encoded(tmp_path: Path) -> None:
             ),
             "qform",
         ),
-        (_chain(_velocity(), log=False), "logarithm"),
+        (_chain(_velocity(), displacement=True), "logarithm"),
     ],
 )
 def test_other_chains_are_refused(

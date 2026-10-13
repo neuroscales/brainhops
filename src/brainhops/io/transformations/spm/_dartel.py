@@ -262,11 +262,10 @@ class DartelFlowField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         """
         qform, sform = _grid_affines(_header(self))
         voxel = _systems.VoxelCoordinateSystem()
-        velocity = _xforms.DisplacementField(
+        velocity = _xforms.StationaryVelocityField(
             data=_velocity(self.data),
             input=voxel,
             output=voxel,
-            log=True,
             steps=self.steps,
             degree=InterpolationOrder.linear,
             bound=DARTEL_BOUND,
