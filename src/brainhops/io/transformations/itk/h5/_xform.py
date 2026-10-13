@@ -39,9 +39,9 @@ class H5Transform(Hdf5Reader, ItkTransform):
     the file are held as an [`H5Raw`][] record by the [`H5Metadata`][] of
     the transformation, and the chain is decoded from the record when it
     is first used. The parameters of the warps are lazy arrays, which read
-    the file again by its name when they are used. The decoded chain is a list that is stored in the
-    transformation, so a change made to it in place, such as an appended
-    block, is kept.
+    the file again by its name when they are used. The decoded chain is a
+    list that is stored in the transformation, so a change made to it in
+    place, such as an appended block, is kept.
 
     The record describes the file as it was read, or as the transformation
     was last consolidated. A chain that is assigned or changed, and an
@@ -275,7 +275,9 @@ class H5Transform(Hdf5Reader, ItkTransform):
             differs from the system of the chain.
         """
         record = _record(self)
-        decoded = [] if record is None else _decode(record, self.position, True)
+        decoded = (
+            [] if record is None else _decode(record, self.position, True)
+        )
         chain = self._transformations
         _check_systems(self, decoded if chain is None else chain)
         if record is not None and (

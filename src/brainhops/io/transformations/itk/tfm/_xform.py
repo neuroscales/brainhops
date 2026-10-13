@@ -270,7 +270,9 @@ class TfmTransform(TextFileReader, ItkTransform):
             differs from the system of the chain.
         """
         record = _record(self)
-        decoded = [] if record is None else _decode(record, self.position, True)
+        decoded = (
+            [] if record is None else _decode(record, self.position, True)
+        )
         chain = self._transformations
         _check_systems(self, decoded if chain is None else chain)
         if record is not None and (

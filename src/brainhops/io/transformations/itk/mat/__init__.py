@@ -90,10 +90,11 @@ with every block of the file, since encoding the blocks again does not
 always give the same bytes.
 
 [`MatTransform`][brainhops.io.transformations.itk.mat.MatTransform] writes
-any other chain as a single block, as ANTs does, in little-endian double
-precision by default. A block read from an ITK file is written back
-unchanged, center included. Any other affine is written as an `AffineTransform` centered on
-the origin, which gives exactly `y = A x + t`. The endpoints of such an
+any other chain as a single block, as ANTs does, in double precision by
+default, and in the byte order of the file that it was read from, or
+little-endian. An ITK block is written as it is, center included. Any
+other affine is written as an `AffineTransform` centered on the origin,
+which gives exactly `y = A x + t`. The endpoints of such an
 affine must be the ITK space or left unspecified, and an affine between RAS
 spaces is refused rather than reinterpreted. A chain of several
 transformations must first be composed into one, for example with

@@ -4,7 +4,15 @@ __all__ = ["FlirtTransform"]
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Alias, ConvertTo, Forget, KwOnly, NoRepr, NotKwOnly, replace
+from bagof.magic import (
+    Alias,
+    ConvertTo,
+    Forget,
+    KwOnly,
+    NoRepr,
+    NotKwOnly,
+    replace,
+)
 
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops._core.typing import ArrayLike
@@ -13,11 +21,11 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.images import Image
 from brainhops.errors import IncompatibleSystemError
 from brainhops.io.base._base import register_format
-from brainhops.io.common.nifti._header import _NiftiObject
 from brainhops.io.base.parsers import (
     TextFileReader,
     UnrepresentableTransformationError,
 )
+from brainhops.io.common.nifti._header import _NiftiObject
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
 

@@ -377,7 +377,9 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         byteorder = _byteorder(byteorder)
         precision = None if precision is None else ItkPrecision(precision)
         record = _record(self)
-        decoded = [] if record is None else _decode(record, self.position, True)
+        decoded = (
+            [] if record is None else _decode(record, self.position, True)
+        )
         chain = self._transformations
         _check_systems(self, decoded if chain is None else chain)
         untouched = record is not None and (

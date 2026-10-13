@@ -180,6 +180,8 @@ def _encode_chain(
         precision=queue[0].precision,
         ndim_input=queue[0].ndim_input,
         ndim_output=queue[0].ndim_output,
+        parameters=_read_only(np.array([])),
+        fixed_parameters=_read_only(np.array([])),
     )
     return (header,) + queue
 
