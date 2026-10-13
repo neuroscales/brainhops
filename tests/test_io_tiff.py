@@ -33,7 +33,7 @@ from brainhops.io.images.tiff import (  # noqa: E402
     TiffImage,
     TiffMultiScaleImage,
 )
-from brainhops.io.images.tiff import _image as tiff_image  # noqa: E402
+from brainhops.io.images.tiff import _writer as tiff_writer  # noqa: E402
 from brainhops.io.images.tiff import _utils as backend  # noqa: E402
 
 RNG = np.random.default_rng(0)
@@ -88,15 +88,17 @@ def _names(image: tx.Any) -> tx.List[str]:
 def test_read_plain_is_a_transposed_memory_map(tmp_path: Path) -> None:
     image = load(_write(tmp_path, "a.tif", GREY))
     assert isinstance(image, TiffImage)
-    assert image.dialect is None
+    assert image.metadata.raw.dialect is None
     np.testing.assert_array_equal(image.data, GREY.T)
     # An F-ordered view of the memory map; nothing is copied.
     assert isinstance(image.data.base, np.memmap)
     assert image.data.flags.f_contiguous
     assert _names(image) == ["x", "y"]
     assert image.transformation.input.name == "pixel"
-    # Copy-on-write: the file is unchanged.
-    image.data[0, 0] = 1
+    # The decoded view is read-only, and the file is unchanged.
+    assert not image.data.flags.writeable
+    with pytest.raises(ValueError):
+        image.data[0, 0] = 1
     np.testing.assert_array_equal(tifffile.imread(tmp_path / "a.tif"), GREY)
 
 
@@ -143,7 +145,7 @@ def test_read_lazily_with_dask(tmp_path: Path) -> None:
 
 def test_read_rgb(tmp_path: Path) -> None:
     image = load(_write(tmp_path, "a.tif", RGB, photometric="rgb"))
-    assert image.storage_axes == "YXS"
+    assert image.metadata.raw.storage_axes == "YXS"
     assert _names(image) == ["x", "y", "c"]
     np.testing.assert_array_equal(image.data, RGB.transpose(1, 0, 2))
 
@@ -170,7 +172,7 @@ def test_read_series(tmp_path: Path) -> None:
         writer.write(GREY)
         writer.write(volume, metadata={"axes": "ZYX"})
     first = load(path)
-    assert first.n_series == 2 and first.series == 0
+    assert first.metadata.raw.n_series == 2 and first.series == 0
     np.testing.assert_array_equal(first.data, GREY.T)
     second = load(path, series=1)
     assert second.series == 1
@@ -288,9 +290,9 @@ def _imagej(tmp_path: Path, **metadata) -> Path:
 def test_imagej_hyperstack(tmp_path: Path) -> None:
     path = _imagej(tmp_path, unit="micron", spacing=2.0, finterval=0.5)
     image = load(path)
-    assert image.dialect == "imagej"
-    assert image.imagej_metadata["spacing"] == 2.0
-    assert image.storage_axes == "TZCYX"
+    assert image.metadata.raw.dialect == "imagej"
+    assert image.metadata.raw.imagej["spacing"] == 2.0
+    assert image.metadata.raw.storage_axes == "TZCYX"
     assert _names(image) == ["x", "y", "z", "t", "c"]
     assert image.data.shape == (12, 7, 3, 4, 2)
     expected = tifffile.imread(path).transpose(4, 3, 1, 0, 2)
@@ -358,8 +360,8 @@ def test_ome_physical_sizes(tmp_path: Path) -> None:
         PhysicalSizeZUnit="mm",
     )
     image = load(path)
-    assert image.dialect == "ome"
-    assert "<OME" in image.ome_xml
+    assert image.metadata.raw.dialect == "ome"
+    assert "<OME" in image.metadata.raw.ome_xml
     assert _names(image) == ["x", "y", "z", "c"]
     np.testing.assert_array_equal(image.data, STACK.transpose(3, 2, 0, 1))
     np.testing.assert_allclose(_scale(image), [0.5, 0.25, 2.0, 1])
@@ -378,7 +380,7 @@ def test_ome_dimension_order(tmp_path: Path) -> None:
     with tifffile.TiffFile(path) as tif:
         assert 'DimensionOrder="XYZCT"' in tif.ome_metadata
     image = load(path)
-    assert image.storage_axes == "CZYX"
+    assert image.metadata.raw.storage_axes == "CZYX"
     np.testing.assert_array_equal(image.data, data.transpose(3, 2, 1, 0))
     np.testing.assert_allclose(_scale(image), [1, 1, 4.0, 1])
 
@@ -444,7 +446,7 @@ def test_ome_multi_series(tmp_path: Path) -> None:
             metadata={"axes": "ZYX", "PhysicalSizeX": 3.0, "Name": "b"},
         )
     second = load(path, series=1)
-    assert second.n_series == 2
+    assert second.metadata.raw.n_series == 2
     np.testing.assert_allclose(_scale(second)[0], 3.0)
 
 
@@ -523,7 +525,7 @@ def test_pyramid_level_as_single_scale(tmp_path: Path) -> None:
     path = _pyramid(tmp_path, PhysicalSizeX=0.5, PhysicalSizeY=0.5)
     level = load(path, level=1)
     assert isinstance(level, TiffImage)
-    assert level.level == 1 and level.n_levels == 3
+    assert level.level == 1 and len(level.metadata.raw.levels) == 3
     assert level.data.shape == (20, 16, 2)
     np.testing.assert_allclose(_scale(level), [1.0, 1.0, 1])
     np.testing.assert_allclose(_shift(level), [0.25, 0.25, 0])
@@ -579,7 +581,7 @@ def test_write_ome_when_size_is_known(tmp_path: Path) -> None:
     bio.save(image, path)
     assert _dialect(path) == (True, False)
     back = load(path)
-    assert back.storage_axes == "ZYX"
+    assert back.metadata.raw.storage_axes == "ZYX"
     np.testing.assert_array_equal(back.data, data)
     np.testing.assert_allclose(_scale(back), [0.5, 0.25, 2])
     assert _units(back) == ["millimeter", "millimeter", "micrometer"]
@@ -610,17 +612,22 @@ def test_write_ome_round_trip(tmp_path: Path) -> None:
     )
     image = load(path)
     out = tmp_path / "b.tif"
+    # An untouched image is written as the bytes of its file.
     image.save(out)
+    assert out.read_bytes() == path.read_bytes()
+    # A compressed copy is encoded again, from the data, the geometry and
+    # the record.
+    image.save(out, compression="zlib")
     back = load(out)
-    assert back.dialect == "ome"
-    assert back.storage_axes == "ZCYX"
+    assert back.metadata.raw.dialect == "ome"
+    assert back.metadata.raw.storage_axes == "ZCYX"
     np.testing.assert_array_equal(back.data, image.data)
     np.testing.assert_allclose(_scale(back), _scale(image))
     np.testing.assert_allclose(_shift(back), _shift(image))
-    assert 'Name="sample"' in back.ome_xml
-    assert 'Name="gfp"' in back.ome_xml
+    assert 'Name="sample"' in back.metadata.raw.ome_xml
+    assert 'Name="gfp"' in back.metadata.raw.ome_xml
     # The position of every plane is written, not only the first.
-    assert 'PositionZ="7.0"' in back.ome_xml
+    assert 'PositionZ="7.0"' in back.metadata.raw.ome_xml
 
 
 def test_write_imagej_round_trip(tmp_path: Path) -> None:
@@ -638,9 +645,9 @@ def test_write_imagej_round_trip(tmp_path: Path) -> None:
     back = load(out)
     np.testing.assert_array_equal(back.data, image.data)
     np.testing.assert_allclose(_scale(back), _scale(image))
-    assert back.imagej_metadata["spacing"] == -2.0
-    assert back.imagej_metadata["finterval"] == 0.5
-    assert tuple(back.imagej_metadata["Ranges"]) == (0.0, 255.0, 0.0, 100.0)
+    assert back.metadata.raw.imagej["spacing"] == -2.0
+    assert back.metadata.raw.imagej["finterval"] == 0.5
+    assert tuple(back.metadata.raw.imagej["Ranges"]) == (0.0, 255.0, 0.0, 100.0)
 
 
 def test_write_imagej_refuses_what_imagej_cannot_store(tmp_path: Path) -> None:
@@ -656,7 +663,7 @@ def test_write_explicit_plain_with_resolution(tmp_path: Path) -> None:
     )
     content = image.to_bytes(dialect="plain")
     back = TiffImage.from_bytes(content)
-    assert back.dialect is None
+    assert back.metadata.raw.dialect is None
     np.testing.assert_allclose(_scale(back), [0.01, 0.02])
     assert _units(back) == ["centimeter"] * 2
     with pytest.raises(WriterError, match="dialect"):
@@ -693,20 +700,20 @@ def test_write_tags_round_trip(tmp_path: Path) -> None:
         extratags=[(315, "s", 0, "someone", True)],
     )
     image = load(path)
-    assert image.tags["Software"] == "scope 1.0"
+    assert image.metadata.raw.tags["Software"] == "scope 1.0"
     out = tmp_path / "b.tif"
     image.save(out)
     back = load(out)
-    assert back.tags["Software"] == "scope 1.0"
-    assert back.tags["Artist"] == "someone"
+    assert back.metadata.raw.tags["Software"] == "scope 1.0"
+    assert back.metadata.raw.tags["Artist"] == "someone"
 
 
 def test_write_bigtiff(tmp_path: Path) -> None:
     image = TiffImage.from_instance(_image(GREY.T.copy()))
     assert image.to_bytes()[:4] == b"II*\0"
     assert image.to_bytes(bigtiff=True)[:4] == b"II+\0"
-    assert tiff_image._bigtiff(2**32, None)
-    assert not tiff_image._bigtiff(2**20, None)
+    assert tiff_writer._bigtiff(2**32, None)
+    assert not tiff_writer._bigtiff(2**20, None)
 
 
 def test_write_options_and_streams(tmp_path: Path) -> None:

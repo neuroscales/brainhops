@@ -36,7 +36,7 @@ __all__ = [
     "MAGICS",
     "RESOLUTION_UNITS",
     "TAGS_OF_INTEREST",
-    "TiffMetadata",
+    "SeriesMetadata",
     "TiffSource",
     "is_tiff",
     "is_whole_slide",
@@ -265,7 +265,7 @@ def _rational(value: tx.Any) -> tx.Optional[float]:
 _Scales = tx.Dict[str, raster.AxisScale]
 
 
-class TiffMetadata(Magic, frozen=True):
+class SeriesMetadata(Magic, frozen=True):
     """The geometry and metadata that a TIFF file records for one series."""
 
     dialect: tx.Optional[str]
@@ -551,7 +551,7 @@ def ome_scales(
     return scales, origin
 
 
-def series_metadata(tif: tx.Any, index: int = 0) -> TiffMetadata:
+def series_metadata(tif: tx.Any, index: int = 0) -> SeriesMetadata:
     """Return the geometry and metadata that a TIFF file records for series
     `index`.
 
@@ -596,7 +596,7 @@ def series_metadata(tif: tx.Any, index: int = 0) -> TiffMetadata:
                 sources[name] = "ome"
                 signs.pop(name, None)
 
-    return TiffMetadata(
+    return SeriesMetadata(
         dialect=dialect,
         scales=scales,
         signs=signs,

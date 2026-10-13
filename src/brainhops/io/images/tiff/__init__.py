@@ -133,7 +133,15 @@ resolution tags as the pixel size only with `dpi=True`. OME-XML, ImageJ
 metadata, stacks and pyramids need tifffile.
 """
 
-__all__ = ["TiffImage", "TiffMultiScaleImage"]
+__all__ = [
+    "TiffImage",
+    "TiffLevelRaw",
+    "TiffMetadata",
+    "TiffMultiScaleImage",
+    "TiffRaw",
+]
 
 from ._image import TiffImage
+from ._metadata import TiffMetadata
 from ._multiscale import TiffMultiScaleImage
+from ._raw import TiffLevelRaw, TiffRaw
