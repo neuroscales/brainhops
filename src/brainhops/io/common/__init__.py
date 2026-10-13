@@ -10,8 +10,6 @@ format have in common -- its parser, header, and geometry conventions:
   shared by every FreeSurfer format;
 - [`hdf5`][brainhops.io.common.hdf5]: formats stored in HDF5 files
   (needs `h5py`);
-- [`jpeg2000`][brainhops.io.common.jpeg2000]: the header of JP2 files and
-  JPEG 2000 codestreams;
 - [`mgh`][brainhops.io.common.mgh]: FreeSurfer MGH/MGZ volumes (needs
   `nibabel`);
 - [`minc`][brainhops.io.common.minc]: MINC1 and MINC2 volumes (needs

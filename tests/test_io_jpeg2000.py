@@ -40,20 +40,18 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.jpeg2000 import (  # noqa: E402
-    Jpeg2000Metadata,
-    Jpeg2000Raw,
-    _boxes,  # noqa: E402
-)
-from brainhops.io.common.jpeg2000._raw import read_record  # noqa: E402
 from brainhops.io.images import load, sniff  # noqa: E402
 from brainhops.io.images.base import _utils_raster as raster  # noqa: E402
 from brainhops.io.images.jpeg2000 import (  # noqa: E402
     Jpeg2000Image,
+    Jpeg2000Metadata,
     Jpeg2000MultiScaleImage,
+    Jpeg2000Raw,
+    _boxes,  # noqa: E402
     _data,  # noqa: E402
 )
 from brainhops.io.images.jpeg2000._data import _Jpeg2000Proxy  # noqa: E402
+from brainhops.io.images.jpeg2000._raw import read_record  # noqa: E402
 from brainhops.io.images.pillow import PillowImage  # noqa: E402
 
 RNG = np.random.default_rng(0)

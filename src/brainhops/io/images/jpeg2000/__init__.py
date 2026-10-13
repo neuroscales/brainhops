@@ -18,6 +18,27 @@ pyramid.metadata.raw.n_levels        # the record of the file
 save(level, "copy.j2k")              # a raw codestream, lossless
 ```
 
+## The format
+
+JPEG 2000 stores an image as a codestream, which is a wavelet
+decomposition of the image cut into tiles and coded in quality layers. A
+codestream starts with a main header, made of marker segments that give
+the size of the image area on a reference grid, the bit depth of each
+component, the number of decomposition levels and the comments. It is
+stored either alone, as a raw codestream (`.j2k`, `.j2c`, `.jpc`), or in
+a JP2 file (`.jp2`, `.jpx`, `.jpf`), which is a sequence of boxes. The
+boxes of a JP2 file add a capture and a display resolution, a palette,
+and XML and UUID boxes such as GMLJP2 and XMP.
+
+Everything but the coded image is held as a [`Jpeg2000Raw`][] record,
+and [`Jpeg2000Metadata`][] reads and writes that record without decoding
+the image. The record is parsed by brainhops itself, and it keeps the
+bytes of the file up to its first tile, so that its header can be
+written again. [`Jpeg2000Image`][] holds such metadata and a lazy array
+of the samples, which Pillow decodes. A record whose comments,
+resolutions, boxes or container change is written by rewriting these
+parts of the file, and the coded image is copied as it is.
+
 ## Resolution levels
 
 A JPEG 2000 codestream is a wavelet decomposition, so an image coded
@@ -102,10 +123,7 @@ and the subsampling of each component, the number of resolution levels
 and of quality layers, whether the wavelet is the reversible one, the
 comments, the capture and display resolutions, the palette, and the
 top-level XML, UUID and UUID info boxes, such as GMLJP2, GeoJP2 and XMP.
-These boxes are not interpreted, but they are written back. The two
-classes of the record are defined in
-[`brainhops.io.common.jpeg2000`][brainhops.io.common.jpeg2000] and
-exported here as well.
+These boxes are not interpreted, but they are written back.
 
 ## Writing
 
@@ -156,7 +174,7 @@ __all__ = [
     "Jpeg2000Raw",
 ]
 
-from brainhops.io.common.jpeg2000 import Jpeg2000Metadata, Jpeg2000Raw
-
 from ._image import Jpeg2000Image
+from ._metadata import Jpeg2000Metadata
 from ._multiscale import Jpeg2000MultiScaleImage
+from ._raw import Jpeg2000Raw

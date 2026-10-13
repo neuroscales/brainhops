@@ -23,7 +23,6 @@ from brainhops.io.base.parsers import (
     Confidence,
     WriterError,
 )
-from brainhops.io.common.jpeg2000 import Jpeg2000Metadata, Jpeg2000Raw
 from brainhops.io.images.base import ImageFormat
 
 # this format
@@ -39,6 +38,8 @@ from ._image import (
     _written,
     level_transformation,
 )
+from ._metadata import Jpeg2000Metadata
+from ._raw import Jpeg2000Raw
 
 
 @register_format

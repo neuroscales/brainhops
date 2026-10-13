@@ -84,9 +84,6 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
-    "brainhops.io.common.jpeg2000": Package(
-        names=frozenset({"Jpeg2000Metadata", "Jpeg2000Raw"}),
-    ),
     "brainhops.io.images.jpeg2000": Package(
         names=frozenset(
             {

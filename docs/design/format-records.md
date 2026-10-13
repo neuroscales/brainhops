@@ -1155,7 +1155,7 @@ its status.
      written. An untouched full-resolution image copies its file. When
      only the comments, the resolutions, the XML and UUID boxes or the
      container change, the header is rewritten around the coded image,
-     which is copied (`io/common/jpeg2000/_boxes.py`), and a record that
+     which is copied (`io/images/jpeg2000/_boxes.py`), and a record that
      changes a field that the coded image decides is refused with
      `WriterError`. Any other change encodes the pixels again with
      Pillow, and the comments of the record, including the version

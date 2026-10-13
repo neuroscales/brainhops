@@ -21,9 +21,10 @@ from brainhops._core import path
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._utils_files import is_local, same_file
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
-from brainhops.io.common.jpeg2000 import Jpeg2000Raw
-from brainhops.io.common.jpeg2000._raw import read_record
 from brainhops.io.images.pillow._utils import pillow_to_array
+
+# this format
+from ._raw import Jpeg2000Raw, read_record
 
 
 class _Jpeg2000Source:

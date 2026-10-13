@@ -24,19 +24,20 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common._geometry import same_transformations
-from brainhops.io.common.jpeg2000 import Jpeg2000Metadata, Jpeg2000Raw
-from brainhops.io.common.jpeg2000._boxes import rewrite
-from brainhops.io.common.jpeg2000._raw import (
-    check_layout,
-    read_record,
-    with_container,
-)
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format
+from ._boxes import rewrite
 from ._codec import default_resolutions, encode_jpeg2000, encoder_options
 from ._data import _Jpeg2000Proxy, _Jpeg2000Source, read_jpeg2000
+from ._metadata import Jpeg2000Metadata
+from ._raw import (
+    Jpeg2000Raw,
+    check_layout,
+    read_record,
+    with_container,
+)
 from ._views import _image_to_model
 
 _EXTENSIONS = (".jp2", ".jpx", ".jpf", ".j2k", ".j2c", ".jpc")

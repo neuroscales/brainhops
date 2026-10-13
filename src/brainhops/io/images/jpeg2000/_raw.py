@@ -67,7 +67,7 @@ class Jpeg2000Raw(Magic, BinaryFileReader, BinaryFileWriter, frozen=True):
 
     Reading a record never decodes the image, so a file cut after the
     main header of its codestream can be read. The record is held by
-    [`Jpeg2000Metadata`][brainhops.io.common.jpeg2000.Jpeg2000Metadata]. A
+    [`Jpeg2000Metadata`][brainhops.io.images.jpeg2000.Jpeg2000Metadata]. A
     record is frozen, and two records are equal when their fields are.
 
     Writing a record writes the bytes that it was read from. When the
