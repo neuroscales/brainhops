@@ -499,9 +499,11 @@ the helpers, `replace_directory`, the toy pyramid of the conformance
 tests and the checks P1 to P12. Zarr and OME-Zarr, TIFF, OpenSlide and
 Pillow move to the design in the later steps of the fourth pass, which
 also move the format fields of TIFF and Pillow into their records and
-make `OmeZarrField` read its levels lazily. The open pull requests of
-JPEG 2000 (#273), precomputed (#436), Imaris (#437), N5 (#438) and
-BigDataViewer (#441) are updated to it after pass 4a.
+make `OmeZarrField` read its levels lazily. The pyramids of JPEG 2000
+(#273), precomputed (#436), Imaris (#437), N5 (#438) and BigDataViewer
+(#441) were merged before pass 4a. They stay among the formats that are
+not migrated, which the checks P1 to P12 never run on, and move to this
+design after pass 4a.
 
 ### Public surface
 
@@ -2048,7 +2050,11 @@ pyramid of the conformance test and the checks P1 to P12.
      which reads a directory file by file. `PyramidExemplar` reads the
      metadata class, the suffix, the proxies, the edit of a record and the
      hooks `cut` and `header` from the exemplar of the level class, so it
-     declares no `container`, `cut` or `storage` of its own. Status:
+     declares no `container`, `cut` or `storage` of its own. Image
+     stacks (#431) added `Exemplar.folder` for a folder of numbered files
+     that no extension names, which checks 5 and 12 treat apart, so the
+     two fields are kept side by side, and checks 7 and 10 compare the
+     summary of any metadata that writes no bytes of its own. Status:
      accepted in pass 4a.
 298. Check P8 cannot tell which files of a directory belong to which level
      without a hook in the exemplar. It checks instead that the files
@@ -2056,15 +2062,17 @@ pyramid of the conformance test and the checks P1 to P12.
      changes. A save that writes again the files of every level with the
      same bytes passes, because only the bytes are compared. Status:
      accepted in pass 4a.
-299. The open pull requests of pyramid formats log tensions that their
-     update to the design of pyramids closes. Items 160 and 250 of #436
-     and #438 note that the precomputed and N5 pyramids have no `raw` of
-     their own, items 161 and 251 note that the rules of atomic and
-     untouched saves were defined for files only, and items 181 and 208
-     of #437 and #441 note that the Imaris and BigDataViewer pyramids have
-     no record. The JPEG 2000 writer of #273 refuses coarse data that was
-     assigned, which the maintainer reverted on 2026-10-13 for every
-     format that derives its levels. The design of pyramids also answers
-     items 130 and 131 of #433, because each record keeps the bytes of its
-     documents, and a level transformation that is not diagonal is
-     refused (#447). Status: open until those pull requests are updated.
+299. The pyramid formats merged before pass 4a log tensions that their
+     move to the design of pyramids closes. Items 160 and 250 note that
+     the precomputed and N5 pyramids have no `raw` of their own, items
+     161 and 251 note that the rules of atomic and untouched saves were
+     defined for files only, and items 181 and 208 note that the Imaris
+     and BigDataViewer pyramids have no record. The JPEG 2000 pyramid
+     already keeps the cache model of this design, with metadata that
+     drops its decoded `images` and `transformations`, and its writer no
+     longer refuses coarse data that was assigned, as the maintainer
+     decided on 2026-10-13 for every format that derives its levels. The
+     design of pyramids also answers items 130 and 131 of #433, because
+     each record keeps the bytes of its documents, and a level
+     transformation that is not diagonal is refused (#447). Status: open
+     until those pyramids move to the design.
