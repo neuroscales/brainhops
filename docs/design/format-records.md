@@ -1175,3 +1175,57 @@ its status.
      them, and the conformance checks load files without options, so the
      view is not one of their variants and is tested in
      `tests/test_io_regdat.py` instead. Status: accepted.
+151. The tkregister RAS space of a volume is one class,
+     `FreesurferTkrSystem` (`io/common/freesurfer/_tkr.py`), which MGH
+     images, `register.dat` and LTA files share. It is not `RASmm`, so
+     the formats that check the class of their systems, such as LTA and
+     MINC, do not write a tkregister space as scanner RAS. The data model
+     compares systems by their axes only, and the axes of a tkregister
+     space are those of RAS in millimetres, so a converter that bridges
+     or checks endpoints by their axes, such as those of the MRtrix
+     linear transform and of the NIfTI voxel-to-RAS affine, still accepts
+     a tkregister space as scanner RAS. The tkr space of a 4-D MGH image keeps a system of
+     four axes named `"tkr"`, as its scanner space keeps four axes named
+     `"scanner"`. Status: open, for the maintainer to decide whether a
+     system may be told apart from RAS by more than its axes.
+152. The geometries `reference` and `moving` of a `register.dat`
+     transformation (item 150) are `Geometry` values of the data model.
+     An image gives its `geometry`, and an LTA geometry block is
+     converted, without its file name. The geometry must place a 3-D
+     volume in an anatomical space in millimetres by an affine, and any
+     other geometry is refused when it is given. A `Geometry` compares
+     equal only to itself, so a tkregister system that holds a geometry
+     equals only a system that holds the same object, and the systems
+     that an LTA file decodes hold no geometry: the record keeps it.
+     Status: accepted, pending review.
+153. A `register.dat` transformation that knows both geometries converts
+     exactly to an LTA file of type `LINEAR_RAS_TO_RAS`, the type that
+     `lta_convert --inreg` writes, and an LTA file that knows both
+     geometries converts exactly to a `register.dat`
+     (`io/transformations/freesurfer/regdat/_converters.py`). Both keep
+     the map, so the reference volume is the source of the LTA file.
+     FreeSurfer keeps the roles of the volumes instead, and its LTA file
+     maps the movable volume to the reference, so the file written here
+     is the one that `lta_convert --inreg ... --invert` writes. `LtaRaw`
+     has no field for the `subject` and `fscale` lines that FreeSurfer
+     appends to an LTA file, so the subject of a `register.dat` is lost
+     through LTA. Status: accepted, pending review.
+154. LTA reads type 14, `REGISTER_DAT`, which `ltaReadFileEx` in
+     `utils/transform.cpp` of FreeSurfer reads as any other type and
+     `LTAchangeType` converts. The record stores the matrix from the
+     tkregister space of `dst` to that of `src`, so the transformation
+     reads its inverse, and a matrix assigned between two tkregister
+     spaces is written with this type and inverted. FreeSurfer refuses
+     to change the type of such a file without valid geometries, whereas
+     brainhops writes it with invalid geometry blocks when no geometry is
+     known. Status: accepted, pending review.
+155. `register.dat` and the plain matrix files both claim `.dat`. Their
+     sniffers do not accept each other's content, so reading picks the
+     right one in both directions. Writing has no content to sniff, and
+     `io.save` prefers `RegisterDatTransformation` for a plain `Affine`
+     saved to a `.dat` name, because it is the more specific format. An
+     affine between `RASmm` spaces is then refused, since a
+     `register.dat` file needs the geometries to store it, where the
+     plain matrix format wrote it before `register.dat` was added.
+     Status: open, for the maintainer to decide whether `io.save` should
+     fall back to another candidate when the chosen one refuses.
