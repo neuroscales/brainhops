@@ -400,7 +400,7 @@ def test_writer_writes_a_non_axis_aligned_geometry_as_an_affine(
     pyramid.save(path)
     back = images.load(path)
 
-    geometry = back.images[0].transformation
+    geometry = back.transformations[0]
     assert isinstance(geometry, Affine)
     np.testing.assert_allclose(_world_matrix(geometry), matrix)
 
@@ -443,7 +443,7 @@ def test_writer_round_trips_a_rotation_placement(tmp_path: Path) -> None:
     pyramid.save(path)
     back = images.load(path)
 
-    geometry = back.images[0].transformation
+    geometry = back.transformations[0]
     assert isinstance(geometry, Rotation)
     np.testing.assert_allclose(
         _world_matrix(geometry), _world_matrix(image.transformation)
@@ -478,7 +478,7 @@ def test_writer_round_trips_a_sequence_placement(tmp_path: Path) -> None:
     pyramid.save(path)
     back = images.load(path)
 
-    geometry = back.images[0].transformation
+    geometry = back.transformations[0]
     assert isinstance(geometry, Sequence)
     kinds = [type(part).__name__ for part in geometry.transformations]
     assert kinds == ["Rotation", "Translation"]
@@ -880,7 +880,7 @@ def _authored_pyramid(
     shape: tuple,
     arrays: tx.Optional[dict] = None,
 ) -> str:
-    """Write a 0.6 group whose one level carries `transform`.
+    """Write a 0.6 group whose multiscale carries `transform`.
 
     `arrays` names extra arrays, such as the field of a displacement transform.
     """
@@ -901,18 +901,28 @@ def _authored_pyramid(
             "version": "0.6",
             "multiscales": [
                 {
-                    "coordinateSystems": [{"name": "phys", "axes": axes}],
+                    "coordinateSystems": [
+                        {"name": "intrinsic", "axes": axes},
+                        {"name": "phys", "axes": axes},
+                    ],
                     "datasets": [
                         {
                             "path": "0",
                             "coordinateTransformations": [
-                                dict(
-                                    transform,
-                                    input={"path": "0"},
-                                    output={"name": "phys"},
-                                )
+                                {
+                                    "type": "identity",
+                                    "input": {"path": "0"},
+                                    "output": {"name": "intrinsic"},
+                                }
                             ],
                         }
+                    ],
+                    "coordinateTransformations": [
+                        dict(
+                            transform,
+                            input={"name": "intrinsic"},
+                            output={"name": "phys"},
+                        )
                     ],
                 }
             ],
@@ -938,7 +948,7 @@ def test_reader_maps_a_rotation_to_a_rotation(tmp_path: Path) -> None:
         _SPACE2,
         (5, 4),
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, Rotation)
     # The stored (y, x) rotation is reordered to (x, y).
     np.testing.assert_allclose(
@@ -953,7 +963,7 @@ def test_reader_maps_an_affine_to_an_affine(tmp_path: Path) -> None:
         _SPACE2,
         (5, 4),
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, Affine)
     np.testing.assert_allclose(
         np.asarray(geometry.matrix), [[3.0, 0.0, 6.0], [0.0, 2.0, 5.0]]
@@ -979,7 +989,7 @@ def test_reader_maps_a_sequence_to_a_sequence(tmp_path: Path) -> None:
         _SPACE3,
         (6, 5, 4),
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, Sequence)
     assert isinstance(geometry.transformations[0], Scaling)
     assert isinstance(geometry.transformations[1], Translation)
@@ -991,21 +1001,21 @@ def test_reader_maps_a_map_axis_to_a_permutation(tmp_path: Path) -> None:
     path = _authored_pyramid(
         tmp_path, {"type": "mapAxis", "mapAxis": [1, 0]}, _SPACE2, (5, 4)
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, Permutation)
     np.testing.assert_array_equal(np.asarray(geometry.permutation), [1, 0])
 
 
-def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
-    # A mapAxis over a subset of the input axes is a Projection; tested on
-    # the mapping, since such a level is not wired through the reader.
+def test_reader_maps_a_project_axis_to_a_projection() -> None:
+    # ProjectAxis drops named inputs; tested on the mapping because such a
+    # level is not wired through the reader.
     from abczarr.ome.v0_6.transformations import CoordinateTransformation
 
     from brainhops.datamodel.transformations import Projection
     from brainhops.io.images.zarr import _ome
 
     transform = CoordinateTransformation.from_json(
-        {"type": "mapAxis", "mapAxis": [0, 2]}
+        {"type": "projectAxis", "droppedInputs": [1]}
     )
     projection = _ome._map_transform(transform, perm=[0, 1, 2], ndim=3)
     assert isinstance(projection, Projection)
@@ -1076,18 +1086,28 @@ def _authored_field_pyramid(
             "version": "0.6",
             "multiscales": [
                 {
-                    "coordinateSystems": [{"name": "phys", "axes": _SPACE3}],
+                    "coordinateSystems": [
+                        {"name": "intrinsic", "axes": _SPACE3},
+                        {"name": "phys", "axes": _SPACE3},
+                    ],
                     "datasets": [
                         {
                             "path": "0",
                             "coordinateTransformations": [
                                 {
-                                    "type": "displacements",
-                                    "path": "disp",
+                                    "type": "identity",
                                     "input": {"path": "0"},
-                                    "output": {"name": "phys"},
+                                    "output": {"name": "intrinsic"},
                                 }
                             ],
+                        }
+                    ],
+                    "coordinateTransformations": [
+                        {
+                            "type": "displacements",
+                            "path": "disp",
+                            "input": {"name": "intrinsic"},
+                            "output": {"name": "phys"},
                         }
                     ],
                 }
@@ -1112,7 +1132,7 @@ def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
             ("d", "displacement"),
         ],
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, DisplacementField)
     result = np.asarray(geometry.field)
     # Read as (x, y, z, component), without reordering the values.
@@ -1131,7 +1151,7 @@ def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, DisplacementField)
     field = np.asarray(geometry.field)
     # The component axis moves to the end.
@@ -1154,7 +1174,7 @@ def test_reader_reads_a_field_by_its_axis_names_not_position(
         (6, 5, 4),
         arrays={"disp": (field, ("z", "y", "x", "d"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, DisplacementField)
     result = np.asarray(geometry.field)
     assert result.shape == (4, 5, 6, 3)
@@ -1186,7 +1206,7 @@ def test_reader_reads_a_coordinate_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"coord": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, CoordinatesField)
     assert np.asarray(geometry.field).shape == (4, 5, 6, 3)
 
@@ -1211,7 +1231,7 @@ def test_reader_reads_an_affine_surrounded_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, Sequence)
     assert isinstance(geometry.transformations[0], Scaling)
     assert isinstance(geometry.transformations[1], DisplacementField)
@@ -1240,7 +1260,7 @@ def test_reader_maps_a_multi_field_sequence_without_banning(
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformations[0]
     assert isinstance(geometry, Sequence)
     assert all(
         isinstance(part, DisplacementField)

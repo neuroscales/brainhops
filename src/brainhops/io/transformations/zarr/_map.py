@@ -243,6 +243,21 @@ def _(
     return _map_axis_transform(transform.mapAxis, perm, ndim)
 
 
+@_from_ome(_ot.ProjectAxis)
+def _(
+    transform: tx.Any,
+    perm: tx.Sequence[int],
+    ndim: int,
+    read_field: tx.Optional[tx.Callable],
+) -> Transformation:
+    inverse = _invert_perm(perm)
+    dropped = sorted(inverse[index] for index in transform.droppedInputs or [])
+    created = sorted(
+        inverse[index] for index in transform.createdOutputs or []
+    )
+    return Projection(dropped=dropped, created=created)
+
+
 @_from_ome(_ot.Displacements)
 def _(
     transform: tx.Any,
@@ -340,6 +355,19 @@ def to_ome(
         return _to_ome_fn(transform, storage_perm, ndim)
     except NoMethodError:
         return _affine_to_ome(transform, storage_perm, ndim)
+
+
+def is_dataset_transform(entry: tx.Mapping[str, tx.Any]) -> bool:
+    """Return whether an OME transform is allowed on a 0.6 dataset."""
+    kind = entry.get("type")
+    if kind in ("identity", "scale"):
+        return True
+    if kind != "sequence":
+        return False
+    steps = entry.get("transformations", [])
+    return len(steps) == 2 and all(
+        step.get("type") in ("scale", "translation") for step in steps
+    )
 
 
 def scale_translation_from_affine(
