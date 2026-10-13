@@ -338,12 +338,14 @@ class FnirtWarpField(
         return degree
 
     def _bound(self) -> tx.Union[str, float]:
-        # Coefficients are zero outside the grid; a dense field is never
-        # sampled outside, so nearest is harmless.
+        # FSL adds up only the splines whose coefficients exist, so the
+        # coefficients beyond the grid count as zero (`Peek` and
+        # `RangeOfSplines` in FSL, see `_ref_to_field`). A dense field is
+        # never sampled outside, so nearest is harmless.
         return "constant" if self._is_coeff() else "nearest"
 
     def _stored_knot_spacing(self) -> np.ndarray:
-        """Knot spacing as stored in the pixdims."""
+        """Knot spacing in voxels of the reference, as stored in the pixdims."""
         zooms = _header(self).get_zooms()[:3]
         return np.abs(np.asarray(zooms, dtype=np.float64))
 
@@ -359,30 +361,67 @@ class FnirtWarpField(
             dtype=np.float64,
         )
 
-    def _knot_spacing(self, ref: _ImageGeometry) -> np.ndarray:
-        """Per-axis knot spacing in reference voxels.
+    def _has_spline_parameters(self) -> bool:
+        """Whether the header gives usable knot and voxel sizes.
 
-        The spacing is one for a deformation field. A coefficient field stores
-        it in voxels of the reference used at registration, so it is rescaled
-        to the current reference resolution.
+        A coefficient field cannot be placed without a positive knot
+        spacing and positive voxel sizes of the reference. A dense field
+        does not need them.
         """
         if not self._is_coeff():
-            return np.ones(3, dtype=np.float64)
-        ratio = self._reference_pixdim() / ref.pixdim
-        return self._stored_knot_spacing() * ratio
+            return True
+        sizes = np.concatenate(
+            [self._stored_knot_spacing(), self._reference_pixdim()]
+        )
+        return bool(np.all(np.isfinite(sizes) & (sizes > 0)))
 
     def _ref_to_field(self, ref: _ImageGeometry) -> np.ndarray:
-        """Affine from reference voxels to warp-grid voxels."""
-        spacing = self._knot_spacing(ref)
-        matrix = np.eye(4, dtype=np.float64)
-        matrix[:3, :3] = np.diag(1.0 / spacing)
-        return matrix
+        """Affine from reference voxels to the coordinates of the warp grid.
+
+        The warp grid of a dense field is the voxel grid of the reference,
+        so the affine is the identity. For a coefficient field, FSL places
+        coefficient `c` of an axis at the voxel `(c - degree // 2) * ksp`
+        of the reference that it registered to, or at voxel `c` when the
+        knot spacing `ksp` is one (`Spline1D::OffsetIntoField` in
+        `src/basisfield/fsl_splines.h` of FSL). These voxels are those of
+        the image as FSL holds it in memory, which FSL flips to the
+        radiological order on read when the voxel-to-world matrix has a
+        positive determinant (`read_volumeROI` in
+        `src/newimage/generalio.cc`, and `read_volume` in
+        `src/fnirt/fnirt.cpp`), while it writes the coefficients without
+        any flip (`common_coef_construction` in
+        `src/warpfns/fnirt_file_writer.cpp`). A voxel in memory is
+        therefore the FSL scaled-mm position divided by the voxel size of
+        the reference, and the grid is placed from the scaled-mm position.
+        These files are those of FSL 5.0.9 in the NeuroDebian mirror,
+        https://github.com/neurodebian/fsl at commit 513f6a0.
+
+        A reference of another resolution than the one used at
+        registration is placed by its scaled-mm positions too, which fslpy
+        also assumes (`_readFnirtCoefficientField` in
+        `fsl/transform/fnirt.py` of fslpy 3.29.1). fslpy places the grid
+        from the stored voxels instead, which differs from FSL when the
+        reference has a positive determinant.
+        """
+        if not self._is_coeff():
+            return np.eye(4, dtype=np.float64)
+        knot_mm = self._reference_pixdim() * self._stored_knot_spacing()
+        grid = np.diag(np.concatenate([1.0 / knot_mm, [1.0]])) @ ref.vox2fsl
+        grid[:3, 3] += _anchor_offsets(
+            self._degree(), self._stored_knot_spacing()
+        )
+        return grid
 
     def _ref_to_source(self) -> np.ndarray:
         """The initial affine, from reference to source scaled millimetres.
 
         A deformation field already includes it, so it is the identity. A
-        coefficient field stores its inverse in the sform.
+        coefficient field stores its inverse in the sform, and FSL adds
+        `(inv(sform) - I) @ x` to the displacement at the reference
+        position `x` in scaled millimetres (`add_affine_part` in
+        `src/warpfns/fnirt_file_reader.cpp` of FSL 5.0.9), which is what
+        fslpy does too (`coefficientFieldToDeformationField` in
+        `fsl/transform/nonlinear.py` of fslpy 3.29.1).
         """
         if not self._is_coeff():
             return np.eye(4, dtype=np.float64)
@@ -445,6 +484,8 @@ class FnirtWarpField(
             return False
         if self._is_coeff() and self.reference is None:
             return False
+        if not self._has_spline_parameters():
+            return False
         # A coefficient field ignores `deformation_type`, so an invalid
         # value only matters for a deformation field.
         if not self._is_coeff() and self.deformation_type not in (
@@ -465,13 +506,19 @@ class FnirtWarpField(
             )
         ref = self._reference_geometry()
         mov = _ImageGeometry(self.moving)
+        if not self._has_spline_parameters():
+            raise ValueError(
+                "A FNIRT coefficient field stores its knot spacing in the "
+                "pixdims and the voxel sizes of its reference in "
+                "intent_p1 to intent_p3, and this header has a value that "
+                "is not positive."
+            )
         return _warp_chain(
             field=self._field_array(ref),
             degree=self._degree(),
             store=StoreEnum.from_coefficients(self._is_coeff()),
             bound=self._bound(),
             ref_to_field=self._ref_to_field(ref),
-            knot_spacing=self._knot_spacing(ref),
             ref=ref,
             mov=mov,
             ref_to_source=self._ref_to_source(),
@@ -592,27 +639,28 @@ def _warp_chain(
     store: tx.Any,
     bound: tx.Union[str, float],
     ref_to_field: np.ndarray,
-    knot_spacing: np.ndarray,
     ref: _ImageGeometry,
     mov: _ImageGeometry,
     ref_to_source: np.ndarray,
 ) -> tx.Tuple[_xforms.Transformation, ...]:
     """Build the lazy reference-RAS to moving-RAS chain of a warp field.
 
-    Two affines place the field grid in world coordinates. They also absorb two
-    differences between FSL and the data model: FSL anchors coarse knots
-    `degree // 2` grid units away from the resampler, and its displacements are
-    in scaled millimetres rather than grid units.
+    `ref_to_field` maps the voxels of the reference to the coordinates of
+    the warp grid, at which the spline of the data model is evaluated, so
+    it holds both the knot spacing and the offset of the knots of FSL. The
+    field holds displacements in scaled millimetres, and FSL adds them to
+    the reference position after the initial affine `ref_to_source` has
+    moved that position (see `FnirtWarpField._ref_to_source`). The
+    displacements are therefore expressed in units of the warp grid in the
+    frame of the source, so that the affine at the end of the chain maps
+    both the position and the displacement.
     """
     degree = int(degree)
-    offsets = _anchor_offsets(degree, knot_spacing)
 
-    field_to_ref = np.linalg.inv(ref_to_field)
     # Warp-grid coordinates to reference scaled millimetres.
-    grid_to_fsl_lin = ref.vox2fsl[:3, :3] @ field_to_ref[:3, :3]
-    grid_to_fsl_off = (
-        ref.vox2fsl[:3, :3] @ field_to_ref[:3, 3] + ref.vox2fsl[:3, 3]
-    )
+    grid_to_fsl = ref.vox2fsl @ np.linalg.inv(ref_to_field)
+    grid_to_fsl_lin = grid_to_fsl[:3, :3]
+    grid_to_fsl_off = grid_to_fsl[:3, 3]
     src_lin = ref_to_source[:3, :3]
     src_off = ref_to_source[:3, 3]
 
@@ -624,19 +672,14 @@ def _warp_chain(
     prescaled = backend.asarray(field) @ backend.asarray(prescale.T)
 
     ras_to_grid = ref_to_field @ ref.ras2vox
-    ras_to_grid[:3, 3] += offsets
 
-    # The anchor offset added on the input side is removed here.
     fsl_to_ras = mov.fsl2ras
-    grid_to_ras_lin = fsl_to_ras[:3, :3] @ src_lin @ grid_to_fsl_lin
-    grid_to_ras_off = (
+    grid_to_ras = np.eye(4, dtype=np.float64)
+    grid_to_ras[:3, :3] = fsl_to_ras[:3, :3] @ combined
+    grid_to_ras[:3, 3] = (
         fsl_to_ras[:3, :3] @ (src_lin @ grid_to_fsl_off + src_off)
         + fsl_to_ras[:3, 3]
-        - grid_to_ras_lin @ offsets
     )
-    grid_to_ras = np.eye(4, dtype=np.float64)
-    grid_to_ras[:3, :3] = grid_to_ras_lin
-    grid_to_ras[:3, 3] = grid_to_ras_off
 
     return (
         RASToWarpField(matrix=ras_to_grid[:-1]),
@@ -653,10 +696,14 @@ def _warp_chain(
 
 
 def _anchor_offsets(degree: int, knot_spacing: np.ndarray) -> np.ndarray:
-    """Per-axis shift between the FSL and resampler spline anchors.
+    """Return the shift of the knots of FSL on each axis, in knots.
 
-    The shift is `degree // 2` grid units, or zero where the knot spacing is
-    one.
+    FSL centres coefficient `c` at `(c - degree // 2) * ksp`, and at `c`
+    when the knot spacing `ksp` is one (`Spline1D::OffsetIntoField` in
+    `src/basisfield/fsl_splines.h` of FSL 5.0.9), while the data model
+    centres it at `c`. The shift is therefore `degree // 2` grid units, or
+    zero where the stored knot spacing is one. A dense field has a knot
+    spacing of one, so it has no shift.
     """
     spacing = np.asarray(knot_spacing, dtype=np.float64)
     step = float(int(degree) // 2)
