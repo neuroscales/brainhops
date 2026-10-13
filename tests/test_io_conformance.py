@@ -42,6 +42,7 @@ import json
 import math
 import os
 import pickle
+import shutil
 import struct
 from copy import deepcopy
 from io import BytesIO
@@ -184,6 +185,13 @@ from brainhops.io.transformations.freesurfer.regdat import (
     RegisterDatMetadata,
     RegisterDatTransformation,
 )
+from brainhops.io.transformations.itk import ItkStruct
+from brainhops.io.transformations.itk.mat import MatMetadata, MatTransform
+from brainhops.io.transformations.itk.tfm import (
+    TfmMetadata,
+    TfmRaw,
+    TfmTransform,
+)
 from brainhops.io.transformations.matrix import (
     CsvMatrixAffine,
     CsvMatrixMetadata,
@@ -255,6 +263,11 @@ try:
         _image_to_model,
     )
     from brainhops.io.transformations.afni import AfniNiftiWarp
+    from brainhops.io.transformations.fsl.flirt import (
+        FlirtMetadata,
+        FlirtRaw,
+        FlirtTransform,
+    )
     from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
     from brainhops.io.transformations.itk.nifti import (
         ItkNiftiCoordinatesField,
@@ -384,6 +397,7 @@ try:
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
     )
+    from brainhops.io.transformations.itk.h5 import H5Metadata, H5Transform
     from brainhops.io.transformations.x5 import (
         X5DisplacementField,
         X5Metadata,
@@ -1788,6 +1802,35 @@ class Exemplar(tx.NamedTuple):
     assigns is read back only with that option.
     """
 
+    pending: tx.Tuple[str, ...] = ("_data", "_transformations")
+    """Private fields that hold the pending state of an object.
+
+    Most formats hold assigned data in `_data` and assigned
+    transformations in `_transformations`. A FLIRT transform holds its
+    assigned FLIRT matrix in `_flirt_matrix`, because its affine is
+    computed from that matrix and two images and cannot be assigned.
+    """
+
+    records: bool = False
+    """Whether a format that cannot write still encodes a new record.
+
+    A format that cannot write, as `source` marks it, consolidates only
+    its data when its record cannot be encoded, as MINC does. A format
+    whose record is a plain structure, such as an ITK text file or a
+    FLIRT matrix, encodes a new record in memory instead, and the checks
+    of consolidation apply to it without the file.
+    """
+
+    bare: bool = False
+    """Whether the record holds nothing but what the data model decodes.
+
+    The record of a FLIRT matrix holds the matrix alone, and that of an
+    ITK text file its blocks alone, so an edit of the record is an edit
+    of the data, which an assigned value replaces. Check 20 then checks
+    that the edit is followed and that the assigned value is kept, but
+    not that the edit is kept under the assigned value.
+    """
+
     container: str = "file"
     """Whether an object is stored in a `"file"` or in a `"directory"`.
 
@@ -3168,6 +3211,268 @@ if PILImage is not None:
     EXEMPLARS[PillowImage] = _PILLOW
 
 
+# A FLIRT file holds a matrix that is read in one pass, so the matrix lives
+# in the record. The affine of the data model is computed from the matrix
+# and two images that the file does not hold, so the data of the format is
+# the FLIRT matrix, which is assigned and pending as `flirt_matrix`.
+# brainhops does not write FLIRT files, so the checks write them, and the
+# checks of writing make sure that the format refuses to write. The record
+# is a plain matrix, which the format encodes in memory. Check 6 is
+# vacuous, because the whole file is the record, as for LTA (item 66), and
+# check 10 only checks that an edited record is kept, because nothing is
+# written.
+
+_FLIRT_SAMPLE = np.array(
+    [
+        [1.0, 0.0, 0.0, 2.0],
+        [0.0, 2.0, 0.0, 3.0],
+        [0.0, 0.0, 3.0, 4.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
+"""A FLIRT matrix whose values are exact in text."""
+
+
+def _flirt_to_disk(matrix: tx.Any) -> tx.Any:
+    return tuple(tuple(float(v) for v in row) for row in np.asarray(matrix))
+
+
+def _flirt_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+def _flirt_change_geometry(xform: tx.Any) -> None:
+    xform.flirt_matrix = np.diag([2.0, 3.0, 4.0, 1.0])
+
+
+def _write_flirt(path: tx.Any, matrix: tx.Any) -> None:
+    # FLIRT writes each row on a line, with two spaces after each value.
+    rows = ["".join(f"{v:.8f}  " for v in row) for row in matrix]
+    with open(path, "w") as file:
+        file.write("\n".join(rows) + "\n")
+
+
+def _copy(source: tx.Any, target: tx.Any) -> None:
+    # A file read in one pass is its own record, so the copy is whole.
+    shutil.copyfile(source, target)
+
+
+if nb is not None:
+    EXEMPLARS[FlirtTransform] = Exemplar(
+        metadata=FlirtMetadata,
+        suffix=".mat",
+        proxies=(tuple,),
+        to_model=lambda raw: np.asarray(raw, dtype=float),
+        to_disk=_flirt_to_disk,
+        sample=lambda: _FLIRT_SAMPLE,
+        edit_record=lambda record: FlirtRaw(matrix=_flirt_to_disk(np.eye(4))),
+        record_edited=lambda record: record.matrix[0] == (1.0, 0.0, 0.0, 0.0),
+        geometry=lambda xform: np.asarray(xform.flirt_matrix),
+        change_geometry=_flirt_change_geometry,
+        build=lambda data: FlirtTransform(flirt_matrix=data),
+        options=frozenset({"flirt_matrix", "moving", "reference"}),
+        binary=False,
+        stored=_flirt_stored,
+        view="flirt_matrix",
+        data=lambda xform: xform.flirt_matrix,
+        set_data=lambda xform, value: setattr(xform, "flirt_matrix", value),
+        cut=_copy,
+        header=lambda metadata: metadata.raw.matrix,
+        source=_write_flirt,
+        pending=("_flirt_matrix",),
+        records=True,
+        bare=True,
+    )
+
+
+# The ITK formats hold a chain of blocks, which their record holds in the
+# order of the file. The data of an exemplar is the parameters of the
+# single block of its chain, and its geometry is the fixed parameters of
+# that block, which are its center or the grid of its warp. brainhops
+# writes the `.mat` files only. The text and HDF5 files are written by the
+# checks, and their formats encode their records in memory. Check 6 is
+# vacuous for the text and `.mat` files, which are read in one pass.
+
+_ITK_AFFINE = "AffineTransform"
+_ITK_WARP = "DisplacementFieldTransform"
+# A warp grid of shape (2, 3, 4), at the origin, with unit spacing and the
+# identity direction.
+_ITK_GRID = np.concatenate([[2.0, 3.0, 4.0], np.zeros(3), np.ones(3)])
+_ITK_GRID = np.concatenate([_ITK_GRID, np.eye(3).ravel()])
+
+
+def _itk_block(kind: str, parameters: tx.Any, fixed: tx.Any) -> tx.Any:
+    return ItkStruct(
+        type=kind,
+        precision="double",
+        ndim_input=3,
+        ndim_output=3,
+        parameters=np.asarray(parameters, dtype=float),
+        fixed_parameters=np.asarray(fixed, dtype=float),
+    )
+
+
+def _itk_affine(parameters: tx.Any) -> tx.Any:
+    return _itk_block(_ITK_AFFINE, parameters, [5.0, 6.0, 7.0])
+
+
+def _itk_warp(parameters: tx.Any) -> tx.Any:
+    return _itk_block(_ITK_WARP, parameters, _ITK_GRID)
+
+
+def _itk_data(xform: tx.Any) -> tx.Any:
+    return xform.transformations[0].parameters
+
+
+def _itk_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.blocks[0].parameters
+
+
+def _itk_geometry(xform: tx.Any) -> np.ndarray:
+    return np.asarray(xform.transformations[0].fixed_parameters)
+
+
+def _itk_change_geometry(xform: tx.Any) -> None:
+    (block,) = xform.transformations
+    fixed = np.asarray(block.fixed_parameters) * 2 + 1
+    xform.transformations = [replace(block, fixed_parameters=fixed)]
+
+
+def _itk_summary(metadata: tx.Any) -> tx.Any:
+    """Summarize the blocks of an ITK record without reading a warp."""
+    return [
+        (
+            str(block.type),
+            str(block.precision),
+            block.ndim_input,
+            block.ndim_output,
+            type(block.parameters),
+            tuple(np.shape(block.parameters)),
+            np.asarray(block.fixed_parameters).tolist(),
+        )
+        for block in metadata.raw.blocks
+    ]
+
+
+def _write_tfm(path: tx.Any, parameters: tx.Any) -> None:
+    def values(vector: tx.Any) -> str:
+        return " ".join(repr(float(v)) for v in vector)
+
+    block = _itk_affine(parameters)
+    with open(path, "w") as file:
+        file.write(
+            "#Insight Transform File V1.0\n"
+            "#Transform 0\n"
+            f"Transform: {_ITK_AFFINE}_double_3_3\n"
+            f"Parameters: {values(block.parameters)}\n"
+            f"FixedParameters: {values(block.fixed_parameters)}\n"
+        )
+
+
+_ITK_TEXT = Exemplar(
+    metadata=TfmMetadata,
+    suffix=".tfm",
+    proxies=(np.ndarray,),
+    to_model=np.asarray,
+    to_disk=np.asarray,
+    sample=lambda: np.arange(12.0),
+    edit_record=lambda record: TfmRaw(
+        blocks=(replace(record.blocks[0], precision="float"),)
+    ),
+    record_edited=lambda record: record.blocks[0].precision == "float",
+    geometry=_itk_geometry,
+    change_geometry=_itk_change_geometry,
+    build=lambda data: TfmTransform([_itk_affine(data)]),
+    options=frozenset({"position"}),
+    binary=False,
+    stored=_itk_stored,
+    view="transformations",
+    data=_itk_data,
+    set_data=lambda xform, value: setattr(
+        xform, "transformations", [_itk_affine(value)]
+    ),
+    cut=_copy,
+    header=_itk_summary,
+    source=_write_tfm,
+    records=True,
+    bare=True,
+)
+EXEMPLARS[TfmTransform] = _ITK_TEXT
+EXEMPLARS[MatTransform] = _ITK_TEXT._replace(
+    bare=False,
+    metadata=MatMetadata,
+    suffix=".mat",
+    # The byte order is kept by a chain that is encoded again.
+    edit_record=lambda record: replace(record, byteorder=">", content=None),
+    record_edited=lambda record: record.byteorder == ">",
+    build=lambda data: MatTransform([_itk_affine(data)]),
+    binary=True,
+    cut=None,
+    header=None,
+    source=None,
+    records=False,
+)
+
+if h5py is not None:
+
+    def _write_itk_h5(path: tx.Any, parameters: tx.Any) -> None:
+        with h5py.File(path, "w") as file:
+            file["ITKVersion"] = np.bytes_("5.4.0")
+            group = file.create_group("TransformGroup/0")
+            group["TransformType"] = np.bytes_(f"{_ITK_WARP}_double_3_3")
+            group["TransformParameters"] = np.asarray(parameters, float)
+            group["TransformFixedParameters"] = _ITK_GRID
+
+    def _itk_h5_cut(source: tx.Any, target: tx.Any) -> None:
+        """Copy an ITK `.h5` file whose warp parameters cannot be read.
+
+        The parameters of a warp are declared in an external file that is
+        never written, so that their shape is known but reading their
+        values fails.
+        """
+        missing = str(target) + ".missing"
+        with h5py.File(source, "r") as old, h5py.File(target, "w") as new:
+
+            def copy(name: str, item: tx.Any) -> None:
+                if isinstance(item, h5py.Group):
+                    new.require_group(name)
+                elif name.endswith("/TransformParameters"):
+                    new.create_dataset(
+                        name,
+                        shape=item.shape,
+                        dtype=item.dtype,
+                        external=[(missing, 0, h5py.h5f.UNLIMITED)],
+                    )
+                else:
+                    new.create_dataset(name, data=item[()])
+
+            old.visititems(copy)
+
+    EXEMPLARS[H5Transform] = _ITK_TEXT._replace(
+        bare=False,
+        metadata=H5Metadata,
+        suffix=".h5",
+        # The parameters of a warp are read when they are used.
+        proxies=(DelayedH5Array,),
+        sample=lambda: np.arange(72.0),
+        edit_record=lambda record: replace(
+            record, header=replace(record.header, OSName="edited")
+        ),
+        record_edited=lambda record: record.header.OSName == "edited",
+        build=lambda data: H5Transform([_itk_warp(data)]),
+        binary=True,
+        set_data=lambda xform, value: setattr(
+            xform, "transformations", [_itk_warp(value)]
+        ),
+        cut=_itk_h5_cut,
+        source=_write_itk_h5,
+    )
+
+
 def _stack_edit_record(record: tx.Any) -> tx.Any:
     # The names of the files are what a record of a stack holds besides
     # its geometry, and a folder that is written keeps them.
@@ -3704,10 +4009,6 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.tiff.TiffMultiScaleImage",
     "brainhops.io.images.zarr.OmeZarrImage",
     "brainhops.io.images.zarr.ZarrImage",
-    "brainhops.io.transformations.fsl.flirt.FlirtTransform",
-    "brainhops.io.transformations.itk.h5.H5Transform",
-    "brainhops.io.transformations.itk.mat.MatTransform",
-    "brainhops.io.transformations.itk.tfm.TfmTransform",
     "brainhops.io.transformations.zarr.OmeZarrField",
 )
 """The registered formats that do not follow the design yet."""
@@ -4177,13 +4478,13 @@ def _raw(obj: tx.Any) -> tx.Any:
     return getattr(obj, "raw", None)
 
 
-def _pending(obj: tx.Any) -> tx.Tuple[tx.Any, tx.Any]:
+def _pending(exemplar: Exemplar, obj: tx.Any) -> tx.Tuple[tx.Any, ...]:
     """Return the assigned data and transformations of an object.
 
     They are pending until the object is consolidated, and `None` for a
     field that the format does not have.
     """
-    return getattr(obj, "_data", None), getattr(obj, "_transformations", None)
+    return tuple(getattr(obj, name, None) for name in exemplar.pending)
 
 
 def _same(first: tx.Sequence[tx.Any], second: tx.Sequence[tx.Any]) -> bool:
@@ -4349,19 +4650,19 @@ def test_03_assigned_data_is_pending(
         assert "_cache_" + name not in vars(loaded)
     # The stored data and the record still describe the file, and the
     # data is pending.
-    pending = _pending(loaded)
+    pending = _pending(exemplar, loaded)
     assert np.array_equal(np.asarray(_stored(exemplar, loaded)), before)
     assert loaded.metadata is metadata
     assert any(field is not None for field in pending)
     assert np.array_equal(np.asarray(_data(exemplar, loaded)), value)
     # Consolidating encodes the data into the stored data of a copy.
     consolidated = loaded.consolidate()
-    assert all(field is None for field in _pending(consolidated))
+    assert all(field is None for field in _pending(exemplar, consolidated))
     stored = np.asarray(_stored(exemplar, consolidated))
     assert np.array_equal(stored, exemplar.to_disk(value))
     assert np.array_equal(np.asarray(_data(exemplar, consolidated)), value)
     assert np.array_equal(np.asarray(_stored(exemplar, loaded)), before)
-    assert _same(_pending(loaded), pending)
+    assert _same(_pending(exemplar, loaded), pending)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -4462,7 +4763,7 @@ def test_08_an_object_built_from_data_saves(
     # Consolidating encodes the data and a new record, which a format
     # that cannot write cannot encode.
     consolidated = built.consolidate()
-    if exemplar.source is None:
+    if exemplar.source is None or exemplar.records:
         assert isinstance(consolidated.metadata, exemplar.metadata)
     stored = np.asarray(_stored(exemplar, consolidated))
     assert np.array_equal(stored, exemplar.to_disk(value))
@@ -4493,14 +4794,14 @@ def test_09_copies_keep_raw_and_metadata(
     copy = replace(loaded)
     assert copy.metadata is loaded.metadata
     assert _raw(copy) is _raw(loaded)
-    assert all(field is None for field in _pending(copy))
+    assert all(field is None for field in _pending(exemplar, copy))
     assert "_cache_" + exemplar.view not in vars(loaded)
     assert "_cache_" + exemplar.view not in vars(copy)
     # Assigned data is pending in the copy as well.
     _set_data(exemplar, loaded, exemplar.sample() + 1)
     copy = replace(loaded)
     assert copy.metadata is loaded.metadata
-    assert _same(_pending(copy), _pending(loaded))
+    assert _same(_pending(exemplar, copy), _pending(exemplar, loaded))
     # The record and the stored array of another format mean nothing to
     # this format, so they are reset. A model that holds data keeps it
     # pending, and a model that holds a chain keeps the chain, which
@@ -4718,22 +5019,26 @@ def test_16_consolidate_is_idempotent(
     tmp_path,  # noqa: ANN001
 ) -> None:
     loaded = _changed(cls, exemplar, tmp_path)
-    raw, metadata, pending = _raw(loaded), loaded.metadata, _pending(loaded)
-    if exemplar.source is not None:
+    raw, metadata = _raw(loaded), loaded.metadata
+    pending = _pending(exemplar, loaded)
+    if exemplar.source is not None and not exemplar.records:
         _check_data_only(exemplar, loaded)
         return
     once = loaded.consolidate()
     # Nothing is pending in the copy, whose record is new, and the copy
-    # holds what a file written from the object holds.
-    assert all(field is None for field in _pending(once))
+    # holds what a file written from the object holds. A format that
+    # cannot write holds a new record in memory only.
+    assert all(field is None for field in _pending(exemplar, once))
     assert once.metadata is not metadata
-    target = _path(tmp_path, exemplar, "written")
-    loaded.save(target)
-    back = _load(cls, exemplar, target)
-    assert np.array_equal(
-        np.asarray(_data(exemplar, once)), np.asarray(_data(exemplar, back))
-    )
-    assert np.allclose(exemplar.geometry(once), exemplar.geometry(back))
+    if exemplar.source is None:
+        target = _path(tmp_path, exemplar, "written")
+        loaded.save(target)
+        back = _load(cls, exemplar, target)
+        assert np.array_equal(
+            np.asarray(_data(exemplar, once)),
+            np.asarray(_data(exemplar, back)),
+        )
+        assert np.allclose(exemplar.geometry(once), exemplar.geometry(back))
     assert np.allclose(exemplar.geometry(once), exemplar.geometry(loaded))
     # A second consolidation changes nothing.
     twice = once.consolidate()
@@ -4742,10 +5047,10 @@ def test_16_consolidate_is_idempotent(
     # The object itself keeps its pending state.
     assert _raw(loaded) is raw
     assert loaded.metadata is metadata
-    assert _same(_pending(loaded), pending)
+    assert _same(_pending(exemplar, loaded), pending)
     # In place, the object holds the consolidated state.
     assert loaded.consolidate(inplace=True) is loaded
-    assert all(field is None for field in _pending(loaded))
+    assert all(field is None for field in _pending(exemplar, loaded))
     raw, metadata = _raw(loaded), loaded.metadata
     loaded.consolidate(inplace=True)
     assert _raw(loaded) is raw
@@ -4761,9 +5066,9 @@ def _check_data_only(exemplar: Exemplar, loaded: tx.Any) -> None:
     a plain matrix does, encodes the pending data into a new record,
     which is held by new metadata.
     """
-    data, chain = _pending(loaded)
+    data, chain = _pending(exemplar, loaded)
     once = loaded.consolidate()
-    data_once, chain_once = _pending(once)
+    data_once, chain_once = _pending(exemplar, once)
     assert data_once is None
     assert chain_once is chain
     if exemplar.stored is None:
@@ -4817,7 +5122,8 @@ def test_17_save_writes_the_consolidated_copy(
     if exemplar.source is not None:
         pytest.skip("The format cannot write.")
     loaded = _changed(cls, exemplar, tmp_path)
-    raw, metadata, pending = _raw(loaded), loaded.metadata, _pending(loaded)
+    raw, metadata = _raw(loaded), loaded.metadata
+    pending = _pending(exemplar, loaded)
     saved = _path(tmp_path, exemplar, "saved")
     consolidated = _path(tmp_path, exemplar, "consolidated")
     loaded.save(saved)
@@ -4839,7 +5145,7 @@ def test_17_save_writes_the_consolidated_copy(
     # Saving leaves the object as it was.
     assert _raw(loaded) is raw
     assert loaded.metadata is metadata
-    assert _same(_pending(loaded), pending)
+    assert _same(_pending(exemplar, loaded), pending)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -4866,7 +5172,7 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     path = _path(tmp_path, exemplar, "src")
     expected = np.asarray(_data(exemplar, loaded.consolidate()))
     loaded.save(path)
-    assert all(field is None for field in _pending(loaded))
+    assert all(field is None for field in _pending(exemplar, loaded))
     assert isinstance(_raw(loaded), exemplar.proxies)
     back = _load(cls, exemplar, path)
     assert np.array_equal(np.asarray(loaded.data), np.asarray(back.data))
@@ -4989,7 +5295,7 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
         exemplar.geometry(loaded)
     loaded.metadata = metadata
     assert loaded.metadata is metadata
-    assert all(field is None for field in _pending(loaded))
+    assert all(field is None for field in _pending(exemplar, loaded))
     assert np.allclose(exemplar.geometry(loaded), expected)
     target = _path(tmp_path, exemplar, "followed")
     if exemplar.source is not None:
@@ -5012,13 +5318,13 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
     exemplar.change_geometry(loaded)
     assigned = exemplar.geometry(loaded)
     assert not np.allclose(assigned, old)
-    pending = _pending(loaded)
+    pending = _pending(exemplar, loaded)
     loaded.metadata = metadata
-    assert _same(_pending(loaded), pending)
+    assert _same(_pending(exemplar, loaded), pending)
     assert np.allclose(exemplar.geometry(loaded), assigned)
     consolidated = loaded.consolidate()
     assert np.allclose(exemplar.geometry(consolidated), assigned)
-    assert exemplar.record_edited(consolidated.metadata.raw)
+    assert exemplar.bare or exemplar.record_edited(consolidated.metadata.raw)
     target = _path(tmp_path, exemplar, "kept")
     if exemplar.source is not None:
         _refuses_writing(loaded, target)
@@ -5202,7 +5508,7 @@ def test_p04_assigned_level_data_is_pending(
         assert loaded.metadata is metadata
         assert images[k].raw is raw[k]
         assert images[k].metadata is metadata
-        pending = _pending(images[k])
+        pending = _pending(level, images[k])
         assert pending[0] is not None
         consolidated = loaded.consolidate()
         assert consolidated._images is None
@@ -5232,7 +5538,7 @@ def test_p04_assigned_level_data_is_pending(
         assert loaded.raw is raw
         assert loaded.metadata is metadata
         assert loaded.images is images
-        assert _same(_pending(images[k]), pending)
+        assert _same(_pending(level, images[k]), pending)
         # Nothing is pending in the copy.
         twice = consolidated.consolidate()
         assert twice.raw is consolidated.raw

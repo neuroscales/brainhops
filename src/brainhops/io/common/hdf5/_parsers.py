@@ -280,8 +280,8 @@ class Hdf5Reader(BinaryFileReader):
 
         The keyword arguments are the options of the format, which
         `from_h5` receives. A file that this method opens is closed once
-        it is read, unless the option `keep_open` is true, which only the
-        formats that keep the file accept.
+        it is read, so a format that reads a dataset later opens the file
+        again by its name.
 
         Parameters
         ----------
@@ -315,7 +315,7 @@ class Hdf5Reader(BinaryFileReader):
         filename : path-like
             The path of the file.
         **kwargs : Any
-            The options of the format, which may include `keep_open`.
+            The options of the format.
 
         Returns
         -------
@@ -331,12 +331,8 @@ class Hdf5Reader(BinaryFileReader):
             filename = path.Path(filename)
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
-        f = h5py.File(str(filename), "r")
-        try:
+        with h5py.File(str(filename), "r") as f:
             return cls.from_h5(f, **kwargs)
-        finally:
-            if not kwargs.get("keep_open", False):
-                f.close()
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
@@ -349,20 +345,15 @@ class Hdf5Reader(BinaryFileReader):
         file : file object
             The stream, open in binary mode.
         **kwargs : Any
-            The options of the format, which may include `keep_open`.
+            The options of the format.
 
         Returns
         -------
         Self
             The object.
         """
-        with preserve_position(file):
-            f = h5py.File(file, "r")
-            try:
-                return cls.from_h5(f, **kwargs)
-            finally:
-                if not kwargs.get("keep_open", False):
-                    f.close()
+        with preserve_position(file), h5py.File(file, "r") as f:
+            return cls.from_h5(f, **kwargs)
 
 
 class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):

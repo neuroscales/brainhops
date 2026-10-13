@@ -192,6 +192,10 @@ PACKAGES: tx.Dict[str, Package] = {
         names=frozenset({"SpmCoordinatesField"}),
         needs=("nibabel",),
     ),
+    "brainhops.io.transformations.fsl.flirt": Package(
+        names=frozenset({"FlirtMetadata", "FlirtRaw", "FlirtTransform"}),
+        needs=("nibabel",),
+    ),
     "brainhops.io.transformations.fsl.fnirt": Package(
         names=frozenset({"FnirtWarpField"}),
         needs=("nibabel",),
@@ -382,12 +386,18 @@ PACKAGES: tx.Dict[str, Package] = {
     ),
     "brainhops.io.transformations.itk.h5": Package(
         names=frozenset(
-            {"DelayedH5Array", "H5Header", "H5Transform", "H5TransformReader"}
+            {
+                "DelayedH5Array",
+                "H5Header",
+                "H5Metadata",
+                "H5Raw",
+                "H5Transform",
+            }
         ),
         needs=("h5py",),
     ),
     "brainhops.io.transformations.itk.mat": Package(
-        names=frozenset({"MatTransform", "MatTransformReaderWriter"}),
+        names=frozenset({"MatMetadata", "MatRaw", "MatTransform"}),
     ),
     "brainhops.io.transformations.itk.nifti": Package(
         names=frozenset(
@@ -400,7 +410,7 @@ PACKAGES: tx.Dict[str, Package] = {
         needs=("nibabel",),
     ),
     "brainhops.io.transformations.itk.tfm": Package(
-        names=frozenset({"TfmTransform", "TfmTransformReader"}),
+        names=frozenset({"TfmMetadata", "TfmRaw", "TfmTransform"}),
     ),
 }
 
