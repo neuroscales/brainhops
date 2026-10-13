@@ -1,8 +1,9 @@
 """FSL FNIRT non-linear transforms.
 
-FNIRT stores either a deformation field or a spline coefficient field in a
-NIfTI file, and the intent code of the file tells the two apart. A single
-reader handles both kinds of field.
+FNIRT stores either a deformation field (`--fout`) or a spline
+coefficient field (`--cout`) in a NIfTI file, and the intent code of the
+file tells the two apart. A single reader handles both kinds of field,
+and it writes each back as the kind that it read.
 """
 
 __all__ = ["FnirtWarpField"]
