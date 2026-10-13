@@ -4,7 +4,8 @@ This memo is agreed and is being implemented. It is tracked in #415,
 and the work is done in the passes described at the end. The first
 two passes are written and under review, and the third is in progress.
 The design of pending data and `consolidate()` is applied across the
-whole stack.
+whole stack. The plain matrix formats and the NiftyReg affine are moved
+on the model of LTA (items 300 to 306).
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides
@@ -366,6 +367,145 @@ Historical names are not kept as aliases. The attributes `header`,
 `struct`, `keyval` and `image`, and the parser mixins, are removed.
 This breaks the public API, which is accepted.
 
+### Pyramids
+
+A pyramid, or multiscale image, stores the same image at several
+resolutions, which are its levels. Every container of a pyramid that
+brainhops reads stores one document that describes the whole pyramid and
+each of its levels. This document is the group document of an OME-Zarr
+store, the IFDs and the OME-XML of a TIFF file, the properties of an
+OpenSlide slide, the boxes of a JPEG 2000 codestream, the `info` file of
+a precomputed volume, the attributes of an N5 group, the `DataSetInfo`
+groups of an Imaris file, or the XML file of a BigDataViewer dataset.
+OME-Zarr also gives each level an array document of its own, inside the
+same store. No container stores a level that can be read without the
+document of its pyramid.
+
+A pyramid format therefore has one record, `<X>Raw`, for its whole
+container. The record holds the metadata of the pyramid and a tuple
+`levels`, which holds the storage description of each level, such as its
+shape, its data type and its chunks, but never its data. One
+`<X>Metadata` holds the record, and the pyramid and each of its levels
+hold the same metadata object, by identity. A level is an object of the
+single-scale format of the same package, such as `OmeZarrLevel` or
+`TiffImage`. It holds the lazy array of its level in `raw`, the shared
+metadata, and the index `level` of its level in the record. The level
+classes are public, and each one reads a single level of a container
+with the reader option `level`. The fourth pass first planned one record
+per level, and this design replaces that plan.
+
+The pyramid holds the tuple of the arrays of its levels in `raw`, finest
+first, so that `raw` stays the only attribute that stores data and an
+untouched copy shares it. Unlike a list, a tuple cannot be changed in
+place. The pyramid takes the `images` and `transformations` fields of
+`MultiScaleImage` over as `_images` and `_transformations`, which hold
+assigned lists only. Its `images` property is a `smartproperty` with a
+cache, which decodes one level object for each array of `raw`, all
+sharing the metadata, and caches the list. Its `transformations`
+property decodes the placements of the pyramid, which map the space of
+its levels to the world, in the same way, and is empty for a container
+that stores no placement. The `metadata` property names both of them in
+`invalidates=`, so other metadata drops the cached levels and placements
+and keeps the assigned ones, as the rules above require. The level
+objects that are dropped keep the old metadata. Within the format,
+`replace` and `from_instance` copy `raw`, the metadata and the assigned
+lists, but not the cache, so a copy of an untouched pyramid decodes
+nothing. From another class, `from_instance` reads the `images` and the
+`transformations` of the other object. Each pyramid gives an explicit
+`shape`, read from the levels that it holds or else from the first array
+of `raw`, without reading the voxels. `MultiScaleImage.data` stays a
+read-only property that returns the data of the finest level.
+
+The helpers of `io/common/_pyramids.py` tell which levels of a pyramid
+are still the levels of its file. `held_images` returns the assigned
+list of levels, or else the cached one, or `None` when the levels were
+neither assigned nor read. `own_level` tells whether a held level is an
+object of the level class that holds the metadata of the pyramid at the
+same index, whose `raw` is the array of that index in the `raw` of the
+pyramid, with no pending data, and with transformations that were never
+read or are the same as a fresh decode. `own_levels` applies that test
+to every held level. Each format calls them explicitly, with its level
+class and its function that decodes the transformations of a level.
+
+A pyramid that has a record, whose levels are those of its file, whose
+placements were never read or are the same as a fresh decode, and which
+is consolidated without options, gives a copy that shares `raw` and the
+metadata. Otherwise each level gives a stored array and a storage
+description. A level of the file gives them as they are stored. A level
+with pending data gives `to_disk` of that data, and a level of another
+class, or one that holds other metadata, gives `to_disk` of its decoded
+data. The transformations of a level are compared with a fresh decode
+and encoded only when they differ, and so are the placements. The new
+record is a copy of the held record with new levels, and the
+consolidated copy holds the new arrays in `raw`, new metadata, and no
+assigned list, so its levels are decoded from the new record.
+
+Zarr and TIFF write every level as it is given, and no ratio between the
+shapes of the levels is checked, for any format. A format whose writer
+derives the coarser levels from the finest one, such as JPEG 2000,
+writes from the finest level only, and assumes that the coarser levels
+that the user assigned are downsampled versions of it. It never refuses
+them. A format that cannot write, such as OpenSlide, consolidates only
+its data, as MINC does (item 101). The pending data of each level then
+moves into the tuple `raw`, the metadata and the transformations are
+kept, and a level of another class is refused with `WriterError`,
+because no record can describe it. The maintainer decided these rules on
+2026-10-13.
+
+OME-NGFF 0.6 lets a dataset of a multiscale hold only a scale, an
+identity, or a scale followed by a translation. The OME-Zarr writer
+encodes a level transformation that is an axis-aligned scale with an
+optional translation, and refuses any other with
+`UnrepresentableTransformationError`, whose message says to move the
+rotation or the shear into the placements of the pyramid, which version
+0.6 stores as common transformations. Factoring a level transformation
+into a common part and a part for each level is tracked in #447. A
+container that stores no placement, such as TIFF or JPEG 2000, composes
+an assigned preferred placement into the transformation of each level
+that it writes, and its class docstring says so.
+
+The reader options `level`, `series`, `setup`, `timepoint` and `frame`
+select what is read. They are kept as fields and never change the record
+(item 49). Options that describe the geometry, such as `pixel_size=`,
+`unit=` and `origin=`, become assigned transformations, so a file read
+with them is written with that geometry, and not byte for byte.
+
+A level is a single-scale image, so a level that is consolidated or
+written alone narrows the record to its own level, at index 0, and keeps
+the rest of the record. `TiffImage.load(path, level=1).save(other)`
+therefore writes a file of one level, and the pyramid class is the way
+to keep the other levels.
+
+An untouched pyramid in a local directory is saved as a copy, file for
+file, of its directory. A pyramid in which one level changed writes
+again only the files of that level and the documents that changed, so
+every other file keeps its bytes. A record keeps the bytes of each
+document as read, and the writer writes them again when the encoded
+document equals the parsed bytes, under a comparison that tells `1` from
+`1.0`. A local directory is written with `replace_directory`
+(`io/base/_utils_files.py`), which fills a new directory beside the
+target and then moves it into place, so a failed write leaves the old
+directory as it was. A save over the directory that the proxies of the
+object read (#426) consolidates the object in place, copies the files of
+the untouched levels from the old directory into the new one, moves the
+new directory into place, and reads the proxies and the record again
+from it. A remote store cannot be renamed, so it is written in place,
+level by level, and the save is not atomic. A remote save over the store
+that the object reads is refused with `WriterError`, so that the proxies
+never read a store that is half written. New Zarr stores are written in
+version 3, and a store that was read keeps its version.
+
+The maintainer decided this design on 2026-10-13. Pass 4a implements
+the helpers, `replace_directory`, the toy pyramid of the conformance
+tests and the checks P1 to P12. Zarr and OME-Zarr, TIFF, OpenSlide and
+Pillow move to the design in the later steps of the fourth pass, which
+also move the format fields of TIFF and Pillow into their records and
+make `OmeZarrField` read its levels lazily. The pyramids of JPEG 2000
+(#273), precomputed (#436), Imaris (#437), N5 (#438) and BigDataViewer
+(#441) were merged before pass 4a. They stay among the formats that are
+not migrated, which the checks P1 to P12 never run on, and move to this
+design after pass 4a.
+
 ### Public surface
 
 Each format package is split into private submodules, such as
@@ -493,6 +633,55 @@ format.
     assigned survive the new metadata, and a consolidated copy and a
     saved file hold them with the edit of its record.
 
+The checks above run on the level class of each pyramid format, which
+reads one level with the option `level`. A level class whose container is
+a directory has no bytes, so its metadata is compared through a summary,
+and its saves are compared file for file. Pass 4a adds the following
+checks, P1 to P12, which run on each pyramid format and on the toy
+pyramid of the test. A format that cannot write consolidates only its
+data in P4, refuses a level of another class in P5, and refuses to write
+in the other checks that write, while P7 and P9 do not apply to it.
+
+- P1. The constructor fields of the pyramid are `images`,
+  `transformations`, `raw`, `metadata` and the options that it declares,
+  and none of them is named `node`, `_slide` or `_source`. `images` and
+  `transformations` are cached properties, and `metadata` invalidates
+  both.
+- P2. Loading is lazy. After a load, `raw` is a tuple of proxies of the
+  level class, and the levels are not decoded. Reading `images` caches a
+  list of objects of the level class, each with its index in `level`, its
+  array of `raw` and the metadata of the pyramid, and no data is decoded.
+- P3. A level of a loaded pyramid holds the data, the geometry and the
+  record of the same level read alone with the option `level`.
+- P4. Data assigned to a level is pending. The arrays and the record of
+  the pyramid do not change, and `consolidate()` gives a copy whose array
+  of that level is `to_disk` of the data, whose other arrays are the same
+  objects, and in which nothing is pending, while the pyramid keeps its
+  pending state.
+- P5. An assigned list of levels, in which one level is an image of
+  another class, is pending and is written.
+- P6. Consolidating an untouched pyramid, or one whose levels and
+  placements were only read, gives a copy that shares `raw` and the
+  metadata and decodes nothing, and consolidating is idempotent.
+- P7. The transformations of a level, and the placements of the pyramid,
+  are compared at consolidation. A list that was only read keeps the
+  record, and so does an equal list that is assigned, while a changed
+  list is written. A container that stores no placement writes the same
+  world geometry into its levels.
+- P8. An untouched pyramid is saved identically, file for file. In a
+  directory, the files that change when one level changes never change
+  when another level changes.
+- P9. A save over the container that the proxies read consolidates the
+  pyramid in place (#426). Its `raw` is then a new tuple of proxies of the
+  new container, and its record is that of a fresh load.
+- P10. `replace` and `from_instance` within the format share `raw` and
+  the metadata and decode nothing, and `from_instance` from another class
+  carries the levels of that object, which are written.
+- P11. Assigning other metadata drops the cached levels and placements
+  and keeps the assigned ones, as check 20 tests for single images.
+- P12. The metadata of a container reads no data, which is tested on a
+  copy of the container that holds no data.
+
 The second pass moves LTA first, so that the reference format matches
 this design. `LtaStruct` becomes `LtaRaw`, its field becomes a
 keyword-only `raw`, and `reverse=False` is dropped. The pass then moves
@@ -522,10 +711,20 @@ The move of MGH, called pass 3a, is pull request #424. The move of AFNI
 and MRtrix, called pass 3b, is pull request #425. The move of NRRD and
 MINC, called pass 3c, is in progress.
 
-The fourth pass moves Zarr, with one record per resolution level, and
-FLIRT. The class variable workaround of FLIRT is removed once it is
-decided whether `moving` and `reference` belong to the format or to the
-record.
+The elastix parameter files move in the same way as M3Z, since a
+parameter file is parsed in one pass. Their record also holds the records
+of the files of their chain of initial transforms, as items 320 to 329
+describe.
+
+The fourth pass moves FLIRT and the formats of pyramids. A pyramid has
+one record for its whole container, which the pyramid and each of its
+levels hold, and in which a level is found by its index `level`, as the
+section on pyramids describes. Pass 4a adds the helpers, the extensions
+of the conformance test and the toy pyramid. The later steps move
+Pillow, then Zarr and OME-Zarr, TIFF and OpenSlide, and then update the
+open pull requests of pyramid formats. The class variable workaround of
+FLIRT is removed once it is decided whether `moving` and `reference`
+belong to the format or to the record.
 
 The move of the raster images read with Pillow, called pass 4e, gives
 `PillowImage` a record of the frame that it reads, `PillowRaw`, held by
@@ -610,7 +809,11 @@ its status.
     take every constructor field of its model. A format must therefore
     keep `data` in its constructor even though `data` becomes a view,
     and `MultiScaleImage.data` is a read-only property for which a rule
-    is set in the fourth pass. Status: open.
+    is set in the fourth pass. Status: open for `data`, and decided for
+    pyramids in pass 4a. `MultiScaleImage.data` stays a read-only property
+    that returns the data of the finest level, and `_holds` is unaffected,
+    because a pyramid format takes `images` and `transformations` over
+    under the same public names.
 11. Reader options fall into two groups. Some describe the object, such
     as `moving`, `reference`, `log` and `steps`, and others describe
     the reading, such as `mmap` and `keep_file_open`. Until the two
@@ -647,8 +850,11 @@ its status.
     PyPI yet, so the checks before each pull request need it installed
     from another source. Status: open.
 15. The levels of a `MultiScaleImage` and the metadata of a pyramid
-    have no record yet. They are decided in the Zarr pass. Status:
-    open.
+    had no record. Status: decided by the maintainer on 2026-10-13, as
+    the section on pyramids describes. A pyramid has one record for its
+    container, which each of its levels holds. Pass 4a implements it for
+    the toy pyramid of the conformance test, and the formats move to it in
+    the later steps of the fourth pass.
 16. `_foreign_format_fields` counted the `MetadataFormat` dispatcher as
     a format that owns `raw`, so `raw` was reset when it should have
     been copied. Status: resolved in pass 1a, where dispatchers are no
@@ -901,7 +1107,9 @@ its status.
     accepted in pass 2c.
 64. The helper `_decompressed` of the conformance harness recognizes a
     compressed file by the gzip magic number and not by a `.gz` suffix.
-    Status: accepted in pass 2c.
+    Status: accepted in pass 2c. In pass 4a, the checks compare saves
+    with `_tree`, which decompresses each file of a directory in the same
+    way.
 65. `M3zMorph.from_instance` given a sequence of transformations
     relabels any chain, and the writer refuses it later. X5 behaves in
     the same way (item 51), and the problem is older than this work.
@@ -1829,6 +2037,272 @@ registrations of its views back into the XML file.
      metadata holds the whole file, as for LTA and M3Z (item 66), and
      check 18 does not apply, because the format has no `raw`. Status:
      accepted.
+
+The items from 290 on were found in pass 4a, which adds the helpers
+of pyramids (`io/common/_pyramids.py`), `replace_directory`, the toy
+pyramid of the conformance test and the checks P1 to P12.
+
+290. A level that is consolidated or written alone narrows the record to
+     its own level, at index 0, and keeps the rest of the record, such as
+     the placement of its pyramid. A level of a pyramid of several levels
+     is therefore never untouched in the sense of check 15, even when
+     nothing was assigned to it, because its record describes more than
+     the file that it writes. Status: decided by the maintainer on
+     2026-10-13, and implemented for the toy level of the conformance test
+     in pass 4a.
+291. A remote store cannot be renamed, so a pyramid in a remote store is
+     written in place, level by level, and the save is not atomic. A
+     remote save over the store that the object reads is refused with
+     `WriterError`. The conformance checks of atomic saves and of #426
+     therefore run on local paths only. Status: decided by the maintainer
+     on 2026-10-13, and to be implemented with Zarr in pass 4b.
+292. tifffile encodes again everything that it writes, so an untouched
+     TIFF file can be saved byte for byte only by copying the bytes of its
+     source. A TIFF file whose dialect or levels changed is encoded again.
+     Status: decided, to be implemented in pass 4c.
+293. OpenSlide cannot write, so its pyramids and levels consolidate only
+     their data. Its 22 classes are to leave the list of formats that are
+     not migrated through the exemplars of the generic TIFF vendor, which
+     share their bases with the other vendors. The maintainer has not
+     answered this point, so the default stands. Status: open, for pass
+     4d.
+294. The toy pyramid of the conformance test is a directory that holds a
+     JSON document and one toy file per level, and its level class is the
+     toy level. They exercise the rules of directory stores without any
+     optional dependency. The toy container stores its preferred placement
+     only, so the branches of the checks for a container that composes the
+     placements into its levels, for a writer that derives its levels, and
+     for a format that cannot write are first run by TIFF, JPEG 2000 and
+     OpenSlide. The generic loader reads a toy pyramid as a pyramid, whose
+     sniffer is more confident, and reads it as a level when the option
+     `level` is given, which the pyramid refuses. Status: accepted in pass
+     4a.
+295. A level changed in place, as in `pyramid.images[1].data = value`,
+     lives in the cache of `images`, as a list of transformations changed
+     in place does (item 191). A copy made with `replace` or
+     `from_instance` within the format decodes the levels again, so it
+     loses that change, while a write of the pyramid itself, including
+     `io.save`, writes it. Assigning the list of levels keeps the change
+     everywhere. Status: open, together with item 191.
+296. `replace_directory` (`io/base/_utils_files.py`) cannot exchange two
+     directories in one step. It moves the old directory aside and then
+     the new one into place, so a reader that opens the target between
+     the two moves finds no directory, but never a half-written one. The
+     old directory is moved back when the second move fails. The new
+     directory has a hidden name that ends like the name of the target,
+     as the new file of `replace_file` has, so that a library that chooses
+     an encoding from the suffix of a name chooses the same. Status:
+     accepted in pass 4a.
+297. The conformance harness has a new field, `Exemplar.container`, which
+     says whether an object is stored in a file or in a directory. The
+     metadata of a directory writes no bytes, so checks 7 and 10 compare
+     its summary through `Exemplar.header`, and check 12 checks that the
+     format refuses bytes. Every check that compares saves uses `_tree`,
+     which reads a directory file by file. `PyramidExemplar` reads the
+     metadata class, the suffix, the proxies, the edit of a record and the
+     hooks `cut` and `header` from the exemplar of the level class, so it
+     declares no `container`, `cut` or `storage` of its own. Image
+     stacks (#431) added `Exemplar.folder` for a folder of numbered files
+     that no extension names, which checks 5 and 12 treat apart, so the
+     two fields are kept side by side, and checks 7 and 10 compare the
+     summary of any metadata that writes no bytes of its own. Status:
+     accepted in pass 4a.
+298. Check P8 cannot tell which files of a directory belong to which level
+     without a hook in the exemplar. It checks instead that the files
+     that change when one level changes never change when another level
+     changes. A save that writes again the files of every level with the
+     same bytes passes, because only the bytes are compared. Status:
+     accepted in pass 4a.
+299. The pyramid formats merged before pass 4a log tensions that their
+     move to the design of pyramids closes. Items 160 and 250 note that
+     the precomputed and N5 pyramids have no `raw` of their own, items
+     161 and 251 note that the rules of atomic and untouched saves were
+     defined for files only, and items 181 and 208 note that the Imaris
+     and BigDataViewer pyramids have no record. The JPEG 2000 pyramid
+     already keeps the cache model of this design, with metadata that
+     drops its decoded `images` and `transformations`, and its writer no
+     longer refuses coarse data that was assigned, as the maintainer
+     decided on 2026-10-13 for every format that derives its levels. The
+     design of pyramids also answers items 130 and 131 of #433, because
+     each record keeps the bytes of its documents, and a level
+     transformation that is not diagonal is refused (#447). Status: open
+     until those pyramids move to the design.
+300. The seven plain matrix formats (`io/transformations/matrix`) share
+     one record, `MatrixAffineRaw`, because a text container and a binary
+     container differ only by the text that a text file keeps and the
+     name of the array that `.npz` and `.mat` files select. Each container
+     has its own registered metadata class, such as `TxtMatrixMetadata`,
+     which reads the container with its array reader and builds the
+     record, and each format class calls its own metadata explicitly.
+     The record holds the stored matrix and the conventions that the
+     caller stated (`ndim`, `vector`, `direction`, `index_base`, the
+     voxel-to-world matrices of the `source` and `target` images, and the
+     coordinate systems), which replace the former attributes
+     `raw_matrix`, `variable`, `vector`, `direction` and `index_base`.
+     `consolidate` stores an assigned matrix in the conventions and the
+     layout of the record (`encode` in
+     `io/transformations/matrix/_conventions.py`), and refuses a
+     translation in a file that stores a linear map and a 1-based endpoint
+     that is no longer a voxel space.
+     Status: open, for review.
+301. The plain matrix formats read files but do not write them, because
+     the writer was ruled out of scope in #242, so the checks of writing
+     make sure that they refuse to write, as for MINC (item 101), and an
+     untouched save is not checked. The checks write their files with
+     NumPy, SciPy and h5py. The data of these formats lives in their
+     record, so a consolidation that cannot be written still encodes a
+     new record, and the harness accepts new metadata in that case
+     (`_check_data_only` in `tests/test_io_conformance.py`). Check 6 is
+     vacuous, as in item 66, and check 10 edits `variable`. The text
+     exemplar writes `.dat` files, and its variant `.1D` files, which
+     `io.save` writes as a `register.dat` file and an AFNI affine (item
+     306), as it writes a `.txt` file as a NiftyReg affine. For a future
+     writer, rewriting the same
+     content gives the same bytes with `np.save`, `np.savez`,
+     `scipy.io.savemat` in format 4 and h5py, but not with
+     `scipy.io.savemat` in format 5, whose header holds the time of
+     writing, and a `.npz` or `.mat` file of several arrays would have to
+     keep its other arrays. Status: open, for the maintainer to decide
+     whether these formats should write.
+302. The plain matrix formats give the coordinate systems of their record
+     to the transformation as its own `input` and `output`, instead of
+     decoding them as properties as LTA does, and a system counts as
+     assigned only when it is not the very object of the record
+     (`_overridden` in `io/transformations/matrix/_xform.py`). The data
+     model copies the private `_input` and `_output` fields, so systems
+     decoded from a record are lost when a transformation is copied into
+     another class. LTA already loses them in this way:
+     `LtaTransformation.to(Affine).input` is `None` for a file of the RAS
+     type, on `main` as well. Status: open, for the maintainer to decide
+     whether the data model should copy the decoded systems of another
+     class, which would let the plain matrix formats decode them too.
+303. `NiftyRegAffine` holds a `NiftyRegAffineRaw` record that keeps the
+     text of the file, as `C3dAffineRaw` does in item 170, so an untouched
+     file keeps its `%.7g` numbers, and a matrix that is encoded is
+     written with the shortest digits that read back exactly. The record
+     holds nothing beside the matrix and its text, and a changed matrix
+     replaces the text, so check 10 is vacuous. The metadata of a
+     NiftyReg affine loses a `.txt` file to the metadata of a plain
+     matrix, as the transformation does, so check 6 selects it with the
+     new field `Exemplar.hint`. `consolidate` refuses an `input` or an
+     `output` that was assigned and is not RAS, which answers item 173
+     for NiftyReg. Status: open, for review.
+304. The four helpers that LTA and the Convert3D format repeated (item
+     171) live in `io/transformations/base/_records.py` as `record_of`,
+     `read_only`, `matrix_to_model` and `matrix_to_disk`, and LTA and
+     NiftyReg call them, and so does `register.dat` (#432), which called
+     the private helpers of LTA. The Convert3D format of #435 still
+     repeats all four, unchanged, in `io/transformations/c3d/_affine.py`,
+     and can switch to them in a later pull request. The MNI transform,
+     BigDataViewer and TrakEM2 formats repeat `_record`, but their
+     helpers `_matrix_to_model` and `_matrix_to_disk` store three rows,
+     or a flat row of twelve or six numbers, rather than a homogeneous
+     matrix, so they are not the same helpers. Status: open.
+305. The readers refuse the options that they do not take with
+     `TypeError`. A plain matrix file of a single array refuses
+     `variable` and `key`, which it used to ignore, and `variable` and
+     `key` that name different arrays are refused. A NiftyReg affine
+     refuses `variable`, `key` and the conventions of a plain matrix. A
+     text file that is read from a path or a stream receives `encoding`
+     after it was decoded, so `encoding` is refused there, as for the
+     Convert3D format, and honoured only when bytes are decoded. Status:
+     open, for the maintainer to decide whether the adapters of
+     `io/base/parsers.py` should open a text file with the given
+     encoding.
+306. The Convert3D format of #435 declares the `.mat` extension,
+     `register.dat` (#432) the `.dat` extension and the AFNI affine the
+     `.1D` extension, and each converts an affine whose systems are
+     unknown, so `io.save` of a plain matrix built from data writes a
+     file of that format instead of raising `WriterError`. The checks of
+     writing of a format that cannot write therefore accept a save by
+     another format, and check only that the format is not a writer and
+     that the file does not read back as the format
+     (`_refuses_writing` in `tests/test_io_conformance.py`). A
+     Convert3D matrix holds no marker, so the metadata of a NiftyReg
+     affine, which scores a text file of a homogeneous matrix from its
+     content, wins over the metadata of Convert3D, which a `.mat` name
+     alone selects, and check 6 selects the Convert3D metadata with
+     `Exemplar.hint`, as it does for NiftyReg (item 303). Status: open,
+     for the maintainer to decide whether a `.mat` text file should
+     dispatch to the Convert3D metadata without a hint.
+320. An elastix parameter file may name an initial transform in another
+     file, and that file may name another. The record of each file of the
+     chain is read when the file that names it is read, and it is held in
+     the record of that file, in `ElastixRaw.initial`
+     (`io/transformations/elastix/_raw.py`). The record of the last file
+     therefore holds the whole chain, and so does its metadata. The files
+     are small text files, and reading them at once keeps the error of a
+     missing or looping file where the file is read, as before. The name in
+     the parameter map is kept as the file stores it. Status: proposed in
+     the elastix pass.
+321. A transformation whose chain was not assigned is written to a path
+     with the files of its chain. Each file whose name is relative is
+     written beside the file that names it, under that name, unless it
+     already holds the same bytes, and a file that holds other bytes is
+     never replaced: the writer raises `WriterError`, and so it does when a
+     file of the chain would be written over the new file
+     (`_place_initial` in `io/transformations/elastix/_xform.py`). A name
+     that is absolute is left as it is. The MINC transform files of #434
+     place their grid volumes in the same way, but replace a file that
+     holds other bytes. elastix looks for a relative name in the working
+     directory first, so a file of the same name there would be read
+     instead of the placed one. Status: open, for the maintainer to choose
+     one rule for both formats.
+322. The reader option `initial` of elastix selects what is read and
+     decoded. `initial=False` reads no file of the chain, and a file name
+     reads that file in place of the one that the map names. A
+     transformation given as `initial` is held in the private field
+     `_initial`, which copies keep, and it is not written, as for the X5
+     options of item 49. A consolidation that encodes an assigned chain
+     resets it, since the new record has no initial transform. Status:
+     proposed in the elastix pass.
+323. The elastix record keeps the text that it was read from and writes
+     it back while it still parses to the parameter map, as AFNI does
+     (item 84). A file is read as bytes and decoded, so that its line
+     endings and comments survive. A record read from lines keeps no text,
+     because the line endings are not known, and a stream that the caller
+     opened in text mode has already translated them. Status: proposed in
+     the elastix pass.
+324. One metadata class, `ElastixMetadata`, reads both syntaxes of
+     elastix. The syntax is a field of the record, which a file name gives
+     as elastix does (`.toml` or not), and which the content gives when
+     there is no name. Each format class passes its syntax explicitly to
+     the reader and to `consolidate`. A record in the other syntax, as
+     after a conversion between the two formats, is copied into a record
+     of the syntax of the class at consolidation, without its text, and
+     the converters between the two formats keep the metadata of an
+     untouched transformation. Status: proposed in the elastix pass.
+325. The transform parameters of an elastix record are a read-only array,
+     and the blocks decoded from the record hold read-only views of it
+     (`_read_only` in `io/transformations/elastix/_blocks.py`), so an edit
+     in place cannot change the record. SciPy refuses a read-only array, so
+     `AffineLogTransform` copies the matrix before its exponential. Status:
+     proposed in the elastix pass.
+326. The elastix pass removes the `parameter_map` field in favor of
+     `metadata.raw.parameters`, the `reverse=False` of the base class, the
+     class methods `_read_map` and `_format_map`, and the module function
+     `initial_filename` of the private `_xform` module, which moves to
+     `_raw`. The writers no longer accept unknown options, and an
+     untouched file keeps its bytes. These changes are to be announced
+     with item 13. Status: open, as for item 13.
+327. The block of an elastix transformation is a view of its record, and
+     not of its chain, so assigning a chain does not clear it, and
+     `xform.block` still describes the file while the chain is pending. In
+     the conformance tests, check 6 is vacuous, as for LTA and M3Z (item
+     66), and checks 18 and 19 do not apply, since the format has no `raw`
+     and is not an image. The chains of several files are checked in
+     `tests/test_io_elastix.py`, because the harness builds objects from
+     data alone. Status: proposed in the elastix pass.
+328. The elastix formats import private names of other packages: the ITK
+     block classes and `_make_system` from `io/transformations/itk`, and
+     `_compatible` from `io/transformations/base/affines.py`, which checks
+     an assigned system against LPS. ITK is moved to records at the same
+     time, so these imports may need to follow it. Status: open.
+329. An elastix transformation without a record and without a chain
+     raises `UnrepresentableTransformationError` when it is consolidated,
+     as it did when it was written, and `ElastixMetadata` without a record
+     raises `WriterError`, as M3Z does (item 61). LTA and X5 write an empty
+     record instead. Status: proposed in the elastix pass.
 330. Pillow writes the header of a raster file only together with its
      pixels, so `PillowMetadata` reads a record but cannot be written
      (`io/images/pillow/_metadata.py`). Checks 6, 7 and 10 compare its

@@ -20,7 +20,6 @@ from brainhops._core.properties import (
     InvalidatorInAttribute,
     smartproperty,
 )
-from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
@@ -33,6 +32,12 @@ from brainhops.io.common.freesurfer import FreesurferTkrSystem
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
+)
+from brainhops.io.transformations.base._records import (
+    matrix_to_disk,
+    matrix_to_model,
+    read_only,
+    record_of,
 )
 
 # this format
@@ -60,12 +65,6 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 # ----------------------------------------------------------------------
 #   READING THE RECORD
 # ----------------------------------------------------------------------
-
-
-def _record(xform: "LtaTransformation") -> tx.Optional[LtaRaw]:
-    """Return the record of the metadata of a transformation, or `None`."""
-    metadata = xform.metadata
-    return None if metadata is None else metadata.raw
 
 
 def _system(
@@ -107,19 +106,6 @@ def _typed_system(
     raise AssertionError(f"unsupported LTA type: {enum_name(record.type)}")
 
 
-def _read_only(matrix: np.ndarray) -> np.ndarray:
-    """Return a matrix decoded from a record, made read-only.
-
-    The matrix is cached, but the writer reads the record and not the
-    cached matrix, so an edit in place would be lost. To change the
-    matrix, a new matrix is assigned as data instead, which stays pending
-    until the transformation is consolidated.
-    """
-    matrix = np.array(matrix, dtype=np.float64)
-    matrix.flags.writeable = False
-    return matrix
-
-
 # ----------------------------------------------------------------------
 #   THE MATRIX OF A RECORD
 # ----------------------------------------------------------------------
@@ -130,15 +116,9 @@ def _read_only(matrix: np.ndarray) -> np.ndarray:
 # transformation is consolidated, which encodes a new record. A
 # transformation is never given a record that it did not read or encode,
 # because the type and the geometries of such a record would be made up,
-# and the writer would trust them.
-
-
-def _matrix_to_model(matrix: tx.Any) -> np.ndarray:
-    """Return the data of a transformation from the matrix of a record.
-
-    The record stores the homogeneous matrix, whose last row is dropped.
-    """
-    return np.asarray(matrix, dtype=np.float64)[:-1]
+# and the writer would trust them. The helpers that read the record and
+# decode and encode its matrix are shared with the other formats whose
+# matrix lives in their record (`io/transformations/base/_records.py`).
 
 
 def _record_to_model(record: LtaRaw) -> np.ndarray:
@@ -153,24 +133,7 @@ def _record_to_model(record: LtaRaw) -> np.ndarray:
     matrix = np.asarray(record.affine.matrix, dtype=np.float64)
     if record.type == LtaType.REGISTER_DAT and matrix.shape == (4, 4):
         matrix = np.linalg.inv(matrix)
-    return _matrix_to_model(matrix)
-
-
-def _matrix_to_disk(data: tx.Optional[ArrayProtocol]) -> tx.Tuple:
-    """Return the matrix that a record stores for the data of a model.
-
-    The record stores the homogeneous matrix as a tuple of rows of floats.
-    Data of `None`, which the data model reads as the identity, is stored
-    as the identity.
-    """
-    if data is None:
-        homogeneous = np.eye(4)
-    else:
-        data = np.asarray(data, dtype=np.float64)
-        last = np.zeros((1, data.shape[-1]))
-        last[0, -1] = 1.0
-        homogeneous = np.concatenate([data, last])
-    return tuple(tuple(float(v) for v in row) for row in homogeneous)
+    return matrix_to_model(matrix)
 
 
 # ----------------------------------------------------------------------
@@ -274,7 +237,7 @@ class LtaTransformation(
         it is `None` when the file records no source geometry. Without a
         record, it is `None`.
         """
-        record = _record(self)
+        record = record_of(self)
         return _typed_system(record, None if record is None else record.src)
 
     @smartproperty
@@ -284,7 +247,7 @@ class LtaTransformation(
         Unless the system was set explicitly, it follows from the LTA type
         and from the destination geometry, in the same way as `input`.
         """
-        record = _record(self)
+        record = record_of(self)
         return _typed_system(record, None if record is None else record.dst)
 
     @smartproperty(cache=True, invalidates=_FORGET_VIEWS)
@@ -296,10 +259,10 @@ class LtaTransformation(
         LTA type. Otherwise the matrix is the matrix of the record, without
         its last row, and is read-only, or `None` without a record.
         """
-        record = _record(self)
+        record = record_of(self)
         if record is None:
             return None
-        return _read_only(_record_to_model(record))
+        return read_only(_record_to_model(record))
 
     # --- sniff --------------------------------------------------------
 
@@ -477,7 +440,7 @@ class LtaTransformation(
         UnrepresentableTransformationError
             If the LTA format cannot encode the systems or the matrix.
         """
-        record = _record(self)
+        record = record_of(self)
         overridden = (
             self._data is not None
             or self._input is not None
@@ -579,14 +542,14 @@ class LtaTransformationVoxToVox(LtaTransformation):
     @smartproperty
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The voxel system of the source volume, unless set explicitly."""
-        record = _record(self)
+        record = record_of(self)
         info = LtaRaw.SrcVolumeInfo() if record is None else record.src
         return _system(LtaVoxelSystem, info)
 
     @smartproperty
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The voxel system of the destination volume, unless set."""
-        record = _record(self)
+        record = record_of(self)
         info = LtaRaw.DstVolumeInfo() if record is None else record.dst
         return _system(LtaVoxelSystem, info)
 
@@ -599,10 +562,10 @@ class LtaTransformationVoxToVox(LtaTransformation):
         voxel-to-voxel type. Otherwise the matrix is derived from the
         record and is read-only, or `None` without a record.
         """
-        record = _record(self)
+        record = record_of(self)
         if record is None:
             return None
-        return _read_only(_get_vox2vox(record)[:-1])
+        return read_only(_get_vox2vox(record)[:-1])
 
 
 class LtaTransformationPhysToPhys(LtaTransformation):
@@ -615,14 +578,14 @@ class LtaTransformationPhysToPhys(LtaTransformation):
     @smartproperty
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The physical system of the source volume, unless set explicitly."""
-        record = _record(self)
+        record = record_of(self)
         info = LtaRaw.SrcVolumeInfo() if record is None else record.src
         return _system(LtaPhysicalSystem, info)
 
     @smartproperty
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The physical system of the destination volume, unless set."""
-        record = _record(self)
+        record = record_of(self)
         info = LtaRaw.DstVolumeInfo() if record is None else record.dst
         return _system(LtaPhysicalSystem, info)
 
@@ -635,10 +598,10 @@ class LtaTransformationPhysToPhys(LtaTransformation):
         physical-to-physical type. Otherwise the matrix is derived from the
         record and is read-only, or `None` without a record.
         """
-        record = _record(self)
+        record = record_of(self)
         if record is None:
             return None
-        return _read_only(_get_phys2phys(record)[:-1])
+        return read_only(_get_phys2phys(record)[:-1])
 
 
 class LtaTransformationRASToRAS(LtaTransformation):
@@ -663,10 +626,10 @@ class LtaTransformationRASToRAS(LtaTransformation):
         RAS-to-RAS type. Otherwise the matrix is derived from the record
         and is read-only, or `None` without a record.
         """
-        record = _record(self)
+        record = record_of(self)
         if record is None:
             return None
-        return _read_only(_get_ras2ras(record)[:-1])
+        return read_only(_get_ras2ras(record)[:-1])
 
 
 # ----------------------------------------------------------------------
@@ -715,7 +678,7 @@ def _build_raw(xform: LtaTransformation) -> LtaRaw:
     See [`LtaTransformation.consolidate`][].
     """
     src_system, dst_system = xform.input, xform.output
-    old = _record(xform)
+    old = record_of(xform)
     if old is None:
         old = LtaRaw()
     Src, Dst = LtaRaw.SrcVolumeInfo, LtaRaw.DstVolumeInfo
@@ -763,7 +726,7 @@ def _build_raw(xform: LtaTransformation) -> LtaRaw:
             f"to say which it is."
         )
 
-    matrix = _matrix_to_disk(xform.matrix)
+    matrix = matrix_to_disk(xform.matrix)
     if lta_type == LtaType.REGISTER_DAT and np.shape(matrix) == (4, 4):
         try:
             inverse = np.linalg.inv(np.asarray(matrix, dtype=np.float64))
@@ -811,6 +774,6 @@ def _lta_written(xform: LtaTransformation) -> LtaRaw:
     UnrepresentableTransformationError
         If the LTA format cannot encode the systems or the matrix.
     """
-    record = _record(xform.consolidate())
+    record = record_of(xform.consolidate())
     _check_shape(record)
     return record
