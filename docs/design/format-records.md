@@ -693,9 +693,9 @@ the record because the file is parsed in one pass.
 
 The move of LTA, called pass 2a, is pull request #421. The move of X5,
 called pass 2b, is pull request #422. The move of M3Z, called pass 2c,
-is under review. ITK-H5 is deferred. It shares
-`ItkStruct` with the ITK text and MAT formats and has no writer, so it
-moves with them.
+is under review. ITK-H5 was deferred, because it shares `ItkStruct` with
+the ITK text and MATLAB formats and has no writer, and it moves with them
+in the fourth pass.
 
 The third pass moves MGH, AFNI, MRtrix, NRRD and MINC. MGH gets a
 record with its header and its tags, and uses nibabel's proxy. For the
@@ -732,6 +732,34 @@ vendor, `OpenSlideMetadata` holds it, and the lazy array `_SlideArray`
 reads one level region by region. The class variable workaround of
 FLIRT is removed once it is decided whether `moving` and `reference`
 belong to the format or to the record.
+
+The move of FLIRT and of the three ITK formats that store parameters, the
+text `.tfm`, MATLAB `.mat` and HDF5 `.h5` files, is in progress. The
+images `moving` and `reference` of FLIRT belong to the format: they are
+options of the transformation that are never stored, as the geometries of
+a `register.dat` file are. The record of FLIRT holds its matrix
+(`FlirtRaw`), and the record of each ITK format holds the blocks of its
+file in the order of the file (`TfmRaw`, `MatRaw` and `H5Raw`), with the
+root strings of an HDF5 file and the bytes of a MATLAB file. Only the
+MATLAB format writes. The formats that do not write encode a pending
+chain or matrix into a new record in memory (item 311).
+
+The move of the raster images read with Pillow, called pass 4e, gives
+`PillowImage` a record of the frame that it reads, `PillowRaw`, held by
+`PillowMetadata`, and a lazy array of that frame in `raw`. The format,
+the mode, the `info` dictionary and the number of frames leave the
+constructor of the image for the record, and the reader options
+`frame`, `palette` and `dpi` stay fields of the image. Pillow encodes
+again whatever it writes, so an image that was read and not changed is
+written as the bytes of its file (item 331).
+
+Step 4b-i moves the plain Zarr array. `ZarrImage` holds a `ZarrRaw`
+record, which keeps the document of the array as the typed model of
+abczarr together with the bytes of each document as read, and a lazy
+array of the store in `raw`, and the Zarr adapters of
+`io/common/zarr/_parsers.py` no longer hold the opened node. Step 4b-ii
+moves the OME-Zarr images and fields, whose record holds the group
+document and one `ZarrRaw` for each level.
 
 The fifth pass brings the #233 vocabulary, as described in the previous
 section.
@@ -1023,10 +1051,12 @@ its status.
     proxy holds only a file name, so the metadata can still be pickled,
     but copied metadata refers to the source file by its name. Status:
     accepted in the pass 2b review (146c69b).
-47. The shared HDF5 adapter still reads the `keep_open` option
-    (`io/common/hdf5/_parsers.py`), because ITK-H5 is not migrated yet.
+47. The shared HDF5 adapter still read the `keep_open` option
+    (`io/common/hdf5/_parsers.py`), because ITK-H5 was not migrated yet.
     The `TypeError` that X5 raises for `keep_open=` comes from its
-    constructor. Status: accepted until ITK-H5 is migrated.
+    constructor. Status: resolved by the move of ITK-H5, where the
+    adapter always closes the file that it opens, and ITK-H5 raises the
+    same `TypeError`.
 48. An untouched HDF5 file is saved byte for byte only when h5py wrote
     it with the attribute and creation order of brainhops and with
     contiguous datasets, which includes a fixture in the layout of
@@ -1337,7 +1367,9 @@ its status.
      `data` over as `_data`, so that `replace` keeps their lazy source,
      and the permutation of an OME-Zarr level is a field (`perm`), so
      that a copy still transposes the array that it reads. Status:
-     resolved in the first pass of pending data.
+     resolved in the first pass of pending data. Since step 4b-i, a level
+     holds the permutation in its lazy array, `_ZarrProxy`
+     (`io/common/zarr/_data.py`), which replaces the node.
 109. An untouched object is written with its record as it is, so a NIfTI
      qform whose code is 0, or the `DISPVECT` intent of a legacy field
      of coordinates read through a hint, is kept on an untouched save.
@@ -1429,9 +1461,9 @@ its status.
      header of each one, with the stacking axis and the geometry of the
      stack. TIFF and Pillow images have no record on the main branch
      yet, so the header of a member is the structure that their readers
-     already parse: the `SeriesMetadata` of the TIFF backend, and a
-     `PillowHeader` that the Pillow backend reads without decoding the
-     pixels. Status: open. The members are to hold `TiffRaw` and
+     already parse: the `SeriesMetadata` of the TIFF backend (named
+     `TiffMetadata` before #459), and a `PillowHeader` that the Pillow
+     backend reads without decoding the pixels. Status: open. The members are to hold `TiffRaw` and
      `PillowRaw` once the TIFF (#459) and Pillow (#458) records are on
      the main branch.
 122. Image stacks are written as folders of numbered files, through the
@@ -1747,9 +1779,13 @@ its status.
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
      the formats merged later (N5, Imaris, precomputed, JPEG 2000,
-     BigDataViewer, image stacks and OpenSlide) follow the same rule, and
-     the JPEG 2000 and OpenSlide pyramids cache the levels and the
-     placements that they decode in the same way. Status: resolved.
+     BigDataViewer, image stacks, Pillow, TIFF, plain Zarr arrays and
+     OpenSlide) follow the same rule, and the JPEG 2000, TIFF and OpenSlide
+     pyramids cache the levels and the placements that they decode in the
+     same way. The chains of the ITK text, MATLAB and HDF5 formats
+     (`TfmTransform`, `MatTransform` and `H5Transform`), which are mutable
+     lists as the transformations of an image are, follow it too (item
+     312). Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
      the cache, so it is lost when other metadata is assigned, and a copy
      made with `replace` or `from_instance` decodes the list again instead
@@ -2055,7 +2091,9 @@ pyramid of the conformance test and the checks P1 to P12.
      remote save over the store that the object reads is refused with
      `WriterError`. The conformance checks of atomic saves and of #426
      therefore run on local paths only. Status: decided by the maintainer
-     on 2026-10-13, and to be implemented with Zarr in pass 4b.
+     on 2026-10-13, and implemented for the plain Zarr array in step 4b-i
+     (`ZarrImage.to_store`). The pyramids of OME-Zarr follow in step
+     4b-ii.
 292. tifffile encodes again everything that it writes, so an untouched
      TIFF file can be saved byte for byte only by copying the bytes of its
      source. A TIFF file whose dialect or levels changed is encoded again.
@@ -2227,6 +2265,83 @@ pyramid of the conformance test and the checks P1 to P12.
      `Exemplar.hint`, as it does for NiftyReg (item 303). Status: open,
      for the maintainer to decide whether a `.mat` text file should
      dispatch to the Convert3D metadata without a hint.
+310. The data of a FLIRT transform is its FLIRT matrix, `flirt_matrix`,
+     which lives in the record and which an assigned matrix overrides
+     until it is consolidated. The affine of the data model maps the RAS
+     space of the reference to that of the moving image, and it is
+     computed from the FLIRT matrix and the two images, so it cannot be
+     assigned, and the fields `_data` and `_matrix` of `Affine` are still
+     forgotten (`io/transformations/fsl/flirt/_xform.py`). Making the
+     affine the pending data would need both images to encode a record,
+     and a FLIRT matrix could then not be built without them. The images
+     are options of the format, which are never stored, as the
+     geometries of a `register.dat` file are. The conformance harness
+     reads the pending state of FLIRT through `Exemplar.pending`. Status:
+     open, for the maintainer to decide whether the affine should be the
+     pending data.
+311. FLIRT, ITK text and ITK HDF5 files are not written by brainhops,
+     but their records are plain structures, so `consolidate()` encodes a
+     pending matrix or chain into a new record in memory, unlike MINC,
+     which consolidates only its data (item 101). The conformance harness
+     marks them with `Exemplar.records`, and runs check 16 without a
+     file. Checks 5, 8, 9 and 10 check that they refuse to write, and
+     check 6 is vacuous for the files that are read in one pass (FLIRT,
+     ITK text and MATLAB), as for LTA (item 66). The records of the text
+     formats do not keep the text of their files, because nothing writes
+     it. The records of FLIRT and ITK text files hold nothing but their
+     data, so an assigned value replaces an edit of the record, and
+     check 20 does not check that the edit is kept under it for the
+     exemplars marked with `Exemplar.bare`. Status: open, for the maintainer to decide whether these
+     formats should write, which would make the untouched round trips
+     byte for byte (with the exemption of item 48 for HDF5).
+312. The blocks of an ITK record are `ItkStruct` objects
+     (`io/transformations/itk/_common.py`), which are also
+     transformations, and the chain that an ITK format
+     decodes holds the blocks of its record, without a copy. Their
+     parameters are read-only arrays, or lazy arrays for the warps of an
+     HDF5 file, but a field of a block can still be assigned, which would
+     change the record in place. An ITK format is a
+     `MutableSequence`, whose chain could be edited in place and was then
+     written, so its chain follows the rule of the images (item 190): it
+     is decoded on first access and cached apart from an assigned chain,
+     `consolidate` reads it through `held_transformations`, and it is
+     compared there with a fresh decode of the record, block by block
+     and by identity (`io/transformations/itk/_chains.py`). Assigning
+     other metadata or another `position` drops the decoded chain, with
+     a change made to it in place (item 191), and keeps an assigned
+     chain. The other chain formats keep their chain pending by
+     assignment (item 114). Status: open.
+313. An untouched ITK MATLAB file is written byte for byte because the
+     record keeps the bytes of the file (`MatRaw.content`), which are
+     written while they still decode to the blocks and the byte order of
+     the record. Encoding the blocks again gives the same bytes for the
+     files that SimpleITK writes, but not for a file whose variables are
+     marked as stored row by row, whose fixed parameters have another name
+     or are in single precision, as `itk::MatlabTransformIOTemplate`
+     writes them for a transform in single precision
+     (`itkMatlabTransformIO.cxx` and `vnl_matlab_write.cxx`, ITK v5.4.0).
+     The option `position` only selects what is read, so a file with
+     several blocks is written whole, as for X5 (item 49). A chain that is
+     encoded again keeps the byte order of the record, and the options
+     `byteorder` and `precision` encode every block of the record again
+     when they differ from it. Status: open.
+314. The move of FLIRT and ITK removes the names `FlirtMatrixReader`,
+     `TfmTransformReader`, `MatTransformReaderWriter` and
+     `H5TransformReader`, and the attributes `header` and `file` of
+     `H5Transform`, in favor of `metadata.raw`. The option `keep_open` of
+     `H5Transform` raises `TypeError`, and its warps are read lazily by
+     default (`load=False`). The images of a FLIRT transform are
+     keyword-only, and its FLIRT matrix is read from the record. A FLIRT
+     transform copied within its format no longer needs its images, and
+     assigning an image drops the views derived from the old one. An
+     untouched ITK MATLAB file read with `position=` is written whole,
+     and a chain that is encoded again keeps the byte order of its file.
+     `MetadataFormat.load` reads a `.mat` file of sixteen numbers as
+     `FlirtMetadata` unless the hint `c3d` is given, as the dispatcher of
+     the transformations reads it as a FLIRT matrix (item 172), so check
+     6 dispatches the metadata of the Convert3D exemplar with the hint of
+     `Exemplar.hint` (item 306). These changes are to be announced with
+     item 13. Status: open, as for item 13.
 320. An elastix parameter file may name an initial transform in another
      file, and that file may name another. The record of each file of the
      chain is read when the file that names it is read, and it is held in
@@ -2305,6 +2420,172 @@ pyramid of the conformance test and the checks P1 to P12.
      as it did when it was written, and `ElastixMetadata` without a record
      raises `WriterError`, as M3Z does (item 61). LTA and X5 write an empty
      record instead. Status: proposed in the elastix pass.
+330. Pillow writes the header of a raster file only together with its
+     pixels, so `PillowMetadata` reads a record but cannot be written
+     (`io/images/pillow/_metadata.py`). Checks 6, 7 and 10 compare its
+     record through the `header` hook of the exemplar instead of the bytes
+     that metadata writes, and check 6 cuts a PNG file where Pillow's tile
+     starts and a JPEG file after its start-of-scan segment, which is
+     where Pillow stops reading the header. Checks 7 and 10 compare the
+     bytes that metadata writes whenever the metadata class can write, so
+     the other formats are checked as before. Status: proposed in pass 4e.
+331. Pillow encodes again whatever it writes, so an untouched raster image
+     could not be saved byte for byte through Pillow. The lazy array of
+     the image keeps the path or the stream of its file and gives its
+     bytes (`_PillowProxy.read_stored` in `io/images/pillow/_data.py`),
+     and an image with a record, no pending data, the transformations of
+     its record, and no writer option is written as those bytes when it is
+     written in the format of its record. The record holds no bytes,
+     because the pixels of a raster file cannot be told from its header
+     in a way that holds for every format. An MPO file is a JPEG file, so
+     JPEG keeps the format of an MPO record. Every format that Pillow reads
+     is therefore saved byte for byte while untouched, including formats
+     that Pillow cannot write and every frame of a multi-frame file. Any
+     change, any writer option or another format encodes the image again
+     with Pillow, and the consolidated copy reads back the bytes that
+     Pillow wrote. Pillow names a JP2 file and a raw codestream both
+     `JPEG2000`, so an untouched JP2 file written under a `.j2k` name
+     keeps its JP2 container. Status: proposed in pass 4e.
+332. The record is read before Pillow decodes the frame, so that reading
+     the metadata decodes nothing. The keys that Pillow adds to `info` only
+     when it decodes the pixels are therefore not in the record: the
+     chunks of a PNG file that follow its pixels, such as text or an
+     `eXIf` chunk there, and the `duration` and `timestamp` of a WebP
+     frame. Before this pass, `info` was read after the decoding. An image
+     that is changed and written again loses an EXIF block that its PNG
+     file stored after the pixels. Status: proposed in pass 4e.
+333. The reader options `frame`, `palette` and `dpi` stay fields of
+     `PillowImage`, as decided for the reader options of every format.
+     `dpi=True` decodes the pixel size from the resolution of the record,
+     so an image read with it is still saved byte for byte, while a
+     resolution, a pixel size or a unit given to the reader are assigned
+     as transformations, which consolidation compares with those of the
+     record. `frame` and `palette` say how the lazy array reads the file,
+     and `consolidate` refuses with `WriterError` an image whose fields
+     differ from those of its lazy array (`_check_reading` in
+     `io/images/pillow/_image.py`), since changing them cannot change
+     what was read. Status: proposed in pass 4e.
+334. Pillow ignores a writer option that the plugin of a format does not
+     read, so the writer checks the options against the keys that the
+     `_save` function of each plugin reads in Pillow 10.4.0, and raises
+     `TypeError` for any other (`_SAVE_OPTIONS` in
+     `io/images/pillow/_image.py`). A format that the table does not list
+     takes no option. An option that a later version of Pillow reads is
+     refused until the table lists it. Status: open, for the maintainer to
+     decide whether the table should follow the installed version of
+     Pillow.
+335. When a raster image is encoded again, the writer takes from the
+     record the format, the resolution, the ICC profile and the EXIF
+     block. The other keys of `info`, such as the transparency and the
+     gamma of a PNG file, the comment of a JPEG file or the compression of
+     a TGA file, are neither written nor refused, so an edit of them in
+     the record is lost. The problem is older than this work. Status:
+     open.
+336. The lazy array of a raster image decodes the whole frame each time
+     its values are read. Dask, which is the default backend when it is
+     installed, reads the lazy array once per chunk, so a frame larger
+     than one chunk is decoded once per chunk. The compressed MRtrix
+     images behave in the same way. Status: open.
+337. Pass 4e changes the following public names and behaviors of
+     `PillowImage`, to be announced with item 13. The fields
+     `image_format`, `mode`, `info` and `n_frames` are removed from the
+     constructor and the attributes in favor of `metadata.raw.format`,
+     `metadata.raw.mode`, `metadata.raw.info` and
+     `metadata.raw.n_frames`. `frame` is 0, not `None`, for an image built
+     from data, and `palette` and `dpi` become fields. The data decoded
+     from a file are read-only, and a Dask array when Dask is installed,
+     where they were a writable NumPy array. A frame whose pixels cannot
+     be decoded raises `ParserContentError` when `data` is first read,
+     not when the file is loaded. A writer option that Pillow does not
+     read raises `TypeError` (item 334). A stream given to the reader must
+     stay open while the data may be read. Status: open, as for item 13.
+338. The conformance harness has a new field, `Exemplar.read`, which
+     gives the options with which the checks read every file of a format.
+     A raster file records a resolution that the Pillow reader applies
+     only with `dpi=True`, so the geometry that the checks assign is read
+     back only with that option. Checks 13 and 20, which were added
+     while this pass was open, read their files with these options too.
+     Status: proposed in pass 4e.
+339. Check 20 found that a raster image with nothing pending, given
+     other metadata whose record decodes the same transformations as
+     those that the image held, was written as the bytes of its file
+     under the record of the other metadata, which may record another
+     resolution. `PillowImage.consolidate` now keeps the bytes of the file
+     only when the lazy array reads the record that the image holds, as
+     the JPEG 2000 image does. Status: resolved.
+340. A plain Zarr array stores no geometry. `ZarrImage` decodes an empty
+     list of transformations, and its writer dropped any other list
+     without saying so, which the rules forbid. Status: decided in step
+     4b-i. The writer refuses a list that is not made of identities with
+     `UnrepresentableTransformationError`, whose message points to
+     OME-Zarr and to `image.transformations = []`. `io.save` of an image
+     with a geometry, such as a NIfTI image, to a `.zarr` name is
+     therefore refused, where it wrote the data alone before. The reader
+     option `transformation` still assigns a geometry, which must be
+     cleared before the image is written. Storing the geometry of a plain
+     array, for example with the coordinate transformations that OME-NGFF
+     0.6 allows on an array, is open for the maintainer.
+341. `ZarrRaw` keeps the document of an array as the model of abczarr,
+     and compares a document with its stored bytes through the model:
+     the bytes are parsed by abczarr, both sides are serialized by
+     abczarr, and the two serializations are compared with sorted keys,
+     which tells the whole number `1` from the number `1.0`. The drivers
+     spell the same document differently: zarr-python writes
+     `"storage_transformers": []` and TensorStore leaves out the
+     configuration of the default chunk key encoding, and the model
+     absorbs both, so that an untouched store of either driver keeps its
+     bytes. A difference that the model of abczarr does not keep is not
+     seen. Status: accepted in step 4b-i.
+342. A document that changed is serialized again by brainhops, with an
+     indentation of two spaces, and a `.zarray` of Zarr version 2 is
+     written without the `node_type` that the model of abczarr adds. A
+     store of version 2 that was read without a `.zattrs` gets one only
+     when the array has attributes. When the data change shape or type, or when a writer
+     option is given, the document is described again by abczarr's
+     `ArrayConfig`, with the version, the attributes, the dimension names
+     and the chunks of the record, and abczarr's defaults for the codecs.
+     The codecs of the record are not kept then. A store of Zarr version
+     1 cannot be written, and the writer asks for the option
+     `zarr_version`. Status: accepted in step 4b-i.
+343. `OmeZarrImage` and `OmeZarrField` still read their group through the
+     field `node`, which the temporary parser `_ZarrNodeReaderWriter`
+     (`io/common/zarr/_parsers.py`) keeps with its position among their
+     positional fields. `OmeZarrLevel` is a `ZarrImage` whose lazy array
+     permutes the stored axes, which holds the `ZarrRaw` of its own array
+     and the transformation of its dataset as an assigned list. A level
+     written alone is therefore written as a plain array, and refused
+     when its transformation is not the identity, and an unchanged level
+     keeps the stored order of its axes while a changed level is written
+     in the brainhops order. Status: temporary, until step 4b-ii moves
+     the OME-Zarr formats to the design of pyramids.
+344. A plain Zarr array has no geometry, so the exemplar of `ZarrImage`
+     lets its data stand in for the geometry, as FNIRT does. Check 13
+     then compares the transformations that the written store decodes,
+     and the part of check 19 that writes a list changed in place is
+     vacuous, because no list but the empty one can be written. Check
+     13 also reads the transformations before the geometry, so that it
+     tests their cache whatever the exemplar reads. Status: accepted in
+     step 4b-i.
+345. abczarr 0.2.2 gives a node opened through the zarr-python driver
+     from a relative path the store path `.`, so the reader makes a local
+     path absolute before it opens it (`absolute_location` in
+     `io/common/zarr/_parsers.py`). abczarr also raises, rather than
+     returning `None`, when a path holds no store, so the sniffer of the
+     Zarr adapters catches the error and scores the path as not Zarr.
+     The same driver of abczarr 0.2.3 gives a node of a remote fsspec
+     store the text of the store object as its store path, so
+     `store_location` (`io/common/zarr/_data.py`) finds no document
+     there, and `ZarrImage.from_store` gives its lazy array the location
+     that it opened instead. A remote node opened by the caller and read
+     with `from_node` has no known location, so a save over its own
+     store is not refused. Status: worked around in step 4b-i.
+346. The data of a plain Zarr array read with the NumPy backend are
+     read-only, as for the other formats, where they were writable
+     before. The Dask backend gets one block per chunk of the store,
+     read through the lazy array, which answers an empty selection
+     without reading the store. The drivers of abczarr read no slice
+     with a negative step, so the lazy array reads the whole array for
+     such a selection. Status: accepted in step 4b-i.
 350. The record of a TIFF file, `TiffRaw`, describes the series that was
      read, with its levels, and not the whole file, because the dialect,
      the OME image and the geometry belong to one series. The index of
@@ -2372,7 +2653,6 @@ pyramid of the conformance test and the checks P1 to P12.
      geometry is that of its record, where it became OME-TIFF when its
      resolution tags gave a pixel size. A pyramid decodes its levels on
      first access. Status: open, as for item 13.
-
 360. The 11 vendors of OpenSlide share one record, `OpenSlideRaw`, one
      metadata class, `OpenSlideMetadata`, and two bases, `OpenSlideImage`
      and `OpenSlideMultiScaleImage`, because OpenSlide describes the

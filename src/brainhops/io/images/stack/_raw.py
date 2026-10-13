@@ -63,13 +63,10 @@ class StackMember(Magic, frozen=True):
     A member is a two-dimensional image, possibly with several channels,
     stored in a TIFF file or in a raster format that Pillow reads, such as
     PNG. The member records the name of the file, the number that the name
-    carries, and the header that the reader of that format parses. TIFF
-    and Pillow images have no record class yet, so the header is the
-    structure that their readers already parse: a `SeriesMetadata` from
-    `brainhops.io.images.tiff._utils` for a TIFF file, and a
-    `PillowHeader` from `brainhops.io.images.pillow._utils` for any other
-    file. When TIFF and Pillow images have records, a member is to hold
-    that record instead.
+    carries, and the header that the reader of that format parses: a
+    `SeriesMetadata` from `brainhops.io.images.tiff._utils` for a TIFF
+    file, and a `PillowHeader` from `brainhops.io.images.pillow._utils`
+    for any other file.
     """
 
     name: str

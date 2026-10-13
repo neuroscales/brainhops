@@ -1,6 +1,14 @@
 """Zarr and OME-Zarr images."""
 
-__all__ = ["ZarrImage", "OmeZarrImage", "OmeImageError"]
+__all__ = [
+    "OmeImageError",
+    "OmeZarrImage",
+    "ZarrImage",
+    "ZarrMetadata",
+    "ZarrRaw",
+]
+
+from brainhops.io.common.zarr import ZarrMetadata, ZarrRaw
 
 from ._image import ZarrImage
 from ._multiscale import OmeZarrImage
