@@ -70,6 +70,28 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.common.precomputed": Package(
+        names=frozenset(
+            {
+                "PrecomputedMetadata",
+                "PrecomputedRaw",
+                "PrecomputedScale",
+                "PrecomputedSharding",
+            }
+        ),
+        needs=("tensorstore",),
+    ),
+    "brainhops.io.images.precomputed": Package(
+        names=frozenset(
+            {
+                "PrecomputedImage",
+                "PrecomputedMetadata",
+                "PrecomputedMultiScaleImage",
+                "PrecomputedRaw",
+            }
+        ),
+        needs=("tensorstore",),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),

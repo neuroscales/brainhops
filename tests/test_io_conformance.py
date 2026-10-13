@@ -28,6 +28,8 @@ as little code as possible.
 
 import gzip
 import importlib
+import json
+import math
 import os
 import pickle
 import struct
@@ -187,6 +189,23 @@ try:
     minc_needs = netcdf_file
 except ImportError:
     minc_needs = None
+
+try:
+    import tensorstore as ts
+
+    from brainhops.io.common.precomputed._data import _PrecomputedProxy
+    from brainhops.io.images.precomputed import (
+        PrecomputedImage,
+        PrecomputedMetadata,
+    )
+    from brainhops.io.images.precomputed._views import (
+        _image_to_disk as _precomputed_to_disk,
+    )
+    from brainhops.io.images.precomputed._views import (
+        _image_to_model as _precomputed_to_model,
+    )
+except ImportError:
+    ts = None
 
 try:
     import h5py
@@ -1395,6 +1414,90 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+# A Neuroglancer precomputed volume is a directory that holds an `info`
+# file and the chunks of each scale, and it cannot be written, so the
+# checks write a volume of one raw scale as `volume.md` describes it,
+# without TensorStore, and name it by its `info` file. The bytes of the
+# `info` file cannot hold the volume, so `header_file` names that file
+# itself. A copy whose data cannot be read is the `info` file alone, in
+# a directory without chunks. The record is compared as it is, since the
+# metadata cannot write bytes. The lazy array reads the chunks with
+# TensorStore, so the exemplar also checks the reader against the
+# specification.
+
+_PRECOMPUTED_CHUNK = (2, 2, 2)
+_PRECOMPUTED_OFFSET = (1, 2, 3)
+
+
+def _write_precomputed(path: tx.Any, data: tx.Any) -> None:
+    """Write a precomputed volume of one raw scale, named by its `info`."""
+    directory = os.path.dirname(os.fspath(path))
+    values = np.asarray(data, dtype="float32")
+    scale = {
+        "key": "s0",
+        "size": list(values.shape),
+        "resolution": [2, 3, 4],
+        "voxel_offset": list(_PRECOMPUTED_OFFSET),
+        "chunk_sizes": [list(_PRECOMPUTED_CHUNK)],
+        "encoding": "raw",
+    }
+    info = {
+        "@type": "neuroglancer_multiscale_volume",
+        "type": "image",
+        "data_type": "float32",
+        "num_channels": 1,
+        "scales": [scale],
+    }
+    os.makedirs(os.path.join(directory, "s0"), exist_ok=True)
+    with open(path, "w") as file:
+        json.dump(info, file)
+    grid = [math.ceil(n / c) for n, c in zip(values.shape, _PRECOMPUTED_CHUNK)]
+    for position in np.ndindex(*grid):
+        begin = [g * c for g, c in zip(position, _PRECOMPUTED_CHUNK)]
+        end = [
+            min(b + c, n)
+            for b, c, n in zip(begin, _PRECOMPUTED_CHUNK, values.shape)
+        ]
+        block = values[tuple(slice(b, e) for b, e in zip(begin, end))]
+        name = "_".join(
+            f"{b + o}-{e + o}"
+            for b, e, o in zip(begin, end, _PRECOMPUTED_OFFSET)
+        )
+        # A chunk is a little-endian [x, y, z, channel] array in Fortran
+        # order, with no header.
+        with open(os.path.join(directory, "s0", name), "wb") as file:
+            file.write(block.astype("<f4").tobytes(order="F"))
+
+
+def _precomputed_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy the `info` file of a volume into a directory without chunks."""
+    os.makedirs(os.path.dirname(os.fspath(target)), exist_ok=True)
+    with open(source, "rb") as file:
+        content = file.read()
+    with open(target, "wb") as file:
+        file.write(content)
+
+
+if ts is not None:
+    EXEMPLARS[PrecomputedImage] = Exemplar(
+        metadata=PrecomputedMetadata,
+        suffix=os.sep + "info",
+        proxies=(_PrecomputedProxy,),
+        to_model=_precomputed_to_model,
+        to_disk=_precomputed_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=lambda record: replace(record, mesh="edited"),
+        record_edited=lambda record: record.mesh == "edited",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_precomputed_cut,
+        header=lambda metadata: metadata.raw,
+        source=_write_precomputed,
+        header_file=lambda path: path,
+    )
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
@@ -1419,6 +1522,12 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.ZeissImage",
     "brainhops.io.images.openslide.ZeissMultiScaleImage",
     "brainhops.io.images.pillow.PillowImage",
+    # The levels of a precomputed pyramid are `PrecomputedImage` exemplars,
+    # and the pyramid holds their shared metadata but no `raw`. The rules
+    # for the levels and the record of a pyramid are decided in the Zarr
+    # pass (item 15 of the memo), so the pyramid waits with the other
+    # pyramids (item 160).
+    "brainhops.io.images.precomputed.PrecomputedMultiScaleImage",
     "brainhops.io.images.tiff.TiffImage",
     "brainhops.io.images.tiff.TiffMultiScaleImage",
     "brainhops.io.images.zarr.OmeZarrImage",
