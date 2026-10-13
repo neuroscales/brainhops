@@ -37,7 +37,10 @@ from brainhops.io.common._geometry import (
     held_transformations,
     same_transformations,
 )
-from brainhops.io.common.freesurfer import FreesurferFormat
+from brainhops.io.common.freesurfer import (
+    FreesurferFormat,
+    FreesurferTkrSystem,
+)
 from brainhops.io.common.freesurfer._geometry import fs_geometry_from_vox2ras
 from brainhops.io.common.mgh import MghMetadata, MghRaw
 from brainhops.io.common.mgh._constants import _MGH_AXES, _MRI_PARAMS
@@ -97,7 +100,13 @@ class MghImage(
     unless other transformations are assigned. They are, in order, a
     [`Scaling`][] to `"physical"` by the voxel size in millimeters and the
     TR in milliseconds, an [`Affine`][] to `"tkr"` (`MghRaw.vox2tkr`), and
-    the preferred [`Affine`][] to `"scanner"` (`MghRaw.vox2ras`).
+    the preferred [`Affine`][] to `"scanner"` (`MghRaw.vox2ras`). The tkr
+    RAS space of a 3-D image is a
+    [`FreesurferTkrSystem`][brainhops.io.common.freesurfer.FreesurferTkrSystem]
+    and not `RASmm`, so that a format that stores scanner RAS refuses to
+    write it as scanner RAS. The tkr space of a 4-D image is a system of
+    four axes named `"tkr"`, as its scanner space is a system of four
+    axes named `"scanner"`.
 
     `raw` and the record describe the file as it was read, or as the image
     was last consolidated. Data that are assigned are pending until
@@ -653,17 +662,23 @@ def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
         input=voxel_space, output=phys_space, scale=zooms[: len(axes)]
     )
 
-    def _affine(matrix: np.ndarray, name: str) -> Affine:
+    def _affine(matrix: np.ndarray, output: CoordinateSystem) -> Affine:
         return Affine(
             input=voxel_space,
-            output=replace(ras_space, name=name),
+            output=output,
             matrix=np.asarray(matrix, dtype=np.float64)[:3],
         )
 
+    # The shared tkregister system has three axes, so a 4-D image keeps a
+    # system of four axes that is only named after it.
+    if len(ras_axes) == 3:
+        tkr_space = FreesurferTkrSystem(name=_TKR, axes=ras_axes)
+    else:
+        tkr_space = replace(ras_space, name=_TKR)
     return [
         vox2phys,
-        _affine(record.vox2tkr, _TKR),
-        _affine(record.vox2ras, _SCANNER),
+        _affine(record.vox2tkr, tkr_space),
+        _affine(record.vox2ras, replace(ras_space, name=_SCANNER)),
     ]
 
 
@@ -805,7 +820,8 @@ def _scanner_transformation(
 
     A transformation named `"scanner"` wins. Otherwise the last
     transformation that does not map to tkr RAS is used, or `None` if
-    there is none.
+    there is none. A transformation maps to tkr RAS when its output is a
+    `FreesurferTkrSystem` or is named `"tkr"`.
     """
     transformations = list(transformations or [])
     chosen = None
@@ -814,8 +830,9 @@ def _scanner_transformation(
             chosen = xform
     if chosen is None:
         for xform in reversed(transformations):
-            name = getattr(getattr(xform, "output", None), "name", None)
-            if name != _TKR:
+            output = getattr(xform, "output", None)
+            tkr = isinstance(output, FreesurferTkrSystem)
+            if not tkr and getattr(output, "name", None) != _TKR:
                 chosen = xform
                 break
     return chosen

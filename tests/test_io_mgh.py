@@ -22,7 +22,7 @@ from nibabel.freesurfer.mghformat import MGHImage as NibabelMgh  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
 from brainhops.backends import backend  # noqa: E402
-from brainhops.datamodel.systems import CoordinateSystem  # noqa: E402
+from brainhops.datamodel.systems import CoordinateSystem, RASmm  # noqa: E402
 from brainhops.datamodel.transformations import (  # noqa: E402
     Affine,
     DisplacementField,
@@ -33,6 +33,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.common.freesurfer import FreesurferTkrSystem  # noqa: E402
 from brainhops.io.common.freesurfer._geometry import (  # noqa: E402
     fs_geometry_from_vox2ras,
     fs_vox2ras,
@@ -44,6 +45,9 @@ from brainhops.io.images.freesurfer.mgh import (  # noqa: E402
     MghMetadata,
 )
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
+from brainhops.io.transformations.freesurfer.lta import (  # noqa: E402
+    LtaTransformation,
+)
 
 # The geometry is oblique and anisotropic, so that every header field
 # matters.
@@ -185,6 +189,32 @@ def test_tkr_and_scanner_differ_by_a_ras_to_ras_rigid(tmp_path) -> None:  # noqa
     assert np.allclose(
         (record.vox2ras @ centre)[:3], record.header["Pxyz_c"], atol=1e-4
     )
+
+
+def test_the_tkr_space_is_the_shared_tkregister_system(tmp_path) -> None:  # noqa: ANN001
+    source = _write(tmp_path, "vol.mgz", _data())
+    image = io.images.load(source)
+    tkr, scanner = image.transformations[1], image.transformations[2]
+    assert type(tkr.output) is FreesurferTkrSystem
+    assert tkr.output.name == "tkr"
+    assert tkr.output.geometry is None
+    assert not isinstance(tkr.output, RASmm)
+    assert isinstance(scanner.output, RASmm)
+    # An affine from tkr RAS to scanner RAS is not written by LTA as an
+    # affine between scanner spaces.
+    tkr2scanner = scanner.homogeneous_matrix @ np.linalg.inv(
+        tkr.homogeneous_matrix
+    )
+    affine = Affine(
+        matrix=tkr2scanner[:3], input=tkr.output, output=scanner.output
+    )
+    lta = LtaTransformation.from_instance(affine)
+    with pytest.raises(UnrepresentableTransformationError):
+        lta.to_text()
+    # A 4-D image keeps a tkr space of four axes, named after it.
+    image = io.images.load(_write(tmp_path, "vol4d.mgz", _data((3, 4, 5, 2))))
+    assert image.transformations[1].output.name == "tkr"
+    assert not isinstance(image.transformations[1].output, RASmm)
 
 
 def test_read_4d(tmp_path) -> None:  # noqa: ANN001

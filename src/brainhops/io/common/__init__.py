@@ -6,6 +6,8 @@ the transformation readers (`brainhops.io.transformations`) of one file
 format have in common -- its parser, header, and geometry conventions:
 
 - [`afni`][brainhops.io.common.afni]: AFNI `.HEAD`/`.BRIK` datasets;
+- [`bdv`][brainhops.io.common.bdv]: BigDataViewer and BigStitcher
+  datasets, an XML file and an HDF5 file (the images need `h5py`);
 - [`freesurfer`][brainhops.io.common.freesurfer]: the volume geometry
   shared by every FreeSurfer format;
 - [`hdf5`][brainhops.io.common.hdf5]: formats stored in HDF5 files
