@@ -53,6 +53,7 @@ __all__ = [
     "to_canonical",
     "storage_permutation",
     "to_storage",
+    "planar_storage",
     "default_axes",
     "image_axes",
     "pixel_system",
@@ -88,6 +89,7 @@ from brainhops.datamodel.units import (
     is_physicalunit,
     is_spaceunit,
 )
+from brainhops.io.base.parsers import WriterError
 
 # ----------------------------------------------------------------------
 #   CONSTANTS
@@ -699,3 +701,111 @@ def size_to_dpi(size: float, unit: tx.Union[str, Unit] = "mm") -> float:
     if not math.isfinite(mm) or mm <= 0:
         raise ValueError(f"A pixel size must be positive, not {size!r}.")
     return MM_PER_INCH / mm
+
+
+# ----------------------------------------------------------------------
+#   PLANAR STORAGE
+# ----------------------------------------------------------------------
+
+
+def planar_storage(
+    data: tx.Any, xform: tx.Optional[Transformation]
+) -> tx.Tuple[np.ndarray, tx.Optional[tx.Dict[str, float]]]:
+    """Return the pixels as a planar raster format stores them.
+
+    The writers of Pillow and of JPEG 2000 store a picture as `(rows,
+    columns[, samples])`. The image must have two spatial axes, where
+    any other spatial axis is a singleton, and at most one channel axis.
+    The axes are those of the input of `xform`, or else the default axes
+    of a picture of that shape.
+
+    Parameters
+    ----------
+    data : array_like
+        The data of the image, in the brainhops order.
+    xform : Transformation, optional
+        The preferred transformation of the image, whose input names the
+        axes and whose scaling gives the pixel size.
+
+    Returns
+    -------
+    storage : numpy.ndarray
+        The pixels, `(rows, columns[, samples])`.
+    sizes : dict of str to float, optional
+        The pixel size along `x` and `y` in millimetres, or `None` when
+        it is not known.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data, or its axes cannot be stored as a
+        picture.
+    """
+    if data is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    shape = tuple(int(d) for d in data.shape)
+    ndim = len(shape)
+    axes = image_axes(ndim, getattr(xform, "input", None))
+    if axes is None:
+        if ndim == 2:
+            axes = default_axes(2)
+        elif ndim == 3 and shape[-1] <= 4:
+            axes = default_axes(3, channel=True)
+        else:
+            raise WriterError(
+                f"Cannot tell the axes of an array of shape {shape}: a "
+                f"raster image is (x, y) or (x, y, c) with at most four "
+                f"channels. Give the image a pixel coordinate system "
+                f"whose axes say which is which."
+            )
+    sizes = physical_pixel_size(xform, axes, "mm")
+
+    # Keep two spatial axes and at most one channel axis. Any other axis
+    # must be a singleton, and is dropped.
+    space = [i for i, a in enumerate(axes) if axis_group(a) == "space"]
+    channel = [i for i, a in enumerate(axes) if axis_group(a) == "channel"]
+    if len(space) > 2:
+        # The image is a slice of a volume. Keep the spatial axes that are
+        # not singletons and, if fewer than two remain, add the first
+        # singleton axes, keeping the original axis order.
+        wide = [i for i in space if shape[i] != 1]
+        narrow = [i for i in space if shape[i] == 1]
+        if len(wide) <= 2:
+            space = sorted(wide + narrow[: 2 - len(wide)])
+    if len(space) != 2:
+        raise WriterError(
+            f"A raster image has two spatial axes, but this one has "
+            f"{len(space)}, not counting singletons (shape {shape}). "
+            f"Extract a 2D slice before writing it."
+        )
+    channel = [i for i in channel if shape[i] != 1] or channel[:1]
+    if len(channel) > 1:
+        raise WriterError(
+            f"A raster image has at most one channel axis, but this one "
+            f"has {len(channel)} (shape {shape})."
+        )
+    keep = space + channel
+    drop = [i for i in range(ndim) if i not in keep]
+    if any(shape[i] != 1 for i in drop):
+        names = [axes[i].name for i in drop if shape[i] != 1]
+        raise WriterError(
+            f"A raster image has two spatial axes and one channel axis, "
+            f"so the axes {names} (shape {shape}) cannot be written. "
+            f"Select one of their elements before writing."
+        )
+    index = tuple(slice(None) if i in keep else 0 for i in range(ndim))
+    data = data[index]
+    # The kept spatial axes are the columns (x) and rows (y) of the raster,
+    # in order, whatever their names. For example, a sagittal (y, z) slice
+    # has y along the columns.
+    position = {axis: k for k, axis in enumerate(sorted(keep))}
+    order = [position[space[1]], position[space[0]]]
+    order += [position[i] for i in channel]
+    storage = data.transpose(order)
+
+    if sizes is not None:
+        x, y = (axes[i].name for i in space)
+        sizes = {"x": sizes[x], "y": sizes[y]}
+    return storage, sizes

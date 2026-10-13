@@ -373,7 +373,11 @@ def test_a_multiscale_image_round_trips_through_ome_zarr(
 ) -> None:
     from brainhops.io.images.zarr import OmeZarrImage
 
-    io.save(MultiScaleImage(images=[_image()]), tmp_path / name)
+    # OME-Zarr 0.6 only scales and translates a level, so the affine is
+    # given as the placement of the pyramid rather than of its level.
+    level = SingleScaleImage(data=DATA)
+    pyramid = MultiScaleImage(images=[level], transformations=[Affine(MATRIX)])
+    io.save(pyramid, tmp_path / name)
     back = io.images.load(tmp_path / name)
     assert isinstance(back, OmeZarrImage)
     assert np.array_equal(np.asarray(back.images[0].data), DATA)
