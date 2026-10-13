@@ -134,17 +134,6 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
 )
-from brainhops.io.transformations.trakem2 import (
-    TrakEM2Metadata,
-    TrakEM2PatchAffine,
-    TrakEM2Raw,
-)
-from brainhops.io.transformations.trakem2._xform import (
-    _matrix_to_disk as _trakem2_matrix_to_disk,
-)
-from brainhops.io.transformations.trakem2._xform import (
-    _matrix_to_model as _trakem2_matrix_to_model,
-)
 from brainhops.io.transformations.mrtrix import (
     MrtrixCoordinatesField,
     MrtrixDisplacementField,
@@ -155,6 +144,17 @@ from brainhops.io.transformations.mrtrix import (
 from brainhops.io.transformations.mrtrix._views import (
     _warp_to_disk,
     _warp_to_model,
+)
+from brainhops.io.transformations.trakem2 import (
+    TrakEM2Metadata,
+    TrakEM2PatchAffine,
+    TrakEM2Raw,
+)
+from brainhops.io.transformations.trakem2._xform import (
+    _matrix_to_disk as _trakem2_matrix_to_disk,
+)
+from brainhops.io.transformations.trakem2._xform import (
+    _matrix_to_model as _trakem2_matrix_to_model,
 )
 
 try:
