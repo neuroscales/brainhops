@@ -2583,6 +2583,78 @@ def test_23_a_field_without_a_slot_is_lost(
         metadata.consolidate(on_loss="raise", **{name: value})
 
 
+@pytest.mark.parametrize("cls, exemplar", VOCABULARY_CASES)
+def test_24_a_conversion_carries_the_vocabulary(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The metadata of an object of another class, generic or of another
+    # format, is converted into the metadata of the format, without the
+    # record of the other format, and a save writes the vocabulary into
+    # a new record, or reports what the record cannot hold.
+    if exemplar.foreign is None:
+        return
+    foreign = exemplar.foreign(exemplar.sample())
+    if isinstance(foreign, _ForeignImage):
+        foreign.metadata = _ForeignMetadata(
+            raw="record", **exemplar.vocabulary
+        )
+    else:
+        foreign.metadata = Metadata(**exemplar.vocabulary)
+    with metadata_loss_policy("ignore"):
+        converted = cls.from_instance(foreign)
+    assert type(converted.metadata) is exemplar.metadata
+    assert converted.metadata.raw is None
+    for name, value in exemplar.vocabulary.items():
+        assert getattr(converted.metadata, name) == value, name
+    path = _path(tmp_path, exemplar, "converted")
+    report = ConversionReport()
+    if exemplar.source is not None:
+        return
+    converted.save(path, on_loss=report)
+    written = cls.load(path).metadata
+    for name, value in exemplar.vocabulary.items():
+        assert getattr(written, name) == value or name in report.lost, name
+
+
+IMAGE_VOCABULARY_CASES = [
+    case
+    for case in VOCABULARY_CASES
+    if issubclass(case.values[0], SingleScaleImage)
+]
+"""The image cases whose metadata stores a vocabulary."""
+
+
+@pytest.mark.parametrize("cls, exemplar", IMAGE_VOCABULARY_CASES)
+def test_25_image_operations_derive_the_metadata(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    loaded = cls.load(_saved(cls, exemplar, tmp_path, "object"))
+    loaded.metadata = replace(
+        loaded.metadata,
+        description="derived",
+        slice_timing=(0.0, 0.5),
+    )
+    # An index that moves no voxel keeps the class and the record of the
+    # metadata, and every field.
+    same = loaded[...]
+    assert type(same.metadata) is type(loaded.metadata)
+    assert same.metadata.raw is loaded.metadata.raw
+    assert same.metadata.description == "derived"
+    assert same.metadata.slice_timing == (0.0, 0.5)
+    # A flip moves the spatial axes: a field in the `FILE` scope is kept,
+    # and a field in the `SPATIAL` scope is mapped or cleared, so the
+    # next consolidation clears its slot.
+    for derived in (loaded[::-1], loaded.reslice()):
+        assert type(derived.metadata) is type(loaded.metadata)
+        assert derived.metadata.description == "derived"
+        assert derived.metadata.slice_timing is None
+        assert derived.metadata.raw is not None
+
+
 def test_the_generic_loader_reads_a_toy_image(tmp_path) -> None:  # noqa: ANN001
     data = np.arange(6.0).reshape(2, 3)
     path = tmp_path / "image.toy"

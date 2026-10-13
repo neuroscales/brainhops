@@ -545,6 +545,14 @@ format.
 23. A field that the format has no slot for is reported as lost by
     `consolidate` and is absent from the copy, and `on_loss="raise"`
     raises `MetadataLossError`.
+24. The metadata of an object of another class, generic or of another
+    format, is converted by `from_instance` into the metadata of the
+    format without the record of the other format, and a save writes
+    each field of `Exemplar.vocabulary` or reports it as lost.
+25. An index that moves no voxel keeps the class and the record of the
+    metadata of an image and every field, and a flip or a resampling
+    keeps the class, keeps a field in the `FILE` scope and clears a
+    field in the `SPATIAL` scope.
 
 The second pass moves LTA first, so that the reference format matches
 this design. `LtaStruct` becomes `LtaRaw`, its field becomes a
