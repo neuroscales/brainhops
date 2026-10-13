@@ -27,12 +27,20 @@ TfmTransform = io.transformations.itk.tfm.TfmTransform
 
 @pytest.mark.parametrize("filename", FILES_H5)
 @pytest.mark.parametrize("load", [True, False])
-@pytest.mark.parametrize("keep_open", [True, False])
-def test_read_h5(filename: str, load: bool, keep_open: bool) -> None:
+def test_read_h5(filename: str, load: bool) -> None:
     pytest.importorskip("h5py")
     H5Transform = io.transformations.itk.h5.H5Transform
-    transform = H5Transform.from_file(filename, load=load, keep_open=keep_open)
+    transform = H5Transform.from_file(filename, load=load)
     transforms = transform.transformations  # noqa: F841
+
+
+@pytest.mark.parametrize("filename", FILES_H5[:1])
+def test_h5_refuses_to_keep_its_file_open(filename: str) -> None:
+    """No object keeps an ITK `.h5` file open, so `keep_open=` is refused."""
+    pytest.importorskip("h5py")
+    H5Transform = io.transformations.itk.h5.H5Transform
+    with pytest.raises(TypeError, match="keep_open"):
+        H5Transform.from_file(filename, keep_open=True)
 
 
 @pytest.mark.parametrize("filename", FILES_TFM)
@@ -547,9 +555,7 @@ def test_h5_warp_without_parameters_reads_the_same_lazily(
     Both settings of `load` now give empty parameters.
     """
     h5py = pytest.importorskip("h5py")
-    from brainhops.io.transformations.itk.h5._parser import (
-        H5TransformReader,
-    )
+    from brainhops.io.transformations.itk.h5 import H5Transform
 
     path = tmp_path / "warp_without_parameters.h5"
     _write_h5_warp_without_parameters(path, after_affine=after_affine)
@@ -559,9 +565,10 @@ def test_h5_warp_without_parameters_reads_the_same_lazily(
     for load in (True, False):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            reader = H5TransformReader.from_h5(
-                h5py.File(path, "r"), load=load, position=position
-            )
+            with h5py.File(path, "r") as h5file:
+                reader = H5Transform.from_h5(
+                    h5file, load=load, position=position
+                )
         (block,) = reader.transformations
         assert block.type == "DisplacementFieldTransform"
         blocks[load] = np.asarray(block.parameters)
@@ -931,3 +938,130 @@ def test_a_block_compares_by_identity() -> None:
     assert block != _versor_rigid_3d((0, 0, 0), (1, 2, 3), (0, 0, 0))
     assert len({block, block}) == 1
     assert itk.ItkStruct.__eq__ is object.__eq__
+
+
+# ----------------------------------------------------------------------
+#   RECORDS
+# ----------------------------------------------------------------------
+# The blocks of a text or HDF5 file are held as a record by the metadata of
+# the transformation, which decodes its chain from it. brainhops does not
+# write these files, so a pending chain is encoded into a record in memory.
+
+
+def _load(ext: str, path: Path, **kwargs) -> xforms.Transformation:  # noqa: ANN003
+    format = itk.tfm.TfmTransform if ext == "tfm" else itk.h5.H5Transform
+    return format.from_file(path, **kwargs)
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_the_record_holds_every_block(tmp_path, ext: str) -> None:  # noqa: ANN001
+    path = WRITERS[ext](tmp_path / f"composite.{ext}", COMPOSITE)
+    transform = _load(ext, path)
+    record = transform.metadata.raw
+    assert [block.type for block in record.blocks] == [
+        itk.ItkTransformClass.CompositeTransform,
+        itk.ItkTransformClass.TranslationTransform,
+        itk.ItkTransformClass.ScaleTransform,
+    ]
+    # Nothing is decoded until the chain is read, and the chain holds the
+    # blocks of the record, in application order.
+    assert transform._transformations is None
+    chain = transform.transformations
+    assert chain[0] is record.blocks[2] and chain[1] is record.blocks[1]
+    assert transform.consolidate().metadata is transform.metadata
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_a_chain_is_encoded_into_a_record(tmp_path, ext: str) -> None:  # noqa: ANN001
+    path = WRITERS[ext](tmp_path / f"single.{ext}", COMPOSITE[1:2])
+    transform = _load(ext, path)
+    metadata = transform.metadata
+    (shift,) = transform
+    transform.append(xforms.Scaling([2.0, 3.0, 4.0]))
+    consolidated = transform.consolidate()
+    assert transform.metadata is metadata
+    record = consolidated.metadata.raw
+    # Several blocks are stored as a composite, whose queue lists the last
+    # applied block first, as ITK writes it.
+    assert record.blocks[0].type == itk.ItkTransformClass.CompositeTransform
+    assert record.blocks[2] is shift
+    assert record.blocks[1].type == itk.ItkTransformClass.AffineTransform
+    assert consolidated._transformations is None
+    np.testing.assert_allclose(
+        _apply(consolidated, POINTS), _apply(transform, POINTS)
+    )
+    assert consolidated.consolidate().metadata is consolidated.metadata
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_assigning_metadata_or_a_position_drops_the_decoded_chain(
+    tmp_path,  # noqa: ANN001
+    ext: str,
+) -> None:
+    path = WRITERS[ext](tmp_path / f"list.{ext}", COMPOSITE[1:])
+    # A decoded chain, and a change made to it in place, follow the record
+    # and the position.
+    transform = _load(ext, path, position=0)
+    transform.append(xforms.Scaling([2.0, 3.0, 4.0]))
+    transform.position = 1
+    (block,) = transform
+    assert block.type == itk.ItkTransformClass.ScaleTransform
+    transform.append(xforms.Scaling([2.0, 3.0, 4.0]))
+    transform.metadata = _load(ext, path, position=0).metadata
+    assert len(transform) == 1
+    assert transform._transformations is None
+    # An assigned chain is pending, and survives both.
+    transform.transformations = []
+    transform.position = 0
+    transform.metadata = _load(ext, path, position=0).metadata
+    assert list(transform) == []
+    assert len(transform.consolidate().metadata.raw.blocks) == 0
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_the_formats_do_not_write(tmp_path, ext: str) -> None:  # noqa: ANN001
+    from brainhops.io.base.parsers import WriterError
+
+    path = WRITERS[ext](tmp_path / f"single.{ext}", COMPOSITE[1:2])
+    transform = _load(ext, path)
+    assert not hasattr(transform, "save")
+    assert not hasattr(transform.metadata, "save")
+    with pytest.raises(WriterError):
+        io.save(transform, tmp_path / f"copy.{ext}")
+
+
+def test_tfm_options_are_refused() -> None:
+    path = data_dir / "itk_translation3d.tfm"
+    with pytest.raises(TypeError):
+        TfmTransform.from_file(path, load=True)
+    with pytest.raises(TypeError):
+        itk.tfm.TfmRaw.from_file(path, position=0)
+
+
+def test_h5_warps_are_read_lazily_by_default() -> None:
+    pytest.importorskip("h5py")
+    from brainhops.io.common.hdf5 import DelayedH5Array
+
+    path = data_dir / "itk_displacement3d.h5"
+    transform = itk.h5.H5Transform.from_file(path)
+    (block,) = transform.metadata.raw.blocks
+    assert isinstance(block.parameters, DelayedH5Array)
+    loaded = itk.h5.H5Transform.from_file(path, load=True)
+    np.testing.assert_array_equal(
+        np.asarray(block.parameters),
+        np.asarray(loaded.metadata.raw.blocks[0].parameters),
+    )
+    # The file is read at once from a stream, which has no name.
+    with open(path, "rb") as file:
+        streamed = itk.h5.H5Transform.from_file(file)
+    assert isinstance(streamed.metadata.raw.blocks[0].parameters, np.ndarray)
+
+
+def test_h5_metadata_holds_the_root_strings() -> None:
+    pytest.importorskip("h5py")
+    from brainhops.io.metadata import MetadataFormat
+
+    metadata = MetadataFormat.load(data_dir / "itk_affine3d.h5")
+    assert isinstance(metadata, itk.h5.H5Metadata)
+    assert metadata.raw.header.ITKVersion
+    assert isinstance(metadata.raw.header, itk.h5.H5Header)

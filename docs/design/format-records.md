@@ -691,9 +691,9 @@ the record because the file is parsed in one pass.
 
 The move of LTA, called pass 2a, is pull request #421. The move of X5,
 called pass 2b, is pull request #422. The move of M3Z, called pass 2c,
-is under review. ITK-H5 is deferred. It shares
-`ItkStruct` with the ITK text and MAT formats and has no writer, so it
-moves with them.
+is under review. ITK-H5 was deferred, because it shares `ItkStruct` with
+the ITK text and MATLAB formats and has no writer, and it moves with them
+in the fourth pass.
 
 The third pass moves MGH, AFNI, MRtrix, NRRD and MINC. MGH gets a
 record with its header and its tags, and uses nibabel's proxy. For the
@@ -725,6 +725,17 @@ Pillow, then Zarr and OME-Zarr, TIFF and OpenSlide, and then update the
 open pull requests of pyramid formats. The class variable workaround of
 FLIRT is removed once it is decided whether `moving` and `reference`
 belong to the format or to the record.
+
+The move of FLIRT and of the three ITK formats that store parameters, the
+text `.tfm`, MATLAB `.mat` and HDF5 `.h5` files, is in progress. The
+images `moving` and `reference` of FLIRT belong to the format: they are
+options of the transformation that are never stored, as the geometries of
+a `register.dat` file are. The record of FLIRT holds its matrix
+(`FlirtRaw`), and the record of each ITK format holds the blocks of its
+file in the order of the file (`TfmRaw`, `MatRaw` and `H5Raw`), with the
+root strings of an HDF5 file and the bytes of a MATLAB file. Only the
+MATLAB format writes. The formats that do not write encode a pending
+chain or matrix into a new record in memory (item 311).
 
 The fifth pass brings the #233 vocabulary, as described in the previous
 section.
@@ -1016,10 +1027,12 @@ its status.
     proxy holds only a file name, so the metadata can still be pickled,
     but copied metadata refers to the source file by its name. Status:
     accepted in the pass 2b review (146c69b).
-47. The shared HDF5 adapter still reads the `keep_open` option
-    (`io/common/hdf5/_parsers.py`), because ITK-H5 is not migrated yet.
+47. The shared HDF5 adapter still read the `keep_open` option
+    (`io/common/hdf5/_parsers.py`), because ITK-H5 was not migrated yet.
     The `TypeError` that X5 raises for `keep_open=` comes from its
-    constructor. Status: accepted until ITK-H5 is migrated.
+    constructor. Status: resolved by the move of ITK-H5, where the
+    adapter always closes the file that it opens, and ITK-H5 raises the
+    same `TypeError`.
 48. An untouched HDF5 file is saved byte for byte only when h5py wrote
     it with the attribute and creation order of brainhops and with
     contiguous datasets, which includes a fixture in the layout of
@@ -1742,7 +1755,10 @@ its status.
      the formats merged later (N5, Imaris, precomputed, JPEG 2000,
      BigDataViewer and image stacks) follow the same rule, and the JPEG
      2000 pyramid caches the levels and the placements that it decodes in
-     the same way. Status: resolved.
+     the same way. The chains of the ITK text, MATLAB and HDF5 formats
+     (`TfmTransform`, `MatTransform` and `H5Transform`), which are
+     mutable lists as the transformations of an image are, follow it too
+     (item 312). Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
      the cache, so it is lost when other metadata is assigned, and a copy
      made with `replace` or `from_instance` decodes the list again instead
@@ -2216,6 +2232,83 @@ pyramid of the conformance test and the checks P1 to P12.
      `Exemplar.hint`, as it does for NiftyReg (item 303). Status: open,
      for the maintainer to decide whether a `.mat` text file should
      dispatch to the Convert3D metadata without a hint.
+310. The data of a FLIRT transform is its FLIRT matrix, `flirt_matrix`,
+     which lives in the record and which an assigned matrix overrides
+     until it is consolidated. The affine of the data model maps the RAS
+     space of the reference to that of the moving image, and it is
+     computed from the FLIRT matrix and the two images, so it cannot be
+     assigned, and the fields `_data` and `_matrix` of `Affine` are still
+     forgotten (`io/transformations/fsl/flirt/_xform.py`). Making the
+     affine the pending data would need both images to encode a record,
+     and a FLIRT matrix could then not be built without them. The images
+     are options of the format, which are never stored, as the
+     geometries of a `register.dat` file are. The conformance harness
+     reads the pending state of FLIRT through `Exemplar.pending`. Status:
+     open, for the maintainer to decide whether the affine should be the
+     pending data.
+311. FLIRT, ITK text and ITK HDF5 files are not written by brainhops,
+     but their records are plain structures, so `consolidate()` encodes a
+     pending matrix or chain into a new record in memory, unlike MINC,
+     which consolidates only its data (item 101). The conformance harness
+     marks them with `Exemplar.records`, and runs check 16 without a
+     file. Checks 5, 8, 9 and 10 check that they refuse to write, and
+     check 6 is vacuous for the files that are read in one pass (FLIRT,
+     ITK text and MATLAB), as for LTA (item 66). The records of the text
+     formats do not keep the text of their files, because nothing writes
+     it. The records of FLIRT and ITK text files hold nothing but their
+     data, so an assigned value replaces an edit of the record, and
+     check 20 does not check that the edit is kept under it for the
+     exemplars marked with `Exemplar.bare`. Status: open, for the maintainer to decide whether these
+     formats should write, which would make the untouched round trips
+     byte for byte (with the exemption of item 48 for HDF5).
+312. The blocks of an ITK record are `ItkStruct` objects
+     (`io/transformations/itk/_common.py`), which are also
+     transformations, and the chain that an ITK format
+     decodes holds the blocks of its record, without a copy. Their
+     parameters are read-only arrays, or lazy arrays for the warps of an
+     HDF5 file, but a field of a block can still be assigned, which would
+     change the record in place. An ITK format is a
+     `MutableSequence`, whose chain could be edited in place and was then
+     written, so its chain follows the rule of the images (item 190): it
+     is decoded on first access and cached apart from an assigned chain,
+     `consolidate` reads it through `held_transformations`, and it is
+     compared there with a fresh decode of the record, block by block
+     and by identity (`io/transformations/itk/_chains.py`). Assigning
+     other metadata or another `position` drops the decoded chain, with
+     a change made to it in place (item 191), and keeps an assigned
+     chain. The other chain formats keep their chain pending by
+     assignment (item 114). Status: open.
+313. An untouched ITK MATLAB file is written byte for byte because the
+     record keeps the bytes of the file (`MatRaw.content`), which are
+     written while they still decode to the blocks and the byte order of
+     the record. Encoding the blocks again gives the same bytes for the
+     files that SimpleITK writes, but not for a file whose variables are
+     marked as stored row by row, whose fixed parameters have another name
+     or are in single precision, as `itk::MatlabTransformIOTemplate`
+     writes them for a transform in single precision
+     (`itkMatlabTransformIO.cxx` and `vnl_matlab_write.cxx`, ITK v5.4.0).
+     The option `position` only selects what is read, so a file with
+     several blocks is written whole, as for X5 (item 49). A chain that is
+     encoded again keeps the byte order of the record, and the options
+     `byteorder` and `precision` encode every block of the record again
+     when they differ from it. Status: open.
+314. The move of FLIRT and ITK removes the names `FlirtMatrixReader`,
+     `TfmTransformReader`, `MatTransformReaderWriter` and
+     `H5TransformReader`, and the attributes `header` and `file` of
+     `H5Transform`, in favor of `metadata.raw`. The option `keep_open` of
+     `H5Transform` raises `TypeError`, and its warps are read lazily by
+     default (`load=False`). The images of a FLIRT transform are
+     keyword-only, and its FLIRT matrix is read from the record. A FLIRT
+     transform copied within its format no longer needs its images, and
+     assigning an image drops the views derived from the old one. An
+     untouched ITK MATLAB file read with `position=` is written whole,
+     and a chain that is encoded again keeps the byte order of its file.
+     `MetadataFormat.load` reads a `.mat` file of sixteen numbers as
+     `FlirtMetadata` unless the hint `c3d` is given, as the dispatcher of
+     the transformations reads it as a FLIRT matrix (item 172), so check
+     6 dispatches the metadata of the Convert3D exemplar with the hint of
+     `Exemplar.hint` (item 306). These changes are to be announced with
+     item 13. Status: open, as for item 13.
 320. An elastix parameter file may name an initial transform in another
      file, and that file may name another. The record of each file of the
      chain is read when the file that names it is read, and it is held in

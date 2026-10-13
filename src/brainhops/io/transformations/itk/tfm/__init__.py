@@ -80,6 +80,18 @@ All values are expressed in LPS coordinates, and matrices are stored in
 row-major order. Software that works in RAS coordinates, such as 3D Slicer,
 converts its transformations to LPS when it saves them.
 
+## Records
+
+A `.tfm` file is short and is read in one pass. Its blocks are held as a
+[`TfmRaw`][brainhops.io.transformations.itk.tfm.TfmRaw] record by
+[`TfmMetadata`][brainhops.io.transformations.itk.tfm.TfmMetadata], the
+metadata of the file, in the order of the file, with the
+`CompositeTransform` header first when there is one. A
+[`TfmTransform`][brainhops.io.transformations.itk.tfm.TfmTransform]
+holds that metadata and decodes its chain from the record when it is
+first used, and the option `position` selects which top-level transform
+is decoded. brainhops does not write `.tfm` files.
+
 ## Transformation classes
 
 The `.tfm` format is intended for linear transformations, such as rigid and
@@ -101,9 +113,11 @@ affine ones. The classes below are the most common.
 
 # ruff: enable[E501]
 __all__ = [
+    "TfmMetadata",
+    "TfmRaw",
     "TfmTransform",
-    "TfmTransformReader",
 ]
 
-from ._parser import TfmTransformReader
+from ._metadata import TfmMetadata
+from ._raw import TfmRaw
 from ._xform import TfmTransform
