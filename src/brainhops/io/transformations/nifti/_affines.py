@@ -5,7 +5,7 @@ file."""
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -271,6 +271,10 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
             return None
         return _read_only(np.linalg.inv(header.get_best_affine())[:-1])
 
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
+
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds its header, or `None`.
 
@@ -388,6 +392,10 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
         if header is None:
             return None
         return _read_only(header.get_best_affine()[:-1])
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds its header, or `None`.

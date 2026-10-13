@@ -129,7 +129,9 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[MincMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MincMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.

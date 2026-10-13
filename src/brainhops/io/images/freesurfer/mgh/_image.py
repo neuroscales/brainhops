@@ -156,7 +156,9 @@ class MghImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[MghMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MghMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.

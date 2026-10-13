@@ -263,7 +263,9 @@ class AfniImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[AfniMetadata]] = None
+    _metadata: NoRepr[tx.Optional[AfniMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the dataset, which holds its record, or `None`.

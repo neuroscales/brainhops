@@ -8,7 +8,7 @@ in [`brainhops.io.transformations.niftyreg`][].
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
@@ -25,6 +25,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
 )
+from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
@@ -306,6 +307,10 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         if self.raw is None:
             return None
         return _field_to_model(self.raw)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.

@@ -173,7 +173,9 @@ class MrtrixImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.

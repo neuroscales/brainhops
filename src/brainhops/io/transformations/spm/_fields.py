@@ -6,7 +6,7 @@ SPM deformation fields, stored in NIfTI files prefixed with `y_` or `iy_`.
 import nibabel as nb
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core.properties import smartproperty
@@ -14,6 +14,7 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
+from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -105,6 +106,10 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         if self.raw is None:
             return None
         return _field_to_model(self.raw)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.

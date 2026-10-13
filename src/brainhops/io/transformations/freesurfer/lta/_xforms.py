@@ -11,7 +11,7 @@ __all__ = [
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, fields, replace
+from bagof.magic import Inherit, NoRepr, fields, replace
 
 # internals
 from brainhops._core import path
@@ -208,7 +208,9 @@ class LtaTransformation(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".lta",)
 
-    _metadata: NoRepr[tx.Optional[LtaMetadata]] = None
+    _metadata: NoRepr[tx.Optional[LtaMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.

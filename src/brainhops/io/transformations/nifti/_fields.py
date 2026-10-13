@@ -10,7 +10,7 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core.properties import (
@@ -26,6 +26,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
+from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_NIFTYREG,
@@ -70,6 +71,17 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
     """Field of RAS coordinates stored in a NIfTI file."""
 
     HINTS = ("coordinates",)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
+
+    metadata = smartproperty("metadata")
+    """The metadata of the file, which holds its header, or `None`.
+
+    A field built from data has no metadata. Its coordinates are its
+    data, so assigning other metadata keeps them.
+    """
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -338,6 +350,10 @@ transformations.StationaryVelocityField].
         if self.raw is None:
             return None
         return _field_to_model(self.raw)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.

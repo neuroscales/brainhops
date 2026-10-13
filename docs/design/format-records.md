@@ -632,10 +632,11 @@ its status.
 7. In the first pass, `metadata` is a field of the format classes,
    while #287 puts it on the roots of the data model. The name also
    clashes with `Transformation.metadata_fields`, which may be renamed.
-   Status: decided in the fifth pass. `metadata` goes on the roots, each
-   format takes it over with `Inherit("metadata")`, and
-   `metadata_fields` becomes `encoding_fields` without an alias. The
-   wiring of pass 5a (#287) implements it.
+   Status: resolved in the fifth pass. `metadata` is a field of the
+   roots, each format takes it over with `Inherit("metadata")` (the
+   NIfTI transformations in each concrete class, see item 400), and
+   `metadata_fields` became `encoding_fields` without an alias, in the
+   wiring of pass 5a (#287).
 8. Views that are decoded from `metadata` and cached, such as
    `transformations`, would become stale when `metadata` is assigned
    again. Each format holds a private `_metadata` field behind a public
@@ -1253,12 +1254,22 @@ its status.
      resolved, where `_geometry_fields` (`io/images/nrrd/_image.py`)
      drops those fields of the spatial axes whenever there is no
      geometry to write.
-400. `bagof` takes an inherited field from the first base that has it,
-     so a NIfTI transformation whose first base is a generic model
-     (`NiftiRASToVoxel(VoxelToRAS, _NiftiAffine)`) gets the generic
-     `metadata` of the root before the takeover of
-     `NiftiBasedTransformation`. The wiring probes it, and falls back on
-     the takeover in each concrete class. Status: open, for #287.
+400. `NiftiBasedTransformation`, `_NiftiAffine` and `NiftyRegField` are
+     format classes that do not derive from `Transformation`: the root
+     of the data model comes in with the first base of each concrete
+     class, as in `NiftiRASToVoxel(RASToVoxel, _NiftiAffine)`. `bagof`
+     refuses a takeover of a field that no base declares, and refuses a
+     class that holds both the `metadata` of the root and a `_metadata`
+     of the format, so the takeover cannot be written once on
+     `NiftiBasedTransformation`. Deriving that class from
+     `Transformation` would allow it, but it would make the abstract
+     `NiftyRegField` a data model, which `relabel` then no longer
+     refuses as a family of formats. Status: decided in pass 5a. Each
+     of the seven concrete classes (`NiftiRASToVoxel`,
+     `NiftiVoxelToRAS`, `NiftiRASCoordinatesField`,
+     `NiftiRASDisplacementField`, `NiftyRegSequence`,
+     `SpmCoordinatesField` and `ItkNiftiField`) takes `metadata` over
+     itself.
 401. The metadata of a format decodes its vocabulary at once, in
      `from_raw`, instead of in lazy properties: a field may be `None`,
      so a lazy field would need a sentinel or a flag, which is the state

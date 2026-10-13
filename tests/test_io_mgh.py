@@ -22,6 +22,7 @@ from nibabel.freesurfer.mghformat import MGHImage as NibabelMgh  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
 from brainhops.backends import backend  # noqa: E402
+from brainhops.datamodel.metadata import MetadataLossWarning  # noqa: E402
 from brainhops.datamodel.systems import CoordinateSystem  # noqa: E402
 from brainhops.datamodel.transformations import (  # noqa: E402
     Affine,
@@ -39,6 +40,7 @@ from brainhops.io.common.freesurfer._geometry import (  # noqa: E402
     fs_vox2tkr,
     mat2orient,
 )
+from brainhops.io.common.nifti import NiftiMetadata  # noqa: E402
 from brainhops.io.images.freesurfer.mgh import (  # noqa: E402
     MghImage,
     MghMetadata,
@@ -632,13 +634,22 @@ def test_the_freesurfer_hint_selects_mgh_and_lta(tmp_path) -> None:  # noqa: ANN
 
 
 def test_conversion_does_not_carry_nibabel_objects(tmp_path) -> None:  # noqa: ANN001
-    """Conversion copies the data model, not the record or the proxy."""
+    """Conversion copies the data model, not the record or the proxy.
+
+    The metadata is part of the data model: it is converted into the
+    metadata of the other format, which holds the vocabulary and no
+    record.
+    """
     mgh = MghImage.from_file(_write(tmp_path, "vol.mgz", _data()))
-    nii = NiftiImage.from_instance(mgh)
-    assert nii.metadata is None
+    with pytest.warns(MetadataLossWarning):
+        nii = NiftiImage.from_instance(mgh)
+    assert isinstance(nii.metadata, NiftiMetadata)
+    assert nii.metadata.raw is None
+    assert nii.metadata.dtype == mgh.metadata.dtype
     assert np.array_equal(np.asarray(nii.data), _data())
     back = MghImage.from_instance(nii)
-    assert back.metadata is None
+    assert isinstance(back.metadata, MghMetadata)
+    assert back.metadata.raw is None
     assert not nb.is_proxy(back.raw)
     # Within one format, the record and the proxy are still shared.
     copy = MghImage.from_instance(mgh)

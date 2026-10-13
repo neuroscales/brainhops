@@ -15,6 +15,7 @@ from ._transformations.multiscale import (
 )
 from .base import DataModelBase, IdentityComparison
 from .geometry import Geometry
+from .metadata import Metadata
 from .transformations import (
     CartesianField,
     Identity,
@@ -31,6 +32,19 @@ class Image(IdentityComparison, DataModelBase, eq=False, kw_only=True):
         Images can therefore be used in sets and as dictionary keys. To compare
         the contents of two images, compare their data explicitly, for example
         with `numpy.array_equal(a, b)`, and compare their geometries.
+    """
+
+    metadata: NoRepr[tx.Optional[Metadata]] = None
+    """What describes the image beyond its data and geometry, or `None`.
+
+    The metadata holds the common vocabulary of
+    [`Metadata`][brainhops.datamodel.metadata.Metadata], such as a
+    repetition time, a description or a slice timing. An image built
+    from data has none unless it is given some. A file format takes the
+    field over to hold the metadata of its own class, which also holds
+    the header of the file, and converts the metadata it is given into
+    that class. The field is keyword-only and is left out of the
+    representation of the image.
     """
 
     # --- array API ----------------------------------------------------

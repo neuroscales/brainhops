@@ -112,8 +112,8 @@ class StationaryVelocityField(
 
     _tangentof: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
 
-    _base_metadata_fields: _FieldNames = DisplacementField.metadata_fields
-    metadata_fields: _FieldNames = (*_base_metadata_fields, "steps")
+    _base_encoding_fields: _FieldNames = DisplacementField.encoding_fields
+    encoding_fields: _FieldNames = (*_base_encoding_fields, "steps")
 
     # --- attributes ---------------------------------------------------
 

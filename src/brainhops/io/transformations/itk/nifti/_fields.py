@@ -8,7 +8,7 @@ described in [`brainhops.io.transformations.itk.nifti`][].
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core import affines as _affines
 from brainhops._core.properties import smartproperty
@@ -24,6 +24,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
+from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
@@ -187,6 +188,10 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         if self.raw is None:
             return None
         return _itk_field_to_model(self.raw)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("transformations", "input", "output")

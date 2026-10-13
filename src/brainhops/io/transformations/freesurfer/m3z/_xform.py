@@ -5,7 +5,7 @@ __all__ = ["M3zFormat", "M3zMorph"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -192,7 +192,9 @@ class M3zMorph(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
 
-    _metadata: NoRepr[tx.Optional[M3zMetadata]] = None
+    _metadata: NoRepr[tx.Optional[M3zMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the file as a record.

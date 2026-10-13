@@ -407,7 +407,9 @@ class ToyImage(
     EXTENSIONS = (".toy",)
 
     raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    _metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[ToyMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     # Other metadata drops the transformations decoded from the old record,
     # and keeps those that were assigned.
