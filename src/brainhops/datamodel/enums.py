@@ -1,9 +1,13 @@
-"""Enumerations shared across the data model, such as interpolation orders
-and boundary conditions."""
+"""Enumerations shared across the data model.
+
+The enumerations cover interpolation orders, boundary conditions,
+anatomical orientations and the known terms of metadata fields.
+"""
 
 __all__ = [
     "BoundaryCondition",
     "InterpolationOrder",
+    "StoreEnum",
     "OrientationType",
     "AnatomicalOrientationValue",
     "SimplifyPolicy",
@@ -17,27 +21,38 @@ __all__ = [
 from brainhops._core.enum import IntEnum, StrEnum
 
 
+# ruff: disable[E501]
+# fmt: off
 class SimplifyPolicy(StrEnum):
-    """How hard a transformation may be looked at, and therefore how far it
-    may be simplified.
+    """How far a transformation may be inspected when it is simplified.
 
-    * `none` -- declared type only: nothing is inspected, nothing is
+    - `none`: only the declared type is used, and nothing is inspected or
       rewritten.
-    * `analytic` -- structure only: `None` parameters, array shapes, axis
-      lists and wrapper contents are read; no value is read and no lazy
-      inverse is materialized. Invertibility, injectivity and surjectivity
-      of a matrix transformation are *assumed from its shape* at this level
-      (a square matrix is presumed invertible, a wide one surjective, a tall
-      one injective).
-    * `numeric` -- values too: zero tests, diagonality, orthogonality, rank;
-      a typed inverse may be materialized when a leaf is downcast. Rank
-      replaces the analytic shape assumption, so a square singular matrix is
-      *not* invertible here.
+    - `analytic`: the structure is inspected (missing parameters, array
+      shapes, axis lists, the contents of wrappers), but no value is read
+      and no lazy inverse is materialized. Matrix transformations are
+      assumed invertible when square, surjective when wide and injective
+      when tall.
+    - `numeric`: values are read as well, so that zero entries,
+      diagonality, orthogonality and rank can be tested. A typed inverse
+      may be materialized when a transformation is rewritten as the
+      cheapest type that it belongs to. The rank replaces the assumption
+      based on the shape, so a singular square matrix is not invertible.
+
+    The members and their values are listed in the following table.
+
+    | Name       | Value        | Description                                                        |
+    |------------|--------------|--------------------------------------------------------------------|
+    | `none`     | `"none"`     | Only the declared type is used; nothing is inspected or rewritten. |
+    | `analytic` | `"analytic"` | The structure is inspected, but no value is read.                  |
+    | `numeric`  | `"numeric"`  | Values are read as well, for zero, diagonality and rank tests.     |
     """
 
     none = "none"
     analytic = "analytic"
     numeric = "numeric"
+# fmt: on
+# ruff: enable[E501]
 
 
 # ruff: disable[E501]
@@ -45,32 +60,63 @@ class SimplifyPolicy(StrEnum):
 class BoundaryCondition(StrEnum):
     """Boundary conditions for interpolation and resampling.
 
-    The following boundary conditions are supported:
+    The following table lists every member with its value, its aliases and
+    the padding pattern that it produces around the values `a b c d`.
 
-    | Value         | Aliases                        | Description                     |
-    |---------------|--------------------------------|---------------------------------|
-    | `nearest`     | `edge`, `border`               | <code>(a a a a &vert; a b c d &vert; d d d d)</code> |
-    | `reflect`     | `symmetric`, `dct2`            | <code>(d c b a &vert; a b c d &vert; d c b a)</code> |
-    | `mirror`      | `dct1`                         | <code>  (d c b &vert; a b c d &vert; c b a)  </code> |
-    | `grid-wrap`   | `circular`, `circulant`, `dft` | <code>(a b c d &vert; a b c d &vert; a b c d)</code> |
-    | `wrap`        |                                | <code>(d b c d &vert; a b c d &vert; b c a b)</code> |
-    | `constant`    | `zero`, `zeros`                | <code>(0 0 0 0 &vert; a b c d &vert; 0 0 0 0)</code> |
+    | Name       | Value         | Aliases                        | Description                                          |
+    |------------|---------------|--------------------------------|------------------------------------------------------|
+    | `nearest`  | `"nearest"`   | `edge`, `border`               | <code>(a a a a &vert; a b c d &vert; d d d d)</code> |
+    | `reflect`  | `"reflect"`   | `symmetric`, `dct2`            | <code>(d c b a &vert; a b c d &vert; d c b a)</code> |
+    | `mirror`   | `"mirror"`    | `dct1`                         | <code>  (d c b &vert; a b c d &vert; c b a)  </code> |
+    | `gridwrap` | `"grid-wrap"` | `circular`, `circulant`, `dft` | <code>(a b c d &vert; a b c d &vert; a b c d)</code> |
+    | `wrap`     | `"wrap"`      |                                | <code>(d b c d &vert; a b c d &vert; b c a b)</code> |
+    | `constant` | `"constant"`  | `zero`, `zeros`                | <code>(0 0 0 0 &vert; a b c d &vert; 0 0 0 0)</code> |
     """
 
-    nearest = edge = border = "nearest"                     # (a a a a | a b c d | d d d d)
-    reflect = symmetric = dct2 = "reflect"                  # (d c b a | a b c d | d c b a)
-    mirror = dct1 = "mirror"                                #   (d c b | a b c d | c b a)
-    gridwrap = circular = circulant = dft = "grid-wrap"     # (a b c d | a b c d | a b c d)
-    wrap = "wrap"                                           # (d b c d | a b c d | b c a b)
-    constant = zero = zeros = "constant"                    # (0 0 0 0 | a b c d | 0 0 0 0)
+    nearest = edge = border = "nearest"
+    reflect = symmetric = dct2 = "reflect"
+    mirror = dct1 = "mirror"
+    gridwrap = circular = circulant = dft = "grid-wrap"
+    wrap = "wrap"
+    constant = zero = zeros = "constant"
+# fmt: on
+# ruff: enable[E501]
+
+
+# ruff: disable[E501]
+# fmt: off
+class StoreEnum(StrEnum):
+    """What the `data` of a transformation field holds.
+
+    The member is given by the `store` flag of
+    [`TransformationField`][brainhops.datamodel.transformations.TransformationField].
+
+    The following table lists each member with its aliases, its value and
+    what `data` holds when the member is used.
+
+    | Name           | Aliases                            | Value            | Description                                                           |
+    |----------------|------------------------------------|------------------|-----------------------------------------------------------------------|
+    | `coefficients` | `COEFFICIENTS`, `COEFFS`, `coeffs` | `"coefficients"` | `data` holds spline coefficients, and `field` decodes them to values. |
+    | `values`       | `VALUES`                           | `"values"`       | `data` holds the field's values, and `field` is `data` itself.        |
+    """
+
+    COEFFICIENTS = COEFFS = coefficients = coeffs = "coefficients"
+    VALUES = values = "values"
+
+    @classmethod
+    def from_coefficients(cls, coefficients: bool) -> "StoreEnum":
+        """Return the member matching a boolean `coefficients` flag.
+
+        File formats state with a boolean whether they store coefficients,
+        and this method turns that boolean into a member.
+        """
+        return cls.coefficients if coefficients else cls.values
 # fmt: on
 # ruff: enable[E501]
 
 
 class InterpolationOrder(IntEnum):
     """Interpolation order for interpolation and resampling.
-
-    The following interpolation orders are supported:
 
     | Name          | Aliases     | Value | Description                     |
     |---------------|-------------|-------|---------------------------------|
@@ -82,7 +128,6 @@ class InterpolationOrder(IntEnum):
     | `fifth`       |             | 5     | Fifth-order interpolation.      |
     | `barycentric` |             | -1    | Barycentric interpolation.      |
     | `fourier`     |             | -2    | Fourier interpolation.          |
-
     """
 
     zeroth = nearest = 0
@@ -96,9 +141,7 @@ class InterpolationOrder(IntEnum):
 
 
 class AxisType(StrEnum):
-    """Axis types for coordinate systems and transformations.
-
-    The following axis types are supported:
+    """Types of the axes of coordinate systems and transformations.
 
     | Name          | Value           | Description             |
     |---------------|-----------------|-------------------------|
@@ -117,10 +160,7 @@ class AxisType(StrEnum):
 
 
 class OrientationType(StrEnum):
-    """
-    Orientation types for coordinate systems and transformations.
-
-    Currently, only the `"anatomical"` orientation is supported.
+    """Types of orientation, of which only `anatomical` exists for now.
 
     | Name          | Value          | Description             |
     |---------------|----------------|-------------------------|
@@ -133,10 +173,7 @@ class OrientationType(StrEnum):
 # ruff: disable[E501]
 # fmt: off
 class AnatomicalOrientationValue(StrEnum):
-    """
-    Anatomical orientation values for coordinate systems and transformations.
-
-    The following values are supported:
+    """Anatomical orientations of the axes of coordinate systems.
 
     | Name                    | Value                     | Description             |
     |-------------------------|---------------------------|-------------------------|
@@ -153,7 +190,7 @@ class AnatomicalOrientationValue(StrEnum):
     | `dorsal_to_plantar`     | `"dorsal-to-plantar"`     | top of foot to sole
     | `plantar_to_dorsal`     | `"plantar-to-dorsal"`     | sole to top of foot
     | `rostral_to_caudal`     | `"rostral-to-caudal"`     | nose/beak-to-tail, especially for nervous system
-    | `caudal_to_rostral`     | ` "caudal-to-rostral"`    | tail-to-nose/beak, especially for nervous system
+    | `caudal_to_rostral`     | `"caudal-to-rostral"`     | tail-to-nose/beak, especially for nervous system
     | `cranial_to_caudal`     | `"cranial-to-caudal"`     | head-to-tail
     | `caudal_to_cranial`     | `"caudal-to-cranial"`     | tail-to-head
     | `dorsal_to_ventral`     | `"dorsal-to-ventral"`     | back/top-to-belly/bottom
@@ -165,13 +202,13 @@ class AnatomicalOrientationValue(StrEnum):
     | `apex_to_base`          | `"apex-to-base"`          | tip to broad base, e.g. heart, lungs
     | `base_to_apex`          | `"base-to-apex"`          | broad base to tip
     """
-    # Common to both bipeds and quadrupeds
+    # Common to bipeds and quadrupeds.
     left_to_right = "left-to-right"
     right_to_left = "right-to-left"
     proximal_to_distal = "proximal-to-distal"
     distal_to_proximal = "distal-to-proximal"
 
-    # Primarily for bipeds (humans)
+    # Primarily for bipeds, such as humans.
     anterior_to_posterior = "anterior-to-posterior"
     posterior_to_anterior = "posterior-to-anterior"
     inferior_to_superior = "inferior-to-superior"
@@ -181,7 +218,7 @@ class AnatomicalOrientationValue(StrEnum):
     dorsal_to_plantar = "dorsal-to-plantar"
     plantar_to_dorsal = "plantar-to-dorsal"
 
-    # Primarily for quadrupeds:
+    # Primarily for quadrupeds.
     rostral_to_caudal = "rostral-to-caudal"
     caudal_to_rostral = "caudal-to-rostral"
     cranial_to_caudal = "cranial-to-caudal"
@@ -189,7 +226,7 @@ class AnatomicalOrientationValue(StrEnum):
     dorsal_to_ventral = "dorsal-to-ventral"
     ventral_to_dorsal = "ventral-to-dorsal"
 
-    # For layered and polarized tissues (subject-local):
+    # Layered and polarized tissues, local to the subject.
     superficial_to_deep = "superficial-to-deep"
     deep_to_superficial = "deep-to-superficial"
     apical_to_basal = "apical-to-basal"
@@ -203,26 +240,25 @@ class AnatomicalOrientationValue(StrEnum):
 # ----------------------------------------------------------------------
 #   METADATA TERMS
 # ----------------------------------------------------------------------
-#
-# The known terms of the free-text fields of `brainhops.datamodel.metadata`.
-# A field typed `Union[<Enum>, str]` holds a member when its value is one
-# of these, and the string otherwise: the lists help consistency and
-# documentation, and do not close the vocabulary.
+# The enumerations below list the known terms of free-text metadata fields.
+# A field typed `Union[<Enum>, str]` holds a member when its value matches
+# one, and the plain string otherwise, so these lists do not restrict the
+# vocabulary.
 
 
 # ruff: disable[E501]
 # fmt: off
 class SpaceEnum(StrEnum):
-    """
-    The known labels of a world space, used by the `space`, `input_space`
-    and `output_space` metadata fields.
+    """Known labels of a world space.
 
-    The first five members are the names that NIfTI gives to its
-    `sform_code` and `qform_code` values. They are followed by the BIDS
-    template identifiers, which BIDS uses for `SpatialReference` and for
-    the `space-` entity of a file name, and by the spaces that BIDS
-    defines without a template. A label that is not listed here is kept
-    as a plain string.
+    The labels are used by the metadata fields `space`, `input_space` and
+    `output_space`. An unlisted label is kept as a plain string.
+
+    The first five members are the names that NIfTI gives to the values of
+    `sform_code` and `qform_code`. They are followed by the BIDS standard
+    templates, which BIDS uses for `SpatialReference` and for the `space-`
+    entity of file names, and by the non-standard spaces that BIDS defines
+    without a template. Every member is listed in the following table.
 
     +------------------------+--------------------------+----------------------------------------------------------+
     | Member                 | Value                    | Meaning                                                  |
@@ -359,15 +395,17 @@ class SpaceEnum(StrEnum):
 
 
 class IntentEnum(StrEnum):
-    """
-    The known values of the `intent` metadata field, which says what the
-    values of an image represent.
+    """Known values of the `intent` metadata field.
 
-    The members are the NIfTI intent names, spelled as `nibabel` spells
-    them, with their NIfTI intent codes. Codes 2 to 24 name statistical
-    distributions, codes 1001 to 2005 name other kinds of values, and the
-    codes from 2006 onwards are FSL's own. An intent that is not listed
-    here is kept as a plain string.
+    The intent states what the values of an image represent. The members
+    are the NIfTI intent names as nibabel spells them, and each value is
+    the member name with its underscores replaced by spaces. An unlisted
+    intent is kept as a plain string.
+
+    NIfTI codes 2 to 24 name statistical distributions, codes 1001 to 2005
+    name other kinds of values, and the codes from 2006 onwards are
+    specific to FSL. The following table lists every member with its value
+    and its NIfTI code.
 
     +---------------------------+-----------------------------+------------+
     | Member                    | Value                       | NIfTI code |
@@ -511,11 +549,13 @@ class IntentEnum(StrEnum):
 
 
 class Manufacturer(StrEnum):
-    """
-    The known values of the `manufacturer` metadata field (BIDS
-    `Manufacturer`), spelled as converters such as `dcm2niix` normalise the
-    DICOM `Manufacturer` tag. Any other manufacturer is kept as a plain
-    string.
+    """Known values of the `manufacturer` metadata field.
+
+    The names follow the BIDS `Manufacturer` field, spelled as converters
+    such as dcm2niix normalise the DICOM Manufacturer tag. Other
+    manufacturers are kept as plain strings.
+
+    The members and their values are listed in the following table.
 
     +---------------+-----------------+
     | Member        | Value           |
@@ -552,10 +592,12 @@ class Manufacturer(StrEnum):
 
 
 class IlluminationType(StrEnum):
-    """
-    The known values of the `illumination_type` metadata field, which are
-    the members of the OME `Channel.IlluminationType` enumeration. Any
-    other value is kept as a plain string.
+    """Known values of the `illumination_type` metadata field.
+
+    The members are those of the OME `Channel.IlluminationType`
+    enumeration. Other values are kept as plain strings.
+
+    The members and their values are listed in the following table.
 
     +-------------------+---------------------+
     | Member            | Value               |
@@ -580,10 +622,12 @@ class IlluminationType(StrEnum):
 
 
 class ContrastMethod(StrEnum):
-    """
-    The known values of the `contrast_method` metadata field, which are the
-    members of the OME `Channel.ContrastMethod` enumeration. Any other
-    value is kept as a plain string.
+    """Known values of the `contrast_method` metadata field.
+
+    The members are those of the OME `Channel.ContrastMethod` enumeration.
+    Other values are kept as plain strings.
+
+    The members and their values are listed in the following table.
 
     +-----------------------+-------------------------+
     | Member                | Value                   |

@@ -1,721 +1,496 @@
-"""
-`FileBasedMetadata`: the metadata of a file format, its hooks, and the
-dispatcher among the formats whose files hold metadata.
+"""The base of the metadata of file formats, and its consolidation."""
 
-It lives in `brainhops.io`, next to `FileBasedImage`, because it derives
-from the dispatcher of the formats; the format-agnostic `Metadata` it
-extends lives in `brainhops.datamodel.metadata`, which never imports it.
-"""
+__all__ = [
+    "MetadataFormat",
+    "consolidated",
+    "lost_fields",
+    "unsupported_values",
+]
 
-__all__ = ["FileBasedMetadata", "OpaqueMetadata"]
-
-# stdlib
-import copy
 import math
 
-# externals
 import typing_extensions as tx
-from bagof.magic import HideIfDefault, NoEq, NoRepr
+from bagof.magic import NoRepr, replace
 
-# internals
 from brainhops._core.compare import differs
-from brainhops.datamodel.metadata._base import (
-    FIELDS,
-    Metadata,
-    _convert_from,
-    _format_name,
-    _History,
-)
-from brainhops.datamodel.metadata._operations import (
-    Operation,
-    propagate_raw,
-)
+from brainhops.datamodel.metadata import ConversionReport, Metadata
+from brainhops.datamodel.metadata._derive import Indexed, Resampled
 from brainhops.datamodel.metadata._report import (
-    ConversionReport,
     OnLoss,
     apply_loss_policy,
     short,
 )
-from brainhops.datamodel.metadata._sentinel import UNSUPPORTED
-from brainhops.io.base._base import FormatDispatcher, format_registry
-from brainhops.io.base.parsers import ParserNotImplementedError
+from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.io.base._base import (
+    Format,
+    _FileBasedModelMixin,
+    format_registry,
+)
+from brainhops.io.base.specs import register_parser
 
-RawT = tx.TypeVar("RawT")
-"""The type of the raw record of a format (see `FileBasedMetadata`)."""
+# An encoder of the vocabulary of a format: `encode(record, changed,
+# report)` writes into `record`, which is already a copy, every field of
+# `changed` that the format can store, pops each of them from
+# `changed`, and returns the record.
+_Encoder = tx.Callable[
+    [tx.Any, tx.Dict[str, tx.Any], ConversionReport], tx.Any
+]
 
 
-@format_registry
-class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
+@register_parser(Metadata)
+@format_registry(isolated=True)
+class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
+    """Format dispatcher and common base for the metadata of files.
+
+    The metadata of a file is what its header records beside the data. Each
+    file format that has a header defines a subclass named after the format,
+    such as `NiftiMetadata`, which holds the header in `raw` as the format
+    stores it. `MetadataFormat.load` reads the header of a file in any
+    registered format, and the same method of a subclass reads a file of
+    its own format. In both cases, the data that follows the header is not
+    read.
+
+    The header held in `raw` is called the record of the file. The record
+    describes the file as it was read, or as the object that holds it was
+    last consolidated. A record is never changed in place: an object that
+    encodes a new header, with its `consolidate` method or when it is
+    written, encodes it into a copy and holds that copy in new metadata.
+    Metadata keeps no open file and no reference to the data, so it is
+    cheap to copy and it can be pickled.
+
+    The metadata of a format also holds the common vocabulary of
+    [`Metadata`][brainhops.datamodel.metadata.Metadata]. A format decodes
+    every field that it can store from the record when the metadata is
+    built with `from_raw`, and a field that the format has no slot for
+    holds `None`. The fields that a format can store are listed in its
+    constant `SUPPORTED_FIELDS`. A field can be assigned whatever the
+    format supports: `consolidate` encodes into a copy of the record the
+    fields that differ from a fresh decode of the record, and reports
+    those that the format could not store.
+
+    Images and transformations share their metadata with their copies,
+    and metadata can be changed in place, so a change made through one
+    copy is seen by the others. To change the metadata of one copy only,
+    assign it new metadata, such as
+    `image.metadata = replace(image.metadata, description="smoothed")`.
+    Metadata compares by identity.
+
+    The metadata registry is separate from the registry of
+    [`Format`][], so that [`load`][brainhops.io.load] never returns
+    metadata when it reads an image or a transformation. A concrete
+    subclass is added to the metadata registry with `@register_format`.
     """
-    The metadata of a file format: the common vocabulary, decoded from and
-    encoded into the format's own raw record.
 
-    This is the base of every `<Fmt>Metadata`, as `FileBasedImage` is the
-    base of the image class of every format. A format declares what it
-    can store with `supports=`, declares the type of its raw record as
-    the type argument of its base (`FileBasedMetadata[nb.Nifti1Header]`;
-    `FileBasedMetadata[None]` for a format without one), and decodes and
-    encodes the record with the hooks described in the format author's
-    guide (`docs/dev/metadata-formats.md`). The record itself and the
-    read-time snapshot are fields of
-    [`Metadata`][brainhops.datamodel.metadata.Metadata], so that generic
-    metadata carries them through a conversion; reading and writing them
-    is what this class adds.
+    SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    """The fields of the metadata that the format can store.
 
-    A new, empty record is the type called without arguments, so the
-    type of a record must build one that way.
-
-    The class is also the dispatcher of the formats whose files hold
-    metadata: `FileBasedMetadata.load(path)` picks the registered format
-    that best matches the file. The class of such a format lists its
-    parser (a
-    [`MetadataParser`][brainhops.io.base._metadata_parser.MetadataParser])
-    first among its bases, and registers with
-    [`register_format`][brainhops.io.base.register_format]. The registry
-    is separate from that of
-    [`FileBasedObject`][brainhops.io.base.FileBasedObject], which this
-    class is not, so that `brainhops.io.load` never returns metadata
-    where an image or a transformation was asked for.
+    The names are those of the vocabulary, and `"extra"` when the format
+    has a free-form store. A field that is not listed is decoded as
+    `None`, and its value is reported as lost when the metadata is
+    consolidated. A conversion into the format reads this list to
+    report a lower bound of what a write would lose. The base class
+    lists no field.
     """
 
-    # Declared again to hide it from `repr` on the class of a format,
-    # whose name says the format: `HideIfDefault` is bound again on each
-    # class, against the value the class pins (`on={"format": ...}`), so
-    # it hides that value. Generic `Metadata` keeps showing its format.
-    format: tx.Annotated[
-        str,
-        tx.Doc(
-            "The format this metadata belongs to; selects the subclass. "
-            "Hidden from `repr` when it is the format of the class."
-        ),
-        HideIfDefault(),
-    ] = "generic"
+    raw: NoRepr[tx.Any] = None
+    """The header of the file as the format stores it, or `None`.
 
-    raw: tx.Annotated[
-        tx.Optional[RawT],
-        tx.Doc(
-            """
-            The raw record of the file the metadata was read from, of the
-            type the format declares, or `None` for metadata built in
-            memory. Edit it only for what the vocabulary does not cover:
-            on write, a field left untouched keeps the value of the
-            record, and a field that was set wins over it.
-            """
-        ),
-        NoRepr(),
-        NoEq(),
-    ] = None
-
-    # No record, until a format declares the type of its own, as the
-    # type argument of this class (which the metaclass reads): a format
-    # never keeps the record of another format (see `_accepts_raw` in
-    # `brainhops.datamodel.metadata._base`).
-    _raw_class: tx.ClassVar[tx.Optional[type]] = type(None)
-
-    # --- reading ------------------------------------------------------
+    The type of the record depends on the format, and only the format
+    reads it. The record is hidden from the representation of the
+    metadata, because a header is usually long.
+    """
 
     @classmethod
-    def load(cls, file: tx.Any, **kwargs: tx.Any) -> "Metadata":
-        """
-        Read the metadata of a file, without reading its data.
+    def from_raw(cls, raw: tx.Any, **kwargs) -> tx.Self:
+        """Build the metadata that holds a record.
 
-        On `FileBasedMetadata` itself, the dispatcher, the format is found
-        among the registered formats whose files hold metadata (NIfTI,
-        MGH, plain Zarr and OME-Zarr, x5, ITK `.h5`, and BIDS JSON
-        sidecars), by the name of the file and by its content, as
-        `brainhops.io.load` finds the format of an image; `hint=`
-        restricts the candidates. On the class of a format, the file is
-        read as a file of that format, by its parser (`MetadataParser`),
-        which comes first among its bases; the class of a format whose
-        files hold no metadata (FLIRT, ITK `.tfm` and `.mat`) refuses.
-        Only the raw record is read: a NIfTI header, the footer and the
-        tags of an MGH file, the attributes of a Zarr node, the JSON of
-        an x5 node.
-
-        Parameters
-        ----------
-        file : str, path-like, file object or bytes
-            The file, or the Zarr store.
-        **kwargs
-            Options of the reader of the format, and, on the dispatcher,
-            `hint=` (a format name such as `"nifti"`, or several).
-
-        Returns
-        -------
-        Metadata
-            The metadata of the file, with its raw record: the metadata
-            of its format, or generic metadata for a BIDS sidecar.
-            Convert it with `to(Metadata)` for generic metadata (which
-            keeps the record).
-
-        Raises
-        ------
-        ParserContentError
-            On the dispatcher, if no registered format reads the file.
-        ParserNotImplementedError
-            On the class of a format whose files hold no metadata.
-        ParserExistsError
-            If the file does not exist.
-
-        Examples
-        --------
-        ```python
-        meta = FileBasedMetadata.load("sub-01_bold.nii.gz")
-        meta.repetition_time  # read from the header alone
-        FileBasedMetadata.load("sub-01_bold.json").extra["TaskName"]
-        FileBasedMetadata.load("scan.mgz", hint="mgh")
-        NiftiMetadata.load("sub-01_bold.nii.gz")  # as a NIfTI file
-        ```
-        """
-        return super().load(file, **kwargs)
-
-    @classmethod
-    def from_raw(
-        cls, raw: tx.Any, *, image: tx.Any = None, **values: tx.Any
-    ) -> tx.Self:
-        """
-        Build the metadata of a raw record that was just read.
-
-        The raw record is decoded into the common fields by the format's
-        `_decode_raw` hook. The decoded values are kept as the read-time
-        snapshot, so that a field the user leaves untouched keeps the
-        value of the record when the record is written back.
+        A reader calls this method once it has parsed the header of a file.
+        The record is held as it is given, without a copy. The format
+        decodes the fields of the vocabulary from the record here, and the
+        base class, which knows no record, decodes none.
 
         Parameters
         ----------
         raw : object
-            The raw record, of the type the format declares for `raw`.
-        image : object, optional
-            The image or transformation the record was read with, for the
-            fields that the format decodes from the data model.
-        **values
-            Fields to set over the decoded values. They count as changes
-            on write.
+            The header of a file, in the representation of the format.
+        **kwargs : Any
+            Other fields of the metadata, which take precedence over the
+            decoded values.
 
         Returns
         -------
-        FileBasedMetadata
-            The metadata, with `raw` set to the record.
+        MetadataFormat
+            The metadata.
+        """
+        return cls(raw=raw, **kwargs)
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build metadata from a file, from other metadata, or from a value.
+
+        Metadata of any class, generic or of another format, is copied
+        field by field with [`from_instance`][]. A file is read as
+        `_FileBasedModelMixin.from_any` reads it, and any other value is
+        passed to the data model.
+
+        Parameters
+        ----------
+        other : object
+            A file, its content, metadata, or a mapping of fields.
+        *args : Any
+            Constructor arguments.
+        **kwargs : Any
+            Fields of the metadata, or the options of the reader for a
+            file.
+
+        Returns
+        -------
+        MetadataFormat
+            The metadata.
+        """
+        if isinstance(other, Metadata):
+            return cls.from_instance(other, *args, **kwargs)
+        return super().from_any(other, *args, **kwargs)
+
+    @classmethod
+    def from_instance(
+        cls,
+        other: tx.Any,
+        *args: tx.Any,
+        on_loss: tx.Optional[OnLoss] = None,
+        **kwargs: tx.Any,
+    ) -> tx.Self:
+        """Copy metadata into this format, field by field.
+
+        Every field of the vocabulary and `extra` are copied by name,
+        including those that this format cannot store, which are dropped
+        and reported only when the metadata is consolidated. The record
+        of another format means nothing to this one, so it is copied only
+        from metadata of this class. The fields that are set and that
+        `SUPPORTED_FIELDS` does not list are reported here as lost,
+        because a write will drop them, so the report is a lower bound of
+        what a write loses.
+
+        Parameters
+        ----------
+        other : object
+            The metadata to copy.
+        *args : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the fields that this format cannot store. By
+            default, the policy in effect (see
+            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+            A report is filled instead of warning or raising.
+        **kwargs : Any
+            Fields to set on the result.
+
+        Returns
+        -------
+        MetadataFormat
+            The copy.
+
+        Raises
+        ------
+        MetadataLossError
+            If a field is reported under the `"raise"` policy.
+        """
+        obj = super().from_instance(other, *args, **kwargs)
+        report = ConversionReport(
+            source=type(other).__name__, target=cls.__name__
+        )
+        report.lost.update(unsupported_values(cls, obj))
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        return obj
+
+    def derive(
+        self,
+        operation: tx.Union[Indexed, Resampled, None] = None,
+        *,
+        history: tx.Union[str, tx.Sequence[str], None] = None,
+    ) -> tx.Self:
+        """Return the metadata of an image computed from this one.
+
+        The fields follow
+        [`Metadata.derive`][brainhops.datamodel.metadata.Metadata.derive],
+        which records the derivation in `history` and `generated_by`.
+        Those two fields keep their value when the format has no slot
+        for them, so that a derived image of the format is not reported
+        to lose a provenance that only the derivation added.
+
+        Parameters
+        ----------
+        operation : Indexed or Resampled, optional
+            What the image operation did to the axes of the image.
+        history : str or sequence of str, optional
+            The steps of the derivation, appended to `history`.
+
+        Returns
+        -------
+        MetadataFormat
+            New metadata, of the same class, which shares the record.
+        """
+        derived = super().derive(operation, history=history)
+        for name in _PROVENANCE:
+            if name in unsupported_values(type(self), derived):
+                setattr(derived, name, getattr(self, name))
+        return derived
+
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
+        """Encode the fields of the metadata into its record.
+
+        The base class knows no record, so it encodes nothing: a field
+        that differs from a fresh decode of the record, which gives
+        `None` for every field, cannot be stored, and is reported as
+        lost. A format that stores fields overrides this method, and
+        encodes them with [`consolidated`][] and an encoder of its own.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this metadata rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the fields that the format cannot store. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override before the encoding, by
+            name.
+
+        Returns
+        -------
+        Self
+            The consolidated copy, or this metadata with `inplace=True`.
 
         Raises
         ------
         TypeError
-            If `_decode_raw` returned a value for a field that this class does
-            not support. The raw record belongs to the format, so this
-            error never comes from the data: it reveals a format class
-            whose `_decode_raw` disagrees with its `supports=` declaration,
-            and which would otherwise drop the value without a report.
-        """
-        decoded = cls._checked_decode_raw(raw, image)
-        obj = cls(raw=raw, **decoded)
-        # Snapshot the *converted* values, so that a decoded list held as
-        # a tuple does not count as a change.
-        obj._snapshot = {
-            key: copy.deepcopy(getattr(obj, key)) for key in decoded
-        }
-        for key, value in values.items():
-            setattr(obj, key, value)
-        return obj
-
-    def update_from_raw(self, raw: tx.Any, *, image: tx.Any = None) -> tx.Self:
-        """
-        Build the metadata of another raw record, keeping the changes made
-        to this metadata.
-
-        The new record is decoded as `from_raw` decodes it. Every field
-        that changed in this object since it was read is then set over the
-        decoded values, and counts as a change. For an object built in
-        memory, every field that is set counts as changed. The keys of
-        `extra` are merged one by one. This is how an image that is given
-        a new raw record (`replace(image, header=...)`) keeps the metadata
-        edits it carried.
-
-        Parameters
-        ----------
-        raw : object
-            The new raw record.
-        image : object, optional
-            The image or transformation the record belongs to.
-
-        Returns
-        -------
-        FileBasedMetadata
-            A new metadata object of the same class.
-        """
-        changed = {
-            key: value
-            for key, value in self._changed_fields().items()
-            if key in type(self).supported_fields
-        }
-        extra = changed.pop("extra", None)
-        obj = type(self).from_raw(raw, image=image)
-        for key, value in changed.items():
-            setattr(obj, key, value)
-        if extra:
-            obj.extra = _apply_diff(obj.extra or {}, extra)
-        return obj
-
-    # --- the change-detecting write -----------------------------------
-
-    def _changed_fields(self) -> tx.Dict[str, tx.Any]:
-        """
-        The common fields that differ from the read-time snapshot.
-
-        An object read from a file and left untouched has none. An object
-        built in memory has no snapshot, so every field that is not
-        `None` is a change. A field set to `None` after a read is a change
-        to `None` (the record's slot is cleared on write). `extra` is
-        compared key by key: its entry is the per-key diff, where `None`
-        removes a key.
-        """
-        snapshot = self._snapshot
-        changed: tx.Dict[str, tx.Any] = {}
-        for name in FIELDS:
-            value = getattr(self, name, None)
-            if value is UNSUPPORTED:
-                continue
-            before = snapshot.get(name)
-            if name == "extra":
-                diff = _extra_diff(before, value)
-                if diff:
-                    changed["extra"] = diff
-            elif differs(value, before):
-                changed[name] = value
-        return changed
-
-    def to_raw(
-        self,
-        *,
-        image: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
-    ) -> tx.Any:
-        """
-        Encode the common fields into a new raw record, and return it.
-
-        This is the counterpart of `from_raw`: the record is a copy of
-        `raw` (or a default record, for metadata built in memory), with
-        the fields that changed since the read encoded over it. It is what
-        a metadata writer writes (see `ZarrMetadata.to_file`). A writer
-        that builds its own fresh record calls `update_raw` instead.
-
-        Parameters
-        ----------
-        image : object, optional
-            The image or transformation the metadata belongs to.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the losses. By default, the policy in effect.
-
-        Returns
-        -------
-        object
-            The encoded record. `raw` itself is left unchanged.
-
-        Raises
-        ------
+            If a keyword names no field of the metadata.
         MetadataLossError
-            If something is lost under the `"raise"` policy.
+            If a field is reported under the `"raise"` policy.
         """
-        return self.update_raw(None, image=image, on_loss=on_loss)
-
-    def update_raw(
-        self,
-        raw: tx.Any = None,
-        *,
-        image: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
-        force: tx.Collection[str] = (),
-    ) -> tx.Any:
-        """
-        Encode the common fields over a raw record, and return the record.
-
-        Only the fields that changed since the read are encoded, so that a
-        field the user did not touch keeps the value that the record holds.
-        The fields named in `force` are encoded whether they changed or
-        not: a writer uses `force` for a keyword argument that must win
-        over the record, such as the `tr=` option of the MGH writer, and a
-        forced `None` clears the slot.
-
-        A field that the format does not support, but that was assigned
-        after construction, is reported as lost, as are the
-        value-dependent losses found by `_encode_raw`. What the writer
-        then changes in the record (a slot that the data model owns, such
-        as the time step of a NIfTI image) is found by `check_raw`, which
-        the writer calls once the record is finished.
-
-        Parameters
-        ----------
-        raw : object, optional
-            The record to encode over. A writer passes its own fresh
-            record, already filled with what it keeps from `self.raw`.
-            By default, a copy of `self.raw` is used, or a default record
-            when there is none.
-        image : object, optional
-            The image or transformation being written.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the losses. By default, the policy in effect
-            (see
-            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
-            A writer passes the report of its whole write, which it then
-            acts on once.
-        force : collection of str, optional
-            The fields to encode even when they did not change.
-
-        Returns
-        -------
-        object
-            The encoded record.
-
-        Raises
-        ------
-        MetadataLossError
-            If something is lost under the `"raise"` policy.
-        """
-        sink = isinstance(on_loss, ConversionReport)
-        if sink:
-            report = on_loss
-        else:
-            report = ConversionReport(source=self.format, target=self.format)
-        unsupported = type(self).unsupported_fields
-        for name in unsupported:
-            value = getattr(self, name, None)
-            if value is not None and value is not UNSUPPORTED:
-                report.lost[name] = value
-        if raw is None:
-            raw = self._raw_or_default()
-        changed = {
-            key: value
-            for key, value in self._changed_fields().items()
-            if key not in unsupported
-        }
-        for name in force:
-            if name in FIELDS and name != "extra":
-                if name not in unsupported:
-                    changed[name] = getattr(self, name)
-        raw = self._encode_raw(raw, changed, image=image, report=report)
-        if not sink:
-            apply_loss_policy(report, on_loss, stacklevel=2)
-        return raw
-
-    def check_raw(
-        self,
-        raw: tx.Any,
-        *,
-        image: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
-    ) -> ConversionReport:
-        """
-        Check that a finished record holds the fields that changed.
-
-        A writer encodes the fields with `update_raw`, then may set slots
-        of the record from the data model, whatever the metadata says: the
-        time step of a NIfTI image, the data type of the stored values.
-        Once the record is finished, it calls this method, which decodes
-        the record as a reader would (`from_raw`) and reports as
-        approximated every changed field whose value the record does not
-        hold. A field already reported (lost or approximated), an
-        unsupported field and `extra` are not checked again.
-
-        Parameters
-        ----------
-        raw : object
-            The finished record.
-        image : object, optional
-            The image or transformation being written, as a reader would
-            be given it.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the losses. By default, the policy in effect.
-            A writer passes the report of its whole write.
-
-        Returns
-        -------
-        ConversionReport
-            The report, `on_loss` itself when it is one.
-
-        Raises
-        ------
-        MetadataLossError
-            If something is approximated under the `"raise"` policy.
-        """
-        sink = isinstance(on_loss, ConversionReport)
-        if sink:
-            report = on_loss
-        else:
-            report = ConversionReport(source=self.format, target=self.format)
-        decoded = type(self).from_raw(raw, image=image)
-        unsupported = type(self).unsupported_fields
-        for name, value in self._changed_fields().items():
-            if (
-                name == "extra"
-                or name in unsupported
-                or name in report.lost
-                or name in report.approximated
-            ):
-                continue
-            held = getattr(decoded, name)
-            if not _agrees(held, value):
-                report.approximated[name] = f"the record holds {short(held)}"
-        if not sink:
-            apply_loss_policy(report, on_loss, stacklevel=2)
-        return report
-
-    @classmethod
-    def writable(
-        cls, metadata: Metadata
-    ) -> tx.Tuple["FileBasedMetadata", ConversionReport]:
-        """
-        Prepare metadata for a writer of this format.
-
-        Metadata that is already of this class is returned as it is.
-        Metadata of another class is converted into this class, and the
-        losses of the conversion seed the report. The loss policy is not
-        applied here: the writer encodes the fields into the same report
-        (`update_raw(..., on_loss=report)`) and applies the policy once, so
-        that one write gives one report and at most one warning.
-
-        Parameters
-        ----------
-        metadata : Metadata
-            The metadata of the object being written.
-
-        Returns
-        -------
-        metadata : FileBasedMetadata
-            The metadata to write, of this class.
-        report : ConversionReport
-            The report of the write so far.
-        """
-        if isinstance(metadata, cls):
-            target = _format_name(cls)
-            return metadata, ConversionReport(
-                source=metadata.format, target=target
-            )
-        return _convert_from(cls, metadata)
-
-    def check_writable(
-        self, *, image: tx.Any = None, raw: tx.Any = None
-    ) -> ConversionReport:
-        """
-        Report what a write of this metadata would lose, without writing
-        anything.
-
-        The class declarations only give a lower bound of what is lost.
-        This method runs the encoder on a scratch record, so that the
-        losses that depend on the values, such as an over-long description
-        or an irregular slice timing, are included as well. A format whose
-        writer starts from another record than a copy of `raw` overrides
-        this method, builds that record, and calls `super()` with it.
-
-        Parameters
-        ----------
-        image : object, optional
-            The image or transformation that would be written, for the
-            fields that depend on the data model.
-        raw : object, optional
-            The record to encode over, which may be edited. By default, a
-            copy of `raw`, or a new, empty record when there is none.
-
-        Returns
-        -------
-        ConversionReport
-            What would be lost or approximated.
-        """
-        report = ConversionReport(source=self.format, target=self.format)
-        raw = self.update_raw(raw, image=image, on_loss=report)
-        self.check_raw(raw, image=image, on_loss=report)
-        return report
-
-    # --- per-format hooks ---------------------------------------------
-
-    @classmethod
-    def _decode_raw(cls, raw: tx.Any, *, image: tx.Any = None) -> tx.Dict:
-        """
-        Decode a raw record into common fields.
-
-        A format overrides this hook. The default decodes nothing.
-
-        Parameters
-        ----------
-        raw : object
-            The raw record.
-        image : object, optional
-            The image or transformation the record was read with.
-
-        Returns
-        -------
-        dict
-            Field name to decoded value. A value that is `None` or
-            `UNSUPPORTED` is ignored.
-        """
-        return {}
-
-    def _encode_raw(
-        self,
-        raw: tx.Any,
-        changed: tx.Dict[str, tx.Any],
-        *,
-        image: tx.Any = None,
-        report: ConversionReport,
-    ) -> tx.Any:
-        """
-        Encode changed common fields into a raw record.
-
-        A format overrides this hook. The default leaves the record
-        unchanged.
-
-        Parameters
-        ----------
-        raw : object
-            The record to encode into, which may be edited in place.
-        changed : dict
-            Field name to new value, for the fields to encode. A `None`
-            value clears the slot of the field.
-        image : object, optional
-            The image or transformation being written.
-        report : ConversionReport
-            The report to fill with what cannot be stored exactly.
-
-        Returns
-        -------
-        object
-            The encoded record.
-        """
-        return raw
-
-    # --- internals ----------------------------------------------------
-
-    @classmethod
-    def _checked_decode_raw(
-        cls, raw: tx.Any, image: tx.Any
-    ) -> tx.Dict[str, tx.Any]:
-        """`_decode_raw`, without its absent values, and checked against the
-        declarations of the class (see `from_raw`)."""
-        decoded: tx.Dict[str, tx.Any] = {}
-        for key, value in cls._decode_raw(raw, image=image).items():
-            if value is None or value is UNSUPPORTED:
-                continue
-            if key not in cls.supported_fields:
-                raise TypeError(
-                    f"{cls.__name__}._decode_raw returned {key}={value!r}, "
-                    f"but {cls.__name__} does not support {key!r}."
-                )
-            decoded[key] = value
-        return decoded
-
-    def _raw_or_default(self) -> tx.Any:
-        """A copy of `raw`, or a new, empty record when there is none."""
-        if self.raw is not None:
-            return copy.deepcopy(self.raw)
-        cls = type(self)._raw_class
-        return None if cls is None else cls()
-
-    def _derive_values(
-        self,
-        *,
-        operation: tx.Optional[Operation],
-        history: _History,
-    ) -> tx.Dict[str, tx.Any]:
-        # A copy of the snapshot is kept, so that a field the operation
-        # cleared is cleared in the record on write. The record is
-        # propagated by the handler of its type, which scrubs what else
-        # the operation invalidates, on a copy (see `propagate_raw`).
-        values = super()._derive_values(operation=operation, history=history)
-        values["snapshot"] = copy.copy(self._snapshot)
-        values["raw"] = propagate_raw(self.raw, operation, source=self)
-        return values
-
-
-class OpaqueMetadata(
-    FileBasedMetadata[None], on={"format": "opaque"}, supports=()
-):
-    """
-    The metadata of a format that stores none, not even in memory: every
-    field is unsupported, and there is no raw record.
-
-    Base class of the formats that store a bare matrix and are given
-    nothing else (matrix text, ITK `.tfm`/`.mat`). A read-then-save
-    loses nothing, because nothing is there. A format that keeps
-    anything, if only in memory (FLIRT `moving`/`fixed`), is a
-    `FileBasedMetadata` with a `supports=` list instead. Its `raw` is
-    always `None`.
-    """
-
-    @classmethod
-    def load(cls, file: tx.Any, **kwargs: tx.Any) -> "Metadata":
-        """
-        Refuse to read the metadata of a file: the files of the format
-        hold none.
-
-        Parameters
-        ----------
-        file : str, path-like or file object
-            The file.
-        **kwargs
-            Ignored.
-
-        Returns
-        -------
-        Metadata
-            Never: the method always raises.
-
-        Raises
-        ------
-        ParserNotImplementedError
-            Always.
-        """
-        raise ParserNotImplementedError(
-            f"{cls.__name__} stores no metadata that can be read on its own."
+        return consolidated(
+            self, None, None, inplace=inplace, on_loss=on_loss, fields=fields
         )
+
+
+# ----------------------------------------------------------------------
+#   HELPERS OF THE FORMATS
+# ----------------------------------------------------------------------
+
+
+def consolidated(
+    metadata: MetadataFormat,
+    encode: tx.Optional[_Encoder],
+    new_record: tx.Optional[tx.Callable[[], tx.Any]],
+    *,
+    inplace: bool,
+    on_loss: tx.Optional[OnLoss],
+    fields: tx.Mapping[str, tx.Any],
+) -> tx.Any:
+    """Return metadata whose record holds its fields.
+
+    This function is the body of `consolidate` for every metadata
+    format, which passes its own encoder. It follows the contract of
+    consolidation of the format records.
+
+    1. The fields given in `fields` replace those of the metadata.
+    2. The fields that differ from a fresh decode of the record (the
+       metadata that `from_raw` builds from it) are the changes. With
+       none, the result shares the record, and metadata without a record
+       and without a field set stays without a record.
+    3. The changes are encoded into a copy of the record, or into a new,
+       empty record when there is none. The encoder takes the name of
+       each change that it writes, and the changes that are left are
+       reported as lost. A change that the record holds only
+       approximately is reported as approximated.
+    4. The result is decoded afresh from the new record, so a second
+       consolidation changes nothing.
+
+    Parameters
+    ----------
+    metadata : MetadataFormat
+        The metadata to consolidate.
+    encode : callable, optional
+        The encoder of the format, `encode(record, changed, report)`. It
+        writes into `record`, which is a copy, the changes that the
+        format can store, pops each of them from `changed`, reports what
+        it stores approximately, and returns the record. `None` stores
+        nothing.
+    new_record : callable, optional
+        A function that returns an empty record of the format, for
+        metadata without a record. With `None`, such metadata stores
+        nothing.
+    inplace : bool
+        Whether to change `metadata` rather than a copy.
+    on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+        What to do with what was not stored. By default, the policy in
+        effect.
+    fields : mapping
+        Fields to override before the encoding.
+
+    Returns
+    -------
+    MetadataFormat
+        The consolidated copy, or `metadata` itself with `inplace=True`.
+
+    Raises
+    ------
+    TypeError
+        If `fields` names no field of the metadata.
+    MetadataLossError
+        If something is reported under the `"raise"` policy.
+    """
+    unknown = sorted(set(fields) - set(FIELDS))
+    if unknown:
+        raise TypeError(
+            f"{type(metadata).__name__}.consolidate() got unknown field(s): "
+            f"{', '.join(unknown)}"
+        )
+    cls = type(metadata)
+    source = replace(metadata, **fields) if fields else metadata
+    fresh = cls.from_raw(source.raw)
+    changed = {
+        name: getattr(source, name)
+        for name in FIELDS
+        if _differs(getattr(source, name), getattr(fresh, name))
+    }
+    if not changed:
+        if inplace:
+            for name in fields:
+                setattr(metadata, name, getattr(source, name))
+            return metadata
+        return source if fields else replace(metadata)
+    report = ConversionReport(source=cls.__name__, target=cls.__name__)
+    record = source.raw
+    remaining = dict(changed)
+    if encode is not None:
+        if record is not None:
+            record = record.copy()
+        elif new_record is not None:
+            record = new_record()
+        if record is not None:
+            record = encode(record, remaining, report)
+    lost_fields(remaining, report)
+    decoded = cls.from_raw(record)
+    for name, value in changed.items():
+        if name in remaining or name in report.approximated:
+            continue
+        held = getattr(decoded, name)
+        if not _agrees(held, value):
+            report.approximated[name] = f"the record holds {short(held)}"
+    apply_loss_policy(report, on_loss, stacklevel=3)
+    if inplace:
+        metadata.raw = record
+        for name in FIELDS:
+            setattr(metadata, name, getattr(decoded, name))
+        return metadata
+    return replace(
+        source,
+        raw=record,
+        **{name: getattr(decoded, name) for name in FIELDS},
+    )
+
+
+def lost_fields(
+    remaining: tx.Mapping[str, tx.Any], report: ConversionReport
+) -> ConversionReport:
+    """Report as lost the changes that no slot of a record took.
+
+    Parameters
+    ----------
+    remaining : mapping
+        The changes that the encoder of a format left: field name to the
+        value that it could not store.
+    report : ConversionReport
+        The report to fill.
+
+    Returns
+    -------
+    ConversionReport
+        `report` itself.
+    """
+    for name, value in remaining.items():
+        report.lost[name] = value
+    return report
+
+
+def unsupported_values(
+    cls: tx.Type[MetadataFormat], metadata: Metadata
+) -> tx.Dict[str, tx.Any]:
+    """Return the fields of metadata that a format declares no slot for.
+
+    This function is the one reader of `SUPPORTED_FIELDS`. A field
+    counts when its value is set, which means not `None`, and not empty
+    for `extra`.
+
+    Parameters
+    ----------
+    cls : type
+        The metadata class of a format.
+    metadata : Metadata
+        The metadata to check.
+
+    Returns
+    -------
+    dict
+        Field name to value, for each field that is set and that
+        `cls.SUPPORTED_FIELDS` does not list.
+    """
+    supported = frozenset(cls.SUPPORTED_FIELDS)
+    values = {}
+    for name in FIELDS:
+        value = getattr(metadata, name, None)
+        if name in supported or value is None:
+            continue
+        if name == "extra" and not value:
+            continue
+        values[name] = value
+    return values
 
 
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
 
-
-def _extra_diff(
-    before: tx.Optional[tx.Mapping], after: tx.Any
-) -> tx.Dict[str, tx.Any]:
-    before = dict(before or {})
-    after = dict(after or {})
-    diff = {
-        key: value
-        for key, value in after.items()
-        if key not in before or differs(value, before[key])
-    }
-    for key in before:
-        if key not in after:
-            diff[key] = None
-    return diff
+# The fields that `Metadata.derive` adds to.
+_PROVENANCE = ("history", "generated_by")
 
 
-def _apply_diff(
-    mapping: tx.Mapping[str, tx.Any], diff: tx.Mapping[str, tx.Any]
-) -> tx.Dict[str, tx.Any]:
-    """A copy of `mapping` with an `extra` diff applied (`None` removes
-    a key)."""
-    out = dict(mapping)
-    for key, value in diff.items():
-        if value is None:
-            out.pop(key, None)
-        else:
-            out[key] = value
-    return out
+def _differs(value: tx.Any, decoded: tx.Any) -> bool:
+    """Return whether a field differs from its decoded value.
+
+    `None` is compared by identity, because NumPy reads `None` as the
+    default data type, so that `np.dtype("float64") == None` holds.
+    """
+    if value is None or decoded is None:
+        return value is not decoded
+    return differs(value, decoded)
 
 
-def _agrees(value: tx.Any, given: tx.Any) -> bool:
-    """Whether a value agrees with what a record holds: numbers, and
-    sequences of numbers element by element, within single-precision
-    rounding."""
-    if _is_number(value) and _is_number(given):
-        return math.isclose(value, given, rel_tol=1e-6, abs_tol=1e-9)
+def _agrees(held: tx.Any, given: tx.Any) -> bool:
+    """Return whether a record holds a value, up to single precision.
+
+    Numbers, and sequences of numbers element by element, agree within
+    the rounding of single precision, which is how most headers store
+    them. Other values agree when they are equal.
+    """
+    if _is_number(held) and _is_number(given):
+        return math.isclose(held, given, rel_tol=1e-6, abs_tol=1e-9)
     if (
-        isinstance(value, (tuple, list))
+        isinstance(held, (tuple, list))
         and isinstance(given, (tuple, list))
-        and len(value) == len(given)
-        and all(_is_number(v) for v in (*value, *given))
+        and len(held) == len(given)
+        and all(_is_number(v) for v in (*held, *given))
     ):
-        return all(_agrees(v, g) for v, g in zip(value, given))
-    return not differs(value, given)
+        return all(_agrees(h, g) for h, g in zip(held, given))
+    return not _differs(held, given)
 
 
 def _is_number(value: tx.Any) -> bool:

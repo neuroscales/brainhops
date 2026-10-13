@@ -1,82 +1,46 @@
-# dependencies
 import numpy as np
 import typing_extensions as tx
-
-# externals
-from bagof.magic import HIDE_IF_NONE, Alias, Factory, Magic
+from bagof.magic import HIDE_IF_NONE, Alias, Magic
 
 from brainhops._core.peek import peekable_lines
 from brainhops._core.typing import ArrayLike
-
-# datamodel
 from brainhops.datamodel.images import Image
-
-# core
-from brainhops.datamodel.metadata._field import MetadataField
-
-# io
-from brainhops.io.base.arrays import ArrayContainerError, read_text_rows
-from brainhops.io.base.nifti import _NiftiObject
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
-    TextFileParser,
+    TextFileReader,
 )
-from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 
-# locals
-from ._metadata import FlirtMetadata
+# io
+from brainhops.io.common._arrays import ArrayContainerError, read_text_rows
+from brainhops.io.common.nifti._header import _NiftiObject
 
-# The moving and reference images may be a nibabel header or image, or a
-# brainhops image. This is the type FLIRT accepts for either of them.
+from .._keywords import pop_aliased
+
+# A nibabel image or header, or a brainhops image.
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
-class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
-    """Reader for a FLIRT `.mat` file.
+class FlirtMatrixReader(Magic, TextFileReader, repr=HIDE_IF_NONE):
+    """Parser for FSL FLIRT `.mat` files.
 
-    A FLIRT `.mat` file is a plain text `(4, 4)` affine matrix, one row
-    per line, whitespace separated. The matrix alone carries no image
-    geometry, so the reference and moving images must be supplied for the
-    matrix to be turned into a world-space transformation.
+    The file holds a plain-text (4, 4) matrix, one row per line. The matrix
+    carries no image geometry, so the reference and moving images are needed to
+    turn it into a world-space transform.
     """
 
     flirt_matrix: tx.Optional[ArrayLike] = None
-    """The raw `(4, 4)` FLIRT matrix, as read from the file.
-
-    An array-like of shape `(4, 4)` mapping moving-image scaled-mm
-    coordinates to reference-image scaled-mm coordinates. It is converted
-    to a NumPy array and used to build the world-space affine.
-    """
+    """The raw FLIRT matrix, from moving to reference scaled millimetres."""
 
     moving: tx.Annotated[
         tx.Optional[_ImageLike], Alias(("moving", "mov", "src"))
     ] = None
-    """The moving (source) image, a nibabel image or header, or a
-    brainhops image."""
+    """The moving (source) image."""
 
     reference: tx.Annotated[
         tx.Optional[_ImageLike], Alias(("reference", "ref"))
     ] = None
-    """The reference image, a nibabel image or header, or a brainhops
-    image."""
-
-    metadata: MetadataField[
-        FlirtMetadata,
-        Factory(),
-        tx.Doc(
-            """
-            The paths of the moving and reference images, when they were
-            read from files (`moving`, `fixed`). A `.mat` file stores no
-            metadata. See
-            [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata].
-            """
-        ),
-    ]
-
-    def __post_init__(self, arguments: tx.Any = None) -> None:
-        parent_post_init(super(), arguments)
-        sync_metadata(self, FlirtMetadata, None, image=self)
+    """The reference image."""
 
     # --- sniff --------------------------------------------------------
 
@@ -104,12 +68,8 @@ class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
-        moving = kwargs.pop("moving", None)
-        if moving is None:
-            moving = kwargs.pop("src", None)
-        reference = kwargs.pop("reference", None)
-        if reference is None:
-            reference = kwargs.pop("ref", None)
+        moving = pop_aliased(cls, kwargs, "moving")
+        reference = pop_aliased(cls, kwargs, "reference")
         rows = _read_matrix_rows(lines)
         if not rows:
             raise SnifferContentError("Empty FLIRT matrix file.")
@@ -132,12 +92,10 @@ class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
 
 
 def _read_matrix_rows(lines: tx.Iterable[str]) -> tx.List[tx.List[float]]:
-    """Read whitespace-separated float rows, skipping blank lines.
+    """Read whitespace-separated rows of floats, skipping blank lines.
 
-    The parsing is shared with the other plain-matrix readers
-    (`brainhops.io.base.arrays`). FLIRT writes whitespace-separated
-    values and no comments, so only those are accepted here. A
-    non-numeric value makes the whole content unreadable (`[]`).
+    FLIRT writes no comments, so none are recognised. Content with a
+    non-numeric value yields an empty list.
     """
     if isinstance(lines, peekable_lines):
         lines = list(lines)
@@ -153,7 +111,7 @@ def _read_matrix_rows(lines: tx.Iterable[str]) -> tx.List[tx.List[float]]:
 
 
 def _looks_like_affine(rows: tx.List[tx.List[float]]) -> bool:
-    """Whether the last row of a `(4, 4)` matrix is `[0, 0, 0, 1]`."""
+    """Whether the last row of the matrix is `[0, 0, 0, 1]`."""
     last = rows[-1]
     return (
         abs(last[0]) < 1e-6

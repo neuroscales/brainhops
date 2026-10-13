@@ -1,68 +1,54 @@
-# dependencies
 import h5py
 import numpy as np
 import typing_extensions as tx
-
-# externals
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
-# io
-from brainhops.datamodel.metadata._field import MetadataField
-from brainhops.io.base.hdf5 import (
-    DelayedH5Array,
-    Hdf5Parser,
-    delayed_dataset,
-    read_string,
-)
 from brainhops.io.base.parsers import Confidence, SnifferContentError
-from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 
-# locals
+# io
+from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5Reader
+from brainhops.io.common.hdf5._delayed import delayed_dataset
+from brainhops.io.common.hdf5._parsers import read_string
+
 from .._common import ItkStruct, ItkTransformClass, _application_order
-from .._metadata import H5Header
-from ._metadata import ItkH5Metadata, read_h5_header
 
-__all__ = ["DelayedH5Array", "H5Header", "H5TransformParser", "read_h5_header"]
+__all__ = ["DelayedH5Array", "H5Header", "H5TransformReader"]
 
 
-class H5TransformParser(
+class H5Header(
     Magic,
-    Hdf5Parser,
     convert=True,
     repr=HIDE_IF_NONE,
 ):
-    """Parses an ITK binary (`.h5`) transform file into a chain of
-    transform blocks.
+    """Provenance strings stored at the root of an ITK HDF5 file."""
 
-    The blocks of a `CompositeTransform` (such as ANTs'
-    `<prefix>Composite.h5`) are listed in the order they apply to
-    points, which is the reverse of their order in the file (ITK applies
-    the last block of a composite first).
+    HDFVersion: tx.Optional[str] = None
+    """The HDF5 library version, such as `"HDF5 library version: 1.10.4"`."""
 
-    Each block is itself a brainhops transformation, so the parsed blocks
-    are stored straight into the `transformations` of the sequence that
-    this parser is mixed into.
+    ITKVersion: tx.Optional[str] = None
+    """The ITK library version, such as `"5.1.0"`."""
+
+    OSName: tx.Optional[str] = None
+    """The operating system name, such as `"Linux"`."""
+
+    OSVersion: tx.Optional[str] = None
+    """The operating system version, such as `"6.1.0-1007-oem"`."""
+
+
+class H5TransformReader(
+    Magic,
+    Hdf5Reader,
+    convert=True,
+    repr=HIDE_IF_NONE,
+):
+    """Parser for ITK HDF5 (`.h5`) transform files.
+
+    Every block is parsed into a transformation and stored directly in
+    `transformations`, with the blocks of a composite in application order.
     """
 
     file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
-
-    metadata: MetadataField[
-        ItkH5Metadata,
-        Factory(),
-        tx.Doc(
-            """
-            The metadata of the file: the version of ITK that wrote it
-            (`generated_by`), with the root header as its record. The
-            blocks have none of their own. See
-            [`ItkH5Metadata`][brainhops.io.transformations.itk.ItkH5Metadata].
-            """
-        ),
-    ]
-
-    def __post_init__(self, arguments: tx.Any = None) -> None:
-        parent_post_init(super(), arguments)
-        sync_metadata(self, ItkH5Metadata, self.header, image=self)
 
     # --- sniff --------------------------------------------------------
 
@@ -72,9 +58,8 @@ class H5TransformParser(
         h5file: h5py.File,
         error: tx.Union[bool, tx.Type[Exception]] = False,
     ) -> float:
-        """Score how confident the parser is that an open HDF5 file is
-        an ITK transform file."""
-        # An ITK transform file records the ITK version at the root.
+        """Confidence that an open HDF5 file is an ITK transform file."""
+        # ITK records its version at the root of the file.
         if "ITKVersion" in h5file.keys():
             return Confidence.CERTAIN
         if error:
@@ -94,61 +79,63 @@ class H5TransformParser(
         position: tx.Optional[int] = None,
         **kwargs,
     ) -> tx.Self:
-        """
-        Build an object from an HDF5 file.
+        """Parse an open HDF5 file.
 
         Parameters
         ----------
         h5file : h5py.File
-            Input HDF5 file.
-        load : bool, optional
-            If True, load the data into memory.
-            If False, keep the data on disk.
-        keep_open : bool, optional
-            If True, keep the HDF5 file open after loading.
-            If False, close the file after loading.
+            The open HDF5 file.
+        keep_open : bool, default=False
+            Whether to keep the file open after parsing, instead of closing it.
+        load : bool, default=True
+            Whether to load warp parameters into memory, instead of reading
+            them lazily from disk.
         position : int, optional
-            Which top-level transform of the file to read: the
-            composite, if the file starts with a `CompositeTransform`
-            header, else one of its blocks. By default, the first one,
-            with a warning if the file holds several.
+            The top-level transform to read: the composite when the file has
+            one, otherwise one of its blocks. By default the first one is read,
+            with a warning when there are several.
 
         Returns
         -------
-        obj
+        Self
             The parsed object.
         """
-        header = read_h5_header(h5file)
+        header = H5Header()
+        if "/HDFVersion" in h5file:
+            header.HDFVersion = read_string(h5file["/HDFVersion"])
+        if "/ITKVersion" in h5file:
+            header.ITKVersion = read_string(h5file["/ITKVersion"])
+        if "/OSName" in h5file:
+            header.OSName = read_string(h5file["/OSName"])
+        if "/OSVersion" in h5file:
+            header.OSVersion = read_string(h5file["/OSVersion"])
 
         obj = cls(header=header, file=h5file if keep_open else None)
         nodes = h5file.get("/TransformGroup", {})
 
         blocks = []
         composites = []
-        # ITK names the groups after their position, `0`, `1`, ...,
-        # and reads them by number; h5py lists them by name, which
-        # would put `10` before `2`.
+        # ITK reads the groups by number, but h5py lists them by name, which
+        # puts `10` before `2`.
         for index, node in enumerate(sorted(nodes, key=_node_number)):
-            # Parse transform type
-            xtype = _readstr(nodes[node]["TransformType"])
+            xtype = read_string(nodes[node]["TransformType"])
             xtype, prec, ndim_inp, ndim_out = xtype.split("_")
             xtype = ItkTransformClass(xtype)
             ndim_inp, ndim_out = int(ndim_inp), int(ndim_out)
 
             if xtype == "CompositeTransform":
-                # A composite header has no parameters of its own: its
-                # queue is the blocks that follow it.
+                # A composite header has no parameters; its queue is the next
+                # blocks.
                 composites.append(index)
                 continue
 
-            # Read transform parameters
-
             parameters = np.array([])
+            parameters_key = None
             if "TransformParameters" in nodes[node]:
                 parameters_key = "TransformParameters"
                 parameters = nodes[node]["TransformParameters"]
             elif "TranformParameters" in nodes[node]:
-                # legacy spelling error in older ITK versions
+                # Misspelling written by older ITK versions.
                 parameters_key = "TranformParameters"
                 parameters = nodes[node][parameters_key]
 
@@ -157,16 +144,18 @@ class H5TransformParser(
                 fixed_parameters_key = "TransformFixedParameters"
                 fixed_parameters = nodes[node]["TransformFixedParameters"]
             elif "TranformFixedParameters" in nodes[node]:
-                # legacy spelling error in older ITK versions
+                # Misspelling written by older ITK versions.
                 fixed_parameters_key = "TranformFixedParameters"
                 fixed_parameters = nodes[node][fixed_parameters_key]
 
-            # Always load fixed parameters (they are never large)
+            # Fixed parameters are small and always loaded.
             fixed_parameters = fixed_parameters[()]
 
-            # Do not load parameters if nonlinear (can be large)
+            # Warp parameters can be large, so they are read lazily on request.
+            # A group without a parameters dataset gives empty parameters,
+            # whether or not the data are loaded.
             LARGE_TYPES = ("DisplacementFieldTransform", "BSplineTransform")
-            if load or xtype not in LARGE_TYPES:
+            if load or xtype not in LARGE_TYPES or parameters_key is None:
                 parameters = parameters[()]
             else:
                 parameters = delayed_dataset(
@@ -197,18 +186,13 @@ class H5TransformParser(
             self.file.close()
 
     def __del__(self) -> None:
-        """Close the underlying HDF5 file, if one is still open."""
+        """Close the HDF5 file if it is still open."""
         self._close()
 
 
 def _node_number(name: str) -> tx.Tuple[int, tx.Union[int, str]]:
-    """Sort key of a `/TransformGroup` child: numbers first, by value."""
+    """Sort key that puts numeric group names first, by value."""
     try:
         return (0, int(name))
     except ValueError:
         return (1, name)
-
-
-def _readstr(dataset: h5py.Dataset) -> str:
-    """Read a string from a HDF5 dataset."""
-    return read_string(dataset)

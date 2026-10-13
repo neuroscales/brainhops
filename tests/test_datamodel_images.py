@@ -1,4 +1,4 @@
-"""Unit tests for the image data model (reslice, indexing, geometry)."""
+"""Tests of the image data model: reslicing, indexing and geometry."""
 
 import numpy as np
 import pytest
@@ -13,7 +13,7 @@ from brainhops.datamodel.transformations import Affine
 
 
 def _voxel_to_ras(scale: float = 2.0) -> Affine:
-    """A voxel-to-world affine that scales each axis by ``scale``."""
+    """Return a voxel-to-world affine that scales each axis by `scale`."""
     matrix = np.diag([scale, scale, scale, 1.0])[:-1]
     return Affine(
         matrix=matrix,
@@ -23,7 +23,7 @@ def _voxel_to_ras(scale: float = 2.0) -> Affine:
 
 
 def _image(scale: float = 2.0) -> SingleScaleImage:
-    """A small single-scale image with a voxel-to-world transformation."""
+    """Return a small single-scale image with a voxel-to-world affine."""
     data = np.arange(24, dtype=float).reshape(2, 3, 4)
     return SingleScaleImage(data=data, transformations=[_voxel_to_ras(scale)])
 
@@ -35,7 +35,6 @@ def test_reslice_onto_own_grid_returns_working_single_scale_image() -> None:
 
     assert isinstance(resliced, SingleScaleImage)
     assert resliced.shape == img.shape
-    # Resampling onto the image's own grid returns the same values.
     assert np.allclose(np.asarray(resliced), np.asarray(img))
 
 
@@ -52,8 +51,6 @@ def test_reslice_no_argument_with_identity_transform_round_trips() -> None:
 
     assert isinstance(resliced, SingleScaleImage)
     assert resliced.shape == img.shape
-    # Resampling an identity-transformed image onto its own grid returns
-    # the same data.
     assert np.allclose(np.asarray(resliced), data)
 
 
@@ -71,7 +68,7 @@ def test_call_then_reslice_returns_single_scale_image() -> None:
     # The applied transformation is appended as the preferred one.
     assert len(moved.transformations) == len(img.transformations) + 1
 
-    # Reslicing onto its own grid resamples the image without moving it.
+    # Reslicing onto the own grid does not move the image.
     resliced = moved.reslice()
 
     assert isinstance(resliced, SingleScaleImage)
@@ -91,8 +88,8 @@ def test_getitem_preserves_geometry() -> None:
     # The sampling grid follows the indexed shape.
     assert sub.grid.shape == (2, 2, 4)
 
-    # The world position of the sub-image origin is the world position of
-    # the voxel the slice started from. The voxel spacing is unchanged.
+    # The origin of the sub-image is the world position of the first selected
+    # voxel, and the spacing is unchanged.
     matrix = np.asarray(sub.transformation.compute().to(Affine).matrix)
     expected = np.asarray(_voxel_to_ras().matrix)
     expected[1, -1] = 2.0
@@ -116,8 +113,8 @@ def test_reselecting_existing_transformation_does_not_duplicate() -> None:
         data=np.ones((2, 3, 4)), transformations=[first, second]
     )
 
-    # Re-selecting a transformation already present reorders it to the end
-    # rather than adding a copy.
+    # Selecting a transformation that is present moves it to the end, without
+    # adding a copy.
     img.transformation = first
 
     assert len(img.transformations) == 2
@@ -161,8 +158,8 @@ def test_multiscale_reslice_onto_own_grid() -> None:
     assert isinstance(resliced, SingleScaleImage)
     assert resliced.shape == level0.shape
     assert np.allclose(np.asarray(resliced), np.asarray(level0))
-    # The pyramid-level transform is the identity, so the resliced
-    # voxel-to-world matrix is the highest-resolution level's own.
+    # The pyramid-level transform is the identity, so the matrix is that of
+    # the highest-resolution level.
     matrix = np.asarray(resliced.transformation.compute().to(Affine).matrix)
     assert np.allclose(matrix, np.asarray(_voxel_to_ras().matrix))
 
@@ -180,8 +177,8 @@ def test_multiscale_geometry_grid_lives_in_level_zero_voxel_space() -> None:
 
     geometry = pyramid.geometry
 
-    # The grid is declared in the highest-resolution level's voxel space,
-    # not in the model space that the pyramid-level transform maps from.
+    # The grid lives in the voxel space of the highest-resolution level, not
+    # in the model space.
     grid_space = getattr(geometry.grid.output, "name", None)
     voxel_space = getattr(level0.transformation.input, "name", None)
     model_space = getattr(model_to_world.input, "name", None)
@@ -192,18 +189,13 @@ def test_multiscale_geometry_grid_lives_in_level_zero_voxel_space() -> None:
 def test_reslice_selects_the_multiscale_level_that_matches_the_target() -> (
     None
 ):
-    # An image whose transformation carries a two-level displacement field
-    # reslices with the level whose resolution matches the target grid. A
-    # target grid twice as coarse selects the coarse level, so the result
-    # matches reslicing with that level substituted by hand, and differs
-    # from reslicing with the fine level.
+    # A target twice as coarse selects the coarse level of a two-level
+    # displacement field.
     import numpy as np
 
     from brainhops.datamodel.transformations import Identity, Scaling
 
-    # OmeZarrField is an OME-Zarr file format, so it is available only when
-    # abczarr is installed. It is used here only as a convenient builder of a
-    # multiscale field for the reslice check.
+    # `OmeZarrField` needs abczarr; it serves only to build a multiscale field.
     pytest.importorskip("abczarr")
     from brainhops.io.transformations.zarr import OmeZarrField
 
@@ -259,8 +251,8 @@ def test_multiscale_reslice_without_copy_may_share_the_level_data() -> None:
 
     resliced = pyramid.reslice(copy=False)
 
-    # Onto its own grid the reslice only gathers, and the selected level is
-    # handed over without a copy, so the result is a view of its data.
+    # Reslicing onto the own grid only gathers, so the result is a view of the
+    # selected level.
     assert np.shares_memory(resliced.data, pyramid.images[0].data)
 
 
@@ -278,131 +270,8 @@ def test_multiscale_reslice_with_copy_is_fresh() -> None:
     assert np.array_equal(level0, before)
 
 
-# ----------------------------------------------------------------------
-#   METADATA
-# ----------------------------------------------------------------------
-
-
-def _dwi() -> SingleScaleImage:
-    """A 4-D diffusion series: three spatial axes and a time axis."""
-    from brainhops.datamodel.metadata import Metadata
-    from brainhops.datamodel.systems import CoordinateSystem
-
-    system = CoordinateSystem(
-        axes=[
-            Axis("i", "space"),
-            Axis("j", "space"),
-            Axis("k", "space"),
-            Axis("t", "time"),
-        ]
-    )
-    placement = Affine(
-        matrix=np.diag([2.0, 2.0, 2.0, 1.0, 1.0])[:-1],
-        input=system,
-        output=RASCoordinateSystem(),
-    )
-    return SingleScaleImage(
-        data=np.zeros((4, 5, 6, 3)),
-        transformations=[placement],
-        metadata=Metadata(
-            bvalues=(0.0, 1000.0, 2000.0),
-            phase_encoding_direction="j-",
-            slice_timing=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5),
-            history=("acquired",),
-        ),
-    )
-
-
-def test_getitem_selects_the_entries_of_the_indexed_axis() -> None:
-    dwi = _dwi()
-    first = dwi[..., :2]
-    assert first.shape == (4, 5, 6, 2)
-    assert first.metadata.bvalues == (0.0, 1000.0)
-    # The spatial axes are untouched: the spatial fields are kept.
-    assert first.metadata.slice_timing == dwi.metadata.slice_timing
-    assert first.metadata.phase_encoding_direction == (
-        dwi.metadata.phase_encoding_direction
-    )
-    # An integer drops the time axis, and with it the b-values.
-    assert dwi[..., 1].metadata.bvalues is None
-
-
-def test_getitem_maps_a_direction_through_a_flip() -> None:
-    from brainhops.datamodel.metadata import EncodingDirection
-
-    flipped = _dwi()[:, ::-1]
-    assert flipped.metadata.phase_encoding_direction == EncodingDirection("j")
-    assert flipped.metadata.slice_timing is None
-    assert flipped.metadata.bvalues == (0.0, 1000.0, 2000.0)
-    # A single component is an index of the first axis.
-    assert _dwi()[::-1].metadata.phase_encoding_direction == (
-        EncodingDirection("j-")
-    )
-
-
-def test_getitem_appends_to_the_history() -> None:
-    from brainhops.datamodel.metadata import EncodingDirection
-
-    dwi = _dwi()
-    # One step, however many axes it changes, along with the fields.
-    both = dwi[:, ::-1, :, :2].metadata
-    assert both.history == ("acquired", "getitem")
-    assert both.bvalues == (0.0, 1000.0)
-    assert both.slice_timing is None
-    assert both.phase_encoding_direction == EncodingDirection("j")
-    assert dwi[...].metadata.history == ("acquired", "getitem")
-    assert dwi.metadata.history == ("acquired",)
-    assert _image()[0].metadata is None
-
-
-def test_reslice_derives_the_metadata() -> None:
-    from brainhops.datamodel.metadata import EncodingDirection
-
-    dwi = _dwi()
-    swap = np.diag([2.0, 2.0, 2.0, 1.0, 1.0])[[1, 0, 2, 3]]
-    target = Affine(
-        matrix=swap,
-        input=dwi.transformation.input,
-        output=RASCoordinateSystem(),
-    )
-    resliced = dwi.reslice(target, degree=0)
-    assert resliced.metadata.phase_encoding_direction == (
-        EncodingDirection("i-")
-    )
-    assert resliced.metadata.slice_timing is None
-    assert resliced.metadata.bvalues == (0.0, 1000.0, 2000.0)
-    assert resliced.metadata.history == ("acquired", "reslice")
-    # A call keeps the metadata as it is.
-    moved = dwi(Affine(matrix=np.eye(5)[:-1]))
-    assert moved.metadata == dwi.metadata
-    assert moved.metadata is not dwi.metadata
-
-
-def test_multiscale_call_keeps_the_pyramid_metadata() -> None:
-    from brainhops.datamodel.metadata import Metadata
-
-    pyramid = _pyramid()
-    pyramid.metadata = Metadata(description="pyramid")
-    identity = Affine(
-        matrix=np.eye(4)[:-1],
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
-    )
-
-    moved = pyramid(identity)
-
-    # Applying a world transformation moves no voxel: the metadata is kept,
-    # as a copy.
-    assert moved.metadata.description == "pyramid"
-    assert moved.metadata is not pyramid.metadata
-    assert len(moved.transformations) == len(pyramid.transformations) + 1
-
-
 def test_images_compare_by_identity() -> None:
-    # `==` is `is`: an image equals itself only, never a distinct image
-    # holding the same data and transformations, and `==` never raises
-    # (the data and the transformations are arrays and transformations,
-    # which have no single truth value to compare by).
+    # An image equals only itself, and `==` never raises.
     data = np.zeros((2, 3, 4))
     affine = Affine(matrix=np.eye(4)[:3])
     image = SingleScaleImage(data=data, transformations=[affine])
@@ -417,15 +286,14 @@ def test_images_compare_by_identity() -> None:
         assert not (this == other)
         assert this != other
         assert not (this == None)  # noqa: E711
-    # Hashable by identity: usable in a set and as a dictionary key.
+    # Images are hashed by identity.
     assert len({image, twin, image, pyramid}) == 3
     assert {image: 1, twin: 2}[twin] == 2
 
 
 def test_every_image_type_compares_by_identity() -> None:
-    # A format image takes its options from its parser, which comes first
-    # and may generate a field-by-field equality; identity holds all the
-    # same.
+    # Identity holds even for format images, whose parser comes first in the
+    # MRO.
     import brainhops.io  # noqa: F401  (registers every format)
     from brainhops.datamodel.images import Image
 

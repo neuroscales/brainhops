@@ -1,6 +1,13 @@
 """The structured values of the vocabulary, and the field converters."""
 
-__all__ = ["Channel", "EncodingDirection", "GeneratedBy"]
+__all__ = [
+    "Channel",
+    "EncodingDirection",
+    "GeneratedBy",
+    "direction",
+    "to_dtype",
+    "unit",
+]
 
 # stdlib
 import math
@@ -18,8 +25,6 @@ from ..base import DataModelBase
 from ..enums import SpaceEnum
 from ..systems import CoordinateSystem
 from ..units import Unit
-from ._operations import Operation, propagates
-from ._sentinel import UNSUPPORTED
 
 AXES = "ijk"
 """The voxel axes of a BIDS direction, in order."""
@@ -213,87 +218,9 @@ class EncodingDirection(DataModelBase):
         return f"EncodingDirection({vector!r}, space={str(self.space)!r})"
 
 
-@propagates(EncodingDirection, Operation)
-def _propagate_direction(
-    value: EncodingDirection,
-    operation: Operation,
-    *,
-    name: str,
-    source: tx.Any,
-) -> tx.Optional[EncodingDirection]:
-    """
-    An encoding direction after an operation: it follows the voxel axes.
-
-    A direction is kept when the spatial axes did not move, or when it
-    is expressed in a world space. One in voxel axes goes through the
-    map of the voxels (`operation.voxel_map`), which may have more axes
-    than the direction, which lies in the first ones (`ijk`), as for a
-    4-D image: the direction is then mapped as a vector of the old axes
-    that is zero beyond its own, and is kept only when it still lies in
-    the first axes. It is cleared when the map is unknown, when it moves
-    the direction off those axes, or when it maps the direction to zero
-    (its axis was dropped).
-    """
-    if not operation.moves_space or value.space is not None:
-        return value
-    linear = operation.voxel_map
-    if linear is None:
-        return None
-    linear = np.asarray(linear, dtype=float)
-    vector = np.asarray(value.vector, dtype=float)
-    size = len(vector)
-    if linear.ndim != 2 or min(linear.shape) < size:
-        return None
-    beyond = linear[size:, :size] @ vector
-    if np.any(np.abs(beyond) > 1e-9 * np.abs(linear).max()):
-        # The direction moved onto an axis it cannot be expressed on.
-        return None
-    try:
-        return value.transform(linear[:size, :size])
-    except ValueError:
-        # Mapped to zero: its axis was dropped.
-        return None
-
-
 # ----------------------------------------------------------------------
 #   CONVERTERS
 # ----------------------------------------------------------------------
-
-
-class MaybeEnumConverter(EnumConverter):
-    """
-    The converter of a vocabulary field that has a list of known terms.
-
-    It converts as [`EnumConverter`][brainhops._core.enum.EnumConverter]
-    does, and lets `UNSUPPORTED` through, as every vocabulary converter
-    does.
-    """
-
-    __slots__ = ()
-
-    def __call__(self, value: tx.Any) -> tx.Any:
-        """
-        Convert a value.
-
-        Parameters
-        ----------
-        value : Enum, str, None or UNSUPPORTED
-            The value to convert.
-
-        Returns
-        -------
-        Enum, str, None or UNSUPPORTED
-            The converted value.
-
-        Raises
-        ------
-        TypeError
-            If `value` is neither a member, a string, `None` nor
-            `UNSUPPORTED`.
-        """
-        if value is UNSUPPORTED:
-            return value
-        return super().__call__(value)
 
 
 def unit(value: tx.Any) -> tx.Any:
@@ -306,12 +233,12 @@ def unit(value: tx.Any) -> tx.Any:
 
     Parameters
     ----------
-    value : Unit, str, None or UNSUPPORTED
+    value : Unit, str or None
         The value to convert.
 
     Returns
     -------
-    Unit, str, None or UNSUPPORTED
+    Unit, str or None
         The converted value.
 
     Raises
@@ -319,7 +246,7 @@ def unit(value: tx.Any) -> tx.Any:
     TypeError
         If `value` is neither a unit nor a string.
     """
-    if _is_absent(value) or isinstance(value, Unit):
+    if value is None or isinstance(value, Unit):
         return value
     if isinstance(value, str):
         try:
@@ -329,7 +256,7 @@ def unit(value: tx.Any) -> tx.Any:
     raise TypeError(f"Expected a Unit or a str, not {type(value).__name__}.")
 
 
-def dtype(value: tx.Any) -> tx.Any:
+def to_dtype(value: tx.Any) -> tx.Any:
     """
     Convert the value of a data type field to a numpy data type in native
     byte order.
@@ -339,15 +266,15 @@ def dtype(value: tx.Any) -> tx.Any:
 
     Parameters
     ----------
-    value : dtype-like, None or UNSUPPORTED
+    value : dtype-like or None
         The value to convert.
 
     Returns
     -------
-    numpy.dtype, None or UNSUPPORTED
+    numpy.dtype or None
         The converted value.
     """
-    if _is_absent(value):
+    if value is None:
         return value
     return np.dtype(value).newbyteorder("=")
 
@@ -358,14 +285,14 @@ def direction(value: tx.Any) -> tx.Any:
 
     Parameters
     ----------
-    value : EncodingDirection, str, array-like, mapping, None or UNSUPPORTED
+    value : EncodingDirection, str, array-like, mapping or None
         A direction, a BIDS string such as `"j-"`, a vector, or a mapping
         with the keys `vector` and `space` (or `Vector` and `Space`, as
         JSON spells them).
 
     Returns
     -------
-    EncodingDirection, None or UNSUPPORTED
+    EncodingDirection or None
         The converted value.
 
     Raises
@@ -373,7 +300,7 @@ def direction(value: tx.Any) -> tx.Any:
     ValueError
         If the value does not describe a direction.
     """
-    if _is_absent(value) or isinstance(value, EncodingDirection):
+    if value is None or isinstance(value, EncodingDirection):
         return value
     if isinstance(value, tx.Mapping):
         vector = value.get("vector", value.get("Vector"))
@@ -385,13 +312,6 @@ def direction(value: tx.Any) -> tx.Any:
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
-
-
-def _is_absent(value: tx.Any) -> bool:
-    """Whether a value is absent, so that there is nothing to convert:
-    `None` (unknown) or `UNSUPPORTED` (no slot). Every vocabulary
-    converter lets an absent value through unchanged."""
-    return value is None or value is UNSUPPORTED
 
 
 # A component this close to 0 or to +-1, once normalised, is snapped to

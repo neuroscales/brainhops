@@ -1,29 +1,19 @@
-"""The ``reslice`` command: resample an image onto a reference grid.
+"""The `reslice` command, which resamples an image onto a reference grid.
 
-The command reads an input image, applies a chain of transformations to
-it, and resamples the result onto the grid of a reference image. Each
-transformation is read from a file named on the command line and applied
-in the order it is given.
+The command reads an input image, applies a chain of transformations and
+resamples the result onto the grid of a reference image, whose geometry
+also places the output in world space.
 
-The target grid comes from a reference image. Its geometry defines both
-the sampling grid and the world placement of the output, so the output
-occupies the same space as the reference.
+Each `-t` or `--transform` option names a forward (push) map that moves
+the input image, as `image(T)` does in the library, and the
+transformations are applied in the order given. Internally, the resampler
+works in the pull direction: it inverts the composed map to find, for
+each voxel of the reference grid, the point of the input image to sample.
+Warps written by ANTs, SPM and FSL are usually pull maps, which go from
+the reference to the moving image, so they must be inverted with the
+`inv` operator:
 
-Transformations follow the push convention. Each ``-t/--transform`` is a
-forward map that moves the input image through world space, in the same
-direction the image itself travels, and matches the library's
-``image(T)`` operation. The transformations are applied in the order
-given, so the first ``-t`` is applied first. The resampler pulls
-internally: it inverts the composed map to sample the reference grid from
-the input. A user therefore reasons about the forward motion of the
-image, while the sampling is done in the opposite direction on its
-behalf.
-
-Many warp files are stored the other way round, as pull maps that run
-from the reference to the moving image. ANTs, SPM and FSL warps are
-usually of this kind. Such a file must be inverted before it can be used
-as a push transform here. A pipe-separated operator on the transform
-value does exactly that: ``path/to/warp.nii.gz|inv``.
+    path/to/warp.nii.gz|inv
 """
 
 from __future__ import annotations
@@ -33,6 +23,7 @@ import argparse
 import typing_extensions as tx
 
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import ImageSpec, OperationSpec, TransformationSpec
 
 from ._errors import CliError
@@ -44,17 +35,18 @@ from ._io import (
 
 
 class _UnimplementedOperation(OperationSpec, frozen=True):
-    """A reserved transformation operation tracked in issue #47."""
+    """Operation that is recognised but not implemented yet (issue #47)."""
 
-    def apply(self, value: tx.Any) -> tx.NoReturn:  # noqa: ARG002
+    def apply(self, value: Transformation) -> tx.NoReturn:  # noqa: ARG002
         raise CliError(
             f"Transform operator '{self.name}' is not implemented yet; "
             "tracked in issue #47."
         )
 
 
-# The exponential and the logarithm are not operators: a file that holds a
-# velocity says so with an option (`|svf`, `|displacements|log:true`).
+# The exponential and the logarithm are not registered as operators,
+# because a file that holds a velocity field declares it with an option,
+# such as `|svf` or `|displacements|log:true`.
 for _operation_name in ("sqrt", "square"):
     TransformationSpec.register_operation(_operation_name)(
         _UnimplementedOperation
@@ -64,7 +56,7 @@ for _operation_name in ("sqrt", "square"):
 def add_parser(
     subparsers: argparse._SubParsersAction,
 ) -> argparse.ArgumentParser:
-    """Register the ``reslice`` subcommand and its arguments."""
+    """Register the `reslice` subcommand."""
     parser = subparsers.add_parser(
         "reslice",
         help="Resample an image onto a reference grid.",
@@ -118,9 +110,10 @@ def add_parser(
             "operator inverts the "
             "transform, which is what a pull-convention warp needs. The "
             "'|' usually needs shell quoting; encode a literal pipe in a "
-            "path as '%%7C'. The operators 'sqrt', "
-            "'square', 'exp' and 'log' are recognised but not implemented "
-            "yet (tracked in issue #47)."
+            "path as '%%7C'. The operators 'sqrt' "
+            "and 'square' are recognised but not implemented yet. A "
+            "velocity field is declared with "
+            "an option such as '|svf' rather than with an operator."
         ),
     )
     parser.add_argument(
@@ -147,7 +140,7 @@ def add_parser(
 
 
 def _split_transform_spec(spec: str) -> TransformationSpec:
-    """Parse a transform source, including nested options and operations."""
+    """Parse a transformation source specification."""
     try:
         return TransformationSpec.from_arg(spec)
     except ValueError as exc:
@@ -157,20 +150,19 @@ def _split_transform_spec(spec: str) -> TransformationSpec:
 
 
 def _split_image_spec(spec: str) -> ImageSpec:
-    """Parse an image source, including hints and nested options."""
+    """Parse an image source specification."""
     try:
         return ImageSpec.from_arg(spec)
     except ValueError as exc:
         raise CliError(f"Invalid image source {spec!r}: {exc}") from exc
 
 
-def _load_push_transform(spec: str) -> Image:
-    """Read one transform value, honouring its operator chain.
+def _load_push_transform(spec: str) -> Transformation:
+    """Load a transformation and apply its chain of operators.
 
-    A value such as `warp.nii.gz|inv` reads `warp.nii.gz` and returns its
-    inverse. Operators are applied in written order, as function
-    composition over the loaded transform, so `warp|a|b` is `b(a(load))`.
-    The returned transform is a forward (push) map, ready to compose.
+    The operators are applied in the order written, so that `warp|a|b`
+    applies `a` to the loaded transformation and then applies `b` to the
+    result. The returned transformation is a forward (push) map.
     """
     source = _split_transform_spec(spec)
     transform = load_transform(source)
@@ -180,37 +172,20 @@ def _load_push_transform(spec: str) -> Image:
 def reslice_image(
     input_path: tx.Union[str, ImageSpec],
     reference_path: tx.Union[str, ImageSpec],
-    transform_paths: list,
+    transform_paths: tx.Iterable[str],
     degree: int = 1,
     bound: str = "reflect",
 ) -> Image:
-    """Resample an image onto a reference grid and return it.
+    """Resample an image onto a reference grid after a chain of transforms.
 
-    The input image is read, each transformation in `transform_paths` is
-    read and applied in order, and the result is resampled onto the grid
-    of the reference image. The returned image lives on the reference
-    grid and in the reference world space.
-
-    Transformations follow the push convention. Each entry is a forward
-    map that moves the input image through world space, the same
-    direction the image travels, matching the library's `image(T)`
-    operation. The entries are applied in order, so the first is applied
-    first. Resampling then pulls: the composed forward map is inverted to
-    sample the reference grid from the input, so the caller reasons
-    forward while the sampling runs the other way.
-
-    A warp stored as a pull map, running from the reference to the moving
-    image, is the opposite direction and must be inverted before use.
-    ANTs, SPM and FSL warps are usually of this kind. An entry may carry
-    pipe-separated operators after its path, applied in written order.
-    The `inv` operator inverts the transform, so `warp.nii.gz|inv` is
-    what such a warp needs. The `|` usually needs shell quoting. The
-    operators `sqrt`, `square`, `exp` and `log` are recognised but not
-    implemented yet, and are tracked in issue #47.
-
-    This function performs no file writing, so it can be exercised on its
-    own. The command wraps it with the step that writes the result to
-    disk.
+    This function implements the `reslice` command, apart from writing the
+    result. Each entry of `transform_paths` is a source specification of a
+    forward (push) transformation, as described in the module
+    documentation, and the entries are applied in order. The operators
+    `sqrt` and `square` are recognised but not implemented yet (issue #47).
+    `degree` is the spline degree (0 for nearest neighbour, 1 for linear and
+    3 for cubic), and `bound` is the boundary condition outside the field of
+    view.
     """
     input_spec = (
         input_path
@@ -231,7 +206,7 @@ def reslice_image(
 
 
 def run(args: argparse.Namespace) -> int:
-    """Run the ``reslice`` command from parsed arguments."""
+    """Run the `reslice` command and write its result."""
     resliced = reslice_image(
         args.input,
         args.reference,

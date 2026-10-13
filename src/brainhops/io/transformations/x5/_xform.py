@@ -1,108 +1,251 @@
-__all__ = ["X5Transform", "X5TransformParser"]
+"""The chain of transformations stored in an X5 file."""
 
-# stdlib
+__all__ = ["X5Transform"]
+
 from warnings import warn
 
-# dependencies
 import h5py
 import typing_extensions as tx
+from bagof.magic import NoRepr, replace
 
-# externals
-from bagof.magic import HIDE_IF_NONE, Factory, Magic, replace
-
+from brainhops._core import path
 from brainhops._core.properties import smartproperty
-
-# datamodel
 from brainhops.datamodel import transformations as _xforms
-
-# core
-from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._field import MetadataField
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
-
-# io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.hdf5 import Hdf5ParserWriter
-from brainhops.io.base.parsers import (
-    Confidence,
-    ParserContentError,
-    SnifferContentError,
+from brainhops.io.base.parsers import ParserContentError
+from brainhops.io.common.hdf5 import Hdf5ReaderWriter
+from brainhops.io.transformations.base import TransformationFormat
+
+from ._blocks import (
+    _check_ras,
+    node_to_transformation,
+    transformation_to_nodes,
 )
-from brainhops.io.metadata._sync import parent_post_init, sync_metadata
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from ._metadata import X5Metadata
+from ._raw import X5_VERSION, X5Header, X5Node, X5Raw
 
-# locals
-from ._blocks import node_to_transformation, transformation_to_nodes
-from ._metadata import X5Metadata, X5Raw, metadata_index
-from ._struct import (
-    X5_VERSION,
-    X5Header,
-    X5Node,
-    is_x5,
-    read_x5,
-    write_x5,
-)
+# ----------------------------------------------------------------------
+#   READING THE RECORD
+# ----------------------------------------------------------------------
 
 
-class X5TransformParser(
-    Magic,
-    Hdf5ParserWriter,
-    repr=HIDE_IF_NONE,
-):
-    """Reads and writes the raw content of a BIDS X5 file."""
+def _record(xform: "X5Transform") -> tx.Optional[X5Raw]:
+    """Return the record of the metadata of a transformation, or `None`."""
+    metadata = xform.metadata
+    return None if metadata is None else metadata.raw
 
-    header: X5Header = Factory(X5Header, repr=False)
-    """The root attributes and the chains of the file."""
 
-    nodes: tx.List[X5Node] = Factory(list, repr=False)
-    """Every transform of `/TransformGroup`, as stored."""
+def _check_selection(
+    record: tx.Optional[X5Raw],
+    chain: tx.Optional[int],
+    position: tx.Optional[int],
+) -> None:
+    """Refuse a chain or a node that a record does not have.
 
-    chain: tx.Optional[int] = None
+    Raises
+    ------
+    ValueError
+        If both `chain` and `position` are given.
+    ParserContentError
+        If `chain` or `position` is out of range.
     """
-    Which chain of `/TransformChain` the transformation is, if any.
-    See `X5Transform.selection`.
-    """
-
-    position: tx.Optional[int] = None
-    """
-    Which single transform of `/TransformGroup` the transformation is,
-    if any. See `X5Transform.selection`.
-    """
-
-    file: tx.Optional[h5py.File] = None
-    """The open HDF5 file, when read with `keep_open=True`."""
-
-    metadata: MetadataField[
-        X5Metadata,
-        Factory(),
-        tx.Doc(
-            """
-            The metadata of the node the transformation was read from,
-            decoded from its JSON `Metadata`, with `(header, node)` as its
-            record. A chain of several nodes has none of its own: its
-            nodes keep theirs, and write them back. See
-            [`X5Metadata`][brainhops.io.transformations.x5.X5Metadata].
-            """
-        ),
-    ]
-
-    def __post_init__(self, arguments: tx.Any = None) -> None:
-        parent_post_init(super(), arguments)
-        index = self._metadata_index() if self.nodes else None
-        node = None if index is None else self.nodes[index]
-        header = self.header
-        sync_metadata(
-            self,
-            X5Metadata,
-            X5Raw(header, node),
-            same=lambda held: held.is_record_of(header, node),
-            image=self,
+    if chain is not None and position is not None:
+        raise ValueError("Select a chain or a position, not both.")
+    chains = [] if record is None else record.header.chains
+    nodes = [] if record is None else record.nodes
+    if chain is not None and not 0 <= chain < len(chains):
+        raise ParserContentError(
+            f"This X5 file has {len(chains)} chain(s), so it has no chain "
+            f"{chain}."
+        )
+    if position is not None and not 0 <= position < len(nodes):
+        raise ParserContentError(
+            f"This X5 file has {len(nodes)} transform(s), so it has no "
+            f"transform {position}."
         )
 
-    def _metadata_index(self) -> tx.Optional[int]:
-        """The node the metadata is that of: the single node read, or
-        `None` for a chain of several (composition does not merge)."""
-        return metadata_index(self.header, self.chain, self.position)
+
+# ----------------------------------------------------------------------
+#   FORMAT
+# ----------------------------------------------------------------------
+
+
+@register_format
+class X5Transform(
+    _xforms.Sequence,
+    TransformationFormat,
+    Hdf5ReaderWriter,
+):
+    """A transformation stored in a BIDS X5 (`.x5`) file.
+
+    The transformation is a
+    [`Sequence`][brainhops.datamodel.transformations.Sequence]
+    of the transforms that the file chains, in the order they are applied
+    (see [`X5Transform.selection`][]). Each transform maps RAS millimetre
+    coordinates to RAS millimetre coordinates.
+
+    | X5 node                                | Transformation              |
+    | -------------------------------------- | --------------------------- |
+    | `linear`, a 4x4 matrix                 | `Affine` (`RASmm` to `RASmm`) |
+    | `nonlinear`, `displacements`           | [`X5DisplacementField`][]   |
+    | `nonlinear`, `deformations`            | [`X5CoordinatesField`][]    |
+    | `nonlinear`, `bspline`                 | [`X5BSplineField`][]        |
+
+    The content of the file, including each node's JSON metadata, `Domain`,
+    `Inverse` and other attributes, is held as an [`X5Raw`][] record by the
+    [`X5Metadata`][] of the transformation. The fields of the record are
+    lazy arrays, which read the file again by its name when they are used,
+    so reading a file reads its matrices but none of its fields. The chain
+    of transformations is decoded from the record when it is first used,
+    and it is then cached.
+
+    The record describes the file as it was read, or as the transformation
+    was last consolidated. A chain that is assigned, and an `input` or
+    `output` that is set, are pending until [`consolidate`][] encodes them
+    into a new record, or until the transformation is written.
+
+    !!! note "What is written"
+        A transformation read from a file, whose `transformations` were never
+        assigned, is written back as read, with every node and chain, in the
+        current layout. The options `chain` and `position` only select what
+        is read, so they never change what is written. To write only the
+        selected chain, assign it with `xform.transformations = list(xform)`.
+
+        Otherwise, the transformation is consolidated: the nodes that encode
+        `transformations` are written, with one `/TransformChain` that
+        applies them in order when there are several. An element that this
+        transformation decoded from its own record is written as that node,
+        so its JSON metadata, `Inverse`, `Jacobian` and other content
+        survive. An element taken from another object, or from a copy made
+        with `replace`, is encoded again and loses that content. The
+        package documentation lists what can be encoded.
+    """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
+    HINTS = ("x5", "bids")
+
+    _metadata: NoRepr[tx.Optional[X5Metadata]] = None
+
+    metadata = smartproperty(
+        "metadata", invalidates=("transformations", "decoded_nodes")
+    )
+    """The metadata of the file, which holds the file as a record.
+
+    A transformation built from a chain has no metadata. Assigning other
+    metadata drops the chain and the nodes decoded from the old record.
+    """
+
+    _chain: tx.Optional[int] = None
+
+    chain = smartproperty("chain", invalidates="transformations")
+    """The index of the chain of `/TransformChain` that is read.
+
+    See [`X5Transform.selection`][]. Assigning another index drops the
+    chain decoded from the record, and the index is checked when
+    `selection` is next read. The index only selects what is read: the
+    file is still written with every chain, unless the chain is assigned
+    with `xform.transformations = list(xform)`.
+    """
+
+    _position: tx.Optional[int] = None
+
+    position = smartproperty("position", invalidates="transformations")
+    """The index of the single node of `/TransformGroup` that is read.
+
+    See [`X5Transform.selection`][]. Assigning another index drops the
+    chain decoded from the record, and the index is checked when
+    `selection` is next read. As with `chain`, the index does not change
+    what is written.
+    """
+
+    # --- chain --------------------------------------------------------
+
+    @property
+    def selection(self) -> tx.Tuple[int, ...]:
+        """The indices of the nodes that this transformation chains, in order.
+
+        The indices are resolved as follows:
+
+        1. The chain `chain` of `/TransformChain`, if one was asked for.
+        2. The node `position`, if one was asked for.
+        3. Otherwise the first chain of `/TransformChain`, if the file
+           has one, as nitransforms' `TransformChain.from_filename` does.
+        4. Otherwise the file's single node.
+        5. Otherwise, in a file with several nodes and no chain, the first
+           node, as nitransforms' `Affine.from_filename` and
+           `DenseFieldTransform.from_filename` do. A warning is issued in
+           this case, because the draft does not say how nodes that no
+           chain lists relate to each other.
+
+        A transformation without a record selects no node.
+
+        Raises
+        ------
+        ValueError
+            If both `chain` and `position` are set.
+        ParserContentError
+            If `chain` or `position` is out of range.
+        """
+        record = _record(self)
+        _check_selection(record, self.chain, self.position)
+        if record is None:
+            return ()
+        chains = record.header.chains
+        if self.chain is not None:
+            return tuple(chains[self.chain])
+        if self.position is not None:
+            return (int(self.position),)
+        if chains:
+            return tuple(chains[0])
+        if len(record.nodes) > 1:
+            warn(
+                f"This X5 file holds {len(record.nodes)} transforms and no "
+                f"chain, so only the first one is read. Pass `position=` "
+                f"to read another one.",
+                stacklevel=2,
+            )
+        return (0,) if record.nodes else ()
+
+    def node_transformation(self, index: int) -> _xforms.Transformation:
+        """Decode node `index` of the record into a transformation.
+
+        The node is decoded once and the same object is returned afterwards,
+        so that the writer can recognise it by identity. Assigning other
+        metadata forgets the decoded nodes.
+
+        Parameters
+        ----------
+        index : int
+            The index of the node in `/TransformGroup`.
+
+        Returns
+        -------
+        Transformation
+            The transformation that the node encodes.
+
+        Raises
+        ------
+        ParserContentError
+            If the transformation has no record.
+        """
+        record = _record(self)
+        if record is None:
+            raise ParserContentError("This X5 transformation has no record.")
+        decoded = self.__dict__.setdefault("_cache_decoded_nodes", {})
+        if index not in decoded:
+            decoded[index] = node_to_transformation(record.nodes[index])
+        return decoded[index]
+
+    @smartproperty(cache=True)
+    def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
+        """The chain of transformations, in the order they are applied.
+
+        The chain is decoded from the record when it is first used, and it
+        is then cached. Assigning a chain replaces the decoded one, and the
+        assigned chain is pending until [`consolidate`][] or the writer
+        encodes it.
+        """
+        return tuple(self.node_transformation(i) for i in self.selection)
 
     # --- sniff --------------------------------------------------------
 
@@ -112,15 +255,23 @@ class X5TransformParser(
         h5file: h5py.File,
         error: tx.Union[bool, tx.Type[Exception]] = False,
     ) -> float:
-        """Score an open HDF5 file: an X5 file says so in its root
-        `Format` attribute."""
-        if is_x5(h5file):
-            return Confidence.CERTAIN
-        if error:
-            if error is True:
-                error = SnifferContentError
-            raise error("HDF5 file is not an X5 file: no Format='X5'.")
-        return Confidence.NO
+        """Score an open HDF5 file by its root `Format` attribute.
+
+        The file is scored by [`X5Metadata.sniff_h5`][].
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the file is not an X5 file.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        return X5Metadata.sniff_h5(h5file, error=error)
 
     # --- from ---------------------------------------------------------
 
@@ -128,270 +279,286 @@ class X5TransformParser(
     def from_h5(
         cls,
         h5file: h5py.File,
-        keep_open: bool = False,
-        load: bool = True,
+        load: bool = False,
         chain: tx.Optional[int] = None,
         position: tx.Optional[int] = None,
         **kwargs,
     ) -> tx.Self:
-        """
-        Build an object from an open HDF5 file.
+        """Read an X5 transformation from an open HDF5 file.
+
+        The record is read by [`X5Metadata.from_h5`][], and the chain is
+        decoded from it when it is first used.
 
         Parameters
         ----------
         h5file : h5py.File
-            Input HDF5 file.
-        keep_open : bool
-            Keep the file open after reading it.
-        load : bool
-            Read the fields into memory. If `False`, they are read
-            lazily, when used.
+            The open file.
+        load : bool, default=False
+            Whether to read the fields into memory at once, rather than
+            when they are used. The fields of a file opened from a stream
+            are always read at once.
         chain : int, optional
-            Which chain of `/TransformChain` to read.
+            The index of the chain of `/TransformChain` to read.
         position : int, optional
-            Which single transform of `/TransformGroup` to read.
+            The index of the single node of `/TransformGroup` to read.
+        **kwargs : Any
+            Other fields of the transformation.
+
+        Returns
+        -------
+        X5Transform
+            The transformation.
+
+        Raises
+        ------
+        ValueError
+            If both `chain` and `position` are given.
+        ParserContentError
+            If `chain` or `position` is out of range.
         """
-        header, nodes = read_x5(h5file, load=load, keep_open=keep_open)
-        if chain is not None and position is not None:
-            raise ValueError("Select a chain or a position, not both.")
-        if chain is not None and not 0 <= chain < len(header.chains):
-            raise ParserContentError(
-                f"This X5 file has {len(header.chains)} chain(s), so it "
-                f"has no chain {chain}."
-            )
-        if position is not None and not 0 <= position < len(nodes):
-            raise ParserContentError(
-                f"This X5 file has {len(nodes)} transform(s), so it has "
-                f"no transform {position}."
-            )
-        return cls(
-            header=header,
-            nodes=nodes,
-            chain=chain,
-            position=position,
-            file=h5file if keep_open else None,
-            **kwargs,
-        )
+        metadata = X5Metadata.from_h5(h5file, load=load)
+        _check_selection(metadata.raw, chain, position)
+        return cls(metadata=metadata, chain=chain, position=position, **kwargs)
+
+    @classmethod
+    def from_raw(cls, raw: X5Raw, **kwargs) -> tx.Self:
+        """Build a transformation from an already read [`X5Raw`][].
+
+        The record is held by new metadata, without a copy.
+
+        Parameters
+        ----------
+        raw : X5Raw
+            The record of the file.
+        **kwargs : Any
+            Field values, such as `chain` or `position`, which go to the
+            constructor.
+
+        Returns
+        -------
+        Self
+            The transformation.
+
+        Raises
+        ------
+        ValueError
+            If both `chain` and `position` are given.
+        ParserContentError
+            If `chain` or `position` is out of range.
+        """
+        _check_selection(raw, kwargs.get("chain"), kwargs.get("position"))
+        return cls(metadata=X5Metadata.from_raw(raw), **kwargs)
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        An [`X5Raw`][] is read with [`from_raw`][], and any other value as
+        the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping,
+            or an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, X5Raw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
 
     # --- to -----------------------------------------------------------
 
-    def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
-        on_loss = kwargs.pop("on_loss", None)
-        report = ConversionReport(target="x5")
-        header, nodes = self._to_struct(report)
-        apply_loss_policy(report, on_loss, stacklevel=4)
-        return lambda h5file: write_x5(h5file, header, nodes)
+    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+        """Encode the pending chain and systems into a new record.
 
-    def to_h5(self, h5file: h5py.File, **kwargs) -> None:
-        """Write this transformation into an empty HDF5 file."""
-        self._h5_writer(**kwargs)(h5file)
+        If neither `transformations` nor the `input` and `output` systems
+        were assigned, and the metadata holds a record, the transformation
+        is left as it is, so that the file is written back as it was read,
+        with every node and chain. The options `chain` and `position` only
+        select what is decoded, so they do not change the record.
+        Otherwise, a new record is built from the chain, whose header keeps
+        the root attributes of the current record. An element that this
+        transformation decoded from its own record is encoded as that node.
+        An element taken from another object, or from a copy made with
+        `replace`, is encoded again and loses the JSON metadata, `Inverse`,
+        `Jacobian` and other content of its node. A transformation without
+        a record and without a chain gives an empty record. The new record
+        is held by new metadata, the chain is then decoded from it, and the
+        options `chain` and `position`, which indexed the old record, are
+        reset.
 
-    def to_struct(
-        self, *, on_loss: tx.Optional[OnLoss] = None
-    ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
-        """
-        The header and the nodes that encode this object.
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this transformation rather than a copy.
 
-        What the metadata cannot carry is handed to `on_loss`: the
-        policy in effect by default, `"ignore"`, `"warn"`, `"raise"`, or
-        a `ConversionReport` to fill.
-        """
-        report = ConversionReport(target="x5")
-        out = self._to_struct(report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
-        return out
-
-    def _to_struct(
-        self, report: ConversionReport
-    ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
-        """`to_struct`, recording what is lost in `report`."""
-        return self.header, list(self.nodes)
-
-    def _close(self) -> None:
-        if isinstance(self.file, h5py.File):
-            self.file.close()
-
-    def __del__(self) -> None:
-        """Close the underlying HDF5 file, if one is still open."""
-        self._close()
-
-
-@register_format
-class X5Transform(
-    X5TransformParser,
-    _xforms.Sequence,
-    WritableFileBasedTransformation,
-):
-    """
-    A transformation stored in a BIDS X5 (`.x5`) file.
-
-    It is the [`Sequence`][brainhops.datamodel.transformations.Sequence]
-    of the transforms that the file chains, in the order in which they
-    are applied (see [`selection`][.selection]). Every transform maps
-    RAS world coordinates, in millimetres, to RAS world coordinates:
-
-    | X5 node                                | Transformation              |
-    | -------------------------------------- | --------------------------- |
-    | `linear`, a 4x4 matrix                 | `Affine` (`RASmm` to `RASmm`) |
-    | `nonlinear`, `displacements`           | [`X5DisplacementField`][]   |
-    | `nonlinear`, `deformations`            | [`X5CoordinatesField`][]    |
-    | `nonlinear`, `bspline`                 | [`X5BSplineField`][]        |
-
-    The raw content of the file -- every node, with its JSON
-    `Metadata`, its `Domain`, its precomputed `Inverse` and any other
-    attribute -- is kept in `header` and `nodes`.
-
-    !!! note "What is written"
-        A transformation read from a file, whose chain has not been
-        assigned, is written back as it was read: every node and chain
-        of the file, in the current layout. One whose `transformations`
-        were assigned -- including one built from scratch -- is written
-        as the nodes those transformations encode, plus one
-        `/TransformChain` that applies them in order when there are
-        several. An element that is one of the transformations read
-        from a node is written as that node, unchanged, so its metadata
-        survives. The package documentation lists what can be encoded.
-    """
-
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
-    HINTS = ("x5", "bids")
-
-    # --- chain --------------------------------------------------------
-
-    @property
-    def selection(self) -> tx.Tuple[int, ...]:
-        """
-        The indices of the nodes this transformation chains, in order.
-
-        1. The chain `chain` of `/TransformChain`, if one was asked for.
-        2. The node `position`, if one was asked for.
-        3. Otherwise the first chain of `/TransformChain`, if the file
-           has one, as nitransforms' `TransformChain.from_filename` does.
-        4. Otherwise the file's single node.
-        5. Otherwise, in a file with several nodes and no chain, the first
-           node, as nitransforms' `Affine.from_filename` and
-           `DenseFieldTransform.from_filename` do, with a warning: the
-           draft says nothing of how unchained nodes relate.
-        """
-        chains = self.header.chains
-        if self.chain is not None:
-            return tuple(chains[self.chain])
-        if self.position is not None:
-            return (int(self.position),)
-        if chains:
-            return tuple(chains[0])
-        if len(self.nodes) > 1:
-            warn(
-                f"This X5 file holds {len(self.nodes)} transforms and no "
-                f"chain, so only the first one is read. Pass `position=` "
-                f"to read another one.",
-                stacklevel=2,
-            )
-        return (0,) if self.nodes else ()
-
-    def node_transformation(self, index: int) -> _xforms.Transformation:
-        """
-        The transformation that node `index` encodes.
-
-        It is decoded once, and the same object is returned afterwards,
-        which is how the writer recognises it. The node the metadata is
-        that of (a single node read) gives its block a copy of it, as
-        it is when the block is decoded.
-        """
-        blocks = self.__dict__.setdefault("_x5_blocks", {})
-        if index not in blocks:
-            block = node_to_transformation(self.nodes[index])
-            if (
-                self.metadata is not None
-                and index == self._metadata_index()
-                and hasattr(block, "metadata")
-            ):
-                # A single-node file: the metadata is the node's, so the
-                # block carries it too (a copy, as the data model's own
-                # metadata), and `from_other(block)` converts it.
-                block.metadata = self.metadata
-            blocks[index] = block
-        return blocks[index]
-
-    @smartproperty(cache=True)
-    def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
-        """
-        The chain of transformations, in the order they are applied.
-
-        It is decoded from the nodes on first access, and cached, as a
-        tuple. Assigning to it overrides the decoded chain, and is what
-        the writer then encodes.
-        """
-        return tuple(self.node_transformation(i) for i in self.selection)
-
-    # --- to -----------------------------------------------------------
-
-    def _to_struct(
-        self, report: ConversionReport
-    ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
-        """
-        The header and the nodes that encode this transformation.
-
-        The metadata is written into the JSON `Metadata` of the node it
-        belongs to (see `X5Metadata`); what cannot be written is
-        recorded in `report`.
+        Returns
+        -------
+        Self
+            The consolidated copy, or this transformation with
+            `inplace=True`.
 
         Raises
         ------
         UnrepresentableTransformationError
-            If an element of the chain cannot be encoded in X5.
+            If an element cannot be encoded in X5, or if the systems that
+            were assigned are not `RASmm`.
         """
-        if getattr(self, "_transformations", None) is None:
-            nodes = list(self.nodes)
-            index = self._metadata_index() if nodes else None
-            return self.header, self._write_metadata(nodes, index, report)
+        record = _record(self)
+        assigned = self._transformations is not None
+        declared = self._input is not None or self._output is not None
+        if not assigned and not declared:
+            if record is not None:
+                return self if inplace else replace(self)
+            record = X5Raw()
+        else:
+            if declared:
+                _check_ras(self, "chain")
+            decoded = self.__dict__.get("_cache_decoded_nodes", {})
+            record = _encode(self.transformations, record, decoded)
+        if self.metadata is None:
+            metadata = X5Metadata.from_raw(record)
+        else:
+            metadata = type(self.metadata).from_raw(record)
+        if not inplace:
+            return replace(
+                self,
+                metadata=metadata,
+                transformations=None,
+                input=None,
+                output=None,
+                chain=None,
+                position=None,
+            )
+        self.metadata = metadata
+        self.transformations = None
+        self.input = None
+        self.output = None
+        self.chain = None
+        self.position = None
+        return self
 
-        blocks = self.__dict__.get("_x5_blocks", {})
-        reused = {id(block): index for index, block in blocks.items()}
-        nodes: tx.List[X5Node] = []
-        indices: tx.Dict[int, int] = {}
-        chain: tx.List[int] = []
-        for xform in self._transformations:
-            if id(xform) in reused:
-                encoded = [self.nodes[reused[id(xform)]]]
-            else:
-                encoded = transformation_to_nodes(xform)
-            for node in encoded:
-                if id(node) not in indices:
-                    indices[id(node)] = len(nodes)
-                    nodes.append(node)
-                chain.append(indices[id(node)])
-        chains = [tuple(chain)] if len(chain) > 1 else []
-        version = X5_VERSION if self.header.legacy else self.header.version
-        header = replace(
-            self.header, chains=chains, legacy=False, version=version
-        )
-        index = 0 if len(nodes) == 1 else None
-        return header, self._write_metadata(nodes, index, report)
+    def to_h5(self, h5file: h5py.File, **kwargs) -> None:
+        """Write the transformation into an empty HDF5 file.
 
-    def _write_metadata(
-        self,
-        nodes: tx.List[X5Node],
-        index: tx.Optional[int],
-        report: ConversionReport,
-    ) -> tx.List[X5Node]:
-        """Encode the metadata into node `index` (`None`: a chain of
-        several nodes, which has no node of its own)."""
-        metadata = self.metadata
-        if metadata is None:
-            return nodes
-        metadata, found = X5Metadata.writable(metadata)
-        report.source = found.source
-        report.merge(found)
-        node = None if index is None else nodes[index]
-        if node is None or metadata.node is not node:
-            # Not the node it was read from: everything is written.
-            metadata = replace(metadata, snapshot={})
-        raw = metadata.update_raw(
-            X5Raw(self.header, node), image=self, on_loss=report
-        )
-        metadata.check_raw(raw, image=self, on_loss=report)
-        node = raw.node
-        if index is not None:
-            nodes[index] = node
-        return nodes
+        The transformation is consolidated into a copy, whose record is
+        written by [`X5Raw.to_h5`][], and the transformation itself is not
+        changed.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The empty file, open for writing.
+        **kwargs : Any
+            Options of [`X5Raw.to_h5`][].
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If an element cannot be encoded in X5, or if the systems
+            that were assigned are not `RASmm`.
+        """
+        _record(self.consolidate()).to_h5(h5file, **kwargs)
+
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """Write the transformation to the file at a path, replacing it.
+
+        The transformation is consolidated into a copy before the file is
+        opened, so a transformation that cannot be encoded leaves the file
+        untouched, and the transformation itself is not changed.
+
+        Parameters
+        ----------
+        filename : path-like
+            The path of the file.
+        **kwargs : Any
+            Options of the writer of the record.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If an element cannot be encoded in X5, or if the systems
+            that were assigned are not `RASmm`.
+        """
+        _record(self.consolidate()).to_filename(filename, **kwargs)
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Return the bytes of the X5 file that encodes the transformation.
+
+        The transformation is consolidated into a copy, whose record is
+        written.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer of the record.
+
+        Returns
+        -------
+        bytes
+            The content of the file.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If an element cannot be encoded in X5, or if the systems
+            that were assigned are not `RASmm`.
+        """
+        return _record(self.consolidate()).to_bytes(**kwargs)
+
+
+# ----------------------------------------------------------------------
+#   ENCODING A CHAIN AS A RECORD
+# ----------------------------------------------------------------------
+
+
+def _encode(
+    chain: tx.Sequence[_xforms.Transformation],
+    record: tx.Optional[X5Raw],
+    decoded: tx.Dict[int, _xforms.Transformation],
+) -> X5Raw:
+    """Encode a chain of transformations as a new record.
+
+    An element that this transformation decoded from a node of `record`,
+    which `decoded` lists by node index, is recognised by its identity and
+    written as that node, so the content of the node survives. Any other
+    element, including one taken from another object or from a copy made
+    with `replace`, is encoded again by `transformation_to_nodes` and loses
+    the extra content of its node. Several
+    nodes are chained by one `/TransformChain`. The root attributes of
+    `record` are kept, and the header is written in the current layout.
+    """
+    reused = {id(xform): index for index, xform in decoded.items()}
+    nodes: tx.List[X5Node] = []
+    indices: tx.Dict[int, int] = {}
+    order: tx.List[int] = []
+    for xform in chain:
+        if id(xform) in reused:
+            encoded = [record.nodes[reused[id(xform)]]]
+        else:
+            encoded = transformation_to_nodes(xform)
+        for node in encoded:
+            if id(node) not in indices:
+                indices[id(node)] = len(nodes)
+                nodes.append(node)
+            order.append(indices[id(node)])
+    header = X5Header() if record is None else record.header
+    version = X5_VERSION if header.legacy else header.version
+    header = replace(
+        header,
+        attrs=dict(header.attrs),
+        chains=[tuple(order)] if len(order) > 1 else [],
+        legacy=False,
+        version=version,
+    )
+    return X5Raw(header=header, nodes=nodes)

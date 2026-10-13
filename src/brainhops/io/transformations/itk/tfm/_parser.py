@@ -1,30 +1,19 @@
-# stdlib
 import re
 from warnings import warn
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
-
-# externals
-from bagof.magic import HIDE_IF_NONE, Factory, Magic
+from bagof.magic import HIDE_IF_NONE, Magic
 
 from brainhops._core.peek import peekable_lines
-
-# core
-from brainhops.datamodel.metadata._field import MetadataField
-
-# io
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
-    TextFileParser,
+    TextFileReader,
 )
 
 from .._common import ItkStruct, ItkTransformClass, _application_order
-from .._metadata import ItkMetadata
 
-# constants
 _HEADER = "#Insight Transform File V1.0"
 _TRANSFORM_RE = re.compile(
     r"^Transform:\s*"
@@ -37,35 +26,21 @@ _PARAMETERS_RE = re.compile(r"^Parameters:\s*(?P<values>.*)$")
 _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 
-class TfmTransformParser(
+class TfmTransformReader(
     Magic,
-    TextFileParser,
+    TextFileReader,
     convert=True,
     repr=HIDE_IF_NONE,
 ):
-    """Parses an ITK text (`.tfm`) transform file into a chain of
-    transform blocks.
-
-    The blocks of a `CompositeTransform` are listed in the order they
-    apply to points, which is the reverse of their order in the file
-    (ITK applies the last block of a composite first).
-
-    Each block is itself a brainhops transformation, so the parsed blocks
-    are stored straight into the `transformations` of the sequence that
-    this parser is mixed into.
     """
+    Parser that reads an ITK text `.tfm` file into a chain of transformations.
 
-    metadata: MetadataField[
-        ItkMetadata,
-        Factory(),
-        tx.Doc(
-            """
-            None: an ITK `.tfm` file stores no metadata, so every field is
-            unsupported. See
-            [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata].
-            """
-        ),
-    ]
+    The parser is a mixin for a sequence of transformations. Each block of the
+    file becomes a brainhops transformation and is stored in the
+    `transformations` attribute of that sequence. The blocks of a composite
+    transformation are listed in application order, which is the reverse of
+    their order in the file, because ITK applies the last block first.
+    """
 
     # --- sniff --------------------------------------------------------
 
@@ -76,14 +51,17 @@ class TfmTransformParser(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the parser is that a line starts a `.tfm`
-        transform block."""
-        # The first (non-comment) line should be
-        # "Transform: {ClassName}_{Precision}_{InputDim}_{OutputDim}".
-        # The version header is a comment, and `peekable_lines` has
-        # already dropped it, so the first line seen here is the block.
-        # A file that is only a header has no such line: `peekable_lines`
-        # yields its end sentinel, which is not a string.
+        """
+        Score the confidence that a line starts a `.tfm` transformation block.
+
+        The line scores `Confidence.CERTAIN` when it is a `Transform:` line and
+        `Confidence.NO` otherwise. When `error` is set, a line that does not
+        match raises instead, either `SnifferContentError` or the exception
+        class given.
+        """
+        # The version header is a comment, which peekable_lines has already
+        # dropped, so the first line must be the Transform: line. A file that
+        # holds only the header yields an end sentinel that is not a str.
         if isinstance(line, str) and _TRANSFORM_RE.match(line.strip()):
             return Confidence.CERTAIN
         if error:
@@ -101,18 +79,19 @@ class TfmTransformParser(
         position: tx.Optional[int] = None,
         **kwargs,
     ) -> tx.Self:
-        """Build the transform chain from an iterable over lines of a
-        `.tfm` file.
+        """
+        Build the chain of transformations from the lines of a `.tfm` file.
 
         Parameters
         ----------
         lines : iterable of str
-            Lines of the file.
+            The lines of the file.
         position : int, optional
-            Which top-level transform of the file to read: the
-            composite, if the file starts with a `CompositeTransform`
-            header, else one of its blocks. By default, the first one,
-            with a warning if the file holds several.
+            The top-level transformation to read. A file that starts with a
+            `CompositeTransform` header holds a single composite
+            transformation, while any other file holds one transformation per
+            block. By default, the first transformation is read, with a warning
+            if the file holds several.
         """
 
         if not isinstance(lines, peekable_lines):
@@ -127,7 +106,6 @@ class TfmTransformParser(
             if not lines.peek():
                 break
 
-            # Parse transform type
             line = lines.next()
             transform = _TRANSFORM_RE.match(line)
             if not transform:
@@ -139,20 +117,18 @@ class TfmTransformParser(
             input_dim = int(transform.group("input_dim"))
             output_dim = int(transform.group("output_dim"))
 
-            # Parse parameters
             line = lines.peek()
             parameters = _PARAMETERS_RE.match(line)
             if parameters:
-                lines.next()  # consume the line
+                lines.next()
                 parameters = _read_vector(parameters.group("values"))
             else:
                 parameters = []
 
-            # Parse fixed parameters
             line = lines.peek()
             fixed_parameters = _FIXEDPARAMETERS_RE.match(line)
             if fixed_parameters:
-                lines.next()  # consume the line
+                lines.next()
                 fixed_parameters = _read_vector(
                     fixed_parameters.group("values")
                 )
@@ -161,8 +137,8 @@ class TfmTransformParser(
 
             index += 1
             if transform_type == "CompositeTransform":
-                # A composite header has no parameters of its own: its
-                # queue is the blocks that follow it.
+                # A composite header has no parameters of its own, because its
+                # queue is made of the blocks that follow it.
                 composites.append(index - 1)
                 continue
 

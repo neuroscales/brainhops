@@ -1,49 +1,36 @@
-"""
-Format dispatch for writing: choosing which writable format a file gets.
+"""Choice of the format in which an object is written.
 
-Reading guesses the format from the content and the file name. Writing
-has no content to look at, so it guesses from the file name and from the
-object being written. The name says which formats are candidates, with
-the same specificity rules reading uses, and the object says which of
-them can hold it.
+Reading chooses a format from the content and the name of a file. Writing has
+no content to inspect, so the format is chosen from the file name, which
+selects the candidates, and from the object, which decides the candidate that
+can hold it.
 """
 
 __all__ = ["save"]
 
-# stdlib
-import contextlib
 import inspect
 
-# dependencies
 import typing_extensions as tx
 from bagof.magic import fields
 
-# internals
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.metadata import (
-    ConversionReport,
-    MetadataLossError,
-    metadata_loss_policy,
-)
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-    collect_loss_reports,
-)
-from brainhops.io.base._base import WritableFileBasedObject
+from brainhops.datamodel.transformations import Transformation
+from brainhops.errors import ConversionError
+from brainhops.io.base._base import Format
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
-    FileSniffer,
+    FileReader,
+    FileWriter,
     WriterError,
 )
 
 
 def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
-    """
-    Write an object to a file, in the format the file name calls for.
+    """Write an object to a file in the format that the file name calls for.
 
-    The format is chosen from the registered writable formats, in three
+    The format is chosen from the registered writable formats, in four
     steps.
 
     1. **The file name.** The formats that declare the longest of the
@@ -53,52 +40,70 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
        its prefixes.
     2. **The object's own format.** If `obj` already is of one of the
        candidates, it is written as it is.
-    3. **A format that can hold the object.** Otherwise, a candidate can
-       hold `obj` if it is a file-backed version of the very data model
-       `obj` is an instance of, and takes every field that data model
-       has (`NiftiImage` and `ZarrImage` are file-backed
+    3. **A format that can hold the object as it is.** Otherwise, a
+       candidate can hold `obj` if it is a file-backed version of the
+       very data model `obj` is an instance of, and takes every field
+       that data model has (`NiftiImage` and `ZarrImage` are file-backed
        `SingleScaleImage`s). `obj` is converted to it, which neither
-       loses nor changes anything. When several can, the most specific
-       is used, by the rules reading uses: the longest prefix, then the
-       narrowest declaration, then `PRIORITY`. Two that are equally
-       specific are an ambiguity, and nothing is written.
+       loses nor changes anything.
+    4. **A format a transformation converts to.** Otherwise, a
+       transformation is converted to the candidates, with the same
+       converters as `obj.to(Format)`, and written in the one it
+       converts to. A converter returns the very map `obj` is, with
+       its endpoints bridged to the format's (an affine to LPS is
+       flipped into RAS), or refuses: a general `Affine` is written as
+       the voxel-to-RAS affine of a NIfTI file only when that is what it
+       maps, or when its coordinate systems are not known.
 
-    !!! note "No conversion beyond the file format"
-        `obj` is never converted to another data model on the way. A
-        `Scaling` is not turned into an `Affine`, and a general `Affine`
-        is not turned into the voxel-to-RAS affine a NIfTI file holds,
-        since it would come back meaning something it did not say. Build
-        the format you want when that is what the file should hold:
-        `NiftiVoxelToRAS.from_other(affine).save(file)`.
+    In steps 3 and 4, when several candidates can hold `obj`, the most
+    specific is used, by the rules reading uses: the longest prefix,
+    then the narrowest declaration, then `PRIORITY`. Two that are
+    equally specific are an ambiguity, and nothing is written.
+
+    !!! note "Nothing is approximated"
+        A transformation is written only in a format that holds it
+        exactly. One that no candidate holds -- a field interpolated
+        with cubic splines, to be written as NIfTI's linearly
+        interpolated values, say -- is refused with each candidate's
+        reason, rather than resampled.
+
+    !!! note "Two passes, one conversion"
+        Steps 3 and 4 are two passes only until every writable
+        transformation format has exact converters (#312). Until then,
+        a format without an exact converter holds a transformation only
+        by relabelling it, that is, by being rebuilt from its
+        parameters, when the coordinate systems allow it. Step 3 writes
+        a transformation in such a format only if the format is a
+        file-backed version of its data model. Step 4 converts it only
+        to the formats that convert it exactly, so that the formats
+        that would only relabel it do not make the choice ambiguous.
+        For every transformation format, `from_instance` is
+        `obj.to(Format)`, so both passes run the same conversion.
+        `NiftyRegAffine` converts an affine between world spaces, or
+        between unknown spaces, in step 4.
 
     Parameters
     ----------
-    obj : Any
+    obj : object
         The object to write.
     file : FileLike
-        The file to write to: a path, or a file object opened for
-        writing. An unnamed file object, such as a buffer, has no name to
-        choose a format from, so `obj` must already be of a writable
-        format, and is written in that format.
-    **kwargs
-        Format-specific options, passed on to the chosen format's `save`.
-        `on_loss` (`"ignore"`, `"warn"`, `"raise"`) also governs the
-        metadata the conversion to that format cannot hold: a save that
-        converts, then writes, warns at most once, with one report. A
-        `ConversionReport` given as `on_loss` is filled with what the
-        conversion and the write lose, and nothing is warned or raised.
+        A path, or a file object opened for writing. An object without a name,
+        such as a buffer, gives no name to choose from, so `obj` must already
+        be a writable format.
+    **kwargs : Any
+        Options passed to the `save` method of the chosen format.
 
     Raises
     ------
     AmbiguousFormatError
         If several equally specific formats can hold `obj`.
     WriterError
-        If no registered format claims the file name, or none of those
-        that do can hold `obj`, or the chosen format cannot write it.
+        If no format claims the file name, if none of those that do can hold
+        `obj`, or if the chosen format cannot write it.
     """
     name = _to_filename(file)
     if name is None:
-        if isinstance(obj, WritableFileBasedObject):
+        if isinstance(obj, Format) and isinstance(obj, FileWriter):
             obj.save(file, **kwargs)
             return
         raise WriterError(
@@ -107,7 +112,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             f"file, or build the format you want and save that."
         )
 
-    registry = WritableFileBasedObject._REGISTRY
+    registry = (fmt for fmt in Format._REGISTRY if issubclass(fmt, FileWriter))
     matches = ((fmt, _match_name(name, fmt)) for fmt in registry)
     claimed = [(fmt, match) for fmt, match in matches if match is not None]
     if not claimed:
@@ -115,15 +120,13 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             f"Cannot write {name!r}: no writable format is registered for "
             f"its extension."
         )
-    # The longest extension decides which formats the name asks for: a
-    # name ending in `.ome.zarr` asks for OME-Zarr, and is not written
-    # as a plain `.zarr` store when no OME-Zarr format can hold `obj`.
+    # The longest extension decides: .ome.zarr is not written as plain .zarr
+    # when no OME-Zarr format can hold the object.
     longest = max(extension for _, (extension, _) in claimed)
     claimed = [(fmt, match) for fmt, match in claimed if match[0] == longest]
 
-    # An object already of a format the name asks for is not rebuilt:
-    # that would run its constructor again, and a file-based object keeps
-    # state that is not a field, such as the data it has already read.
+    # Rebuilding the object would rerun its constructor and lose state that is
+    # not a field, such as data already read.
     if any(isinstance(obj, fmt) for fmt, _ in claimed):
         obj.save(file, **kwargs)
         return
@@ -132,98 +135,118 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     holders = [
         (fmt, match) for fmt, match in claimed if _holds(fmt, obj, reasons)
     ]
-    # The conversion converts the metadata too (and reports what the
-    # format cannot hold), under the save's own `on_loss`; its report
-    # and the write's are warned as one.
-    on_loss = kwargs.get("on_loss")
-    # A report given as `on_loss` is filled with both, and acted on by
-    # the caller: the conversion's losses are collected (`"warn"` inside
-    # `collect_loss_reports`), and the writer fills it with its own.
-    sink = on_loss if isinstance(on_loss, ConversionReport) else None
-    for tier in _tiers(holders):
-        writers = []
-        for fmt in tier:
-            try:
-                policy = "warn" if sink is not None else on_loss
-                with _policy(policy), collect_loss_reports() as reports:
-                    converted = fmt.from_instance(obj)
-                writers.append((fmt, converted, reports))
-            except MetadataLossError:
-                raise
-            except Exception as e:  # noqa: BLE001
-                reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
-        if len(writers) > 1:
-            raise AmbiguousFormatError(
-                _ambiguity_message(name, obj, [fmt for fmt, _, _ in writers])
-            )
-        if writers:
-            _, converted, reports = writers[0]
-            if sink is not None:
-                apply_loss_policy(ConversionReport.merged(reports), sink)
-                converted.save(file, **kwargs)
-                return
-            with collect_loss_reports() as written:
-                converted.save(file, **kwargs)
-            if reports or written:
-                # One warning for the conversion and the write.
-                merged = ConversionReport.merged(reports + written)
-                apply_loss_policy(merged, "warn", stacklevel=2)
-            return
+    writer = _first_writer(name, obj, holders, _copy, reasons)
+    # The second pass converts a transformation (see "Two passes, one
+    # conversion" above): the first stays for the formats without
+    # converters, and for those with them it runs the same conversion.
+    if writer is None and isinstance(obj, Transformation):
+        others = [
+            candidate for candidate in claimed if candidate not in holders
+        ]
+        writer = _first_writer(name, obj, others, _convert, reasons)
+    if writer is not None:
+        writer.save(file, **kwargs)
+        return
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))
     detail = "".join(f"\n  - {reason}" for reason in reasons)
     raise WriterError(
         f"Cannot write {type(obj).__name__} to {name!r}: none of the "
         f"formats registered for it ({formats}) can hold it as it is. "
-        f"Build the format you want with its `from_other` and save "
+        f"Build the format you want with its `from_any` and save "
         f"that.{detail}"
     )
 
 
-def _policy(on_loss: tx.Optional[str]) -> tx.ContextManager[None]:
-    if on_loss is None:
-        return contextlib.nullcontext()
-    return metadata_loss_policy(on_loss)
+def _copy(obj: tx.Any, fmt: type) -> tx.Any:
+    """`obj` copied into `fmt`, a file-backed version of its data model."""
+    return fmt.from_instance(obj)
+
+
+def _convert(obj: Transformation, fmt: type) -> tx.Any:
+    """`obj` converted exactly to `fmt`, as `obj.to(fmt)` converts it.
+
+    A format without an exact converter for `obj` may relabel it (#312).
+    Such a format is not chosen by this pass, so that a format that
+    converts `obj` exactly is not made ambiguous by the formats that
+    would only relabel it.
+    """
+    # The transformation formats import this package, so their helper is
+    # imported when it is used.
+    from brainhops.io.transformations.base._converters import relabels
+
+    if relabels(obj, fmt):
+        raise ConversionError(
+            f"{fmt.__name__} has no exact converter for a "
+            f"{type(obj).__name__} (#312), and a transformation is saved "
+            f"by relabelling it only in a format of its own data model."
+        )
+    return obj.to(fmt)
+
+
+def _first_writer(
+    name: str,
+    obj: tx.Any,
+    candidates: tx.List[tx.Tuple[type, tx.Any]],
+    build: tx.Callable[[tx.Any, type], tx.Any],
+    reasons: tx.List[str],
+) -> tx.Any:
+    """
+    `obj` built into the most specific candidate format that takes it.
+
+    The candidates are tried tier by tier, most specific first, and
+    `build(obj, fmt)` makes the object to write. The first tier where it
+    succeeds for one format gives the writer; a tier where it succeeds
+    for several is an ambiguity. Why it fails for the others is added to
+    `reasons`. `None` when it fails for every candidate.
+    """
+    for tier in _tiers(candidates):
+        writers = []
+        for fmt in tier:
+            try:
+                writers.append((fmt, build(obj, fmt)))
+            except Exception as e:  # noqa: BLE001
+                reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
+        if len(writers) > 1:
+            raise AmbiguousFormatError(
+                _ambiguity_message(name, obj, [fmt for fmt, _ in writers])
+            )
+        if writers:
+            return writers[0][1]
+    return None
 
 
 def _model(cls: type) -> tx.Optional[type]:
-    """
-    The data model that `cls` is an instance of, file formats aside.
+    """Return the data model that `cls` instantiates, or `None`.
 
-    It is the first class in the MRO that is a data model and is not a
-    file format: `SingleScaleImage` for `NiftiImage`, and `VoxelToRAS`
-    for `NiftiVoxelToRAS`. A class that is not a data model has none.
+    This is the first class in the MRO that is a data model but not I/O,
+    such as `SingleScaleImage` for `NiftiImage`.
     """
     for base in cls.__mro__:
         if issubclass(base, DataModelBase) and not issubclass(
-            base, FileSniffer
+            base, (Format, FileReader, FileWriter)
         ):
             return base
     return None
 
 
 def _init_fields(cls: type) -> tx.Set[str]:
-    """The names of the fields that the constructor of `cls` takes."""
-    return {field.name for field in fields(cls) if field.init}
+    # Public names are compared, because a format may take a field of its
+    # data model over under a private name, as `NiftiImage` stores
+    # `transformations` in `_transformations` and `OmeZarrImage` stores
+    # `images` in `_images`.
+    return {field.public_name for field in fields(cls) if field.init}
 
 
 def _holds(fmt: type, obj: tx.Any, reasons: tx.List[str]) -> bool:
-    """
-    Whether `obj` can be converted to `fmt` without losing or changing
-    any of it.
+    """Whether `obj` converts to `fmt` without loss.
 
-    The format must be a file-backed version of the very data model
-    `obj` is an instance of, and must take every field of that data
-    model.
-
-    - *The very data model*, not a more specific one: `NiftiVoxelToRAS`
-      is an `Affine`, but one that means voxel-to-RAS, so a general
-      `Affine` written through it would come back meaning something it
-      did not say.
-    - *Every field*: a format that stores its content differently, such
-      as an OME-Zarr field that keeps the arrays it read rather than a
-      list of scales, would build itself from `obj` with that content
-      missing.
+    The format must be a file-backed version of the very data model that `obj`
+    instantiates, and take every field of that model. `NiftiVoxelToRAS` is an
+    `Affine` that means voxel-to-RAS, so a general `Affine` written through it
+    would come back with another meaning. A format that stores its content
+    differently, such as OME-Zarr keeping the arrays it read rather than a list
+    of scales, would be built with content missing.
     """
     model = _model(type(obj))
     if model is None or _model(fmt) is not model:
@@ -238,25 +261,13 @@ def _holds(fmt: type, obj: tx.Any, reasons: tx.List[str]) -> bool:
     return True
 
 
-# NOTE  `_describe` and the wording of `_ambiguity_message` follow the
-#   messages `parse` and `sniff` give for the same error, so that the
-#   three can share one helper. `save` takes no `hint=`, so a format is
-#   chosen here by converting the object to it.
+# _describe and _ambiguity_message mirror the messages of parse and sniff
+# so that the three could share a helper. save has no hint=, so a format is
+# chosen by converting the object.
 
 
 def _describe(cls: type) -> str:
-    """
-    What a format holds, in the words of its own docstring.
-
-    The first paragraph of the class's own docstring, on one line and
-    without its final full stop. A docstring inherited from a base class
-    describes the base, not this format, so it is not used.
-
-    A data model without a docstring of its own is given one that lists
-    its fields under an `Attributes` heading. A paragraph that opens with
-    a section heading, underlined with dashes, describes nothing, so no
-    description is given.
-    """
+    """Describe a format by the first paragraph of its own docstring."""
     doc = cls.__dict__.get("__doc__")
     if not isinstance(doc, str) or not doc.strip():
         return ""
@@ -270,14 +281,9 @@ def _describe(cls: type) -> str:
 def _ambiguity_message(
     name: str, obj: tx.Any, candidates: tx.Iterable[type]
 ) -> str:
-    """
-    Tell a user which formats a file could be written in, and how to
-    choose one.
+    """Explain which formats an object could be written in.
 
-    Each candidate is named, described in its own words, and given the
-    call that writes `obj` in it. How to make the formats tell such an
-    object apart (a `PRIORITY`) is a question for whoever maintains
-    them, and is not put to the user.
+    Each candidate is listed with the call that writes the object in it.
     """
     candidates = sorted(candidates, key=lambda cls: cls.__name__)
     lines = [
@@ -291,10 +297,10 @@ def _ambiguity_message(
         about = _describe(cls)
         if about:
             line += f" ({about})"
-        line += f": `{cls.__name__}.from_other(obj).save(path)`"
+        line += f": `{cls.__name__}.from_any(obj).save(path)`"
         lines.append(line)
     lines.append(
         f"Choose one by converting the object to that format and saving "
-        f"it, as in `{candidates[0].__name__}.from_other(obj).save(path)`."
+        f"it, as in `{candidates[0].__name__}.from_any(obj).save(path)`."
     )
     return "\n".join(lines)

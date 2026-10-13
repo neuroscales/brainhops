@@ -1,13 +1,10 @@
-# stdlib
 import functools
 import itertools
 from types import ModuleType
 
-# dependencies
 import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 
-# core
 from brainhops._core.dependencies import da, np
 from brainhops.backends import (
     best_backend,
@@ -18,15 +15,15 @@ from brainhops.backends import (
 
 
 def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
-    """Translate a boundary condition into a scipy ``(mode, cval)`` pair.
+    """Translate a boundary condition into the `(mode, cval)` of SciPy.
 
-    A constant boundary maps to scipy's ``"grid-constant"`` mode, whether
-    it is named (the ``"constant"`` condition) or given as a numeric fill
-    value. That mode treats every coordinate beyond the grid as the fill
-    value for a spline of any degree, which is the zero-padding an FNIRT
-    coefficient field is evaluated with. Scipy's ``"constant"`` mode is not
-    equivalent for a degree above one, so it is not used. Every other
-    named condition passes through unchanged.
+    A constant boundary, whether it is given by the name `"constant"` or as
+    a numeric fill value, becomes the SciPy mode `"grid-constant"`. In that
+    mode, every coordinate beyond the grid takes the fill value for a spline
+    of any degree, which matches the zero padding with which FNIRT
+    coefficient fields are evaluated. The `"constant"` mode of SciPy is not
+    equivalent above degree 1, so it is not used. Other names are passed
+    through unchanged.
     """
     if isinstance(bound, str):
         return ("grid-constant" if bound == "constant" else str(bound)), 0.0
@@ -47,11 +44,12 @@ def _autoreshape(map_coordinates: tx.Callable) -> tx.Callable:
 
 
 def _map_coordinates_for(nx: ModuleType, nd: ModuleType) -> tx.Callable:
-    """The (autoreshaping) ``map_coordinates`` to use for a backend.
+    """Return the `map_coordinates` function of a backend.
 
-    The dask backend's (see [`brainhops._core.dask_ndimage`][]) samples
-    coordinates of shape `(ndim, *shape)` block by block, keeping their
-    spatial layout, so it is not flattened; every other backend's is.
+    The dask implementation samples coordinates of shape `(ndim, *shape)`
+    block by block and keeps their spatial layout, so it is returned as it
+    is. The functions of other backends are wrapped so that they flatten the
+    coordinates before sampling and restore the spatial shape afterwards.
     """
     if da is not None and nx is da:
         return nd.map_coordinates
@@ -66,12 +64,12 @@ def _over_batch(
     shape: tx.Tuple[int, ...],
     output: tx.Optional[ArrayProtocol] = None,
 ) -> ArrayProtocol:
-    """Apply `func` to each `input[index]` of a batch, into `(*batch, *shape)`.
+    """Apply a function to each item of the batch dimensions of an array.
 
-    A concrete array is filled item by item, into `output` when given. A
-    dask array is assembled by stacking the results instead: assigning one
-    dask array into another rebuilds the graph of every chunk it covers,
-    which takes minutes on a finely chunked array.
+    The result has shape `(*batch, *shape)`. A concrete result is filled
+    item by item, into `output` when it is given. With dask, the results
+    are stacked instead, because assigning one dask array into another
+    rebuilds the graph of every chunk that the assignment covers.
     """
     indices = itertools.product(*[range(s) for s in batch])
     if da is not None and nx is da:
@@ -96,43 +94,41 @@ def pull(
     bound: tx.Union[str, float],
     coeff: bool,
 ) -> ArrayProtocol:
-    """
-    Interpolate an array using a coordinates field.
+    """Interpolate an array at the coordinates of a field.
 
     Parameters
     ----------
-    input : array-like
-        The array to be interpolated. Shape (*batch, *spatial_in)
-    coords : array-like
-        The coordinates field. Shape (*spatial_out, ndim)
-    degree : {0..5}
-        The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
-    bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
-        The boundary condition. If a string, one of:
-        - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-        - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-        - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-        - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-        - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-        If a float, the constant value to use beyond the edge.
+    input : ArrayProtocol
+        Array with shape `(*batch, *spatial_in)`.
+    coords : ArrayProtocol
+        Coordinates with shape `(*spatial_out, ndim)`.
+    degree : int
+        Degree of the spline, from 0 to 5: 0 is nearest neighbour, 1 is
+        linear, 2 is quadratic, and so on.
+    bound : str or float
+        Boundary condition, given by name or as a constant fill value. A
+        number gives the value beyond the edge, and the name `"constant"`
+        stands for a fill value of zero. The other names are:
+
+          - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
+          - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
+          - 'mirror': mirror at edge        (d c b | a b c d | c b a)
+          - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
+          - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+
     coeff : bool
-        If True, the input image is assumed to already contain spline
-        coefficients. If False, the input image will be prefiltered
-        before interpolation.
+        Whether `input` already holds spline coefficients. When false, the
+        input is prefiltered before it is interpolated.
 
     Returns
     -------
-    array-like
-        The interpolated array. Shape (*batch, *spatial_out)
-
+    ArrayProtocol
+        The interpolated array, with shape `(*batch, *spatial_out)`.
     """
-    # Get backends
     nx = best_backend(input, coords)
     nd = get_ndimage_backend(nx)
-    # Get dimensions
     ndim = coords.shape[-1]
     batch = input.shape[:-ndim]
-    # Prepare for map_coordinates
     coords = nx.moveaxis(coords, -1, 0)
     mode, cval = _scipy_boundary(bound)
     degree = int(degree)
@@ -142,7 +138,6 @@ def pull(
         "cval": cval,
         "prefilter": not coeff,
     }
-    # Interpolate each batch
     map_coordinates = _map_coordinates_for(nx, nd)
     return _over_batch(
         nx,
@@ -161,41 +156,36 @@ def pull_axes(
     bound: tx.Union[str, float],
     coeff: bool,
 ) -> ArrayProtocol:
-    """
-    Interpolate an array along a subset of its axes.
+    """Interpolate an array along a subset of its axes.
 
-    The named axes are the spatial axes that the coordinates field
-    addresses. They are moved to the end of the array, the interpolation
-    is applied over them, and every other axis is carried along as a
-    batch dimension. This samples a low-dimensional field over a few axes
-    of a larger array without building a full-dimensional coordinates
-    field over the whole array.
+    The axes listed in `axes` are moved to the end of the array, in the
+    order in which the components of the coordinates address them, and
+    [`pull`][] is then applied. The other axes become batch axes. In this
+    way, a large array can be resampled along a few of its axes without
+    building a field of coordinates over all of its dimensions.
 
     Parameters
     ----------
-    input : array-like
-        The array to interpolate. Shape `(*d0, *d1, ...)`.
-    coords : array-like
-        The coordinates field. Shape `(*spatial_out, len(axes))`.
+    input : ArrayProtocol
+        Array to interpolate.
+    coords : ArrayProtocol
+        Coordinates with shape `(*spatial_out, len(axes))`.
     axes : sequence of int
-        The axes of `input` that the coordinates field addresses, in the
-        order the components of the field address them.
-    degree : {0..5}
-        The spline degree.
+        Axes of `input` that the coordinates address.
+    degree : int
+        Degree of the spline, from 0 to 5.
     bound : str or float
-        The boundary condition, as accepted by [`pull`][].
+        Boundary condition, as in [`pull`][].
     coeff : bool
-        Whether the input already contains spline coefficients.
+        Whether `input` already holds spline coefficients.
 
     Returns
     -------
-    array-like
-        The interpolated array. Its leading axes are the axes of `input`
-        that were not named, kept in their original order, followed by
-        the output spatial axes of the field. Shape
-        `(*batch, *spatial_out)`.
+    ArrayProtocol
+        The interpolated array. The axes that are not listed in `axes`
+        come first, in their original order, and are followed by the
+        spatial axes of the output.
     """
-    # Get backends
     nx = best_backend(input, coords)
     axes = [int(a) % input.ndim for a in axes]
     ndim = len(axes)
@@ -211,48 +201,33 @@ def spline_matrix(
     bound: tx.Union[str, float],
     coeff: bool,
 ) -> ArrayProtocol:
-    """
-    Build the weight matrix of a one-dimensional spline resampling.
+    """Return the weight matrix of a one-dimensional spline resampling.
 
-    The result is a matrix `W` of shape `(n_out, n_in)`, where `n_out`
-    is the number of output samples in `coords_1d`. Applying `W` to a
-    one-dimensional array of length `n_in` reproduces the interpolation
-    that [`pull`][] performs at the same coordinates, because spline
-    interpolation is linear in the sample values. The prefilter is baked
-    into `W` when `coeff` is false, so the matrix maps values, not
-    coefficients, unless `coeff` is true.
-
-    The matrix is applied along one axis of a larger array with a single
-    contraction, which replaces a batched call to [`pull`][] over that
-    axis. This is faster than a batched pull for a one-dimensional step.
-
-    A constant boundary cannot be expressed as a linear weight, so `W`
-    carries only the in-bounds contribution when `bound` is a float. An
-    output sample that reads beyond the grid then has a row that sums to
-    less than one, and the constant fill is added separately as
-    `cval * (1 - W.sum(axis=1))`. This is the partition-of-unity
-    correction, and omitting it leaves the constant-boundary result wrong
-    by an amount proportional to the fill value.
+    Spline interpolation is linear in its input, so it can be written as a
+    matrix `W`. Multiplying an axis of length `n_in` by `W` gives the same
+    result as [`pull`][] at the coordinates `coords_1d`. When `coeff` is
+    false, `W` includes the prefilter, so that it maps values rather than
+    coefficients. With a numeric `bound`, `W` only holds the contributions
+    from inside the array, and the fill value must be added separately as
+    `cval * (1 - W.sum(axis=1))`.
 
     Parameters
     ----------
     n_in : int
-        The length of the input axis.
-    coords_1d : array-like
-        The output coordinates along the axis. Shape `(n_out,)`.
-    degree : {0..5}
-        The spline degree.
+        Length of the input axis.
+    coords_1d : ArrayProtocol
+        Coordinates with shape `(n_out,)`.
+    degree : int
+        Degree of the spline, from 0 to 5.
     bound : str or float
-        The boundary condition, as accepted by [`pull`][]. A float
-        selects a constant boundary, and the returned matrix then holds
-        only the in-bounds weights.
+        Boundary condition, as in [`pull`][].
     coeff : bool
-        Whether the input already contains spline coefficients.
+        Whether `W` maps coefficients rather than values.
 
     Returns
     -------
-    array-like
-        The weight matrix. Shape `(n_out, n_in)`.
+    ArrayProtocol
+        The matrix `W`, with shape `(n_out, n_in)`.
     """
     nx = get_array_backend(coords_1d)
     bound0 = bound if isinstance(bound, str) else 0.0
@@ -268,36 +243,26 @@ def pull_field(
     bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
     coeff: bool,
 ) -> ArrayLike:
-    """
-    Interpolate an displacement or coordinates field using a coordinates field.
+    """Interpolate a field of displacements or coordinates.
 
     Parameters
     ----------
-    field : array-like
-        The field to be interpolated. Shape (*batch, *spatial_in, ndim)
-    coords : array-like
-        The coordinates field. Shape (*spatial_out, ndim)
-    degree : {0..5}
-        The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
-    bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
-        The boundary condition. If a string, one of:
-        - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-        - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-        - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-        - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-        - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-        If a float, the constant value to use beyond the edge.
+    field : ArrayLike
+        Field with shape `(*batch, *spatial_in, ndim)`.
+    coords : ArrayLike
+        Coordinates with shape `(*spatial_out, ndim)`.
+    degree : int
+        Degree of the spline, from 0 to 5.
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
+        Boundary condition, as in [`pull`][].
     coeff : bool
-        If True, the input image is assumed to already contain spline
-        coefficients. I.e., it has already been prefiltered with the
-        appropriate spline filter. If False, the input image will be
-        prefiltered before interpolation.
+        Whether `field` has already been prefiltered with the appropriate
+        spline filter.
 
     Returns
     -------
-    array-like
-        The interpolated field. Shape (*batch, *spatial_out, ndim)
-
+    ArrayLike
+        The interpolated field, with shape `(*batch, *spatial_out, ndim)`.
     """
     nx = best_backend(field, coords)
     field = nx.moveaxis(field, -1, 0)
@@ -313,61 +278,43 @@ def coeff2value(
     inplace: bool = False,
     ndim: tx.Optional[int] = None,
 ) -> ArrayLike:
-    """
-    Convert an array of spline coefficients to values by applying the
-    appropriate inverse spline filter.
+    """Convert spline coefficients to values.
 
-    This is equivalent to (and implemented as) interpolating the field
-    at the center of each voxel.
+    The conversion is the inverse of the spline filter. It is computed by
+    interpolating the coefficients at the centres of the voxels.
 
     Parameters
     ----------
-    input : array-like
-        The array of spline coefficients. Shape (*batch, *spatial)
-    degree : {0..5}
-        The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
-    bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
-        The boundary condition. If a string, one of:
-        - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-        - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-        - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-        - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-        - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-        If a float, the constant value to use beyond the edge.
-    inplace : bool
-        If True, the conversion will be done in-place (i.e. the input
-        array will be modified). If False, a new array will be created
-        for the output.
+    input : ArrayLike
+        Coefficients with shape `(*batch, *spatial)`.
+    degree : int
+        Degree of the spline, from 0 to 5.
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
+        Boundary condition, as in [`pull`][].
+    inplace : bool, default=False
+        Whether to write the result into `input`.
     ndim : int, optional
-        The number of spatial dimensions. If None, all input dimensions
-        are assumed to be spatial. If an integer, the last `ndim`
-        dimensions are assumed to be spatial.
+        Number of spatial axes. By default, all axes are spatial.
 
     Returns
     -------
-    array-like
-        The array of values. Shape (*batch, *spatial)
+    ArrayLike
+        The values, with the same shape as `input`.
     """
-    # Splines of degree 0 and 1 interpolate their coefficients: the
+    # Splines of degree 0 and 1 interpolate their coefficients, so the
     # coefficients are the values.
     if int(degree) < 2:
         return input if inplace else copy_array(input)
-    # Get packages
     nx = get_array_backend(input)
     nd = get_ndimage_backend(nx)
-    # Get dimensions
-    # NOTE: `ndim or input.ndim` treats ndim=0 (or None) as "all dimensions
-    # are spatial"; a genuine ndim=0 is meaningless for interpolation, so
-    # collapsing it into the "all" case is intentional.
+    # An ndim of 0 means that all axes are spatial, since zero spatial axes
+    # would be meaningless for interpolation.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
-    # Create coordinates field for interpolation, sampling at the center of
-    # each voxel of the *spatial* dimensions (the last `ndim` axes).
     grid = nx.meshgrid(
         *(nx.arange(s) for s in input.shape[-ndim:]), indexing="ij"
     )
     grid = nx.stack(grid, axis=0)
-    # Prepare for map_coordinates
     mode, cval = _scipy_boundary(bound)
     degree = int(degree)
     opts = {"order": degree, "mode": mode, "cval": cval, "prefilter": False}
@@ -388,36 +335,26 @@ def coeff2value_field(
     bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
     inplace: bool = False,
 ) -> ArrayLike:
-    """
-    Convert a field of spline coefficients to values by applying the
-    appropriate inverse spline filter.
+    """Convert the spline coefficients of a field to values.
 
-    This is equivalent to (and implemented as) interpolating the field
-    at the center of each voxel.
+    The conversion is the one performed by [`coeff2value`][], applied to a
+    field whose last axis holds the components of each vector.
 
     Parameters
     ----------
-    field : array-like
-        The field of spline coefficients. Shape (*batch, *spatial, ndim)
-    degree : {0..5}
-        The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
-    bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
-        The boundary condition. If a string, one of:
-        - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-        - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-        - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-        - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-        - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-        If a float, the constant value to use beyond the edge.
-    inplace : bool
-        If True, the conversion will be done in-place (i.e. the input
-        array will be modified). If False, a new array will be created
-        for the output.
+    field : ArrayLike
+        Coefficients with shape `(*batch, *spatial, ndim)`.
+    degree : int
+        Degree of the spline, from 0 to 5.
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
+        Boundary condition, as in [`pull`][].
+    inplace : bool, default=False
+        Whether to write the result into `field`.
 
     Returns
     -------
-    array-like
-        The field of values. Shape (*batch, *spatial, ndim)
+    ArrayLike
+        The values, with the same shape as `field`.
     """
     nx = get_array_backend(field)
     ndim = field.shape[-1]
@@ -434,55 +371,41 @@ def value2coeff(
     inplace: bool = False,
     ndim: tx.Optional[int] = None,
 ) -> ArrayLike:
-    """
-    Convert an array of values to spline coefficients by applying the
-    appropriate spline filter.
+    """Convert values to spline coefficients.
 
     Parameters
     ----------
-    input : array-like
-        The array of values. Shape (*batch, *spatial)
-    degree : {0..5}
-        The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
-    bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
-        The boundary condition. If a string, one of:
-        - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-        - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-        - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-        - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-        - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-        If a float, the constant value to use beyond the edge.
-    inplace : bool
-        If True, the conversion will be done in-place (i.e. the input
-        array will be modified). If False, a new array will be created
-        for the output.
+    input : ArrayLike
+        Values with shape `(*batch, *spatial)`.
+    degree : int
+        Degree of the spline, from 0 to 5.
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
+        Boundary condition, as in [`pull`][].
+    inplace : bool, default=False
+        Whether to write the result into `input`.
     ndim : int, optional
-        The number of spatial dimensions. If None, all input dimensions
-        are assumed to be spatial. If an integer, the last `ndim`
-        dimensions are assumed to be spatial.
+        Number of spatial axes. By default, all axes are spatial.
 
     Returns
     -------
-    array-like
-        The array of spline coefficients. Shape (*batch, *spatial)
+    ArrayLike
+        The coefficients, with the same shape as `input`.
     """
-    # Splines of degree 0 and 1 interpolate their coefficients: the
-    # coefficients are the values.
+    # Splines of degree 0 and 1 interpolate their coefficients, so the
+    # values are the coefficients.
     if int(degree) < 2:
         return input if inplace else copy_array(input)
-    # Get packages
     nx = get_array_backend(input)
     nd = get_ndimage_backend(input)
-    # Get dimensions
-    # NOTE: `ndim or input.ndim` treats ndim=0 (or None) as "all dimensions
-    # are spatial"; a genuine ndim=0 is meaningless for a spline filter, so
-    # collapsing it into the "all" case is intentional.
+    # An ndim of 0 means that all axes are spatial, since zero spatial axes
+    # would be meaningless for a spline filter.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
-    # The coefficients are those that `coeff2value` interpolates exactly.
-    # scipy's prefilter computes them for the bounds whose evaluation
-    # extends the coefficients the way the prefilter extends the values.
-    # `nearest` and constant bounds are not among them, and are solved.
+    # The coefficients must be those that coeff2value interpolates exactly.
+    # The prefilter of SciPy computes them correctly only in the modes where
+    # the evaluation extends the coefficients beyond the edges in the same
+    # way as the prefilter extends the values. In the modes of _SOLVED_MODES,
+    # the prefilter is wrong or inexact, so the coefficients are solved for.
     mode, cval = _scipy_boundary(bound)
     if mode in _SOLVED_MODES:
         bound = 0.0 if mode == "grid-constant" else mode
@@ -495,6 +418,7 @@ def value2coeff(
         def convert(x: ArrayProtocol) -> ArrayProtocol:
             return nd.spline_filter(x, order=degree, mode=mode)
 
+    input = ensure_floating(input)
     output = _over_batch(
         nx,
         input,
@@ -509,25 +433,24 @@ def value2coeff(
 
 
 _SOLVED_MODES = ("nearest", "grid-constant", "reflect")
-"""
-The modes whose coefficients `value2coeff` solves for rather than filters.
+"""Modes whose coefficients are solved for rather than filtered.
 
-scipy's prefilter extends the values by reflection for `nearest`, and by
-mirroring for `constant`, while its evaluation extends the coefficients
-by clamping for `nearest` and by `cval` for `grid-constant` (which is what
-constant bounds are evaluated with). The two do not match, and filtered
-coefficients do not interpolate the values near the edges (see #250).
-scipy's `reflect` prefilter does match its evaluation, but approximates
-it near the edges of a short axis, by up to 1e-4 at degree five.
+For `nearest` and for a constant boundary, the prefilter of SciPy extends
+the values beyond the edges by reflection and by mirroring, respectively.
+The evaluation, however, clamps the coefficients for `nearest` and uses
+`cval` for a constant boundary. Because the two extensions differ, the
+filtered coefficients do not interpolate the values near the edges (#250).
+For `reflect`, the prefilter matches the evaluation, but it is only
+approximate near the edges of short axes, by up to 1e-4 at degree 5.
 """
 
 _EDGE = 48
-"""
-The samples at each end of an axis whose coefficients a boundary changes.
+"""Number of samples at each end of an axis that a boundary affects.
 
-A boundary changes the coefficients by an amount that decays as the
-spline's pole to the power of the distance to the edge; the largest pole,
-at degree five, is 0.43, and 0.43 ** 48 is about 3e-18.
+Farther from the edge, the effect of the boundary on the coefficients is
+negligible, because it decays as `pole**distance` with the distance to the
+edge. The largest pole, at degree 5, is 0.43, and `0.43**48` is about
+3e-18.
 """
 
 
@@ -540,28 +463,21 @@ def _boundary_solvers(
     tx.Optional[tx.Tuple[np.ndarray, np.ndarray]],
     np.ndarray,
 ]:
-    """
-    How to solve for the coefficients of one axis under a boundary.
+    """Return how to solve for the coefficients of one axis under a boundary.
 
-    The values of an axis are its coefficients times `A`, the matrix of
-    [`spline_matrix`][] under `bound` -- clamped coefficients for
-    `nearest`, reflected ones for `reflect`, and zeros past the edges for
-    `0.0`. A short axis is solved with the inverse of `A`, returned first.
-
-    A long one is solved by scipy's recursive `mirror` prefilter, whose
-    matrix `M` is the same but with mirrored coefficients past the edges,
-    then corrected near each end. `inv(A) - inv(M)` is negligible farther
-    than `_EDGE` samples from either end, and its corner blocks have rank
-    one per pole of the prefilter -- one at degrees 2 and 3, two at degrees
-    4 and 5: they change the initial value of each pole's recursion. So
-    the correction at each end is returned as a pair `(U, V)`, applied as
-    `U @ (V @ values[edge])`, which costs a few operations per sample of
-    the edge. Both are trimmed to the samples the correction reaches at
-    this degree: about 20 at degree 2, 28 at degree 3 and 44 at degree 5. At
-    the low end `V` reads the first `V.shape[1]` values and `U` corrects
-    the first `U.shape[0]` coefficients; at the high end, the last ones.
-
-    The last item is `inv(A) @ 1`, which a constant bound needs.
+    The values along an axis are the coefficients multiplied by `A`, the
+    [`spline_matrix`][] of the boundary. For a short axis, the first item
+    is `inv(A)`, which gives the coefficients directly. A long axis is
+    instead filtered with the mirror prefilter of SciPy, whose matrix is
+    `M`, and the result is corrected near each end. The correction is
+    cheap because `inv(A) - inv(M)` is negligible farther than `_EDGE`
+    samples from either end, and because its corner blocks have a rank of
+    one per pole of the filter, since the boundary only changes the initial
+    value of each recursion. The second and third items are the
+    corrections at the low and the high end. Each correction is a pair
+    `(U, V)`, applied as `U @ (V @ values)` to the first or the last
+    coefficients. The last item is `inv(A) @ 1`, which a constant boundary
+    needs. The results are cached.
     """
     edge = _EDGE
     length = size if size <= 2 * edge else 4 * edge
@@ -573,10 +489,12 @@ def _boundary_solvers(
     mirror = np.asarray(spline_matrix(length, grid, degree, "mirror", True))
     correction = inverse - np.linalg.inv(mirror)
     low = _low_rank(correction[:edge, :edge])
-    # The high corner is trimmed, and returned, from its far end.
+    # _low_rank trims a block from its far end, so the high corner is
+    # flipped before the factorisation and the factors are flipped back.
     high = _low_rank(correction[-edge:, -edge:][::-1, ::-1])
     high = (high[0][::-1], high[1][:, ::-1])
-    # The coefficients of a constant under `mirror` are that constant.
+    # Under the mirror boundary, the coefficients of a constant are that
+    # constant.
     ones = np.ones(size)
     ones[: low[0].shape[0]] += low[0] @ low[1].sum(axis=1)
     ones[size - high[0].shape[0] :] += high[0] @ high[1].sum(axis=1)
@@ -584,14 +502,17 @@ def _boundary_solvers(
 
 
 _CORRECTION_TOLERANCE = 1e-17
-"""The relative size below which an entry of a correction is dropped."""
+"""Relative size below which an entry of a correction is dropped."""
 
 
 def _low_rank(block: np.ndarray) -> tx.Tuple[np.ndarray, np.ndarray]:
-    """
-    A corner block, starting at the edge, as `U @ V` of the rank it has to
-    machine precision, with `U`'s rows and `V`'s columns cut where they
-    fall below `_CORRECTION_TOLERANCE` of the largest entry.
+    """Factor a corner block, starting at the edge, as `U @ V`.
+
+    The factors have the numerical rank of the block, that is, its rank to
+    machine precision. The trailing rows of `U` and columns of `V` whose
+    contributions fall below `_CORRECTION_TOLERANCE` times the largest
+    entry of the block are then cut, so that the correction only covers the
+    samples that it actually reaches.
     """
     u, s, vt = np.linalg.svd(block)
     rank = max(1, int((s > s[0] * 1e-14).sum()))
@@ -605,7 +526,7 @@ def _low_rank(block: np.ndarray) -> tx.Tuple[np.ndarray, np.ndarray]:
 def _along(
     nx: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
 ) -> ArrayProtocol:
-    """`matrix` applied to `x` along one of its axes."""
+    """Apply a matrix to an array along one axis."""
     matrix = nx.asarray(matrix, dtype=np.float64)
     return nx.moveaxis(nx.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
 
@@ -618,14 +539,15 @@ def _edge_terms(
     length: int,
     at_end: bool,
 ) -> tx.List[tx.Tuple[np.ndarray, ArrayProtocol]]:
-    """
-    The rank-one terms `(u, w)` of the edge correction `U @ (V @ slab)`.
+    """Return the rank-one terms of the edge correction `U @ (V @ slab)`.
 
-    `w` holds `V @ slab` along `axis`, kept as an axis of length one, and
-    `u` is a column of `U` laid along `axis` and padded with zeros to
-    `length` (at its start when the edge is at the end of the axis), so
-    that `u * w` broadcasts to the corrected part of the array without
-    materializing anything larger than `w`.
+    Each term is a pair `(u, w)`. The weights `w` are one row of
+    `V @ slab`, computed along the axis, which is kept with a length of
+    one. The vector `u` is the matching column of `U`, laid along the axis
+    and padded with zeros to `length`. The padding goes at the start when
+    the edge is at the end of the axis. The product `u * w` then
+    broadcasts to the corrected part of the array without materialising
+    anything larger than `w`.
     """
     u, v = pair
     weights = nx.tensordot(
@@ -650,15 +572,13 @@ def _add_edges(
     low: tx.Tuple[tx.Tuple[np.ndarray, np.ndarray], ArrayProtocol],
     high: tx.Tuple[tx.Tuple[np.ndarray, np.ndarray], ArrayProtocol],
 ) -> ArrayProtocol:
-    """
-    A dask array `like`, with the edge corrections `low` and `high` --
-    each a `(U, V)` pair and the slab of values `V` reads -- added at the
-    two ends of `axis`.
+    """Add edge corrections at both ends of an axis of a dask array.
 
-    The axis is split at chunk boundaries: the chunks the corrections
-    reach are corrected by broadcasting their rank-one terms, which dask
-    fuses into one task per chunk, and the chunks in between are passed
-    through untouched, so the result keeps the chunks of `like`.
+    Each of `low` and `high` holds a correction pair `(U, V)` together with
+    the slab of values that `V` reads. The axis is split at chunk
+    boundaries. The chunks that a correction reaches are changed by
+    broadcasting its rank-one terms, and the chunks in between are passed
+    through unchanged, so the result keeps the chunks of `like`.
     """
     size = int(like.shape[axis])
     depth_low = int(low[0][0].shape[0])
@@ -683,8 +603,8 @@ def _add_edges(
             part = part + column * weights
         pieces.append(part)
     if (stop, start) == (size, 0):
-        # The two corrections share chunks: they are both added to the
-        # whole axis.
+        # The corrections overlap in a chunk, so both are added to the whole
+        # axis.
         whole = pieces[0]
         for column, weights in _edge_terms(
             da, high[0], high[1], axis, size, True
@@ -698,15 +618,16 @@ def _add_edges(
 def _constant_correction(
     ones: tx.Sequence[np.ndarray], cval: float
 ) -> tx.Iterator[tx.Tuple[tx.Tuple[slice, ...], np.ndarray]]:
-    """
-    Where, and by how much, coefficients filtered as if they were zero past
-    the edges must change to be `cval` past the edges.
+    """Yield the corrections that turn a zero boundary into a constant one.
 
-    With `L` the per-axis solve and `ones[d] = L_d @ 1`, the coefficients
-    are `L @ (values - cval) + cval = L @ values + cval * (1 - prod_d
-    ones[d])`. Each `ones[d]` is one but within its edge depths, so the
-    correction is zero but on the slabs along the faces of the array.
-    They are yielded, each sample once, as `(slices, correction)` pairs.
+    The coefficients are first computed as if the values beyond the edges
+    were zero, and they must then be changed so that they equal `cval`
+    beyond the edges. With `L` the solve along each axis and
+    `ones[d] = L_d @ 1`, the coefficients `L @ (values - cval) + cval`
+    equal `L @ values + cval * (1 - prod_d ones[d])`. Each `ones[d]` equals
+    one except near the edges, so the corrections are nonzero only on slabs
+    along the faces of the array. The function yields pairs of slices and
+    corrections, and each sample is covered by exactly one pair.
     """
     ndim = len(ones)
     edges = [np.flatnonzero(np.abs(o - 1) > 0) for o in ones]
@@ -725,7 +646,7 @@ def _constant_correction(
                 if d == axis:
                     sl = slice(int(part[0]), int(part[-1]) + 1)
                 elif d < axis and edges[d].size:
-                    # Samples already in an earlier axis's slabs are skipped.
+                    # Skip samples that the slabs of an earlier axis cover.
                     lo = int(edges[d][edges[d] < n // 2].max(initial=-1)) + 1
                     hi = int(edges[d][edges[d] >= n // 2].min(initial=n))
                     sl = slice(lo, hi)
@@ -749,23 +670,18 @@ def _interpolating_coefficients(
     bound: tx.Union[str, float],
     cval: float,
 ) -> ArrayProtocol:
-    """
-    The spline coefficients that interpolate `values` exactly, when the
-    coefficients past the edges are clamped (`bound="nearest"`), reflected
-    (`bound="reflect"`), or are `cval` (`bound=0.0`).
+    """Return the coefficients that interpolate values exactly.
 
-    Each axis is prefiltered in turn, by scipy's recursive filter with
-    corrected initial values at each end (see [`_boundary_solvers`][]):
-    the cost is the filter's. A numpy array is filtered in place after the
-    first axis, so it takes no more memory than the filter does. A dask
-    array keeps its chunks, and each chunk reads only its neighbours and
-    the samples near each end of its axes.
-
-    Coefficients that are `cval` past the edges interpolate `values` when
-    `coefficients - cval`, zero past the edges, interpolate `values -
-    cval`. The solve is linear and separable, so `cval` changes the
-    coefficients only near the faces of the array, and is applied there
-    (see [`_constant_correction`][]) rather than to a copy of the values.
+    The coefficients beyond the edges are clamped when `bound` is
+    `"nearest"`, reflected when it is `"reflect"`, and equal to `cval` when
+    it is `0.0`. The axes are processed in turn. A short axis is solved
+    with an inverse matrix, and a long axis is filtered by the recursive
+    prefilter of SciPy and then corrected near each end (see
+    `_boundary_solvers`), so the cost is that of the filter. NumPy arrays
+    are filtered in place after the first axis, and dask arrays keep their
+    chunks. Because the solve is linear and separable, `cval` only changes
+    the coefficients near the faces of the array, and that change is added
+    at the end (see `_constant_correction`).
     """
     nx = get_array_backend(values)
     nd = get_ndimage_backend(values)
@@ -779,7 +695,8 @@ def _interpolating_coefficients(
             coeff = _along(nx, inverse, coeff, axis)
         else:
             index = (slice(None),) * axis
-            # The corrections read the values before they are filtered.
+            # The corrections read the values before the in-place filter
+            # overwrites them.
             low = (low, coeff[index + (slice(0, low[1].shape[1]),)])
             high = (
                 high,
@@ -816,7 +733,6 @@ def _interpolating_coefficients(
         all_ones.append(ones)
     if cval:
         if lazy:
-            # `cval * (1 - prod_d ones[d])`, broadcast chunk by chunk.
             shape = [1] * coeff.ndim
             shape[0] = -1
             product = da.from_array(
@@ -840,33 +756,26 @@ def value2coeff_field(
     bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
     inplace: bool = False,
 ) -> ArrayLike:
-    """
-    Convert a field of values to spline coefficients by applying the
-    appropriate spline filter.
+    """Convert the values of a field to spline coefficients.
+
+    The conversion is the one performed by [`value2coeff`][], applied to a
+    field whose last axis holds the components of each vector.
 
     Parameters
     ----------
-    field : array-like
-        The field of values. Shape (*batch, *spatial, ndim)
-    degree : {0..5}
-        The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
-    bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
-        The boundary condition. If a string, one of:
-        - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-        - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-        - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-        - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-        - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
-        If a float, the constant value to use beyond the edge.
-    inplace : bool
-        If True, the conversion will be done in-place (i.e. the input
-        array will be modified). If False, a new array will be created
-        for the output.
+    field : ArrayLike
+        Values with shape `(*batch, *spatial, ndim)`.
+    degree : int
+        Degree of the spline, from 0 to 5.
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
+        Boundary condition, as in [`pull`][].
+    inplace : bool, default=False
+        Whether to write the result into `field`.
 
     Returns
     -------
-    array-like
-        The field of spline coefficients. Shape (*batch, *spatial, ndim)
+    ArrayLike
+        The coefficients, with the same shape as `field`.
     """
     nx = get_array_backend(field)
     ndim = field.shape[-1]
@@ -874,3 +783,11 @@ def value2coeff_field(
     field = value2coeff(field, degree, bound, inplace=inplace, ndim=ndim)
     field = nx.moveaxis(field, 0, -1)
     return field
+
+
+def ensure_floating(values: ArrayProtocol) -> ArrayProtocol:
+    # Integer and boolean values have non-integer coefficients, which an
+    # integer array would truncate.
+    if values.dtype.kind in "biu":
+        return values.astype("float32")
+    return values
