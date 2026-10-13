@@ -25,44 +25,6 @@ from ._sn_metadata import SpmSnMetadata
 from ._sn_raw import SPM_TO_NIFTI, SpmSnRaw
 
 # ----------------------------------------------------------------------
-#   READING THE RECORD
-# ----------------------------------------------------------------------
-# A normalisation file is parsed in one pass, so the coefficients of its
-# warp live in the record of its metadata. The chain is decoded from the
-# record when it is first used: the warp is then evaluated on the grid of
-# the template, with the array backend, so that it stays lazy with Dask.
-
-
-def _record(xform: "SpmSnTransformation") -> tx.Optional[SpmSnRaw]:
-    """Return the record of the metadata of a transformation, or `None`."""
-    metadata = xform.metadata
-    return None if metadata is None else metadata.raw
-
-
-def _decode(record: SpmSnRaw) -> tx.Tuple[_xforms.Transformation, ...]:
-    """Return the chain of transformations that a record describes.
-
-    The chain is described in [`SpmSnTransformation`][].
-    """
-    ras2grid = RASToVoxel(matrix=np.linalg.inv(record.template.vox2world)[:3])
-    # `spm_sn2def` maps template voxel x, numbered from 1, to
-    # VF.mat * Affine * (x + warp(x)). A voxel numbered from 0 is x - 1.
-    grid2source = record.source.mat @ record.affine @ SPM_TO_NIFTI
-    voxel2ras = VoxelToRAS(matrix=grid2source[:3])
-    if record.affine_only:
-        return (ras2grid, voxel2ras)
-    voxel = _systems.VoxelCoordinateSystem()
-    field = _xforms.CoordinatesField(
-        data=sn_positions(record),
-        input=voxel,
-        output=voxel,
-        degree=InterpolationOrder.linear,
-        bound=BoundaryCondition.nearest,
-    )
-    return (ras2grid, field, voxel2ras)
-
-
-# ----------------------------------------------------------------------
 #   FORMAT
 # ----------------------------------------------------------------------
 
@@ -393,3 +355,41 @@ def sn_positions(
     if isinstance(positions, np.ndarray):
         positions.flags.writeable = False
     return positions
+
+
+# ----------------------------------------------------------------------
+#   READING THE RECORD
+# ----------------------------------------------------------------------
+# A normalisation file is parsed in one pass, so the coefficients of its
+# warp live in the record of its metadata. The chain is decoded from the
+# record when it is first used: the warp is then evaluated on the grid of
+# the template, with the array backend, so that it stays lazy with Dask.
+
+
+def _record(xform: "SpmSnTransformation") -> tx.Optional[SpmSnRaw]:
+    """Return the record of the metadata of a transformation, or `None`."""
+    metadata = xform.metadata
+    return None if metadata is None else metadata.raw
+
+
+def _decode(record: SpmSnRaw) -> tx.Tuple[_xforms.Transformation, ...]:
+    """Return the chain of transformations that a record describes.
+
+    The chain is described in [`SpmSnTransformation`][].
+    """
+    ras2grid = RASToVoxel(matrix=np.linalg.inv(record.template.vox2world)[:3])
+    # `spm_sn2def` maps template voxel x, numbered from 1, to
+    # VF.mat * Affine * (x + warp(x)). A voxel numbered from 0 is x - 1.
+    grid2source = record.source.mat @ record.affine @ SPM_TO_NIFTI
+    voxel2ras = VoxelToRAS(matrix=grid2source[:3])
+    if record.affine_only:
+        return (ras2grid, voxel2ras)
+    voxel = _systems.VoxelCoordinateSystem()
+    field = _xforms.CoordinatesField(
+        data=sn_positions(record),
+        input=voxel,
+        output=voxel,
+        degree=InterpolationOrder.linear,
+        bound=BoundaryCondition.nearest,
+    )
+    return (ras2grid, field, voxel2ras)
