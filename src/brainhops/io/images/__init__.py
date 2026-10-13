@@ -15,6 +15,7 @@ from brainhops._core.dependencies import (
     HAS_NIBABEL,
     HAS_OPENSLIDE,
     HAS_PILLOW,
+    HAS_TENSORSTORE,
     HAS_TIFFFILE,
     has_abczarr_driver,
 )
@@ -39,6 +40,14 @@ else:
     register_missing_format(
         ["minc", "minc1", "minc2", "minc.1", "minc.2"], "nibabel", "minc"
     )
+
+# Imaris files are HDF5 files and need h5py to be read.
+if HAS_H5PY:
+    from . import imaris
+
+    __all__ += ["imaris"]
+else:
+    register_missing_format(["imaris", "ims"], "h5py", "imaris")
 
 # Raster formats (PNG, JPEG, ...) are read and written through Pillow.
 if HAS_PILLOW:
@@ -100,6 +109,26 @@ else:
         ],
         "openslide-python",
         "openslide",
+    )
+
+# The samples of an N5 dataset are read with TensorStore, so the format
+# is registered only when it is installed.
+if HAS_TENSORSTORE:
+    from . import n5
+
+    __all__ += ["n5"]
+else:
+    register_missing_format(["n5"], "tensorstore", "n5")
+
+# The voxels of a Neuroglancer precomputed volume are read with
+# TensorStore, so the format is registered only when it is installed.
+if HAS_TENSORSTORE:
+    from . import precomputed
+
+    __all__ += ["precomputed"]
+else:
+    register_missing_format(
+        ["precomputed", "neuroglancer"], "tensorstore", "precomputed"
     )
 
 # abczarr cannot open stores without at least one backend driver, so the
