@@ -18,16 +18,6 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferTypeError,
 )
-from brainhops.io.common.n5 import N5Metadata, N5Raw
-from brainhops.io.common.n5._data import (
-    READABLE_COMPRESSIONS,
-    _N5Proxy,
-    dataset_location,
-    read_node,
-    stream_location,
-)
-from brainhops.io.common.n5._raw import no_options, score
-from brainhops.io.common.n5._spatial import placement
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base._utils_raster import (
     axis_group,
@@ -36,6 +26,16 @@ from brainhops.io.images.base._utils_raster import (
 )
 
 # this format
+from ._data import (
+    READABLE_COMPRESSIONS,
+    _N5Proxy,
+    dataset_location,
+    read_node,
+    stream_location,
+)
+from ._metadata import N5Metadata
+from ._raw import N5Raw, no_options, score
+from ._spatial import placement
 from ._views import _image_to_disk, _image_to_model
 
 
@@ -44,7 +44,7 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
 
     An N5 container is a directory tree in which a dataset is a directory
     that holds an `attributes.json` file and the blocks of an array (see
-    [`brainhops.io.common.n5`][brainhops.io.common.n5]). This class reads
+    [`brainhops.io.images.n5`][brainhops.io.images.n5]). This class reads
     a dataset, named by its directory or its `attributes.json` file. It
     also reads one level of a pyramid, a group whose datasets are `s0`,
     `s1`, ..., the finest by default or the one that `level` selects. A
@@ -62,7 +62,7 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
     The transformation maps the voxels to a `"physical"` space with the
     voxel size, the downsampling factors and the offset that the spatial
     attributes of the tools of the N5 ecosystem give, as
-    [`brainhops.io.common.n5`][brainhops.io.common.n5] describes them.
+    [`brainhops.io.images.n5`][brainhops.io.images.n5] describes them.
     Without such attributes, the transformation is the identity and the
     physical axes have no unit, as for a raster image whose pixel size is
     unknown.

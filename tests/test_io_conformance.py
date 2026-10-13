@@ -193,8 +193,8 @@ except ImportError:
 try:
     import tensorstore
 
-    from brainhops.io.common.n5._data import _N5Proxy
     from brainhops.io.images.n5 import N5Image, N5Metadata
+    from brainhops.io.images.n5._data import _N5Proxy
     from brainhops.io.images.n5._views import (
         _image_to_disk as _n5_to_disk,
     )

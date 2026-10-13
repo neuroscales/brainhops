@@ -15,8 +15,6 @@ format have in common -- its parser, header, and geometry conventions:
 - [`minc`][brainhops.io.common.minc]: MINC1 and MINC2 volumes (needs
   `nibabel`, and `h5py` for MINC2);
 - [`mrtrix`][brainhops.io.common.mrtrix]: MRtrix `.mif`/`.mih` images;
-- [`n5`][brainhops.io.common.n5]: N5 datasets and pyramids (needs
-  `tensorstore` for the samples);
 - [`nifti`][brainhops.io.common.nifti]: NIfTI-1 and NIfTI-2 files (needs
   `nibabel`);
 - [`nrrd`][brainhops.io.common.nrrd]: NRRD `.nrrd`/`.nhdr` files;

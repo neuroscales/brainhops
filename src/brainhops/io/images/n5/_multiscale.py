@@ -15,13 +15,13 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferTypeError,
 )
-from brainhops.io.common.n5 import N5Metadata, N5Raw
-from brainhops.io.common.n5._data import read_node, stream_location
-from brainhops.io.common.n5._raw import no_options, score
 from brainhops.io.images.base import ImageFormat
 
 # this format
+from ._data import read_node, stream_location
 from ._image import N5Image, _read_dataset
+from ._metadata import N5Metadata
+from ._raw import N5Raw, no_options, score
 
 
 class N5MultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
@@ -30,7 +30,7 @@ class N5MultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
     An N5 pyramid is a group whose datasets `s0`, `s1`, ... hold the same
     image at decreasing resolutions, finest first, as the n5-viewer,
     Paintera and BigDataViewer write it (see
-    [`brainhops.io.common.n5`][brainhops.io.common.n5]). Each level is an
+    [`brainhops.io.images.n5`][brainhops.io.images.n5]). Each level is an
     [`N5Image`][] whose samples are read lazily, and every level maps its
     voxels to the same `"physical"` space by the spatial attributes of
     its dataset and of the group. The pyramid therefore has no

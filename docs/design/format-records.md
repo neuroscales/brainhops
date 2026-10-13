@@ -1162,13 +1162,13 @@ its status.
      TensorStore. Status: accepted.
 253. The readable compressions are those that TensorStore 0.1.45
      decodes: `raw`, `gzip`, `bzip2`, `xz` and `blosc`. The list is fixed
-     in `io/common/n5/_data.py`, so a dataset compressed with `lz4` or
+     in `io/images/n5/_data.py`, so a dataset compressed with `lz4` or
      `zstd`, or described by the `compressionType` of version 0 of the
      specification, is refused when it is loaded, although its record is
      read. Status: open, until the list follows the version of
      TensorStore.
 254. The specification of N5 defines no spatial attribute, and its tools
-     disagree on some points (`io/common/n5/__init__.py`). brainhops
+     disagree on some points (`io/images/n5/__init__.py`). brainhops
      reads the attributes of a dataset that is read on its own as
      n5-universe does, and completes a level of a pyramid from its group
      as Paintera and the deprecated layout of the n5-viewer do. It reads
@@ -1193,7 +1193,7 @@ its status.
      refusal.
 257. The lazy array of N5 translates NumPy indices for TensorStore,
      which reads integers and slice bounds as absolute positions, in its
-     own helper `_basic_index` (`io/common/n5/_data.py`). Another reader
+     own helper `_basic_index` (`io/images/n5/_data.py`). Another reader
      backed by TensorStore needs the same translation, which should then
      move to a shared private module of `io/common`. Status: open.
 258. Only local N5 containers are read. A pyramid is found by reading

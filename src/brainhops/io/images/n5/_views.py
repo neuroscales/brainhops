@@ -15,7 +15,9 @@ import numpy as np
 # internals
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
-from brainhops.io.common.n5._data import _N5Proxy
+
+# this format
+from ._data import _N5Proxy
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:

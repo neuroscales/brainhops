@@ -32,13 +32,14 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserTypeError,
     WriterError,
 )
-from brainhops.io.common.n5 import (  # noqa: E402
+from brainhops.io.images.n5 import (  # noqa: E402
     N5AttributeWarning,
+    N5Image,
     N5Metadata,
+    N5MultiScaleImage,
     N5Raw,
 )
-from brainhops.io.common.n5._data import _N5Proxy, node_location  # noqa: E402
-from brainhops.io.images.n5 import N5Image, N5MultiScaleImage  # noqa: E402
+from brainhops.io.images.n5._data import _N5Proxy, node_location  # noqa: E402
 from brainhops.io.metadata import MetadataFormat  # noqa: E402
 
 _COMPRESS = {

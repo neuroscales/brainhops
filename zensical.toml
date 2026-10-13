@@ -44,7 +44,6 @@ nav = [
         "api/io/common/freesurfer.md",
         "api/io/common/mgh.md",
         "api/io/common/minc.md",
-        "api/io/common/n5.md",
         "api/io/common/zarr.md",
       ]},
       {"images" = [

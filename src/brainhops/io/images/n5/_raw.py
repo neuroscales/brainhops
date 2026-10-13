@@ -67,7 +67,7 @@ class N5Raw(Magic, BinaryFileReader, frozen=True):
 
     Reading a record never reads a block. A record is frozen, and two
     records are equal when their fields are. The record is held by
-    [`N5Metadata`][brainhops.io.common.n5.N5Metadata].
+    [`N5Metadata`][brainhops.io.images.n5.N5Metadata].
     """
 
     attributes: tx.Dict[str, tx.Any]
@@ -75,7 +75,7 @@ class N5Raw(Magic, BinaryFileReader, frozen=True):
 
     Every attribute is kept, including those that the specification does
     not define, such as the spatial attributes that brainhops interprets
-    (see [`brainhops.io.common.n5`][brainhops.io.common.n5]).
+    (see [`brainhops.io.images.n5`][brainhops.io.images.n5]).
     """
 
     dimensions: tx.Optional[tx.Tuple[int, ...]] = None

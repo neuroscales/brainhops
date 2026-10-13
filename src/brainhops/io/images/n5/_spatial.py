@@ -2,7 +2,7 @@
 
 The specification of N5 defines no spatial attribute. The functions of
 this module read the attributes that the tools of the N5 ecosystem
-write, as [`brainhops.io.common.n5`][brainhops.io.common.n5] describes
+write, as [`brainhops.io.images.n5`][brainhops.io.images.n5] describes
 them with their sources, and give the voxel size, the downsampling
 factors and the origin of one dataset. They do not build a
 transformation, which the image readers do.
