@@ -3012,7 +3012,7 @@ def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
         return _saved(cls, exemplar, tmp_path, "placed")
     path = _path(tmp_path, exemplar, "placed")
     if exemplar.template is not None:
-        obj = cls.load(_saved(cls, exemplar, tmp_path, "template"))
+        obj = _load(cls, exemplar, _saved(cls, exemplar, tmp_path, "template"))
     else:
         obj = _built(cls, exemplar, exemplar.sample())
     exemplar.change_geometry(obj)
@@ -3705,14 +3705,16 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
     # assigned. Whether the decoded value was read before does not matter.
     source = _saved(cls, exemplar, tmp_path)
     placed = _placed(cls, exemplar, tmp_path)
-    old = exemplar.geometry(cls.load(source))
+    old = exemplar.geometry(_load(cls, exemplar, source))
 
     # A value that was not assigned follows the new metadata, as in an
     # object built with it. The record of the new metadata carries an edit
     # outside of the geometry, which a save keeps.
-    record = exemplar.edit_record(deepcopy(cls.load(placed).metadata.raw))
+    record = exemplar.edit_record(
+        deepcopy(_load(cls, exemplar, placed).metadata.raw)
+    )
     metadata = exemplar.metadata.from_raw(record)
-    loaded = cls.load(source)
+    loaded = _load(cls, exemplar, source)
     expected = exemplar.geometry(replace(loaded, metadata=metadata))
     if exemplar.source is None and exemplar.geometry is not _data_geometry:
         assert not np.allclose(expected, old)
@@ -3727,15 +3729,17 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
         _refuses_writing(loaded, target)
     else:
         loaded.save(target)
-        back = cls.load(target)
+        back = _load(cls, exemplar, target)
         assert np.allclose(exemplar.geometry(back), expected)
         assert exemplar.record_edited(back.metadata.raw)
 
     # A value that was assigned survives the new metadata, here that of
     # the source, with the edit, and is written over its record.
-    record = exemplar.edit_record(deepcopy(cls.load(source).metadata.raw))
+    record = exemplar.edit_record(
+        deepcopy(_load(cls, exemplar, source).metadata.raw)
+    )
     metadata = exemplar.metadata.from_raw(record)
-    loaded = cls.load(source)
+    loaded = _load(cls, exemplar, source)
     if decoded:
         exemplar.geometry(loaded)
     exemplar.change_geometry(loaded)
@@ -3753,7 +3757,7 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
         _refuses_writing(loaded, target)
         return
     loaded.save(target)
-    back = cls.load(target)
+    back = _load(cls, exemplar, target)
     assert np.allclose(exemplar.geometry(back), assigned)
     assert exemplar.record_edited(back.metadata.raw)
 
