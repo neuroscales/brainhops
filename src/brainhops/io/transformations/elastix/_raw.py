@@ -13,10 +13,9 @@ __all__ = ["ElastixRaw", "initial_filename", "resolve_initial"]
 import os
 
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Factory, Magic, NoRepr
+from bagof.magic import HIDE_IF_NONE, Factory, Magic, NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.streams import preserve_position
 from brainhops.io.base._utils_files import open_path
 from brainhops.io.base.parsers import (
     Confidence,
@@ -25,6 +24,7 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileReader,
     TextFileWriter,
+    _passthrough_from_fileobj,
 )
 
 from ._parser import (
@@ -141,12 +141,7 @@ class ElastixRaw(
         ElastixRaw
             The copy.
         """
-        return ElastixRaw(
-            parameters=dict(self.parameters),
-            syntax=self.syntax,
-            text=self.text,
-            initial=self.initial,
-        )
+        return replace(self, parameters=dict(self.parameters))
 
     # --- sniff --------------------------------------------------------
 
@@ -241,30 +236,16 @@ class ElastixRaw(
         return _read_file(filename, syntax, initial, encoding, ())
 
     @classmethod
+    @_passthrough_from_fileobj
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ElastixRaw":
         """Read the record from an open file, in text or binary mode.
 
-        The name of the file, when it has one, gives the location against
-        which a relative initial file is resolved.
-
-        Parameters
-        ----------
-        file : IO
-            The open file, whose position is restored.
-        **kwargs : Any
-            Options of [`from_text`][], and `encoding` for a binary file.
-
-        Returns
-        -------
-        ElastixRaw
-            The record.
+        The name of the file, when it has one, is the `origin` of
+        [`from_text`][], so it selects the syntax and locates a relative
+        initial file.
         """
         kwargs.setdefault("origin", getattr(file, "name", None))
-        with preserve_position(file):
-            content = file.read()
-        if isinstance(content, (bytes, bytearray)):
-            return cls.from_bytes(content, **kwargs)
-        return cls.from_text(content, **kwargs)
+        return super().from_fileobj(file, **kwargs)
 
     @classmethod
     def from_text(
@@ -308,26 +289,10 @@ class ElastixRaw(
         initial: _InitialOption = True,
         origin: tx.Optional[path.FilenameLike] = None,
     ) -> "ElastixRaw":
-        """Read the record from the lines of a file.
+        """Same as [`from_text`][], for lines.
 
         The line endings are not known, so the record keeps no text, and
         it is formatted from its map when it is written.
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        syntax : {"text", "toml"}, optional
-            The syntax of the file, as for [`from_text`][].
-        initial : bool or path-like, default=True
-            The initial transform, as for [`from_filename`][].
-        origin : path-like, optional
-            The file that the lines come from, as for [`from_text`][].
-
-        Returns
-        -------
-        ElastixRaw
-            The record.
         """
         return _read(list(lines), None, syntax, initial, origin, ())
 
@@ -363,23 +328,11 @@ class ElastixRaw(
         return formatted
 
     def to_lines(self) -> tx.Iterator[str]:
-        """Yield the lines of the file, without line endings.
-
-        Yields
-        ------
-        str
-            The lines of [`to_text`][].
-        """
         return iter(self.to_text().splitlines())
 
     def to_fileobj(self, file: tx.IO) -> None:
-        """Write the text of the file to an open text file.
-
-        Parameters
-        ----------
-        file : IO
-            The file, open for writing text.
-        """
+        # The base writes `to_lines`, each followed by "\n", which would
+        # change the line endings of the text that was read.
         file.write(self.to_text())
 
 

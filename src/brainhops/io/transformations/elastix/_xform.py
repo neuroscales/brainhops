@@ -14,7 +14,6 @@ from bagof.magic import NoRepr, replace
 
 from brainhops._core import path
 from brainhops._core.properties import lazyproperty, smartproperty
-from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
 from brainhops.io.base._base import register_format
@@ -30,6 +29,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
     WriterError,
+    _passthrough_from_fileobj,
 )
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import _compatible
@@ -120,6 +120,12 @@ class ElastixTransform(
     """
 
     HINTS = ("elastix", "transformix")
+
+    _SYNTAX: tx.ClassVar[tx.Optional[str]] = None
+    """The syntax of the files of the format, `"text"` or `"toml"`.
+
+    It is `None` in this abstract class, which reads no file.
+    """
 
     _metadata: NoRepr[tx.Optional[ElastixMetadata]] = None
 
@@ -216,6 +222,22 @@ class ElastixTransform(
         record = _record(self)
         return None if record is None else fixed_geometry(record.parameters)
 
+    # --- sniff --------------------------------------------------------
+
+    @classmethod
+    def sniff_text(
+        cls,
+        text: str,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Score text as a transform parameter file in the format's syntax.
+
+        The text is scored by [`ElastixRaw.sniff_text`][], and the options
+        of the reader are ignored.
+        """
+        return ElastixRaw.sniff_text(text, error=error, syntax=_syntax(cls))
+
     # --- from ---------------------------------------------------------
 
     @classmethod
@@ -238,178 +260,6 @@ class ElastixTransform(
         """
         return cls(metadata=ElastixMetadata.from_raw(raw), **kwargs)
 
-    # --- to -----------------------------------------------------------
-
-    def to_file(self, file: path.FileLike) -> None:
-        """Write the transformation to a path or to an open text file.
-
-        A path is written by [`to_filename`][], with the files of the
-        chain, and an open file by [`to_fileobj`][], alone.
-
-        Parameters
-        ----------
-        file : path or file object
-            The path or the open file.
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the chain cannot be written as a single elastix transform.
-        WriterError
-            If a file of the chain cannot be placed where the new file
-            names it.
-        """
-        if isinstance(file, (str, os.PathLike, path.PathLike)):
-            return self.to_filename(file)
-        return self.to_fileobj(file)
-
-    def to_filename(self, filename: path.FilenameLike) -> None:
-        """Write the transformation to a file, with the files of its chain.
-
-        The transformation is consolidated into a copy before anything is
-        written, so a transformation that cannot be encoded leaves the
-        files untouched, and the transformation itself is not changed. Each
-        file of the chain whose name is relative is then written where the
-        new file names it, which is beside it, unless that file already
-        holds the same bytes. A name that is absolute is left as it is,
-        and nothing is written for it, nor for a chain that was not read,
-        as with `initial=False`. The file itself is written last, and a
-        local file is replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the chain cannot be written as a single elastix transform.
-        WriterError
-            If a file of the chain would be written over the new file, or
-            over another file that holds different bytes.
-        """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        record = _record(self.consolidate())
-        content = record.to_bytes()
-        _place_initial(record, filename, filename)
-        write_file(filename, content)
-
-    def to_fileobj(self, file: tx.IO) -> None:
-        """Write the parameter file to an open text file, without its chain.
-
-        Parameters
-        ----------
-        file : IO
-            The file, open for writing text.
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the chain cannot be written as a single elastix transform.
-        """
-        file.write(self.to_text())
-
-    def to_text(self) -> str:
-        """Return the text of the parameter file that encodes the chain.
-
-        The transformation is consolidated into a copy, whose record is
-        written, without the files of its chain.
-
-        Returns
-        -------
-        str
-            The text of the file, ending with a newline.
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the chain cannot be written as a single elastix transform.
-        """
-        return _record(self.consolidate()).to_text()
-
-    def to_lines(self) -> tx.Iterator[str]:
-        """Yield the lines of the parameter file that encodes the chain.
-
-        Yields
-        ------
-        str
-            The lines of [`to_text`][], without line endings.
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the chain cannot be written as a single elastix transform.
-        """
-        return _record(self.consolidate()).to_lines()
-
-
-@register_format
-class ElastixParameterTransform(ElastixTransform):
-    """Classic `(Name value ...)` elastix parameter file (`.txt`).
-
-    See [`ElastixTransform`][] for the content and for what is written.
-    """
-
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
-    HINTS = ("params",)
-
-    @classmethod
-    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Build a transformation from a record, a file or a data model.
-
-        An [`ElastixRaw`][] is read with `from_raw`, and any other value as
-        the bases read it.
-
-        Parameters
-        ----------
-        other : object
-            A record, a file, its content, a transformation, a mapping, or
-            an instance of a similar class.
-        *args : Any
-            Constructor arguments. A record and a file take keyword
-            arguments only.
-        **kwargs : Any
-            Options of the reader, and field values otherwise.
-
-        Returns
-        -------
-        Self
-            The new transformation.
-        """
-        if isinstance(other, ElastixRaw) and not args:
-            return cls.from_raw(other, **kwargs)
-        return super().from_any(other, *args, **kwargs)
-
-    @classmethod
-    def sniff_text(
-        cls,
-        text: str,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score text as a transform parameter file in the text syntax.
-
-        The text is scored by [`ElastixRaw.sniff_text`][].
-
-        Parameters
-        ----------
-        text : str
-            The text of the file.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the text is not a transform
-            parameter file.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return ElastixRaw.sniff_text(text, error=error, syntax="text")
-
     @classmethod
     def from_filename(
         cls,
@@ -419,6 +269,9 @@ class ElastixParameterTransform(ElastixTransform):
         encoding: str = "utf-8",
     ) -> tx.Self:
         """Read a transformation from a file, with its chain.
+
+        The bytes of the file are read, so that the record keeps its line
+        endings.
 
         Parameters
         ----------
@@ -434,28 +287,25 @@ class ElastixParameterTransform(ElastixTransform):
         Self
             The transformation.
         """
-        return _from_filename(cls, "text", filename, initial, encoding)
+        if isinstance(initial, _xforms.Transformation):
+            given, initial = initial, False
+        else:
+            given = None
+        raw = ElastixRaw.from_filename(
+            filename, syntax=_syntax(cls), initial=initial, encoding=encoding
+        )
+        return _checked(cls.from_raw(raw, initial=given))
 
     @classmethod
+    @_passthrough_from_fileobj
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """Read a transformation from an open file.
+        """Read a transformation from an open file, in text or binary mode.
 
-        When the file has a `name`, a relative initial file is also looked
-        for next to the file.
-
-        Parameters
-        ----------
-        file : IO
-            The open file, whose position is restored.
-        **kwargs : Any
-            Options of [`from_text`][], and `encoding` for a binary file.
-
-        Returns
-        -------
-        Self
-            The transformation.
+        The name of the file, when it has one, is the `origin` of
+        [`from_text`][].
         """
-        return _from_fileobj(cls, file, kwargs)
+        kwargs.setdefault("origin", getattr(file, "name", None))
+        return super().from_fileobj(file, **kwargs)
 
     @classmethod
     def from_text(
@@ -496,7 +346,7 @@ class ElastixParameterTransform(ElastixTransform):
             initial transform (`HowToCombineTransforms "Add"`), which a
             chain cannot express.
         """
-        return _from_text(cls, "text", text, None, initial, origin)
+        return _from_text(cls, text, None, initial, origin)
 
     @classmethod
     def from_lines(
@@ -506,25 +356,119 @@ class ElastixParameterTransform(ElastixTransform):
         initial: _Initial = True,
         origin: tx.Optional[path.FilenameLike] = None,
     ) -> tx.Self:
-        """Read a transformation from the lines of a file.
+        """Same as [`from_text`][], for lines.
 
         The record keeps no text, since the line endings are not known.
+        """
+        return _from_text(cls, None, lines, initial, origin)
+
+    # --- to -----------------------------------------------------------
+
+    def to_filename(self, filename: path.FilenameLike) -> None:
+        """Write the transformation to a file, with the files of its chain.
+
+        The transformation is consolidated into a copy before anything is
+        written, so a transformation that cannot be encoded leaves the
+        files untouched, and the transformation itself is not changed. Each
+        file of the chain whose name is relative is then written where the
+        new file names it, which is beside it, unless that file already
+        holds the same bytes. A name that is absolute is left as it is,
+        and nothing is written for it, nor for a chain that was not read,
+        as with `initial=False`. The file itself is written last, and a
+        local file is replaced at once.
 
         Parameters
         ----------
-        lines : iterable of str
-            The lines of the file.
-        initial : bool, path-like or Transformation, default=True
-            The initial transform, as for [`from_text`][].
-        origin : path-like, optional
-            The file that the lines come from, as for [`from_text`][].
+        filename : path-like
+            The path of the file.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the chain cannot be written as a single elastix transform.
+        WriterError
+            If a file of the chain would be written over the new file, or
+            over another file that holds different bytes.
+        """
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+        record = _record(self.consolidate())
+        content = record.to_bytes()
+        _place_initial(record, filename, filename)
+        write_file(filename, content)
+
+    def to_fileobj(self, file: tx.IO) -> None:
+        """Write the parameter file to an open text file, without its chain.
+
+        The text of [`to_text`][] is written as it is, so that it keeps the
+        line endings of the file that was read.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the chain cannot be written as a single elastix transform.
+        """
+        file.write(self.to_text())
+
+    def to_text(self) -> str:
+        """Return the text of the parameter file that encodes the chain.
+
+        The transformation is consolidated into a copy, whose record is
+        written, without the files of its chain.
+
+        Returns
+        -------
+        str
+            The text of the file, ending with a newline.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the chain cannot be written as a single elastix transform.
+        """
+        return _record(self.consolidate()).to_text()
+
+    def to_lines(self) -> tx.Iterator[str]:
+        return _record(self.consolidate()).to_lines()
+
+
+@register_format
+class ElastixParameterTransform(ElastixTransform):
+    """Classic `(Name value ...)` elastix parameter file (`.txt`).
+
+    See [`ElastixTransform`][] for the content and for what is written.
+    """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
+    HINTS = ("params",)
+    _SYNTAX = "text"
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        An [`ElastixRaw`][] is read with `from_raw`, and any other value as
+        the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
 
         Returns
         -------
         Self
-            The transformation.
+            The new transformation.
         """
-        return _from_text(cls, "text", None, lines, initial, origin)
+        if isinstance(other, ElastixRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending chain and systems into a new record.
@@ -562,6 +506,7 @@ class ElastixTomlTransform(ElastixTransform):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".toml",)
     HINTS = ("toml",)
+    _SYNTAX = "toml"
 
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
@@ -589,145 +534,6 @@ class ElastixTomlTransform(ElastixTransform):
         if isinstance(other, ElastixRaw) and not args:
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
-
-    @classmethod
-    def sniff_text(
-        cls,
-        text: str,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score text as a transform parameter file in the TOML syntax.
-
-        The text is scored by [`ElastixRaw.sniff_text`][].
-
-        Parameters
-        ----------
-        text : str
-            The text of the file.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the text is not a transform
-            parameter file.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return ElastixRaw.sniff_text(text, error=error, syntax="toml")
-
-    @classmethod
-    def from_filename(
-        cls,
-        filename: path.FilenameLike,
-        *,
-        initial: _Initial = True,
-        encoding: str = "utf-8",
-    ) -> tx.Self:
-        """Read a transformation from a file, with its chain.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        initial : bool, path-like or Transformation, default=True
-            The initial transform, as for
-            [`ElastixParameterTransform.from_text`][].
-        encoding : str, default="utf-8"
-            The encoding of the file.
-
-        Returns
-        -------
-        Self
-            The transformation.
-        """
-        return _from_filename(cls, "toml", filename, initial, encoding)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """Read a transformation from an open file.
-
-        When the file has a `name`, a relative initial file is also looked
-        for next to the file.
-
-        Parameters
-        ----------
-        file : IO
-            The open file, whose position is restored.
-        **kwargs : Any
-            Options of [`from_text`][], and `encoding` for a binary file.
-
-        Returns
-        -------
-        Self
-            The transformation.
-        """
-        return _from_fileobj(cls, file, kwargs)
-
-    @classmethod
-    def from_text(
-        cls,
-        text: str,
-        *,
-        initial: _Initial = True,
-        origin: tx.Optional[path.FilenameLike] = None,
-    ) -> tx.Self:
-        """Read a transformation from the text of a file.
-
-        Parameters
-        ----------
-        text : str
-            The text of the file.
-        initial : bool, path-like or Transformation, default=True
-            The initial transform, as for
-            [`ElastixParameterTransform.from_text`][].
-        origin : path-like, optional
-            The file that the text comes from, against which a relative
-            initial file is resolved.
-
-        Returns
-        -------
-        Self
-            The transformation.
-
-        Raises
-        ------
-        ParserNotImplementedError
-            If a transform is not supported, or if it is added to its
-            initial transform (`HowToCombineTransforms "Add"`), which a
-            chain cannot express.
-        """
-        return _from_text(cls, "toml", text, None, initial, origin)
-
-    @classmethod
-    def from_lines(
-        cls,
-        lines: tx.Iterable[str],
-        *,
-        initial: _Initial = True,
-        origin: tx.Optional[path.FilenameLike] = None,
-    ) -> tx.Self:
-        """Read a transformation from the lines of a file.
-
-        The record keeps no text, since the line endings are not known.
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        initial : bool, path-like or Transformation, default=True
-            The initial transform, as for [`from_text`][].
-        origin : path-like, optional
-            The file that the lines come from, as for [`from_text`][].
-
-        Returns
-        -------
-        Self
-            The transformation.
-        """
-        return _from_text(cls, "toml", None, lines, initial, origin)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending chain and systems into a new record.
@@ -778,43 +584,25 @@ class ElastixTomlTransform(ElastixTransform):
 # ----------------------------------------------------------------------
 
 
-def _from_filename(
-    cls: type,
-    syntax: str,
-    filename: path.FilenameLike,
-    initial: _Initial,
-    encoding: str,
-) -> ElastixTransform:
-    """Read a transformation from a file, in the syntax of its class.
+def _syntax(cls: type) -> str:
+    """Return the syntax of a format class.
 
-    The bytes of the file are read, so that the record keeps the line
-    endings of the file.
+    Raises
+    ------
+    ParserNotImplementedError
+        If the class is the abstract [`ElastixTransform`][], which has no
+        syntax.
     """
-    if isinstance(initial, _xforms.Transformation):
-        given, initial = initial, False
-    else:
-        given = None
-    raw = ElastixRaw.from_filename(
-        filename, syntax=syntax, initial=initial, encoding=encoding
-    )
-    return _checked(cls.from_raw(raw, initial=given))
-
-
-def _from_fileobj(
-    cls: type, file: tx.IO, kwargs: tx.Dict[str, tx.Any]
-) -> ElastixTransform:
-    """Read a transformation from an open file, in text or binary mode."""
-    kwargs.setdefault("origin", getattr(file, "name", None))
-    with preserve_position(file):
-        content = file.read()
-    if isinstance(content, (bytes, bytearray)):
-        return cls.from_bytes(content, **kwargs)
-    return cls.from_text(content, **kwargs)
+    if cls._SYNTAX is None:
+        raise ParserNotImplementedError(
+            f"{cls.__name__} is abstract: read the file with "
+            f"ElastixParameterTransform or ElastixTomlTransform."
+        )
+    return cls._SYNTAX
 
 
 def _from_text(
     cls: type,
-    syntax: str,
     text: tx.Optional[str],
     lines: tx.Optional[tx.Iterable[str]],
     initial: _Initial,
@@ -825,7 +613,7 @@ def _from_text(
         given, initial = initial, False
     else:
         given = None
-    options = dict(syntax=syntax, initial=initial, origin=origin)
+    options = dict(syntax=_syntax(cls), initial=initial, origin=origin)
     if text is None:
         raw = ElastixRaw.from_lines(lines, **options)
     else:

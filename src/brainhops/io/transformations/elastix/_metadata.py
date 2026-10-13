@@ -46,7 +46,9 @@ class ElastixMetadata(MetadataFormat, TextFileReader, TextFileWriter):
     raw: NoRepr[tx.Optional[ElastixRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
 
-    # --- sniff --------------------------------------------------------
+    # Each reader forwards to the reader of the record of the same name,
+    # since the bases would route a path, an open file and text to readers
+    # that lose the line endings, the name of the file, or the text.
 
     @classmethod
     def sniff_text(
@@ -55,126 +57,32 @@ class ElastixMetadata(MetadataFormat, TextFileReader, TextFileWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score text as the text of a transform parameter file.
-
-        The text is scored by [`ElastixRaw.sniff_text`][], in either
-        syntax.
-
-        Parameters
-        ----------
-        text : str
-            The text of the file.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the text is not a transform
-            parameter file.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
         return ElastixRaw.sniff_text(text, error=error, **kwargs)
-
-    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_filename(
         cls, filename: path.FilenameLike, **kwargs
     ) -> "ElastixMetadata":
-        """Read the metadata of a file, with the records of its chain.
-
-        The file is read by [`ElastixRaw.from_filename`][].
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Options of [`ElastixRaw.from_filename`][].
-
-        Returns
-        -------
-        ElastixMetadata
-            The metadata, which holds the record of the file.
-        """
         return cls.from_raw(ElastixRaw.from_filename(filename, **kwargs))
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ElastixMetadata":
-        """Read the metadata from an open file.
-
-        The file is read by [`ElastixRaw.from_fileobj`][].
-
-        Parameters
-        ----------
-        file : IO
-            The open file, whose position is restored.
-        **kwargs : Any
-            Options of [`ElastixRaw.from_fileobj`][].
-
-        Returns
-        -------
-        ElastixMetadata
-            The metadata, which holds the record of the file.
-        """
         return cls.from_raw(ElastixRaw.from_fileobj(file, **kwargs))
 
     @classmethod
     def from_text(cls, text: str, **kwargs) -> "ElastixMetadata":
-        """Read the metadata from the text of a file.
-
-        The text is read by [`ElastixRaw.from_text`][].
-
-        Parameters
-        ----------
-        text : str
-            The text of the file.
-        **kwargs : Any
-            Options of [`ElastixRaw.from_text`][].
-
-        Returns
-        -------
-        ElastixMetadata
-            The metadata, which holds the record of the file.
-        """
         return cls.from_raw(ElastixRaw.from_text(text, **kwargs))
 
     @classmethod
     def from_lines(
         cls, lines: tx.Iterable[str], **kwargs
     ) -> "ElastixMetadata":
-        """Read the metadata from the lines of a file.
-
-        The lines are read by [`ElastixRaw.from_lines`][].
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        **kwargs : Any
-            Options of [`ElastixRaw.from_lines`][].
-
-        Returns
-        -------
-        ElastixMetadata
-            The metadata, which holds the record of the file.
-        """
         return cls.from_raw(ElastixRaw.from_lines(lines, **kwargs))
 
     # --- to -----------------------------------------------------------
 
     def to_text(self) -> str:
-        """Return the text of the file that the record holds.
-
-        Only the file of the record is written, and not the files of its
-        chain.
-
-        Returns
-        -------
-        str
-            The text of the file, as [`ElastixRaw.to_text`][] writes it.
+        """Return the text of the file of the record, without its chain.
 
         Raises
         ------
@@ -185,50 +93,17 @@ class ElastixMetadata(MetadataFormat, TextFileReader, TextFileWriter):
         return _record(self).to_text()
 
     def to_lines(self) -> tx.Iterator[str]:
-        """Yield the lines of the file that the record holds.
-
-        Yields
-        ------
-        str
-            The lines of [`to_text`][], without line endings.
-
-        Raises
-        ------
-        WriterError
-            If the metadata holds no record.
-        """
         return _record(self).to_lines()
 
     def to_fileobj(self, file: tx.IO) -> None:
-        """Write the text of the file to an open text file.
-
-        Parameters
-        ----------
-        file : IO
-            The file, open for writing text.
-
-        Raises
-        ------
-        WriterError
-            If the metadata holds no record.
-        """
-        file.write(self.to_text())
+        # The record writes its text as it is, where the base would write
+        # `to_lines` with "\n" endings.
+        _record(self).to_fileobj(file)
 
     def to_filename(self, filename: path.FilenameLike) -> None:
-        """Write the file that the record holds, replacing a local file.
+        """Write the file of the record, without its chain.
 
-        Only the file of the record is written, and not the files of its
-        chain. A local file is replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-
-        Raises
-        ------
-        WriterError
-            If the metadata holds no record.
+        A local file is replaced at once.
         """
         write_file(filename, self.to_bytes())
 
