@@ -737,6 +737,15 @@ root strings of an HDF5 file and the bytes of a MATLAB file. Only the
 MATLAB format writes. The formats that do not write encode a pending
 chain or matrix into a new record in memory (item 311).
 
+The move of the raster images read with Pillow, called pass 4e, gives
+`PillowImage` a record of the frame that it reads, `PillowRaw`, held by
+`PillowMetadata`, and a lazy array of that frame in `raw`. The format,
+the mode, the `info` dictionary and the number of frames leave the
+constructor of the image for the record, and the reader options
+`frame`, `palette` and `dpi` stay fields of the image. Pillow encodes
+again whatever it writes, so an image that was read and not changed is
+written as the bytes of its file (item 331).
+
 The fifth pass brings the #233 vocabulary, as described in the previous
 section.
 
@@ -1753,10 +1762,10 @@ its status.
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
      the formats merged later (N5, Imaris, precomputed, JPEG 2000,
-     BigDataViewer and image stacks) follow the same rule, and the JPEG
-     2000 pyramid caches the levels and the placements that it decodes in
-     the same way. The chains of the ITK text, MATLAB and HDF5 formats
-     (`TfmTransform`, `MatTransform` and `H5Transform`), which are
+     BigDataViewer, image stacks and Pillow) follow the same rule, and
+     the JPEG 2000 pyramid caches the levels and the placements that it
+     decodes in the same way. The chains of the ITK text, MATLAB and HDF5
+     formats (`TfmTransform`, `MatTransform` and `H5Transform`), which are
      mutable lists as the transformations of an image are, follow it too
      (item 312). Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
@@ -2387,3 +2396,96 @@ pyramid of the conformance test and the checks P1 to P12.
      as it did when it was written, and `ElastixMetadata` without a record
      raises `WriterError`, as M3Z does (item 61). LTA and X5 write an empty
      record instead. Status: proposed in the elastix pass.
+330. Pillow writes the header of a raster file only together with its
+     pixels, so `PillowMetadata` reads a record but cannot be written
+     (`io/images/pillow/_metadata.py`). Checks 6, 7 and 10 compare its
+     record through the `header` hook of the exemplar instead of the bytes
+     that metadata writes, and check 6 cuts a PNG file where Pillow's tile
+     starts and a JPEG file after its start-of-scan segment, which is
+     where Pillow stops reading the header. Checks 7 and 10 compare the
+     bytes that metadata writes whenever the metadata class can write, so
+     the other formats are checked as before. Status: proposed in pass 4e.
+331. Pillow encodes again whatever it writes, so an untouched raster image
+     could not be saved byte for byte through Pillow. The lazy array of
+     the image keeps the path or the stream of its file and gives its
+     bytes (`_PillowProxy.read_stored` in `io/images/pillow/_data.py`),
+     and an image with a record, no pending data, the transformations of
+     its record, and no writer option is written as those bytes when it is
+     written in the format of its record. The record holds no bytes,
+     because the pixels of a raster file cannot be told from its header
+     in a way that holds for every format. An MPO file is a JPEG file, so
+     JPEG keeps the format of an MPO record. Every format that Pillow reads
+     is therefore saved byte for byte while untouched, including formats
+     that Pillow cannot write and every frame of a multi-frame file. Any
+     change, any writer option or another format encodes the image again
+     with Pillow, and the consolidated copy reads back the bytes that
+     Pillow wrote. Pillow names a JP2 file and a raw codestream both
+     `JPEG2000`, so an untouched JP2 file written under a `.j2k` name
+     keeps its JP2 container. Status: proposed in pass 4e.
+332. The record is read before Pillow decodes the frame, so that reading
+     the metadata decodes nothing. The keys that Pillow adds to `info` only
+     when it decodes the pixels are therefore not in the record: the
+     chunks of a PNG file that follow its pixels, such as text or an
+     `eXIf` chunk there, and the `duration` and `timestamp` of a WebP
+     frame. Before this pass, `info` was read after the decoding. An image
+     that is changed and written again loses an EXIF block that its PNG
+     file stored after the pixels. Status: proposed in pass 4e.
+333. The reader options `frame`, `palette` and `dpi` stay fields of
+     `PillowImage`, as decided for the reader options of every format.
+     `dpi=True` decodes the pixel size from the resolution of the record,
+     so an image read with it is still saved byte for byte, while a
+     resolution, a pixel size or a unit given to the reader are assigned
+     as transformations, which consolidation compares with those of the
+     record. `frame` and `palette` say how the lazy array reads the file,
+     and `consolidate` refuses with `WriterError` an image whose fields
+     differ from those of its lazy array (`_check_reading` in
+     `io/images/pillow/_image.py`), since changing them cannot change
+     what was read. Status: proposed in pass 4e.
+334. Pillow ignores a writer option that the plugin of a format does not
+     read, so the writer checks the options against the keys that the
+     `_save` function of each plugin reads in Pillow 10.4.0, and raises
+     `TypeError` for any other (`_SAVE_OPTIONS` in
+     `io/images/pillow/_image.py`). A format that the table does not list
+     takes no option. An option that a later version of Pillow reads is
+     refused until the table lists it. Status: open, for the maintainer to
+     decide whether the table should follow the installed version of
+     Pillow.
+335. When a raster image is encoded again, the writer takes from the
+     record the format, the resolution, the ICC profile and the EXIF
+     block. The other keys of `info`, such as the transparency and the
+     gamma of a PNG file, the comment of a JPEG file or the compression of
+     a TGA file, are neither written nor refused, so an edit of them in
+     the record is lost. The problem is older than this work. Status:
+     open.
+336. The lazy array of a raster image decodes the whole frame each time
+     its values are read. Dask, which is the default backend when it is
+     installed, reads the lazy array once per chunk, so a frame larger
+     than one chunk is decoded once per chunk. The compressed MRtrix
+     images behave in the same way. Status: open.
+337. Pass 4e changes the following public names and behaviors of
+     `PillowImage`, to be announced with item 13. The fields
+     `image_format`, `mode`, `info` and `n_frames` are removed from the
+     constructor and the attributes in favor of `metadata.raw.format`,
+     `metadata.raw.mode`, `metadata.raw.info` and
+     `metadata.raw.n_frames`. `frame` is 0, not `None`, for an image built
+     from data, and `palette` and `dpi` become fields. The data decoded
+     from a file are read-only, and a Dask array when Dask is installed,
+     where they were a writable NumPy array. A frame whose pixels cannot
+     be decoded raises `ParserContentError` when `data` is first read,
+     not when the file is loaded. A writer option that Pillow does not
+     read raises `TypeError` (item 334). A stream given to the reader must
+     stay open while the data may be read. Status: open, as for item 13.
+338. The conformance harness has a new field, `Exemplar.read`, which
+     gives the options with which the checks read every file of a format.
+     A raster file records a resolution that the Pillow reader applies
+     only with `dpi=True`, so the geometry that the checks assign is read
+     back only with that option. Checks 13 and 20, which were added
+     while this pass was open, read their files with these options too.
+     Status: proposed in pass 4e.
+339. Check 20 found that a raster image with nothing pending, given
+     other metadata whose record decodes the same transformations as
+     those that the image held, was written as the bytes of its file
+     under the record of the other metadata, which may record another
+     resolution. `PillowImage.consolidate` now keeps the bytes of the file
+     only when the lazy array reads the record that the image holds, as
+     the JPEG 2000 image does. Status: resolved.
