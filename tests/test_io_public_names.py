@@ -203,6 +203,21 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.transformations.mrtrix": Package(
+        names=frozenset(
+            {
+                "MrtrixCoordinatesField",
+                "MrtrixDisplacementField",
+                "MrtrixLinearMetadata",
+                "MrtrixLinearRaw",
+                "MrtrixLinearTransform",
+                "MrtrixMetadata",
+                "MrtrixRaw",
+                "MrtrixWarp",
+                "MrtrixWarpFull",
+            }
+        ),
+    ),
     "brainhops.io.transformations.itk": Package(
         names=frozenset(
             {
