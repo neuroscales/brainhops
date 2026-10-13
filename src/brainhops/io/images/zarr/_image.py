@@ -245,6 +245,39 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
             image.transformation = transformation
         return image
 
+    @classmethod
+    def from_store(cls, location: StoreLike, **kwargs) -> "ZarrImage":
+        """Read an image from a Zarr store location.
+
+        The array is opened as by [`from_node`][], and the lazy array of
+        the image knows the location that it was read from, so that the
+        image is never written over the store that it still reads.
+
+        Parameters
+        ----------
+        location : str or PathLike
+            The location of the array.
+        **kwargs : Any
+            `mode` and `driver`, which are passed to `abczarr.open`, and
+            the options of [`from_node`][].
+
+        Returns
+        -------
+        ZarrImage
+            The image, whose chunks are read lazily.
+
+        Raises
+        ------
+        ParserExistsError
+            If no Zarr store exists at `location`.
+        ParserContentError
+            If the store is a group, not a plain array.
+        """
+        location = absolute_location(location)
+        image = super().from_store(location, **kwargs)
+        image.raw = _ZarrProxy(image.raw.node, location)
+        return image
+
     # --- consolidate --------------------------------------------------
 
     def consolidate(

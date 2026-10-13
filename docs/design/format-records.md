@@ -2172,7 +2172,13 @@ registrations of its views back into the XML file.
      `io/common/zarr/_parsers.py`). abczarr also raises, rather than
      returning `None`, when a path holds no store, so the sniffer of the
      Zarr adapters catches the error and scores the path as not Zarr.
-     Status: worked around in step 4b-i.
+     The same driver of abczarr 0.2.3 gives a node of a remote fsspec
+     store the text of the store object as its store path, so
+     `store_location` (`io/common/zarr/_data.py`) finds no document
+     there, and `ZarrImage.from_store` gives its lazy array the location
+     that it opened instead. A remote node opened by the caller and read
+     with `from_node` has no known location, so a save over its own
+     store is not refused. Status: worked around in step 4b-i.
 346. The data of a plain Zarr array read with the NumPy backend are
      read-only, as for the other formats, where they were writable
      before. The Dask backend gets one block per chunk of the store,
