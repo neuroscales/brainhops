@@ -1,4 +1,13 @@
-"""Private converters into SPM transformation formats."""
+"""Private converters into SPM transformation formats.
+
+An SPM deformation field ([`SpmCoordinatesField`][]) holds another
+transformation exactly, or refuses it with the reason. An SPM
+normalisation ([`SpmSnTransformation`][]) holds the coefficients of a
+basis of discrete cosines, which brainhops does not fit to another
+transformation, and it cannot be written, so every other transformation
+is refused. A transformation that is already of one of these formats is
+changed by the rules of any chain.
+"""
 
 import numpy as np
 import typing_extensions as tx
@@ -22,6 +31,7 @@ from brainhops.io.transformations.nifti._converters import (
 )
 
 from ._fields import SpmCoordinatesField
+from ._sn import SpmSnTransformation
 
 
 @converter(_xforms.DisplacementField, SpmCoordinatesField)
@@ -52,6 +62,35 @@ def _(
     cls: tx.Type[SpmCoordinatesField],
     **kwargs,
 ) -> SpmCoordinatesField:
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type.
+    return smart_replace(t, cls, **kwargs)
+
+
+@converter
+def _(
+    t: _xforms.Transformation,
+    cls: tx.Type[SpmSnTransformation],
+    **kwargs,
+) -> SpmSnTransformation:
+    # A normalisation file stores the coefficients of a warp in a basis of
+    # discrete cosines, and nothing is fitted to them.
+    raise unrepresentable(
+        t,
+        cls,
+        "an SPM normalisation file holds the coefficients of a warp in a "
+        "basis of discrete cosines, which brainhops does not fit, and it "
+        "cannot be written. An SpmCoordinatesField holds a deformation "
+        "field that SPM reads.",
+    )
+
+
+@converter
+def _(
+    t: SpmSnTransformation,
+    cls: tx.Type[SpmSnTransformation],
+    **kwargs,
+) -> SpmSnTransformation:
     # A transformation that is already in this format is changed by the
     # rules of any chain, and these rules keep its type.
     return smart_replace(t, cls, **kwargs)
