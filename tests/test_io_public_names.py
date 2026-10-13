@@ -115,7 +115,15 @@ PACKAGES: tx.Dict[str, Package] = {
         needs=("nibabel",),
     ),
     "brainhops.io.transformations.spm": Package(
-        names=frozenset({"SpmCoordinatesField"}),
+        names=frozenset(
+            {
+                "SpmCoordinatesField",
+                "SpmSnMetadata",
+                "SpmSnRaw",
+                "SpmSnTransformation",
+                "SpmVolume",
+            }
+        ),
         needs=("nibabel",),
     ),
     "brainhops.io.transformations.fsl.fnirt": Package(

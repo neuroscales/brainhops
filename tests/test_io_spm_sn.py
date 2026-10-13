@@ -17,17 +17,19 @@ import numpy as np
 import pytest
 import scipy.io
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import fields, replace
 from scipy.io.matlab import MatlabObject
 
 from brainhops import io
 from brainhops.backends import backend
 from brainhops.datamodel import transformations as xforms
+from brainhops.datamodel.metadata import Metadata
 from brainhops.errors import ConversionError
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserNotImplementedError,
     WriterError,
+    _overrides_from_fileobj,
 )
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations import TransformationFormat
@@ -209,7 +211,9 @@ def _spm_sn2def(sn: dict) -> np.ndarray:
         else:
 
             def plane(c: int, j: int = j) -> np.ndarray:
-                coeffs = Tr[:, :, :, c].reshape(st[0] * st[1], st[2], order="F")
+                coeffs = Tr[:, :, :, c].reshape(
+                    st[0] * st[1], st[2], order="F"
+                )
                 return (coeffs @ basZ[j, :]).reshape(st[0], st[1], order="F")
 
             X1 = X + basX @ plane(0) @ basY.T
@@ -217,7 +221,10 @@ def _spm_sn2def(sn: dict) -> np.ndarray:
             Z1 = z[j] + basX @ plane(2) @ basY.T
         for c in range(3):
             Def[:, :, j, c] = (
-                Mult[c, 0] * X1 + Mult[c, 1] * Y1 + Mult[c, 2] * Z1 + Mult[c, 3]
+                Mult[c, 0] * X1
+                + Mult[c, 1] * Y1
+                + Mult[c, 2] * Z1
+                + Mult[c, 3]
             )
     return Def
 
@@ -257,8 +264,8 @@ def test_the_field_is_what_spm_computes(tmp_path: Path) -> None:
     # The field holds the template voxels moved by the warp, numbered from
     # 0, and the last affine carries them to the source.
     ras2grid, field, grid2source = sn.transformations
-    to_source = VF_MAT @ AFFINE @ np.linalg.inv(VG_MAT) @ (
-        _template_nifti_affine()
+    to_source = (
+        VF_MAT @ AFFINE @ np.linalg.inv(VG_MAT) @ (_template_nifti_affine())
     )
     assert np.allclose(grid2source.homogeneous_matrix, to_source)
     moved = np.asarray(field.field)
@@ -588,3 +595,37 @@ def test_bytes_hold_one_file() -> None:
     scipy.io.savemat(buffer, _variables(), format="5")
     sn = SpmSnTransformation.from_bytes(buffer.getvalue())
     assert sn.metadata.raw.template.dim == DIM
+
+
+# ----------------------------------------------------------------------
+#   THE CHECKS OF THE CONFORMANCE TESTS THAT APPLY
+# ----------------------------------------------------------------------
+# The conformance tests list this format as not migrated, because their
+# checks of assigned data expect consolidation to leave nothing pending,
+# and a format that cannot write keeps an assigned chain (design memo,
+# item 260). The checks below are those that apply, numbered as in
+# `tests/test_io_conformance.py`.
+
+
+def test_01_the_constructor_takes_the_model_and_metadata() -> None:
+    names = {f.public_name for f in fields(SpmSnTransformation) if f.init}
+    model = {f.public_name for f in fields(xforms.ImmutableSequence) if f.init}
+    assert names <= model | {"metadata"}
+    assert not names & {"image", "header", "_header", "struct", "raw"}
+    metadata = {f.public_name for f in fields(SpmSnMetadata) if f.init}
+    assert metadata <= {f.public_name for f in fields(Metadata)} | {"raw"}
+
+
+def test_06_the_metadata_reads_the_whole_file(tmp_path: Path) -> None:
+    # The check is vacuous: the file is read in one pass, and its record
+    # holds the coefficients of the warp, which are its data.
+    path = _save(tmp_path / "s_sn.mat")
+    record = MetadataFormat.load(path).raw
+    assert np.array_equal(record.tr, _coefficients())
+
+
+def test_12_the_adapter_contract_holds(tmp_path: Path) -> None:
+    for klass in (SpmSnTransformation, SpmSnMetadata):
+        assert not klass._is_dispatcher()
+        assert _overrides_from_fileobj(klass)
+        assert klass._READ_MODE == "rb"

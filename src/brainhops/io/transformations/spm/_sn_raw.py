@@ -492,7 +492,7 @@ def _flags(value: tx.Any) -> tx.Dict[str, tx.Any]:
         if isinstance(item, np.ndarray) and item.dtype.kind == "U":
             flags[name] = _text(item)
         elif _numeric(item):
-            flags[name] = float(item.item()) if item.size == 1 else (
-                _read_only(item)
+            flags[name] = (
+                float(item.item()) if item.size == 1 else (_read_only(item))
             )
     return flags

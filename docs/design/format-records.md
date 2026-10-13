@@ -1131,3 +1131,50 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+260. An SPM normalisation file (`*_sn.mat`) follows the design of
+     records: `SpmSnRaw` holds the whole file, `SpmSnMetadata` holds
+     the record, and `SpmSnTransformation` decodes its chain from the
+     record and has no `raw` field, as M3Z does (item 56). The file can
+     only be read, and the model is a chain that it cannot encode, so
+     `consolidate()` keeps an assigned chain and assigned systems, as
+     MINC keeps assigned transformations (item 101). The checks 3, 8 and
+     16 of the conformance test expect consolidation to leave nothing
+     pending, and they assume that data which is assigned can be stored,
+     so the two classes are listed as not migrated, and
+     `tests/test_io_spm_sn.py` runs the checks that apply. Status: open,
+     for the maintainer to decide whether the harness gains a branch for
+     a read-only chain, or whether such a format refuses to consolidate
+     an assigned chain.
+261. The data model has no field of discrete cosines, and
+     `InterpolationOrder.fourier` is declared but not implemented. The
+     warp of an SPM normalisation is therefore sampled on the grid of the
+     template, as SPM12's `get_sn2def` samples it, into a field of
+     coordinates that is linear between voxels and takes the nearest
+     value outside the grid (`io/transformations/spm/_sn.py`). The values
+     at the voxels are exact, and a conversion to a `y_*.nii` field is
+     exact, but the cosines are smooth between voxels and extend
+     outside the grid by symmetry. Status: open, since an exact map
+     would need a new type of transformation in the data model.
+262. Conversion into `SpmSnTransformation` is refused by an explicit
+     converter, rather than relabelled, because the format cannot be
+     written and a relabelled chain could never be encoded
+     (`io/transformations/spm/_converters.py`). This departs from the
+     rule that a format without an exact converter registers
+     `relabelling`. Status: open.
+263. The record of an SPM normalisation keeps only the `fname`, `dim`,
+     `mat` and `descrip` of each `spm_vol` structure and the text and
+     numeric fields of `flags`. The `private` field holds a MATLAB
+     `nifti` object, which `scipy.io` reads but which cannot be written
+     back as MATLAB wrote it. A file saved in the MATLAB v7.3 format is
+     refused, and the `*_sn3d.mat` files of SPM99, which are MATLAB v4
+     files with other variables, are not read. Status: accepted.
+264. Decoding the chain of an SPM normalisation evaluates the warp, which
+     NumPy does at once and Dask keeps lazy, so reading only the first
+     affine of the chain evaluates the field with NumPy. An
+     `SpmCoordinatesField` gives its element the lazy NIfTI proxy
+     instead. Status: accepted, since the evaluation costs a few
+     products of small matrices per voxel.
+265. The SPM package imports nibabel through `SpmCoordinatesField`, so
+     the reader of normalisation files, which needs only SciPy, is not
+     available without nibabel (`io/transformations/spm/__init__.py`).
+     Status: open.

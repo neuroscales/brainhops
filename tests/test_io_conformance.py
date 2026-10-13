@@ -1437,6 +1437,13 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.transformations.matrix.TsvMatrixAffine",
     "brainhops.io.transformations.matrix.TxtMatrixAffine",
     "brainhops.io.transformations.niftyreg.NiftyRegAffine",
+    # An SPM normalisation file follows the design of records, but it can
+    # only be read and its model is a chain that it cannot encode, so the
+    # checks of assigned data (3, 8 and 16), which expect consolidation to
+    # leave nothing pending, do not apply. `tests/test_io_spm_sn.py` runs
+    # the checks that do (design memo, item 260).
+    "brainhops.io.transformations.spm.SpmSnMetadata",
+    "brainhops.io.transformations.spm.SpmSnTransformation",
     "brainhops.io.transformations.zarr.OmeZarrField",
 )
 """The registered formats that do not follow the design yet."""

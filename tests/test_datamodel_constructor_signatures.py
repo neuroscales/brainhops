@@ -223,6 +223,9 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.transformations.spm._fields": {
         "SpmCoordinatesField": ("transformations",),
     },
+    "brainhops.io.transformations.spm._sn": {
+        "SpmSnTransformation": ("transformations",),
+    },
     "brainhops.io.transformations.x5._blocks": {
         "X5BSplineField": ("transformations",),
         "X5CoordinatesField": ("transformations",),
