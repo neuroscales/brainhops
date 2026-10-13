@@ -783,8 +783,12 @@ def test_an_untouched_image_is_written_as_its_file(
     assert image.to_bytes() == content
     (tmp_path / "copy").mkdir()
     target = tmp_path / "copy" / source.name
-    bio.save(PillowImage.load(source), target)
+    PillowImage.load(source).save(target)
     assert target.read_bytes() == content
+    if source.suffix in PillowImage.EXTENSIONS:
+        # The generic writer chooses the Pillow writer for this name.
+        bio.save(PillowImage.load(source), target)
+        assert target.read_bytes() == content
     assert "_cache_data" not in vars(image)
     # A changed image is encoded again, as one frame. It reads back as it
     # was given, except in JPEG and WebP, which Pillow writes lossily by
