@@ -26,7 +26,7 @@ from brainhops.io.common.n5._data import (
     read_node,
     stream_location,
 )
-from brainhops.io.common.n5._raw import no_options
+from brainhops.io.common.n5._raw import no_options, score
 from brainhops.io.common.n5._spatial import placement
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base._utils_raster import (
@@ -239,10 +239,10 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
         float
             The confidence, between 0 and 1.
         """
-        score = N5Metadata.sniff_filename(filename, error=error)
-        if not score:
-            return score
-        _, record = read_node(filename)
+        try:
+            _, record = read_node(filename)
+        except Exception:  # noqa: BLE001
+            return score(Confidence.NO, error)
         if record.levels and level is None:
             return Confidence.LIKELY
         return Confidence.CERTAIN

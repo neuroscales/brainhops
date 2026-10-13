@@ -167,9 +167,7 @@ def _group_scale(
     if not isinstance(scales, list) or index >= len(scales):
         _ignored("scales", scales)
         return None
-    return _numbers(
-        {"scales": scales[index]}, "scales", ndim, positive=True
-    )
+    return _numbers({"scales": scales[index]}, "scales", ndim, positive=True)
 
 
 def _numbers(

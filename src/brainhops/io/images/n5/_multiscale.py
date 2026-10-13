@@ -229,9 +229,7 @@ class N5MultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
         return _read_pyramid(cls, location, record)
 
     @classmethod
-    def from_fileobj(
-        cls, file: tx.BinaryIO, **kwargs
-    ) -> "N5MultiScaleImage":
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "N5MultiScaleImage":
         """Read every level of a pyramid from an open `attributes.json`.
 
         The pyramid is found from the name of the stream, which must have

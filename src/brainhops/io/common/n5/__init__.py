@@ -103,13 +103,16 @@ reads that record without reading any block.
 and [`N5MultiScaleImage`][brainhops.io.images.n5.N5MultiScaleImage]
 reads every level of a pyramid.
 
-The specification was checked at saalfeldlab/n5@c489d1653e05b3bac38f433037befd79f62586c4
-(tag n5-3.5.1): the section "File-system specification" of `README.md`,
-version 4.0.0, and `DatasetAttributes.java`, `DataType.java` and
+The specification was checked at
+saalfeldlab/n5@c489d1653e05b3bac38f433037befd79f62586c4 (tag n5-3.5.1):
+the section "File-system specification" of `README.md`, version 4.0.0,
+and `DatasetAttributes.java`, `DataType.java` and
 `DefaultBlockReader.java`. The order of the dimensions was checked in
-`tensorstore/driver/n5/metadata.cc` of google/tensorstore@97c57499888348dca3d41e6d66fb9a69de1ba046
-(tag v0.1.45), whose `DecodeChunk` reads a block in Fortran order, and
-in `zarr/n5.py` of zarr-developers/zarr-python@f1978dde52b11a7803a1a06937e69948acc8fe84
+`tensorstore/driver/n5/metadata.cc` of
+google/tensorstore@97c57499888348dca3d41e6d66fb9a69de1ba046 (tag
+v0.1.45), whose `DecodeChunk` reads a block in Fortran order, and in
+`zarr/n5.py` of
+zarr-developers/zarr-python@f1978dde52b11a7803a1a06937e69948acc8fe84
 (tag v2.18.3), whose `N5Store` reverses the dimensions. The spatial
 attributes were checked in these sources:
 

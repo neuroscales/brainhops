@@ -97,7 +97,9 @@ def write_group(directory: tx.Any, attributes: tx.Dict[str, tx.Any]) -> None:
         json.dump(attributes, file)
 
 
-def sample(shape: tx.Sequence[int] = (5, 3, 4), dtype: str = "uint16"):
+def sample(
+    shape: tx.Sequence[int] = (5, 3, 4), dtype: str = "uint16"
+) -> np.ndarray:
     """Return an array whose values tell their position."""
     return np.arange(int(np.prod(shape))).reshape(shape).astype(dtype)
 
@@ -135,7 +137,8 @@ def test_blocks_are_read_as_the_specification_writes_them(
 
 
 @pytest.mark.parametrize(
-    "dtype", ["uint8", "int8", "int16", "uint32", "int64", "float32", "float64"]
+    "dtype",
+    ["uint8", "int8", "int16", "uint32", "int64", "float32", "float64"],
 )
 def test_every_numeric_type_is_read(tmp_path: tx.Any, dtype: str) -> None:
     data = sample((3, 4), dtype) - (1 if dtype.startswith("int") else 0)
@@ -150,7 +153,9 @@ def test_a_missing_block_reads_as_zeros(tmp_path: tx.Any) -> None:
     write_dataset(tmp_path / "d", data, (2, 2, 3), skip=[(1, 1, 0)])
     expected = data.copy()
     expected[2:4, 2:3, 0:3] = 0
-    assert np.array_equal(np.asarray(N5Image.load(tmp_path / "d").raw), expected)
+    assert np.array_equal(
+        np.asarray(N5Image.load(tmp_path / "d").raw), expected
+    )
 
 
 def test_a_dataset_is_named_by_its_attributes_file(tmp_path: tx.Any) -> None:
@@ -416,7 +421,9 @@ def test_a_resolution_takes_the_unit_attribute(tmp_path: tx.Any) -> None:
 
 
 def test_a_pixel_unit_is_no_unit(tmp_path: tx.Any) -> None:
-    attributes = {"pixelResolution": {"dimensions": [2, 2, 2], "unit": "pixel"}}
+    attributes = {
+        "pixelResolution": {"dimensions": [2, 2, 2], "unit": "pixel"}
+    }
     write_dataset(tmp_path / "d", sample(), (2, 2, 3), attributes=attributes)
     with warnings.catch_warnings():
         warnings.simplefilter("error")

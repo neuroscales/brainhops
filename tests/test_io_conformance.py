@@ -1489,8 +1489,7 @@ if n5_needs is not None:
         edit_record=lambda record: replace(
             record, attributes={**record.attributes, "note": "edited"}
         ),
-        record_edited=lambda record: record.attributes.get("note")
-        == "edited",
+        record_edited=lambda record: record.attributes.get("note") == "edited",
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
