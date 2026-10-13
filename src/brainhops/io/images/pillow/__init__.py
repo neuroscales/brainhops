@@ -9,6 +9,7 @@ from brainhops.io import save
 
 image = load("photo.png")            # PillowImage
 image.data.shape                     # (width, height, 3): x, y, c
+image.metadata.raw.format            # "PNG", from the header of the file
 save(image, "photo.jpg", quality=95)
 ```
 
@@ -31,9 +32,16 @@ column `x` and row `y`.
 | `P`, `PA` (palette)             | `uint8`, `(x, y, 3)` or `(x, y, 4)`   |
 
 Channels come after the spatial axes. Colours stay in the colour space in
-which they are stored, which `mode` names. Palette images are the exception:
-their colours are looked up in the palette, unless `palette=False` keeps the
-indices. Pillow reduces 16-bit colour PNG files to 8 bits.
+which they are stored, which the `mode` of the record names. Palette images are
+the exception: their colours are looked up in the palette, unless
+`palette=False` keeps the indices. Pillow reduces 16-bit colour PNG files to 8
+bits.
+
+After a read, `raw` is a lazy array of the frame, `(rows, columns[,
+samples])`, which Pillow decodes only when `data` is first accessed. Its shape
+and type are known from the header, so `image.shape` decodes nothing. The data
+that it gives is read-only, since the writer writes `raw` and would lose an
+edit made in place: assign `data` to change the pixels.
 
 ## Geometry
 
@@ -55,6 +63,13 @@ request:
   precedence over any resolution. `unit` alone converts a size derived from a
   resolution.
 
+With `dpi=True`, the image keeps the option and decodes the pixel size from the
+resolution of its record, so an unchanged image is still written as the bytes
+of its file. A resolution, a pixel size or a unit given to the reader are
+assigned to the image as its transformations, and an image whose
+transformations differ from those of its record is encoded again when it is
+written.
+
 ITK writes its spacing (conventionally in millimetres) to the PNG `sCAL` chunk
 without converting it to the unit of the chunk, so the unit of the chunk is
 unreliable. The chunk is therefore kept as `info["sCAL"] = (unit, x, y)`, where
@@ -71,16 +86,39 @@ written back. `dpi=` overrides both, and `dpi=False` records no resolution.
 
 Multi-frame files (animated GIF, PNG and WebP, multi-picture JPEG) are read one
 frame at a time. The first frame is read by default, `load(file, frame=i)`
-reads frame `i`, and `image.n_frames` gives the number of frames. Animated GIF
-frames are composited, so frame `i` is the picture displayed at step `i`.
+reads frame `i`, and `image.metadata.raw.n_frames` gives the number of frames.
+Animated GIF frames are composited, so frame `i` is the picture displayed at
+step `i`. An unchanged image is written back with all the frames of its file,
+and a changed image is written as one frame.
 
 ## Metadata
 
-The image keeps `image_format` (such as `"PNG"`), `mode` (as stored, such as
-`"P"`), the Pillow `info` dictionary, `frame` and `n_frames`. The ICC profile
-and EXIF block are written back on save.
+The header of the file is the record of the image,
+[`PillowRaw`][brainhops.io.images.pillow.PillowRaw], held by its
+[`PillowMetadata`][brainhops.io.images.pillow.PillowMetadata]. It gives the
+format (such as `"PNG"`), the mode of the frame as stored (such as `"P"`), its
+size, the Pillow `info` dictionary as read with the header, the index of the
+frame and the number of frames:
+
+```python
+image.metadata.raw.format            # "PNG"
+image.metadata.raw.mode              # "P"
+image.metadata.raw.info["dpi"]       # (300.0, 300.0)
+image.metadata.raw.n_frames          # 1
+```
+
+`PillowMetadata.load(file)` reads the record without decoding the pixels. The
+image keeps the reader options `frame`, `palette` and `dpi`. The ICC profile
+and EXIF block are written back when the image is encoded again.
 
 ## Writing
+
+An image that was read and is written again in the format of its file, without
+changes and without options, is written as the bytes of its file, so it keeps
+them exactly, whatever the format and even when Pillow cannot write that
+format. Any change of the data or of the geometry, any option, or another
+format encodes the image again with Pillow, and the consolidated copy of the
+image then reads back the bytes that Pillow wrote.
 
 The data to write is `(x, y)`, or `(x, y, c)` with 1 to 4 channels, and any
 other axis must be a singleton. The data type is stored as is:
@@ -100,8 +138,10 @@ channels, a volume) raises a
 [`WriterError`][brainhops.io.base.parsers.WriterError], as does a mode the
 format cannot store, such as 16-bit JPEG. The format is given by `format=` or,
 failing that, by the extension of the file, and a stream without a name is
-written as PNG. Other keywords are passed to `Image.save`, such as `quality`
-for JPEG. JPEG and lossy WebP do not preserve the pixel values exactly.
+written in the format of the record, or as PNG. Other keywords are passed to
+`Image.save`, such as `quality` for JPEG. Pillow ignores a keyword that it does
+not read for the format, so the writer refuses such a keyword with a
+`TypeError`. JPEG and lossy WebP do not preserve the pixel values exactly.
 
 ## Limits
 
@@ -109,12 +149,16 @@ for JPEG. JPEG and lossy WebP do not preserve the pixel values exactly.
   179 million pixels) with a `PIL.Image.DecompressionBombError`, and warns
   above the limit itself. Raising `MAX_IMAGE_PIXELS`, or setting it to `None`,
   allows a trusted larger image.
-* The whole frame is decoded on load, so there is no lazy access.
+* The whole frame is decoded when `data` is first read, so there is no access
+  to a part of the frame.
+* A stream given to the reader must stay open while the data may be read.
 * `.tif` and `.tiff` files are left to the dedicated TIFF reader. The Pillow
   reader claims TIFF only as a fallback, when tifffile (the `tiff` extra) is
   not installed.
 """
 
-__all__ = ["PillowImage"]
+__all__ = ["PillowImage", "PillowMetadata", "PillowRaw"]
 
 from ._image import PillowImage
+from ._metadata import PillowMetadata
+from ._raw import PillowRaw

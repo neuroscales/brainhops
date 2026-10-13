@@ -24,6 +24,7 @@ __all__ = [
     "DPI_FORMATS",
     "sniff_pillow",
     "read_pillow",
+    "pillow_layout",
     "pillow_to_array",
     "pillow_dpi",
     "array_to_pillow",
@@ -38,7 +39,7 @@ from io import BytesIO
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageMode, UnidentifiedImageError
 
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
@@ -229,18 +230,11 @@ def pillow_to_array(
         `"YX"` or `"YXS"`.
     """
     mode = im.mode
-    if mode in _PALETTE_MODES:
-        if palette:
-            alpha = mode == "PA" or "transparency" in im.info
-            im = im.convert("RGBA" if alpha else "RGB")
-        elif mode == "PA":
-            im = im.getchannel(0)
-    elif mode == "La":
-        im = im.convert("LA")
-    elif mode == "RGBa":
-        im = im.convert("RGBA")
-    elif mode.startswith("BGR;"):
-        im = im.convert("RGB")
+    target = _decoded_mode(mode, im.info, palette)
+    if mode == "PA" and target == "L":
+        im = im.getchannel(0)
+    elif target != mode:
+        im = im.convert(target)
     try:
         array = np.array(im)
     except Exception as e:
@@ -363,6 +357,58 @@ def read_pillow(
     )
 
 
+def pillow_layout(
+    mode: str, info: tx.Mapping[str, tx.Any], palette: bool = True
+) -> tx.Tuple[np.dtype, int]:
+    """Return the type and the number of samples of a decoded frame.
+
+    A frame of a given mode is decoded by [`pillow_to_array`][] into an
+    array whose type and number of samples depend only on the mode, on
+    whether the palette is looked up, and, for a palette image, on whether
+    `info` records a transparent colour. This function computes them from
+    the descriptor of the mode that Pillow publishes in `PIL.ImageMode`,
+    so that the pixels need not be decoded. The descriptor gives the
+    NumPy type string of a band (`typestr`) and the names of the bands
+    (`bands`), as `src/PIL/ImageMode.py` of Pillow 10.4.0 defines them.
+    Pillow builds the array interface of an image from the same two
+    fields (`_conv_type_shape` in `src/PIL/Image.py`), and a test compares
+    the result with decoded frames of each mode.
+
+    Parameters
+    ----------
+    mode : str
+        The Pillow mode of the frame as stored, such as `"P"` or `"I;16B"`.
+    info : Mapping[str, Any]
+        The `info` dictionary of the frame.
+    palette : bool, default=True
+        Whether palette colours are looked up, as in [`pillow_to_array`][].
+
+    Returns
+    -------
+    dtype : numpy.dtype
+        The type of the decoded pixels, in native byte order.
+    samples : int
+        The number of samples per pixel, where 1 means that the array has
+        no axis of samples.
+
+    Raises
+    ------
+    ParserContentError
+        If Pillow does not describe the mode.
+    """
+    target = _decoded_mode(mode, info, palette)
+    try:
+        descriptor = ImageMode.getmode(target)
+    except KeyError as e:
+        raise ParserContentError(
+            f"Pillow does not describe the mode {target!r}."
+        ) from e
+    dtype = np.dtype(descriptor.typestr)
+    if dtype.byteorder not in ("=", "|"):
+        dtype = dtype.newbyteorder("=")
+    return dtype, len(descriptor.bands)
+
+
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -406,6 +452,31 @@ def _png_scal(
             return scan(f)
     except Exception:
         return None
+
+
+def _decoded_mode(
+    mode: str, info: tx.Mapping[str, tx.Any], palette: bool
+) -> str:
+    """Return the mode in which [`pillow_to_array`][] decodes a frame.
+
+    A palette image becomes RGB, or RGBA if it has transparency, when its
+    palette is looked up. Without the lookup, the indices of a `PA` image
+    are its first channel, of mode `L`. The premultiplied modes `La` and
+    `RGBa` become `LA` and `RGBA`, and the `BGR;*` modes become `RGB`.
+    Every other mode is kept.
+    """
+    if mode in _PALETTE_MODES:
+        if palette:
+            alpha = mode == "PA" or "transparency" in info
+            return "RGBA" if alpha else "RGB"
+        return "L" if mode == "PA" else mode
+    if mode == "La":
+        return "LA"
+    if mode == "RGBa":
+        return "RGBA"
+    if mode.startswith("BGR;"):
+        return "RGB"
+    return mode
 
 
 # ----------------------------------------------------------------------
