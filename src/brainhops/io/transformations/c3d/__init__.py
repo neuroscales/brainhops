@@ -1,4 +1,4 @@
-"""Readers and writers of the affine matrices of Greedy, Convert3D and ITK-SNAP.
+"""Readers and writers of the affine matrices of Greedy and Convert3D.
 
 Greedy, `c3d_affine_tool` (Convert3D) and ITK-SNAP save an affine as a
 text file of sixteen numbers, the rows of a homogeneous (4, 4) matrix that

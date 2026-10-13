@@ -181,9 +181,7 @@ def test_a_new_matrix_keeps_the_layout_of_the_file(tmp_path) -> None:  # noqa: A
     xform.data = np.diag([2.0, 3.0, 4.0, 1.0])[:3]
     # The assigned matrix is pending, and the record is unchanged.
     assert xform.metadata.raw is record
-    assert xform.to_text() == (
-        "2 0 0 0 \n0 3 0 0 \n0 0 4 0 \n0 0 0 1 \n"
-    )
+    assert xform.to_text() == ("2 0 0 0 \n0 3 0 0 \n0 0 4 0 \n0 0 0 1 \n")
     assert xform.metadata.raw is record
 
 
