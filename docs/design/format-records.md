@@ -1137,15 +1137,14 @@ its status.
      `transformations` over as `OmeZarrImage` does, and decodes its levels
      from `raw` and the record as `Jpeg2000Image` objects that share its
      metadata (`io/images/jpeg2000/_multiscale.py`). It is consolidated
-     through its full-resolution level. The codec computes the coarser
-     levels again, so their shapes are checked, and a coarser
-     `Jpeg2000Image` that holds assigned data, or assigned transformations
-     other than those that the first level gives it, is refused with
-     `WriterError` rather than dropped. A coarser level of another class,
-     such as a level of a converted TIFF pyramid, is derived again. The
-     pyramid is listed in `NOT_MIGRATED`, and its full-resolution level is
-     an exemplar. Status: refused for assigned levels, and open until the
-     fourth pass.
+     through its full-resolution level alone. As the maintainer decided,
+     the coarser levels are taken to be downsampled versions of the first
+     one, which the codec derives again: whatever was assigned to them,
+     data or transformations, is ignored rather than refused, and the
+     ratios of their shapes are not checked, here as for any format. The
+     pyramid is listed in `NOT_MIGRATED`, and its full-resolution level
+     is an exemplar. Status: accepted for the coarser levels, and open
+     until the fourth pass.
 116. A raw JPEG 2000 codestream has no resolution box, so the pixel size
      of an image written as a `.j2k` file is lost, as for the Pillow
      formats that store no resolution. The checks of geometry would be

@@ -592,8 +592,10 @@ def test_write_multiscale(tmp_path: Path) -> None:
             np.asarray(level.data), np.asarray(other.data)
         )
 
+    # The shapes of the coarser levels are not checked: the codec derives
+    # them from the first level.
     axes = raster.default_axes(2)
-    bad = Jpeg2000MultiScaleImage(
+    odd = Jpeg2000MultiScaleImage(
         images=[
             SingleScaleImage(
                 data=np.zeros((8, 8), np.uint8),
@@ -606,8 +608,8 @@ def test_write_multiscale(tmp_path: Path) -> None:
         ],
         transformations=[],
     )
-    with pytest.raises(WriterError, match="shape"):
-        bad.to_bytes()
+    back = Jpeg2000MultiScaleImage.from_bytes(odd.to_bytes())
+    assert [level.shape for level in back.images] == [(8, 8), (4, 4)]
 
 
 def test_a_multiscale_image_of_fewer_levels(tmp_path: Path) -> None:
@@ -739,30 +741,46 @@ def test_resolution_box_encoding() -> None:
         assert back == pytest.approx((value, value), rel=1e-6)
 
 
-def test_a_coarser_level_that_was_assigned_is_refused(tmp_path: Path) -> None:
+def test_a_coarser_level_that_was_assigned_is_ignored(tmp_path: Path) -> None:
     path = _write(tmp_path, "a.jp2", RAMP)
-    # Data assigned to a coarser level cannot be written, since the codec
-    # computes that level again from the first one.
+    derived = Jpeg2000MultiScaleImage.from_bytes(load(path).to_bytes())
+    # A pyramid is written from its first level, and the codec derives the
+    # coarser levels again, so data assigned to a coarser level, even of
+    # another shape, are ignored rather than refused.
     pyramid = load(path)
-    pyramid.images[2].data = np.zeros((12, 10), np.uint16)
-    with pytest.raises(WriterError, match="Level 2 .* first level"):
-        pyramid.consolidate()
-    with pytest.raises(WriterError, match="Level 2"):
-        pyramid.save(tmp_path / "b.jp2")
-    assert not (tmp_path / "b.jp2").exists()
-    # So are transformations that the first level does not give it.
-    pyramid = load(path)
+    pyramid.images[2].data = np.zeros((5, 7), np.uint16)
     level = pyramid.images[1].transformation
     pyramid.images[1].transformations = [
         Scaling([3.0, 3.0], input=level.input, output=level.output)
     ]
-    with pytest.raises(WriterError, match="Level 1 .* transformations"):
-        pyramid.to_bytes()
-    # Transformations that were read, or that a pixel size gives every
-    # level, are those that the first level gives, and are written.
+    content = pyramid.to_bytes()
+    assert content == path.read_bytes()
+    pyramid.save(tmp_path / "b.jp2")
+    back = load(tmp_path / "b.jp2")
+    assert len(back.images) == len(derived.images)
+    for got, expected in zip(back.images, derived.images):
+        np.testing.assert_array_equal(
+            np.asarray(got.data), np.asarray(expected.data)
+        )
+        np.testing.assert_allclose(
+            got.transformation.to(Affine).homogeneous_matrix,
+            expected.transformation.to(Affine).homogeneous_matrix,
+        )
+    np.testing.assert_array_equal(
+        np.asarray(back.images[0].data), np.asarray(load(path).images[0].data)
+    )
+    # A changed first level gives the coarser levels that the codec derives
+    # from it, whatever was assigned to them.
+    first = RAMP.T[:, ::-1].copy()
+    expected = load(path)
+    expected.images[0].data = first
+    expected = Jpeg2000MultiScaleImage.from_bytes(expected.to_bytes())
     pyramid = load(path)
-    _ = [image.transformation for image in pyramid.images]
-    assert pyramid.to_bytes() == path.read_bytes()
-    pyramid = load(path, pixel_size=0.5, unit="mm")
+    pyramid.images[0].data = first
+    pyramid.images[3].data = np.ones((6, 5), np.uint16)
     back = Jpeg2000MultiScaleImage.from_bytes(pyramid.to_bytes())
-    np.testing.assert_allclose(back.images[3].transformation.scale, [4, 4])
+    np.testing.assert_array_equal(np.asarray(back.images[0].data), first)
+    for got, want in zip(back.images, expected.images):
+        np.testing.assert_array_equal(
+            np.asarray(got.data), np.asarray(want.data)
+        )
