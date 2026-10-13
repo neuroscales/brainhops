@@ -22,7 +22,7 @@ any other member of that family. The square needs no wrapper, because
 """
 
 __all__ = [
-    "Operation",
+    "DerivedTransformation",
     "Sqrt",
     "UNARY_OPERATORS",
 ]
@@ -50,7 +50,7 @@ from .concrete import (
     _alias,
 )
 from .modes import ModeLike, mode_admits, normalize_modes
-from .nocycles import register_operator
+from .nocycles import register_derived
 
 if tx.TYPE_CHECKING:
     from brainhops.datamodel.systems import CoordinateSystem
@@ -66,7 +66,7 @@ _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 # ======================================================================
 
 
-class Operation(Transformation):
+class DerivedTransformation(Transformation):
     """A unary operator applied to a transformation and resolved on demand.
 
     An operation holds its target as `forward` and derives its own parameter
@@ -188,7 +188,7 @@ class Operation(Transformation):
             own.add("error")
             others = {k: kwargs.pop(k) for k in list(kwargs) if k not in own}
             if others:
-                front = nocycles.OPERATORS[type(self)._operator]
+                front = nocycles.DERIVED[type(self)._operator]
                 obj = front(
                     forward=self.forward.to(**others),
                     input=self._input,
@@ -254,7 +254,7 @@ class Operation(Transformation):
         # state of the forward, such as the flags of a field. Rebuilding needs
         # a resolved forward, so a forward that is itself a lazy wrapper is
         # resolved first.
-        if isinstance(forward, Operation):
+        if isinstance(forward, DerivedTransformation):
             forward = forward._materialize()
         # A type whose name states a direction inverts to the type of its pair
         # that names the opposite direction.
@@ -275,8 +275,8 @@ class Operation(Transformation):
         return resolved.to(**edits) if edits else resolved
 
 
-@register_operator("sqrt")
-class Sqrt(Operation, polymorphic="strict"):
+@register_derived("sqrt")
+class Sqrt(DerivedTransformation, polymorphic="strict"):
     """Lazy principal square root of a transformation.
 
     The square root `S` of `T` satisfies `S @ S == T`. The principal root is
