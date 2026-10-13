@@ -50,6 +50,7 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     Metadata,
     MetadataLossError,
+    metadata_loss_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import RASmm
@@ -60,7 +61,7 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base._base import Format, register_format
+from brainhops.io.base._base import Format, _takes_over, register_format
 from brainhops.io.base._save import _model
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -600,18 +601,21 @@ def _toy_reads(raw: tx.Any, filename: str) -> bool:
     return isinstance(raw, _ToyProxy) and raw.source == filename
 
 
+class _ForeignMetadata(MetadataFormat):
+    """Metadata of another format, which is never registered."""
+
+
 class _ForeignImage(ImageFormat, SingleScaleImage):
     """Image of another format, which is never registered.
 
-    Its `raw` and `metadata` fields mean nothing to the toy format.
+    Its `raw` and the record of its metadata mean nothing to the toy
+    format.
     """
 
     raw: KwOnly[NoRepr[tx.Any]] = None
-    metadata: KwOnly[NoRepr[tx.Any]] = None
-
-
-class _ForeignMetadata(MetadataFormat):
-    """Metadata of another format, which is never registered."""
+    _metadata: NoRepr[tx.Optional[_ForeignMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
 
 def _toy_edit_record(record: ToyRaw) -> ToyRaw:
@@ -931,7 +935,9 @@ if nb is not None:
     )
 
     EXEMPLARS[NiftiImage] = _NIFTI._replace(
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, raw="raw", metadata=_ForeignMetadata(raw="record")
+        ),
         storage={"dtype": "int16"},
     )
     EXEMPLARS[NiftiVoxelToRAS] = _NIFTI._replace(
@@ -1240,7 +1246,9 @@ if nb is not None:
         to_disk=_mgh_to_disk,
         edit_record=_mgh_edit_record,
         record_edited=_mgh_record_edited,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, raw="raw", metadata=_ForeignMetadata(raw="record")
+        ),
         storage={"dtype": "int16"},
         # The metadata writes the fixed header alone, which holds the
         # type of the voxels but not the footer.
@@ -1275,7 +1283,9 @@ _AFNI = Exemplar(
     record_edited=lambda record: record.get("HISTORY_NOTE") == "edited",
     geometry=_afni_geometry,
     change_geometry=_nifti_change_geometry,
-    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    foreign=lambda data: _ForeignImage(
+        data, raw="raw", metadata=_ForeignMetadata(raw="record")
+    ),
     header_file=_afni_header_file,
     storage={"datatype": "int16"},
 )
@@ -1304,7 +1314,9 @@ _MRTRIX = Exemplar(
     record_edited=lambda record: record.keyval.get("comments") == "edited",
     geometry=_nifti_geometry,
     change_geometry=_nifti_change_geometry,
-    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    foreign=lambda data: _ForeignImage(
+        data, raw="raw", metadata=_ForeignMetadata(raw="record")
+    ),
     storage={"datatype": "int16"},
 )
 EXEMPLARS[MrtrixImage] = _MRTRIX
@@ -1336,7 +1348,9 @@ _NRRD = Exemplar(
     record_edited=lambda record: record.keyvalue.get("comment") == "edited",
     geometry=_nifti_geometry,
     change_geometry=_nifti_change_geometry,
-    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    foreign=lambda data: _ForeignImage(
+        data, raw="raw", metadata=_ForeignMetadata(raw="record")
+    ),
     storage={"datatype": "int16"},
 )
 EXEMPLARS[AttachedNrrdImage] = _NRRD
@@ -1418,7 +1432,9 @@ if minc_needs is not None:
         record_edited=lambda record: record.datatype == "<f8",
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, raw="raw", metadata=_ForeignMetadata(raw="record")
+        ),
         cut=_minc1_cut,
         header=lambda metadata: metadata.raw,
         source=_write_minc1,
@@ -1490,7 +1506,9 @@ TEST_EXEMPLARS: tx.Dict[type, Exemplar] = {
         record_edited=lambda record: record.note == "edited",
         geometry=lambda image: _toy_spacing(image.transformation, image.ndim),
         change_geometry=_toy_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, raw="raw", metadata=_ForeignMetadata(raw="record")
+        ),
     ),
 }
 """Formats defined by the tests, which the checks also run on."""
@@ -1968,8 +1986,16 @@ def test_09_copies_keep_raw_and_metadata(
     if exemplar.foreign is None:
         return
     value = exemplar.sample()
-    converted = cls.from_instance(exemplar.foreign(value))
-    assert converted.metadata is None
+    foreign = exemplar.foreign(value)
+    with metadata_loss_policy("ignore"):
+        converted = cls.from_instance(foreign)
+    # The metadata of a data model is converted into the metadata of the
+    # format, without the record of another format.
+    if _takes_over(cls, "metadata") and foreign.metadata is not None:
+        assert isinstance(converted.metadata, Metadata)
+        assert converted.metadata.raw is None
+    elif foreign.metadata is None:
+        assert converted.metadata is None
     if "data" in _init_names(_model(cls)):
         assert getattr(converted, "raw", None) is None
         assert np.array_equal(np.asarray(converted.data), value)
