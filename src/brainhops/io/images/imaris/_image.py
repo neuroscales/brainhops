@@ -58,10 +58,10 @@ class ImarisImage(ImageFormat, SingleScaleImage, Hdf5Reader):
     three spatial axes, then the time points and the channels of the
     file, in the order of the other brainhops images. A file stores each
     channel at each time point as a separate dataset, and the lazy array
-    presents them as one array, so a selection of a time point or a
-    channel, such as `image.data[..., 0, 1]`, reads only that dataset
-    when the data are a Dask array. The voxels beyond the size of the
-    image, which pad the datasets to whole chunks, are left out.
+    presents them as one array, which reads only the datasets and the
+    voxels that a selection covers. When the data are a Dask array, its
+    blocks hold whole chunks of the file. The voxels beyond the size of
+    the image, which pad the datasets to whole chunks, are left out.
 
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. There is one, an
