@@ -45,7 +45,7 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import Metadata
-from brainhops.datamodel.systems import RASmm
+from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.datamodel.transformations import (
     Affine,
     DisplacementField,
@@ -98,6 +98,17 @@ from brainhops.io.images.nrrd._views import (
     _image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
+from brainhops.io.transformations.afni import (
+    AfniAffine,
+    AfniAffineMetadata,
+    AfniBrikWarp,
+)
+from brainhops.io.transformations.afni._views import (
+    _warp_to_disk as _afni_warp_to_disk,
+)
+from brainhops.io.transformations.afni._views import (
+    _warp_to_model as _afni_warp_to_model,
+)
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.freesurfer.lta import (
@@ -150,6 +161,7 @@ try:
         _image_to_disk,
         _image_to_model,
     )
+    from brainhops.io.transformations.afni import AfniNiftiWarp
     from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
     from brainhops.io.transformations.itk.nifti import (
         ItkNiftiCoordinatesField,
@@ -1258,6 +1270,79 @@ _AFNI = Exemplar(
 )
 EXEMPLARS[AfniImage] = _AFNI
 
+# An AFNI warp is a dataset of three sub-bricks of DICOM displacements,
+# checked as an AFNI dataset and as a NIfTI file, whose models are
+# chains. The exemplar that is converted is a chain on a grid whose voxels
+# run along the DICOM axes, so that its displacements in voxel units are
+# the stored DICOM displacements.
+
+
+def _afni_displacements(data: np.ndarray) -> tx.Any:
+    lps = np.diag([-1.0, -1.0, 1.0, 1.0])
+    return Sequence(
+        [
+            RASToVoxel(matrix=lps[:-1]),
+            DisplacementField(
+                data, input=RASToVoxel().output, output=RASToVoxel().output
+            ),
+            VoxelToRAS(matrix=lps[:-1]),
+        ]
+    )
+
+
+_AFNI_WARP = _AFNI._replace(
+    to_model=_afni_warp_to_model,
+    to_disk=_afni_warp_to_disk,
+    sample=_vectors,
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    foreign=_afni_displacements,
+    build=lambda data: AfniBrikWarp(data=data),
+    derived=("transformations",),
+)
+EXEMPLARS[AfniBrikWarp] = _AFNI_WARP
+if nb is not None:
+    EXEMPLARS[AfniNiftiWarp] = _NIFTI_FIELD._replace(
+        build=lambda data: AfniNiftiWarp(data=data),
+        foreign=_afni_displacements,
+    )
+
+# An AFNI matrix file is a short text file, parsed in one pass, so its
+# matrices live in the record of its metadata and are a read-only array
+# just after a read, as for LTA. The record stores the matrices of every
+# volume, and the model holds the matrix of one.
+
+
+def _afni_affine_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrices
+
+
+def _afni_affine_edit_record(record: tx.Any) -> tx.Any:
+    record.comment = "# edited"
+    return record
+
+
+EXEMPLARS[AfniAffine] = Exemplar(
+    metadata=AfniAffineMetadata,
+    suffix=".aff12.1D",
+    proxies=(np.ndarray,),
+    to_model=lambda raw: np.asarray(raw)[0],
+    to_disk=lambda data: np.asarray(data)[None],
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_afni_affine_edit_record,
+    record_edited=lambda raw: raw.comment == "# edited",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=LPSmm(), output=LPSmm()),
+    build=AfniAffine,
+    options=frozenset({"volume", "base", "source"}),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_afni_affine_stored,
+)
+
 # An MRtrix image is checked as a `.mif` file, which holds the header and
 # the voxels, and as a gzipped `.mif.gz` file. A `.mih` header names its
 # data file, so a copy under another name differs in that line, and the
@@ -1624,6 +1709,13 @@ VARIANTS.append(
     ("AfniImage-BRIK-gz", AfniImage, _AFNI._replace(suffix=".BRIK.gz"))
 )
 
+VARIANTS.append(
+    (
+        "AfniBrikWarp-BRIK-gz",
+        AfniBrikWarp,
+        _AFNI_WARP._replace(suffix=".BRIK.gz"),
+    )
+)
 VARIANTS.append(
     ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
 )
