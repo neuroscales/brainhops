@@ -9,7 +9,7 @@ __all__ = [
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import ConvertTo, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -19,13 +19,19 @@ from brainhops._core.properties import (
 )
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.geometry import Geometry
+from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.common.freesurfer._geometry import fs_vox2tkr
+from brainhops.io.common.freesurfer import FreesurferTkrSystem
+from brainhops.io.common.freesurfer._tkr import (
+    scanner_vox2ras,
+    tkr_to_scanner,
+)
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
@@ -34,16 +40,13 @@ from brainhops.io.transformations.base import (
 # this format
 from .._formats import FreesurferTransformationFormat
 from ..lta import LtaRaw
-from ..lta._matrix_utils import _get_vox2ras
+from ..lta._matrix_utils import _volume_geometry
 from ..lta._xforms import _matrix_to_disk, _matrix_to_model, _read_only
 from ._metadata import RegisterDatMetadata
 from ._raw import RegisterDatRaw
-from ._systems import RegisterDatTkrSystem
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
-
-_VolumeInfo = tx.Optional[LtaRaw.VolumeInfo]
 
 
 # ----------------------------------------------------------------------
@@ -55,8 +58,8 @@ _VolumeInfo = tx.Optional[LtaRaw.VolumeInfo]
 # by the data model, in its private field, and it is pending: the record
 # is not changed until the transformation is consolidated, which encodes
 # a new record. The file holds no geometry, so the geometries of the
-# reference and movable volumes are given to the transformation, and
-# they are never written.
+# reference and movable volumes are given to the transformation, as data
+# model geometries, and they are never written.
 
 
 def _record(xform: "RegisterDatTransformation") -> tx.Optional[RegisterDatRaw]:
@@ -97,18 +100,29 @@ class RegisterDatTransformation(
     volume. FreeSurfer documents this direction in `regio_read_register`
     (`utils/registerio.cpp`, commit 4f8728e) and in `MRItkReg2Native`
     (`utils/mri.cpp`). The tkregister RAS space of a volume is described
-    by [`RegisterDatTkrSystem`][]. This class is the registered format for
-    `.dat` and `.reg` files, which `io.load` reads and `io.save` writes.
+    by
+    [`FreesurferTkrSystem`][brainhops.io.common.freesurfer.FreesurferTkrSystem].
+    This class is the registered format for `.dat` and `.reg` files,
+    which `io.load` reads and `io.save` writes.
 
     The file holds no geometry of either volume. The input and the output
     of the transformation are therefore the tkregister spaces of two
     volumes that are not known, unless the geometries are given with the
     options `reference=` and `moving=` when the file is read, or set on
-    the transformation later. A geometry is an
+    the transformation later. They are kept on the transformation, and
+    never written, because the file has no place for them. A geometry
+    is a [`Geometry`][brainhops.datamodel.geometry.Geometry] of the data
+    model. An image is also accepted and gives its `geometry`, and so is
+    an
     [`LtaRaw.VolumeInfo`][brainhops.io.transformations.freesurfer.lta.LtaRaw],
-    the geometry block that LTA files store. With both geometries, the
-    view [`RegisterDatTransformationRASToRAS`][] reads the same file as an
-    affine between the scanner RAS spaces of the two volumes.
+    the geometry block that LTA files store, which is converted to a
+    `Geometry`. The geometry must be that of a 3-D volume whose
+    voxel-to-world transformation is an affine into an anatomical space
+    in millimetres, which FreeSurfer reads as scanner RAS. Any other
+    geometry is refused when it is given. With both geometries, the view
+    [`RegisterDatTransformationRASToRAS`][] reads the same file as an
+    affine between the scanner RAS spaces of the two volumes, and the
+    transformation converts exactly to an LTA file.
 
     The whole file is held as a [`RegisterDatRaw`][] record by the
     [`RegisterDatMetadata`][] of the transformation, and the matrix is
@@ -122,7 +136,7 @@ class RegisterDatTransformation(
         and `output` were not set, is written as that record, byte for
         byte when the record was read from a file. Any other
         transformation is consolidated. When `input` and `output` are both
-        [`RegisterDatTkrSystem`][], the matrix is written as it is. When
+        `FreesurferTkrSystem`, the matrix is written as it is. When
         they are both `RASmm`, the matrix is taken to map the scanner RAS
         space of the reference volume to that of the movable volume, and
         it is converted with the geometries `reference` and `moving`,
@@ -137,9 +151,21 @@ class RegisterDatTransformation(
 
     _metadata: NoRepr[tx.Optional[RegisterDatMetadata]] = None
 
-    _reference: KwOnly[_VolumeInfo] = None
+    # A geometry that is given, or assigned, is converted to a `Geometry`
+    # and checked by `_as_geometry`.
+    _reference: KwOnly[
+        tx.Annotated[
+            tx.Optional[Geometry],
+            ConvertTo(lambda v: _as_geometry(v, "the reference volume")),
+        ]
+    ] = None
 
-    _moving: KwOnly[_VolumeInfo] = None
+    _moving: KwOnly[
+        tx.Annotated[
+            tx.Optional[Geometry],
+            ConvertTo(lambda v: _as_geometry(v, "the movable volume")),
+        ]
+    ] = None
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -156,7 +182,9 @@ class RegisterDatTransformation(
 
     It is an option of the reader, since the file does not store it, and
     it is never written. It gives the input system its geometry, and the
-    view [`RegisterDatTransformationRASToRAS`][] needs it.
+    view [`RegisterDatTransformationRASToRAS`][] and the conversions to
+    LTA need it. An image or an LTA geometry block that is assigned is
+    stored as a `Geometry`.
     """
 
     moving = smartproperty("moving", invalidates=("data", _FORGET_VIEWS))
@@ -164,7 +192,9 @@ class RegisterDatTransformation(
 
     It is an option of the reader, since the file does not store it, and
     it is never written. It gives the output system its geometry, and the
-    view [`RegisterDatTransformationRASToRAS`][] needs it.
+    view [`RegisterDatTransformationRASToRAS`][] and the conversions to
+    LTA need it. An image or an LTA geometry block that is assigned is
+    stored as a `Geometry`.
     """
 
     @smartproperty
@@ -172,19 +202,20 @@ class RegisterDatTransformation(
         """The input coordinate system.
 
         Unless it was set explicitly, it is the tkregister space of the
-        reference volume, which holds the geometry `reference` when it is
-        given.
+        reference volume, named `"reference"`, which holds the geometry
+        `reference` when it is given.
         """
-        return RegisterDatTkrSystem.from_raw(self.reference, "reference")
+        return FreesurferTkrSystem(name="reference", geometry=self.reference)
 
     @smartproperty
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The output coordinate system.
 
         Unless it was set explicitly, it is the tkregister space of the
-        movable volume, which holds the geometry `moving` when it is given.
+        movable volume, named `"moving"`, which holds the geometry `moving`
+        when it is given.
         """
-        return RegisterDatTkrSystem.from_raw(self.moving, "moving")
+        return FreesurferTkrSystem(name="moving", geometry=self.moving)
 
     @smartproperty(cache=True, invalidates=_FORGET_VIEWS)
     def data(self) -> tx.Optional[np.ndarray]:
@@ -266,6 +297,8 @@ class RegisterDatTransformation(
         **kwargs : Any
             Field values, such as the geometries `reference` and `moving`,
             which go to the constructor. Any other option is refused.
+            A geometry is a `Geometry`, an image or an LTA geometry
+            block.
 
         Returns
         -------
@@ -526,7 +559,7 @@ class RegisterDatTransformationRASToRAS(RegisterDatTransformation):
 
 def _geometries(
     xform: RegisterDatTransformation,
-) -> tx.Tuple[LtaRaw.VolumeInfo, LtaRaw.VolumeInfo]:
+) -> tx.Tuple[Geometry, Geometry]:
     """Return the geometries of the reference and the movable volume.
 
     Raises
@@ -545,38 +578,30 @@ def _geometries(
     return xform.reference, xform.moving
 
 
-def _tkr_to_ras(info: LtaRaw.VolumeInfo) -> np.ndarray:
-    """Return the matrix from the tkregister RAS to the scanner RAS of a
-    volume.
-
-    It is `vox2ras @ inv(vox2tkr)`, where `vox2tkr` is the matrix of
-    `MRIxfmCRS2XYZtkreg` in `utils/mri.cpp` of FreeSurfer.
-    """
-    vox2ras = _get_vox2ras(info)
-    vox2tkr = fs_vox2tkr(info.volume, info.voxelsize)
-    return vox2ras @ np.linalg.inv(vox2tkr)
-
-
 def _tkr_to_scanner(
-    matrix: np.ndarray,
-    reference: LtaRaw.VolumeInfo,
-    moving: LtaRaw.VolumeInfo,
+    matrix: np.ndarray, reference: Geometry, moving: Geometry
 ) -> np.ndarray:
-    """Return the scanner RAS matrix of a tkregister RAS matrix."""
-    return _tkr_to_ras(moving) @ matrix @ np.linalg.inv(_tkr_to_ras(reference))
+    """Return the scanner RAS matrix of a tkregister RAS matrix.
+
+    This is the inverse of the matrix that `MRItkReg2Native` in
+    `utils/mri.cpp` of FreeSurfer (commit 4f8728e) computes.
+    """
+    ref_tkr2ras = tkr_to_scanner(reference, "the reference volume")
+    mov_tkr2ras = tkr_to_scanner(moving, "the movable volume")
+    return mov_tkr2ras @ matrix @ np.linalg.inv(ref_tkr2ras)
 
 
 def _scanner_to_tkr(
-    matrix: np.ndarray,
-    reference: LtaRaw.VolumeInfo,
-    moving: LtaRaw.VolumeInfo,
+    matrix: np.ndarray, reference: Geometry, moving: Geometry
 ) -> np.ndarray:
     """Return the tkregister RAS matrix of a scanner RAS matrix.
 
     This is the matrix that `MRItkRegMtx` in `utils/mri.cpp` of
     FreeSurfer computes from the inverse of `matrix`.
     """
-    return np.linalg.inv(_tkr_to_ras(moving)) @ matrix @ _tkr_to_ras(reference)
+    ref_tkr2ras = tkr_to_scanner(reference, "the reference volume")
+    mov_tkr2ras = tkr_to_scanner(moving, "the movable volume")
+    return np.linalg.inv(mov_tkr2ras) @ matrix @ ref_tkr2ras
 
 
 def _build_raw(xform: RegisterDatTransformation) -> RegisterDatRaw:
@@ -602,7 +627,7 @@ def _build_raw(xform: RegisterDatTransformation) -> RegisterDatRaw:
             f"the matrix has shape {shape}."
         )
     homogeneous = np.asarray(_matrix_to_disk(data), dtype=np.float64)
-    if both(RegisterDatTkrSystem):
+    if both(FreesurferTkrSystem):
         matrix = homogeneous
     elif both(_systems.RASmm):
         try:
@@ -620,7 +645,7 @@ def _build_raw(xform: RegisterDatTransformation) -> RegisterDatRaw:
         raise UnrepresentableTransformationError(
             f"A register.dat file cannot encode an affine from "
             f"{name(src_system)} to {name(dst_system)}: it encodes "
-            f"RegisterDatTkrSystem to RegisterDatTkrSystem, or RASmm to "
+            f"FreesurferTkrSystem to FreesurferTkrSystem, or RASmm to "
             f"RASmm given the geometries of both volumes. Set the input "
             f"and output of the affine to say which it is."
         )
@@ -638,18 +663,21 @@ def _build_raw(xform: RegisterDatTransformation) -> RegisterDatRaw:
     )
 
 
-def _new_record(moving: _VolumeInfo) -> RegisterDatRaw:
+def _new_record(moving: tx.Optional[Geometry]) -> RegisterDatRaw:
     """Return the fields of a record for a transformation without one.
 
     The resolution lines hold the first and third voxel sizes of the
     movable volume, as `tkregister2` writes them, when its geometry is
-    given.
+    given. A voxel size is the length of a column of the voxel-to-RAS
+    matrix.
     """
     if moving is None:
         return RegisterDatRaw()
+    _, vox2ras = scanner_vox2ras(moving, "the movable volume")
+    voxelsize = np.linalg.norm(vox2ras[:3, :3], axis=0)
     return RegisterDatRaw(
-        inplane_resolution=float(moving.voxelsize[0]),
-        slice_thickness=float(moving.voxelsize[2]),
+        inplane_resolution=float(voxelsize[0]),
+        slice_thickness=float(voxelsize[2]),
     )
 
 
@@ -664,3 +692,34 @@ def _written(xform: RegisterDatTransformation) -> RegisterDatRaw:
         If the format cannot encode the systems or the matrix.
     """
     return _record(xform.consolidate())
+
+
+def _as_geometry(value: tx.Any, what: str) -> tx.Optional[Geometry]:
+    """Return a geometry of a volume, given as a register.dat accepts it.
+
+    A `Geometry` is kept as it is, an image gives its `geometry`, and an
+    LTA geometry block is converted. The geometry is then checked by
+    `scanner_vox2ras` of `brainhops.io.common.freesurfer._tkr`.
+
+    Raises
+    ------
+    TypeError
+        If `value` is neither `None`, a `Geometry`, an image nor an LTA
+        geometry block.
+    ValueError
+        If the geometry does not place a 3-D volume in scanner RAS by an
+        affine, or if the geometry block is marked invalid.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Image):
+        value = value.geometry
+    elif isinstance(value, LtaRaw.VolumeInfo):
+        value = _volume_geometry(value)
+    elif not isinstance(value, Geometry):
+        raise TypeError(
+            f"The geometry of {what} is a Geometry, an image or an "
+            f"LtaRaw.VolumeInfo, not a {type(value).__name__}."
+        )
+    scanner_vox2ras(value, what)
+    return value

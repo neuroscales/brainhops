@@ -7,6 +7,9 @@ RAS space of the movable volume, together with the name of the subject,
 the voxel size of the movable volume and two settings of `tkregister2`.
 It holds no geometry of either volume, so the scanner RAS affine that it
 describes is known only once the geometries of both volumes are given.
+The tkregister RAS space of a volume is described by
+[`FreesurferTkrSystem`][brainhops.io.common.freesurfer.FreesurferTkrSystem],
+which the MGH images share.
 
 A `register.dat` file is short and is read in one pass, as an LTA file
 is. Its whole content is held as a [`RegisterDatRaw`][] record by
@@ -17,30 +20,32 @@ changes is written as its file stored it.
 
 !!! example "Reading a registration in scanner RAS"
     ```python
-    from brainhops.io.transformations.freesurfer.lta import LtaRaw
+    import brainhops.io as io
+    from brainhops.io.transformations.freesurfer.lta import (
+        LtaTransformation,
+    )
     from brainhops.io.transformations.freesurfer.regdat import (
         RegisterDatTransformationRASToRAS,
     )
 
-    reference = LtaRaw.VolumeInfo(volume=(256, 256, 256))
-    moving = LtaRaw.VolumeInfo(volume=(64, 64, 36), voxelsize=(3, 3, 4))
+    anatomy = io.images.load("orig.mgz")
+    bold = io.images.load("bold.nii.gz")
     xform = RegisterDatTransformationRASToRAS.load(
-        "register.dat", reference=reference, moving=moving
+        "register.dat", reference=anatomy, moving=bold
     )
+    lta = xform.to(LtaTransformation)  # exact, with both geometries
     ```
 """
 
 __all__ = [
     "RegisterDatRaw",
     "RegisterDatMetadata",
-    "RegisterDatTkrSystem",
     "RegisterDatTransformation",
     "RegisterDatTransformationRASToRAS",
 ]
 
 from ._metadata import RegisterDatMetadata
 from ._raw import RegisterDatRaw
-from ._systems import RegisterDatTkrSystem
 from ._xforms import (
     RegisterDatTransformation,
     RegisterDatTransformationRASToRAS,
@@ -49,5 +54,6 @@ from ._xforms import (
 # Importing the private converters registers them with the data model,
 # so that a conversion into one of these formats, such as
 # `t.to(Format)`, fails with a reason instead of building a wrong
-# object.
+# object. They also register the exact conversions between register.dat
+# and LTA.
 from . import _converters  # noqa: E402, F401  isort: skip
