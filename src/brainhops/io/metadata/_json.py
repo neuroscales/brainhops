@@ -1,7 +1,7 @@
 """
 The vocabulary as a flat JSON object: the codec that BIDS sidecars
-(`bids`) and the JSON stores of formats (x5 node `Metadata`, Zarr
-attributes) share.
+(`_bids`) and the JSON stores of formats (the `Metadata` of an X5 node)
+share.
 
 A vocabulary field is stored under its *sidecar key*: its BIDS key
 (`"RepetitionTime"`), or, when BIDS has none, its name in `CamelCase`
@@ -12,7 +12,7 @@ A vocabulary field is stored under its *sidecar key*: its BIDS key
 An encoding direction is its BIDS string (`"j-"`), or, when it has none,
 an object (`Vector`, `Space`). A known term (a `SpaceEnum`, an `IntentEnum`,
 ...) is its string, a `data_unit` its unit symbol (`"ms"`, `"a.u."`), a
-`data_type` its `numpy` name (`"int16"`).
+`dtype` its `numpy` name (`"int16"`).
 """
 
 __all__ = [
@@ -135,38 +135,42 @@ def encode_changes(
 
 def encode_extra(
     obj: tx.Dict[str, tx.Any],
-    diff: tx.Mapping[str, tx.Any],
+    extra: tx.Mapping[str, tx.Any],
+    names: tx.Iterable[str],
     *,
     report: ConversionReport,
     reserved: tx.Collection[str] = (),
 ) -> None:
     """
-    Apply a diff of `extra` to a JSON object, in place.
+    Replace the free-form keys of a JSON object with `extra`, in place.
 
-    The diff is the one that `FileBasedMetadata._changed_fields` computes:
-    a `None` value removes the key, and any other value is written as
-    JSON. A key that the format keeps for its own use is not written, and
-    is reported as lost.
+    The free-form keys of the object are those that hold no vocabulary
+    field, which `decode_object` decodes as `extra`. They are removed,
+    and each key of `extra` is written as JSON. A key that the format
+    keeps for its own use, or that holds a vocabulary field, is not
+    written, and is reported as lost.
 
     Parameters
     ----------
     obj : dict
         The JSON object to edit.
-    diff : mapping
-        Key to new value, or to `None` for a removed key.
+    extra : mapping
+        The new free-form keys and their values.
+    names : iterable of str
+        The vocabulary fields that the object stores, whose keys are not
+        free-form (see `sidecar_key`).
     report : ConversionReport
-        The report to fill with the reserved keys that were refused.
+        The report to fill with the keys that were refused.
     reserved : collection of str, optional
         The keys the format keeps for its own use.
     """
-    # Not `FileBasedMetadata`'s diff helper: this one also writes JSON
-    # and refuses the keys a format reserves, two things the data model
-    # knows nothing of.
-    for key, value in diff.items():
-        if key in reserved:
+    vocabulary = {sidecar_key(name) for name in names}
+    for key in [key for key in obj if key not in vocabulary]:
+        if key not in reserved:
+            del obj[key]
+    for key, value in extra.items():
+        if key in reserved or key in vocabulary:
             report.lost[f"extra[{key!r}]"] = value
-        elif value is None:
-            obj.pop(key, None)
         else:
             obj[key] = to_json("extra", value)
 

@@ -19,8 +19,10 @@ when they differ.
 
 Each format that follows the design is listed in `EXEMPLARS`, with what
 the checks need to know about it, and every other registered format is
-listed in `NOT_MIGRATED`. A test makes sure that the two tables together
-name every registered format, so a new format has to choose a table. The
+listed in `NOT_MIGRATED`. A metadata format whose files hold metadata
+only, such as a BIDS sidecar, has no format object and is listed in
+`METADATA_FILES`. A test makes sure that the tables together name every
+registered format, so a new format has to choose a table. The
 checks are parametrized over the exemplars and over a small format defined
 in this module, the toy format, which shows the mechanism end to end in
 as little code as possible.
@@ -1395,6 +1397,9 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+METADATA_FILES: tx.Tuple[str, ...] = ("brainhops.io.metadata.BidsSidecar",)
+"""Metadata formats whose files hold metadata only."""
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
@@ -1716,6 +1721,7 @@ def test_every_registered_format_is_in_one_table() -> None:
     }
     # The metadata class of an exemplar is registered with it.
     metadata = {exemplar.metadata for exemplar in EXEMPLARS.values()}
+    metadata |= {_resolve(name) for name in METADATA_FILES}
     assert registered == set(EXEMPLARS) | metadata | not_migrated
 
 
