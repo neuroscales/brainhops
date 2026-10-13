@@ -1,0 +1,319 @@
+"""Where an N5 node lies, and the lazy array of one dataset."""
+
+# stdlib
+import os
+
+# dependencies
+import numpy as np
+import typing_extensions as tx
+
+# internals
+from brainhops._core import path
+from brainhops._core.dependencies import ts
+from brainhops.io.base._utils_files import is_local
+from brainhops.io.base.parsers import (
+    ParserContentError,
+    ParserExistsError,
+    ParserTypeError,
+)
+
+# this format
+from ._raw import N5Raw, json_attributes, parse_attributes, with_levels
+
+ATTRIBUTES = "attributes.json"
+"""The name of the JSON file that holds the attributes of a node."""
+
+READABLE_COMPRESSIONS = ("raw", "gzip", "bzip2", "xz", "blosc")
+"""The compressions that the `n5` driver of TensorStore 0.1.45 decodes.
+
+TensorStore refuses the others, such as `lz4` and `zstd`, and the
+`compressionType` of version 0 of the specification, when it opens a
+dataset.
+"""
+
+
+def node_location(filename: tx.Any) -> str:
+    """Return the directory of the N5 node that a name designates.
+
+    A node is designated by its directory or by its `attributes.json`
+    file. Only local containers are read.
+
+    Parameters
+    ----------
+    filename : path-like
+        The directory or the `attributes.json` file of a node.
+
+    Returns
+    -------
+    str
+        The absolute path of the directory of the node.
+
+    Raises
+    ------
+    ParserTypeError
+        If the name is not a local path.
+    ParserExistsError
+        If the name is neither a directory nor an `attributes.json` file.
+    """
+    if isinstance(filename, str):
+        filename = path.Path(filename)
+    if not is_local(filename):
+        raise ParserTypeError(
+            f"brainhops reads local N5 containers only, not {filename}."
+        )
+    local = os.path.abspath(os.fspath(filename))
+    if os.path.isdir(local):
+        return local
+    if os.path.basename(local) == ATTRIBUTES and os.path.isfile(local):
+        return os.path.dirname(local)
+    raise ParserExistsError(f"No N5 node at {local}.")
+
+
+def read_node(filename: tx.Any) -> tx.Tuple[str, N5Raw]:
+    """Read the record of a dataset or of a pyramid, with its location.
+
+    The attributes of the node are read, and a node that is not a
+    dataset is read as a pyramid: its subdirectories `s0`, `s1`, ... are
+    read as its levels, up to the first one that is missing. No block is
+    read.
+
+    Parameters
+    ----------
+    filename : path-like
+        The directory or the `attributes.json` file of a node.
+
+    Returns
+    -------
+    str
+        The directory of the node.
+    N5Raw
+        The record of the node.
+
+    Raises
+    ------
+    ParserExistsError
+        If there is no node at that name.
+    ParserContentError
+        If the node is neither a dataset nor a pyramid, or its
+        attributes break the specification.
+    """
+    location = node_location(filename)
+    record = _read_attributes(location)
+    if record.is_dataset:
+        return location, record
+    levels = []
+    while True:
+        level = os.path.join(location, f"s{len(levels)}")
+        if not os.path.isfile(os.path.join(level, ATTRIBUTES)):
+            break
+        levels.append(_read_attributes(level))
+    if not levels:
+        raise ParserContentError(
+            f"The N5 group at {location} is neither a dataset nor a pyramid "
+            f"of datasets s0, s1, ..."
+        )
+    return location, with_levels(record, levels)
+
+
+def dataset_location(location: str, record: N5Raw, level: int) -> str:
+    """Return the directory of a dataset of a node.
+
+    The dataset is the node itself, or the level `s<level>` of a pyramid.
+    """
+    if record.levels:
+        return os.path.join(location, f"s{level}")
+    return location
+
+
+def stream_location(file: tx.Any) -> str:
+    """Return the directory of the node whose attributes a stream reads.
+
+    Raises
+    ------
+    ParserTypeError
+        If the stream has no file name, which a node of several files
+        needs.
+    """
+    name = getattr(file, "name", None)
+    if not isinstance(name, (str, os.PathLike)):
+        raise ParserTypeError(
+            "An N5 dataset is a directory of files, which a stream without a "
+            "file name cannot hold. Read it from the path of its directory "
+            "or of its attributes.json file instead."
+        )
+    return node_location(name)
+
+
+class _N5Proxy:
+    """A lazy array of the samples of an N5 dataset.
+
+    The proxy holds the directory of the dataset and the shape and the
+    type that its record gives, so that it answers them without reading
+    anything. The dataset is opened with the `n5` driver of TensorStore
+    the first time that values are needed, and each read then decodes
+    only the blocks that it needs. A missing block reads as zeros, since
+    N5 datasets are sparse. The samples are indexed in the order of the
+    `dimensions` of the dataset, fastest first. The proxy keeps no open
+    dataset when it is pickled or copied.
+    """
+
+    def __init__(self, location: str, record: N5Raw) -> None:
+        self.location = location
+        """The directory of the dataset."""
+        self.shape = tuple(int(n) for n in record.dimensions)
+        """The shape of the samples, read from the record."""
+        self.dtype = record.dtype
+        """The type of the samples, in the native byte order."""
+        self._store = None
+
+    @property
+    def ndim(self) -> int:
+        """The number of dimensions of the samples."""
+        return len(self.shape)
+
+    def __getstate__(self) -> tx.Dict[str, tx.Any]:
+        state = dict(self.__dict__)
+        state["_store"] = None
+        return state
+
+    def __array__(
+        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
+    ) -> np.ndarray:
+        values = self._read(Ellipsis)
+        return values if dtype is None else values.astype(dtype)
+
+    def __getitem__(self, index: tx.Any) -> np.ndarray:
+        # An empty selection, such as the one that Dask reads to learn the
+        # type of an array, is answered without reading the dataset.
+        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
+        if selected.size == 0:
+            return np.empty(selected.shape, self.dtype)
+        basic = _basic_index(index, self.shape)
+        if basic is None:
+            return np.asarray(self)[index]
+        return self._read(basic)
+
+    def __repr__(self) -> str:
+        return (
+            f"_N5Proxy(location={self.location!r}, shape={self.shape}, "
+            f"dtype={self.dtype})"
+        )
+
+    def _read(self, index: tx.Any) -> np.ndarray:
+        """Read a selection of the samples with TensorStore.
+
+        Raises
+        ------
+        ParserContentError
+            If the dataset cannot be opened or a block cannot be decoded.
+        """
+        store = self._open()
+        try:
+            return np.asarray(store[index].read().result())
+        except Exception as e:  # noqa: BLE001
+            raise ParserContentError(
+                f"TensorStore cannot read the N5 dataset at {self.location}: "
+                f"{e}"
+            ) from e
+
+    def _open(self) -> tx.Any:
+        """Open the dataset with TensorStore, once.
+
+        Raises
+        ------
+        ParserContentError
+            If TensorStore is missing or cannot open the dataset, or the
+            dataset no longer has the shape and the type of the record.
+        """
+        if self._store is not None:
+            return self._store
+        if ts is None:
+            raise ParserContentError(
+                "Reading the samples of an N5 dataset needs TensorStore "
+                "(pip install brainhops[n5])."
+            )
+        spec = {
+            "driver": "n5",
+            "kvstore": {"driver": "file", "path": self.location + os.sep},
+        }
+        try:
+            store = ts.open(spec, read=True, open=True).result()
+        except Exception as e:  # noqa: BLE001
+            raise ParserContentError(
+                f"TensorStore cannot open the N5 dataset at {self.location}: "
+                f"{e}"
+            ) from e
+        if tuple(store.shape) != self.shape or store.dtype.numpy_dtype != (
+            self.dtype
+        ):
+            raise ParserContentError(
+                f"The N5 dataset at {self.location} holds {store.dtype} "
+                f"samples of shape {tuple(store.shape)}, but the attributes "
+                f"that the image was read with say {self.dtype} and "
+                f"{self.shape}."
+            )
+        self._store = store
+        return store
+
+
+def _read_attributes(location: str) -> N5Raw:
+    """Read the record of the attributes of one directory, without levels.
+
+    A directory without `attributes.json` is a group without attributes.
+
+    Raises
+    ------
+    ParserContentError
+        If the attributes break the specification.
+    """
+    filename = os.path.join(location, ATTRIBUTES)
+    if not os.path.isfile(filename):
+        return parse_attributes({})
+    with open(filename, "rb") as file:
+        return parse_attributes(json_attributes(file.read()))
+
+
+def _basic_index(
+    index: tx.Any, shape: tx.Tuple[int, ...]
+) -> tx.Optional[tx.Tuple[tx.Any, ...]]:
+    """Translate a basic NumPy index into one that TensorStore reads.
+
+    TensorStore reads integers and slice bounds as absolute positions,
+    without wrapping negative values, so each integer and each slice with
+    a positive step is made explicit with the help of `range`. `None` is
+    returned for any other index, such as an array, a new axis or a
+    negative step, which the caller then applies with NumPy after a full
+    read.
+    """
+    if not isinstance(index, tuple):
+        index = (index,)
+    if sum(item is Ellipsis for item in index) > 1:
+        return None
+    explicit = [item for item in index if item is not Ellipsis]
+    if len(explicit) > len(shape):
+        return None
+    expanded: tx.List[tx.Any] = []
+    for item in index:
+        if item is Ellipsis:
+            expanded += [slice(None)] * (len(shape) - len(explicit))
+        else:
+            expanded.append(item)
+    expanded += [slice(None)] * (len(shape) - len(expanded))
+    out: tx.List[tx.Any] = []
+    for item, n in zip(expanded, shape):
+        if isinstance(item, (int, np.integer)) and not isinstance(item, bool):
+            out.append(range(n)[int(item)])
+        elif isinstance(item, slice):
+            selected = range(n)[item]
+            if selected.step < 1:
+                return None
+            out.append(
+                slice(
+                    selected.start,
+                    max(selected.start, selected.stop),
+                    selected.step,
+                )
+            )
+        else:
+            return None
+    return tuple(out)

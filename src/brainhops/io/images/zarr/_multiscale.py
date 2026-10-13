@@ -14,7 +14,7 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import AxisList, CoordinateSystem
-from brainhops.datamodel.transformations import Transformation
+from brainhops.datamodel.transformations import Identity, Transformation
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.common.zarr import StoreLike, ZarrReaderWriter
@@ -408,6 +408,8 @@ class OmeZarrImage(
 
         levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
         rich = False
+        placements = list(self.transformations or [])
+        moved_placement = False
         for index, image in enumerate(images):
             data = image.data
             if data is None:
@@ -425,6 +427,16 @@ class OmeZarrImage(
                     f"Level {index} of this image cannot be written as "
                     f"OME-Zarr metadata. {error}"
                 ) from error
+            if not _map.is_dataset_transform(entry):
+                if len(images) != 1 or placements:
+                    raise WriterError(
+                        f"Level {index} has a transformation that OME-Zarr "
+                        "cannot store on a dataset. Put the placement on the "
+                        "multiscale image instead."
+                    )
+                placements.append(image.transformation)
+                entry = _map.to_ome(Identity(), storage_perm, len(data.shape))
+                moved_placement = True
             rich = rich or _map.needs_rich_version(entry)
             backend = get_array_backend(data)
             stored = backend.transpose(data, storage_perm)
@@ -436,7 +448,6 @@ class OmeZarrImage(
 
         # Placements are written once as common transformations instead of
         # being folded into the levels, so a round trip keeps them apart.
-        placements = list(self.transformations or [])
         entries = []  # type: tx.List[tx.Dict[str, tx.Any]]
         for placement in placements:
             try:
@@ -448,6 +459,7 @@ class OmeZarrImage(
                 ) from error
             rich = rich or _map.needs_rich_version(entry)
             entries.append(entry)
+        rich = rich or moved_placement
         # Only 0.6 and later name coordinate systems, which several world
         # spaces require.
         rich = rich or len(entries) > 1

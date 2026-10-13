@@ -55,6 +55,7 @@ nifti = ["brainhops[nibabel]"]
 mgh = ["brainhops[nibabel]"]
 # MINC1 is read with nibabel; MINC2 (HDF5) also needs h5py.
 minc = ["brainhops[nibabel]", "brainhops[h5py]"]
+imaris = ["brainhops[h5py]"]
 spm = ["brainhops[nifti]"]
 fsl = ["brainhops[nifti]"]
 niftyreg = ["brainhops[nifti]"]
@@ -66,7 +67,8 @@ niftyreg = ["brainhops[nifti]"]
 zarr = [
     # 0.2 for OME 0.6 support;
     # 0.2.1 opens and creates a store from any os.PathLike.
-    "abczarr >= 0.2.1",
+    # 0.2.3 checks that a 0.6 dataset only scales and translates.
+    "abczarr >= 0.2.3",
     # abczarr reads and writes Zarr through a driver.
     # The zarr-py driver needs zarr-python 3, which requires python >= 3.11
     "zarr >= 3; python_version >= '3.11'",
@@ -75,19 +77,44 @@ zarr = [
     # range 3.8-3.10.
     "tensorstore >= 0.1.43 ; python_version <= '3.10'",
 ]
-zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
-zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]
-zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
+# N5 datasets are read with TensorStore, whose n5 driver decodes the raw,
+# gzip, bzip2, xz and blosc compressions.
+n5 = ["tensorstore >= 0.1.45"]
+precomputed = ["tensorstore >= 0.1.45"]
+zarr-python = ["abczarr[zarr-py] >= 0.2.3"]
+zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.3", "tensorstore >= 0.1.43"]
+zarr-zarrista = ["abczarr[zarrista] >= 0.2.3"]
 io = [
     "brainhops[h5py]",
     "brainhops[nibabel]",
     "brainhops[pillow]",
     "brainhops[tiff]",
     "brainhops[openslide]",
+    "brainhops[n5]",
+    "brainhops[precomputed]",
     "brainhops[zarr]",
 ]
 
 # test
+# Third-party libraries that the tests use only to cross-check brainhops
+# (they are not dependencies of any I/O); tests that need one skip when it
+# is missing.
+test-interop = [
+    "SimpleITK",
+    # SimpleITK 2.5 has no wheels for Python 3.8, and building it from
+    # source is slow.
+    "SimpleITK < 2.5 ; python_version < '3.9'",
+    # itk-elastix pulls in ITK and adds elastix/transformix to it. ITK
+    # 5.4.4, the last release with Python 3.8 wheels, uses `numpy.bool`,
+    # which only numpy >= 2 (Python 3.9+) has.
+    "itk-elastix ; python_version >= '3.9'",
+    "nitransforms",
+    "fslpy",
+    # fslpy 3.28 uses syntax that needs Python 3.9.
+    "fslpy < 3.28 ; python_version < '3.9'",
+    "pynrrd",
+    "universal_pathlib",
+]
 test = [
     "pytest",
     "pytest-cov",
@@ -97,7 +124,10 @@ test = [
     "brainhops[pillow]",
     "brainhops[tiff]",
     "brainhops[openslide]",
-    "brainhops[zarr]"
+    "brainhops[n5]",
+    "brainhops[precomputed]",
+    "brainhops[zarr]",
+    "brainhops[test-interop]",
 ]
 
 # doc

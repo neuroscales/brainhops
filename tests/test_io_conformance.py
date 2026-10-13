@@ -28,6 +28,8 @@ as little code as possible.
 
 import gzip
 import importlib
+import json
+import math
 import os
 import pickle
 import struct
@@ -45,9 +47,10 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import Metadata
-from brainhops.datamodel.systems import RASmm
+from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.datamodel.transformations import (
     Affine,
+    DisplacementField,
     Identity,
     Scaling,
     Sequence,
@@ -98,6 +101,17 @@ from brainhops.io.images.nrrd._views import (
     _image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
+from brainhops.io.transformations.afni import (
+    AfniAffine,
+    AfniAffineMetadata,
+    AfniBrikWarp,
+)
+from brainhops.io.transformations.afni._views import (
+    _warp_to_disk as _afni_warp_to_disk,
+)
+from brainhops.io.transformations.afni._views import (
+    _warp_to_model as _afni_warp_to_model,
+)
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.bdv import BdvViewRegistration
@@ -106,6 +120,13 @@ from brainhops.io.transformations.bdv._xform import (
 )
 from brainhops.io.transformations.bdv._xform import (
     _matrix_to_model as _bdv_matrix_to_model,
+)
+from brainhops.io.transformations.c3d import C3dAffine, C3dAffineMetadata
+from brainhops.io.transformations.c3d._affine import (
+    _matrix_to_disk as _c3d_to_disk,
+)
+from brainhops.io.transformations.c3d._affine import (
+    _matrix_to_model as _c3d_to_model,
 )
 from brainhops.io.transformations.freesurfer.lta import (
     LtaMetadata,
@@ -129,12 +150,33 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
 )
+from brainhops.io.transformations.minc import (
+    XfmAffine,
+    XfmMetadata,
+    XfmTransform,
+)
+from brainhops.io.transformations.minc._affine import (
+    _matrix_to_disk as _xfm_matrix_to_disk,
+)
+from brainhops.io.transformations.minc._affine import (
+    _matrix_to_model as _xfm_matrix_to_model,
+)
+from brainhops.io.transformations.mrtrix import (
+    MrtrixCoordinatesField,
+    MrtrixDisplacementField,
+    MrtrixLinearMetadata,
+    MrtrixLinearTransform,
+    MrtrixWarpFull,
+)
+from brainhops.io.transformations.mrtrix._views import (
+    _warp_to_disk,
+    _warp_to_model,
+)
 
 try:
     import nibabel as nb
     from nibabel.arrayproxy import ArrayProxy
 
-    from brainhops.datamodel.transformations import DisplacementField
     from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.freesurfer.mgh._views import (
         _image_to_disk as _mgh_to_disk,
@@ -147,6 +189,7 @@ try:
         _image_to_disk,
         _image_to_model,
     )
+    from brainhops.io.transformations.afni import AfniNiftiWarp
     from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
     from brainhops.io.transformations.itk.nifti import (
         ItkNiftiCoordinatesField,
@@ -197,6 +240,34 @@ except ImportError:
     minc_needs = None
 
 try:
+    import tensorstore as ts
+
+    from brainhops.io.images.n5 import N5Image, N5Metadata
+    from brainhops.io.images.n5._data import _N5Proxy
+    from brainhops.io.images.n5._views import (
+        _image_to_disk as _n5_to_disk,
+    )
+    from brainhops.io.images.n5._views import (
+        _image_to_model as _n5_to_model,
+    )
+    from brainhops.io.images.precomputed import (
+        PrecomputedImage,
+        PrecomputedMetadata,
+    )
+    from brainhops.io.images.precomputed._data import _PrecomputedProxy
+    from brainhops.io.images.precomputed._views import (
+        _image_to_disk as _precomputed_to_disk,
+    )
+    from brainhops.io.images.precomputed._views import (
+        _image_to_model as _precomputed_to_model,
+    )
+
+    n5_needs = ts
+except ImportError:
+    ts = None
+    n5_needs = None
+
+try:
     import h5py
 
     from brainhops.io.common.bdv._hdf5 import _BdvProxy
@@ -207,6 +278,14 @@ try:
     )
     from brainhops.io.images.bdv._views import (
         _image_to_model as _bdv_to_model,
+    )
+    from brainhops.io.images.imaris import ImarisImage, ImarisMetadata
+    from brainhops.io.images.imaris._data import _ImarisProxy
+    from brainhops.io.images.imaris._views import (
+        _image_to_disk as _imaris_to_disk,
+    )
+    from brainhops.io.images.imaris._views import (
+        _image_to_model as _imaris_to_model,
     )
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
@@ -1022,6 +1101,37 @@ _LTA = Exemplar(
 EXEMPLARS[LtaTransformation] = _LTA
 
 
+# A Convert3D matrix file is parsed in one pass, as an LTA file is, and
+# its record holds the matrix. The only field of the record outside the
+# matrix is the layout of its rows, which the edit of check 10 changes to
+# the layout of Greedy. Check 6 is vacuous, because the file holds no
+# data beside its record (item 170 of the design memo).
+
+
+def _c3d_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+EXEMPLARS[C3dAffine] = Exemplar(
+    metadata=C3dAffineMetadata,
+    suffix=".mat",
+    proxies=(tuple,),
+    to_model=_c3d_to_model,
+    to_disk=_c3d_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=lambda record: replace(record, row_end=" "),
+    record_edited=lambda raw: raw.row_end == " ",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=RASmm(), output=RASmm()),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_c3d_stored,
+)
+
+
 # The model of an X5 file is a chain, whose first element here is a field
 # of displacements on an identity grid, so that its displacements in voxel
 # units are the stored RAS displacements.
@@ -1200,6 +1310,74 @@ _M3Z = Exemplar(
 )
 EXEMPLARS[M3zMorph] = _M3Z
 
+# An MNI transform file is short and parsed in one pass, so the matrices
+# of its linear transforms live in the record, as the matrix of an LTA
+# file does. A file of one linear transform is an `XfmAffine`. The
+# exemplar of the chain, `XfmTransform`, is a chain of one affine, whose
+# matrix stands for its data: a grid transform names a MINC volume, which
+# brainhops cannot write, so the checks of writing cannot build one. The
+# metadata holds the whole file, so the check that metadata never reads
+# data compares a full copy of the file, as for LTA and M3Z. Its own test
+# module checks that the metadata never reads a displacement volume.
+
+
+def _xfm_stored(xform: tx.Any) -> tx.Any:
+    # The matrix of the first transform lives in the record. A
+    # transformation without a record stores nothing until it is
+    # consolidated.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.transforms[0].matrix
+
+
+def _xfm_edit_record(record: tx.Any) -> tx.Any:
+    # A record is frozen, so the edit is made with `replace`.
+    return replace(record, comments=("%edited",))
+
+
+def _xfm_affine(data: tx.Any) -> tx.Any:
+    return Affine(data, input=RASmm(), output=RASmm())
+
+
+def _xfm_data(xform: tx.Any) -> tx.Any:
+    return xform.transformations[0].data
+
+
+def _xfm_set_data(xform: tx.Any, value: tx.Any) -> None:
+    xform.transformations = (_xfm_affine(value),)
+
+
+_XFM = Exemplar(
+    metadata=XfmMetadata,
+    suffix=".xfm",
+    # The file is parsed in one pass and has no lazy data, so the checks
+    # read the matrix of the record, a tuple of rows, as for LTA.
+    proxies=(tuple,),
+    to_model=_xfm_matrix_to_model,
+    to_disk=_xfm_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_xfm_edit_record,
+    record_edited=lambda raw: raw.comments == ("%edited",),
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=_xfm_affine,
+    build=XfmAffine,
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_xfm_stored,
+)
+EXEMPLARS[XfmAffine] = _XFM
+EXEMPLARS[XfmTransform] = _XFM._replace(
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    foreign=lambda data: Sequence([_xfm_affine(data)]),
+    build=lambda data: XfmTransform([_xfm_affine(data)]),
+    derived=(),
+    view="transformations",
+    data=_xfm_data,
+    set_data=_xfm_set_data,
+)
+
 # An MGH file keeps its footer of acquisition parameters and its tags
 # after the voxels, and both belong to the record. The edit of the record
 # changes one parameter of the footer and the tags. The metadata writes
@@ -1263,6 +1441,79 @@ _AFNI = Exemplar(
 )
 EXEMPLARS[AfniImage] = _AFNI
 
+# An AFNI warp is a dataset of three sub-bricks of DICOM displacements,
+# checked as an AFNI dataset and as a NIfTI file, whose models are
+# chains. The exemplar that is converted is a chain on a grid whose voxels
+# run along the DICOM axes, so that its displacements in voxel units are
+# the stored DICOM displacements.
+
+
+def _afni_displacements(data: np.ndarray) -> tx.Any:
+    lps = np.diag([-1.0, -1.0, 1.0, 1.0])
+    return Sequence(
+        [
+            RASToVoxel(matrix=lps[:-1]),
+            DisplacementField(
+                data, input=RASToVoxel().output, output=RASToVoxel().output
+            ),
+            VoxelToRAS(matrix=lps[:-1]),
+        ]
+    )
+
+
+_AFNI_WARP = _AFNI._replace(
+    to_model=_afni_warp_to_model,
+    to_disk=_afni_warp_to_disk,
+    sample=_vectors,
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    foreign=_afni_displacements,
+    build=lambda data: AfniBrikWarp(data=data),
+    derived=("transformations",),
+)
+EXEMPLARS[AfniBrikWarp] = _AFNI_WARP
+if nb is not None:
+    EXEMPLARS[AfniNiftiWarp] = _NIFTI_FIELD._replace(
+        build=lambda data: AfniNiftiWarp(data=data),
+        foreign=_afni_displacements,
+    )
+
+# An AFNI matrix file is a short text file, parsed in one pass, so its
+# matrices live in the record of its metadata and are a read-only array
+# just after a read, as for LTA. The record stores the matrices of every
+# volume, and the model holds the matrix of one.
+
+
+def _afni_affine_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrices
+
+
+def _afni_affine_edit_record(record: tx.Any) -> tx.Any:
+    record.comment = "# edited"
+    return record
+
+
+EXEMPLARS[AfniAffine] = Exemplar(
+    metadata=AfniAffineMetadata,
+    suffix=".aff12.1D",
+    proxies=(np.ndarray,),
+    to_model=lambda raw: np.asarray(raw)[0],
+    to_disk=lambda data: np.asarray(data)[None],
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_afni_affine_edit_record,
+    record_edited=lambda raw: raw.comment == "# edited",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=LPSmm(), output=LPSmm()),
+    build=AfniAffine,
+    options=frozenset({"volume", "base", "source"}),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_afni_affine_stored,
+)
+
 # An MRtrix image is checked as a `.mif` file, which holds the header and
 # the voxels, and as a gzipped `.mif.gz` file. A `.mih` header names its
 # data file, so a copy under another name differs in that line, and the
@@ -1290,6 +1541,87 @@ _MRTRIX = Exemplar(
     storage={"datatype": "int16"},
 )
 EXEMPLARS[MrtrixImage] = _MRTRIX
+
+# The MRtrix warps are MRtrix images, checked as `.mif` files, whose
+# models are chains. A field of coordinates and a field of displacements
+# are built on an identity grid, which their chains replace to change the
+# geometry. A new record of either one records its kind in the header key
+# `brainhops_field_type`, with a `command_history` line of brainhops,
+# which an untouched save does not add. A
+# warpfull file holds its warps and its linear transforms, which no chain
+# can be split back into, so its data stands in for its geometry, as for
+# FNIRT, and it refuses every conversion from another format. Its grid is
+# not part of the model, and new warps of the same type keep the record,
+# so the new warps are given in double precision, which the record
+# stores, for the checks that the record is new.
+
+
+def _warpfull_change_geometry(xform: tx.Any) -> None:
+    xform.data = np.asarray(xform.data, dtype="float64") * 2 + 1
+
+
+_MRTRIX_WARP = _MRTRIX._replace(
+    to_model=_warp_to_model,
+    to_disk=_warp_to_disk,
+    sample=_vectors,
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    derived=("transformations",),
+)
+EXEMPLARS[MrtrixCoordinatesField] = _MRTRIX_WARP._replace(
+    build=lambda data: MrtrixCoordinatesField(data=data),
+    foreign=_spm_coordinates,
+)
+EXEMPLARS[MrtrixDisplacementField] = _MRTRIX_WARP._replace(
+    build=lambda data: MrtrixDisplacementField(data=data),
+    foreign=_ras_displacements,
+)
+EXEMPLARS[MrtrixWarpFull] = _MRTRIX_WARP._replace(
+    sample=lambda: np.arange(288, dtype="float32").reshape(2, 3, 4, 3, 4),
+    geometry=_data_geometry,
+    change_geometry=_warpfull_change_geometry,
+    foreign=None,
+    build=lambda data: MrtrixWarpFull(data=data),
+    options=frozenset({"from_image", "midway"}),
+    derived=(),
+)
+
+# An MRtrix linear transform is a short text file, parsed in one pass, so
+# its matrix lives in the record of its metadata and is a read-only array
+# just after a read, as for LTA. The record stores the `(3, 4)` matrix of
+# the model as it is. A file that a transformation without a record
+# writes names brainhops in its `command_history`, which is the signature
+# by which the metadata dispatcher recognizes it.
+
+
+def _mrtrix_linear_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+def _mrtrix_linear_edit_record(record: tx.Any) -> tx.Any:
+    record.keyval["comments"] = "edited"
+    return record
+
+
+EXEMPLARS[MrtrixLinearTransform] = Exemplar(
+    metadata=MrtrixLinearMetadata,
+    suffix=".txt",
+    proxies=(np.ndarray,),
+    to_model=np.asarray,
+    to_disk=np.asarray,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_mrtrix_linear_edit_record,
+    record_edited=lambda raw: raw.keyval.get("comments") == "edited",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=RASmm(), output=RASmm()),
+    build=MrtrixLinearTransform,
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_mrtrix_linear_stored,
+)
 
 # A NRRD image is checked as an attached `.nrrd` file and as a detached
 # `.nhdr` header with its `.raw.gz` data file, both gzipped by default.
@@ -1554,10 +1886,256 @@ if h5py is not None:
         source=_write_bdv,
     )
 
+
+# An N5 dataset is a directory that holds an `attributes.json` file and
+# its blocks, and it cannot be written, so the checks write a dataset as
+# the specification describes it, without TensorStore, and name it by its
+# `attributes.json` file. The blocks at the upper edges are smaller than
+# `blockSize`, as the Java tools write them. The bytes of the attributes
+# cannot hold the dataset, so `header_file` names that file itself. N5
+# datasets are sparse, so a copy without blocks would read as zeros: the
+# copy whose data cannot be read holds a block that cannot be decoded
+# instead. The record is compared as it is, since the metadata cannot
+# write bytes. The lazy array reads the blocks with TensorStore, so the
+# exemplar also checks the reader against the specification.
+
+_N5_BLOCK = (2, 2, 3)
+
+
+def _n5_writer(compression: str) -> tx.Callable[[tx.Any, tx.Any], None]:
+    """Return a function that writes an N5 dataset of one compression."""
+
+    def write(path: tx.Any, data: tx.Any) -> None:
+        directory = os.path.dirname(os.fspath(path))
+        values = np.asarray(data, dtype="float32")
+        attributes = {
+            "dimensions": list(values.shape),
+            "blockSize": list(_N5_BLOCK),
+            "dataType": "float32",
+            "compression": {"type": compression},
+            "pixelResolution": {"dimensions": [2, 3, 4], "unit": "um"},
+        }
+        os.makedirs(directory, exist_ok=True)
+        with open(path, "w") as file:
+            json.dump(attributes, file)
+        grid = [math.ceil(n / b) for n, b in zip(values.shape, _N5_BLOCK)]
+        for position in np.ndindex(*grid):
+            begin = [g * b for g, b in zip(position, _N5_BLOCK)]
+            block = values[
+                tuple(slice(i, i + b) for i, b in zip(begin, _N5_BLOCK))
+            ]
+            # A block is a big-endian header (mode, number of dimensions
+            # and size of the block), then the big-endian samples with the
+            # first dimension fastest.
+            header = struct.pack(">HH", 0, block.ndim)
+            header += struct.pack(f">{block.ndim}I", *block.shape)
+            samples = block.astype(">f4").tobytes(order="F")
+            if compression == "gzip":
+                samples = gzip.compress(samples)
+            name = os.path.join(directory, *map(str, position))
+            os.makedirs(os.path.dirname(name), exist_ok=True)
+            with open(name, "wb") as file:
+                file.write(header + samples)
+
+    return write
+
+
+def _n5_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy the attributes of a dataset beside a block that cannot be read."""
+    directory = os.path.dirname(os.fspath(target))
+    os.makedirs(os.path.join(directory, "0", "0"), exist_ok=True)
+    with open(source, "rb") as file:
+        content = file.read()
+    with open(target, "wb") as file:
+        file.write(content)
+    with open(os.path.join(directory, "0", "0", "0"), "wb") as file:
+        file.write(b"not a block")
+
+
+if n5_needs is not None:
+    _N5 = Exemplar(
+        metadata=N5Metadata,
+        suffix=os.sep + "attributes.json",
+        proxies=(_N5Proxy,),
+        to_model=_n5_to_model,
+        to_disk=_n5_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=lambda record: replace(
+            record, attributes={**record.attributes, "note": "edited"}
+        ),
+        record_edited=lambda record: record.attributes.get("note") == "edited",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_n5_cut,
+        header=lambda metadata: metadata.raw,
+        source=_n5_writer("gzip"),
+        header_file=lambda path: path,
+    )
+    EXEMPLARS[N5Image] = _N5
+
+
+# Brainhops cannot write Imaris files, so the checks write them with
+# h5py as the description of the format lays them out: one dataset per
+# time point and channel, ordered z, y, x and padded to whole chunks, and
+# every parameter as an array of single characters. The data have the
+# five axes of every Imaris image, `(x, y, z, t, c)`. The copy that the
+# metadata check reads keeps every group and parameter of the file, but
+# its voxels are in an external file that does not exist, so the chunk
+# shape, which that copy loses, is not part of the record. The record is
+# compared as it is, since the metadata cannot write bytes. The level is
+# a reader option that the image keeps as a field.
+
+
+def _imaris_text(value: tx.Any) -> np.ndarray:
+    """Encode a parameter as Imaris does, one character per element."""
+    return np.frombuffer(str(value).encode(), dtype="S1")
+
+
+def _write_imaris(path: tx.Any, data: tx.Any) -> None:
+    stored = np.asarray(data, dtype="float32").T
+    with h5py.File(path, "w") as f:
+        f.attrs["ImarisVersion"] = _imaris_text("5.5.0")
+        for channel, times in enumerate(stored):
+            for time, block in enumerate(times):
+                group = f.create_group(
+                    f"DataSet/ResolutionLevel 0/TimePoint {time}/"
+                    f"Channel {channel}"
+                )
+                for axis, size in zip("XYZ", reversed(block.shape)):
+                    group.attrs["ImageSize" + axis] = _imaris_text(size)
+                padded = np.zeros([n + n % 2 for n in block.shape], "float32")
+                padded[tuple(slice(n) for n in block.shape)] = block
+                group.create_dataset("Data", data=padded, chunks=(2, 2, 2))
+        image = f.create_group("DataSetInfo/Image")
+        for i, size in enumerate(reversed(stored.shape[2:])):
+            image.attrs[f"ExtMin{i}"] = _imaris_text(float(i))
+            image.attrs[f"ExtMax{i}"] = _imaris_text(float(i + 2 * size))
+        image.attrs["Unit"] = _imaris_text("um")
+
+
+def _imaris_edit_record(record: tx.Any) -> tx.Any:
+    info = record.copy().info
+    info["Image"]["Name"] = "edited"
+    return replace(record, info=info)
+
+
+if h5py is not None:
+    EXEMPLARS[ImarisImage] = Exemplar(
+        metadata=ImarisMetadata,
+        suffix=".ims",
+        proxies=(_ImarisProxy,),
+        to_model=_imaris_to_model,
+        to_disk=_imaris_to_disk,
+        sample=lambda: np.arange(48, dtype="float32").reshape(4, 3, 2, 2, 1),
+        edit_record=_imaris_edit_record,
+        record_edited=lambda record: (
+            record.info["Image"].get("Name") == "edited"
+        ),
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_hdf5_cut,
+        header=lambda metadata: metadata.raw,
+        source=_write_imaris,
+    )
+
+
+# A Neuroglancer precomputed volume is a directory that holds an `info`
+# file and the chunks of each scale, and it cannot be written, so the
+# checks write a volume of one raw scale as `volume.md` describes it,
+# without TensorStore, and name it by its `info` file. The bytes of the
+# `info` file cannot hold the volume, so `header_file` names that file
+# itself. A copy whose data cannot be read is the `info` file alone, in
+# a directory without chunks. The record is compared as it is, since the
+# metadata cannot write bytes. The lazy array reads the chunks with
+# TensorStore, so the exemplar also checks the reader against the
+# specification.
+
+_PRECOMPUTED_CHUNK = (2, 2, 2)
+_PRECOMPUTED_OFFSET = (1, 2, 3)
+
+
+def _write_precomputed(path: tx.Any, data: tx.Any) -> None:
+    """Write a precomputed volume of one raw scale, named by its `info`."""
+    directory = os.path.dirname(os.fspath(path))
+    values = np.asarray(data, dtype="float32")
+    scale = {
+        "key": "s0",
+        "size": list(values.shape),
+        "resolution": [2, 3, 4],
+        "voxel_offset": list(_PRECOMPUTED_OFFSET),
+        "chunk_sizes": [list(_PRECOMPUTED_CHUNK)],
+        "encoding": "raw",
+    }
+    info = {
+        "@type": "neuroglancer_multiscale_volume",
+        "type": "image",
+        "data_type": "float32",
+        "num_channels": 1,
+        "scales": [scale],
+    }
+    os.makedirs(os.path.join(directory, "s0"), exist_ok=True)
+    with open(path, "w") as file:
+        json.dump(info, file)
+    grid = [math.ceil(n / c) for n, c in zip(values.shape, _PRECOMPUTED_CHUNK)]
+    for position in np.ndindex(*grid):
+        begin = [g * c for g, c in zip(position, _PRECOMPUTED_CHUNK)]
+        end = [
+            min(b + c, n)
+            for b, c, n in zip(begin, _PRECOMPUTED_CHUNK, values.shape)
+        ]
+        block = values[tuple(slice(b, e) for b, e in zip(begin, end))]
+        name = "_".join(
+            f"{b + o}-{e + o}"
+            for b, e, o in zip(begin, end, _PRECOMPUTED_OFFSET)
+        )
+        # A chunk is a little-endian [x, y, z, channel] array in Fortran
+        # order, with no header.
+        with open(os.path.join(directory, "s0", name), "wb") as file:
+            file.write(block.astype("<f4").tobytes(order="F"))
+
+
+def _precomputed_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy the `info` file of a volume into a directory without chunks."""
+    os.makedirs(os.path.dirname(os.fspath(target)), exist_ok=True)
+    with open(source, "rb") as file:
+        content = file.read()
+    with open(target, "wb") as file:
+        file.write(content)
+
+
+if ts is not None:
+    EXEMPLARS[PrecomputedImage] = Exemplar(
+        metadata=PrecomputedMetadata,
+        suffix=os.sep + "info",
+        proxies=(_PrecomputedProxy,),
+        to_model=_precomputed_to_model,
+        to_disk=_precomputed_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=lambda record: replace(record, mesh="edited"),
+        record_edited=lambda record: record.mesh == "edited",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_precomputed_cut,
+        header=lambda metadata: metadata.raw,
+        source=_write_precomputed,
+        header_file=lambda path: path,
+    )
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     # A pyramid has no record yet (tension 15). Its levels are
     # `BdvImage` objects, which follow the design.
     "brainhops.io.images.bdv.BdvMultiScaleImage",
+    # The levels of an N5 pyramid are `N5Image` exemplars, and the pyramid
+    # holds their shared metadata but no `raw`. The rules for the levels
+    # and the record of a pyramid are decided in the Zarr pass (item 15 of
+    # the memo), so the pyramid waits with the other pyramids (item 250).
+    "brainhops.io.images.n5.N5MultiScaleImage",
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
     "brainhops.io.images.openslide.DicomWsiImage",
@@ -1580,7 +2158,17 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.VentanaMultiScaleImage",
     "brainhops.io.images.openslide.ZeissImage",
     "brainhops.io.images.openslide.ZeissMultiScaleImage",
+    # The record of a pyramid is decided in the Zarr pass (item 15 of the
+    # design memo). Each level of an Imaris pyramid is an `ImarisImage`,
+    # which follows the design.
+    "brainhops.io.images.imaris.ImarisMultiScaleImage",
     "brainhops.io.images.pillow.PillowImage",
+    # The levels of a precomputed pyramid are `PrecomputedImage` exemplars,
+    # and the pyramid holds their shared metadata but no `raw`. The rules
+    # for the levels and the record of a pyramid are decided in the Zarr
+    # pass (item 15 of the memo), so the pyramid waits with the other
+    # pyramids (item 160).
+    "brainhops.io.images.precomputed.PrecomputedMultiScaleImage",
     "brainhops.io.images.tiff.TiffImage",
     "brainhops.io.images.tiff.TiffMultiScaleImage",
     "brainhops.io.images.zarr.OmeZarrImage",
@@ -1695,7 +2283,35 @@ VARIANTS.append(
 )
 
 VARIANTS.append(
+    (
+        "AfniBrikWarp-BRIK-gz",
+        AfniBrikWarp,
+        _AFNI_WARP._replace(suffix=".BRIK.gz"),
+    )
+)
+VARIANTS.append(
     ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
+)
+
+# The blocks of an N5 dataset may be uncompressed.
+if n5_needs is not None:
+    VARIANTS.append(
+        ("N5Image-raw", N5Image, _N5._replace(source=_n5_writer("raw")))
+    )
+
+VARIANTS.append(
+    (
+        "MrtrixCoordinatesField-gz",
+        MrtrixCoordinatesField,
+        EXEMPLARS[MrtrixCoordinatesField]._replace(suffix=".mif.gz"),
+    )
+)
+VARIANTS.append(
+    (
+        "MrtrixWarpFull-gz",
+        MrtrixWarpFull,
+        EXEMPLARS[MrtrixWarpFull]._replace(suffix=".mif.gz"),
+    )
 )
 
 # A MINC1 file may be gzipped.
