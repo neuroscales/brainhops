@@ -3348,6 +3348,582 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
 
 
 # ----------------------------------------------------------------------
+#   CHECKS OF PYRAMIDS
+# ----------------------------------------------------------------------
+# A pyramid holds one record for its container, which each of its levels
+# holds too, by identity, and the tuple of the arrays of its levels in
+# `raw`. Its levels and its placements are decoded on first access and
+# cached apart from assigned lists, which are pending. The checks P1 to
+# P12 test this design on every pyramid format, and the checks 1 to 20
+# test the level class of each format as a plain exemplar.
+
+
+def _level_exemplar(exemplar: PyramidExemplar) -> Exemplar:
+    """Return the exemplar of the level class of a pyramid format."""
+    return {**EXEMPLARS, **TEST_EXEMPLARS}[exemplar.level]
+
+
+def _pyramid_built(cls: type, exemplar: PyramidExemplar) -> tx.Any:
+    """Build a pyramid of the format from the data of its levels alone."""
+    return cls(images=[SingleScaleImage(data) for data in exemplar.levels()])
+
+
+def _pyramid_saved(
+    cls: type, exemplar: PyramidExemplar, tmp_path: tx.Any, name: str = "src"
+) -> tx.Any:
+    """Write a new pyramid of the format and return the path of its container."""
+    path = _path(tmp_path, _level_exemplar(exemplar), name)
+    if exemplar.source is not None:
+        exemplar.source(path, exemplar.levels())
+    else:
+        _pyramid_built(cls, exemplar).save(path)
+    return path
+
+
+def _pyramid_placed(
+    cls: type, exemplar: PyramidExemplar, tmp_path: tx.Any
+) -> tx.Any:
+    """Write a new pyramid with the placements that `exemplar.place` gives.
+
+    A format that cannot write keeps the placements that its source
+    writes.
+    """
+    if exemplar.source is not None:
+        return _pyramid_saved(cls, exemplar, tmp_path, "placed")
+    path = _path(tmp_path, _level_exemplar(exemplar), "placed")
+    pyramid = _pyramid_built(cls, exemplar)
+    exemplar.place(pyramid)
+    pyramid.save(path)
+    return path
+
+
+def _levels_data(exemplar: PyramidExemplar, pyramid: tx.Any) -> tx.List[tx.Any]:
+    """Return the data of each level of a pyramid, finest first."""
+    level = _level_exemplar(exemplar)
+    return [np.asarray(_data(level, image)) for image in pyramid.images]
+
+
+def _all_equal(first: tx.Sequence[tx.Any], second: tx.Sequence[tx.Any]) -> bool:
+    """Tell whether two lists of arrays hold the same values."""
+    return len(first) == len(second) and all(
+        np.array_equal(np.asarray(a), np.asarray(b))
+        for a, b in zip(first, second)
+    )
+
+
+def _world(pyramid: tx.Any) -> np.ndarray:
+    """Return the map from the finest voxels of a pyramid to its world."""
+    finest = pyramid.to_singlescale(0)
+    return np.asarray(finest.transformation.to(Affine).matrix, dtype=float)
+
+
+def _decodes_nothing(pyramid: tx.Any) -> bool:
+    """Tell whether a pyramid has decoded neither its levels nor any data."""
+    return "_cache_images" not in vars(pyramid) and "_cache_data" not in vars(
+        pyramid
+    )
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p01_pyramid_shape(cls: type, exemplar: PyramidExemplar) -> None:
+    level = _level_exemplar(exemplar)
+    assert issubclass(cls, MultiScaleImage)
+    assert "level" in level.options
+    allowed = {"images", "transformations", "raw", "metadata"}
+    assert _init_names(cls) <= allowed | exemplar.options
+    names = {field.name for field in fields(cls)} | _init_names(cls)
+    assert not names & (_PARSER_STATE | {"_node", "_slide", "_source"})
+    # The levels and the placements are cached views, and other metadata
+    # drops both.
+    for name in ("images", "transformations"):
+        view = inspect.getattr_static(cls, name)
+        assert isinstance(view, property)
+        assert getattr(view, "cache", False), name
+    metadata = inspect.getattr_static(cls, "metadata")
+    invalidated = set(getattr(metadata, "invalidates", ()))
+    assert {"images", "transformations"} <= invalidated
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p02_load_is_lazy(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    level = _level_exemplar(exemplar)
+    loaded = cls.load(_pyramid_saved(cls, exemplar, tmp_path))
+    samples = exemplar.levels()
+    assert isinstance(loaded.raw, tuple)
+    assert len(loaded.raw) == len(samples)
+    assert all(isinstance(raw, level.proxies) for raw in loaded.raw)
+    assert isinstance(loaded.metadata, level.metadata)
+    repr(loaded)
+    assert tuple(loaded.shape) == samples[0].shape
+    assert _decodes_nothing(loaded)
+    # The levels are decoded once, share `raw` and the metadata of the
+    # pyramid, and read no data until their data is read.
+    images = loaded.images
+    assert loaded.images is images
+    assert held_images(loaded) is images
+    for index, image in enumerate(images):
+        assert type(image) is exemplar.level
+        assert image.level == index
+        assert image.raw is loaded.raw[index]
+        assert image.metadata is loaded.metadata
+        assert "_cache_data" not in vars(image)
+    assert "_cache_data" not in vars(loaded)
+    assert _all_equal(_levels_data(exemplar, loaded), samples)
+    assert all(isinstance(raw, level.proxies) for raw in loaded.raw)
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p03_a_level_is_the_level_read_alone(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    level = _level_exemplar(exemplar)
+    path = _pyramid_placed(cls, exemplar, tmp_path)
+    loaded = cls.load(path)
+    for index, image in enumerate(loaded.images):
+        alone = exemplar.level.load(path, level=index)
+        assert alone.level == index
+        assert np.array_equal(
+            np.asarray(_data(level, image)), np.asarray(_data(level, alone))
+        )
+        assert np.allclose(level.geometry(image), level.geometry(alone))
+        assert _header(level, image.metadata) == _header(level, alone.metadata)
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p04_assigned_level_data_is_pending(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    level = _level_exemplar(exemplar)
+    path = _pyramid_saved(cls, exemplar, tmp_path)
+    samples = exemplar.levels()
+    for k in range(len(samples)):
+        loaded = cls.load(path)
+        raw, metadata = loaded.raw, loaded.metadata
+        images = loaded.images
+        value = samples[k] + 1
+        _set_data(level, images[k], value)
+        # The arrays and the record still describe the container, and the
+        # data is pending in the level.
+        assert loaded.raw is raw
+        assert loaded.metadata is metadata
+        assert images[k].raw is raw[k]
+        assert images[k].metadata is metadata
+        pending = _pending(images[k])
+        assert pending[0] is not None
+        consolidated = loaded.consolidate()
+        assert consolidated._images is None
+        assert "_cache_images" not in vars(consolidated)
+        if exemplar.source is not None:
+            # A format that cannot write moves the data into `raw` only.
+            assert consolidated.metadata is metadata
+        elif exemplar.derive and k > 0:
+            # The writer writes from the finest level only, and assumes
+            # that the coarser levels are downsampled versions of it.
+            assert np.array_equal(
+                _levels_data(exemplar, consolidated)[0], samples[0]
+            )
+            continue
+        else:
+            assert consolidated.metadata is not metadata
+        stored = np.asarray(consolidated.raw[k])
+        assert np.array_equal(stored, level.to_disk(value))
+        assert np.array_equal(
+            _levels_data(exemplar, consolidated)[k], np.asarray(value)
+        )
+        if not exemplar.derive:
+            for index, array in enumerate(raw):
+                if index != k:
+                    assert consolidated.raw[index] is array
+        # The pyramid itself keeps its pending state.
+        assert loaded.raw is raw
+        assert loaded.metadata is metadata
+        assert loaded.images is images
+        assert _same(_pending(images[k]), pending)
+        # Nothing is pending in the copy.
+        twice = consolidated.consolidate()
+        assert twice.raw is consolidated.raw
+        assert twice.metadata is consolidated.metadata
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p05_assigned_levels_are_pending_and_written(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = _pyramid_saved(cls, exemplar, tmp_path)
+    samples = exemplar.levels()
+    loaded = cls.load(path)
+    raw, metadata = loaded.raw, loaded.metadata
+    # A level is replaced by an image of another class, with other data.
+    value = samples[1] * 2 + 1
+    images = list(loaded.images)
+    images[1] = SingleScaleImage(value)
+    loaded.images = images
+    assert loaded._images is images
+    assert held_images(loaded) is images
+    assert loaded.raw is raw
+    assert loaded.metadata is metadata
+    target = _path(tmp_path, _level_exemplar(exemplar), "assigned")
+    if exemplar.source is not None:
+        # No record can describe a level of another class.
+        with pytest.raises(WriterError):
+            loaded.consolidate()
+        _refuses_writing(loaded, target)
+        return
+    loaded.save(target)
+    back = _levels_data(exemplar, cls.load(target))
+    if exemplar.derive:
+        assert np.array_equal(back[0], samples[0])
+    else:
+        assert _all_equal(back, [samples[0], value, samples[2]])
+    # Saving leaves the pyramid as it was.
+    assert loaded._images is images
+    assert loaded.raw is raw
+    assert loaded.metadata is metadata
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p06_consolidating_an_untouched_pyramid_changes_nothing(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    level = _level_exemplar(exemplar)
+    path = _pyramid_saved(cls, exemplar, tmp_path)
+    loaded = cls.load(path)
+    raw, metadata = loaded.raw, loaded.metadata
+    # The copy shares `raw` and the metadata, and nothing is decoded.
+    consolidated = loaded.consolidate()
+    assert consolidated is not loaded
+    assert consolidated.raw is raw
+    assert consolidated.metadata is metadata
+    assert _decodes_nothing(loaded)
+    assert _decodes_nothing(consolidated)
+    # Levels and placements that were only read keep the record too.
+    for image in loaded.images:
+        image.transformations
+    loaded.transformations
+    consolidated = loaded.consolidate()
+    assert consolidated.raw is raw
+    assert consolidated.metadata is metadata
+    assert all("_cache_data" not in vars(image) for image in loaded.images)
+    assert loaded.consolidate(inplace=True) is loaded
+    assert loaded.raw is raw
+    assert loaded.metadata is metadata
+    if exemplar.source is not None:
+        return
+    # A changed pyramid consolidates into a copy that holds what a file
+    # written from it holds, and a second consolidation changes nothing.
+    loaded = cls.load(path)
+    _set_data(level, loaded.images[0], exemplar.levels()[0] + 1)
+    once = loaded.consolidate()
+    assert once._images is None
+    assert once._transformations is None
+    target = _path(tmp_path, level, "written")
+    loaded.save(target)
+    back = cls.load(target)
+    assert _all_equal(
+        _levels_data(exemplar, once), _levels_data(exemplar, back)
+    )
+    assert np.allclose(_world(once), _world(back))
+    twice = once.consolidate()
+    assert twice.raw is once.raw
+    assert twice.metadata is once.metadata
+    # In place, the pyramid holds the consolidated state.
+    assert loaded.consolidate(inplace=True) is loaded
+    assert loaded._images is None
+    raw, metadata = loaded.raw, loaded.metadata
+    loaded.consolidate(inplace=True)
+    assert loaded.raw is raw
+    assert loaded.metadata is metadata
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p07_transformations_are_compared_at_consolidation(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    if exemplar.source is not None:
+        pytest.skip("A format that cannot write encodes no list.")
+    level = _level_exemplar(exemplar)
+    path = _pyramid_saved(cls, exemplar, tmp_path)
+    loaded = cls.load(path)
+    raw, metadata = loaded.raw, loaded.metadata
+    # The transformations of a level that were only read keep the record,
+    # and so does an equal list that is assigned.
+    for image in loaded.images:
+        image.transformations
+    assert loaded.consolidate().metadata is metadata
+    fresh = cls.load(path)
+    loaded.images[1].transformations = list(fresh.images[1].transformations)
+    assert loaded.consolidate().metadata is metadata
+    # A changed list is written, and the other levels keep their arrays.
+    level.change_geometry(loaded.images[1])
+    expected = level.geometry(loaded.images[1])
+    consolidated = loaded.consolidate()
+    assert consolidated.metadata is not metadata
+    if not exemplar.derive:
+        assert consolidated.raw[0] is raw[0]
+        assert consolidated.raw[2] is raw[2]
+    target = _path(tmp_path, level, "level")
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.allclose(level.geometry(back.images[1]), expected)
+    assert np.allclose(
+        level.geometry(back.images[0]), level.geometry(fresh.images[0])
+    )
+
+    # The placements of the pyramid that were only read keep the record,
+    # and so does an equal list that is assigned.
+    placed = _pyramid_placed(cls, exemplar, tmp_path)
+    loaded = cls.load(placed)
+    metadata = loaded.metadata
+    loaded.transformations
+    assert loaded.consolidate().metadata is metadata
+    loaded.transformations = list(cls.load(placed).transformations)
+    assert loaded.consolidate().metadata is metadata
+    # Changed placements are written. A container that stores no placement
+    # composes them into the transformation of each level.
+    loaded = cls.load(path)
+    exemplar.place(loaded)
+    world = _world(loaded)
+    assert not np.allclose(world, _world(cls.load(path)))
+    assert loaded.consolidate().metadata is not loaded.metadata
+    target = _path(tmp_path, level, "placed-again")
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.allclose(_world(back), world)
+    if exemplar.placements:
+        assert len(back.transformations) == len(loaded.transformations)
+    else:
+        assert not back.transformations
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p08_untouched_save_is_identical_file_for_file(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    level = _level_exemplar(exemplar)
+    source = _pyramid_saved(cls, exemplar, tmp_path)
+    if exemplar.source is not None:
+        _refuses_writing(cls.load(source), _path(tmp_path, level, "copy"))
+        return
+    target = _path(tmp_path, level, "copy")
+    cls.load(source).save(target)
+    assert _tree(target) == _tree(source)
+    target = _path(tmp_path, level, "generic")
+    io.save(cls.load(source), target)
+    assert _tree(target) == _tree(source)
+    if level.container != "directory" or exemplar.derive:
+        return
+    # A save in which one level changed keeps every file of the other
+    # levels: the files that change with one level never change with
+    # another.
+    changed = {}
+    for k in (1, 2):
+        loaded = cls.load(source)
+        _set_data(level, loaded.images[k], exemplar.levels()[k] + 1)
+        target = _path(tmp_path, level, f"level{k}")
+        loaded.save(target)
+        before, after = _tree(source), _tree(target)
+        assert set(before) == set(after)
+        changed[k] = {name for name in before if before[name] != after[name]}
+        assert changed[k]
+    assert not changed[1] & changed[2]
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p09_saving_over_its_own_container_consolidates_the_pyramid(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    if exemplar.source is not None:
+        pytest.skip("Only a pyramid that writes its container is affected.")
+    level = _level_exemplar(exemplar)
+    path = _pyramid_saved(cls, exemplar, tmp_path)
+    # An untouched pyramid is written over the container that it reads,
+    # and then reads the new container.
+    loaded = cls.load(path)
+    loaded.save(path)
+    back = cls.load(path)
+    assert all(isinstance(raw, level.proxies) for raw in loaded.raw)
+    assert _all_equal(_levels_data(exemplar, loaded), exemplar.levels())
+    assert _all_equal(_levels_data(exemplar, back), exemplar.levels())
+    assert _header(level, loaded.metadata) == _header(level, back.metadata)
+    # A changed pyramid is consolidated in place, and then holds what the
+    # container holds (#426): its `raw` is a new tuple of proxies of the
+    # new container, and its record is read again from it.
+    loaded = cls.load(path)
+    old = loaded.raw
+    _set_data(level, loaded.images[1], exemplar.levels()[1] + 1)
+    expected = _levels_data(exemplar, loaded.consolidate())
+    loaded.save(path)
+    assert loaded._images is None
+    assert loaded._transformations is None
+    assert loaded.raw is not old
+    assert all(isinstance(raw, level.proxies) for raw in loaded.raw)
+    back = cls.load(path)
+    assert _all_equal(_levels_data(exemplar, loaded), expected)
+    assert _all_equal(_levels_data(exemplar, back), expected)
+    assert np.allclose(_world(loaded), _world(back))
+    assert _header(level, loaded.metadata) == _header(level, back.metadata)
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p10_copies_keep_raw_and_metadata(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    level = _level_exemplar(exemplar)
+    loaded = cls.load(_pyramid_saved(cls, exemplar, tmp_path))
+    # Within the format, the copies share `raw` and the metadata, and
+    # decode nothing.
+    for copy in (replace(loaded), cls.from_instance(loaded)):
+        assert copy.raw is loaded.raw
+        assert copy.metadata is loaded.metadata
+        assert copy._images is None
+        assert _decodes_nothing(copy)
+    assert _decodes_nothing(loaded)
+    # Assigned levels are pending in the copies as well.
+    images = list(loaded.images)
+    loaded.images = images
+    for copy in (replace(loaded), cls.from_instance(loaded)):
+        assert _same(copy.images, images)
+        assert copy.raw is loaded.raw
+    # From another class, the levels that it reports are copied, and the
+    # record and the arrays of the format are reset.
+    samples = exemplar.levels()
+    foreign = MultiScaleImage(
+        images=[SingleScaleImage(data) for data in samples]
+    )
+    converted = cls.from_instance(foreign)
+    assert converted.metadata is None
+    assert converted.raw is None
+    assert _all_equal(_levels_data(exemplar, converted), samples)
+    target = _path(tmp_path, level, "converted")
+    if exemplar.source is not None:
+        _refuses_writing(converted, target)
+        return
+    converted.save(target)
+    back = _levels_data(exemplar, cls.load(target))
+    if exemplar.derive:
+        assert np.array_equal(back[0], samples[0])
+    else:
+        assert _all_equal(back, samples)
+
+
+@pytest.mark.parametrize("decoded", [False, True], ids=["unread", "read"])
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p11_other_metadata_keeps_only_what_was_assigned(
+    cls: type,
+    exemplar: PyramidExemplar,
+    decoded: bool,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # As check 20, for the levels and the placements of a pyramid.
+    level = _level_exemplar(exemplar)
+    source = _pyramid_saved(cls, exemplar, tmp_path)
+    placed = _pyramid_placed(cls, exemplar, tmp_path)
+    old = _world(cls.load(source))
+
+    # Levels and placements that were not assigned follow the new metadata.
+    record = level.edit_record(deepcopy(cls.load(placed).metadata.raw))
+    metadata = level.metadata.from_raw(record)
+    loaded = cls.load(source)
+    expected = _world(replace(loaded, metadata=metadata))
+    if exemplar.source is None:
+        assert not np.allclose(expected, old)
+    images = loaded.images if decoded else None
+    if decoded:
+        loaded.transformations
+    loaded.metadata = metadata
+    assert loaded.metadata is metadata
+    assert "_cache_images" not in vars(loaded)
+    assert "_cache_transformations" not in vars(loaded)
+    assert loaded._images is None
+    assert loaded._transformations is None
+    assert all(image.metadata is metadata for image in loaded.images)
+    if decoded:
+        # The levels that were dropped still hold the old metadata.
+        assert loaded.images is not images
+        assert all(image.metadata is not metadata for image in images)
+    assert np.allclose(_world(loaded), expected)
+    target = _path(tmp_path, level, "followed")
+    if exemplar.source is not None:
+        _refuses_writing(loaded, target)
+    else:
+        loaded.save(target)
+        back = cls.load(target)
+        assert np.allclose(_world(back), expected)
+        assert level.record_edited(back.metadata.raw)
+
+    # Levels and placements that were assigned survive the new metadata,
+    # here that of the source with the edit.
+    record = level.edit_record(deepcopy(cls.load(source).metadata.raw))
+    metadata = level.metadata.from_raw(record)
+    loaded = cls.load(source)
+    if decoded:
+        loaded.images
+        loaded.transformations
+    images = list(loaded.images)
+    loaded.images = images
+    exemplar.place(loaded)
+    placements = loaded._transformations
+    assigned = _world(loaded)
+    loaded.metadata = metadata
+    assert loaded._images is images
+    assert loaded._transformations is placements
+    assert loaded.images is images
+    assert np.allclose(_world(loaded), assigned)
+    target = _path(tmp_path, level, "kept")
+    if exemplar.source is not None:
+        _refuses_writing(loaded, target)
+        return
+    consolidated = loaded.consolidate()
+    assert np.allclose(_world(consolidated), assigned)
+    assert level.record_edited(consolidated.metadata.raw)
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.allclose(_world(back), assigned)
+    assert level.record_edited(back.metadata.raw)
+
+
+@pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
+def test_p12_metadata_never_reads_data(
+    cls: type,
+    exemplar: PyramidExemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    level = _level_exemplar(exemplar)
+    document = exemplar.document or (lambda path: path)
+    source = _pyramid_saved(cls, exemplar, tmp_path)
+    metadata = level.metadata.load(document(source))
+    header = _header(level, metadata)
+    assert header == _header(level, cls.load(source).metadata)
+    # The data of the copy cannot be read, so reading any data would fail.
+    truncated = _path(tmp_path, level, "header")
+    _cut(level, source, metadata, truncated)
+    assert _header(level, level.metadata.load(document(truncated))) == header
+    dispatched = MetadataFormat.load(document(truncated))
+    assert isinstance(dispatched, level.metadata)
+    assert _header(level, dispatched) == header
+
+
+# ----------------------------------------------------------------------
 #   THE TOY FORMAT THROUGH THE GENERIC ENTRY POINTS
 # ----------------------------------------------------------------------
 
