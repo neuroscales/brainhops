@@ -1854,9 +1854,9 @@ VARIANTS.append(
     )
 )
 
-# The whitespace-separated reader also reads AFNI `.1D` files.
+# The reader accepts `.1D`, but AFNI claims that suffix for writes.
 VARIANTS.append(
-    ("TxtMatrixAffine-1D", TxtMatrixAffine, _MATRIX._replace(suffix=".1D"))
+    ("TxtMatrixAffine-dat", TxtMatrixAffine, _MATRIX._replace(suffix=".dat"))
 )
 
 # A morph whose name ends in `.m3d` is written without compression.
