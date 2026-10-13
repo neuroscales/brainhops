@@ -70,6 +70,30 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.common.zarr": Package(
+        names=frozenset(
+            {
+                "StoreLike",
+                "ZarrMetadata",
+                "ZarrRaw",
+                "ZarrReader",
+                "ZarrReaderWriter",
+            }
+        ),
+        needs=("abczarr",),
+    ),
+    "brainhops.io.images.zarr": Package(
+        names=frozenset(
+            {
+                "OmeImageError",
+                "OmeZarrImage",
+                "ZarrImage",
+                "ZarrMetadata",
+                "ZarrRaw",
+            }
+        ),
+        needs=("abczarr",),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),

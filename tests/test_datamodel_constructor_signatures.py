@@ -6,9 +6,10 @@ follows the order of the bases, and reordering the bases once made
 Fields are therefore keyword-only by default, and only the defining
 fields, such as `data` or the parsed file of a reader, are positional.
 An image is defined by its `data` (or its `images`, for a pyramid) and
-its `transformations`, which are positional in that order. The fields
-that a reader of `brainhops.io.common` contributes, such as the opened
-Zarr `node`, stay positional, as they do on the transformations. An
+its `transformations`, which are positional in that order. The opened
+Zarr `node` of the OME-Zarr formats, which a temporary parser of
+`brainhops.io.common.zarr` contributes until they follow the design of
+format records, stays positional, as it does on the transformations. An
 intended change of signature must update `POSITIONAL` or `IMAGES`.
 """
 
@@ -326,11 +327,11 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "TiffMultiScaleImage": ("images", "transformations"),
     },
     "brainhops.io.images.zarr._image": {
-        "ZarrImage": ("data", "transformations", "node"),
+        "ZarrImage": ("data", "transformations"),
     },
     "brainhops.io.images.zarr._multiscale": {
         "OmeZarrImage": ("images", "transformations", "node"),
-        "OmeZarrLevel": ("data", "transformations", "node"),
+        "OmeZarrLevel": ("data", "transformations"),
     },
 }
 
