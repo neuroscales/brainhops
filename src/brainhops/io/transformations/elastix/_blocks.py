@@ -242,9 +242,23 @@ def _struct(
         precision="double",
         ndim_input=ndim,
         ndim_output=ndim,
-        parameters=np.asarray(parameters, dtype=np.float64),
-        fixed_parameters=np.asarray(fixed_parameters, dtype=np.float64),
+        parameters=_read_only(parameters),
+        fixed_parameters=_read_only(fixed_parameters),
     )
+
+
+def _read_only(values: tx.Any) -> np.ndarray:
+    """Return values as a read-only float64 array.
+
+    The transform parameters of a block decoded from a record are a view
+    of the array of the record, so they are made read-only here, whatever
+    the flags of the array of the record. An edit in place would change
+    the record, which the writer writes. To change the parameters, a new
+    chain is assigned instead.
+    """
+    array = np.asarray(values, dtype=np.float64).view()
+    array.flags.writeable = False
+    return array
 
 
 def _affine_struct(
@@ -384,7 +398,8 @@ def map_to_block(pmap: ParameterMap) -> ItkStruct:
         # The matrix is the exponential of the first D * D parameters
         # (row-major), and the translation follows.
         _check_length(name, params, ndim * (ndim + 1))
-        log = params[: ndim * ndim].reshape(ndim, ndim)
+        # SciPy refuses the read-only array of a record, so it is copied.
+        log = np.array(params[: ndim * ndim]).reshape(ndim, ndim)
         matrix = scipy.linalg.expm(log)
         return _affine_struct(ndim, matrix, params[ndim * ndim :], center)
 

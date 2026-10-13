@@ -4,7 +4,8 @@ This memo is agreed and is being implemented. It is tracked in #415,
 and the work is done in the passes described at the end. The first
 two passes are written and under review, and the third is in progress.
 The design of pending data and `consolidate()` is applied across the
-whole stack.
+whole stack. The plain matrix formats and the NiftyReg affine are moved
+on the model of LTA (items 300 to 306).
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides
@@ -499,9 +500,11 @@ the helpers, `replace_directory`, the toy pyramid of the conformance
 tests and the checks P1 to P12. Zarr and OME-Zarr, TIFF, OpenSlide and
 Pillow move to the design in the later steps of the fourth pass, which
 also move the format fields of TIFF and Pillow into their records and
-make `OmeZarrField` read its levels lazily. The open pull requests of
-JPEG 2000 (#273), precomputed (#436), Imaris (#437), N5 (#438) and
-BigDataViewer (#441) are updated to it after pass 4a.
+make `OmeZarrField` read its levels lazily. The pyramids of JPEG 2000
+(#273), precomputed (#436), Imaris (#437), N5 (#438) and BigDataViewer
+(#441) were merged before pass 4a. They stay among the formats that are
+not migrated, which the checks P1 to P12 never run on, and move to this
+design after pass 4a.
 
 ### Public surface
 
@@ -707,6 +710,11 @@ a file after decompression.
 The move of MGH, called pass 3a, is pull request #424. The move of AFNI
 and MRtrix, called pass 3b, is pull request #425. The move of NRRD and
 MINC, called pass 3c, is in progress.
+
+The elastix parameter files move in the same way as M3Z, since a
+parameter file is parsed in one pass. Their record also holds the records
+of the files of their chain of initial transforms, as items 320 to 329
+describe.
 
 The fourth pass moves FLIRT and the formats of pyramids. A pyramid has
 one record for its whole container, which the pyramid and each of its
@@ -2023,6 +2031,10 @@ registrations of its views back into the XML file.
      check 18 does not apply, because the format has no `raw`. Status:
      accepted.
 
+The items from 290 on were found in pass 4a, which adds the helpers
+of pyramids (`io/common/_pyramids.py`), `replace_directory`, the toy
+pyramid of the conformance test and the checks P1 to P12.
+
 290. A level that is consolidated or written alone narrows the record to
      its own level, at index 0, and keeps the rest of the record, such as
      the placement of its pyramid. A level of a pyramid of several levels
@@ -2084,7 +2096,11 @@ registrations of its views back into the XML file.
      which reads a directory file by file. `PyramidExemplar` reads the
      metadata class, the suffix, the proxies, the edit of a record and the
      hooks `cut` and `header` from the exemplar of the level class, so it
-     declares no `container`, `cut` or `storage` of its own. Status:
+     declares no `container`, `cut` or `storage` of its own. Image
+     stacks (#431) added `Exemplar.folder` for a folder of numbered files
+     that no extension names, which checks 5 and 12 treat apart, so the
+     two fields are kept side by side, and checks 7 and 10 compare the
+     summary of any metadata that writes no bytes of its own. Status:
      accepted in pass 4a.
 298. Check P8 cannot tell which files of a directory belong to which level
      without a hook in the exemplar. It checks instead that the files
@@ -2092,19 +2108,196 @@ registrations of its views back into the XML file.
      changes. A save that writes again the files of every level with the
      same bytes passes, because only the bytes are compared. Status:
      accepted in pass 4a.
-299. The open pull requests of pyramid formats log tensions that their
-     update to the design of pyramids closes. Items 160 and 250 of #436
-     and #438 note that the precomputed and N5 pyramids have no `raw` of
-     their own, items 161 and 251 note that the rules of atomic and
-     untouched saves were defined for files only, and items 181 and 208
-     of #437 and #441 note that the Imaris and BigDataViewer pyramids have
-     no record. The JPEG 2000 writer of #273 refuses coarse data that was
-     assigned, which the maintainer reverted on 2026-10-13 for every
-     format that derives its levels. The design of pyramids also answers
-     items 130 and 131 of #433, because each record keeps the bytes of its
-     documents, and a level transformation that is not diagonal is
-     refused (#447). Status: open until those pull requests are updated.
-
+299. The pyramid formats merged before pass 4a log tensions that their
+     move to the design of pyramids closes. Items 160 and 250 note that
+     the precomputed and N5 pyramids have no `raw` of their own, items
+     161 and 251 note that the rules of atomic and untouched saves were
+     defined for files only, and items 181 and 208 note that the Imaris
+     and BigDataViewer pyramids have no record. The JPEG 2000 pyramid
+     already keeps the cache model of this design, with metadata that
+     drops its decoded `images` and `transformations`, and its writer no
+     longer refuses coarse data that was assigned, as the maintainer
+     decided on 2026-10-13 for every format that derives its levels. The
+     design of pyramids also answers items 130 and 131 of #433, because
+     each record keeps the bytes of its documents, and a level
+     transformation that is not diagonal is refused (#447). Status: open
+     until those pyramids move to the design.
+300. The seven plain matrix formats (`io/transformations/matrix`) share
+     one record, `MatrixAffineRaw`, because a text container and a binary
+     container differ only by the text that a text file keeps and the
+     name of the array that `.npz` and `.mat` files select. Each container
+     has its own registered metadata class, such as `TxtMatrixMetadata`,
+     which reads the container with its array reader and builds the
+     record, and each format class calls its own metadata explicitly.
+     The record holds the stored matrix and the conventions that the
+     caller stated (`ndim`, `vector`, `direction`, `index_base`, the
+     voxel-to-world matrices of the `source` and `target` images, and the
+     coordinate systems), which replace the former attributes
+     `raw_matrix`, `variable`, `vector`, `direction` and `index_base`.
+     `consolidate` stores an assigned matrix in the conventions and the
+     layout of the record (`encode` in
+     `io/transformations/matrix/_conventions.py`), and refuses a
+     translation in a file that stores a linear map and a 1-based endpoint
+     that is no longer a voxel space.
+     Status: open, for review.
+301. The plain matrix formats read files but do not write them, because
+     the writer was ruled out of scope in #242, so the checks of writing
+     make sure that they refuse to write, as for MINC (item 101), and an
+     untouched save is not checked. The checks write their files with
+     NumPy, SciPy and h5py. The data of these formats lives in their
+     record, so a consolidation that cannot be written still encodes a
+     new record, and the harness accepts new metadata in that case
+     (`_check_data_only` in `tests/test_io_conformance.py`). Check 6 is
+     vacuous, as in item 66, and check 10 edits `variable`. The text
+     exemplar writes `.dat` files, and its variant `.1D` files, which
+     `io.save` writes as a `register.dat` file and an AFNI affine (item
+     306), as it writes a `.txt` file as a NiftyReg affine. For a future
+     writer, rewriting the same
+     content gives the same bytes with `np.save`, `np.savez`,
+     `scipy.io.savemat` in format 4 and h5py, but not with
+     `scipy.io.savemat` in format 5, whose header holds the time of
+     writing, and a `.npz` or `.mat` file of several arrays would have to
+     keep its other arrays. Status: open, for the maintainer to decide
+     whether these formats should write.
+302. The plain matrix formats give the coordinate systems of their record
+     to the transformation as its own `input` and `output`, instead of
+     decoding them as properties as LTA does, and a system counts as
+     assigned only when it is not the very object of the record
+     (`_overridden` in `io/transformations/matrix/_xform.py`). The data
+     model copies the private `_input` and `_output` fields, so systems
+     decoded from a record are lost when a transformation is copied into
+     another class. LTA already loses them in this way:
+     `LtaTransformation.to(Affine).input` is `None` for a file of the RAS
+     type, on `main` as well. Status: open, for the maintainer to decide
+     whether the data model should copy the decoded systems of another
+     class, which would let the plain matrix formats decode them too.
+303. `NiftyRegAffine` holds a `NiftyRegAffineRaw` record that keeps the
+     text of the file, as `C3dAffineRaw` does in item 170, so an untouched
+     file keeps its `%.7g` numbers, and a matrix that is encoded is
+     written with the shortest digits that read back exactly. The record
+     holds nothing beside the matrix and its text, and a changed matrix
+     replaces the text, so check 10 is vacuous. The metadata of a
+     NiftyReg affine loses a `.txt` file to the metadata of a plain
+     matrix, as the transformation does, so check 6 selects it with the
+     new field `Exemplar.hint`. `consolidate` refuses an `input` or an
+     `output` that was assigned and is not RAS, which answers item 173
+     for NiftyReg. Status: open, for review.
+304. The four helpers that LTA and the Convert3D format repeated (item
+     171) live in `io/transformations/base/_records.py` as `record_of`,
+     `read_only`, `matrix_to_model` and `matrix_to_disk`, and LTA and
+     NiftyReg call them, and so does `register.dat` (#432), which called
+     the private helpers of LTA. The Convert3D format of #435 still
+     repeats all four, unchanged, in `io/transformations/c3d/_affine.py`,
+     and can switch to them in a later pull request. The MNI transform,
+     BigDataViewer and TrakEM2 formats repeat `_record`, but their
+     helpers `_matrix_to_model` and `_matrix_to_disk` store three rows,
+     or a flat row of twelve or six numbers, rather than a homogeneous
+     matrix, so they are not the same helpers. Status: open.
+305. The readers refuse the options that they do not take with
+     `TypeError`. A plain matrix file of a single array refuses
+     `variable` and `key`, which it used to ignore, and `variable` and
+     `key` that name different arrays are refused. A NiftyReg affine
+     refuses `variable`, `key` and the conventions of a plain matrix. A
+     text file that is read from a path or a stream receives `encoding`
+     after it was decoded, so `encoding` is refused there, as for the
+     Convert3D format, and honoured only when bytes are decoded. Status:
+     open, for the maintainer to decide whether the adapters of
+     `io/base/parsers.py` should open a text file with the given
+     encoding.
+306. The Convert3D format of #435 declares the `.mat` extension,
+     `register.dat` (#432) the `.dat` extension and the AFNI affine the
+     `.1D` extension, and each converts an affine whose systems are
+     unknown, so `io.save` of a plain matrix built from data writes a
+     file of that format instead of raising `WriterError`. The checks of
+     writing of a format that cannot write therefore accept a save by
+     another format, and check only that the format is not a writer and
+     that the file does not read back as the format
+     (`_refuses_writing` in `tests/test_io_conformance.py`). A
+     Convert3D matrix holds no marker, so the metadata of a NiftyReg
+     affine, which scores a text file of a homogeneous matrix from its
+     content, wins over the metadata of Convert3D, which a `.mat` name
+     alone selects, and check 6 selects the Convert3D metadata with
+     `Exemplar.hint`, as it does for NiftyReg (item 303). Status: open,
+     for the maintainer to decide whether a `.mat` text file should
+     dispatch to the Convert3D metadata without a hint.
+320. An elastix parameter file may name an initial transform in another
+     file, and that file may name another. The record of each file of the
+     chain is read when the file that names it is read, and it is held in
+     the record of that file, in `ElastixRaw.initial`
+     (`io/transformations/elastix/_raw.py`). The record of the last file
+     therefore holds the whole chain, and so does its metadata. The files
+     are small text files, and reading them at once keeps the error of a
+     missing or looping file where the file is read, as before. The name in
+     the parameter map is kept as the file stores it. Status: proposed in
+     the elastix pass.
+321. A transformation whose chain was not assigned is written to a path
+     with the files of its chain. Each file whose name is relative is
+     written beside the file that names it, under that name, unless it
+     already holds the same bytes, and a file that holds other bytes is
+     never replaced: the writer raises `WriterError`, and so it does when a
+     file of the chain would be written over the new file
+     (`_place_initial` in `io/transformations/elastix/_xform.py`). A name
+     that is absolute is left as it is. The MINC transform files of #434
+     place their grid volumes in the same way, but replace a file that
+     holds other bytes. elastix looks for a relative name in the working
+     directory first, so a file of the same name there would be read
+     instead of the placed one. Status: open, for the maintainer to choose
+     one rule for both formats.
+322. The reader option `initial` of elastix selects what is read and
+     decoded. `initial=False` reads no file of the chain, and a file name
+     reads that file in place of the one that the map names. A
+     transformation given as `initial` is held in the private field
+     `_initial`, which copies keep, and it is not written, as for the X5
+     options of item 49. A consolidation that encodes an assigned chain
+     resets it, since the new record has no initial transform. Status:
+     proposed in the elastix pass.
+323. The elastix record keeps the text that it was read from and writes
+     it back while it still parses to the parameter map, as AFNI does
+     (item 84). A file is read as bytes and decoded, so that its line
+     endings and comments survive. A record read from lines keeps no text,
+     because the line endings are not known, and a stream that the caller
+     opened in text mode has already translated them. Status: proposed in
+     the elastix pass.
+324. One metadata class, `ElastixMetadata`, reads both syntaxes of
+     elastix. The syntax is a field of the record, which a file name gives
+     as elastix does (`.toml` or not), and which the content gives when
+     there is no name. Each format class passes its syntax explicitly to
+     the reader and to `consolidate`. A record in the other syntax, as
+     after a conversion between the two formats, is copied into a record
+     of the syntax of the class at consolidation, without its text, and
+     the converters between the two formats keep the metadata of an
+     untouched transformation. Status: proposed in the elastix pass.
+325. The transform parameters of an elastix record are a read-only array,
+     and the blocks decoded from the record hold read-only views of it
+     (`_read_only` in `io/transformations/elastix/_blocks.py`), so an edit
+     in place cannot change the record. SciPy refuses a read-only array, so
+     `AffineLogTransform` copies the matrix before its exponential. Status:
+     proposed in the elastix pass.
+326. The elastix pass removes the `parameter_map` field in favor of
+     `metadata.raw.parameters`, the `reverse=False` of the base class, the
+     class methods `_read_map` and `_format_map`, and the module function
+     `initial_filename` of the private `_xform` module, which moves to
+     `_raw`. The writers no longer accept unknown options, and an
+     untouched file keeps its bytes. These changes are to be announced
+     with item 13. Status: open, as for item 13.
+327. The block of an elastix transformation is a view of its record, and
+     not of its chain, so assigning a chain does not clear it, and
+     `xform.block` still describes the file while the chain is pending. In
+     the conformance tests, check 6 is vacuous, as for LTA and M3Z (item
+     66), and checks 18 and 19 do not apply, since the format has no `raw`
+     and is not an image. The chains of several files are checked in
+     `tests/test_io_elastix.py`, because the harness builds objects from
+     data alone. Status: proposed in the elastix pass.
+328. The elastix formats import private names of other packages: the ITK
+     block classes and `_make_system` from `io/transformations/itk`, and
+     `_compatible` from `io/transformations/base/affines.py`, which checks
+     an assigned system against LPS. ITK is moved to records at the same
+     time, so these imports may need to follow it. Status: open.
+329. An elastix transformation without a record and without a chain
+     raises `UnrepresentableTransformationError` when it is consolidated,
+     as it did when it was written, and `ElastixMetadata` without a record
+     raises `WriterError`, as M3Z does (item 61). LTA and X5 write an empty
+     record instead. Status: proposed in the elastix pass.
 350. The record of a TIFF file, `TiffRaw`, describes the series that was
      read, with its levels, and not the whole file, because the dialect,
      the OME image and the geometry belong to one series. The index of

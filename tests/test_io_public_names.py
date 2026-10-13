@@ -208,6 +208,8 @@ PACKAGES: tx.Dict[str, Package] = {
         names=frozenset(
             {
                 "NiftyRegAffine",
+                "NiftyRegAffineMetadata",
+                "NiftyRegAffineRaw",
                 "NiftyRegControlPointGrid",
                 "NiftyRegDeformationField",
                 "NiftyRegDisplacementField",
@@ -222,6 +224,17 @@ PACKAGES: tx.Dict[str, Package] = {
     ),
     "brainhops.io.transformations.c3d": Package(
         names=frozenset({"C3dAffine", "C3dAffineMetadata", "C3dAffineRaw"}),
+    ),
+    "brainhops.io.transformations.elastix": Package(
+        names=frozenset(
+            {
+                "ElastixMetadata",
+                "ElastixParameterTransform",
+                "ElastixRaw",
+                "ElastixTomlTransform",
+                "ElastixTransform",
+            }
+        ),
     ),
     "brainhops.io.transformations.freesurfer.lta": Package(
         names=frozenset(
@@ -239,6 +252,30 @@ PACKAGES: tx.Dict[str, Package] = {
                 "LtaType",
                 "LtaValidity",
                 "LtaVoxelSystem",
+            }
+        ),
+    ),
+    "brainhops.io.transformations.matrix": Package(
+        names=frozenset(
+            {
+                "CsvMatrixAffine",
+                "CsvMatrixMetadata",
+                "Mat73MatrixAffine",
+                "Mat73MatrixMetadata",
+                "MatLegacyMatrixAffine",
+                "MatLegacyMatrixMetadata",
+                "MatMatrixAffine",
+                "MatrixAffine",
+                "MatrixAffineRaw",
+                "MatrixMetadata",
+                "NpyMatrixAffine",
+                "NpyMatrixMetadata",
+                "NpzMatrixAffine",
+                "NpzMatrixMetadata",
+                "TsvMatrixAffine",
+                "TsvMatrixMetadata",
+                "TxtMatrixAffine",
+                "TxtMatrixMetadata",
             }
         ),
     ),
