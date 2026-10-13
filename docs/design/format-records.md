@@ -1739,17 +1739,19 @@ its status.
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
      the formats merged later (N5, Imaris, precomputed, JPEG 2000,
-     BigDataViewer and image stacks) follow the same rule, and the JPEG
-     2000 pyramid caches the levels and the placements that it decodes in
-     the same way. Status: resolved.
+     BigDataViewer, image stacks and OpenSlide) follow the same rule, and
+     the JPEG 2000 and OpenSlide pyramids cache the levels and the
+     placements that they decode in the same way. Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
      the cache, so it is lost when other metadata is assigned, and a copy
      made with `replace` or `from_instance` decodes the list again instead
      of copying the change. A write of the image itself, including
      `io.save`, still writes the change. Assigning the changed list keeps
      it everywhere. The images that cannot be written (N5, Imaris,
-     precomputed and BigDataViewer) have no record to encode the change into, so their
-     `consolidate` gives the copy the changed list as an assigned one.
+     precomputed, BigDataViewer and OpenSlide) have no record to encode
+     the change into, so their `consolidate` gives the copy the changed
+     list as an assigned one, and so does the OpenSlide pyramid for its
+     placements.
      Status: open, for the maintainer to decide whether copies within a
      format should carry the cache.
 192. Check 20 cannot tell an old geometry from a new one for some
