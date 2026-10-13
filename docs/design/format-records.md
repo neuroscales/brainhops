@@ -4,7 +4,8 @@ This memo is agreed and is being implemented. It is tracked in #415,
 and the work is done in the passes described at the end. The first
 two passes are written and under review, and the third is in progress.
 The design of pending data and `consolidate()` is applied across the
-whole stack.
+whole stack. The plain matrix formats and the NiftyReg affine are moved
+on the model of LTA (items 300 to 306).
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides
@@ -1825,6 +1826,104 @@ registrations of its views back into the XML file.
      metadata holds the whole file, as for LTA and M3Z (item 66), and
      check 18 does not apply, because the format has no `raw`. Status:
      accepted.
+300. The seven plain matrix formats (`io/transformations/matrix`) share
+     one record, `MatrixAffineRaw`, because a text container and a binary
+     container differ only by the text that a text file keeps and the
+     name of the array that `.npz` and `.mat` files select. Each container
+     has its own registered metadata class, such as `TxtMatrixMetadata`,
+     which reads the container with its array reader and builds the
+     record, and each format class calls its own metadata explicitly.
+     The record holds the stored matrix and the conventions that the
+     caller stated (`ndim`, `vector`, `direction`, `index_base`, the
+     voxel-to-world matrices of the `source` and `target` images, and the
+     coordinate systems), which replace the former attributes
+     `raw_matrix`, `variable`, `vector`, `direction` and `index_base`.
+     `consolidate` stores an assigned matrix in the conventions and the
+     layout of the record (`encode` in
+     `io/transformations/matrix/_conventions.py`), and refuses a
+     translation in a file that stores a linear map and a 1-based endpoint
+     that is no longer a voxel space.
+     Status: open, for review.
+301. The plain matrix formats read files but do not write them, because
+     the writer was ruled out of scope in #242, so the checks of writing
+     make sure that they refuse to write, as for MINC (item 101), and an
+     untouched save is not checked. The checks write their files with
+     NumPy, SciPy and h5py. The data of these formats lives in their
+     record, so a consolidation that cannot be written still encodes a
+     new record, and the harness accepts new metadata in that case
+     (`_check_data_only` in `tests/test_io_conformance.py`). Check 6 is
+     vacuous, as in item 66, and check 10 edits `variable`. The text
+     exemplar writes `.dat` files, and its variant `.1D` files, which
+     `io.save` writes as a `register.dat` file and an AFNI affine (item
+     306), as it writes a `.txt` file as a NiftyReg affine. For a future
+     writer, rewriting the same
+     content gives the same bytes with `np.save`, `np.savez`,
+     `scipy.io.savemat` in format 4 and h5py, but not with
+     `scipy.io.savemat` in format 5, whose header holds the time of
+     writing, and a `.npz` or `.mat` file of several arrays would have to
+     keep its other arrays. Status: open, for the maintainer to decide
+     whether these formats should write.
+302. The plain matrix formats give the coordinate systems of their record
+     to the transformation as its own `input` and `output`, instead of
+     decoding them as properties as LTA does, and a system counts as
+     assigned only when it is not the very object of the record
+     (`_overridden` in `io/transformations/matrix/_xform.py`). The data
+     model copies the private `_input` and `_output` fields, so systems
+     decoded from a record are lost when a transformation is copied into
+     another class. LTA already loses them in this way:
+     `LtaTransformation.to(Affine).input` is `None` for a file of the RAS
+     type, on `main` as well. Status: open, for the maintainer to decide
+     whether the data model should copy the decoded systems of another
+     class, which would let the plain matrix formats decode them too.
+303. `NiftyRegAffine` holds a `NiftyRegAffineRaw` record that keeps the
+     text of the file, as `C3dAffineRaw` does in item 170, so an untouched
+     file keeps its `%.7g` numbers, and a matrix that is encoded is
+     written with the shortest digits that read back exactly. The record
+     holds nothing beside the matrix and its text, and a changed matrix
+     replaces the text, so check 10 is vacuous. The metadata of a
+     NiftyReg affine loses a `.txt` file to the metadata of a plain
+     matrix, as the transformation does, so check 6 selects it with the
+     new field `Exemplar.hint`. `consolidate` refuses an `input` or an
+     `output` that was assigned and is not RAS, which answers item 173
+     for NiftyReg. Status: open, for review.
+304. The four helpers that LTA and the Convert3D format repeated (item
+     171) live in `io/transformations/base/_records.py` as `record_of`,
+     `read_only`, `matrix_to_model` and `matrix_to_disk`, and LTA and
+     NiftyReg call them, and so does `register.dat` (#432), which called
+     the private helpers of LTA. The Convert3D format of #435 still
+     repeats all four, unchanged, in `io/transformations/c3d/_affine.py`,
+     and can switch to them in a later pull request. The MNI transform,
+     BigDataViewer and TrakEM2 formats repeat `_record`, but their
+     helpers `_matrix_to_model` and `_matrix_to_disk` store three rows,
+     or a flat row of twelve or six numbers, rather than a homogeneous
+     matrix, so they are not the same helpers. Status: open.
+305. The readers refuse the options that they do not take with
+     `TypeError`. A plain matrix file of a single array refuses
+     `variable` and `key`, which it used to ignore, and `variable` and
+     `key` that name different arrays are refused. A NiftyReg affine
+     refuses `variable`, `key` and the conventions of a plain matrix. A
+     text file that is read from a path or a stream receives `encoding`
+     after it was decoded, so `encoding` is refused there, as for the
+     Convert3D format, and honoured only when bytes are decoded. Status:
+     open, for the maintainer to decide whether the adapters of
+     `io/base/parsers.py` should open a text file with the given
+     encoding.
+306. The Convert3D format of #435 declares the `.mat` extension,
+     `register.dat` (#432) the `.dat` extension and the AFNI affine the
+     `.1D` extension, and each converts an affine whose systems are
+     unknown, so `io.save` of a plain matrix built from data writes a
+     file of that format instead of raising `WriterError`. The checks of
+     writing of a format that cannot write therefore accept a save by
+     another format, and check only that the format is not a writer and
+     that the file does not read back as the format
+     (`_refuses_writing` in `tests/test_io_conformance.py`). A
+     Convert3D matrix holds no marker, so the metadata of a NiftyReg
+     affine, which scores a text file of a homogeneous matrix from its
+     content, wins over the metadata of Convert3D, which a `.mat` name
+     alone selects, and check 6 selects the Convert3D metadata with
+     `Exemplar.hint`, as it does for NiftyReg (item 303). Status: open,
+     for the maintainer to decide whether a `.mat` text file should
+     dispatch to the Convert3D metadata without a hint.
 320. An elastix parameter file may name an initial transform in another
      file, and that file may name another. The record of each file of the
      chain is read when the file that names it is read, and it is held in

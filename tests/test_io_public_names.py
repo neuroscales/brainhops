@@ -196,6 +196,8 @@ PACKAGES: tx.Dict[str, Package] = {
         names=frozenset(
             {
                 "NiftyRegAffine",
+                "NiftyRegAffineMetadata",
+                "NiftyRegAffineRaw",
                 "NiftyRegControlPointGrid",
                 "NiftyRegDeformationField",
                 "NiftyRegDisplacementField",
@@ -238,6 +240,30 @@ PACKAGES: tx.Dict[str, Package] = {
                 "LtaType",
                 "LtaValidity",
                 "LtaVoxelSystem",
+            }
+        ),
+    ),
+    "brainhops.io.transformations.matrix": Package(
+        names=frozenset(
+            {
+                "CsvMatrixAffine",
+                "CsvMatrixMetadata",
+                "Mat73MatrixAffine",
+                "Mat73MatrixMetadata",
+                "MatLegacyMatrixAffine",
+                "MatLegacyMatrixMetadata",
+                "MatMatrixAffine",
+                "MatrixAffine",
+                "MatrixAffineRaw",
+                "MatrixMetadata",
+                "NpyMatrixAffine",
+                "NpyMatrixMetadata",
+                "NpzMatrixAffine",
+                "NpzMatrixMetadata",
+                "TsvMatrixAffine",
+                "TsvMatrixMetadata",
+                "TxtMatrixAffine",
+                "TxtMatrixMetadata",
             }
         ),
     ),
