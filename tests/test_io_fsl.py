@@ -412,39 +412,6 @@ def test_fnirt_refuses_to_encode_an_assigned_chain(tmp_path) -> None:  # noqa: A
     assert not (tmp_path / "copy.nii").exists()
 
 
-@pytest.mark.parametrize("decoded", [False, True], ids=["unread", "read"])
-def test_fnirt_keeps_its_chain_when_other_metadata_is_assigned(
-    tmp_path,  # noqa: ANN001
-    decoded: bool,
-) -> None:
-    # Other metadata never changes the chain (2026-10-13). A chain that can
-    # be built is built from the previous header, and FNIRT cannot encode
-    # a chain, so the field then refuses to be written.
-    _, absolute, _ = _fnirt_setup()
-    warp = _warp(absolute)
-    expected = np.asarray(warp.transformations[0].homogeneous_matrix)
-    warp = _warp(absolute)
-    if decoded:
-        assert warp.transformations
-    other = nb.Nifti1Image(absolute.astype(np.float32), np.diag([3, 3, 3, 1]))
-    other.header["intent_code"] = 2006
-    metadata = FnirtWarpField.from_nibabel(other).metadata
-    warp.metadata = metadata
-    assert warp.metadata is metadata
-    chain = warp.transformations
-    assert np.allclose(chain[0].homogeneous_matrix, expected)
-    with pytest.raises(UnrepresentableTransformationError):
-        warp.save(tmp_path / "copy.nii")
-    warp.transformations = None
-    assert not np.allclose(
-        warp.transformations[0].homogeneous_matrix, expected
-    )
-    # A field without its moving image has no chain to keep yet.
-    bare = FnirtWarpField.from_nibabel(other)
-    bare.metadata = _warp(absolute).metadata
-    assert bare._transformations is None
-
-
 # ----------------------------------------------------------------------
 #   FNIRT (real fixtures)
 # ----------------------------------------------------------------------

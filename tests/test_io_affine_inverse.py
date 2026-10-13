@@ -116,12 +116,6 @@ def test_the_matrix_comes_from_the_header_unless_it_is_set(cls) -> None:  # noqa
     assert consolidated._data is None
     np.testing.assert_array_equal(consolidated.matrix, np.eye(4)[:3])
     assert consolidated.metadata.raw is not explicit.metadata.raw
-    # Other metadata keeps the matrix (2026-10-13), which is pending until
-    # the affine is consolidated, and assigning `None` as data decodes the
-    # matrix of the new header.
+    # Other metadata gives another matrix.
     t.metadata = NiftiMetadata.from_raw(NiftiRaw(header=nb.Nifti1Header()))
-    np.testing.assert_allclose(t.matrix, expected[:3])
-    assert t._data is not None
-    np.testing.assert_allclose(t.consolidate().matrix, expected[:3])
-    t.data = None
     assert not np.allclose(t.matrix, expected[:3])

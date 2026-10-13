@@ -36,6 +36,7 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common._geometry import (
     RAS_FROM_ORIENTATION,
+    held_transformations,
     reduce_to_affine,
     same_transformations,
 )
@@ -401,31 +402,27 @@ class NrrdImage(
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
-    property of the same name reads it. `None`, the default, means that
-    the transformations have been neither read nor assigned, so the
-    record is kept as it is. The property stores here the list that it
-    decodes, and an assigned list, even an empty one, is stored as it is.
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the record and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
     _metadata: NoRepr[tx.Optional[NrrdMetadata]] = None
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
-    An image built from data has no metadata. Assigning other metadata
-    drops the transformations that the image holds, read or assigned, so
-    that they are decoded from the new record.
+    An image built from data has no metadata. Assigning
+    other metadata drops the transformations decoded from the previous
+    record, so that they are decoded from the new one, and keeps the
+    transformations that were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[NrrdMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -442,15 +439,19 @@ class NrrdImage(
             return None
         return _image_to_model(self.raw)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. An image without
-        metadata has no transformations.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place, such as an appended
+        transformation, is kept.
+        Assigning other metadata drops the decoded list, so that it is
+        decoded from the new record, and keeps an assigned list. A change
+        made in place to a decoded list is therefore lost when other
+        metadata is assigned. An image without metadata has no
+        transformations.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -458,8 +459,7 @@ class NrrdImage(
         image has no geometry, and the image is then written as an image
         built from data alone. Assigning `None` decodes the record again.
         """
-        self._transformations = _record_transformations(self.metadata)
-        return self._transformations
+        return _record_transformations(self.metadata)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -732,8 +732,9 @@ class NrrdImage(
         )
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
-        kept = self._transformations is None or same_transformations(
-            self._transformations, _record_transformations(self.metadata)
+        held = held_transformations(self)
+        kept = held is None or same_transformations(
+            held, _record_transformations(self.metadata)
         )
         if (
             self._data is None
@@ -946,12 +947,12 @@ def _encoded(
         written.
     """
     # The helpers read the transformations of a copy that holds the list
-    # of the record when the image holds none, so that a write leaves the
-    # image as it was.
-    if image._transformations is None:
-        image = replace(
-            image, transformations=_record_transformations(image.metadata)
-        )
+    # of the image, or the list of the record when the image holds none,
+    # so that a write leaves the image as it was.
+    held = held_transformations(image)
+    if held is None:
+        held = _record_transformations(image.metadata)
+    image = replace(image, transformations=held)
     if image._data is not None:
         raw = _image_to_disk(image._data)
     else:
