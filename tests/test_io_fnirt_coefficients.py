@@ -276,6 +276,20 @@ def test_the_coefficients_stay_on_their_grid() -> None:
     assert np.asarray(field.field).shape == coef.shape
 
 
+def test_the_knot_spacing_is_rounded_to_whole_voxels() -> None:
+    """FSL rounds the pixdims of a coefficient file to whole voxels."""
+    ksp = (3, 4, 2)
+    coef = _coefficients(3, ksp)
+    reference = _reference(False)
+    image = _coefficient_file(coef, 3, ksp)
+    image.header.set_zooms((2.8, 4.3, 1.6, 1.0))
+    warp = _warp(image, reference)
+    expected = _fsl_world(
+        coef.astype(float), ksp, 3, np.eye(4), reference, REF_PIXDIM
+    )
+    assert np.allclose(_world(warp, reference), expected, atol=1e-5)
+
+
 @pytest.mark.parametrize("name", ["intent_p2", "pixdim"])
 def test_a_header_without_spline_parameters_has_no_chain(name) -> None:  # noqa: ANN001
     """A knot spacing or a voxel size that is not positive is refused."""

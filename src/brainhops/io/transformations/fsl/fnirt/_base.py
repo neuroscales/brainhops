@@ -375,9 +375,14 @@ class FnirtWarpField(
         return "constant" if self._is_coeff() else "nearest"
 
     def _stored_knot_spacing(self) -> np.ndarray:
-        """Knot spacing in reference voxels, as stored in the pixdims."""
-        zooms = _header(self).get_zooms()[:3]
-        return np.abs(np.asarray(zooms, dtype=np.float64))
+        """Knot spacing in reference voxels, as stored in the pixdims.
+
+        FSL rounds the pixdims to whole numbers of voxels
+        (`FnirtFileReader::read_coef_file` in
+        `src/warpfns/fnirt_file_reader.cpp` of FSL 5.0.9).
+        """
+        zooms = np.abs(np.asarray(_header(self).get_zooms()[:3], float))
+        return np.floor(zooms + 0.5)
 
     def _reference_pixdim(self) -> np.ndarray:
         """Reference voxel sizes, stored in the intent parameters."""
