@@ -86,8 +86,8 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.multiscale": {
         "MultiscaleField": ("scales",),
     },
-    "brainhops.datamodel._transformations.operators": {
-        "Operation": ("forward",),
+    "brainhops.datamodel._transformations.derived": {
+        "DerivedTransformation": ("forward",),
         "Sqrt": ("forward",),
         "SqrtAffine": ("forward",),
         "SqrtLinear": ("forward",),
@@ -102,6 +102,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     },
     "brainhops.datamodel.geometry": {
         "Geometry": ("transformations", "shape", "grid", "transformation"),
+    },
+    "brainhops.io.transformations.afni._affine": {
+        "AfniAffine": ("data",),
+    },
+    "brainhops.io.transformations.afni._nifti": {
+        "AfniNiftiWarp": ("transformations",),
+    },
+    "brainhops.io.transformations.afni._warp": {
+        "AfniBrikWarp": ("transformations",),
     },
     "brainhops.io.transformations.base.affines": {
         "LPSToVoxel": ("data",),
@@ -194,6 +203,24 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
             "TsvMatrixAffine",
             "TxtMatrixAffine",
         )
+    },
+    "brainhops.io.transformations.minc._affine": {
+        "XfmAffine": ("data",),
+    },
+    "brainhops.io.transformations.minc._chain": {
+        "XfmTransform": ("transformations",),
+    },
+    "brainhops.io.transformations.minc._grid": {
+        "XfmGridTransform": ("transformations",),
+    },
+    "brainhops.io.transformations.mrtrix._linear": {
+        "MrtrixLinearTransform": ("data",),
+    },
+    "brainhops.io.transformations.mrtrix._warps": {
+        "MrtrixCoordinatesField": ("transformations",),
+        "MrtrixDisplacementField": ("transformations",),
+        "MrtrixWarp": (),
+        "MrtrixWarpFull": ("transformations",),
     },
     "brainhops.io.transformations.nifti._affines": {
         "NiftiRASToVoxel": ("data",),

@@ -247,8 +247,11 @@ def test_map_axis_between_two_orders_of_the_same_axes_is_the_identity() -> (
 
 
 def test_map_axis_refuses_a_map_that_is_not_a_permutation() -> None:
+    # abczarr 0.2.3 refuses such a mapAxis when it parses it, and brainhops
+    # refuses it when an older abczarr lets it through. Both errors are
+    # value errors.
     yx = _system(_YX)
-    with pytest.raises(_map.OmeMappingError):
+    with pytest.raises(ValueError, match="not a permutation"):
         _map_json({"type": "mapAxis", "mapAxis": [0, 0]}, yx, yx)
 
 
@@ -715,8 +718,11 @@ def test_translation_of_a_sequence_is_exact_in_brainhops_order() -> None:
     ],
 )
 def test_axis_indices_must_be_valid_and_unique(transform: dict) -> None:
-    # OME-NGFF 0.6 requires valid, unique and zero-based indices.
-    with pytest.raises(_map.OmeMappingError):
+    # OME-NGFF 0.6 requires valid, unique and zero-based indices. abczarr
+    # 0.2.3 already refuses a mapAxis that is not a permutation when it
+    # parses it, with a value error, as brainhops does after an older
+    # abczarr.
+    with pytest.raises(ValueError):
         _map_json(transform, _system(_ZYX), _system(_YX))
 
 
