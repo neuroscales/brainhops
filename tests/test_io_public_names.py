@@ -157,6 +157,11 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.transformations.trakem2": Package(
+        names=frozenset(
+            {"TrakEM2Metadata", "TrakEM2PatchAffine", "TrakEM2Raw"}
+        ),
+    ),
     "brainhops.io.transformations.freesurfer.m3z": Package(
         names=frozenset(
             {

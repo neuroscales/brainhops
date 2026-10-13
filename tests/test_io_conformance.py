@@ -61,6 +61,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     ParserError,
+    UnrepresentableTransformationError,
     WriterError,
     _overrides_from_fileobj,
 )
@@ -120,6 +121,17 @@ from brainhops.io.transformations.freesurfer.m3z import (
 from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
+)
+from brainhops.io.transformations.trakem2 import (
+    TrakEM2Metadata,
+    TrakEM2PatchAffine,
+    TrakEM2Raw,
+)
+from brainhops.io.transformations.trakem2._xform import (
+    _matrix_to_disk as _trakem2_matrix_to_disk,
+)
+from brainhops.io.transformations.trakem2._xform import (
+    _matrix_to_model as _trakem2_matrix_to_model,
 )
 
 try:
@@ -771,6 +783,17 @@ class Exemplar(tx.NamedTuple):
     then the header file, beside an empty file of data.
     """
 
+    template: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
+    """Function that writes a file of a format that writes only over a file.
+
+    The function receives a path and data. It is `None` for a format that
+    writes an object built from data alone. A TrakEM2 affine is written
+    into the project that it was read from, and an affine without a
+    project is refused, so the checks write a project with this function,
+    and check that an object without a record refuses to be consolidated
+    and saved.
+    """
+
     storage: tx.Optional[tx.Dict[str, tx.Any]] = None
     """Options of `consolidate` that change how the data is stored.
 
@@ -1004,6 +1027,88 @@ _LTA = Exemplar(
     stored=_lta_stored,
 )
 EXEMPLARS[LtaTransformation] = _LTA
+
+# A TrakEM2 project is an XML file that places the patches of each layer
+# by a 2D affine, whose six values live in the record, which is parsed in
+# one pass, as LTA keeps its matrix. The affine is written into the
+# project that it was read from, by replacing the value of the
+# `transform` attribute of its patch, and an affine without a project is
+# refused, so the checks write a project by hand (`template`). A record
+# is frozen, so the edit of a record gives a new record, read from edited
+# bytes. The checks that build an object from data alone, or convert one
+# from another format, check that it refuses to be consolidated. Check 6
+# is vacuous, as for LTA, since the metadata holds the whole file, and
+# check 18 does not apply, since the format has no `raw`.
+
+_TRAKEM2_XML = """<?xml version="1.0" encoding="ISO-8859-1"?>
+<!DOCTYPE trakem2_anything [
+\t<!ELEMENT t2_patch (t2_prop,t2_linked_prop,t2_annot,ict_transform,ict_transform_list,t2_filter)>
+\t<!ATTLIST t2_patch oid NMTOKEN #REQUIRED>
+] >
+
+<trakem2>
+\t<t2_layer_set
+\t\toid="3"
+\t\ttransform="matrix(1.0,0.0,0.0,1.0,0.0,0.0)"
+\t>
+\t\t<t2_layer oid="5"
+\t\t\t thickness="1.0"
+\t\t\t z="0.0"
+\t\t>
+\t\t\t<t2_patch
+\t\t\t\toid="7"
+\t\t\t\twidth="4.0"
+\t\t\t\theight="3.0"
+\t\t\t\ttransform="matrix({transform})"
+\t\t\t\ttitle="tile.tif"
+\t\t\t>
+\t\t\t</t2_patch>
+\t\t</t2_layer>
+\t</t2_layer_set>
+</trakem2>
+"""
+
+
+def _write_trakem2(path: tx.Any, data: tx.Any) -> None:
+    """Write a project of one patch, laid out as TrakEM2 lays it out."""
+    values = _trakem2_matrix_to_disk(data)
+    text = _TRAKEM2_XML.format(transform=",".join(repr(v) for v in values))
+    with open(path, "wb") as file:
+        file.write(text.encode("latin-1"))
+
+
+def _trakem2_stored(xform: tx.Any) -> tx.Any:
+    # The six values live in the record, and a matrix that was assigned is
+    # pending until it is encoded into a new record.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.patch(xform.patch).transform
+
+
+def _trakem2_edit_record(record: tx.Any) -> tx.Any:
+    stored = record.stored.replace(b"<trakem2>", b"<!-- edited -->\n<trakem2>")
+    return TrakEM2Raw.from_bytes(stored)
+
+
+EXEMPLARS[TrakEM2PatchAffine] = Exemplar(
+    metadata=TrakEM2Metadata,
+    suffix=".xml",
+    proxies=(tuple,),
+    to_model=_trakem2_matrix_to_model,
+    to_disk=_trakem2_matrix_to_disk,
+    sample=lambda: np.array([[2.0, 0.5, 1.0], [-0.25, 4.0, 2.0]]),
+    edit_record=_trakem2_edit_record,
+    record_edited=lambda raw: b"<!-- edited -->" in raw.stored,
+    geometry=_matrix_geometry,
+    change_geometry=lambda xform: setattr(
+        xform, "data", np.array([[3.0, 0.0, 5.0], [0.0, 3.0, 6.0]])
+    ),
+    foreign=lambda data: Affine(data),
+    derived=("homogeneous_matrix",),
+    options=frozenset({"patch"}),
+    stored=_trakem2_stored,
+    template=_write_trakem2,
+)
 
 
 # The model of an X5 file is a chain, whose first element here is a field
@@ -1671,6 +1776,8 @@ def _saved(
     path = _path(tmp_path, exemplar, name)
     if exemplar.source is not None:
         exemplar.source(path, exemplar.sample())
+    elif exemplar.template is not None:
+        exemplar.template(path, exemplar.sample())
     else:
         _built(cls, exemplar, exemplar.sample()).save(path)
     return path
@@ -1681,6 +1788,16 @@ def _refuses_writing(obj: tx.Any, target: tx.Any) -> None:
     assert not hasattr(obj, "save")
     with pytest.raises(WriterError):
         io.save(obj, target)
+
+
+def _refuses_encoding(obj: tx.Any, target: tx.Any) -> None:
+    """Check that a format that writes only over a file refuses an object
+    without a record."""
+    with pytest.raises(UnrepresentableTransformationError):
+        obj.consolidate()
+    with pytest.raises(UnrepresentableTransformationError):
+        obj.save(target)
+    assert not os.path.exists(target)
 
 
 def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
@@ -1694,7 +1811,10 @@ def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
     if exemplar.source is not None:
         return _saved(cls, exemplar, tmp_path, "placed")
     path = _path(tmp_path, exemplar, "placed")
-    obj = _built(cls, exemplar, exemplar.sample())
+    if exemplar.template is not None:
+        obj = cls.load(_saved(cls, exemplar, tmp_path, "template"))
+    else:
+        obj = _built(cls, exemplar, exemplar.sample())
     exemplar.change_geometry(obj)
     obj.save(path)
     return path
@@ -1882,6 +2002,10 @@ def test_08_an_object_built_from_data_saves(
     built = _built(cls, exemplar, value)
     assert built.metadata is None
     assert np.array_equal(np.asarray(_data(exemplar, built)), value)
+    path = _path(tmp_path, exemplar, "built")
+    if exemplar.template is not None:
+        _refuses_encoding(built, path)
+        return
     # Consolidating encodes the data and a new record, which a format
     # that cannot write cannot encode.
     consolidated = built.consolidate()
@@ -1889,7 +2013,6 @@ def test_08_an_object_built_from_data_saves(
         assert isinstance(consolidated.metadata, exemplar.metadata)
     stored = np.asarray(_stored(exemplar, consolidated))
     assert np.array_equal(stored, exemplar.to_disk(value))
-    path = _path(tmp_path, exemplar, "built")
     if exemplar.source is not None:
         _refuses_writing(built, path)
         return
@@ -1932,6 +2055,10 @@ def test_09_copies_keep_raw_and_metadata(
     value = exemplar.sample()
     converted = cls.from_instance(exemplar.foreign(value))
     assert converted.metadata is None
+    if exemplar.template is not None:
+        assert np.array_equal(np.asarray(converted.data), value)
+        _refuses_encoding(converted, _path(tmp_path, exemplar, "converted"))
+        return
     if "data" in _init_names(_model(cls)):
         assert getattr(converted, "raw", None) is None
         assert np.array_equal(np.asarray(converted.data), value)

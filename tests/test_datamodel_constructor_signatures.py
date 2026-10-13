@@ -125,6 +125,9 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "LtaTransformationRASToRAS": ("data",),
         "LtaTransformationVoxToVox": ("data",),
     },
+    "brainhops.io.transformations.trakem2._xform": {
+        "TrakEM2PatchAffine": ("data",),
+    },
     "brainhops.io.transformations.freesurfer.m3z._xform": {
         "M3zMorph": ("transformations",),
     },
