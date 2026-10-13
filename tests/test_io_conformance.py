@@ -62,6 +62,7 @@ from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
+    FileWriter,
     ParserContentError,
     ParserError,
     UnrepresentableTransformationError,
@@ -86,6 +87,7 @@ from brainhops.io.images.afni._views import (
     _image_to_model as _afni_to_model,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
 from brainhops.io.images.mrtrix._views import (
     _image_to_disk as _mrtrix_to_disk,
@@ -253,6 +255,20 @@ try:
     minc_needs = netcdf_file
 except ImportError:
     minc_needs = None
+
+try:
+    import tifffile
+
+    from brainhops.io.images.stack import StackImage, StackMetadata
+    from brainhops.io.images.stack._data import _StackProxy
+    from brainhops.io.images.stack._views import (
+        _image_to_disk as _stack_to_disk,
+    )
+    from brainhops.io.images.stack._views import (
+        _image_to_model as _stack_to_model,
+    )
+except ImportError:
+    tifffile = None
 
 try:
     import tensorstore as ts
@@ -898,6 +914,18 @@ class Exemplar(tx.NamedTuple):
     the format must refuse them, and the metadata is read from the bytes
     of the header file. A copy of a file whose data cannot be read is
     then the header file, beside an empty file of data.
+    """
+
+    folder: bool = False
+    """Whether an object of the format is a folder of files.
+
+    An image stack is a folder of numbered files, so its checks write
+    and read a folder, whose path is the path of the other formats. Bytes
+    and streams cannot hold a folder, so the format and its metadata must
+    refuse them, and check 12 tests that they do instead of reading them.
+    No extension names a folder, so `io.save` cannot choose the format of
+    a folder from its name, and check 5 writes the copy that `io.save`
+    would make with the format itself.
     """
 
     template: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
@@ -1879,6 +1907,75 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+
+def _stack_edit_record(record: tx.Any) -> tx.Any:
+    # The names of the files are what a record of a stack holds besides
+    # its geometry, and a folder that is written keeps them.
+    members = tuple(
+        replace(member, name="edited_" + member.name)
+        for member in record.members
+    )
+    return replace(record, members=members)
+
+
+def _stack_change_geometry(image: tx.Any) -> None:
+    # A stack records only a scaling onto axes with a unit of length.
+    axes = raster.default_axes(3)
+    image.transformations = raster.raster_transformations(
+        axes, {"x": (2.0, "mm"), "y": (3.0, "mm"), "z": (4.0, "mm")}
+    )
+
+
+def _stack_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy a folder of TIFF files, each cut before its pixels.
+
+    tifffile writes the pixels of a page after its header, so each copy
+    keeps the tags, which the record reads, and loses the pixels.
+    """
+    os.mkdir(target)
+    for name in sorted(os.listdir(source)):
+        with tifffile.TiffFile(os.path.join(source, name)) as tif:
+            offset = min(tif.pages[0].dataoffsets)
+        with open(os.path.join(source, name), "rb") as file:
+            header = file.read(offset)
+        with open(os.path.join(target, name), "wb") as file:
+            file.write(header)
+
+
+if tifffile is not None:
+    # An image stack is a folder of numbered TIFF files, which the checks
+    # write and read with the path of a folder (`folder=True`). Check 12
+    # checks that bytes and streams are refused, since they cannot hold a
+    # folder, and check 6 cuts each file of the folder before its pixels.
+    # Check 5 compares the folders file by file, and writes the copy of
+    # the generic writer with the format itself, since no extension names
+    # a folder for `io.save` to choose the format from. The metadata
+    # cannot be written on its own, so checks 7 and 10 compare records.
+    # The record holds the names of the files, which the edit of check 10
+    # changes, and only a scaling with a unit of length, which the
+    # geometry of the checks is. The format has no option that changes
+    # the stored data, so check 16a is skipped (items 121 to 128 of the
+    # memo on format records).
+    EXEMPLARS[StackImage] = Exemplar(
+        metadata=StackMetadata,
+        suffix="",
+        proxies=(_StackProxy,),
+        to_model=_stack_to_model,
+        to_disk=_stack_to_disk,
+        sample=lambda: np.arange(24, dtype="uint16").reshape(2, 3, 4),
+        edit_record=_stack_edit_record,
+        record_edited=lambda record: all(
+            name.startswith("edited_") for name in record.names
+        ),
+        geometry=_nifti_geometry,
+        change_geometry=_stack_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        cut=_stack_cut,
+        header=lambda metadata: metadata.raw,
+        folder=True,
+    )
+
+
 # A BigDataViewer dataset is an XML file, which lists the views and holds
 # their registrations, and an HDF5 file of voxels. The registration of a
 # view is a chain of affines whose values live in the record, which is
@@ -2524,9 +2621,15 @@ def _resolve(name: str) -> tx.Optional[type]:
         return None
 
 
-def _decompressed(path: tx.Any) -> bytes:
+def _decompressed(path: tx.Any) -> tx.Any:
     # A gzipped file, such as a `.nii.gz` or a `.m3z` file, is compared
-    # after decompression, since only its content must be kept.
+    # after decompression, since only its content must be kept. A folder
+    # is compared file by file.
+    if os.path.isdir(path):
+        return {
+            name: _decompressed(os.path.join(path, name))
+            for name in sorted(os.listdir(path))
+        }
     with open(path, "rb") as file:
         content = file.read()
     if content[:2] == b"\x1f\x8b":
@@ -2573,6 +2676,31 @@ def _header(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
     if exemplar.header is None:
         return metadata.to_bytes()
     return exemplar.header(metadata)
+
+
+def _written(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
+    """Return what metadata writes, or its summary if it cannot write.
+
+    The metadata of a format that cannot write, such as MINC, and the
+    metadata of an image stack, which is written only with its image,
+    are compared through their summary.
+    """
+    if isinstance(metadata, FileWriter):
+        return metadata.to_bytes()
+    return exemplar.header(metadata)
+
+
+def _generic_save(exemplar: Exemplar, obj: tx.Any, target: tx.Any) -> None:
+    """Write an object with the generic writer, as `io.save` does.
+
+    No extension names a folder, so `io.save` cannot choose the format of
+    a folder from its name. The copy that it would make of an object of
+    the format, with `from_instance`, is then written by the format.
+    """
+    if exemplar.folder:
+        type(obj).from_instance(obj).save(target)
+    else:
+        io.save(obj, target)
 
 
 def _cut(
@@ -2789,7 +2917,7 @@ def test_05_untouched_save_is_byte_identical(
         assert _decompressed(target) == _decompressed(source)
         # The generic writer copies the object with `from_instance` first.
         target = _path(tmp_path, exemplar, "generic")
-        io.save(cls.load(source), target)
+        _generic_save(exemplar, cls.load(source), target)
         assert _decompressed(target) == _decompressed(source)
     # Every file of a copy under the same name, in another directory, is
     # the file of the same name beside the source.
@@ -2797,7 +2925,7 @@ def test_05_untouched_save_is_byte_identical(
         directory = tmp_path / name
         directory.mkdir()
         if write is None:
-            io.save(cls.load(source), directory / source.name)
+            _generic_save(exemplar, cls.load(source), directory / source.name)
         else:
             write(directory / source.name)
         for copied in directory.iterdir():
@@ -2833,11 +2961,7 @@ def test_07_metadata_pickles(
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
     clone = pickle.loads(pickle.dumps(loaded.metadata))
     assert type(clone) is type(loaded.metadata)
-    if exemplar.source is None:
-        assert clone.to_bytes() == loaded.metadata.to_bytes()
-    else:
-        # Metadata that cannot be written is compared through its summary.
-        assert _header(exemplar, clone) == _header(exemplar, loaded.metadata)
+    assert _written(exemplar, clone) == _written(exemplar, loaded.metadata)
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -2937,10 +3061,10 @@ def test_10_record_edits_survive_and_geometry_wins(
         assert exemplar.record_edited(loaded.metadata.raw)
         _refuses_writing(loaded, target)
         return
-    header = loaded.metadata.to_bytes()
+    header = _written(exemplar, loaded.metadata)
     loaded.save(target)
     # Writing encodes into a copy of the record, never into the record.
-    assert loaded.metadata.to_bytes() == header
+    assert _written(exemplar, loaded.metadata) == header
     back = cls.load(target)
     assert exemplar.record_edited(back.metadata.raw)
     assert np.allclose(exemplar.geometry(back), exemplar.geometry(loaded))
@@ -2975,6 +3099,16 @@ def test_12_adapter_contract(
         else:
             assert klass._READ_MODE == "rt"
     path = _saved(cls, exemplar, tmp_path)
+    if exemplar.folder:
+        # Neither the bytes of one file of the folder nor a stream can
+        # hold a folder of files.
+        content = sorted(path.iterdir())[0].read_bytes()
+        for klass in (cls, exemplar.metadata):
+            with pytest.raises(ParserError):
+                klass.from_bytes(content)
+            with pytest.raises(ParserError):
+                klass.from_fileobj(BytesIO(content))
+        return
     if exemplar.header_file is None:
         data = _data(exemplar, cls.from_bytes(path.read_bytes()))
         assert np.array_equal(np.asarray(data), exemplar.sample())
