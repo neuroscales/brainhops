@@ -1131,6 +1131,177 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+140. MNI transform files (#222) are parsed in one pass, so the matrices
+     of their linear transforms live in the record, as for LTA. The
+     displacements of a grid transform live in a separate MINC volume,
+     which `XfmTransform` reads into `raw` as a tuple of lazy
+     `MincImage` objects, one per grid transform
+     (`io/transformations/minc/_chain.py`). A file without a grid
+     transform has no `raw`, so check 18 does not apply to the exemplar,
+     and check 6 is vacuous, as for LTA and M3Z (item 66). Status:
+     accepted, pending review.
+141. brainhops cannot write MINC volumes, so an `XfmTransform` writes a
+     grid transform only as the volume that it was read from, which it
+     recognizes by the identity of the decoded element, as X5 does (item
+     36), and which it copies beside a file written elsewhere. A new
+     displacement field raises `UnrepresentableTransformationError`.
+     Status: open, until a MINC writer exists.
+142. libminc writes a MINC1 displacement volume without a variable for
+     `vector_dimension` (`volume_io/Volumes/output_mnc.c`), and both the
+     MINC reader of brainhops and nibabel refuse such a file, so only
+     MINC2 displacement volumes, whose HDF5 layer gives every dimension a
+     dataset, are read. Status: open. Reading these volumes would need
+     `io/common/minc` to read the voxels of MINC1 without nibabel's
+     `Minc1File`.
+143. The record of an MNI transform file keeps the text that it was read
+     from, and writes it while it still parses to the fields of the
+     record, as AFNI and MRtrix do (item 84). Comments, the layout of the
+     numbers, line endings and bytes that do not decode as UTF-8 are
+     therefore kept by an untouched save. A record that is encoded again
+     keeps only the comments at the top of the file. Status: accepted,
+     pending review.
+144. libminc interpolates a grid transform with cubic interpolating
+     splines, lowers the degree near the edges, and applies no
+     displacement beyond half a voxel outside the grid, and it inverts a
+     grid transform by an iteration. brainhops uses cubic B-splines of the
+     values with a zero boundary and the inverse of the data model. The
+     two agree at the nodes of the grid only. Status: accepted and
+     documented in `XfmGridTransform`.
+160. A Neuroglancer precomputed volume holds several scales, so it is read
+     as a pyramid, `PrecomputedMultiScaleImage`, whose levels are
+     `PrecomputedImage` objects (`io/images/precomputed`). Each level
+     follows this design: it holds the `info` file of the volume as its
+     record and the lazy array of its scale in `raw`, and it is an
+     exemplar of the conformance tests. The pyramid holds the same
+     metadata as its levels and has no `raw` of its own, and its
+     `consolidate` consolidates its levels. The rules for the levels and
+     the record of a pyramid are decided in the Zarr pass (item 15), so
+     the pyramid is listed with the other pyramids among the formats that
+     are not migrated. Status: open.
+161. Precomputed volumes are read and not written, as MINC (item 101).
+     A volume is a directory of files, local or remote, while the atomic
+     save of `io/base/_utils_files.py`, the save over the file that a
+     proxy reads (#426) and the untouched copy that is identical byte
+     for byte are defined for files. A writer would also encode a pyramid,
+     whose rules wait for the Zarr pass (item 160), and TensorStore,
+     which brainhops would write with, writes its own `info` file, with
+     other members, such as `jpeg_quality`, and other formatting. Status:
+     decided for the reader, and open for a writer.
+162. The specification of precomputed volumes does not say where the
+     centre of a voxel lies. The viewer rounds a position down to find
+     its voxel and subtracts half a voxel before it interpolates, so the
+     corner of a voxel sits at an integer coordinate, and the
+     transformation of a scale moves by `(voxel_offset + 0.5) *
+     resolution` nanometres (`io/images/precomputed/_image.py`, with the
+     sources in `io/images/precomputed/__init__.py`). Status: decided.
+163. The conformance exemplar of `PrecomputedImage` names a volume by its
+     `info` file, with the suffix `/info`, because checks 6 and 12 read
+     and copy the file that a case names, and a volume is a directory.
+     `Exemplar.header_file` is the identity, so that the bytes of the
+     `info` file are refused as a volume and read as its metadata. The
+     checks write the volume as `volume.md` describes it, without
+     TensorStore, and the tests of the format read volumes named by their
+     directory. Status: accepted.
+164. The readable encodings are those that TensorStore 0.1.45 decodes:
+     `raw`, `jpeg` and `compressed_segmentation`, sharded or not. The
+     list is fixed in `io/images/precomputed/_data.py`, so a scale in
+     `png`, `compresso`, `jxl` or `crackle` is refused when it is
+     loaded, even with a later TensorStore that decodes one of them.
+     TensorStore reads a missing chunk as zeros. Status: open, until the
+     list follows the version of TensorStore.
+165. A remote volume is read with the key-value stores of TensorStore,
+     which read `gs`, `http` and `https` URLs in version 0.1.45, and not
+     `s3`. The `precomputed://` prefix of Neuroglancer is not accepted,
+     because `bagof.paths.Path` merges the slashes of a nested URL. The
+     tests read a remote volume through a `file://` URL and use no
+     network. Status: accepted.
+170. The Convert3D matrix format of Greedy, `c3d_affine_tool` and
+     ITK-SNAP (`io/transformations/c3d`, #197) is read in one pass, as
+     LTA is, and its record `C3dAffineRaw` holds the matrix, the
+     characters that end each row and the text of the file. The text is
+     written back only while it still parses to the matrix and the
+     layout of the record, as in item 84, so an untouched file keeps its
+     bytes, including its six-digit numbers. Check 6 of the conformance
+     test is vacuous, because the file holds no data beside its record,
+     and check 10 edits `row_end`, the only field of the record outside
+     the matrix. Status: open, for review.
+171. `C3dAffine` repeats four short helpers of LTA (`_record`,
+     `_read_only`, `_matrix_to_model` and `_matrix_to_disk` in
+     `io/transformations/c3d/_affine.py` and
+     `io/transformations/freesurfer/lta/_xforms.py`), because the LTA
+     helpers are private to their package. They could move to
+     `io/transformations/base` once a third one-pass affine format needs
+     them. Status: open.
+172. A Convert3D matrix holds no marker, so `C3dAffine` never claims a
+     file from its content and is selected by the hints `c3d`, `greedy`
+     and `itksnap`. Without a hint, a `.mat` file of sixteen numbers is
+     still read as a FLIRT matrix, whose meaning differs, and a `.txt`
+     file as a plain matrix. The format declares the `.mat` extension,
+     so that `io.save` and the metadata dispatcher can choose it, and
+     `io.save` of an affine between world spaces to a `.mat` file, which
+     raised `WriterError` before, now writes a Convert3D matrix. Status:
+     open, for the maintainer to decide whether `.mat` should select this
+     writer.
+173. `RASToRAS` checks its systems only when it is built
+     (`io/transformations/base/affines.py`), so an `input` or an `output`
+     that is assigned later is not refused there. `C3dAffine.consolidate`
+     checks both systems again with the private `_check_endpoint` and
+     refuses a system that is not RAS with
+     `UnrepresentableTransformationError`. `NiftyRegAffine` has no such
+     check. Status: open.
+180. Imaris files are read only, as MINC files are (item 101). An
+     untouched Imaris file could not be saved byte for byte: its `Data`
+     datasets are always chunked and compressed, often with the LZ4
+     filter that h5py reads only with a plugin, and h5py rewrites only
+     contiguous datasets identically (item 48). A valid file also needs
+     every resolution level, binned as Imaris bins them, and the
+     histograms of every level, which belong to the writer of a pyramid
+     whose record is not designed yet (item 15). `ImarisImage.consolidate`
+     therefore moves pending data into `raw` only
+     (`io/images/imaris/_image.py`). Status: open, for the maintainer to
+     confirm.
+181. An Imaris pyramid holds no record of its own.
+     `ImarisMultiScaleImage` is listed among the formats that are not
+     migrated, and its levels are `ImarisImage` objects, which follow the
+     design and share one `ImarisMetadata`. Its record describes the
+     whole file, every level included, and the level that an image holds
+     is the reader option `level`, which the image keeps as a field, as
+     X5 keeps `chain` and `position` (item 49). The Zarr pass plans one
+     record per resolution level instead. Status: open, until the record
+     of a pyramid is decided (item 15).
+182. The time points and the channels of an Imaris file are axes of the
+     data, which always have five axes, `(x, y, z, t, c)`, even for a
+     single time point and a single channel. Brainhops orders space, time
+     and channels in this way for NIfTI, TIFF hyperstacks and OME-Zarr,
+     Imaris itself treats every file as five-dimensional, and the lazy
+     array reads only the datasets that a selection covers, so options
+     that select a time point or a channel would duplicate an index of
+     the data. Such options would also leave the record describing data
+     that the image does not hold. The time axis stays an index, although
+     `/DataSetInfo/TimeInfo` records a date for each time point, because
+     the dates need not be evenly spaced. Status: open, for the
+     maintainer to confirm.
+183. Every level of an Imaris pyramid is placed over the whole extent of
+     the file, as TIFF pyramids are, so its voxel size is the extent
+     divided by its size. ImarisWriter bins two voxels into one and drops
+     the last voxel of an odd axis (`bpMultiresolutionImsImage.cxx`), so
+     its coarse levels are placed by a factor of exactly two, which
+     imaris-ims-file-reader also uses. The two placements differ by less
+     than one coarse voxel along an odd axis, and how Imaris itself places
+     the levels is not documented. Status: open.
+184. The record of an Imaris file holds the size, the stored shape and
+     the type of each level, read from its first time point and channel,
+     but not the shape of its chunks. The copy of a file that the
+     conformance check of metadata reads stores its voxels in an external
+     file, which has no chunks, and the record must be the same for both
+     files. The lazy array reads the chunk shape from the file when Dask
+     asks for it (`io/images/imaris/_data.py`). Status: accepted.
+185. The adapter `Hdf5Reader` does not pass reader options to `sniff_h5`,
+     so the Imaris classes override `sniff_filename`, `sniff_fileobj` and
+     `sniff_bytes` to see the option `level`, which makes the pyramid
+     decline and the single image certain. An open `h5py.File` is still
+     sniffed without the option. Passing the options to `sniff_h5` would
+     break the X5 and ITK sniffers, which take none. Status: accepted.
 280. A TrakEM2 affine (`io/transformations/trakem2/_xform.py`) is
      written only into the project that it was read from, by replacing
      the value of the `transform` attribute of its patch, as the
@@ -1181,3 +1352,73 @@ its status.
      metadata holds the whole file, as for LTA and M3Z (item 66), and
      check 18 does not apply, because the format has no `raw`. Status:
      accepted.
+250. An N5 pyramid, a group whose datasets are `s0`, `s1`, ..., is read
+     as `N5MultiScaleImage`, whose levels are `N5Image` objects
+     (`io/images/n5`). Each level follows this design: it holds the
+     attributes of the group and of its datasets as its record and the
+     lazy array of its dataset in `raw`, and it is an exemplar of the
+     conformance tests. The pyramid holds the same metadata as its levels
+     and has no `raw` of its own, and its `consolidate` consolidates its
+     levels. The rules for the levels and the record of a pyramid are
+     decided in the Zarr pass (item 15), so the pyramid is listed among
+     the formats that are not migrated. Status: open.
+251. N5 datasets are read and not written, as MINC (item 101). A dataset
+     is a directory of files, while the atomic save of
+     `io/base/_utils_files.py`, the save over the file that a proxy reads
+     (#426) and the untouched copy that is identical byte for byte are
+     defined for files. TensorStore, which brainhops would write with,
+     writes every block at its full size, while the Java tools truncate
+     the blocks at the upper edges, and it writes its own
+     `attributes.json`, so an untouched copy would not keep its bytes. A
+     writer would also encode a pyramid, whose rules wait for the Zarr
+     pass (item 250). Status: decided for the reader, and open for a
+     writer.
+252. The conformance exemplar of `N5Image` names a dataset by its
+     `attributes.json` file, because checks 6 and 12 read and copy the
+     file that a case names, and `Exemplar.header_file` is the identity.
+     An N5 dataset is sparse, so a copy without blocks would read as
+     zeros and check 6 would not show that the metadata reads no block.
+     The copy therefore holds a block that cannot be decoded. The checks
+     write the datasets as the specification describes them, without
+     TensorStore. Status: accepted.
+253. The readable compressions are those that TensorStore 0.1.45
+     decodes: `raw`, `gzip`, `bzip2`, `xz` and `blosc`. The list is fixed
+     in `io/images/n5/_data.py`, so a dataset compressed with `lz4` or
+     `zstd`, or described by the `compressionType` of version 0 of the
+     specification, is refused when it is loaded, although its record is
+     read. Status: open, until the list follows the version of
+     TensorStore.
+254. The specification of N5 defines no spatial attribute, and its tools
+     disagree on some points (`io/images/n5/__init__.py`). brainhops
+     reads the attributes of a dataset that is read on its own as
+     n5-universe does, and completes a level of a pyramid from its group
+     as Paintera and the deprecated layout of the n5-viewer do. It reads
+     a bare `pixelResolution` without a unit, as n5-universe does, where
+     the older n5-viewer assumed micrometres. It reads `resolution` and
+     `offset` in the order of `dimensions`, although Paintera can reverse
+     them for files whose tools wrote them in the reverse order. It does
+     not infer the factors `2**k` of a level from its name `s<k>`, which
+     n5-universe does. The axes are named `x`, `y`, `z`, `t` and `c` by
+     position, since the `axes` attribute of n5-universe is not read.
+     Status: decided, for the maintainer to confirm.
+255. A dataset that is read on its own, and the same dataset read as a
+     level of its pyramid, can have different transformations, because
+     the attributes of the group apply only to the levels of a pyramid.
+     Status: accepted.
+256. A spatial attribute of N5 that breaks the conventions, such as a
+     `pixelResolution` of the wrong length or a unit that is not a
+     length, is ignored with a new public warning, `N5AttributeWarning`,
+     when the transformations are decoded, instead of making the dataset
+     unreadable, since the attributes are not part of the specification.
+     Status: open, for the maintainer to choose between this and a
+     refusal.
+257. The lazy array of N5 translates NumPy indices for TensorStore,
+     which reads integers and slice bounds as absolute positions, in its
+     own helper `_basic_index` (`io/images/n5/_data.py`). Another reader
+     backed by TensorStore needs the same translation, which should then
+     move to a shared private module of `io/common`. Status: open.
+258. Only local N5 containers are read. A pyramid is found by reading
+     `s0`, `s1`, ... up to the first missing level, without listing the
+     directory, so a level after a gap is not read, and the channel
+     groups `c0`, `c1`, ... of the n5-viewer are read one at a time.
+     Status: open.

@@ -70,6 +70,43 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.images.imaris": Package(
+        names=frozenset(
+            {
+                "ImarisImage",
+                "ImarisLevel",
+                "ImarisMetadata",
+                "ImarisMultiScaleImage",
+                "ImarisRaw",
+            }
+        ),
+        needs=("h5py",),
+    ),
+    "brainhops.io.images.precomputed": Package(
+        names=frozenset(
+            {
+                "PrecomputedImage",
+                "PrecomputedMetadata",
+                "PrecomputedMultiScaleImage",
+                "PrecomputedRaw",
+                "PrecomputedScale",
+                "PrecomputedSharding",
+            }
+        ),
+        needs=("tensorstore",),
+    ),
+    "brainhops.io.images.n5": Package(
+        names=frozenset(
+            {
+                "N5AttributeWarning",
+                "N5Image",
+                "N5Metadata",
+                "N5MultiScaleImage",
+                "N5Raw",
+            }
+        ),
+        needs=("tensorstore",),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),
@@ -138,6 +175,9 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.transformations.c3d": Package(
+        names=frozenset({"C3dAffine", "C3dAffineMetadata", "C3dAffineRaw"}),
+    ),
     "brainhops.io.transformations.freesurfer.lta": Package(
         names=frozenset(
             {
@@ -173,6 +213,18 @@ PACKAGES: tx.Dict[str, Package] = {
                 "M3zMorph",
                 "M3zRaw",
                 "M3zXform",
+            }
+        ),
+    ),
+    "brainhops.io.transformations.minc": Package(
+        names=frozenset(
+            {
+                "XfmAffine",
+                "XfmFormat",
+                "XfmGridTransform",
+                "XfmMetadata",
+                "XfmRaw",
+                "XfmTransform",
             }
         ),
     ),
