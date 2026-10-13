@@ -75,6 +75,9 @@ zarr = [
     # range 3.8-3.10.
     "tensorstore >= 0.1.43 ; python_version <= '3.10'",
 ]
+# N5 datasets are read with TensorStore, whose n5 driver decodes the raw,
+# gzip, bzip2, xz and blosc compressions.
+n5 = ["tensorstore >= 0.1.45"]
 precomputed = ["tensorstore >= 0.1.45"]
 zarr-python = ["abczarr[zarr-py] >= 0.2.3"]
 zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.3", "tensorstore >= 0.1.43"]
@@ -85,6 +88,7 @@ io = [
     "brainhops[pillow]",
     "brainhops[tiff]",
     "brainhops[openslide]",
+    "brainhops[n5]",
     "brainhops[precomputed]",
     "brainhops[zarr]",
 ]
@@ -118,6 +122,7 @@ test = [
     "brainhops[pillow]",
     "brainhops[tiff]",
     "brainhops[openslide]",
+    "brainhops[n5]",
     "brainhops[precomputed]",
     "brainhops[zarr]",
     "brainhops[test-interop]",

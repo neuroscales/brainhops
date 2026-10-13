@@ -95,6 +95,18 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("tensorstore",),
     ),
+    "brainhops.io.images.n5": Package(
+        names=frozenset(
+            {
+                "N5AttributeWarning",
+                "N5Image",
+                "N5Metadata",
+                "N5MultiScaleImage",
+                "N5Raw",
+            }
+        ),
+        needs=("tensorstore",),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),

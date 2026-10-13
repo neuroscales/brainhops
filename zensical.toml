@@ -56,6 +56,7 @@ nav = [
         {"freesurfer.mgh" = "api/io/images/mgh.md"},
         "api/io/images/minc.md",
         "api/io/images/imaris.md",
+        "api/io/images/n5.md",
         "api/io/images/precomputed.md",
         "api/io/images/zarr.md",
         "api/io/images/pillow.md",
