@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from bagof.magic import replace
 
 from brainhops import io
 from brainhops.datamodel import systems
@@ -12,10 +13,15 @@ from brainhops.datamodel import transformations as xforms
 from brainhops.io.base.parsers import (
     ParserContentError,
     UnrepresentableTransformationError,
+    WriterError,
 )
+from brainhops.io.metadata import MetadataFormat
 from brainhops.io.transformations import itk
+from brainhops.io.transformations.base._converters import relabels
 from brainhops.io.transformations.elastix import (
+    ElastixMetadata,
     ElastixParameterTransform,
+    ElastixRaw,
     ElastixTomlTransform,
     ElastixTransform,
 )
@@ -612,3 +618,292 @@ def test_the_base_is_not_registered() -> None:
     assert ElastixParameterTransform in registry
     assert ElastixTomlTransform in registry
     assert ElastixTransform not in registry
+
+
+# ----------------------------------------------------------------------
+#   RECORDS
+# ----------------------------------------------------------------------
+# A parameter file is held as an `ElastixRaw` record by the metadata of
+# the transformation, together with the records of the files of its
+# chain. The record keeps the text that it was read from, and writes it
+# back while it still parses to the parameter map.
+
+TRANSFORM_FILES = sorted(
+    path.name for path in [*data_dir.glob("*.txt"), *data_dir.glob("*.toml")]
+)
+
+
+@pytest.mark.parametrize("name", TRANSFORM_FILES)
+def test_an_untouched_file_is_saved_byte_for_byte(
+    tmp_path: Path, name: str
+) -> None:
+    """Every fixture, written by elastix, is written back as it was read."""
+    source = data_dir / name
+    for write in (lambda x, p: x.save(p), io.save):
+        directory = tmp_path / str(len(list(tmp_path.iterdir())))
+        directory.mkdir()
+        write(io.load(source), directory / name)
+        # The files of the chain are placed beside the copy, under the
+        # names that the copy stores, with the bytes they were read with.
+        for copied in directory.iterdir():
+            assert copied.read_bytes() == (data_dir / copied.name).read_bytes()
+        assert (directory / name).exists()
+
+
+def test_line_endings_and_comments_are_kept(tmp_path: Path) -> None:
+    text = "// written on Windows\r\n" + EULER.strip().replace(
+        "\n", "  // kept\r\n"
+    )
+    source = tmp_path / "crlf.txt"
+    source.write_bytes(text.encode())
+    xform = io.load(source)
+    assert xform.metadata.raw.text == text
+    target = tmp_path / "copy.txt"
+    xform.save(target)
+    assert target.read_bytes() == text.encode()
+    # The text is kept by the copies that the generic writer makes too.
+    io.save(xform, tmp_path / "generic.txt")
+    assert (tmp_path / "generic.txt").read_bytes() == text.encode()
+
+
+def test_an_edited_map_is_formatted_again() -> None:
+    xform = io.load(FILES["euler3d"])
+    record = xform.metadata.raw
+    parameters = {**record.parameters, "DefaultPixelValue": (7,)}
+    edited = replace(record, parameters=parameters)
+    assert edited.text == record.text
+    assert edited.to_text() != record.text
+    assert "(DefaultPixelValue 7)" in edited.to_text()
+    assert ElastixRaw.from_text(edited.to_text()).parameters.keys() == (
+        parameters.keys()
+    )
+    # A record built from a map has no text, and is formatted.
+    built = ElastixRaw(parameters=dict(record.parameters))
+    assert built.to_text() == ElastixRaw.from_text(built.to_text()).to_text()
+
+
+def test_the_record_holds_the_chain() -> None:
+    record = ElastixMetadata.load(FILES["chain3"]).raw
+    assert record.initial_filename == "chain3_TransformParameters.1.txt"
+    assert record.initial.initial_filename == (
+        "chain3_TransformParameters.0.txt"
+    )
+    assert record.initial.initial.initial is None
+    assert isinstance(MetadataFormat.load(FILES["chain3"]), ElastixMetadata)
+    # Without its chain, the record keeps the name of the initial file.
+    alone = ElastixRaw.from_filename(FILES["chain3"], initial=False)
+    assert alone.initial is None
+    assert alone.initial_filename == record.initial_filename
+
+
+def test_the_syntax_follows_the_extension() -> None:
+    assert ElastixMetadata.load(data_dir / "euler3d.toml").raw.syntax == "toml"
+    assert ElastixMetadata.load(FILES["euler3d"]).raw.syntax == "text"
+    text = (data_dir / "euler3d.toml").read_text()
+    assert ElastixRaw.from_text(text).syntax == "toml"
+    with pytest.raises(ParserContentError):
+        ElastixRaw.from_text(text, syntax="text")
+
+
+def test_metadata_without_a_record_is_not_written() -> None:
+    with pytest.raises(WriterError):
+        ElastixMetadata().to_text()
+
+
+def test_decoded_parameters_are_read_only() -> None:
+    xform = io.load(FILES["bspline3d"])
+    with pytest.raises(ValueError):
+        xform[0].parameters[0] = 1.0
+    with pytest.raises(ValueError):
+        xform.metadata.raw.parameters["TransformParameters"][0] = 1.0
+
+
+# ----------------------------------------------------------------------
+#   OPTIONS
+# ----------------------------------------------------------------------
+
+
+def test_unknown_options_are_refused(tmp_path: Path) -> None:
+    with pytest.raises(TypeError):
+        ElastixParameterTransform.from_file(FILES["euler3d"], keep_open=True)
+    with pytest.raises(TypeError):
+        ElastixTomlTransform.from_text("", unknown=1)
+    with pytest.raises(TypeError):
+        ElastixMetadata.load(FILES["euler3d"], unknown=1)
+    xform = io.load(FILES["euler3d"])
+    with pytest.raises(TypeError):
+        xform.save(tmp_path / "out.txt", precision=3)
+    with pytest.raises(TypeError):
+        xform.to_text(precision=3)
+    with pytest.raises(TypeError):
+        xform.consolidate(precision=3)
+    assert not (tmp_path / "out.txt").exists()
+
+
+def test_a_given_initial_transform_does_not_change_the_file(
+    tmp_path: Path,
+) -> None:
+    """The option `initial` selects what is decoded, not what is written."""
+    shift = xforms.Translation([1.0, 0.0, 0.0])
+    xform = ElastixParameterTransform.load(FILES["chain"], initial=shift)
+    assert xform[0] is shift
+    assert xform.consolidate().metadata is xform.metadata
+    out = tmp_path / FILES["chain"].name
+    xform.save(out)
+    assert out.read_bytes() == FILES["chain"].read_bytes()
+    # The file of the chain was not read, so it is not written either.
+    assert list(tmp_path.iterdir()) == [out]
+
+
+# ----------------------------------------------------------------------
+#   CONSOLIDATION
+# ----------------------------------------------------------------------
+
+
+def test_consolidating_an_untouched_chain_keeps_the_record() -> None:
+    xform = io.load(FILES["chain"])
+    copy = xform.consolidate()
+    assert copy.metadata is xform.metadata
+    assert len(copy) == 2
+    # LPS systems are what the file maps, so assigning them keeps it.
+    xform.input = xform.input
+    copy = xform.consolidate()
+    assert copy.metadata is xform.metadata
+    assert copy._input is None
+
+
+def test_assigned_systems_must_be_lps() -> None:
+    xform = io.load(FILES["euler3d"])
+    xform.input = systems.RASmm()
+    with pytest.raises(UnrepresentableTransformationError, match="LPS"):
+        xform.consolidate()
+
+
+def test_an_assigned_chain_is_encoded_without_initial_file() -> None:
+    xform = io.load(FILES["chain3"])
+    record = xform.metadata.raw
+    xform.transformations = list(xform.transformations)
+    copy = xform.consolidate()
+    assert copy.metadata is not xform.metadata
+    assert copy.metadata.raw.initial is None
+    assert copy.initial is None
+    assert copy.initial_filename is None
+    assert copy.metadata.raw.syntax == "text"
+    # The parameters that do not describe the transform are kept.
+    assert copy.metadata.raw.parameters["Size"] == record.parameters["Size"]
+    # The record that was read is not changed.
+    assert xform.metadata.raw is record
+    assert record.initial is not None
+
+
+def test_a_record_of_the_other_syntax_is_written_in_this_one(
+    tmp_path: Path,
+) -> None:
+    text = io.load(FILES["chain"])
+    toml = ElastixTomlTransform.from_instance(text)
+    assert type(toml) is ElastixTomlTransform
+    assert toml.metadata is text.metadata
+    assert len(toml) == 2
+    consolidated = toml.consolidate()
+    assert consolidated.metadata.raw.syntax == "toml"
+    assert consolidated.metadata.raw.initial is text.metadata.raw.initial
+    # The generic writer converts the same way, and the chain is placed.
+    io.save(text, tmp_path / "chain.toml")
+    again = io.load(tmp_path / "chain.toml")
+    assert type(again) is ElastixTomlTransform
+    assert again.initial_filename == text.initial_filename
+    assert len(again) == 2
+
+
+def test_a_chain_is_relabelled() -> None:
+    chain = xforms.Sequence([xforms.Translation([1.0, 2.0, 3.0])])
+    assert relabels(chain, ElastixParameterTransform)
+    assert relabels(chain, ElastixTomlTransform)
+    held = chain.to(ElastixParameterTransform)
+    assert type(held) is ElastixParameterTransform
+    assert held.metadata is None
+
+
+# ----------------------------------------------------------------------
+#   THE FILES OF A CHAIN
+# ----------------------------------------------------------------------
+
+
+def _copy_chain(directory: Path, prefix: str = "chain3") -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    for path in data_dir.glob(prefix + "_TransformParameters.*.txt"):
+        shutil.copy(path, directory / path.name)
+    return directory / sorted(p.name for p in directory.iterdir())[-1]
+
+
+def test_a_chain_saved_elsewhere_reads_the_same(tmp_path: Path) -> None:
+    xform = io.load(FILES["chain3"])
+    out = tmp_path / "out" / "last.txt"
+    out.parent.mkdir()
+    xform.save(out)
+    names = sorted(p.name for p in out.parent.iterdir())
+    assert names == [
+        "chain3_TransformParameters.0.txt",
+        "chain3_TransformParameters.1.txt",
+        "last.txt",
+    ]
+    again = io.load(out)
+    for a, b in zip(again, xform):
+        np.testing.assert_array_equal(a.parameters, b.parameters)
+
+
+def test_a_chain_saved_over_itself_writes_one_file(tmp_path: Path) -> None:
+    source = _copy_chain(tmp_path / "chain")
+    before = {p.name: p.stat().st_mtime_ns for p in source.parent.iterdir()}
+    io.load(source).save(source)
+    after = {p.name: p.stat().st_mtime_ns for p in source.parent.iterdir()}
+    assert before.keys() == after.keys()
+    for name in before:
+        if name != source.name:
+            assert before[name] == after[name]
+
+
+def test_an_absolute_initial_file_is_left_where_it_is(tmp_path: Path) -> None:
+    initial = tmp_path / "initial" / "TransformParameters.0.txt"
+    initial.parent.mkdir()
+    shutil.copy(FILES["euler3d"], initial)
+    text = TRANSLATION + f'(InitialTransformParameterFileName "{initial}")\n'
+    source = _text(tmp_path, "TransformParameters.1.txt", text)
+    out = tmp_path / "out" / "TransformParameters.1.txt"
+    out.parent.mkdir()
+    io.load(source).save(out)
+    assert [p.name for p in out.parent.iterdir()] == [out.name]
+    assert len(io.load(out)) == 2
+
+
+def test_a_chain_read_without_its_files_is_written_alone(
+    tmp_path: Path,
+) -> None:
+    xform = ElastixParameterTransform.load(FILES["chain"], initial=False)
+    out = tmp_path / FILES["chain"].name
+    xform.save(out)
+    assert [p.name for p in tmp_path.iterdir()] == [out.name]
+    assert out.read_bytes() == FILES["chain"].read_bytes()
+
+
+def test_another_file_is_never_replaced(tmp_path: Path) -> None:
+    xform = io.load(FILES["chain"])
+    other = tmp_path / "chain_TransformParameters.0.txt"
+    other.write_text("not the initial transform\n")
+    out = tmp_path / "chain_TransformParameters.1.txt"
+    with pytest.raises(WriterError, match="another file"):
+        xform.save(out)
+    assert other.read_text() == "not the initial transform\n"
+    assert not out.exists()
+    # Nor is the file itself replaced by a file of its chain.
+    with pytest.raises(WriterError, match="written over"):
+        xform.save(tmp_path / "chain_TransformParameters.0.txt")
+
+
+def test_a_chain_is_written_alone_to_a_stream() -> None:
+    import io as _io
+
+    xform = io.load(FILES["chain"])
+    stream = _io.StringIO()
+    xform.save(stream)
+    assert stream.getvalue() == FILES["chain"].read_text()

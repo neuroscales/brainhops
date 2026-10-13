@@ -219,33 +219,6 @@ class ElastixTransform(
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Build a transformation from a record, a file or a data model.
-
-        An [`ElastixRaw`][] is read with `from_raw`, and any other value as
-        the bases read it.
-
-        Parameters
-        ----------
-        other : object
-            A record, a file, its content, a transformation, a mapping, or
-            an instance of a similar class.
-        *args : Any
-            Constructor arguments. A record and a file take keyword
-            arguments only.
-        **kwargs : Any
-            Options of the reader, and field values otherwise.
-
-        Returns
-        -------
-        Self
-            The new transformation.
-        """
-        if isinstance(other, ElastixRaw) and not args:
-            return cls.from_raw(other, **kwargs)
-        return super().from_any(other, *args, **kwargs)
-
-    @classmethod
     def from_raw(cls, raw: ElastixRaw, **kwargs) -> tx.Self:
         """Build a transformation from an already read [`ElastixRaw`][].
 
@@ -381,6 +354,33 @@ class ElastixParameterTransform(ElastixTransform):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
     HINTS = ("params",)
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        An [`ElastixRaw`][] is read with `from_raw`, and any other value as
+        the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, ElastixRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
 
     @classmethod
     def sniff_text(
@@ -562,6 +562,33 @@ class ElastixTomlTransform(ElastixTransform):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".toml",)
     HINTS = ("toml",)
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        An [`ElastixRaw`][] is read with `from_raw`, and any other value as
+        the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, ElastixRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
 
     @classmethod
     def sniff_text(

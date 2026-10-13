@@ -138,6 +138,17 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.transformations.elastix": Package(
+        names=frozenset(
+            {
+                "ElastixMetadata",
+                "ElastixParameterTransform",
+                "ElastixRaw",
+                "ElastixTomlTransform",
+                "ElastixTransform",
+            }
+        ),
+    ),
     "brainhops.io.transformations.freesurfer.lta": Package(
         names=frozenset(
             {
