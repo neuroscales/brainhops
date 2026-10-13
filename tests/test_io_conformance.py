@@ -71,6 +71,7 @@ from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
+    FileWriter,
     ParserContentError,
     ParserError,
     ParserTypeError,
@@ -204,6 +205,25 @@ try:
     minc_needs = netcdf_file
 except ImportError:
     minc_needs = None
+
+try:
+    import tifffile
+
+    from brainhops.io.images.base import _utils_raster as raster
+    from brainhops.io.images.tiff import (
+        TiffImage,
+        TiffMetadata,
+        TiffMultiScaleImage,
+    )
+    from brainhops.io.images.tiff._data import _TiffProxy
+    from brainhops.io.images.tiff._views import (
+        _image_to_disk as _tiff_to_disk,
+    )
+    from brainhops.io.images.tiff._views import (
+        _image_to_model as _tiff_to_model,
+    )
+except ImportError:
+    tifffile = None
 
 try:
     import h5py
@@ -1569,6 +1589,15 @@ class Exemplar(tx.NamedTuple):
     read is made by `cut`, which a directory format must give too.
     """
 
+    writer_options: tx.Optional[tx.Dict[str, tx.Any]] = None
+    """Options of the writer with which the checks write a new file.
+
+    They are `None` for a file that the name and the data decide. A TIFF
+    file is written as an ImageJ hyperstack only when the writer is asked
+    for it, since no name asks for ImageJ, so the variant of ImageJ gives
+    `{"dialect": "imagej"}`.
+    """
+
 
 def _nifti_edit_record(record: tx.Any) -> tx.Any:
     record.header["descrip"] = b"edited"
@@ -2185,6 +2214,131 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+# A TIFF file has no header apart from its pixels: the IFDs of tifffile
+# point to the pixels that follow them, so `TiffMetadata` reads the IFDs
+# and writes nothing, and its record is compared as a summary. The copy
+# whose data cannot be read keeps every IFD, and its strip and tile offsets
+# point beyond the end of the file. The edit of a record changes the
+# `Artist` tag, which the writer writes back. The geometry is changed to a
+# pixel size in millimetres, which every dialect stores. tifffile encodes
+# again everything that it writes, so an untouched file is saved by copying
+# its bytes. The file is checked as plain TIFF, as OME-TIFF, which its name
+# asks for, and as an ImageJ hyperstack, which the writer is asked for.
+
+
+def _tiff_edit_record(record: tx.Any) -> tx.Any:
+    return replace(record, tags={**record.tags, "Artist": "edited"})
+
+
+def _tiff_geometry(image: tx.Any) -> np.ndarray:
+    return np.asarray(image.transformation.to(Affine).matrix, dtype=float)
+
+
+def _tiff_change_geometry(image: tx.Any) -> None:
+    axes = raster.default_axes(len(image.shape))
+    sizes = {"x": (0.5, "mm"), "y": (0.25, "mm"), "z": (2.0, "mm")}
+    names = {axis.name for axis in axes}
+    image.transformations = raster.raster_transformations(
+        axes, {name: size for name, size in sizes.items() if name in names}
+    )
+
+
+def _tiff_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy a TIFF file whose pixels cannot be read.
+
+    Every IFD is kept, including the SubIFDs of a pyramid, so the copy
+    has the same record. The strip and tile offsets point beyond the end
+    of the copy, so that any read of a pixel fails. tifffile finds the
+    pages of an ImageJ hyperstack from the size of the file and the
+    offsets of its first page, so the offsets of an ImageJ file are kept,
+    and its pixels are overwritten instead, which a read would not notice.
+    The IFDs are walked here rather than through tifffile, whose classes
+    differ between its versions.
+    """
+    with open(source, "rb") as file:
+        content = bytearray(file.read())
+    order = "<" if content[:2] == b"II" else ">"
+    big = struct.unpack(order + "H", content[2:4])[0] == 43
+    count_format, offset_format = ("Q", "Q") if big else ("H", "I")
+    width = 8 if big else 4
+    first = struct.unpack_from(order + offset_format, content, width)
+    kinds = {3: "H", 4: "I", 13: "I", 16: "Q", 18: "Q"}
+    sizes = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8}
+    sizes.update({11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8})
+    offsets, counts, imagej = [], [], False
+    pending, seen = [first[0]], set()
+    while pending:
+        ifd = pending.pop()
+        if not ifd or ifd in seen:
+            continue
+        seen.add(ifd)
+        (number,) = struct.unpack_from(order + count_format, content, ifd)
+        entry = ifd + struct.calcsize(count_format)
+        for _ in range(number):
+            code, kind = struct.unpack_from(order + "HH", content, entry)
+            (count,) = struct.unpack_from(
+                order + offset_format, content, entry + 4
+            )
+            value = entry + 4 + width
+            if sizes.get(kind, 1) * count > width:
+                (value,) = struct.unpack_from(
+                    order + offset_format, content, value
+                )
+            if code == 270:
+                imagej |= bytes(content[value : value + 7]) == b"ImageJ="
+            if code in (273, 279, 324, 325, 330) and kind in kinds:
+                element = order + kinds[kind]
+                step = struct.calcsize(element)
+                values = [
+                    (value + k * step, element)
+                    for k in range(count)
+                ]
+                if code == 330:
+                    pending.extend(
+                        struct.unpack_from(element, content, at)[0]
+                        for at, element in values
+                    )
+                elif code in (273, 324):
+                    offsets.extend(values)
+                else:
+                    counts.extend(values)
+            entry += 4 + 2 * width
+        pending.extend(
+            struct.unpack_from(order + offset_format, content, entry)
+        )
+    if imagej:
+        for (at, element), (size_at, size_element) in zip(offsets, counts):
+            (start,) = struct.unpack_from(element, content, at)
+            (size,) = struct.unpack_from(size_element, content, size_at)
+            content[start : start + size] = b"\xff" * size
+    else:
+        beyond = len(content) + 1
+        for at, element in offsets:
+            limit = 2 ** (8 * struct.calcsize(element)) - 1
+            struct.pack_into(element, content, at, min(beyond, limit))
+    with open(target, "wb") as file:
+        file.write(bytes(content))
+
+
+if tifffile is not None:
+    _TIFF = Exemplar(
+        metadata=TiffMetadata,
+        suffix=".tif",
+        proxies=(_TiffProxy,),
+        to_model=_tiff_to_model,
+        to_disk=_tiff_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=_tiff_edit_record,
+        record_edited=lambda record: record.tags.get("Artist") == "edited",
+        geometry=_tiff_geometry,
+        change_geometry=_tiff_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"series", "level"}),
+        cut=_tiff_cut,
+        header=lambda metadata: metadata.raw,
+    )
+    EXEMPLARS[TiffImage] = _TIFF
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
@@ -2209,8 +2363,6 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.ZeissImage",
     "brainhops.io.images.openslide.ZeissMultiScaleImage",
     "brainhops.io.images.pillow.PillowImage",
-    "brainhops.io.images.tiff.TiffImage",
-    "brainhops.io.images.tiff.TiffMultiScaleImage",
     "brainhops.io.images.zarr.OmeZarrImage",
     "brainhops.io.images.zarr.ZarrImage",
     "brainhops.io.transformations.elastix.ElastixParameterTransform",
@@ -2349,6 +2501,16 @@ VARIANTS.append(
 if minc_needs is not None:
     VARIANTS.append(
         ("Minc1Image-gz", Minc1Image, _MINC._replace(suffix=".mnc.gz"))
+    )
+
+if tifffile is not None:
+    VARIANTS.append(("TiffImage-ome", TiffImage, _TIFF._replace(suffix=".ome.tif")))
+    VARIANTS.append(
+        (
+            "TiffImage-imagej",
+            TiffImage,
+            _TIFF._replace(writer_options={"dialect": "imagej"}),
+        )
     )
 
 CASES = [
@@ -2548,13 +2710,26 @@ def _header(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
     return exemplar.header(metadata)
 
 
+def _writes_bytes(exemplar: Exemplar) -> bool:
+    """Tell whether the metadata of a format writes the bytes of a header.
+
+    The metadata of a directory writes no bytes, and neither does the
+    metadata of a file that has no header apart from its data, such as a
+    TIFF file, whose IFDs point to the pixels that follow them. Such
+    metadata is a reader only, and it is compared through its summary.
+    """
+    return exemplar.container == "file" and issubclass(
+        exemplar.metadata, FileWriter
+    )
+
+
 def _written(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
     """Return what metadata writes, or a copy of its summary.
 
-    The metadata of a directory writes no bytes, so its summary is
-    copied, so that a later change made to the record in place shows.
+    Metadata that writes no bytes has its summary copied, so that a later
+    change made to the record in place shows.
     """
-    if exemplar.container == "directory":
+    if not _writes_bytes(exemplar):
         return deepcopy(_header(exemplar, metadata))
     return metadata.to_bytes()
 
@@ -2609,7 +2784,9 @@ def _saved(
     if exemplar.source is not None:
         exemplar.source(path, exemplar.sample())
     else:
-        _built(cls, exemplar, exemplar.sample()).save(path)
+        _built(cls, exemplar, exemplar.sample()).save(
+            path, **(exemplar.writer_options or {})
+        )
     return path
 
 
@@ -2633,7 +2810,7 @@ def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
     path = _path(tmp_path, exemplar, "placed")
     obj = _built(cls, exemplar, exemplar.sample())
     exemplar.change_geometry(obj)
-    obj.save(path)
+    obj.save(path, **(exemplar.writer_options or {}))
     return path
 
 
@@ -2807,11 +2984,11 @@ def test_07_metadata_pickles(
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
     clone = pickle.loads(pickle.dumps(loaded.metadata))
     assert type(clone) is type(loaded.metadata)
-    if exemplar.source is None and exemplar.container == "file":
+    if exemplar.source is None and _writes_bytes(exemplar):
         assert clone.to_bytes() == loaded.metadata.to_bytes()
     else:
-        # Metadata that cannot be written, or that describes a directory,
-        # is compared through its summary.
+        # Metadata that cannot be written, or that writes no bytes, is
+        # compared through its summary.
         assert _header(exemplar, clone) == _header(exemplar, loaded.metadata)
 
 
