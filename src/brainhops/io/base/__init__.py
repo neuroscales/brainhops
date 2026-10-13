@@ -1,21 +1,12 @@
-"""The format-independent base shared by every file-based object, whatever
-its kind."""
+"""Format-independent machinery shared by every kind of file-based object."""
 
 __all__ = [
-    "FileBasedObject",
-    "WritableFileBasedObject",
-    "TextFileBasedObject",
-    "BinaryFileBasedObject",
-    "WritableTextFileBasedObject",
-    "WritableBinaryFileBasedObject",
+    "Format",
     "format_registry",
     "load",
     "save",
     "sniff",
-    "afni",
-    "mrtrix",
     "parsers",
-    "freesurfer",
     "register_format",
     "ImageSpec",
     "Parser",
@@ -27,19 +18,9 @@ __all__ = [
     "register_parser",
 ]
 
-from brainhops._core.dependencies import (
-    HAS_NIBABEL,
-    has_abczarr_driver,
-)
-
-from . import afni, freesurfer, mrtrix, parsers
+from . import parsers
 from ._base import (
-    BinaryFileBasedObject,
-    FileBasedObject,
-    TextFileBasedObject,
-    WritableBinaryFileBasedObject,
-    WritableFileBasedObject,
-    WritableTextFileBasedObject,
+    Format,
     format_registry,
     register_format,
 )
@@ -55,16 +36,3 @@ from .specs import (
     parser_for,
     register_parser,
 )
-
-if HAS_NIBABEL:
-    from . import mgh, minc, nifti
-
-    __all__ += ["mgh", "minc", "nifti"]
-
-# The Zarr store adapter needs abczarr and at least one backend driver.
-# abczarr alone cannot open a store, so the adapter is exposed only when a
-# driver is present.
-if has_abczarr_driver():
-    from . import zarr
-
-    __all__ += ["zarr"]

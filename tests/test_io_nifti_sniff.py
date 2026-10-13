@@ -1,15 +1,13 @@
-"""
-Tests for the NIfTI sniffer on files that are, and are not, NIfTI.
+"""Tests of the NIfTI sniffer on NIfTI and other files.
 
-Every format is sniffed by the NIfTI parser when `io.load` looks for a
-reader. It checks the NIfTI magic before handing anything to `nibabel`,
-which would otherwise parse an MGH, a PNG or an LTA as a NIfTI header
-and warn about what it found there (issue #258).
+The sniffer checks the magic before nibabel, which would parse MGH, PNG or
+LTA files as a header and warn (#258).
 """
 
 import gzip
 import warnings
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pytest
@@ -17,7 +15,12 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.io.base.nifti import NiftiParser  # noqa: E402
+from brainhops.io.base.parsers import (  # noqa: E402
+    Confidence,
+    SnifferContentError,
+)
+from brainhops.io.common.nifti import NiftiRaw  # noqa: E402
+from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 
 DATA = Path(__file__).parent / "data"
 
@@ -80,7 +83,7 @@ def _tfm(tmp_path: Path, name: str) -> Path:
 
 
 def _no_warnings(func, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
-    """Call `func`, failing if it emits a `UserWarning`."""
+    """Call `func` and fail on any UserWarning."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = func(*args, **kwargs)
@@ -120,15 +123,14 @@ def test_the_nifti_sniffer_declines_a_non_nifti_quietly(
     name: str,
 ) -> None:
     data = make(tmp_path, name).read_bytes()
-    assert not _no_warnings(NiftiParser.sniff_bytes, data)
+    assert not _no_warnings(NiftiRaw.sniff_bytes, data)
 
 
 def test_a_header_sized_without_magic_is_declined() -> None:
-    """`sizeof_hdr` alone is not enough: the magic must match too."""
     header = bytearray(nb.Nifti1Header().binaryblock)
     header[344:348] = b"xxx\0"
-    assert not NiftiParser.sniff_bytes(bytes(header))
-    assert not NiftiParser.sniff_bytes(gzip.compress(bytes(header)))
+    assert not NiftiRaw.sniff_bytes(bytes(header))
+    assert not NiftiRaw.sniff_bytes(gzip.compress(bytes(header)))
 
 
 # ----------------------------------------------------------------------
@@ -152,17 +154,17 @@ def test_a_nifti_is_still_sniffed_and_loaded(
 ) -> None:
     file = tmp_path / name
     nb.save(cls(_volume(), np.eye(4)), str(file))
-    assert NiftiParser.sniff_bytes(file.read_bytes())
+    assert NiftiRaw.sniff_bytes(file.read_bytes())
     image = _no_warnings(io.images.load, file)
     np.testing.assert_array_equal(np.asarray(image.data), _volume())
 
 
 @pytest.mark.parametrize("cls", [nb.Nifti1Pair, nb.Nifti2Pair])
 def test_the_header_of_a_pair_is_sniffed(tmp_path: Path, cls: type) -> None:
-    """A `.hdr` carries the `ni1`/`ni2` magic of a header-image pair."""
+    """The .hdr file of a pair carries the ni1 or ni2 magic."""
     file = tmp_path / "x.hdr"
     nb.save(cls(_volume(), np.eye(4)), str(file))
-    assert _no_warnings(NiftiParser.sniff_bytes, file.read_bytes())
+    assert _no_warnings(NiftiRaw.sniff_bytes, file.read_bytes())
 
 
 @pytest.mark.parametrize("version", [1, 2])
@@ -172,4 +174,48 @@ def test_the_magic_is_found_in_either_byte_order(
 ) -> None:
     cls = {1: nb.Nifti1Header, 2: nb.Nifti2Header}[version]
     header = cls(endianness=order)
-    assert NiftiParser.sniff_bytes(header.binaryblock)
+    assert NiftiRaw.sniff_bytes(header.binaryblock)
+
+
+def _mgh() -> "nb.MGHImage":
+    return nb.MGHImage(np.zeros((2, 2, 2), "f4"), np.eye(4))
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: _mgh().to_bytes(),
+        lambda: _mgh().header.binaryblock,
+        lambda: nb.AnalyzeHeader().binaryblock,
+    ],
+    ids=["MGHImage", "MGHHeader", "AnalyzeHeader"],
+)
+def test_other_headers_are_declined_with_the_requested_error(
+    make: "Callable[[], bytes]",
+) -> None:
+    """A header of another format gives the requested error."""
+    data = make()
+    assert NiftiRaw.sniff_bytes(data) == Confidence.NO
+    with pytest.raises(SnifferContentError, match="not a valid NIfTI"):
+        NiftiRaw.sniff_bytes(data, error=True)
+    with pytest.raises(KeyError, match="NIfTI-1 or NIfTI-2"):
+        NiftiRaw.sniff_bytes(data, error=KeyError)
+
+
+def test_a_wrong_header_size_is_declined() -> None:
+    header = nb.Nifti1Header()
+    header["sizeof_hdr"] = 540
+    data = header.binaryblock
+    assert NiftiRaw.sniff_bytes(data) == Confidence.NO
+    with pytest.raises(SnifferContentError, match="NIfTI-1 file"):
+        NiftiRaw.sniff_bytes(data, error=True, version=1)
+
+
+def test_an_image_scores_its_header() -> None:
+    plain = nb.Nifti1Header()
+    plain.set_data_shape((2, 3, 4))
+    field = nb.Nifti1Header()
+    field.set_data_shape((2, 3, 4, 1, 3))
+    field.set_intent("vector")
+    assert NiftiImage.sniff_bytes(plain.binaryblock) == Confidence.LIKELY
+    assert NiftiImage.sniff_bytes(field.binaryblock) == Confidence.WEAK

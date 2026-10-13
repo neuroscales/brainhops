@@ -1,29 +1,37 @@
-"""NiftyReg affine matrices, as `reg_aladin` writes them."""
+"""NiftyReg affine matrices, as written by `reg_aladin`."""
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# io
+from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._transformations.compute.convert import converter
+from brainhops.datamodel._transformations.compute.converters import (
+    _convert_withlog,
+)
 from brainhops.io.base._base import register_format
-from brainhops.io.base.arrays import TxtArrayParser, is_numeric_array
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     WriterError,
 )
-from brainhops.io.transformations.base import WritableFileBasedTransformation
-from brainhops.io.transformations.base.affines import RASToRAS
+from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
+from brainhops.io.transformations.base import TransformationFormat
+from brainhops.io.transformations.base._conversions import (
+    affine_between,
+    format_options,
+)
+from brainhops.io.transformations.base.affines import _RAS, RASToRAS
 
 from ._formats import NiftyRegAffineFormat
 
 _SHAPE = (4, 4)
-"""The shape of the matrix NiftyReg reads and writes."""
+"""Shape of the matrix that NiftyReg reads and writes."""
 
 
 def _is_homogeneous(array: np.ndarray) -> bool:
-    """Whether `array` is a `(4, 4)` matrix with last row `[0, 0, 0, 1]`."""
+    """Return whether an array is (4, 4) with a last row of `[0, 0, 0, 1]`."""
     if not is_numeric_array(array) or tuple(array.shape) != _SHAPE:
         return False
     last = np.asarray(array[-1], dtype=np.float64)
@@ -33,50 +41,41 @@ def _is_homogeneous(array: np.ndarray) -> bool:
 @register_format
 class NiftyRegAffine(
     NiftyRegAffineFormat,
-    TxtArrayParser,
-    TextFileParserWriter,
+    TxtArrayReader,
+    TextFileReader,
+    TextFileWriter,
     RASToRAS,
-    WritableFileBasedTransformation,
+    TransformationFormat,
 ):
     """
-    A NiftyReg affine, as written by `reg_aladin -aff`.
+    Affine written by `reg_aladin -aff`.
 
-    The file is plain text: the four rows of a `(4, 4)` homogeneous
-    matrix, four whitespace-separated numbers per line
-    (`reg_tool_WriteAffineFile`, `reg-io/_reg_ReadWriteMatrix.cpp`).
-    NiftyReg documents it as `Affine * Reference = Floating`: it maps a
-    world coordinate of the reference image to a world coordinate of the
-    floating image. That is the direction the data model uses to
-    resample a moving (floating) image onto a reference, so the matrix is
-    read as it is, with no inversion.
+    The file is plain text holding the four rows of a (4, 4) homogeneous
+    matrix, with four whitespace-separated numbers per line
+    (`reg_tool_WriteAffineFile`). NiftyReg documents the matrix as `Affine *
+    Reference = Floating`: it maps the reference world to the floating world,
+    which is the resampling direction of the data model, so it is read without
+    inversion. The world is NIfTI RAS in millimetres, with no sign flip, and no
+    image is needed to read the file.
 
-    The world coordinates are the NIfTI ones, RAS millimetres: NiftyReg
-    applies the matrix to the reference voxel-to-world affine (its sform
-    when `sform_code > 0`, its qform otherwise) and then the floating
-    world-to-voxel affine, with no sign flip
-    (`reg_affine_deformationField3D`, `reg-lib/cpu/_reg_globalTrans.cpp`).
-    No image is needed to read it.
-
-    **Dispatch.** Nothing in the file says it is NiftyReg's: it is a
-    bare `(4, 4)` matrix. So this reader scores `WEAK`, below the
-    generic matrix reader ([`TxtMatrixAffine`][]) and FLIRT, and is
-    reached with `hint="niftyreg"` (or `"niftyreg.aladin"`,
-    `"aladin"`).
-
-    **Writing** prints the homogeneous matrix in the same layout, each
-    number with as many digits as it takes to read it back exactly
-    (NiftyReg itself prints `%.7g`).
+    Nothing marks the file as NiftyReg's, so this reader scores
+    `Confidence.WEAK`, below the generic matrix reader
+    ([`TxtMatrixAffine`][brainhops.io.transformations.matrix.TxtMatrixAffine])
+    and FLIRT. It is selected with `hint="niftyreg"`, `"niftyreg.aladin"` or
+    `"aladin"`. The matrix is written in the same layout, with enough digits
+    for each number to be read back exactly, whereas NiftyReg itself prints
+    `%.7g`.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
     HINTS = ("aladin",)
     SNIFF_CONFIDENCE: tx.ClassVar[float] = Confidence.WEAK
     NAMED_CONFIDENCE: tx.ClassVar[float] = Confidence.WEAK
-    # An affine file is a few dozen bytes: do not read a large file
-    # whole only to turn it down.
+    # The affine file is tiny, so a large file is not read whole only to be
+    # rejected.
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 1 << 16
 
-    # --- ArrayParser hooks --------------------------------------------
+    # --- ArrayReader hooks --------------------------------------------
 
     @classmethod
     def _accepts_array(cls, array: np.ndarray) -> bool:
@@ -84,14 +83,16 @@ class NiftyRegAffine(
 
     @classmethod
     def _array_confidence(cls, array: np.ndarray, **kwargs) -> float:
-        """`WEAK` for a homogeneous `(4, 4)` matrix, else `NO`."""
+        """Score `Confidence.WEAK` for a homogeneous (4, 4) matrix."""
         return cls.SNIFF_CONFIDENCE if _is_homogeneous(array) else 0.0
 
     @classmethod
     def from_array(
         cls, array: np.ndarray, key: tx.Optional[str] = None, **kwargs
     ) -> tx.Self:
-        """Build the affine from the `(4, 4)` matrix read from the file."""
+        """
+        Build an affine from the (4, 4) homogeneous matrix read from the file.
+        """
         array = np.asarray(array, dtype=np.float64)
         if tuple(array.shape) != _SHAPE:
             raise ParserContentError(
@@ -108,7 +109,7 @@ class NiftyRegAffine(
     # --- writing ------------------------------------------------------
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
-        """The four lines of the file, one row of the matrix per line."""
+        """Yield the four lines of the file, one matrix row each."""
         matrix = self.homogeneous_matrix
         if matrix is None:
             matrix = np.eye(4)
@@ -120,3 +121,36 @@ class NiftyRegAffine(
             )
         for row in matrix:
             yield " ".join(repr(float(value)) for value in row)
+
+
+@converter(_xforms.Identity, NiftyRegAffine)
+@converter(_xforms.Translation, NiftyRegAffine)
+@converter(_xforms.Scaling, NiftyRegAffine)
+@converter(_xforms.Permutation, NiftyRegAffine)
+@converter(_xforms.Linear, NiftyRegAffine)
+@converter(_xforms.AffineExponential, NiftyRegAffine)
+@converter(_xforms.SubspaceTransformation, NiftyRegAffine)
+@converter(_xforms.Sequence, NiftyRegAffine)
+@converter
+def _(
+    t: _xforms.Affine, cls: tx.Type[NiftyRegAffine], **kwargs
+) -> NiftyRegAffine:
+    # `affine_between` either converts `t` exactly or raises. It bridges
+    # the endpoints of `t` to RAS, which flips an affine between LPS
+    # spaces, and it reduces a chain to one affine. An affine whose
+    # systems are not known is taken to map RAS to RAS, because the
+    # endpoints of a NiftyReg affine accept unknown systems.
+    cls = NiftyRegAffine
+    format_options(t, cls, kwargs)
+    matrix = affine_between(t, _RAS, _RAS, cls)
+    return cls(matrix=matrix[:-1])
+
+
+@converter
+def _(
+    t: NiftyRegAffine, cls: tx.Type[NiftyRegAffine], **kwargs
+) -> NiftyRegAffine:
+    # A transformation that is already in this format is changed by the
+    # rules of any affine, for example when it is given a new `matrix=`,
+    # and these rules keep its type.
+    return _convert_withlog(t, cls, "matrix", **kwargs)

@@ -1,12 +1,8 @@
-"""
-BIDS X5 (`.x5`) transformation files.
+"""Tests for BIDS X5 (.x5) transformation files.
 
-The fixtures are written with `h5py`, in the layouts that nitransforms
-(`nitransforms/io/x5.py`, `Version = 1`) and fslpy
-(`fsl/transform/x5.py`, `Version = "0.1.0"`) write. When either library
-is installed, it is also used to check that the files it writes are read
-as it reads them, and that the files brainhops writes are read back by
-it.
+The fixtures are written with h5py in the layouts of nitransforms (version 1)
+and fslpy (version '0.1.0'). When either library is installed, the tests
+also check that both sides read each other's files alike.
 """
 
 import io as _io
@@ -16,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from bagof.magic import replace
 
 h5py = pytest.importorskip("h5py")
 
@@ -27,20 +24,22 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserNotImplementedError,
     UnrepresentableTransformationError,
 )
+from brainhops.io.common.hdf5 import DelayedH5Array  # noqa: E402
 from brainhops.io.transformations.x5 import (  # noqa: E402
     X5BSplineField,
     X5CoordinatesField,
     X5DisplacementField,
+    X5Metadata,
+    X5Raw,
     X5Transform,
 )
 
 data_dir = Path(__file__).parent / "data"
 
 SHAPE = (4, 5, 6)
-"""Grid shape: small, and no two axes of the same length."""
+"""A small grid whose axis lengths all differ."""
 
-# A voxel-to-RAS affine with a permutation, a flip, anisotropic spacing
-# and an offset, so that a grid read the wrong way cannot pass.
+# A permutation, flip, anisotropy and offset, so a misread grid fails.
 VOX2RAS = np.array(
     [
         [0.0, -3.0, 0.0, 10.0],
@@ -50,7 +49,7 @@ VOX2RAS = np.array(
     ]
 )
 
-# A rotation about the superior axis plus a translation.
+# A rotation about the superior axis, plus a translation.
 AFFINE = np.array(
     [
         [0.0, -1.0, 0.0, 5.0],
@@ -62,11 +61,11 @@ AFFINE = np.array(
 
 KINDS = ("space", "space", "space", "vector")
 IJK = np.array([[1, 2, 3], [0, 4, 5], [3, 1, 0], [2, 0, 4]])
-"""Voxels at which fields are probed, so that no interpolation happens."""
+"""Voxels where the fields are probed, avoiding interpolation."""
 
 
 def _ramp() -> np.ndarray:
-    """An `(X, Y, Z, 3)` field whose entries name their voxel."""
+    """A field whose entries name their voxel."""
     i, j, k = np.meshgrid(*map(np.arange, SHAPE), indexing="ij")
     return np.stack(
         [1.0 + 0.1 * i, 2.0 + 0.2 * j, 3.0 + 0.3 * k], axis=-1
@@ -74,12 +73,10 @@ def _ramp() -> np.ndarray:
 
 
 def _ras(ijk: np.ndarray) -> np.ndarray:
-    """The RAS coordinates of voxels of the grid."""
     return ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
 
 
 def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
-    """Map RAS points through a RAS-to-RAS transformation."""
     points = xforms.CoordinatesField(field=np.asarray(points, float))
     chain = list(xform) if isinstance(xform, xforms.Sequence) else [xform]
     out = xforms.Sequence(transformations=[points, *chain]).compute()
@@ -96,7 +93,7 @@ def _affine_apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
 
 
 def _write_node(group, node: dict) -> None:  # noqa: ANN001
-    """Write a node as `nitransforms.io.x5._write_x5_group` does."""
+    """Write a node as nitransforms.io.x5._write_x5_group does."""
     group.attrs["Type"] = node["type"]
     group.attrs["ArrayLength"] = node.get("array_length", 1)
     for key, attr in (
@@ -127,8 +124,7 @@ def _write_node(group, node: dict) -> None:  # noqa: ANN001
 
 
 def _write_x5(path: Path, nodes: list, chains: tuple = ()) -> Path:
-    """Write an X5 file as `nitransforms.io.x5.to_filename` and
-    `TransformChain.to_filename` do."""
+    """Write an X5 file as nitransforms writes transforms and chains."""
     with h5py.File(path, "w") as f:
         f.attrs["Format"] = "X5"
         f.attrs["Version"] = np.uint16(1)
@@ -214,7 +210,7 @@ def test_linear_is_a_ras_to_ras_affine(linear_x5: Path) -> None:
 
 def test_linear_keeps_its_raw_node(linear_x5: Path) -> None:
     xform = io.load(linear_x5)
-    node = xform.nodes[0]
+    node = xform.metadata.raw.nodes[0]
     assert node.metadata == {"WrittenBy": "NiTransforms 25.1.0"}
     assert node.subtype == "affine"
     assert node.representation == "matrix"
@@ -223,7 +219,7 @@ def test_linear_keeps_its_raw_node(linear_x5: Path) -> None:
     assert node.domain.coordinates == "cartesian"
     np.testing.assert_allclose(node.domain.mapping, VOX2RAS)
     np.testing.assert_allclose(node.inverse, np.eye(4))
-    assert xform.header.version == 1
+    assert xform.metadata.raw.header.version == 1
 
 
 def test_untouched_file_is_written_back_unchanged(
@@ -233,9 +229,9 @@ def test_untouched_file_is_written_back_unchanged(
     out = tmp_path / "out.x5"
     xform.save(out)
     again = io.load(out)
-    assert again.header.chains == [(0, 1), (1, 0)]
-    assert len(again.nodes) == 2
-    for a, b in zip(again.nodes, xform.nodes):
+    assert again.metadata.raw.header.chains == [(0, 1), (1, 0)]
+    assert len(again.metadata.raw.nodes) == 2
+    for a, b in zip(again.metadata.raw.nodes, xform.metadata.raw.nodes):
         assert a.type == b.type
         assert a.metadata == b.metadata
         assert a.dimension_kinds == b.dimension_kinds
@@ -245,6 +241,10 @@ def test_untouched_file_is_written_back_unchanged(
         assert f.attrs["Format"] == "X5"
         assert f.attrs["Version"] == 1
         assert f["TransformChain/1"][()] == b"1/0"
+    # The fixture is written by h5py in the order that the writer uses,
+    # with contiguous datasets, so the copy has the same bytes. A file
+    # with chunked or compressed datasets is written back contiguous.
+    assert out.read_bytes() == chain_x5.read_bytes()
 
 
 def test_bytes_and_file_objects_round_trip(linear_x5: Path) -> None:
@@ -257,7 +257,8 @@ def test_bytes_and_file_objects_round_trip(linear_x5: Path) -> None:
     buffer.seek(0)
     again = io.transformations.load(buffer)
     assert type(again) is X5Transform
-    assert again.nodes[0].metadata == xform.nodes[0].metadata
+    node = again.metadata.raw.nodes[0]
+    assert node.metadata == xform.metadata.raw.nodes[0].metadata
 
 
 # ----------------------------------------------------------------------
@@ -268,7 +269,7 @@ def test_bytes_and_file_objects_round_trip(linear_x5: Path) -> None:
 def test_displacements_move_each_voxel_centre_by_its_vector(
     field_x5: Path,
 ) -> None:
-    """A field of displacements maps `x -> x + u(x)`, in RAS mm."""
+    """Displacements map x -> x + u(x) in RAS mm."""
     xform = io.load(field_x5)
     assert len(xform) == 1
     field = xform[0]
@@ -302,13 +303,141 @@ def test_vector_axis_is_found_by_its_dimension_kind(tmp_path: Path) -> None:
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
 
 
-def test_field_can_be_read_lazily(field_x5: Path) -> None:
-    pytest.importorskip("dask")
-    xform = X5Transform.from_file(field_x5, load=False)
-    assert not isinstance(xform.nodes[0].transform, np.ndarray)
+def test_fields_are_read_lazily(field_x5: Path) -> None:
+    xform = X5Transform.from_file(field_x5)
+    node = xform.metadata.raw.nodes[0]
+    # The field is read from the file when it is used, and the small
+    # datasets are read at once.
+    assert isinstance(node.transform, DelayedH5Array)
+    assert isinstance(node.domain.mapping, np.ndarray)
+    assert "_cache_transformations" not in vars(xform)
     points = _ras(IJK)
     expected = points + _ramp()[tuple(IJK.T)]
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
+    # Decoding the chain leaves the record as it was read.
+    assert xform.metadata.raw.nodes[0] is node
+    assert isinstance(node.transform, DelayedH5Array)
+
+
+def test_fields_can_be_read_at_once(field_x5: Path) -> None:
+    xform = X5Transform.from_file(field_x5, load=True)
+    assert isinstance(xform.metadata.raw.nodes[0].transform, np.ndarray)
+    # A stream cannot be opened again by name, so its fields are read at
+    # once, and no open file is kept.
+    with open(field_x5, "rb") as stream:
+        xform = X5Transform.from_file(stream)
+    assert isinstance(xform.metadata.raw.nodes[0].transform, np.ndarray)
+    points = _ras(IJK)
+    expected = points + _ramp()[tuple(IJK.T)]
+    np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
+
+
+def test_no_open_file_is_kept(field_x5: Path) -> None:
+    with pytest.raises(TypeError, match="keep_open"):
+        X5Transform.from_file(field_x5, keep_open=True)
+    xform = X5Transform.from_file(field_x5)
+    assert not [
+        value for value in vars(xform).values() if isinstance(value, h5py.File)
+    ]
+
+
+def test_decoded_matrices_are_read_only(linear_x5: Path) -> None:
+    # The writer writes the record, not the decoded chain, so an edit in
+    # place would be lost. A new chain is assigned instead.
+    xform = io.load(linear_x5)
+    with pytest.raises(ValueError, match="read-only"):
+        xform[0].matrix[0, 0] = 2.0
+    np.testing.assert_allclose(xform.metadata.raw.nodes[0].transform, AFFINE)
+
+
+def test_a_record_is_never_changed_in_place(
+    chain_x5: Path, tmp_path: Path
+) -> None:
+    xform = io.load(chain_x5)
+    record = xform.metadata.raw
+    copy = record.copy()
+    assert copy is not record and copy.nodes[0] is not record.nodes[0]
+    copy.header.attrs["Edited"] = "yes"
+    copy.nodes[0].metadata["Edited"] = True
+    copy.nodes[1].metadata = {"edited": True}
+    assert "Edited" not in record.header.attrs
+    assert record.nodes[1].metadata == {"WrittenBy": "NiTransforms 25.1.0"}
+    assert record.nodes[0].metadata == {"WrittenBy": "NiTransforms 25.1.0"}
+    # Encoding a new chain builds a new record.
+    xform.transformations = [xform[1]]
+    xform.save(tmp_path / "out.x5")
+    assert record.header.chains == [(0, 1), (1, 0)]
+    assert len(record.nodes) == 2
+
+
+def test_a_copy_made_with_replace_encodes_its_elements_again(
+    chain_x5: Path, tmp_path: Path
+) -> None:
+    # Only the elements that a transformation decoded from its own record
+    # are written as their nodes. The copy decodes its own elements, so an
+    # element of the original is encoded again and loses its node metadata.
+    xform = io.load(chain_x5)
+    copy = replace(xform, transformations=[xform[1]])
+    copy.save(tmp_path / "copy.x5")
+    assert io.load(tmp_path / "copy.x5").metadata.raw.nodes[0].metadata is None
+    xform.transformations = [xform[1]]
+    xform.save(tmp_path / "same.x5")
+    node = io.load(tmp_path / "same.x5").metadata.raw.nodes[0]
+    assert node.metadata == {"WrittenBy": "NiTransforms 25.1.0"}
+
+
+def test_a_selection_is_checked_against_a_record(chain_x5: Path) -> None:
+    record = X5Metadata.load(chain_x5).raw
+    with pytest.raises(ParserContentError, match="no chain 2"):
+        X5Transform.from_raw(record, chain=2)
+    with pytest.raises(ValueError, match="not both"):
+        X5Transform.from_raw(record, chain=0, position=0)
+    # An index assigned later is checked when the selection is read.
+    xform = X5Transform.from_raw(record)
+    xform.position = 5
+    with pytest.raises(ParserContentError, match="no transform 5"):
+        _ = xform.selection
+
+
+def test_only_the_selected_chain_is_written_when_assigned(
+    chain_x5: Path, tmp_path: Path
+) -> None:
+    xform = X5Transform.from_file(chain_x5, chain=1)
+    xform.save(tmp_path / "whole.x5")
+    whole = io.load(tmp_path / "whole.x5").metadata.raw
+    assert whole.header.chains == [(0, 1), (1, 0)]
+    xform.transformations = list(xform)
+    xform.save(tmp_path / "selected.x5")
+    selected = io.load(tmp_path / "selected.x5").metadata.raw
+    assert selected.header.chains == [(0, 1)]
+    assert [node.type for node in selected.nodes] == ["nonlinear", "linear"]
+
+
+def test_other_metadata_gives_another_chain(chain_x5: Path) -> None:
+    xform = io.load(chain_x5)
+    first = xform.transformations
+    assert isinstance(first[0], xforms.Affine)
+    record = xform.metadata.raw.copy()
+    record.header.chains = [(1,)]
+    xform.metadata = X5Metadata.from_raw(record)
+    assert isinstance(xform[0], X5DisplacementField)
+    assert xform.transformations is not first
+    # Selecting another chain also drops the decoded chain.
+    xform.chain = 0
+    assert isinstance(xform[0], X5DisplacementField)
+    xform.metadata = io.load(chain_x5).metadata
+    xform.chain = 1
+    assert xform.selection == (1, 0)
+    assert isinstance(xform[0], X5DisplacementField)
+
+
+def test_a_record_is_read_as_a_transformation(chain_x5: Path) -> None:
+    record = X5Metadata.load(chain_x5).raw
+    assert isinstance(record, X5Raw)
+    xform = X5Transform.from_raw(record, chain=1)
+    assert xform.metadata.raw is record
+    assert xform.selection == (1, 0)
+    assert X5Transform.from_any(record).selection == (0, 1)
 
 
 @pytest.mark.parametrize(
@@ -331,8 +460,8 @@ def test_malformed_fields_are_refused(
 #   B-SPLINES
 # ----------------------------------------------------------------------
 
-# The knots of the B-spline fixtures: an oblique grid, so that a
-# coefficient read in the wrong frame cannot pass.
+# The knots lie on an oblique grid, so coefficients in the wrong frame
+# fail.
 KNOTS = np.array(
     [
         [3.5, -1.0, 0.5, -12.0],
@@ -344,7 +473,7 @@ KNOTS = np.array(
 
 
 def _cubic(d: np.ndarray) -> np.ndarray:
-    """The centred cubic B-spline (nitransforms' `_cubic_bspline`)."""
+    """The centred cubic B-spline of nitransforms (_cubic_bspline)."""
     d = np.abs(d)
     near = (4.0 - 6.0 * d**2 + 3.0 * d**3) / 6.0
     far = np.clip(2.0 - d, 0.0, None) ** 3 / 6.0
@@ -354,10 +483,7 @@ def _cubic(d: np.ndarray) -> np.ndarray:
 def _bspline_map(
     coeffs: np.ndarray, knots: np.ndarray, points: np.ndarray
 ) -> np.ndarray:
-    """
-    `x + sum_k c_k B3(i(x) - k)` over the knots that exist, as
-    nitransforms' `BSplineFieldTransform.map` (`_map_xyz`) computes it.
-    """
+    """x + sum_k c_k B3(i(x) - k), as BSplineFieldTransform.map computes it."""
     ijk = _affine_apply(np.linalg.inv(knots), points)
     grid = np.stack(
         np.meshgrid(*map(np.arange, coeffs.shape[:-1]), indexing="ij"),
@@ -368,7 +494,7 @@ def _bspline_map(
 
 
 def _bspline(**kwargs) -> dict:
-    """A node as `BSplineFieldTransform.to_x5` writes it."""
+    """A node as BSplineFieldTransform.to_x5 writes it."""
     node = dict(
         type="nonlinear",
         subtype="bspline",
@@ -383,7 +509,7 @@ def _bspline(**kwargs) -> dict:
 
 
 def _knot_probes() -> np.ndarray:
-    """RAS points: on knots, between them, near the edges and outside."""
+    """RAS points on the knots, between them, near the edges and outside."""
     rng = np.random.default_rng(0)
     ijk = np.concatenate(
         [IJK, rng.uniform(-3.0, np.add(SHAPE, 2.0), size=(64, 3))]
@@ -394,10 +520,8 @@ def _knot_probes() -> np.ndarray:
 def test_bspline_is_a_cubic_spline_of_ras_displacements(
     tmp_path: Path,
 ) -> None:
-    """
-    The coefficients are RAS displacements on the knot grid placed by
-    `AdditionalParameters`; the `Domain` (the reference grid) is not used,
-    and coefficients beyond the grid are zero.
+    """The coefficients are RAS displacements on the knot grid placed by
+    AdditionalParameters; the Domain is unused.
     """
     path = _write_x5(tmp_path / "bspline.x5", [_bspline()])
     xform = io.load(path)
@@ -405,7 +529,7 @@ def test_bspline_is_a_cubic_spline_of_ras_displacements(
     assert isinstance(field, X5BSplineField)
     assert isinstance(field.input, systems.RASmm)
     assert isinstance(field.output, systems.RASmm)
-    assert field.displacement.coeff
+    assert field.displacement.store == "coefficients"
     assert int(field.displacement.degree) == 3
     points = _knot_probes()
     expected = _bspline_map(_ramp() - 2.0, KNOTS, points)
@@ -416,11 +540,7 @@ def test_bspline_is_a_cubic_spline_of_ras_displacements(
 
 
 def test_bspline_agrees_with_the_itk_reader(tmp_path: Path) -> None:
-    """
-    An ITK `BSplineTransform` and the same spline in X5 -- its coefficient
-    grid and coefficients moved from LPS to RAS -- map points alike: knot
-    `k` sits at voxel `k` of the grid in both.
-    """
+    """An ITK B-spline and the same spline in X5 map points alike."""
     block = io.load(data_dir / "itk_bspline3d.h5")[-1]
     vox2lps = block.voxel2lps.to(xforms.Affine).homogeneous_matrix
     flip = np.diag([-1.0, -1.0, 1.0, 1.0])
@@ -451,7 +571,7 @@ def test_bspline_is_written_from_scratch(tmp_path: Path) -> None:
         assert node.attrs["Representation"] == "coefficients"
         np.testing.assert_allclose(node["Transform"], _ramp(), atol=1e-5)
         np.testing.assert_allclose(node["AdditionalParameters"], KNOTS)
-        # nitransforms requires a Domain: the knot grid stands in for it.
+        # nitransforms requires a Domain, so the knot grid stands in.
         np.testing.assert_allclose(node["Domain/Mapping"], KNOTS)
         np.testing.assert_array_equal(node["Domain/Size"], SHAPE)
     points = _knot_probes()
@@ -470,8 +590,9 @@ def test_bspline_read_is_written_back_with_its_domain(
     out = tmp_path / "out.x5"
     xform.save(out)
     again = io.load(out)
-    assert again.nodes[0].domain.size == (20, 20, 20)
-    assert again.nodes[0].metadata == {"WrittenBy": "NiTransforms 25.1.0"}
+    node = again.metadata.raw.nodes[0]
+    assert node.domain.size == (20, 20, 20)
+    assert node.metadata == {"WrittenBy": "NiTransforms 25.1.0"}
     assert isinstance(again[0], X5BSplineField)
 
 
@@ -483,16 +604,14 @@ def test_bspline_read_is_written_back_with_its_domain(
 def test_splines_x5_cannot_hold_are_refitted(
     tmp_path: Path, kwargs: dict
 ) -> None:
-    # X5 stores cubic coefficients with a zero boundary: coefficients of
-    # another degree or boundary are refitted to those, and the field
-    # reads back with the same values on its knots.
+    # X5 stores cubic zero-boundary coefficients, so others are refitted.
     out = tmp_path / "refit.x5"
     ras2vox, field, vox2ras = X5BSplineField.from_ras(_ramp(), KNOTS)
     spline = xforms.DisplacementField(
         data=field.data,
         input=field.input,
         output=field.output,
-        coeff=True,
+        store="coefficients",
         **{"degree": 3, "bound": "constant", **kwargs},
     )
     chain = xforms.Sequence(
@@ -504,7 +623,7 @@ def test_splines_x5_cannot_hold_are_refitted(
     again = io.load(out)[0]
     assert isinstance(again, X5BSplineField)
     back = again[1]
-    assert (back.coeff, int(back.degree)) == (True, 3)
+    assert (back.store, int(back.degree)) == ("coefficients", 3)
     np.testing.assert_allclose(
         np.asarray(back.field), np.asarray(spline.field), atol=1e-4
     )
@@ -513,8 +632,7 @@ def test_splines_x5_cannot_hold_are_refitted(
 def test_stored_spline_coefficients_are_not_refitted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A cubic, zero-boundary spline is already what X5 stores: its
-    # coefficients are written as they are, without a refit.
+    # A cubic zero-boundary spline is written as is, without refitting.
     from brainhops.datamodel._transformations import concrete
 
     def refuse(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
@@ -533,8 +651,7 @@ def test_stored_spline_coefficients_are_not_refitted(
 
 
 def test_sampled_displacements_stay_sampled(tmp_path: Path) -> None:
-    # X5 stores either encoding, and the field's `coeff` flag selects
-    # which: a field of values is written as displacements.
+    # The `store` flag selects the encoding; values are written as such.
     out = tmp_path / "dense.x5"
     X5Transform(
         transformations=[X5DisplacementField.from_ras(_ramp(), VOX2RAS)]
@@ -584,10 +701,7 @@ def test_malformed_bsplines_are_refused(
 
 
 def test_chain_is_a_sequence_in_application_order(chain_x5: Path) -> None:
-    """
-    nitransforms' `TransformChain.map` applies "0/1" as `f1(f0(x))`,
-    which is how a brainhops `Sequence([t0, t1])` applies.
-    """
+    """The chain '0/1' applies f1(f0(x)), as Sequence([t0, t1]) does."""
     xform = io.load(chain_x5)
     assert xform.selection == (0, 1)
     assert isinstance(xform[0], xforms.Affine)
@@ -624,10 +738,7 @@ def test_unchained_nodes_read_the_first_with_a_warning(
 
 
 def test_chain_is_written_from_scratch(tmp_path: Path) -> None:
-    """
-    A chain built in brainhops is written as one node per element, and
-    one `/TransformChain` that applies them in order.
-    """
+    """A chain is written as one node per element plus a /TransformChain."""
     nifti = pytest.importorskip("nibabel")
     from brainhops.io.transformations.nifti import NiftiRASDisplacementField
 
@@ -674,9 +785,10 @@ def test_reused_nodes_keep_their_metadata(
     out = tmp_path / "field.x5"
     xform.save(out)
     again = io.load(out)
-    assert len(again.nodes) == 1
-    assert again.header.chains == []
-    assert again.nodes[0].metadata == {"WrittenBy": "NiTransforms 25.1.0"}
+    assert len(again.metadata.raw.nodes) == 1
+    assert again.metadata.raw.header.chains == []
+    node = again.metadata.raw.nodes[0]
+    assert node.metadata == {"WrittenBy": "NiTransforms 25.1.0"}
     assert isinstance(again[0], X5DisplacementField)
 
 
@@ -697,10 +809,10 @@ def test_a_coordinates_field_is_written_as_deformations(
 def test_coordinate_coefficients_are_written_as_deformations(
     tmp_path: Path,
 ) -> None:
-    # X5 stores sampled coordinates, so a field of coefficients is written
-    # as its values, and reads back as them.
+    # X5 stores sampled coordinates, so a coefficient field is written as
+    # values.
     ras2vox, field = X5CoordinatesField.from_ras(_ramp(), VOX2RAS)
-    spline = field.to(degree=3).to(coeff=True)
+    spline = field.to(degree=3).to(store="coefficients")
     chain = xforms.Sequence(
         transformations=[ras2vox, spline],
         input=systems.RASmm(),
@@ -759,8 +871,9 @@ def test_unsupported_nodes_are_refused_but_round_trip(
     out = tmp_path / "out.x5"
     xform.save(out)
     again = io.load(out)
-    assert again.nodes[0].type == node["type"]
-    np.testing.assert_allclose(again.nodes[0].transform, node["transform"])
+    written = again.metadata.raw.nodes[0]
+    assert written.type == node["type"]
+    np.testing.assert_allclose(written.transform, node["transform"])
 
 
 # ----------------------------------------------------------------------
@@ -782,7 +895,7 @@ def _write_fslpy_space(group, shape, vox2ras) -> None:  # noqa: ANN001
 
 
 def _write_fslpy(path: Path, kind: str) -> Path:
-    """Write a file as `fsl.transform.x5.write(Non)LinearX5` does."""
+    """Write a file as fsl.transform.x5.write(Non)LinearX5 does."""
     with h5py.File(path, "w") as f:
         f.attrs["Format"] = "X5"
         f.attrs["Version"] = "0.1.0"
@@ -804,19 +917,22 @@ def _write_fslpy(path: Path, kind: str) -> Path:
 
 def test_fslpy_linear_is_read(tmp_path: Path) -> None:
     xform = io.load(_write_fslpy(tmp_path / "fsl.x5", "linear"))
-    assert xform.header.legacy
-    assert xform.nodes[0].metadata == {"fslpy": "3.29.1"}
+    assert xform.metadata.raw.header.legacy
+    node = xform.metadata.raw.nodes[0]
+    assert node.metadata == {"fslpy": "3.29.1"}
     np.testing.assert_allclose(xform[0].matrix, AFFINE[:3])
-    np.testing.assert_allclose(xform.nodes[0].inverse, np.linalg.inv(AFFINE))
+    np.testing.assert_allclose(node.inverse, np.linalg.inv(AFFINE))
 
 
 @pytest.mark.parametrize("kind", ["relative", "absolute"])
 def test_fslpy_nonlinear_is_read(tmp_path: Path, kind: str) -> None:
     xform = io.load(_write_fslpy(tmp_path / "fsl.x5", kind))
+    # The deformation is read when it is used, as in the current layout.
+    assert isinstance(xform.metadata.raw.nodes[0].transform, DelayedH5Array)
     points = _ras(IJK)
     expected = _ramp()[tuple(IJK.T)] + (points if kind == "relative" else 0)
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
-    # ... and written back in the current layout.
+    # The transformation is written back in the current layout.
     out = tmp_path / "out.x5"
     xform.save(out)
     with h5py.File(out, "r") as f:
@@ -881,7 +997,7 @@ def test_nitransforms_files_are_read_as_it_reads_them(
         _apply(xform, points), chain.map(points), atol=1e-5
     )
 
-    # ... and the files brainhops writes are read back by nitransforms.
+    # brainhops files are read back by nitransforms.
     out = tmp_path / "rev.x5"
     X5Transform(transformations=list(xform)[::-1]).save(out)
     back = TransformChain.from_filename(out)
@@ -966,10 +1082,53 @@ def test_nitransforms_bsplines_match(tmp_path: Path) -> None:
     # nitransforms weighs the knots in single precision.
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
 
-    # ... and the files brainhops writes are read back by nitransforms.
+    # brainhops files are read back by nitransforms.
     out = tmp_path / "out.x5"
     X5Transform(transformations=[X5BSplineField.from_ras(coeffs, KNOTS)]).save(
         out
     )
     back = BSplineFieldTransform.from_filename(out)
     np.testing.assert_allclose(back.map(points), expected, atol=1e-5)
+
+
+def test_assigned_systems_are_encoded(chain_x5: Path) -> None:
+    # Systems that were assigned override the record, so the chain is
+    # encoded, and X5 only stores maps from RAS to RAS.
+    xform = io.load(chain_x5)
+    xform.input = systems.RASmm()
+    record = xform.consolidate().metadata.raw
+    assert record is not xform.metadata.raw
+    assert record.header.chains == [(0, 1)]
+    assert record.nodes[0] is xform.metadata.raw.nodes[0]
+    xform.input = systems.LPSmm()
+    with pytest.raises(UnrepresentableTransformationError, match="RAS"):
+        xform.consolidate()
+    # The options only select what is decoded.
+    selected = X5Transform.from_file(chain_x5, chain=1)
+    assert selected.consolidate().metadata is selected.metadata
+
+
+def test_a_selected_chain_is_encoded_as_the_only_chain(
+    chain_x5: Path,
+) -> None:
+    selected = X5Transform.from_file(chain_x5, chain=1)
+    chain = selected.transformations
+    selected.transformations = list(selected)
+    consolidated = selected.consolidate()
+    # The chain becomes the content of the record, so the option that
+    # selected it in the old record is reset.
+    assert consolidated.chain is None
+    assert len(consolidated.metadata.raw.nodes) == len(chain)
+    assert all(
+        type(a) is type(b) for a, b in zip(consolidated.transformations, chain)
+    )
+    assert selected.chain == 1
+
+
+def test_decoded_fields_are_read_only(field_x5: Path) -> None:
+    from brainhops.backends import backend
+
+    with backend("numpy"):
+        vectors = io.load(field_x5)[0].displacement.data
+    assert isinstance(vectors, np.ndarray)
+    assert not vectors.flags.writeable

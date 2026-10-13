@@ -1,4 +1,4 @@
-"""Entry point for ``python -m brainhops``."""
+"""Entry point for `python -m brainhops`, which runs the command-line tool."""
 
 from __future__ import annotations
 

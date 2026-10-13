@@ -1,10 +1,7 @@
-"""
-Regression tests: io affines accept the `inverse()` signature of
-`Transformation`.
+"""Regression tests: io affines accept the arguments of `inverse`.
 
-`Sequence.inverse` forwards `compute` and the options of `compute()` to
-every child, so an io affine whose override took no argument broke the
-inverse of any sequence that held it -- an SPM `y_` field among them.
+`Sequence.inverse` forwards its options to every child, so an override
+without arguments broke the inverse of any sequence holding an io affine.
 """
 
 import numpy as np
@@ -19,10 +16,12 @@ from brainhops.io.transformations.base.affines import (  # noqa: E402
     VoxelToRAS,
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
+    NiftiMetadata,
     NiftiRASToVoxel,
+    NiftiRaw,
     NiftiVoxelToRAS,
 )
-from brainhops.io.transformations.spm.y import (  # noqa: E402
+from brainhops.io.transformations.spm import (  # noqa: E402
     SpmCoordinatesField,
 )
 
@@ -41,13 +40,16 @@ def _image():  # noqa: ANN202
     return nb.Nifti1Image(np.zeros(SHAPE, "float32"), VOX2RAS)
 
 
+def _metadata() -> NiftiMetadata:
+    return NiftiMetadata.from_raw(NiftiRaw(header=_image().header))
+
+
 def _spm(tmp_path):  # noqa: ANN001, ANN202
-    # An SPM `y_` map is a field of absolute RAS coordinates; the
-    # identity map is enough to exercise the inverse.
+    # An SPM y_ map holds absolute RAS coordinates; an identity map suffices.
     ijk = np.stack(np.meshgrid(*map(np.arange, SHAPE), indexing="ij"), -1)
     ras = ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
     img = nb.Nifti1Image(ras[:, :, :, None, :].astype("float32"), VOX2RAS)
-    img.header["intent_code"] = 1007  # NIFTI_INTENT_VECTOR
+    img.header["intent_code"] = 1007
     img.header["intent_name"] = "Mapping"
     path = tmp_path / "y_sub01.nii.gz"
     nb.save(img, str(path))
@@ -59,8 +61,7 @@ def _spm(tmp_path):  # noqa: ANN001, ANN202
     "cls, back", [(NiftiRASToVoxel, VoxelToRAS), (NiftiVoxelToRAS, RASToVoxel)]
 )
 def test_a_nifti_affine_inverse_takes_compute(cls, back, compute) -> None:  # noqa: ANN001
-    img = _image()
-    forward = cls(image=img, header=img.header)
+    forward = cls(metadata=_metadata())
     inverse = forward.inverse(compute=compute)
     assert isinstance(inverse, back)
     np.testing.assert_allclose(
@@ -72,8 +73,7 @@ def test_a_nifti_affine_inverse_takes_compute(cls, back, compute) -> None:  # no
 @pytest.mark.parametrize("compute", [False, True])
 @pytest.mark.parametrize("cls", [NiftiRASToVoxel, NiftiVoxelToRAS])
 def test_a_nifti_affine_with_a_set_matrix_inverts(cls, compute) -> None:  # noqa: ANN001
-    # A set matrix takes the `super().inverse()` path, which must
-    # receive `compute` too.
+    # A set matrix takes the parent inverse, which must also receive compute.
     forward = cls(matrix=VOX2RAS[:-1])
     inverse = forward.inverse(compute=compute)
     np.testing.assert_allclose(
@@ -82,8 +82,7 @@ def test_a_nifti_affine_with_a_set_matrix_inverts(cls, compute) -> None:  # noqa
 
 
 def test_a_sequence_holding_a_nifti_affine_inverts() -> None:
-    img = _image()
-    seq = xforms.Sequence([NiftiRASToVoxel(image=img, header=img.header)])
+    seq = xforms.Sequence([NiftiRASToVoxel(metadata=_metadata())])
     inverse = seq.inverse()
     assert len(inverse) == 1
     assert isinstance(inverse[0], VoxelToRAS)
@@ -100,18 +99,23 @@ def test_an_spm_field_inverts(tmp_path) -> None:  # noqa: ANN001
 
 
 @pytest.mark.parametrize("cls", [NiftiRASToVoxel, NiftiVoxelToRAS])
-def test_reading_the_image_does_not_replace_the_matrix(cls) -> None:  # noqa: ANN001
-    # The parser's image `data` and the affine's matrix share a name, not
-    # a slot: loading the voxels must not turn them into the matrix.
-    from brainhops.io.base.nifti import NiftiParser
-
-    img = _image()
-    t = cls(image=img, header=img.header)
-    NiftiParser.data.fget(t)
+def test_the_matrix_comes_from_the_header_unless_it_is_set(cls) -> None:  # noqa: ANN001
+    t = cls(metadata=_metadata())
+    assert t.raw is None
     assert t.matrix.shape == (3, 4)
     expected = VOX2RAS if cls is NiftiVoxelToRAS else np.linalg.inv(VOX2RAS)
     np.testing.assert_allclose(t.matrix, expected[:3])
-    # An explicit matrix still wins over the header.
-    explicit = cls(np.eye(4)[:3], image=img, header=img.header)
-    NiftiParser.data.fget(explicit)
+    # The inverse of a matrix read from the header reads the same header.
+    assert t.inverse().metadata is t.metadata
+    # An explicit matrix wins over the header, and is pending until the
+    # affine is consolidated, which encodes it in the header.
+    explicit = cls(np.eye(4)[:3], metadata=_metadata())
     np.testing.assert_array_equal(explicit.matrix, np.eye(4)[:3])
+    assert explicit.raw is None
+    consolidated = explicit.consolidate()
+    assert consolidated._data is None
+    np.testing.assert_array_equal(consolidated.matrix, np.eye(4)[:3])
+    assert consolidated.metadata.raw is not explicit.metadata.raw
+    # Other metadata gives another matrix.
+    t.metadata = NiftiMetadata.from_raw(NiftiRaw(header=nb.Nifti1Header()))
+    assert not np.allclose(t.matrix, expected[:3])

@@ -1,13 +1,12 @@
-# dependencies
 import typing_extensions as tx
 
 
 def stored_repr(obj: tx.Any, names: tx.Sequence[str]) -> str:
-    """A repr built from an object's stored fields.
+    """Build a repr from the stored fields of an object.
 
-    Each name in `names` is read with `getattr`, and a field whose value
-    is `None` is left out. Reading these fields does not resolve the
-    lazily computed transformation chain, so the repr of an incompletely
+    Each name in `names` is read with `getattr`, and fields whose value is
+    `None` are omitted. Reading the fields does not resolve the lazily
+    computed chain of transformations, so the repr of an incompletely
     specified transform does not raise.
     """
     parts = []

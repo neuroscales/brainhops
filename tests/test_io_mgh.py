@@ -1,17 +1,14 @@
-"""
-Tests for FreeSurfer MGH / MGZ images.
+"""Tests for FreeSurfer MGH and MGZ images.
 
-The reader must agree with `nibabel` on the voxels and on both the
-scanner and the tkr voxel-to-RAS matrices, recognise the format from its
-content rather than its name, follow FreeSurfer when `goodRASFlag` is not
-set, and write files that read back unchanged -- footer parameters and
-trailing tags included.
+The reader must agree with nibabel on the voxels and on both the scanner and
+tkr vox-to-RAS matrices, and must recognise the format by content.
 """
 
 import gc
 import gzip
 import io as _io
 import os
+import pickle
 import struct
 import warnings
 
@@ -24,28 +21,32 @@ from bagof.magic import replace  # noqa: E402
 from nibabel.freesurfer.mghformat import MGHImage as NibabelMgh  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
+from brainhops.backends import backend  # noqa: E402
 from brainhops.datamodel.systems import CoordinateSystem  # noqa: E402
 from brainhops.datamodel.transformations import (  # noqa: E402
     Affine,
     DisplacementField,
     Scaling,
 )
-from brainhops.io.base.freesurfer import (  # noqa: E402
-    fs_geometry_from_vox2ras,
-    fs_vox2ras,
-    fs_vox2tkr,
-    mat2orient,
-)
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.images.freesurfer import MghImage  # noqa: E402
+from brainhops.io.common.freesurfer._geometry import (  # noqa: E402
+    fs_geometry_from_vox2ras,
+    fs_vox2ras,
+    fs_vox2tkr,
+    mat2orient,
+)
+from brainhops.io.images.freesurfer.mgh import (  # noqa: E402
+    MghImage,
+    MghMetadata,
+)
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 
-# An oblique, anisotropic geometry, so that every part of the header
-# (voxel size, direction cosines, centre) matters.
+# The geometry is oblique and anisotropic, so that every header field
+# matters.
 _ROT = np.array(
     [
         [np.cos(0.3), -np.sin(0.3), 0.0],
@@ -69,7 +70,6 @@ TAGS = struct.pack(">iq", 30, 9) + b"cmdline\x00\x00"
 
 
 def _write(tmp_path, name, data, affine=AFFINE, tr=0.0, tags=b""):  # noqa: ANN001, ANN202
-    """Write an MGH fixture with nibabel, and optional trailing tags."""
     img = NibabelMgh(data, affine)
     img.header["tr"] = tr
     img.header["te"] = 3.5
@@ -96,7 +96,6 @@ def _data(shape=(4, 5, 6), dtype="float32"):  # noqa: ANN001, ANN202
 
 
 def test_shared_geometry_matches_nibabel() -> None:
-    """The shared FreeSurfer geometry reproduces nibabel's matrices."""
     img = NibabelMgh(np.zeros((7, 8, 9), "float32"), AFFINE)
     header = img.header
     shape = header["dims"][:3]
@@ -117,7 +116,6 @@ def test_shared_geometry_matches_nibabel() -> None:
 
 
 def test_tkr_of_a_conformed_volume_is_lia() -> None:
-    """The tkr matrix is FreeSurfer's coronal LIA orientation."""
     assert mat2orient(fs_vox2tkr((256, 256, 256), (1, 1, 1))) == "LIA"
 
 
@@ -128,14 +126,15 @@ def test_tkr_of_a_conformed_volume_is_lia() -> None:
 
 @pytest.mark.parametrize("name", ["vol.mgh", "vol.mgz"])
 def test_read_matches_nibabel(tmp_path, name) -> None:  # noqa: ANN001
-    """Voxels, scanner and tkr matrices all agree with nibabel."""
+    """Voxels, scanner and tkr matrices all match nibabel."""
     data = _data()
     source = _write(tmp_path, name, data)
     image = io.images.load(source)
 
     assert isinstance(image, MghImage)
     assert np.array_equal(np.asarray(image.data), data)
-    assert image._good_ras is True
+    record = image.metadata.raw
+    assert record.good_ras is True
 
     header = nb.load(str(source)).header
     names = [x.output.name for x in image.transformations]
@@ -146,8 +145,8 @@ def test_read_matches_nibabel(tmp_path, name) -> None:  # noqa: ANN001
     tkr = image.transformations[1].homogeneous_matrix
     assert np.allclose(scanner, header.get_vox2ras(), atol=1e-5)
     assert np.allclose(tkr, header.get_vox2ras_tkr(), atol=1e-5)
-    assert np.allclose(image.vox2ras, header.get_vox2ras(), atol=1e-5)
-    assert np.allclose(image.vox2tkr, header.get_vox2ras_tkr(), atol=1e-5)
+    assert np.allclose(record.vox2ras, header.get_vox2ras(), atol=1e-5)
+    assert np.allclose(record.vox2tkr, header.get_vox2ras_tkr(), atol=1e-5)
     assert not np.allclose(scanner, tkr)
 
     scaling = image.transformations[0]
@@ -157,15 +156,14 @@ def test_read_matches_nibabel(tmp_path, name) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("name", ["vol.mgh", "vol.mgz"])
 def test_load_leaves_no_file_open(tmp_path, name) -> None:  # noqa: ANN001
-    """Loading closes the file it reads the header from (#262), while
-    the voxels are still read lazily, from the file."""
+    """Loading closes the header file (#262) while the voxels stay lazy."""
     data = _data()
     source = _write(tmp_path, name, data)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
         image = io.load(source)
         assert isinstance(image, MghImage)
-        assert nb.is_proxy(image.image.dataobj)
+        assert nb.is_proxy(image.raw)
         assert np.array_equal(np.asarray(image.data), data)
         del image
         gc.collect()
@@ -174,24 +172,23 @@ def test_load_leaves_no_file_open(tmp_path, name) -> None:  # noqa: ANN001
 
 
 def test_tkr_and_scanner_differ_by_a_ras_to_ras_rigid(tmp_path) -> None:  # noqa: ANN001
-    """scanner = M @ tkr with M independent of the voxel (FreeSurfer's
-    `Norig @ inv(Torig)`)."""
+    """scanner = M @ tkr, where M = Norig @ inv(Torig) is a rigid transform."""
     source = _write(tmp_path, "vol.mgz", _data())
-    image = io.images.load(source)
-    tkr2scanner = image.vox2ras @ np.linalg.inv(image.vox2tkr)
-    # The linear part is a rotation: the voxel size cancels out.
+    record = io.images.load(source).metadata.raw
+    tkr2scanner = record.vox2ras @ np.linalg.inv(record.vox2tkr)
+    # The voxel size cancels, leaving a rotation.
     linear = tkr2scanner[:3, :3]
     assert np.allclose(linear @ linear.T, np.eye(3), atol=1e-5)
-    # The volume centre maps to c_ras in scanner RAS and to 0 in tkr RAS.
-    centre = np.r_[np.asarray(image.shape[:3]) / 2, 1]
-    assert np.allclose(image.vox2tkr @ centre, [0, 0, 0, 1], atol=1e-5)
+    # The volume centre maps to c_ras in scanner space and 0 in tkr space.
+    centre = np.r_[np.asarray(record.shape[:3]) / 2, 1]
+    assert np.allclose(record.vox2tkr @ centre, [0, 0, 0, 1], atol=1e-5)
     assert np.allclose(
-        (image.vox2ras @ centre)[:3], image.header["Pxyz_c"], atol=1e-4
+        (record.vox2ras @ centre)[:3], record.header["Pxyz_c"], atol=1e-4
     )
 
 
 def test_read_4d(tmp_path) -> None:  # noqa: ANN001
-    """A multi-frame volume reads as (x, y, z, t), with TR as time step."""
+    """Frames become the fourth axis, with TR as the time step."""
     data = _data((3, 4, 5, 2))
     source = _write(tmp_path, "vol4d.mgz", data, tr=2500.0)
     image = io.images.load(source)
@@ -213,7 +210,6 @@ def test_read_4d(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_4d_without_tr_invents_no_time_unit(tmp_path) -> None:  # noqa: ANN001
-    """With no TR recorded, the frame step is 1 with no unit."""
     source = _write(tmp_path, "vol4d.mgh", _data((3, 4, 5, 2)))
     scaling = io.images.load(source).transformations[0]
     assert scaling.scale[-1] == 1.0
@@ -221,7 +217,6 @@ def test_4d_without_tr_invents_no_time_unit(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_data_is_f_ordered_like_nibabel(tmp_path) -> None:  # noqa: ANN001
-    """Disk order is x fastest: the array matches nibabel's dataobj."""
     data = _data((2, 3, 4))
     source = _write(tmp_path, "vol.mgh", data)
     raw = source.read_bytes()[284 : 284 + data.size * 4]
@@ -231,26 +226,26 @@ def test_data_is_f_ordered_like_nibabel(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_mri_params_are_kept(tmp_path) -> None:  # noqa: ANN001
-    """The footer's MRI parameters are read."""
     source = _write(tmp_path, "vol.mgz", _data(), tr=1234.0)
-    params = io.images.load(source).mri_params
+    params = io.images.load(source).metadata.raw.mri_params
     assert params["tr"] == pytest.approx(1234.0)
     assert params["te"] == pytest.approx(3.5)
     assert params["flip_angle"] == pytest.approx(0.15)
 
 
 def test_bad_ras_flag_uses_freesurfer_defaults(tmp_path) -> None:  # noqa: ANN001
-    """goodRASFlag = 0: 1 mm, LIA, centre 0 -- whatever the header says."""
+    """Without goodRASFlag, the voxels are 1 mm, LIA and centred at 0."""
     source = _write(tmp_path, "vol.mgh", _data())
     raw = bytearray(source.read_bytes())
     raw[28:30] = struct.pack(">h", 0)
     source.write_bytes(bytes(raw))
 
-    image = io.images.load(source)
-    assert image._good_ras is False
-    assert image.voxel_size == (1.0, 1.0, 1.0)
-    assert np.allclose(image.vox2ras, image.vox2tkr)
-    assert mat2orient(image.vox2ras) == "LIA"
+    record = io.images.load(source).metadata.raw
+    assert record.good_ras is False
+    assert int(record.header["goodRASFlag"]) == 0
+    assert record.voxel_size == (1.0, 1.0, 1.0)
+    assert np.allclose(record.vox2ras, record.vox2tkr)
+    assert mat2orient(record.vox2ras) == "LIA"
 
 
 # ----------------------------------------------------------------------
@@ -260,7 +255,6 @@ def test_bad_ras_flag_uses_freesurfer_defaults(tmp_path) -> None:  # noqa: ANN00
 
 @pytest.mark.parametrize("compress", [False, True])
 def test_sniff_by_content(tmp_path, compress) -> None:  # noqa: ANN001
-    """The format is recognised from the bytes, whatever the name."""
     source = _write(tmp_path, "vol.mgh", _data())
     raw = source.read_bytes()
     if compress:
@@ -275,7 +269,6 @@ def test_sniff_by_content(tmp_path, compress) -> None:  # noqa: ANN001
 
 
 def test_a_gzipped_file_named_mgh_is_read(tmp_path) -> None:  # noqa: ANN001
-    """A gzipped file with a `.mgh` name is still decompressed."""
     source = _write(tmp_path, "vol.mgz", _data())
     misnamed = tmp_path / "vol.mgh"
     misnamed.write_bytes(source.read_bytes())
@@ -284,7 +277,6 @@ def test_a_gzipped_file_named_mgh_is_read(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_sniff_rejects_other_content(tmp_path) -> None:  # noqa: ANN001
-    """A NIfTI file, or garbage, is not an MGH."""
     target = tmp_path / "vol.nii"
     nb.save(nb.Nifti1Image(_data(), np.eye(4)), str(target))
     assert MghImage.sniff(target) == Confidence.NO
@@ -294,7 +286,7 @@ def test_sniff_rejects_other_content(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_from_bytes_and_fileobj(tmp_path) -> None:  # noqa: ANN001
-    """Bytes and open streams, gzipped or not, read the same image."""
+    """Bytes and streams, compressed or not, read the same image."""
     source = _write(tmp_path, "vol.mgz", _data(), tags=TAGS)
     raw = source.read_bytes()
     a = MghImage.from_bytes(raw)
@@ -305,8 +297,8 @@ def test_from_bytes_and_fileobj(tmp_path) -> None:  # noqa: ANN001
         assert np.array_equal(np.asarray(c.data), _data())
     for image in (a, b, c):
         assert np.array_equal(np.asarray(image.data), _data())
-        assert image.tags == TAGS
-        assert np.allclose(image.vox2ras, a.vox2ras)
+        assert image.metadata.raw.tags == TAGS
+        assert np.allclose(image.metadata.raw.vox2ras, a.metadata.raw.vox2ras)
 
 
 # ----------------------------------------------------------------------
@@ -316,25 +308,26 @@ def test_from_bytes_and_fileobj(tmp_path) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("out", ["out.mgh", "out.mgz"])
 def test_round_trip(tmp_path, out) -> None:  # noqa: ANN001
-    """Voxels, geometry, footer and tags survive a save and reload."""
+    """Voxels, geometry, footer parameters and tags survive a round trip."""
     source = _write(tmp_path, "vol.mgz", _data(), tr=900.0, tags=TAGS)
     image = io.images.load(source)
-    assert image.tags == TAGS
+    record = image.metadata.raw
+    assert record.tags == TAGS
     target = tmp_path / out
     image.save(target)
 
     assert (target.read_bytes()[:2] == b"\x1f\x8b") == out.endswith(".mgz")
     again = io.images.load(target)
+    copied = again.metadata.raw
     assert np.array_equal(np.asarray(again.data), _data())
-    assert np.allclose(again.vox2ras, image.vox2ras, atol=1e-5)
-    assert np.allclose(again.vox2tkr, image.vox2tkr, atol=1e-5)
-    assert again.mri_params == pytest.approx(image.mri_params)
-    assert again.tags == TAGS
-    assert again.header.get_data_dtype() == np.dtype(">f4")
+    assert np.allclose(copied.vox2ras, record.vox2ras, atol=1e-5)
+    assert np.allclose(copied.vox2tkr, record.vox2tkr, atol=1e-5)
+    assert copied.mri_params == pytest.approx(record.mri_params)
+    assert copied.tags == TAGS
+    assert copied.header.get_data_dtype() == np.dtype(">f4")
 
 
 def test_round_trip_4d(tmp_path) -> None:  # noqa: ANN001
-    """A multi-frame volume round-trips."""
     data = _data((3, 4, 5, 2), "int16")
     source = _write(tmp_path, "vol.mgz", data, tr=2000.0)
     target = tmp_path / "out.mgz"
@@ -342,24 +335,23 @@ def test_round_trip_4d(tmp_path) -> None:  # noqa: ANN001
     again = io.images.load(target)
     assert again.data.shape == (3, 4, 5, 2)
     assert np.array_equal(np.asarray(again.data), data)
-    assert again.mri_params["tr"] == pytest.approx(2000.0)
+    record = again.metadata.raw
+    assert record.mri_params["tr"] == pytest.approx(2000.0)
     assert np.allclose(
-        again.vox2ras, nb.load(str(source)).header.get_vox2ras(), atol=1e-5
+        record.vox2ras, nb.load(str(source)).header.get_vox2ras(), atol=1e-5
     )
 
 
 def test_bytes_round_trip(tmp_path) -> None:  # noqa: ANN001
-    """to_bytes / from_bytes round-trip, with and without compression."""
     image = io.images.load(_write(tmp_path, "vol.mgh", _data(), tags=TAGS))
     for compress in (False, True):
         again = MghImage.from_bytes(image.to_bytes(compress=compress))
         assert np.array_equal(np.asarray(again.data), _data())
-        assert again.tags == TAGS
+        assert again.metadata.raw.tags == TAGS
 
 
 def test_write_from_data_and_affine(tmp_path) -> None:  # noqa: ANN001
-    """An image built in memory writes its preferred affine as scanner
-    RAS, and nibabel reads the same matrix back."""
+    """The preferred affine of an in-memory image is written as scanner RAS."""
     image = MghImage(
         data=_data(dtype="float64"),
         transformations=[Affine(matrix=AFFINE[:3])],
@@ -368,12 +360,12 @@ def test_write_from_data_and_affine(tmp_path) -> None:  # noqa: ANN001
     image.save(target)
     loaded = nb.load(str(target))
     assert np.allclose(loaded.affine, AFFINE, atol=1e-5)
-    # float64 is not an MGH type: it is stored as float32.
+    # float64 is not an MGH type, so float32 is stored.
     assert loaded.get_data_dtype() == np.dtype(">f4")
 
 
 def test_a_scaling_and_no_geometry_are_written(tmp_path) -> None:  # noqa: ANN001
-    """A Scaling is written as its matrix; no transformation as 1 mm RAS."""
+    """A scaling is written as its matrix; no transformation means 1 mm."""
     target = tmp_path / "a.mgh"
     MghImage(
         data=_data(), transformations=[Scaling(scale=[2.0, 3.0, 4.0])]
@@ -385,8 +377,28 @@ def test_a_scaling_and_no_geometry_are_written(tmp_path) -> None:  # noqa: ANN00
     assert np.allclose(nb.load(str(target)).affine, np.eye(4))
 
 
+def test_an_image_whose_transformations_are_emptied_has_no_geometry(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """An empty list is honoured, and `None` decodes the record again.
+
+    The writer encodes an image without transformations as it encodes an
+    image built from data alone: the vox2ras matrix is the identity, and
+    `goodRASFlag` is set.
+    """
+    image = MghImage.load(_write(tmp_path, "source.mgz", _data()))
+    image.transformations = []
+    assert image.transformations == []
+    target = tmp_path / "bare.mgz"
+    image.save(target)
+    header = nb.load(str(target)).header
+    assert int(header["goodRASFlag"]) == 1
+    assert np.allclose(header.get_affine(), np.eye(4))
+    image.transformations = None
+    assert np.allclose(image.to_nibabel().affine, AFFINE)
+
+
 def test_a_preferred_tkr_is_not_written_as_scanner(tmp_path) -> None:  # noqa: ANN001
-    """Selecting tkr as preferred still writes the scanner geometry."""
     source = _write(tmp_path, "vol.mgz", _data())
     image = io.images.load(source)
     image.transformations = list(image.transformations)
@@ -402,7 +414,6 @@ def test_a_preferred_tkr_is_not_written_as_scanner(tmp_path) -> None:  # noqa: A
 
 
 def test_world_units_are_converted_to_mm(tmp_path) -> None:  # noqa: ANN001
-    """A world space in centimetres is written in millimetres."""
     affine = Affine(matrix=np.diag([0.1, 0.2, 0.3, 1.0])[:3])
     world = affine.output
     if world is None or world.ndim is None:
@@ -434,7 +445,7 @@ def test_world_units_are_converted_to_mm(tmp_path) -> None:  # noqa: ANN001
     ],
 )
 def test_dtypes(tmp_path, dtype, stored) -> None:  # noqa: ANN001
-    """Every array type is stored as the nearest MGH type."""
+    """Each dtype is stored as the nearest MGH type."""
     data = (_data() % 2).astype(dtype)
     target = tmp_path / "out.mgh"
     MghImage(data=data).save(target)
@@ -444,7 +455,7 @@ def test_dtypes(tmp_path, dtype, stored) -> None:  # noqa: ANN001
 
 
 def test_unstorable_values_are_refused() -> None:
-    """Integers beyond int32, complex numbers and 5D arrays are refused."""
+    """Integers beyond int32, complex values and 5-D data are refused."""
     with pytest.raises(WriterError):
         MghImage(data=np.full((2, 2, 2), 2**40, "int64")).to_bytes()
     with pytest.raises(WriterError):
@@ -456,7 +467,6 @@ def test_unstorable_values_are_refused() -> None:
 
 
 def test_explicit_dtype_and_params(tmp_path) -> None:  # noqa: ANN001
-    """Keyword arguments set the stored type and the footer fields."""
     target = tmp_path / "out.mgz"
     MghImage(data=_data()).save(target, dtype="int16", tr=42.0)
     loaded = nb.load(str(target))
@@ -465,7 +475,7 @@ def test_explicit_dtype_and_params(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_like_copies_mri_params(tmp_path) -> None:  # noqa: ANN001
-    """`like` supplies the footer parameters, never the geometry."""
+    """`like` supplies the footer parameters but never the geometry."""
     template = _write(tmp_path, "template.mgz", _data(), tr=777.0)
     image = MghImage(data=_data(), transformations=[Scaling(scale=[2, 2, 2])])
     target = tmp_path / "out.mgz"
@@ -476,7 +486,6 @@ def test_like_copies_mri_params(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_field_is_unrepresentable() -> None:
-    """A displacement field has no affine, so MGH cannot store it."""
     field = DisplacementField(field=np.zeros((4, 5, 6, 3), dtype="float32"))
     image = MghImage(data=_data(), transformations=[field])
     with pytest.raises(UnrepresentableTransformationError):
@@ -484,7 +493,7 @@ def test_a_field_is_unrepresentable() -> None:
 
 
 def test_mgh_to_nifti_keeps_scanner_geometry(tmp_path) -> None:  # noqa: ANN001
-    """Converting to NIfTI writes the scanner RAS matrix as the sform."""
+    """The scanner geometry becomes the NIfTI sform."""
     source = _write(tmp_path, "vol.mgz", _data())
     image = io.images.load(source)
     target = tmp_path / "out.nii.gz"
@@ -499,7 +508,6 @@ def test_mgh_to_nifti_keeps_scanner_geometry(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_io_save_converts_between_mgh_and_nifti(tmp_path) -> None:  # noqa: ANN001
-    """`io.save` picks the format from the name, both ways."""
     source = _write(tmp_path, "vol.mgz", _data())
     nifti = tmp_path / "out.nii.gz"
     io.save(io.load(source), nifti)
@@ -513,13 +521,14 @@ def test_io_save_converts_between_mgh_and_nifti(tmp_path) -> None:  # noqa: ANN0
     assert isinstance(image, MghImage)
     assert np.array_equal(np.asarray(image.data), _data())
     assert np.allclose(
-        image.vox2ras, nb.load(str(source)).header.get_vox2ras(), atol=1e-5
+        image.metadata.raw.vox2ras,
+        nb.load(str(source)).header.get_vox2ras(),
+        atol=1e-5,
     )
 
 
 class _RemotePath(os.PathLike):
-    """A path to remote storage, held in memory: `nibabel` cannot open
-    it by name, since `os.fspath` raises (see test_io_nifti_remote)."""
+    """An in-memory remote path that nibabel cannot open by name."""
 
     def __init__(self, url: str, store: dict) -> None:
         self.url, self.store = url, store
@@ -548,21 +557,21 @@ class _RemotePath(os.PathLike):
 
 @pytest.mark.parametrize("name", ["vol.mgh", "vol.mgz"])
 def test_a_remote_path_round_trips(tmp_path, name) -> None:  # noqa: ANN001
-    """A remote path is read and written through its own backend, as a
-    stream, and never handed to `nibabel` by name."""
+    """A remote path is read and written as a stream by its own backend."""
     source = _write(tmp_path, name, _data(), tags=TAGS)
     store = {f"s3://bucket/{name}": source.read_bytes()}
     image = MghImage.load(_RemotePath(f"s3://bucket/{name}", store))
     assert np.array_equal(np.asarray(image.data), _data())
-    assert image.tags == TAGS
+    assert image.metadata.raw.tags == TAGS
     target = _RemotePath(f"s3://bucket/out/{name}", store)
     image.save(target)
     raw = store[target.url]
     assert (raw[:2] == b"\x1f\x8b") == name.endswith(".mgz")
     again = MghImage.from_bytes(raw)
     assert np.array_equal(np.asarray(again.data), _data())
-    assert np.allclose(again.vox2ras, image.vox2ras)
-    assert again.tags == TAGS
+    record = again.metadata.raw
+    assert np.allclose(record.vox2ras, image.metadata.raw.vox2ras)
+    assert record.tags == TAGS
 
 
 # ----------------------------------------------------------------------
@@ -601,10 +610,9 @@ cras   = 0.0 0.0 0.0
 
 
 def test_the_freesurfer_hint_selects_mgh_and_lta(tmp_path) -> None:  # noqa: ANN001
-    """MGH and LTA share the FreeSurfer format base, whose `"freesurfer"`
-    hint selects both; each keeps its own hints too."""
-    from brainhops.io.base.freesurfer import FreesurferFormat
+    """The shared 'freesurfer' hint selects both MGH and LTA."""
     from brainhops.io.base.specs import format_hints
+    from brainhops.io.common.freesurfer import FreesurferFormat
     from brainhops.io.transformations.freesurfer.lta import (
         LtaTransformation,
     )
@@ -624,20 +632,22 @@ def test_the_freesurfer_hint_selects_mgh_and_lta(tmp_path) -> None:  # noqa: ANN
 
 
 def test_conversion_does_not_carry_nibabel_objects(tmp_path) -> None:  # noqa: ANN001
-    """MGH and NIfTI both call their `nibabel` objects `image` and
-    `header`; converting one to the other copies the data model only."""
+    """Conversion copies the data model, not the record or the proxy."""
     mgh = MghImage.from_file(_write(tmp_path, "vol.mgz", _data()))
     nii = NiftiImage.from_instance(mgh)
-    assert nii.image is None and nii.header is None
+    assert nii.metadata is None
     assert np.array_equal(np.asarray(nii.data), _data())
     back = MghImage.from_instance(nii)
-    assert back.image is None and back.header is None
-    # Within a format, they are still copied.
-    assert MghImage.from_instance(mgh).image is mgh.image
+    assert back.metadata is None
+    assert not nb.is_proxy(back.raw)
+    # Within one format, the record and the proxy are still shared.
+    copy = MghImage.from_instance(mgh)
+    assert copy.metadata is mgh.metadata
+    assert copy.raw is mgh.raw
 
 
 class _Unseekable(_io.RawIOBase):
-    """A stream that can only be read forward, like a pipe."""
+    """A forward-only stream, like a pipe."""
 
     def __init__(self, data: bytes) -> None:
         self._buffer = _io.BytesIO(data)
@@ -658,4 +668,254 @@ def test_an_unseekable_stream_is_read(tmp_path) -> None:  # noqa: ANN001
     raw = _write(tmp_path, "vol.mgz", _data(), tags=TAGS).read_bytes()
     image = MghImage.from_fileobj(_Unseekable(raw))
     assert np.array_equal(np.asarray(image.data), _data())
-    assert image.tags == TAGS
+    assert image.metadata.raw.tags == TAGS
+
+
+# ----------------------------------------------------------------------
+#   RECORD AND WRITE PRECEDENCE
+# ----------------------------------------------------------------------
+
+
+def _content(path) -> bytes:  # noqa: ANN001
+    raw = path.read_bytes()
+    return gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw
+
+
+def _no_ras_flag(path) -> None:  # noqa: ANN001
+    """Set the `goodRASFlag` of an uncompressed file to 0 in place."""
+    raw = bytearray(path.read_bytes())
+    raw[28:30] = struct.pack(">h", 0)
+    path.write_bytes(bytes(raw))
+
+
+@pytest.mark.parametrize("name", ["vol.mgh", "vol.mgz"])
+def test_an_untouched_oblique_file_keeps_its_bytes(tmp_path, name) -> None:  # noqa: ANN001
+    """Oblique geometry, footer and tags are written back byte for byte."""
+    data = _data((3, 4, 5, 2), "int16")
+    source = _write(tmp_path, name, data, tr=2300.0, tags=TAGS)
+    loaded = MghImage.load(source)
+    assert loaded.consolidate().metadata.raw is loaded.metadata.raw
+    targets = {
+        "save": lambda target: loaded.save(target),
+        "io.save": lambda target: io.save(MghImage.load(source), target),
+        "replace": lambda target: replace(loaded).save(target),
+        "from_instance": lambda target: MghImage.from_instance(loaded).save(
+            target
+        ),
+    }
+    for label, write in targets.items():
+        target = tmp_path / (label + "-" + name)
+        write(target)
+        assert _content(target) == _content(source), label
+
+
+def test_a_file_without_valid_geometry_keeps_its_flag(tmp_path) -> None:  # noqa: ANN001
+    source = _write(tmp_path, "vol.mgh", _data())
+    _no_ras_flag(source)
+    loaded = MghImage.load(source)
+    record = loaded.metadata.raw
+    # The record keeps the stored geometry, which FreeSurfer ignores.
+    assert int(record.header["goodRASFlag"]) == 0
+    stored = nb.load(str(_write(tmp_path, "ref.mgh", _data()))).header
+    assert np.array_equal(record.header["Mdc"], stored["Mdc"])
+    assert np.array_equal(record.copy().header["Mdc"], stored["Mdc"])
+    assert mat2orient(loaded.transformation.homogeneous_matrix) == "LIA"
+    target = tmp_path / "copy.mgh"
+    loaded.save(target)
+    assert target.read_bytes() == source.read_bytes()
+    # An image whose geometry is encoded sets the flag.
+    loaded.transformations = [Affine(matrix=AFFINE[:3])]
+    loaded.save(target)
+    again = MghImage.load(target).metadata.raw
+    assert again.good_ras
+    assert np.allclose(again.vox2ras, AFFINE, atol=1e-5)
+
+
+def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
+    """Each public knob is either written or leaves the record as read."""
+    source = _write(tmp_path, "vol.mgh", _data(), tr=900.0, tags=TAGS)
+
+    def loaded():  # noqa: ANN202
+        return MghImage.load(source)
+
+    image = loaded()
+    record = image.metadata.raw
+    assert image.consolidate().metadata.raw is record
+
+    # New voxels of the same shape and type are written under the record.
+    image.data = _data() + 1
+    assert image.consolidate().metadata.raw is record
+    assert np.array_equal(
+        np.asarray(MghImage.from_bytes(image.to_bytes()).data), _data() + 1
+    )
+
+    # Another type changes the stored voxel type only.
+    image = loaded()
+    image.data = _data(dtype="int16")
+    written = image.consolidate().metadata.raw
+    assert written is not record
+    assert written.header.get_data_dtype() == np.dtype(">i2")
+    assert np.array_equal(written.header["Mdc"], record.header["Mdc"])
+    assert written.tags == TAGS
+
+    # Another number of frames keeps the stored geometry.
+    image = loaded()
+    image.data = _data((4, 5, 6, 3))
+    written = image.consolidate().metadata.raw
+    assert written.shape == (4, 5, 6, 3)
+    assert np.array_equal(written.header["delta"], record.header["delta"])
+    assert np.array_equal(written.header["Pxyz_c"], record.header["Pxyz_c"])
+
+    # Another spatial shape keeps the corner, so the centre moves.
+    image = loaded()
+    image.data = _data((2, 5, 6))
+    written = image.consolidate().metadata.raw
+    assert written.shape == (2, 5, 6)
+    assert np.allclose(written.vox2ras, record.vox2ras, atol=1e-4)
+    assert not np.allclose(written.header["Pxyz_c"], record.header["Pxyz_c"])
+
+    # Assigned transformations give the geometry.
+    image = loaded()
+    image.transformations = [Scaling(scale=[2.0, 3.0, 4.0])]
+    written = image.consolidate().metadata.raw
+    assert np.allclose(np.diag(written.vox2ras), [2, 3, 4, 1])
+    assert written.tags == TAGS
+    assert written.mri_params["tr"] == pytest.approx(900.0)
+
+    # Other metadata gives its record and its geometry.
+    image = loaded()
+    edited = image.metadata.raw.copy()
+    edited.tags = b"other"
+    image.metadata = MghMetadata.from_raw(edited)
+    assert image.consolidate().metadata.raw is edited
+
+    # `like` and the overrides are written, the overrides last.
+    template = _write(tmp_path, "template.mgh", _data(), tr=777.0)
+    image = loaded()
+    assert image.consolidate(like=template).metadata.raw.mri_params[
+        "tr"
+    ] == pytest.approx(777.0)
+    written = image.consolidate(
+        like=template, tr=55.0, dtype="uint8"
+    ).metadata.raw
+    assert written.mri_params["tr"] == pytest.approx(55.0)
+    assert written.header.get_data_dtype() == np.dtype("u1")
+    held = image.metadata.raw
+    assert (
+        image.consolidate(te=3.5, flip_angle=0.15, tr=900.0).metadata.raw
+        is held
+    )
+
+    # The record of the metadata is never changed.
+    assert record == MghImage.load(source).metadata.raw
+
+    # The voxel system is derived from the record and cannot be assigned.
+    with pytest.raises(AttributeError):
+        image.system = None
+
+
+def test_decoded_data_is_read_only(tmp_path) -> None:  # noqa: ANN001
+    # An edit in place would not reach `raw`, which is what is written.
+    image = MghImage.load(_write(tmp_path, "vol.mgh", _data()))
+    with backend("numpy"):
+        data = image.data
+    assert not data.flags.writeable
+    with pytest.raises(ValueError):
+        data[0, 0, 0] = 1
+
+
+def test_metadata_reads_and_writes_the_record(tmp_path) -> None:  # noqa: ANN001
+    source = _write(tmp_path, "vol.mgz", _data(), tr=900.0, tags=TAGS)
+    metadata = MghMetadata.load(source)
+    assert metadata.raw.tags == TAGS
+    assert metadata.raw.mri_params["tr"] == pytest.approx(900.0)
+    assert metadata.raw == MghImage.load(source).metadata.raw
+    assert pickle.loads(pickle.dumps(metadata)).raw == metadata.raw
+    assert metadata.raw.copy() == metadata.raw
+    assert metadata.raw.copy() is not metadata.raw
+    assert metadata.consolidate().raw is metadata.raw
+    # Writing the metadata alone writes the fixed header, without the
+    # footer and the tags that a file stores after the voxels.
+    target = tmp_path / "header.mgz"
+    metadata.save(target)
+    assert len(_content(target)) == 284
+    assert _content(target) == _content(source)[:284]
+    header = MghMetadata.load(target).raw
+    assert header.shape == metadata.raw.shape
+    assert header.tags == b""
+    assert header.mri_params["tr"] == 0.0
+
+
+def test_from_nibabel_keeps_the_header() -> None:
+    nibabel_image = NibabelMgh(_data(), AFFINE)
+    image = MghImage.from_nibabel(nibabel_image)
+    assert image.raw is nibabel_image.dataobj
+    assert image.metadata.raw.header == nibabel_image.header
+    assert image.metadata.raw.header is not nibabel_image.header
+    back = image.to_nibabel()
+    assert np.allclose(back.affine, AFFINE, atol=1e-5)
+    assert MghImage.from_nibabel(nibabel_image.header).raw is None
+
+
+class _CountedReads:
+    """Count the reads of the voxels of every nibabel proxy."""
+
+    def __init__(self, monkeypatch) -> None:  # noqa: ANN001
+        from nibabel.arrayproxy import ArrayProxy
+
+        self.count = 0
+        unscaled = ArrayProxy._get_unscaled
+        array = ArrayProxy.__array__
+
+        def counted_unscaled(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return unscaled(proxy, *args, **kwargs)
+
+        def counted_array(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+            self.count += 1
+            return array(proxy, *args, **kwargs)
+
+        monkeypatch.setattr(ArrayProxy, "_get_unscaled", counted_unscaled)
+        monkeypatch.setattr(ArrayProxy, "__array__", counted_array)
+
+
+@pytest.mark.parametrize("name", ["vol.mgh", "vol.mgz", "vol.nii.gz"])
+def test_the_shape_is_read_without_the_voxels(
+    tmp_path,  # noqa: ANN001
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from brainhops.io.transformations.fsl._affines import _shape
+
+    data = _data((3, 4, 5, 2))
+    if name.endswith(".nii.gz"):
+        source = tmp_path / name
+        nb.save(nb.Nifti1Image(data, AFFINE), str(source))
+    else:
+        source = _write(tmp_path, name, data)
+    reads = _CountedReads(monkeypatch)
+    image = io.load(source)
+    assert image.shape == (3, 4, 5, 2)
+    assert image.ndim == 4
+    assert _shape(image) == (3, 4, 5, 2)
+    assert reads.count == 0
+    assert "_cache_data" not in vars(image)
+    # Assigned data gives its own shape, and an image without data raises
+    # as before.
+    image.data = _data((2, 3, 4))
+    assert image.shape == (2, 3, 4)
+    with pytest.raises(AttributeError):
+        _ = type(image)().shape
+
+
+@pytest.mark.parametrize("field", ["dims", "type"])
+def test_the_layout_of_the_voxels_cannot_be_overridden(
+    tmp_path,  # noqa: ANN001
+    field: str,
+) -> None:
+    image = MghImage.load(_write(tmp_path, "vol.mgh", _data()))
+    value = (9, 9, 9, 1) if field == "dims" else 0
+    with pytest.raises(WriterError, match="dtype="):
+        image.to_bytes(**{field: value})
+    with pytest.raises(WriterError):
+        MghImage(data=_data()).consolidate(**{field: value})

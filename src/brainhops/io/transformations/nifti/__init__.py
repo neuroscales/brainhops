@@ -1,49 +1,53 @@
 """
 Readers and writers for transformations stored in NIfTI files.
 
-Fields of RAS displacements and of RAS coordinates
---------------------------------------------------
-The NIfTI-1 standard (`nifti1.h`) gives a field of vectors two intent
-codes, and they do not mean the same map:
+Each transformation holds the header of its file as
+[`NiftiMetadata`][brainhops.io.common.nifti.NiftiMetadata], whose record
+is a [`NiftiRaw`][brainhops.io.common.nifti.NiftiRaw], and the array of
+the file as it is stored, in `raw`. The two classes of the header are
+defined in [`brainhops.io.common.nifti`][] and exported here as well. An
+affine keeps its matrix in the header, and a field decodes its data from
+`raw` when the data is first read. A field that is read and written again
+without changes is written as its file stored it.
 
-- `DISPVECT` (1006), "specifically for displacements", is read and
-  written by [`NiftiRASDisplacementField`][].
-- `VECTOR` (1007), "for any other type of vector", is read and written
-  by [`NiftiRASCoordinatesField`][].
+## Fields of RAS displacements and of RAS coordinates
 
-A displacement field maps `x -> x + u(x)`; a coordinates field maps a
-voxel to the position its vector holds. Reading one as the other moves
-every point by the whole world position of its voxel, so the intent code
-decides between them.
+The NIfTI-1 standard (`nifti1.h`) gives vector fields two intent codes with
+different meanings. `DISPVECT` (1006) is "specifically for displacements" and
+is read and written by [`NiftiRASDisplacementField`][]. `VECTOR` (1007) is "for
+any other type of vector" and is read and written by
+[`NiftiRASCoordinatesField`][].
 
-`DISPVECT` is read as RAS displacements in millimetres, as ITK 5.4 and
-later reads it. A field of coordinates is written as `VECTOR`, with the
-intent name `"Mapping"`, which is what SPM writes for its `y_`
-deformations -- the same kind of field. `POINTSET` (1008) would name the
-content better ("the vector value at each voxel is really a spatial
-coordinate"), but the standard ties it to a flat list of points
-(`dim[2] = dim[3] = dim[4] = 1`), and readers -- brainhops included --
-lay out its axes as one, so a grid written with it would be misread.
+A displacement field maps `x` to `x + u(x)`, while a coordinates field maps
+each voxel to the position that its vector holds. Reading one kind as the other
+shifts every point by the world position of its voxel, so the intent code
+decides. `DISPVECT` fields are read as RAS displacements in millimetres, as ITK
+5.4 and later read them. Coordinates are written under `VECTOR` with the intent
+name `"Mapping"`, which is what SPM writes for its `y_` deformations, a field
+of the same kind.
 
-!!! warning "Coordinates fields written by brainhops before this change"
-    Older versions of brainhops wrote fields of RAS *coordinates* with
-    the `DISPVECT` intent and nothing else to mark them. Such a file is
-    byte-for-byte a standard displacement field, so it is now read as
-    one. Nothing in the file tells the two apart, and guessing from the
-    values would be just that, so read them explicitly:
-    `load(path, hint="nifti.coordinates")`, or
-    `NiftiRASCoordinatesField.from_file(path)`. Saving the result
-    rewrites it with the `VECTOR` intent.
+`POINTSET` (1008) would describe coordinates better, but the standard ties it
+to a flat list of points (`dim[2] = dim[3] = dim[4] = 1`), so readers,
+brainhops included, would misread a grid written with it.
 """
 
 __all__ = [
     "NiftiBasedTransformation",
+    "NiftiMetadata",
     "NiftiRASCoordinatesField",
     "NiftiRASDisplacementField",
     "NiftiRASToVoxel",
+    "NiftiRaw",
     "NiftiVoxelToRAS",
 ]
 
-from .affines import NiftiRASToVoxel, NiftiVoxelToRAS
-from .base import NiftiBasedTransformation
-from .fields import NiftiRASCoordinatesField, NiftiRASDisplacementField
+from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
+
+from ._affines import NiftiRASToVoxel, NiftiVoxelToRAS
+from ._base import NiftiBasedTransformation
+from ._fields import NiftiRASCoordinatesField, NiftiRASDisplacementField
+
+# The converters into these formats register themselves when this module
+# is imported, here, so that importing the formats makes `t.to(Format)`
+# work. The SPM converters import theirs from it too, and rely on it.
+from . import _converters  # noqa: E402, F401  isort: skip

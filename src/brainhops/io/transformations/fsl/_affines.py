@@ -1,11 +1,10 @@
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import KwOnly
 
-# internals
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.io.common.nifti._header import _header
 
 from ._systems import FslCoordinateSystem
 
@@ -15,7 +14,7 @@ from ._systems import FslCoordinateSystem
 
 
 class VoxelToScaledMm(_xforms.Affine):
-    """Affine transformation from voxel space to FSL scaled-mm space."""
+    """Affine transformation from voxel coordinates to FSL scaled-mm."""
 
     _input: KwOnly[_systems.CoordinateSystem] = (
         _systems.VoxelCoordinateSystem()
@@ -24,7 +23,7 @@ class VoxelToScaledMm(_xforms.Affine):
 
 
 class ScaledMmToVoxel(_xforms.Affine):
-    """Affine transformation from FSL scaled-mm space to voxel space."""
+    """Affine transformation from FSL scaled-mm to voxel coordinates."""
 
     _input: KwOnly[_systems.CoordinateSystem] = FslCoordinateSystem()
     _output: KwOnly[_systems.CoordinateSystem] = (
@@ -35,8 +34,8 @@ class ScaledMmToVoxel(_xforms.Affine):
 class ScaledMmToScaledMm(_xforms.Affine):
     """Affine transformation between two FSL scaled-mm spaces.
 
-    A FLIRT matrix is an affine between the scaled-mm coordinates of the
-    reference image and the scaled-mm coordinates of the moving image.
+    A FLIRT matrix is such an affine, from the scaled-mm space of the
+    reference image to that of the moving image.
     """
 
     _input: KwOnly[_systems.CoordinateSystem] = FslCoordinateSystem()
@@ -49,11 +48,12 @@ class ScaledMmToScaledMm(_xforms.Affine):
 
 
 def _best_affine(obj: tx.Any) -> np.ndarray:
-    """The voxel-to-world (RAS) affine of a nibabel image or header."""
+    """Return the voxel-to-world (RAS) affine of a nibabel image or header."""
     if hasattr(obj, "get_best_affine"):
         return np.asarray(obj.get_best_affine(), dtype=np.float64)
-    if hasattr(obj, "header") and obj.header is not None:
-        return _best_affine(obj.header)
+    header = _header(obj)
+    if header is not None:
+        return _best_affine(header)
     if getattr(obj, "affine", None) is not None:
         return np.asarray(obj.affine, dtype=np.float64)
     raise ValueError(
@@ -63,26 +63,26 @@ def _best_affine(obj: tx.Any) -> np.ndarray:
 
 
 def _shape(obj: tx.Any) -> tx.Tuple[int, ...]:
-    """The spatial shape of a nibabel image or header."""
+    """Return the spatial shape of a nibabel image or header."""
     if hasattr(obj, "get_data_shape"):
         return tuple(int(s) for s in obj.get_data_shape())
     if getattr(obj, "shape", None) is not None:
         return tuple(int(s) for s in obj.shape)
-    if hasattr(obj, "header") and obj.header is not None:
-        return _shape(obj.header)
+    header = _header(obj)
+    if header is not None:
+        return _shape(header)
     raise ValueError("Cannot determine the shape of the image.")
 
 
 def _pixdim(obj: tx.Any) -> np.ndarray:
-    """The positive pixel sizes (magnitudes) of a nibabel image or header.
+    """Return the pixel sizes, as positive magnitudes.
 
-    A pixel size that is missing, zero, or not finite is replaced with
-    one, so a header with an incomplete pixdim still yields an invertible
-    scaled-mm affine rather than a singular one.
+    Missing, zero or non-finite sizes are replaced with one, so that an
+    incomplete `pixdim` still gives an invertible scaled-mm affine.
     """
     header = obj
-    if not hasattr(header, "get_zooms") and hasattr(obj, "header"):
-        header = obj.header
+    if not hasattr(header, "get_zooms"):
+        header = _header(obj)
     if hasattr(header, "get_zooms"):
         zooms = np.asarray(header.get_zooms(), dtype=np.float64)
     else:
@@ -94,13 +94,12 @@ def _pixdim(obj: tx.Any) -> np.ndarray:
 
 
 class _ImageGeometry:
-    """The affines that place one image in the FSL coordinate systems.
+    """Affines that place one image in the FSL coordinate systems.
 
-    Given a nibabel image or header, this holds the affines between the
-    voxel, FSL scaled-mm, and world (RAS) coordinate systems of that
-    image. The scaled-mm affine scales voxel indices by the pixel sizes
-    and flips the x-axis when the voxel-to-world affine has a positive
-    determinant, following FSL's convention.
+    Built from a nibabel image or header, the geometry holds the affines
+    between voxel, FSL scaled-mm and world (RAS) coordinates. Following the
+    FSL convention, the scaled-mm affine scales voxel indices by the pixel
+    sizes and flips x when the voxel-to-world determinant is positive.
     """
 
     def __init__(self, image: tx.Any) -> None:
@@ -108,9 +107,9 @@ class _ImageGeometry:
         shape = _shape(image)
         pixdim = _pixdim(image)
 
-        # A header with a missing or degenerate sform can carry a
-        # non-finite voxel-to-world affine. Fall back to a plain pixel-size
-        # scaling so the geometry is still usable.
+        # A header with a missing or degenerate sform can give a non-finite
+        # voxel-to-world affine. Plain pixel-size scaling keeps the geometry
+        # usable.
         if not np.all(np.isfinite(vox2ras)):
             vox2ras = np.diag(np.concatenate([pixdim, [1.0]]))
 
@@ -128,12 +127,12 @@ class _ImageGeometry:
 
     @property
     def is_neurological(self) -> bool:
-        """Whether the voxel-to-world affine has a positive determinant."""
+        """Whether the voxel-to-world determinant is positive."""
         return bool(np.linalg.det(self.vox2ras[:3, :3]) > 0)
 
     @property
     def ras2vox(self) -> np.ndarray:
-        """The RAS-to-voxel affine (the inverse of the sform/qform)."""
+        """The RAS-to-voxel affine, the inverse of the sform or qform."""
         return np.linalg.inv(self.vox2ras)
 
     @property
