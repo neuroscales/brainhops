@@ -1248,6 +1248,40 @@ its status.
      because `bagof.paths.Path` merges the slashes of a nested URL. The
      tests read a remote volume through a `file://` URL and use no
      network. Status: accepted.
+170. The Convert3D matrix format of Greedy, `c3d_affine_tool` and
+     ITK-SNAP (`io/transformations/c3d`, #197) is read in one pass, as
+     LTA is, and its record `C3dAffineRaw` holds the matrix, the
+     characters that end each row and the text of the file. The text is
+     written back only while it still parses to the matrix and the
+     layout of the record, as in item 84, so an untouched file keeps its
+     bytes, including its six-digit numbers. Check 6 of the conformance
+     test is vacuous, because the file holds no data beside its record,
+     and check 10 edits `row_end`, the only field of the record outside
+     the matrix. Status: open, for review.
+171. `C3dAffine` repeats four short helpers of LTA (`_record`,
+     `_read_only`, `_matrix_to_model` and `_matrix_to_disk` in
+     `io/transformations/c3d/_affine.py` and
+     `io/transformations/freesurfer/lta/_xforms.py`), because the LTA
+     helpers are private to their package. They could move to
+     `io/transformations/base` once a third one-pass affine format needs
+     them. Status: open.
+172. A Convert3D matrix holds no marker, so `C3dAffine` never claims a
+     file from its content and is selected by the hints `c3d`, `greedy`
+     and `itksnap`. Without a hint, a `.mat` file of sixteen numbers is
+     still read as a FLIRT matrix, whose meaning differs, and a `.txt`
+     file as a plain matrix. The format declares the `.mat` extension,
+     so that `io.save` and the metadata dispatcher can choose it, and
+     `io.save` of an affine between world spaces to a `.mat` file, which
+     raised `WriterError` before, now writes a Convert3D matrix. Status:
+     open, for the maintainer to decide whether `.mat` should select this
+     writer.
+173. `RASToRAS` checks its systems only when it is built
+     (`io/transformations/base/affines.py`), so an `input` or an `output`
+     that is assigned later is not refused there. `C3dAffine.consolidate`
+     checks both systems again with the private `_check_endpoint` and
+     refuses a system that is not RAS with
+     `UnrepresentableTransformationError`. `NiftyRegAffine` has no such
+     check. Status: open.
 180. Imaris files are read only, as MINC files are (item 101). An
      untouched Imaris file could not be saved byte for byte: its `Data`
      datasets are always chunked and compressed, often with the LZ4

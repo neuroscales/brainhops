@@ -175,6 +175,9 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.transformations.c3d": Package(
+        names=frozenset({"C3dAffine", "C3dAffineMetadata", "C3dAffineRaw"}),
+    ),
     "brainhops.io.transformations.freesurfer.lta": Package(
         names=frozenset(
             {

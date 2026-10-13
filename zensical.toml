@@ -84,6 +84,7 @@ nav = [
         {"fsl.fnirt" = "api/io/transformations/fsl-fnirt.md"},
         {"afni" = "api/io/transformations/afni.md"},
         {"niftyreg" = "api/io/transformations/niftyreg.md"},
+        {"c3d" = "api/io/transformations/c3d.md"},
         "api/io/transformations/zarr.md",
       ]},
       {"metadata" = "api/io/metadata.md"},

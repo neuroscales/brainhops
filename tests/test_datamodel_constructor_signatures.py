@@ -123,6 +123,9 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "LPSCoordinatesField": ("data",),
         "RASCoordinatesField": ("data",),
     },
+    "brainhops.io.transformations.c3d._affine": {
+        "C3dAffine": ("data",),
+    },
     "brainhops.io.transformations.elastix._xform": {
         "ElastixParameterTransform": ("transformations",),
         "ElastixTomlTransform": ("transformations",),
