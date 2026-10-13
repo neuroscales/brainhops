@@ -30,7 +30,6 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
