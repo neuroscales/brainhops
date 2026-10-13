@@ -429,7 +429,7 @@ class X5Transform(
         if self.metadata is None:
             metadata = X5Metadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = type(self.metadata).from_raw(record)
         if not inplace:
             return replace(
                 self,
