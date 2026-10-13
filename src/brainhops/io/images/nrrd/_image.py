@@ -1189,10 +1189,12 @@ def _geometry_fields(
 
     The fields of one value per axis are taken from the base when the
     shape is that of the base, and the spatial axes are then described by
-    their geometry alone. An image without transformations has no
-    geometry, so the spacings, positions and units of its spatial axes
-    are dropped as well. The base also gives the space and the
-    measurement frame of the result, whatever its shape.
+    their geometry alone. An image without transformations, or whose
+    preferred transformation is the unit scaling that a file without
+    geometry decodes to, has no geometry to write, so the spacings,
+    positions and units of its spatial axes are dropped as well. The base
+    also gives the space and the measurement frame of the result,
+    whatever its shape.
 
     Raises
     ------
@@ -1214,7 +1216,8 @@ def _geometry_fields(
             if len(values) == ndim:
                 per_axis[name] = values
     spatial = [order[j] for j, r in enumerate(roles) if r == "space"]
-    if not image.transformations:
+    geometry = _geometry(image, roles, space, held)
+    if geometry is None:
         # The image is written as an image built from data alone, which
         # has none of these fields, rather than with the geometry of the
         # base.
@@ -1226,7 +1229,6 @@ def _geometry_fields(
                 per_axis[name][i] = empty
             if all(value == empty for value in per_axis[name]):
                 del per_axis[name]
-    geometry = _geometry(image, roles, space, held)
     if geometry is not None:
         kind, values = geometry
         if kind == "space":
