@@ -637,7 +637,10 @@ def _decode_coordinate_transform(
         If the transform is a list or another model, or if its values
         cannot be read.
     """
-    if item.element.endswith("_list") or item.cls not in (_AFFINE, _SIMILARITY):
+    if item.element.endswith("_list") or item.cls not in (
+        _AFFINE,
+        _SIMILARITY,
+    ):
         kind = item.element if item.cls is None else item.cls
         raise ParserContentError(
             f"The coordinate transform of patch {oid} is a {kind}, and "

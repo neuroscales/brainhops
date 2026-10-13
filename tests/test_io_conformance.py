@@ -1042,7 +1042,7 @@ EXEMPLARS[LtaTransformation] = _LTA
 
 _TRAKEM2_XML = """<?xml version="1.0" encoding="ISO-8859-1"?>
 <!DOCTYPE trakem2_anything [
-\t<!ELEMENT t2_patch (t2_prop,t2_linked_prop,t2_annot,ict_transform,ict_transform_list,t2_filter)>
+\t<!ELEMENT t2_patch (t2_prop,t2_annot,ict_transform,t2_filter)>
 \t<!ATTLIST t2_patch oid NMTOKEN #REQUIRED>
 ] >
 

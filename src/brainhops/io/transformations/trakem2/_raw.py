@@ -278,7 +278,9 @@ class TrakEM2Raw(Magic, BinaryFileReader, BinaryFileWriter, frozen=True):
             )
         text = "matrix(" + ",".join(_java_double(v) for v in values) + ")"
         start, stop = patch.span
-        content = self.stored[:start] + text.encode("ascii") + self.stored[stop:]
+        content = (
+            self.stored[:start] + text.encode("ascii") + self.stored[stop:]
+        )
         return TrakEM2Raw.from_bytes(content)
 
     # --- reading and writing ------------------------------------------

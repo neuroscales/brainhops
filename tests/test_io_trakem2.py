@@ -32,7 +32,7 @@ PROJECT = """<?xml version="1.0" encoding="ISO-8859-1"?>
 \t<!ATTLIST t2_layer oid NMTOKEN #REQUIRED>
 \t<!ATTLIST t2_layer thickness NMTOKEN #REQUIRED>
 \t<!ATTLIST t2_layer z NMTOKEN #REQUIRED>
-\t<!ELEMENT t2_patch (t2_prop,t2_linked_prop,t2_annot,ict_transform,ict_transform_list,t2_filter)>
+{patch_element}
 \t<!ATTLIST t2_patch oid NMTOKEN #REQUIRED>
 \t<!ATTLIST t2_patch transform NMTOKEN #REQUIRED>
 {padding}] >
@@ -40,7 +40,7 @@ PROJECT = """<?xml version="1.0" encoding="ISO-8859-1"?>
 <trakem2>
 \t<project
 \t\tid="0"
-\t\ttitle="caf\xe9.xml"
+\t\ttitle="\xe9t\xe9.xml"
 \t>
 \t</project>
 \t<t2_layer_set
@@ -98,7 +98,8 @@ PROJECT = """<?xml version="1.0" encoding="ISO-8859-1"?>
 \t\t\t\to_height="256"
 \t\t\t\tct_id="11"
 \t\t\t>
-<iict_transform class="mpicbg.trakem2.transform.SimilarityModel2D" data="0.5 0.1 3.0 4.0" />
+<iict_transform class="mpicbg.trakem2.transform.SimilarityModel2D"
+ data="0.5 0.1 3.0 4.0" />
 \t\t\t</t2_patch>
 \t\t</t2_layer>
 \t\t<t2_layer oid="6"
@@ -114,7 +115,8 @@ PROJECT = """<?xml version="1.0" encoding="ISO-8859-1"?>
 \t\t\t\ttitle="affine.tif"
 \t\t\t\tct_id="12"
 \t\t\t>
-<iict_transform class="mpicbg.trakem2.transform.AffineModel2D" data="1.0 0.5 -0.5 2.0 7.0 8.0" />
+<iict_transform class="mpicbg.trakem2.transform.AffineModel2D"
+ data="1.0 0.5 -0.5 2.0 7.0 8.0" />
 \t\t\t</t2_patch>
 \t\t\t<t2_patch
 \t\t\t\toid="10"
@@ -125,8 +127,11 @@ PROJECT = """<?xml version="1.0" encoding="ISO-8859-1"?>
 \t\t\t\tct_id="13"
 \t\t\t>
 <ict_transform_list>
-\t<iict_transform class="mpicbg.trakem2.transform.AffineModel2D" data="1.0 0.0 0.0 1.0 0.0 0.0" />
-\t<ict_transform class="mpicbg.trakem2.transform.ThinPlateSplineTransform" data="2 1 2 0.0 0.0 1.0 1.0" />
+\t<iict_transform class="mpicbg.trakem2.transform.AffineModel2D"
+\t data="1.0 0.0 0.0 1.0 0.0 0.0" />
+\t<ict_transform
+\t class="mpicbg.trakem2.transform.ThinPlateSplineTransform"
+\t data="2 1 2 0.0 0.0 1.0 1.0" />
 </ict_transform_list>
 \t\t\t</t2_patch>
 \t\t\t<t2_patch
@@ -144,10 +149,18 @@ PROJECT = """<?xml version="1.0" encoding="ISO-8859-1"?>
 """
 
 
+PATCH_ELEMENT = (
+    "\t<!ELEMENT t2_patch (t2_prop,t2_linked_prop,t2_annot,ict_transform,"
+    "ict_transform_list,t2_filter)>"
+)
+"""The declaration of a patch, which TrakEM2 writes on one line."""
+
+
 def _project(padding: int = 0) -> bytes:
     """Return the project, with a longer document type if asked."""
     comment = "\t<!-- " + "x" * padding + " -->\n" if padding else ""
-    return PROJECT.format(padding=comment).encode("latin-1")
+    text = PROJECT.format(padding=comment, patch_element=PATCH_ELEMENT)
+    return text.encode("latin-1")
 
 
 @pytest.fixture
@@ -252,7 +265,10 @@ def test_other_coordinate_transforms_are_refused(project) -> None:  # noqa: ANN0
 # ----------------------------------------------------------------------
 
 
-def test_an_untouched_project_is_written_byte_for_byte(project, tmp_path) -> None:  # noqa: ANN001
+def test_an_untouched_project_is_written_byte_for_byte(
+    project,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
     target = tmp_path / "copy.xml"
     TrakEM2PatchAffine.load(project, patch=10).save(target)
     assert target.read_bytes() == project.read_bytes()
