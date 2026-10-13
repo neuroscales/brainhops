@@ -8,6 +8,7 @@ parsing the file.
 __all__ = [
     "TransformationFormat",
     "base",
+    "c3d",
     "elastix",
     "freesurfer",
     "itk",
@@ -19,7 +20,7 @@ __all__ = [
 
 from brainhops._core.dependencies import has_abczarr_driver
 
-from . import base, elastix, freesurfer, itk, matrix, niftyreg
+from . import base, c3d, elastix, freesurfer, itk, matrix, niftyreg
 from .base import (
     TransformationFormat,
     load,
