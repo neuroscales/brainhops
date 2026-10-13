@@ -86,8 +86,8 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.multiscale": {
         "MultiscaleField": ("scales",),
     },
-    "brainhops.datamodel._transformations.operators": {
-        "Operation": ("forward",),
+    "brainhops.datamodel._transformations.derived": {
+        "DerivedTransformation": ("forward",),
         "Sqrt": ("forward",),
         "SqrtAffine": ("forward",),
         "SqrtLinear": ("forward",),
