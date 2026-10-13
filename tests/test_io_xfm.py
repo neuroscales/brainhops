@@ -105,7 +105,8 @@ def _libminc(
                 matrix = np.linalg.inv(homogeneous)[:3]
             text += "Transform_Type = Linear;\nLinear_Transform =\n"
             for i in range(3):
-                text += " %.15g %.15g %.15g %.15g" % tuple(matrix[i])
+                # The C format of libminc, kept as it is written.
+                text += " %.15g %.15g %.15g %.15g" % tuple(matrix[i])  # noqa: UP031
                 if i == 2:
                     text += ";"
                 text += "\n"
@@ -125,7 +126,8 @@ def _freesurfer(matrix: np.ndarray, src: str, dst: str) -> str:
     text += "Transform_Type = Linear;\n"
     text += "Linear_Transform =\n"
     for row in range(3):
-        text += "%13.8f %13.8f %13.8f %13.8f " % tuple(matrix[row])
+        # The C format of FreeSurfer, kept as it is written.
+        text += "%13.8f %13.8f %13.8f %13.8f " % tuple(matrix[row])  # noqa: UP031
         if row == 2:
             text += ";"
         text += "\n"
@@ -291,7 +293,7 @@ def test_an_untouched_file_keeps_every_byte(tmp_path: Path) -> None:
     # Carriage returns, a comment in Latin-1, a comment between the rows
     # and a file without a final newline.
     content = (
-        b"% caf\xe9\r\nMNI Transform File\r\n\r\n"
+        b"% r\xe9sum\xe9\r\nMNI Transform File\r\n\r\n"
         b"Transform_Type = Linear;\r\nLinear_Transform =\r\n"
         b" 1 0 0 0 # first row\r\n 0 1 0 0\r\n 0 0 1 0;"
     )
@@ -300,7 +302,7 @@ def test_an_untouched_file_keeps_every_byte(tmp_path: Path) -> None:
     for cls in (XfmAffine, XfmTransform, XfmMetadata):
         cls.load(path).save(tmp_path / "copy.xfm")
         assert (tmp_path / "copy.xfm").read_bytes() == content
-    assert XfmMetadata.load(path).raw.comments == ("% caf\udce9",)
+    assert XfmMetadata.load(path).raw.comments == ("% r\udce9sum\udce9",)
 
 
 def test_tabs_separate_numbers() -> None:
@@ -502,7 +504,7 @@ def test_a_grid_read_from_bytes_has_no_volume(tmp_path: Path) -> None:
     chain = XfmTransform.from_bytes(path.read_bytes())
     assert chain.raw == (None,)
     with pytest.raises(ParserContentError, match="without its path"):
-        chain.transformations
+        _ = chain.transformations
     assert chain.to_bytes() == path.read_bytes()
     with pytest.raises(WriterError, match="cannot write MINC"):
         chain.save(tmp_path / "copy.xfm")
@@ -533,9 +535,7 @@ def test_a_minc1_volume_written_by_libminc_is_refused(
 def test_a_volume_without_three_components_is_refused(
     tmp_path: Path,
 ) -> None:
-    _write_grid(
-        tmp_path / "nl_grid_0.mnc", np.zeros(SHAPE + (2,), "float32")
-    )
+    _write_grid(tmp_path / "nl_grid_0.mnc", np.zeros(SHAPE + (2,), "float32"))
     path = tmp_path / "nl.xfm"
     path.write_text(_libminc([("grid", "nl_grid_0.mnc", False)]))
     with pytest.raises(ParserContentError, match="components"):
@@ -571,7 +571,7 @@ def test_a_thin_plate_spline_is_kept_but_not_decoded(tmp_path: Path) -> None:
     assert isinstance(block, XfmRaw.ThinPlateSpline)
     assert block.points == ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
     with pytest.raises(ParserNotImplementedError, match="thin-plate"):
-        chain.transformations
+        _ = chain.transformations
     chain.save(tmp_path / "copy.xfm")
     assert (tmp_path / "copy.xfm").read_text() == THIN_PLATE_SPLINE
     rewritten = XfmRaw(transforms=(block,))

@@ -63,6 +63,8 @@ class XfmGridTransform(_xforms.ImmutableSequence):
     and near the edges.
     """
 
+    # The interpolation differs from that of libminc (item 144 of the
+    # design memo).
     degree: tx.ClassVar[InterpolationOrder] = InterpolationOrder.cubic
     """The degree of the spline that interpolates the field."""
 
@@ -167,6 +169,9 @@ def read_volume(
             f"needs nibabel, which reads MINC files: pip install "
             f"brainhops[minc]."
         ) from error
+    # A MINC1 volume written by libminc has no variable for its vector
+    # dimension, and the MINC reader refuses it (item 142 of the design
+    # memo).
     try:
         return MincImage.from_filename(filename)
     except ParserExistsError as error:

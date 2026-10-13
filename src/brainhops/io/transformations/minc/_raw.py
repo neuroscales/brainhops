@@ -381,6 +381,8 @@ class XfmRaw(Magic, TextFileReader, TextFileWriter, frozen=True):
                 "An MNI transform file holds at least one transform, and "
                 "libminc does not read a file without one."
             )
+        # The text is kept as AFNI and MRtrix keep theirs (item 143 of the
+        # design memo).
         encoded = _format(self)
         if self.text is not None:
             try:
@@ -443,7 +445,7 @@ class XfmRaw(Magic, TextFileReader, TextFileWriter, frozen=True):
             file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the file that the record holds, replacing a local file at once.
+        """Write the file that the record holds, replacing a local file.
 
         Parameters
         ----------
@@ -498,7 +500,7 @@ def parse(text: str) -> tx.Tuple[tx.Tuple[str, ...], tx.Tuple[tx.Any, ...]]:
 
 
 def sniff_transforms(text: str) -> tx.Optional[tx.Tuple[tx.Any, ...]]:
-    """Return the transforms of a text, or `None` if libminc would not read it."""
+    """Return the transforms of a text, or `None` if libminc refuses it."""
     try:
         return parse(text)[1]
     except ParserContentError:
@@ -739,7 +741,12 @@ def _format_volume(volume: str) -> str:
         If the name cannot be read back as it is.
     """
     volume = str(volume)
-    if not volume or "\n" in volume or '"' in volume or volume != volume.strip():
+    if (
+        not volume
+        or "\n" in volume
+        or '"' in volume
+        or volume != volume.strip()
+    ):
         raise WriterError(
             f"The displacement volume {volume!r} cannot be written in an "
             f"MNI transform file, which reads a name without line breaks, "

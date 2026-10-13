@@ -46,11 +46,13 @@ matter. Each transform starts with `Transform_Type = <type>;`, may then
 set `Invert_Flag = True;` or `Invert_Flag = False;`, and holds the
 parameters of its type:
 
-| `Transform_Type`              | Parameters                                    |
-| ----------------------------- | --------------------------------------------- |
-| `Linear`                      | `Linear_Transform =` 12 numbers `;`, row by row |
-| `Grid_Transform`              | `Displacement_Volume =` a file name `;`       |
-| `Thin_Plate_Spline_Transform` | `Number_Dimensions`, `Points`, `Displacements` |
+| `Transform_Type`              | Parameters                              |
+| ----------------------------- | --------------------------------------- |
+| `Linear`                      | `Linear_Transform =`, 12 numbers, `;`   |
+| `Grid_Transform`              | `Displacement_Volume =`, a name, `;`    |
+| `Thin_Plate_Spline_Transform` | `Number_Dimensions`, `Points`, and more |
+
+The 12 numbers of a linear transform are given row by row.
 
 The matrix of a linear transform is the top `(3, 4)` part of a
 homogeneous matrix, whose last row is `0 0 0 1`. libminc writes each

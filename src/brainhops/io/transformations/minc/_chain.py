@@ -26,7 +26,6 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     ParserNotImplementedError,
-    SnifferContentError,
     TextFileReader,
     TextFileWriter,
     UnrepresentableTransformationError,
@@ -53,7 +52,8 @@ _Volumes = tx.Optional[tx.Tuple[tx.Any, ...]]
 # `raw`, one lazy image per grid transform. The chain is decoded from
 # both when it is first used. A chain that is assigned is held by the
 # data model, and it is encoded into a new record when the transform is
-# consolidated or written.
+# consolidated or written. The design memo `docs/design/format-records.md`
+# records this layout as item 140.
 
 
 def _record(xform: "XfmTransform") -> tx.Optional[XfmRaw]:
@@ -241,8 +241,7 @@ class XfmTransform(
         if record is None:
             return ()
         return tuple(
-            self.block_transformation(i)
-            for i in range(len(record.transforms))
+            self.block_transformation(i) for i in range(len(record.transforms))
         )
 
     @transformations.setter
@@ -298,7 +297,8 @@ class XfmTransform(
         """Score the text of a file as an MNI transform file.
 
         A file that libminc reads is likely of this format, whatever it
-        holds, so that [`XfmAffine`][brainhops.io.transformations.minc.XfmAffine]
+        holds, so that
+        [`XfmAffine`][brainhops.io.transformations.minc.XfmAffine]
         is preferred for a file of one linear transform. A text that starts
         with the header line but that libminc would not read scores
         `Confidence.MAYBE`, so that reading it reports what is wrong.
@@ -872,6 +872,8 @@ def _encode(
     WriterError
         If the chain is empty.
     """
+    # A grid transform is recognized by its identity, as an X5 node is
+    # (items 36 and 141 of the design memo).
     reused = {id(xform): index for index, xform in decoded.items()}
     blocks: tx.List[tx.Any] = []
     grids: tx.List[tx.Any] = []
@@ -912,7 +914,9 @@ def _encode_linear(xform: _xforms.Transformation) -> tx.List[XfmRaw.Linear]:
     except Exception as error:  # noqa: BLE001
         if isinstance(xform, _xforms.Sequence):
             try:
-                return [block for item in xform for block in _encode_linear(item)]
+                return [
+                    block for item in xform for block in _encode_linear(item)
+                ]
             except UnrepresentableTransformationError:
                 pass
         raise UnrepresentableTransformationError(
@@ -955,6 +959,10 @@ def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
     ):
         return proxy.source
     return None
+
+
+# brainhops cannot write MINC volumes, so a volume is copied as it was
+# read (item 141 of the design memo).
 
 
 def _place_volumes(

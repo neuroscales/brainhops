@@ -214,7 +214,8 @@ class XfmAffine(
 
         A file that libminc reads, and that holds one linear transform, is
         certainly of this format. Any other text scores `Confidence.NO`,
-        so that [`XfmTransform`][brainhops.io.transformations.minc.XfmTransform]
+        so that
+        [`XfmTransform`][brainhops.io.transformations.minc.XfmTransform]
         reads the other files, and reports what is wrong with a file that
         libminc would not read.
 

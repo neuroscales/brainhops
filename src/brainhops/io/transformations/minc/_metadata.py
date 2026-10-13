@@ -9,7 +9,11 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import TextFileReader, TextFileWriter, WriterError
+from brainhops.io.base.parsers import (
+    TextFileReader,
+    TextFileWriter,
+    WriterError,
+)
 from brainhops.io.metadata import MetadataFormat
 
 # this format
@@ -18,7 +22,7 @@ from ._raw import XfmRaw
 
 @register_format
 class XfmMetadata(MetadataFormat, TextFileReader, TextFileWriter):
-    """Metadata of an MNI transform file, which holds the file as an [`XfmRaw`][].
+    """Metadata of an MNI transform file, which holds it as an [`XfmRaw`][].
 
     An MNI transform file is a short text file that is read in one pass,
     so its record holds the whole file: its comments and its transforms,
