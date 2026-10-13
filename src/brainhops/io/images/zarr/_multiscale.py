@@ -17,7 +17,7 @@ from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
-from brainhops.io.common.zarr._data import _ZarrProxy
+from brainhops.io.common.zarr._data import _ZarrProxy, store_location
 from brainhops.io.common.zarr._parsers import (
     _as_node,
     _ZarrNodeReaderWriter,
@@ -511,6 +511,6 @@ def _level(
     """Return the level of a dataset, which reads its array lazily."""
     return OmeZarrLevel(
         transformations=[geometry],
-        raw=_ZarrProxy(array, array.store_path, perm),
+        raw=_ZarrProxy(array, store_location(array), perm),
         metadata=ZarrMetadata.from_raw(ZarrRaw.from_node(array)),
     )

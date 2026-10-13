@@ -718,6 +718,14 @@ open pull requests of pyramid formats. The class variable workaround of
 FLIRT is removed once it is decided whether `moving` and `reference`
 belong to the format or to the record.
 
+Step 4b-i moves the plain Zarr array. `ZarrImage` holds a `ZarrRaw`
+record, which keeps the document of the array as the typed model of
+abczarr together with the bytes of each document as read, and a lazy
+array of the store in `raw`, and the Zarr adapters of
+`io/common/zarr/_parsers.py` no longer hold the opened node. Step 4b-ii
+moves the OME-Zarr images and fields, whose record holds the group
+document and one `ZarrRaw` for each level.
+
 The fifth pass brings the #233 vocabulary, as described in the previous
 section.
 
@@ -1322,7 +1330,9 @@ its status.
      `data` over as `_data`, so that `replace` keeps their lazy source,
      and the permutation of an OME-Zarr level is a field (`perm`), so
      that a copy still transposes the array that it reads. Status:
-     resolved in the first pass of pending data.
+     resolved in the first pass of pending data. Since step 4b-i, a level
+     holds the permutation in its lazy array, `_ZarrProxy`
+     (`io/common/zarr/_data.py`), which replaces the node.
 109. An untouched object is written with its record as it is, so a NIfTI
      qform whose code is 0, or the `DISPVECT` intent of a legacy field
      of coordinates read through a hint, is kept on an untouched save.
@@ -1406,7 +1416,9 @@ its status.
      remote save over the store that the object reads is refused with
      `WriterError`. The conformance checks of atomic saves and of #426
      therefore run on local paths only. Status: decided by the maintainer
-     on 2026-10-13, and to be implemented with Zarr in pass 4b.
+     on 2026-10-13, and implemented for the plain Zarr array in step 4b-i
+     (`ZarrImage.to_store`). The pyramids of OME-Zarr follow in step
+     4b-ii.
 292. tifffile encodes again everything that it writes, so an untouched
      TIFF file can be saved byte for byte only by copying the bytes of its
      source. A TIFF file whose dialect or levels changed is encoded again.
@@ -1472,3 +1484,71 @@ its status.
      items 130 and 131 of #433, because each record keeps the bytes of its
      documents, and a level transformation that is not diagonal is
      refused (#447). Status: open until those pull requests are updated.
+
+340. A plain Zarr array stores no geometry. `ZarrImage` decodes an empty
+     list of transformations, and its writer dropped any other list
+     without saying so, which the rules forbid. Status: decided in step
+     4b-i. The writer refuses a list that is not made of identities with
+     `UnrepresentableTransformationError`, whose message points to
+     OME-Zarr and to `image.transformations = []`. `io.save` of an image
+     with a geometry, such as a NIfTI image, to a `.zarr` name is
+     therefore refused, where it wrote the data alone before. The reader
+     option `transformation` still assigns a geometry, which must be
+     cleared before the image is written. Storing the geometry of a plain
+     array, for example with the coordinate transformations that OME-NGFF
+     0.6 allows on an array, is open for the maintainer.
+341. `ZarrRaw` keeps the document of an array as the model of abczarr,
+     and compares a document with its stored bytes through the model:
+     the bytes are parsed by abczarr, both sides are serialized by
+     abczarr, and the two serializations are compared with sorted keys,
+     which tells the whole number `1` from the number `1.0`. The drivers
+     spell the same document differently: zarr-python writes
+     `"storage_transformers": []` and TensorStore leaves out the
+     configuration of the default chunk key encoding, and the model
+     absorbs both, so that an untouched store of either driver keeps its
+     bytes. A difference that the model of abczarr does not keep is not
+     seen. Status: accepted in step 4b-i.
+342. A document that changed is serialized again by brainhops, with an
+     indentation of two spaces, and a `.zarray` of Zarr version 2 is
+     written without the `node_type` that the model of abczarr adds. A
+     store of version 2 that was read without a `.zattrs` gets one only
+     when the array has attributes. When the data change shape or type, or when a writer
+     option is given, the document is described again by abczarr's
+     `ArrayConfig`, with the version, the attributes, the dimension names
+     and the chunks of the record, and abczarr's defaults for the codecs.
+     The codecs of the record are not kept then. A store of Zarr version
+     1 cannot be written, and the writer asks for the option
+     `zarr_version`. Status: accepted in step 4b-i.
+343. `OmeZarrImage` and `OmeZarrField` still read their group through the
+     field `node`, which the temporary parser `_ZarrNodeReaderWriter`
+     (`io/common/zarr/_parsers.py`) keeps with its position among their
+     positional fields. `OmeZarrLevel` is a `ZarrImage` whose lazy array
+     permutes the stored axes, which holds the `ZarrRaw` of its own array
+     and the transformation of its dataset as an assigned list. A level
+     written alone is therefore written as a plain array, and refused
+     when its transformation is not the identity, and an unchanged level
+     keeps the stored order of its axes while a changed level is written
+     in the brainhops order. Status: temporary, until step 4b-ii moves
+     the OME-Zarr formats to the design of pyramids.
+344. A plain Zarr array has no geometry, so the exemplar of `ZarrImage`
+     lets its data stand in for the geometry, as FNIRT does. Check 13
+     then compares the transformations that the written store decodes,
+     and the part of check 19 that writes a list changed in place is
+     vacuous, because no list but the empty one can be written. Check
+     13 also reads the transformations before the geometry, so that it
+     tests their cache whatever the exemplar reads. Status: accepted in
+     step 4b-i.
+345. abczarr 0.2.2 gives a node opened through the zarr-python driver
+     from a relative path the store path `.`, so the reader makes a local
+     path absolute before it opens it (`absolute_location` in
+     `io/common/zarr/_parsers.py`). abczarr also raises, rather than
+     returning `None`, when a path holds no store, so the sniffer of the
+     Zarr adapters catches the error and scores the path as not Zarr.
+     Status: worked around in step 4b-i.
+346. The data of a plain Zarr array read with the NumPy backend are
+     read-only, as for the other formats, where they were writable
+     before. The Dask backend gets one block per chunk of the store,
+     read through the lazy array, which answers an empty selection
+     without reading the store. The drivers of abczarr read no slice
+     with a negative step, so the lazy array reads the whole array for
+     such a selection. Status: accepted in step 4b-i.

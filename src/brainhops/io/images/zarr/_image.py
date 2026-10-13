@@ -35,6 +35,7 @@ from brainhops.io.common.zarr import (
 from brainhops.io.common.zarr._data import (
     _ZarrProxy,
     reads_store,
+    store_location,
     write_array,
     write_into,
 )
@@ -237,7 +238,7 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
             )
         record = ZarrRaw.from_node(node)
         image = cls(
-            raw=_ZarrProxy(node, node.store_path),
+            raw=_ZarrProxy(node, store_location(node)),
             metadata=ZarrMetadata.from_raw(record),
         )
         if transformation is not None:

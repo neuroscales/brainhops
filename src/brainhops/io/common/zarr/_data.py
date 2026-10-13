@@ -43,8 +43,9 @@ class _ZarrProxy:
     ----------
     node : ZarrArray
         The opened array.
-    location : str or PathLike
-        The location of the store of the array.
+    location : str or PathLike or None
+        The location of the store of the array, or `None` when it is not
+        known.
     perm : sequence of int, optional
         The permutation from the stored axes to the axes of the proxy.
     """
@@ -149,13 +150,31 @@ class _ZarrProxy:
         return da.from_array(self, chunks=self.chunks, asarray=True)
 
 
+def store_location(node: tx.Any) -> tx.Any:
+    """Return the location of the store of an opened array, or `None`.
+
+    The location is the store path of the node when a document of the
+    array lies there. A node whose store path is wrong, as the
+    zarr-python driver of abczarr 0.2.2 gives a node opened from a
+    relative path, has no known location, so that a writer never copies
+    the files of another directory.
+    """
+    location = node.store_path
+    try:
+        if any((location / key).exists() for key in _all_document_keys()):
+            return location
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def reads_store(raw: tx.Any, location: tx.Any) -> bool:
     """Tell whether an array is the lazy array of a store at a location.
 
     A local location is compared once its symbolic links are resolved,
     and a remote location is compared by its URL.
     """
-    if not isinstance(raw, _ZarrProxy):
+    if not isinstance(raw, _ZarrProxy) or raw.location is None:
         return False
     source = raw.location
     if _local(source) and _local(location):
@@ -244,7 +263,7 @@ def _copies_chunks(raw: tx.Any, record: ZarrRaw) -> bool:
     """Tell whether the chunk files of the store of `raw` can be copied."""
     if not isinstance(raw, _ZarrProxy) or raw.perm is not None:
         return False
-    if not _local(raw.location):
+    if raw.location is None or not _local(raw.location):
         return False
     source = _fspath(raw.location)
     if not os.path.isdir(source):
