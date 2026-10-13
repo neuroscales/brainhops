@@ -41,6 +41,14 @@ else:
         ["minc", "minc1", "minc2", "minc.1", "minc.2"], "nibabel", "minc"
     )
 
+# Imaris files are HDF5 files and need h5py to be read.
+if HAS_H5PY:
+    from . import imaris
+
+    __all__ += ["imaris"]
+else:
+    register_missing_format(["imaris", "ims"], "h5py", "imaris")
+
 # Raster formats (PNG, JPEG, ...) are read and written through Pillow.
 if HAS_PILLOW:
     from . import pillow

@@ -1215,3 +1215,56 @@ its status.
      because `bagof.paths.Path` merges the slashes of a nested URL. The
      tests read a remote volume through a `file://` URL and use no
      network. Status: accepted.
+180. Imaris files are read only, as MINC files are (item 101). An
+     untouched Imaris file could not be saved byte for byte: its `Data`
+     datasets are always chunked and compressed, often with the LZ4
+     filter that h5py reads only with a plugin, and h5py rewrites only
+     contiguous datasets identically (item 48). A valid file also needs
+     every resolution level, binned as Imaris bins them, and the
+     histograms of every level, which belong to the writer of a pyramid
+     whose record is not designed yet (item 15). `ImarisImage.consolidate`
+     therefore moves pending data into `raw` only
+     (`io/images/imaris/_image.py`). Status: open, for the maintainer to
+     confirm.
+181. An Imaris pyramid holds no record of its own.
+     `ImarisMultiScaleImage` is listed among the formats that are not
+     migrated, and its levels are `ImarisImage` objects, which follow the
+     design and share one `ImarisMetadata`. Its record describes the
+     whole file, every level included, and the level that an image holds
+     is the reader option `level`, which the image keeps as a field, as
+     X5 keeps `chain` and `position` (item 49). The Zarr pass plans one
+     record per resolution level instead. Status: open, until the record
+     of a pyramid is decided (item 15).
+182. The time points and the channels of an Imaris file are axes of the
+     data, which always have five axes, `(x, y, z, t, c)`, even for a
+     single time point and a single channel. Brainhops orders space, time
+     and channels in this way for NIfTI, TIFF hyperstacks and OME-Zarr,
+     Imaris itself treats every file as five-dimensional, and the lazy
+     array reads only the datasets that a selection covers, so options
+     that select a time point or a channel would duplicate an index of
+     the data. Such options would also leave the record describing data
+     that the image does not hold. The time axis stays an index, although
+     `/DataSetInfo/TimeInfo` records a date for each time point, because
+     the dates need not be evenly spaced. Status: open, for the
+     maintainer to confirm.
+183. Every level of an Imaris pyramid is placed over the whole extent of
+     the file, as TIFF pyramids are, so its voxel size is the extent
+     divided by its size. ImarisWriter bins two voxels into one and drops
+     the last voxel of an odd axis (`bpMultiresolutionImsImage.cxx`), so
+     its coarse levels are placed by a factor of exactly two, which
+     imaris-ims-file-reader also uses. The two placements differ by less
+     than one coarse voxel along an odd axis, and how Imaris itself places
+     the levels is not documented. Status: open.
+184. The record of an Imaris file holds the size, the stored shape and
+     the type of each level, read from its first time point and channel,
+     but not the shape of its chunks. The copy of a file that the
+     conformance check of metadata reads stores its voxels in an external
+     file, which has no chunks, and the record must be the same for both
+     files. The lazy array reads the chunk shape from the file when Dask
+     asks for it (`io/images/imaris/_data.py`). Status: accepted.
+185. The adapter `Hdf5Reader` does not pass reader options to `sniff_h5`,
+     so the Imaris classes override `sniff_filename`, `sniff_fileobj` and
+     `sniff_bytes` to see the option `level`, which makes the pyramid
+     decline and the single image certain. An open `h5py.File` is still
+     sniffed without the option. Passing the options to `sniff_h5` would
+     break the X5 and ITK sniffers, which take none. Status: accepted.
