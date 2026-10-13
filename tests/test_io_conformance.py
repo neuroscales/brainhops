@@ -64,6 +64,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     ParserError,
+    UnrepresentableTransformationError,
     WriterError,
     _overrides_from_fileobj,
 )
@@ -74,6 +75,7 @@ from brainhops.io.common._geometry import (
 from brainhops.io.common.afni._data import _BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
+from brainhops.io.common.bdv import BdvMetadata, BdvRaw
 from brainhops.io.common.freesurfer import FreesurferTkrSystem
 from brainhops.io.common.mrtrix._data import _MrtrixProxy
 from brainhops.io.common.nrrd._data import _NrrdProxy
@@ -117,6 +119,13 @@ from brainhops.io.transformations.afni._views import (
 )
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.bdv import BdvViewRegistration
+from brainhops.io.transformations.bdv._xform import (
+    _matrix_to_disk as _bdv_matrix_to_disk,
+)
+from brainhops.io.transformations.bdv._xform import (
+    _matrix_to_model as _bdv_matrix_to_model,
+)
 from brainhops.io.transformations.c3d import C3dAffine, C3dAffineMetadata
 from brainhops.io.transformations.c3d._affine import (
     _matrix_to_disk as _c3d_to_disk,
@@ -171,6 +180,17 @@ from brainhops.io.transformations.mrtrix import (
 from brainhops.io.transformations.mrtrix._views import (
     _warp_to_disk,
     _warp_to_model,
+)
+from brainhops.io.transformations.trakem2 import (
+    TrakEM2Metadata,
+    TrakEM2PatchAffine,
+    TrakEM2Raw,
+)
+from brainhops.io.transformations.trakem2._xform import (
+    _matrix_to_disk as _trakem2_matrix_to_disk,
+)
+from brainhops.io.transformations.trakem2._xform import (
+    _matrix_to_model as _trakem2_matrix_to_model,
 )
 
 try:
@@ -270,7 +290,15 @@ except ImportError:
 try:
     import h5py
 
+    from brainhops.io.common.bdv._hdf5 import _BdvProxy
     from brainhops.io.common.hdf5 import DelayedH5Array
+    from brainhops.io.images.bdv import BdvImage
+    from brainhops.io.images.bdv._views import (
+        _image_to_disk as _bdv_to_disk,
+    )
+    from brainhops.io.images.bdv._views import (
+        _image_to_model as _bdv_to_model,
+    )
     from brainhops.io.images.imaris import ImarisImage, ImarisMetadata
     from brainhops.io.images.imaris._data import _ImarisProxy
     from brainhops.io.images.imaris._views import (
@@ -877,6 +905,17 @@ class Exemplar(tx.NamedTuple):
     then the header file, beside an empty file of data.
     """
 
+    template: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
+    """Function that writes a file of a format that writes only over a file.
+
+    The function receives a path and data. It is `None` for a format that
+    writes an object built from data alone. A TrakEM2 affine is written
+    into the project that it was read from, and an affine without a
+    project is refused, so the checks write a project with this function,
+    and check that an object without a record refuses to be consolidated
+    and saved.
+    """
+
     storage: tx.Optional[tx.Dict[str, tx.Any]] = None
     """Options of `consolidate` that change how the data is stored.
 
@@ -1119,6 +1158,88 @@ _LTA = Exemplar(
     stored=_lta_stored,
 )
 EXEMPLARS[LtaTransformation] = _LTA
+
+# A TrakEM2 project is an XML file that places the patches of each layer
+# by a 2D affine, whose six values live in the record, which is parsed in
+# one pass, as LTA keeps its matrix. The affine is written into the
+# project that it was read from, by replacing the value of the
+# `transform` attribute of its patch, and an affine without a project is
+# refused, so the checks write a project by hand (`template`). A record
+# is frozen, so the edit of a record gives a new record, read from edited
+# bytes. The checks that build an object from data alone, or convert one
+# from another format, check that it refuses to be consolidated. Check 6
+# is vacuous, as for LTA, since the metadata holds the whole file, and
+# check 18 does not apply, since the format has no `raw`.
+
+_TRAKEM2_XML = """<?xml version="1.0" encoding="ISO-8859-1"?>
+<!DOCTYPE trakem2_anything [
+\t<!ELEMENT t2_patch (t2_prop,t2_annot,ict_transform,t2_filter)>
+\t<!ATTLIST t2_patch oid NMTOKEN #REQUIRED>
+] >
+
+<trakem2>
+\t<t2_layer_set
+\t\toid="3"
+\t\ttransform="matrix(1.0,0.0,0.0,1.0,0.0,0.0)"
+\t>
+\t\t<t2_layer oid="5"
+\t\t\t thickness="1.0"
+\t\t\t z="0.0"
+\t\t>
+\t\t\t<t2_patch
+\t\t\t\toid="7"
+\t\t\t\twidth="4.0"
+\t\t\t\theight="3.0"
+\t\t\t\ttransform="matrix({transform})"
+\t\t\t\ttitle="tile.tif"
+\t\t\t>
+\t\t\t</t2_patch>
+\t\t</t2_layer>
+\t</t2_layer_set>
+</trakem2>
+"""
+
+
+def _write_trakem2(path: tx.Any, data: tx.Any) -> None:
+    """Write a project of one patch, laid out as TrakEM2 lays it out."""
+    values = _trakem2_matrix_to_disk(data)
+    text = _TRAKEM2_XML.format(transform=",".join(repr(v) for v in values))
+    with open(path, "wb") as file:
+        file.write(text.encode("latin-1"))
+
+
+def _trakem2_stored(xform: tx.Any) -> tx.Any:
+    # The six values live in the record, and a matrix that was assigned is
+    # pending until it is encoded into a new record.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.patch(xform.patch).transform
+
+
+def _trakem2_edit_record(record: tx.Any) -> tx.Any:
+    stored = record.stored.replace(b"<trakem2>", b"<!-- edited -->\n<trakem2>")
+    return TrakEM2Raw.from_bytes(stored)
+
+
+EXEMPLARS[TrakEM2PatchAffine] = Exemplar(
+    metadata=TrakEM2Metadata,
+    suffix=".xml",
+    proxies=(tuple,),
+    to_model=_trakem2_matrix_to_model,
+    to_disk=_trakem2_matrix_to_disk,
+    sample=lambda: np.array([[2.0, 0.5, 1.0], [-0.25, 4.0, 2.0]]),
+    edit_record=_trakem2_edit_record,
+    record_edited=lambda raw: b"<!-- edited -->" in raw.stored,
+    geometry=_matrix_geometry,
+    change_geometry=lambda xform: setattr(
+        xform, "data", np.array([[3.0, 0.0, 5.0], [0.0, 3.0, 6.0]])
+    ),
+    foreign=lambda data: Affine(data),
+    derived=("homogeneous_matrix",),
+    options=frozenset({"patch"}),
+    stored=_trakem2_stored,
+    template=_write_trakem2,
+)
 
 
 def _regdat_stored(xform: tx.Any) -> tx.Any:
@@ -1809,6 +1930,150 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+# A BigDataViewer dataset is an XML file, which lists the views and holds
+# their registrations, and an HDF5 file of voxels. The registration of a
+# view is a chain of affines whose values live in the record, which is
+# parsed in one pass, as LTA keeps its matrix. The exemplar is a chain of
+# one affine, whose stored data are the twelve values of its transform. A
+# record is frozen, so the edit of a record gives a new record, read from
+# edited bytes, which keeps the levels that an image read from the HDF5
+# file. The XML file is read as bytes, so that its CRLF line separators
+# are kept.
+
+
+def _bdv_stored(xform: tx.Any) -> tx.Any:
+    # The values of the transform live in the record, and a chain that
+    # was assigned is pending until it is encoded into a new record.
+    if xform.metadata is None:
+        return None
+    setup, timepoint = xform.view()
+    registration = xform.metadata.raw.registration(timepoint, setup)
+    return registration.transforms[0].affine
+
+
+def _bdv_edit_record(record: tx.Any) -> tx.Any:
+    stored = record.stored.replace(
+        b"<SpimData", b"<!-- edited -->\r\n<SpimData", 1
+    )
+    return replace(BdvRaw.from_bytes(stored), pyramids=record.pyramids)
+
+
+def _bdv_record_edited(record: tx.Any) -> bool:
+    return b"<!-- edited -->" in record.stored
+
+
+def _bdv_set_chain(xform: tx.Any, value: tx.Any) -> None:
+    xform.transformations = (Affine(value),)
+
+
+_BDV = Exemplar(
+    metadata=BdvMetadata,
+    suffix=".xml",
+    # The XML file is parsed in one pass, so the values of the transform
+    # are a tuple of the record just after a read. The metadata holds the
+    # whole file, so the check that metadata never reads data compares a
+    # full copy of the file, as for LTA.
+    proxies=(tuple,),
+    to_model=_bdv_matrix_to_model,
+    to_disk=_bdv_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_bdv_edit_record,
+    record_edited=_bdv_record_edited,
+    geometry=lambda xform: np.asarray(xform.transformations[0].matrix),
+    change_geometry=lambda xform: _bdv_set_chain(
+        xform, np.diag([2.0, 3.0, 4.0, 1.0])[:3]
+    ),
+    foreign=lambda data: Sequence([Affine(data)]),
+    build=lambda data: BdvViewRegistration([Affine(data)]),
+    options=frozenset({"setup", "timepoint"}),
+    stored=_bdv_stored,
+    view="transformations",
+    data=lambda xform: xform.transformations[0].matrix,
+    set_data=_bdv_set_chain,
+)
+EXEMPLARS[BdvViewRegistration] = _BDV
+
+# BigDataViewer images cannot be written, so the checks write their
+# datasets as BigDataViewer lays them out, with an XML file written by
+# hand and an HDF5 file written with h5py beside it. The XML file is the
+# header file of the dataset, and the bytes of the XML file alone cannot
+# hold an image. The voxels are stored as floats, which the `dataType`
+# attribute declares, and the view is registered by an affine, so that
+# the geometry of the image is not the identity.
+
+_BDV_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<SpimData version="0.2">
+  <BasePath type="relative">.</BasePath>
+  <SequenceDescription>
+    <ImageLoader format="bdv.hdf5">
+      <hdf5 type="relative">{hdf5}</hdf5>
+    </ImageLoader>
+    <ViewSetups>
+      <ViewSetup>
+        <id>0</id>
+        <name>0</name>
+        <size>{size}</size>
+        <voxelSize>
+          <unit>um</unit>
+          <size>0.5 0.5 2.0</size>
+        </voxelSize>
+      </ViewSetup>
+    </ViewSetups>
+    <Timepoints type="range">
+      <first>0</first>
+      <last>0</last>
+    </Timepoints>
+  </SequenceDescription>
+  <ViewRegistrations>
+    <ViewRegistration timepoint="0" setup="0">
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>{affine}</affine>
+      </ViewTransform>
+    </ViewRegistration>
+  </ViewRegistrations>
+</SpimData>
+"""
+
+
+def _write_bdv(path: tx.Any, data: tx.Any) -> None:
+    """Write a dataset of one view and one level, as BigDataViewer does."""
+    hdf5 = os.path.splitext(str(path))[0] + ".h5"
+    text = _BDV_XML.format(
+        hdf5=os.path.basename(hdf5),
+        size=" ".join(str(n) for n in np.shape(data)),
+        affine=" ".join(repr(float(v)) for v in _VOXEL_TO_RAS.reshape(-1)),
+    )
+    with open(path, "wb") as file:
+        file.write(text.replace("\n", "\r\n").encode())
+    with h5py.File(hdf5, "w") as f:
+        f.create_dataset("s00/resolutions", data=np.ones((1, 3)))
+        f.create_dataset("s00/subdivisions", data=np.full((1, 3), 4, "i4"))
+        f["s00"].attrs["dataType"] = "float32"
+        f.create_dataset(
+            "t00000/s00/0/cells", data=np.asarray(data, "float32").T
+        )
+
+
+if h5py is not None:
+    EXEMPLARS[BdvImage] = Exemplar(
+        metadata=BdvMetadata,
+        suffix=".xml",
+        proxies=(_BdvProxy,),
+        to_model=_bdv_to_model,
+        to_disk=_bdv_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=_bdv_edit_record,
+        record_edited=_bdv_record_edited,
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"setup", "timepoint", "level"}),
+        header_file=lambda path: path,
+        source=_write_bdv,
+    )
+
+
 # A JPEG 2000 image is one resolution level of a JP2 file, written with
 # Pillow from 8-bit grey samples. Its geometry is the pixel size that the
 # resolution box of the file stores, in millimetres, so the geometry that
@@ -2085,6 +2350,9 @@ if ts is not None:
     )
 
 NOT_MIGRATED: tx.Tuple[str, ...] = (
+    # A pyramid has no record yet (tension 15). Its levels are
+    # `BdvImage` objects, which follow the design.
+    "brainhops.io.images.bdv.BdvMultiScaleImage",
     # A JPEG 2000 pyramid waits for the design of the levels of a
     # multiscale image, which the fourth pass of #415 decides with
     # OME-Zarr. Its full-resolution level is the exemplar above.
@@ -2407,6 +2675,8 @@ def _saved(
     path = _path(tmp_path, exemplar, name)
     if exemplar.source is not None:
         exemplar.source(path, exemplar.sample())
+    elif exemplar.template is not None:
+        exemplar.template(path, exemplar.sample())
     else:
         _built(cls, exemplar, exemplar.sample()).save(path)
     return path
@@ -2417,6 +2687,16 @@ def _refuses_writing(obj: tx.Any, target: tx.Any) -> None:
     assert not hasattr(obj, "save")
     with pytest.raises(WriterError):
         io.save(obj, target)
+
+
+def _refuses_encoding(obj: tx.Any, target: tx.Any) -> None:
+    """Check that a format that writes only over a file refuses an object
+    without a record."""
+    with pytest.raises(UnrepresentableTransformationError):
+        obj.consolidate()
+    with pytest.raises(UnrepresentableTransformationError):
+        obj.save(target)
+    assert not os.path.exists(target)
 
 
 def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
@@ -2430,7 +2710,10 @@ def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
     if exemplar.source is not None:
         return _saved(cls, exemplar, tmp_path, "placed")
     path = _path(tmp_path, exemplar, "placed")
-    obj = _built(cls, exemplar, exemplar.sample())
+    if exemplar.template is not None:
+        obj = cls.load(_saved(cls, exemplar, tmp_path, "template"))
+    else:
+        obj = _built(cls, exemplar, exemplar.sample())
     exemplar.change_geometry(obj)
     obj.save(path)
     return path
@@ -2618,6 +2901,10 @@ def test_08_an_object_built_from_data_saves(
     built = _built(cls, exemplar, value)
     assert built.metadata is None
     assert np.array_equal(np.asarray(_data(exemplar, built)), value)
+    path = _path(tmp_path, exemplar, "built")
+    if exemplar.template is not None:
+        _refuses_encoding(built, path)
+        return
     # Consolidating encodes the data and a new record, which a format
     # that cannot write cannot encode.
     consolidated = built.consolidate()
@@ -2625,7 +2912,6 @@ def test_08_an_object_built_from_data_saves(
         assert isinstance(consolidated.metadata, exemplar.metadata)
     stored = np.asarray(_stored(exemplar, consolidated))
     assert np.array_equal(stored, exemplar.to_disk(value))
-    path = _path(tmp_path, exemplar, "built")
     if exemplar.source is not None:
         _refuses_writing(built, path)
         return
@@ -2668,6 +2954,10 @@ def test_09_copies_keep_raw_and_metadata(
     value = exemplar.sample()
     converted = cls.from_instance(exemplar.foreign(value))
     assert converted.metadata is None
+    if exemplar.template is not None:
+        assert np.array_equal(np.asarray(converted.data), value)
+        _refuses_encoding(converted, _path(tmp_path, exemplar, "converted"))
+        return
     if "data" in _init_names(_model(cls)):
         assert getattr(converted, "raw", None) is None
         assert np.array_equal(np.asarray(converted.data), value)

@@ -1449,8 +1449,8 @@ its status.
      read the assigned list, or else the cached one, through
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
-     the formats merged later (N5, Imaris, precomputed and JPEG 2000)
-     follow the same rule, and the JPEG 2000 pyramid caches the levels
+     the formats merged later (N5, Imaris, precomputed, JPEG 2000 and
+     BigDataViewer) follow the same rule, and the JPEG 2000 pyramid caches the levels
      and the placements that it decodes in the same way. Status:
      resolved.
 191. A change made in place to a decoded list of transformations lives in
@@ -1458,8 +1458,8 @@ its status.
      made with `replace` or `from_instance` decodes the list again instead
      of copying the change. A write of the image itself, including
      `io.save`, still writes the change. Assigning the changed list keeps
-     it everywhere. The images that cannot be written (N5, Imaris and
-     precomputed) have no record to encode the change into, so their
+     it everywhere. The images that cannot be written (N5, Imaris,
+     precomputed and BigDataViewer) have no record to encode the change into, so their
      `consolidate` gives the copy the changed list as an assigned one.
      Status: open, for the maintainer to decide whether copies within a
      format should carry the cache.
@@ -1481,6 +1481,107 @@ its status.
      file too short for its header. Its `consolidate` now encodes the
      voxels again unless the record stores them as the file that they
      come from (`stores_as_recorded`, `io/common/mrtrix/_files.py`).
+
+The items from 200 on were found while adding the BigDataViewer formats
+(`io/common/bdv`, `io/images/bdv` and `io/transformations/bdv`), which
+read a dataset made of an XML file and an HDF5 file, and write the
+registrations of its views back into the XML file.
+
+200. The global space of a BigDataViewer dataset has no unit of its own.
+     A dataset exported by the Fiji plugin stores the voxel size as its
+     only transform (`ExportImagePlusPlugIn`), so its global space is in
+     the unit of the voxel size, but BigStitcher stores the voxel size
+     divided by the smallest voxel size of the dataset as `calibration`
+     (`DatasetCreationUtils.createViewRegistrations`), so its global
+     space is in units of that smallest size. BigDataViewer measures the
+     global space through the voxel size along x and the scale of the
+     transform along x (`ScaleBarOverlayRenderer`). The axes of the
+     `"global"` system therefore have no unit, and each level of an image
+     also has an affine to a `"physical"` system, scaled by the voxel size
+     in its unit (`io/images/bdv/_image.py`). Status: open, for the
+     maintainer to decide whether the unit should be derived as the scale
+     bar of BigDataViewer derives it.
+201. BigDataViewer images cannot be written, as MINC images cannot
+     (item 101). A view is one dataset of a chunked and compressed HDF5
+     file that holds every setup, time point and level of the
+     acquisition, and the XML file describes the whole acquisition, so
+     writing one image would mean rewriting or editing in place a file
+     that h5py does not write back byte for byte (item 48). The
+     registration of a view is written by `BdvViewRegistration`, into
+     the same XML file. The `transformations` of an image follows item
+     190, and its `consolidate` gives a copy a decoded list changed in
+     place, as item 191 says. Status: decided in this pass.
+202. The record of an image holds the XML file and also what the HDF5
+     file says about the resolution levels of each setup
+     (`BdvRaw.pyramids`), which the image reader adds, because the
+     transformations of a level are decoded from both. `BdvMetadata.load`
+     reads the XML file alone, so its `pyramids` are `None`, and the
+     metadata of an image and the metadata of its XML file differ in this
+     field while they write the same bytes. Status: open.
+203. The XML file is read and written as bytes, by binary adapters,
+     because BigDataViewer writes it with JDOM, whose default line
+     separator is CRLF (`LineSeparator.DEFAULT`), and a text adapter
+     reads with universal newlines and would drop the carriage returns.
+     Status: accepted.
+204. A chain that is assigned to a registration is written by replacing
+     the bytes of the `<ViewRegistration>` element of its view, at the
+     offsets that expat reports, so the rest of the file is kept byte for
+     byte. An element of the chain that the registration decoded from its
+     own record is written as its `<ViewTransform>` element, with its
+     `<Name>` and the text of its values, and is recognized by its
+     identity, as X5 recognizes its nodes (item 36). An element taken
+     from another object, or from a copy made with `replace`, is written
+     again without a name. The data model has no name for a
+     transformation, so a cleaner design would need a subclass of
+     `Affine` that carries the name of its transform. The systems
+     between the elements of the chain are unknown and are `None`.
+     Status: open, as item 36.
+205. A dataset stored in HDF5 is both an image and a set of
+     registrations. `BdvViewRegistration` scores `MAYBE`, below the
+     image readers, so that `io.load` reads the dataset as an image whose
+     transformation is the registration, as it reads a NIfTI file as an
+     image rather than as an affine (`NiftiVoxelToRAS` scores `WEAK`).
+     `transformations.load` reads the registration, and a dataset stored
+     with another image loader, such as N5, is read as a registration by
+     `io.load`. No change of the data model is needed. Status: decided in
+     this pass.
+206. A view is selected by the reader options `setup` and `timepoint`,
+     which are ids, and both default to the first id, which is setup 0
+     and time point 0 in the datasets that BigDataViewer and BigStitcher
+     write. A reader stores the ids that it resolved. The options select
+     what is read and do not count as overrides, as for X5 (item 49), so
+     a registration is always written back with every view. Status:
+     decided in this pass.
+207. A file written before the `dataType` attribute existed stores 16-bit
+     unsigned voxels as signed integers, which are read back bit for bit
+     as unsigned values, as BigDataViewer reads them. BigDataViewer reads
+     any other stored type of such a file through an HDF5 conversion to
+     signed 16-bit integers, and brainhops reads it in its stored type
+     instead. Values stored in another type than the one that `dataType`
+     declares are converted with NumPy, while BigDataViewer converts them
+     with HDF5, whose rounding and clipping were not checked. Status:
+     open.
+208. `BdvMultiScaleImage` is listed in `NOT_MIGRATED`, because a pyramid
+     has no record yet (item 15). Its levels are `BdvImage` objects,
+     which follow the design and share one metadata object. Status: open,
+     as item 15.
+209. The image readers read the whole XML file to sniff it, and open the
+     HDF5 file to count the levels of the setup, so that a view with a
+     single level is read as a `BdvImage`, as the Imaris readers do.
+     Status: accepted.
+210. A generic `<ViewTransform>`, whose content a Java class reads, is
+     kept and written back as it is, but decoding the chain of its view
+     raises `ParserContentError`, so a chain assigned to that view
+     cannot keep it. Status: accepted.
+211. A registration saved under another name is the whole XML file, whose
+     `<hdf5>` path may be relative, so the copy names an HDF5 file beside
+     it that may not exist, as a `.mih` header names its data file
+     (item 91). Status: accepted.
+212. `BdvMetadata` without a record refuses to write, because a dataset
+     needs at least a setup and a time point, as `M3zMetadata` refuses
+     (item 61). A registration without a record writes a new file with
+     a single setup, a single time point and no image loader. Status:
+     accepted.
 250. An N5 pyramid, a group whose datasets are `s0`, `s1`, ..., is read
      as `N5MultiScaleImage`, whose levels are `N5Image` objects
      (`io/images/n5`). Each level follows this design: it holds the
@@ -1551,3 +1652,53 @@ its status.
      directory, so a level after a gap is not read, and the channel
      groups `c0`, `c1`, ... of the n5-viewer are read one at a time.
      Status: open.
+280. A TrakEM2 affine (`io/transformations/trakem2/_xform.py`) is
+     written only into the project that it was read from, by replacing
+     the value of the `transform` attribute of its patch, as the
+     BigDataViewer registration of #441 replaces one element. An affine
+     without a record, such as one built from data or converted from
+     another format, is refused by `consolidate` with
+     `UnrepresentableTransformationError`, because a project cannot be
+     made from an affine alone: a patch needs an image file, a layer and
+     a project. The conformance harness has a new field,
+     `Exemplar.template`, which writes a project by hand, and checks 8 and
+     9 check the refusal for such a format. Status: open, for the
+     maintainer to decide whether a format may refuse to write an object
+     without a record.
+281. A TrakEM2 patch is placed by a 2D affine in the plane of its layer,
+     and the layer has a z and a thickness. The affine is read as a 2D
+     `Affine` of shape `(2, 3)`, and the z, the thickness and the
+     calibration stay in the record of the patch. A 3D placement would
+     need a convention for the third axis of a patch, which has none:
+     either a unit axis at the z of the layer, or an axis scaled by the
+     thickness of the layer, and in either case whether z is the top or
+     the middle of the section and whether it is calibrated by
+     `pixelWidth`, as TrakEM2 does, or by `pixelDepth`. The datamodel has
+     no embedding of a 2D transformation in 3D that would carry it.
+     Status: open.
+282. The coordinate transform of a TrakEM2 patch is not composed with
+     its affine. TrakEM2 shifts the image between the two by the corner of
+     the bounding box of a mesh of the image
+     (`Patch.getFullCoordinateTransform`), which depends on the mesh
+     resolution and on a truncation to integers, and brainhops does not
+     compute it. The `input` of an affine whose patch has a coordinate
+     transform is therefore `None`. Only an affine model and a similarity
+     model written inside the patch are decoded, by
+     `coordinate_transform()`, and lists, other models and transforms
+     kept in separate `.ct` files are refused when decoded and kept in
+     the file as they are. Status: accepted.
+283. The TrakEM2 reader parses XML with expat to know the byte spans of
+     its elements and attributes (`io/transformations/trakem2/_xml.py`),
+     as the BigDataViewer reader of #441 does in
+     `io/common/bdv/_xml.py`. The two helpers overlap, and are to be
+     merged into one module under `io/common/` once both are on `main`.
+     Status: open.
+284. The similarity model of TrakEM2 reads its four values in single
+     precision with Java's `Float.parseFloat`, and brainhops reads them
+     with `numpy.float32`, which rounds the decimal text through a double
+     and may differ from Java in the last bit for rare values. Status:
+     accepted.
+285. Check 6 of the conformance test is vacuous for TrakEM2, because the
+     metadata holds the whole file, as for LTA and M3Z (item 66), and
+     check 18 does not apply, because the format has no `raw`. Status:
+     accepted.
