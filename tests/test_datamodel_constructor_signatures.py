@@ -204,6 +204,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.transformations.minc._grid": {
         "XfmGridTransform": ("transformations",),
     },
+    "brainhops.io.transformations.mrtrix._linear": {
+        "MrtrixLinearTransform": ("data",),
+    },
+    "brainhops.io.transformations.mrtrix._warps": {
+        "MrtrixCoordinatesField": ("transformations",),
+        "MrtrixDisplacementField": ("transformations",),
+        "MrtrixWarp": (),
+        "MrtrixWarpFull": ("transformations",),
+    },
     "brainhops.io.transformations.nifti._affines": {
         "NiftiRASToVoxel": ("data",),
         "NiftiVoxelToRAS": ("data",),
