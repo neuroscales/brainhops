@@ -98,10 +98,6 @@ from brainhops.io.images.nrrd._views import (
     _image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
-from brainhops.io.transformations.base._records import (
-    matrix_to_disk,
-    matrix_to_model,
-)
 from brainhops.io.transformations.afni import (
     AfniAffine,
     AfniAffineMetadata,
@@ -112,6 +108,10 @@ from brainhops.io.transformations.afni._views import (
 )
 from brainhops.io.transformations.afni._views import (
     _warp_to_model as _afni_warp_to_model,
+)
+from brainhops.io.transformations.base._records import (
+    matrix_to_disk,
+    matrix_to_model,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
@@ -149,10 +149,6 @@ from brainhops.io.transformations.matrix import (
     TxtMatrixAffine,
     TxtMatrixMetadata,
 )
-from brainhops.io.transformations.niftyreg import (
-    NiftyRegAffine,
-    NiftyRegAffineMetadata,
-)
 from brainhops.io.transformations.mrtrix import (
     MrtrixCoordinatesField,
     MrtrixDisplacementField,
@@ -163,6 +159,10 @@ from brainhops.io.transformations.mrtrix import (
 from brainhops.io.transformations.mrtrix._views import (
     _warp_to_disk,
     _warp_to_model,
+)
+from brainhops.io.transformations.niftyreg import (
+    NiftyRegAffine,
+    NiftyRegAffineMetadata,
 )
 
 try:
