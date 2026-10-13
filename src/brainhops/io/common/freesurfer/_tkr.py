@@ -127,7 +127,9 @@ def scanner_vox2ras(
         raise ValueError(
             f"FreeSurfer places a 3-D volume in tkregister RAS, but the "
             f"geometry of {what} has shape {shape}. Give the geometry of "
-            f"a 3-D volume, for example of one frame of the image."
+            f"its three spatial axes, a Geometry whose shape has three "
+            f"dimensions and whose transformation is the 3-D "
+            f"voxel-to-RAS affine."
         )
     xform = geometry.transformation
     for side in ("input", "output"):
