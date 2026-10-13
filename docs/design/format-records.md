@@ -1192,24 +1192,24 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
-115. `bagof` takes an inherited field from the first base that has it,
+400. `bagof` takes an inherited field from the first base that has it,
      so a NIfTI transformation whose first base is a generic model
      (`NiftiRASToVoxel(VoxelToRAS, _NiftiAffine)`) gets the generic
      `metadata` of the root before the takeover of
      `NiftiBasedTransformation`. The wiring probes it, and falls back on
      the takeover in each concrete class. Status: open, for #287.
-116. The metadata of a format decodes its vocabulary at once, in
+401. The metadata of a format decodes its vocabulary at once, in
      `from_raw`, instead of in lazy properties: a field may be `None`,
      so a lazy field would need a sentinel or a flag, which is the state
      that the comparison with a fresh decode removes. Reading the
      metadata of an MGZ file decompresses it to its tags. Status:
      decided in pass 5a.
-117. Loss is reported at consolidation, so once per write, and a
+402. Loss is reported at consolidation, so once per write, and a
      conversion reports only a lower bound from `SUPPORTED_FIELDS`. A
      save that converts and then writes would warn twice, so the writer
      passes one report as `on_loss=` to both. Status: decided in pass
      5a, and the single report of a save is wired in #287.
-118. The format objects of the first three passes built the metadata of
+403. The format objects of the first three passes built the metadata of
      their consolidated copy with `replace(self.metadata, raw=record)`,
      which kept the decoded fields of the old record. With eager
      decoding, the metadata of NIfTI, MGH and X5 is decoded from the new
@@ -1218,12 +1218,12 @@ its status.
      wiring makes the consolidation of the metadata step 2 of every
      write. Status: resolved in pass 5a for the formats that have a
      vocabulary, and open for #287.
-119. `Metadata.derive` adds to `history` and `generated_by`, which NIfTI
+404. `Metadata.derive` adds to `history` and `generated_by`, which NIfTI
      and MGH cannot store, so every consolidation of derived metadata
      would report them as lost. `MetadataFormat.derive` keeps the two
      fields as they were when the format has no slot for them. Status:
      decided in pass 5a.
-120. The metadata of an MGH file writes the fixed header alone, so the
+405. The metadata of an MGH file writes the fixed header alone, so the
      footer and the tags reach a file only through the image (item 68).
      Check 22 changes `dtype` for MGH, which the fixed header holds.
      Check 23 is vacuous for X5, whose JSON metadata stores every field,
