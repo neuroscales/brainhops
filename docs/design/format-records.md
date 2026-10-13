@@ -1131,3 +1131,102 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+
+The items from 200 on were found while adding the BigDataViewer formats
+(`io/common/bdv`, `io/images/bdv` and `io/transformations/bdv`), which
+read a dataset made of an XML file and an HDF5 file, and write the
+registrations of its views back into the XML file.
+
+200. The global space of a BigDataViewer dataset has no unit of its own.
+     A dataset exported by the Fiji plugin stores the voxel size as its
+     only transform (`ExportImagePlusPlugIn`), so its global space is in
+     the unit of the voxel size, but BigStitcher stores the voxel size
+     divided by the smallest voxel size of the dataset as `calibration`
+     (`DatasetCreationUtils.createViewRegistrations`), so its global
+     space is in units of that smallest size. BigDataViewer measures the
+     global space through the voxel size along x and the scale of the
+     transform along x (`ScaleBarOverlayRenderer`). The axes of the
+     `"global"` system therefore have no unit, and each level of an image
+     also has an affine to a `"physical"` system, scaled by the voxel size
+     in its unit (`io/images/bdv/_image.py`). Status: open, for the
+     maintainer to decide whether the unit should be derived as the scale
+     bar of BigDataViewer derives it.
+201. BigDataViewer images cannot be written, as MINC images cannot
+     (item 101). A view is one dataset of a chunked and compressed HDF5
+     file that holds every setup, time point and level of the
+     acquisition, and the XML file describes the whole acquisition, so
+     writing one image would mean rewriting or editing in place a file
+     that h5py does not write back byte for byte (item 48). The
+     registration of a view is written by `BdvViewRegistration`, into
+     the same XML file. Status: decided in this pass.
+202. The record of an image holds the XML file and also what the HDF5
+     file says about the resolution levels of each setup
+     (`BdvRaw.pyramids`), which the image reader adds, because the
+     transformations of a level are decoded from both. `BdvMetadata.load`
+     reads the XML file alone, so its `pyramids` are `None`, and the
+     metadata of an image and the metadata of its XML file differ in this
+     field while they write the same bytes. Status: open.
+203. The XML file is read and written as bytes, by binary adapters,
+     because BigDataViewer writes it with JDOM, whose default line
+     separator is CRLF (`LineSeparator.DEFAULT`), and a text adapter
+     reads with universal newlines and would drop the carriage returns.
+     Status: accepted.
+204. A chain that is assigned to a registration is written by replacing
+     the bytes of the `<ViewRegistration>` element of its view, at the
+     offsets that expat reports, so the rest of the file is kept byte for
+     byte. An element of the chain that the registration decoded from its
+     own record is written as its `<ViewTransform>` element, with its
+     `<Name>` and the text of its values, and is recognized by its
+     identity, as X5 recognizes its nodes (item 36). An element taken
+     from another object, or from a copy made with `replace`, is written
+     again without a name. The data model has no name for a
+     transformation, so a cleaner design would need a subclass of
+     `Affine` that carries the name of its transform. The systems
+     between the elements of the chain are unknown and are `None`.
+     Status: open, as item 36.
+205. A dataset stored in HDF5 is both an image and a set of
+     registrations. `BdvViewRegistration` scores `MAYBE`, below the
+     image readers, so that `io.load` reads the dataset as an image whose
+     transformation is the registration, as it reads a NIfTI file as an
+     image rather than as an affine (`NiftiVoxelToRAS` scores `WEAK`).
+     `transformations.load` reads the registration, and a dataset stored
+     with another image loader, such as N5, is read as a registration by
+     `io.load`. No change of the data model is needed. Status: decided in
+     this pass.
+206. A view is selected by the reader options `setup` and `timepoint`,
+     which are ids, and both default to the first id, which is setup 0
+     and time point 0 in the datasets that BigDataViewer and BigStitcher
+     write. A reader stores the ids that it resolved. The options select
+     what is read and do not count as overrides, as for X5 (item 49), so
+     a registration is always written back with every view. Status:
+     decided in this pass.
+207. A file written before the `dataType` attribute existed stores 16-bit
+     unsigned voxels as signed integers, which are read back bit for bit
+     as unsigned values, as BigDataViewer reads them. BigDataViewer reads
+     any other stored type of such a file through an HDF5 conversion to
+     signed 16-bit integers, and brainhops reads it in its stored type
+     instead. Values stored in another type than the one that `dataType`
+     declares are converted with NumPy, while BigDataViewer converts them
+     with HDF5, whose rounding and clipping were not checked. Status:
+     open.
+208. `BdvMultiScaleImage` is listed in `NOT_MIGRATED`, because a pyramid
+     has no record yet (item 15). Its levels are `BdvImage` objects,
+     which follow the design and share one metadata object. Status: open,
+     as item 15.
+209. The image readers read the whole XML file to sniff it, and open the
+     HDF5 file to count the levels of the setup, so that a view with a
+     single level is read as a `BdvImage`, as the Imaris readers do.
+     Status: accepted.
+210. A generic `<ViewTransform>`, whose content a Java class reads, is
+     kept and written back as it is, but decoding the chain of its view
+     raises `ParserContentError`, so a chain assigned to that view
+     cannot keep it. Status: accepted.
+211. A registration saved under another name is the whole XML file, whose
+     `<hdf5>` path may be relative, so the copy names an HDF5 file beside
+     it that may not exist, as a `.mih` header names its data file
+     (item 91). Status: accepted.
+212. `BdvMetadata` without a record refuses to write, because a dataset
+     needs at least a setup and a time point, as `M3zMetadata` refuses
+     (item 61). A registration without a record writes a new file with
+     a single setup, a single time point and no image loader. Status:
+     accepted.
