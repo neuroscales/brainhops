@@ -1178,3 +1178,38 @@ its status.
      the reader of normalisation files, which needs only SciPy, is not
      available without nibabel (`io/transformations/spm/__init__.py`).
      Status: open.
+266. A DARTEL flow field (`u_*.nii`) is placed by two affines of its
+     header: the qform (`mat0`) places the grid that the map reads from,
+     and the sform (`mat`) carries the integrated positions to the world
+     (`get_dartel` in SPM12's `spm_deformations.m`). No other NIfTI
+     transformation of brainhops uses the two forms separately.
+     `DartelFlowField` writes an assigned chain with the inverse of its
+     first affine as the qform and its last affine as the sform, and it
+     refuses a first affine that a qform cannot hold, rather than let
+     nibabel remove its shears (`io/transformations/spm/_dartel.py`).
+     Status: open.
+267. A DARTEL flow field does not store `K`, the number of squaring
+     steps, which is an option of SPM's batch whose default is 6. It is
+     the reader option `steps` of `DartelFlowField`, and a consolidated
+     copy takes the steps of its velocity as that option, so a file
+     written from a velocity with other steps must be read with the same
+     `steps`. This is the same kind of option as `log` and `steps` of a
+     NIfTI displacement field (items 11 and 13). Status: open.
+268. The velocity of a DARTEL flow field wraps around its grid, as DARTEL
+     composes it, while an SPM deformation field (`y_*.nii`) takes the
+     nearest value outside its grid. The exact converter into
+     `SpmCoordinatesField` therefore refuses a flow field, although
+     SPM's Deformations utility writes a `y_` file from a flow field by
+     sampling it on its grid. Status: open, for the maintainer to decide
+     whether a conversion that samples a map on a grid, and changes it
+     outside that grid, should be offered.
+269. SPM decodes a qform whose code is 0 with an orientation that it
+     guesses from its defaults (`decode_qform0.m`), and it rescales `mat`
+     and `mat0` by the spatial unit of the header. `DartelFlowField`
+     refuses a header without a qform when its chain is decoded, and it
+     does not rescale units, as the other NIfTI transformations of
+     brainhops do not. DARTEL writes both forms, in millimetres. Status:
+     accepted.
+270. The affine from a DARTEL template to MNI space, which `get_dartel`
+     reads from a `*_2mni.mat` file when a template is given, is another
+     file and is not read. Status: accepted.

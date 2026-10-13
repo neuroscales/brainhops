@@ -117,6 +117,7 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.transformations.spm": Package(
         names=frozenset(
             {
+                "DartelFlowField",
                 "SpmCoordinatesField",
                 "SpmSnMetadata",
                 "SpmSnRaw",

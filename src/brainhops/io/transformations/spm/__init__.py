@@ -11,6 +11,12 @@ ends in `_sn.mat`. Such a file is read by [`SpmSnTransformation`][],
 which holds the whole file as an [`SpmSnRaw`][] record in its
 [`SpmSnMetadata`][], and it cannot be written.
 
+DARTEL, the diffeomorphic registration of SPM8 and SPM12, saves a
+stationary velocity for each image that it registers, in a NIfTI file
+whose name starts with `u_`, such as `u_rc1subject.nii`. Such a file is
+read and written by [`DartelFlowField`][], which integrates the velocity
+as DARTEL does.
+
 ```python
 from brainhops import io
 from brainhops.io.transformations.spm import SpmCoordinatesField
@@ -18,6 +24,9 @@ from brainhops.io.transformations.spm import SpmCoordinatesField
 sn = io.load("subject_sn.mat")              # or hint="sn"
 y = sn.to(SpmCoordinatesField)              # the same map, as y_*.nii
 io.save(y, "y_subject.nii")
+
+flow = io.load("u_rc1subject.nii")          # or hint="dartel", steps=6
+backward = flow.inverse()                   # template to subject
 ```
 
 ## Specification of `*_sn.mat` files
@@ -116,9 +125,62 @@ map is written as a deformation field instead, with
 are those that `get_sn2def` computes with its default bounding box and
 voxel size (`NaN` in `config/spm_cfg_deformations.m`), which are those
 of the template.
+
+## Specification of DARTEL flow fields
+
+The conventions below are taken from `spm/spm12` at
+03ac9473cad402407b6472228377c0167fdc54b8: `spm_dartel_integrate.m`
+(r5506), the function `get_dartel` of `spm_deformations.m` (r7700),
+`config/spm_cfg_deformations.m`, `toolbox/DARTEL/spm_dartel_warp.m`
+(r7182), `spm_preproc_write8.m`, `@nifti/subsref.m`, and the functions
+`expdef` of `src/shoot_dartel.c`, `smalldef` and `composition` of
+`src/shoot_diffeo3d.c`, and `circulant_boundary` of
+`src/shoot_boundary.c`. SPM8 (`spm/spm8` at
+29d67c03ecd49bac7daca905c734aacc15dadc78) has the same
+`spm_dartel_integrate.m`, and its `toolbox/DARTEL/diffeo3d.c` integrates
+in the same way, with the indices wrapped by its macro `WRAP`.
+
+### File
+
+`spm_dartel_warp` writes the velocity `u` as a float32 NIfTI array of
+shape (X, Y, Z, 1, 3), described as `"Flow Field"`, in voxels of its
+grid. Its header is that of the imported image (`rc1*.nii`), whose sform
+is the `mat` that places the grid in the space of the template, and
+whose qform is the `mat0` that places the same grid in the space of the
+subject (`mat0 = R \\ mat` in `spm_preproc_write8`). Both are coded
+`Aligned`. SPM reads `mat` from the sform, or from the qform when the
+sform code is 0, and `mat0` from the qform (`@nifti/subsref.m`).
+
+### Integration
+
+`spm_dartel_integrate(U, [0 1], K)` returns `dartel3('Exp', u, [K 1])`.
+`expdef` starts from `Id + u / 2^K` (`smalldef`) and composes the result
+with itself `K` times (`composition`), where the displacement is
+interpolated trilinearly with indices wrapped around the grid
+(`circulant_boundary`, which `dartel3('Exp', ...)` does not change). The
+velocity is in voxels, and `K` is not stored in the file. It is an
+option of the batch, whose default is 6 in SPM12. This is the scaling
+and squaring of a
+[`StationaryVelocityField`][brainhops.datamodel.transformations.StationaryVelocityField]
+with `degree=1`, `bound="grid-wrap"` and `steps=K`, which the tests check
+against a transcription of the C code.
+
+### Deformation
+
+For a forward flow (`times = [0 1]`), `get_dartel` evaluates the map on
+the grid of `mat0` and carries it to the world by `mat`, so that it maps
+a point `x` of the space of `mat0` to `mat * Exp(u)(mat0 \\ x)`. For a
+backward flow (`times = [1 0]`, the default of the Deformations
+utility), it uses `Exp(-u)`, on the grid of `mat`, carried by `mat0`,
+which is the inverse map. [`DartelFlowField`][] holds the forward map,
+and its inverse is the backward one. The affine of a DARTEL template to
+MNI space, which `get_dartel` reads from a `*_2mni.mat` file when a
+template is given, is another file and is not read.
+
 """
 
 __all__ = [
+    "DartelFlowField",
     "SpmCoordinatesField",
     "SpmSnMetadata",
     "SpmSnRaw",
@@ -126,6 +188,7 @@ __all__ = [
     "SpmVolume",
 ]
 
+from ._dartel import DartelFlowField
 from ._fields import SpmCoordinatesField
 from ._sn import SpmSnTransformation
 from ._sn_metadata import SpmSnMetadata

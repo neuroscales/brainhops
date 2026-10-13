@@ -167,7 +167,10 @@ try:
         NiftyRegVelocityField,
         NiftyRegVelocityGrid,
     )
-    from brainhops.io.transformations.spm import SpmCoordinatesField
+    from brainhops.io.transformations.spm import (
+        DartelFlowField,
+        SpmCoordinatesField,
+    )
 except ImportError:
     nb = None
 
@@ -872,6 +875,26 @@ def _spm_coordinates(data: np.ndarray) -> tx.Any:
     )
 
 
+def _dartel_velocity(data: np.ndarray) -> tx.Any:
+    # A stationary velocity, in voxels of its grid, as DARTEL integrates
+    # it: interpolated linearly and wrapped around its grid.
+    voxel = RASToVoxel().output
+    return Sequence(
+        [
+            RASToVoxel(matrix=np.eye(4)[:-1]),
+            DisplacementField(
+                data,
+                input=voxel,
+                output=voxel,
+                log=True,
+                steps=6,
+                bound="grid-wrap",
+            ),
+            VoxelToRAS(matrix=np.eye(4)[:-1]),
+        ]
+    )
+
+
 EXEMPLARS: tx.Dict[type, Exemplar] = {}
 """The registered formats that follow the design."""
 
@@ -934,6 +957,12 @@ if nb is not None:
         build=lambda data: SpmCoordinatesField(raw=_field_to_disk(data)),
         foreign=_spm_coordinates,
         prefix="y_",
+    )
+    EXEMPLARS[DartelFlowField] = _NIFTI_FIELD._replace(
+        build=lambda data: DartelFlowField(raw=_field_to_disk(data)),
+        foreign=_dartel_velocity,
+        prefix="u_",
+        options=frozenset({"steps"}),
     )
     for _cls in (
         NiftyRegControlPointGrid,
