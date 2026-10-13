@@ -28,10 +28,10 @@ import itertools
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import ConvertTo, Field, HideIf, Magic, fields
+from bagof.magic import ConvertTo, Field, HideIfNone, Magic, fields
 
 # internals
-from brainhops._core.enum import StrEnum
+from brainhops._core.enum import EnumConverter, StrEnum
 
 from ..enums import (
     AxisType,
@@ -42,16 +42,12 @@ from ..enums import (
     SpaceEnum,
 )
 from ..units import Unit
-from ._operations import Indexed, Operation, propagates
-from ._sentinel import Maybe
 from ._terms import (
     Channel,
     EncodingDirection,
     GeneratedBy,
-    MaybeEnumConverter,
-    _is_absent,
     direction,
-    dtype,
+    to_dtype,
     unit,
 )
 
@@ -91,50 +87,6 @@ class Scope(StrEnum):
     AXIS = "axis"
 
 
-# The scope defaults: how the value of a field propagates through an
-# operation when no handler of its type takes it (see `_operations`).
-
-
-@propagates(Scope.FILE, Operation)
-@propagates(Scope.ACQUISITION, Operation)
-@propagates(Scope.AXIS, Operation)
-def _keep(
-    value: tx.Any, operation: Operation, *, name: str, source: tx.Any
-) -> tx.Any:
-    """A field that the operation does not change: it is kept."""
-    return value
-
-
-@propagates(Scope.SPATIAL, Operation)
-def _clear_if_space_moves(
-    value: tx.Any, operation: Operation, *, name: str, source: tx.Any
-) -> tx.Any:
-    """A field tied to the spatial sampling: it is cleared when the
-    spatial axes move."""
-    return None if operation.moves_space else value
-
-
-@propagates(Scope.AXIS, Indexed)
-def _index_along(
-    value: tx.Any, operation: Indexed, *, name: str, source: tx.Any
-) -> tx.Any:
-    """
-    A field with one entry per index along an axis, after an index: the
-    entries at the positions the index keeps along the first axis of
-    the type the field runs along (`ALONG`). The field is kept when the
-    image has no such axis, or when the index leaves it untouched, and
-    cleared when the index drops it.
-    """
-    axis = ALONG[name]
-    if axis not in operation.axes:
-        return value
-    positions = operation.positions(axis)
-    size = operation.shape[operation.axes.index(axis)]
-    if positions is not None and np.array_equal(positions, np.arange(size)):
-        return value
-    return _select_entries(value, positions)
-
-
 class Bids(Field):
     """
     The annotation that gives a vocabulary field its BIDS sidecar key.
@@ -146,7 +98,7 @@ class Bids(Field):
     --------
     ```python
     repetition_time: tx.Annotated[
-        Maybe[float], Bids("RepetitionTime")
+        tx.Optional[float], Bids("RepetitionTime")
     ] = None
     ```
     """
@@ -172,7 +124,9 @@ class Scoped(Field):
     Examples
     --------
     ```python
-    echo_time: tx.Annotated[Maybe[float], Scoped(Scope.ACQUISITION)] = None
+    echo_time: tx.Annotated[
+        tx.Optional[float], Scoped(Scope.ACQUISITION)
+    ] = None
     ```
     """
 
@@ -214,7 +168,7 @@ class Along(Field):
     --------
     ```python
     channels: tx.Annotated[
-        Maybe[tx.Tuple[Channel, ...]], Along(AxisType.channel)
+        tx.Optional[tx.Tuple[Channel, ...]], Along(AxisType.channel)
     ] = None
     ```
     """
@@ -250,20 +204,20 @@ class Vocabulary(
     Magic,
     kw_only=True,
     convert=True,
-    # A field is shown in `repr` only when it holds a value: not `None`
-    # (unknown), not `UNSUPPORTED` (no slot).
-    repr=HideIf(_is_absent),
+    # A field is shown in `repr` only when it holds a value.
+    repr=HideIfNone,
 ):
     """
     The base class of the vocabulary groups.
 
-    A vocabulary group is a `Magic` mixin that declares a few fields of
-    the common vocabulary, and nothing else. [`Metadata`][] inherits every
-    group, and a format names the groups it can store in its `supports=`
-    declaration. A group is not meant to be instantiated. The groups
-    convert their fields (`convert=True`), and hide from `repr` a field
-    that holds `None` or `UNSUPPORTED`, because the fields of a mixin
-    keep the options of the class that declares them.
+    A vocabulary group declares a few fields of the common vocabulary,
+    and nothing else. [`Metadata`][] inherits every group, and so does
+    the metadata of every file format, so that each group is one page of
+    the documentation with the fields of one topic. A group is not meant
+    to be instantiated. The groups convert their fields
+    (`convert=True`), and hide from `repr` a field that holds `None`,
+    because the fields of a base class keep the options of the class
+    that declares them.
     """
 
 
@@ -274,44 +228,46 @@ class ProvenanceVocabulary(Vocabulary):
     """
 
     name: tx.Annotated[
-        Maybe[str], tx.Doc("A short name for the data."), Scoped(Scope.FILE)
+        tx.Optional[str],
+        tx.Doc("A short name for the data."),
+        Scoped(Scope.FILE),
     ] = None
 
     description: tx.Annotated[
-        Maybe[str],
+        tx.Optional[str],
         tx.Doc("A free-text description."),
         Bids("Description"),
         Scoped(Scope.FILE),
     ] = None
 
     history: tx.Annotated[
-        Maybe[tx.Tuple[str, ...]],
+        tx.Optional[tx.Tuple[str, ...]],
         tx.Doc("The commands that produced the data, oldest first."),
         Scoped(Scope.FILE),
     ] = None
 
     generated_by: tx.Annotated[
-        Maybe[tx.Tuple[GeneratedBy, ...]],
+        tx.Optional[tx.Tuple[GeneratedBy, ...]],
         tx.Doc("The programs that produced the data."),
         Bids("GeneratedBy"),
         Scoped(Scope.FILE),
     ] = None
 
     creation_time: tx.Annotated[
-        Maybe[datetime.datetime],
+        tx.Optional[datetime.datetime],
         tx.Doc("When the file was created."),
         Scoped(Scope.FILE),
     ] = None
 
     sources: tx.Annotated[
-        Maybe[tx.Tuple[str, ...]],
+        tx.Optional[tx.Tuple[str, ...]],
         tx.Doc("Files the data was derived from (BIDS provenance)."),
         Bids("Sources"),
         Scoped(Scope.FILE),
     ] = None
 
     space: tx.Annotated[
-        Maybe[tx.Union[SpaceEnum, str]],
+        tx.Optional[tx.Union[SpaceEnum, str]],
         tx.Doc(
             "The label of the world space (`'MNI152NLin6Asym'`, "
             "`'scanner'`, ...; a known one is a `SpaceEnum`); the space "
@@ -319,17 +275,17 @@ class ProvenanceVocabulary(Vocabulary):
         ),
         Bids("SpatialReference"),
         Scoped(Scope.FILE),
-        ConvertTo(MaybeEnumConverter(SpaceEnum)),
+        ConvertTo(EnumConverter(SpaceEnum)),
     ] = None
 
     intent: tx.Annotated[
-        Maybe[tx.Union[IntentEnum, str]],
+        tx.Optional[tx.Union[IntentEnum, str]],
         tx.Doc(
             "What the values are, as a NIfTI intent name (a known one is "
             "an `IntentEnum`)."
         ),
         Scoped(Scope.FILE),
-        ConvertTo(MaybeEnumConverter(IntentEnum)),
+        ConvertTo(EnumConverter(IntentEnum)),
     ] = None
 
 
@@ -342,73 +298,73 @@ class MRIVocabulary(Vocabulary):
     """
 
     repetition_time: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc("Repetition time, in seconds."),
         Bids("RepetitionTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     echo_time: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc("Echo time, in seconds."),
         Bids("EchoTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     inversion_time: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc("Inversion time, in seconds."),
         Bids("InversionTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     flip_angle: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc("Flip angle, in degrees."),
         Bids("FlipAngle"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     magnetic_field_strength: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc("Nominal field strength, in tesla."),
         Bids("MagneticFieldStrength"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     manufacturer: tx.Annotated[
-        Maybe[tx.Union[Manufacturer, str]],
+        tx.Optional[tx.Union[Manufacturer, str]],
         tx.Doc(
             "Manufacturer of the equipment (a known one is a `Manufacturer`)."
         ),
         Bids("Manufacturer"),
         Scoped(Scope.ACQUISITION),
-        ConvertTo(MaybeEnumConverter(Manufacturer)),
+        ConvertTo(EnumConverter(Manufacturer)),
     ] = None
 
     manufacturers_model_name: tx.Annotated[
-        Maybe[str],
+        tx.Optional[str],
         tx.Doc("Model name of the equipment."),
         Bids("ManufacturersModelName"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     institution_name: tx.Annotated[
-        Maybe[str],
+        tx.Optional[str],
         tx.Doc("Institution responsible for the equipment."),
         Bids("InstitutionName"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     acquisition_time: tx.Annotated[
-        Maybe[datetime.datetime],
+        tx.Optional[datetime.datetime],
         tx.Doc("When the acquisition started."),
         Bids("AcquisitionTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     phase_encoding_direction: tx.Annotated[
-        Maybe[EncodingDirection],
+        tx.Optional[EncodingDirection],
         tx.Doc(
             "Phase-encoding direction: a unit vector, by default in voxel "
             "axes (BIDS `'j-'` is accepted)."
@@ -419,21 +375,21 @@ class MRIVocabulary(Vocabulary):
     ] = None
 
     total_readout_time: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc("Total readout time, in seconds."),
         Bids("TotalReadoutTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     effective_echo_spacing: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc("Effective echo spacing, in seconds."),
         Bids("EffectiveEchoSpacing"),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     slice_encoding_direction: tx.Annotated[
-        Maybe[EncodingDirection],
+        tx.Optional[EncodingDirection],
         tx.Doc(
             "Slice-encoding direction: a unit vector, by default in voxel "
             "axes (BIDS `'k'` is accepted)."
@@ -444,7 +400,7 @@ class MRIVocabulary(Vocabulary):
     ] = None
 
     slice_timing: tx.Annotated[
-        Maybe[tx.Tuple[float, ...]],
+        tx.Optional[tx.Tuple[float, ...]],
         tx.Doc(
             "Acquisition time of each slice, in seconds, along the slice "
             "encoding direction."
@@ -454,7 +410,7 @@ class MRIVocabulary(Vocabulary):
     ] = None
 
     multiband_acceleration_factor: tx.Annotated[
-        Maybe[int],
+        tx.Optional[int],
         tx.Doc("Multiband acceleration factor."),
         Bids("MultibandAccelerationFactor"),
         Scoped(Scope.ACQUISITION),
@@ -470,7 +426,7 @@ class DiffusionVocabulary(Vocabulary):
     """
 
     bvalues: tx.Annotated[
-        Maybe[tx.Tuple[float, ...]],
+        tx.Optional[tx.Tuple[float, ...]],
         tx.Doc(
             "One b-value per index along the time axis (the volumes of a "
             "diffusion series), in s/mm^2."
@@ -479,7 +435,7 @@ class DiffusionVocabulary(Vocabulary):
     ] = None
 
     bvectors: tx.Annotated[
-        Maybe[tx.Tuple[tx.Tuple[float, float, float], ...]],
+        tx.Optional[tx.Tuple[tx.Tuple[float, float, float], ...]],
         tx.Doc(
             "One unit gradient direction per index along the time axis, "
             "in world (RAS) coordinates."
@@ -497,19 +453,19 @@ class DisplayVocabulary(Vocabulary):
     """
 
     display_range: tx.Annotated[
-        Maybe[tx.Tuple[float, float]],
+        tx.Optional[tx.Tuple[float, float]],
         tx.Doc("Display window `(min, max)`."),
         Scoped(Scope.FILE),
     ] = None
 
     channels: tx.Annotated[
-        Maybe[tx.Tuple[Channel, ...]],
+        tx.Optional[tx.Tuple[Channel, ...]],
         tx.Doc("One description per channel."),
         Along(AxisType.channel),
     ] = None
 
     data_unit: tx.Annotated[
-        Maybe[tx.Union[Unit, str]],
+        tx.Optional[tx.Union[Unit, str]],
         tx.Doc(
             "Unit of the data values: a `Unit` whenever the units module "
             "parses the name (`'a.u.'`, `'mm/s'`, `'HU'`), and the name "
@@ -530,27 +486,29 @@ class StorageVocabulary(Vocabulary):
     The loaded array always holds the values themselves. A file that
     stores integers with an intensity scaling (NIfTI `scl_slope` and
     `scl_inter`) loads as floating-point values, which are
-    `stored * scale_slope + scale_intercept`. A writer stores the data as
-    `data_type`, with the scaling, when the values of the array are of
-    that kind and fit the scaling, so that a scaled integer file is
-    written back as it was read. Otherwise the writer stores the array as
-    it is, and reports a changed field it could not use.
+    `stored * scale_slope + scale_intercept`. When an image is written,
+    its values are stored as `dtype`, so that a label map read as
+    `uint8` is written as `uint8` again, even after a computation that
+    gave `int64` values. An override given to `save` or to `consolidate`
+    takes precedence over `dtype`, and the type of the data is used only
+    when neither is given.
     """
 
-    data_type: tx.Annotated[
-        Maybe[np.dtype],
+    dtype: tx.Annotated[
+        tx.Optional[np.dtype],
         tx.Doc(
             "The element type of the data as stored, in native byte "
             "order. It may differ from the type of the loaded array: a "
-            "scaled integer file loads as floating-point values. A "
-            "`dtype=` writer option wins over it."
+            "scaled integer file loads as floating-point values. An "
+            "override given to `save` or to `consolidate` takes "
+            "precedence over it."
         ),
         Scoped(Scope.FILE),
-        ConvertTo(dtype),
+        ConvertTo(to_dtype),
     ] = None
 
     scale_slope: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc(
             "The slope of the intensity scaling: a value is `stored * "
             "scale_slope + scale_intercept`. `None` means no scaling."
@@ -559,7 +517,7 @@ class StorageVocabulary(Vocabulary):
     ] = None
 
     scale_intercept: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc(
             "The intercept of the intensity scaling (see `scale_slope`). "
             "`None` means no intercept."
@@ -575,29 +533,29 @@ class MicroscopyVocabulary(Vocabulary):
     """
 
     objective_magnification: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc("Nominal magnification of the objective."),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     objective_numerical_aperture: tx.Annotated[
-        Maybe[float],
+        tx.Optional[float],
         tx.Doc("Numerical aperture of the objective."),
         Scoped(Scope.ACQUISITION),
     ] = None
 
     illumination_type: tx.Annotated[
-        Maybe[tx.Union[IlluminationType, str]],
+        tx.Optional[tx.Union[IlluminationType, str]],
         tx.Doc("Illumination type (a known one is an `IlluminationType`)."),
         Scoped(Scope.ACQUISITION),
-        ConvertTo(MaybeEnumConverter(IlluminationType)),
+        ConvertTo(EnumConverter(IlluminationType)),
     ] = None
 
     contrast_method: tx.Annotated[
-        Maybe[tx.Union[ContrastMethod, str]],
+        tx.Optional[tx.Union[ContrastMethod, str]],
         tx.Doc("Contrast method (a known one is a `ContrastMethod`)."),
         Scoped(Scope.ACQUISITION),
-        ConvertTo(MaybeEnumConverter(ContrastMethod)),
+        ConvertTo(EnumConverter(ContrastMethod)),
     ] = None
 
 
@@ -608,29 +566,29 @@ class TransformVocabulary(Vocabulary):
     """
 
     moving: tx.Annotated[
-        Maybe[str],
+        tx.Optional[str],
         tx.Doc("The moving image of a registration (file reference)."),
         Scoped(Scope.FILE),
     ] = None
 
     fixed: tx.Annotated[
-        Maybe[str],
+        tx.Optional[str],
         tx.Doc("The fixed image of a registration (file reference)."),
         Scoped(Scope.FILE),
     ] = None
 
     input_space: tx.Annotated[
-        Maybe[tx.Union[SpaceEnum, str]],
+        tx.Optional[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps from."),
         Scoped(Scope.FILE),
-        ConvertTo(MaybeEnumConverter(SpaceEnum)),
+        ConvertTo(EnumConverter(SpaceEnum)),
     ] = None
 
     output_space: tx.Annotated[
-        Maybe[tx.Union[SpaceEnum, str]],
+        tx.Optional[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps to."),
         Scoped(Scope.FILE),
-        ConvertTo(MaybeEnumConverter(SpaceEnum)),
+        ConvertTo(EnumConverter(SpaceEnum)),
     ] = None
 
 
@@ -662,7 +620,9 @@ iterate in, never `fields(Metadata)`.
 """
 
 FIELDS: tx.Tuple[str, ...] = ("extra",) + VOCABULARY
-"""The fields `supports=` speaks of, in the order reports list them."""
+"""The fields of the metadata: `extra`, then the vocabulary. They are the
+names that `consolidate` takes as overrides, in the order reports list
+them."""
 
 
 BIDS_KEYS: tx.Dict[str, str] = {
@@ -691,28 +651,3 @@ ALONG: tx.Dict[str, AxisType] = {
 }
 """Vocabulary field in the `AXIS` scope -> the type of the axis its
 entries run along (`Along`)."""
-
-
-# ----------------------------------------------------------------------
-#   PRIVATE
-# ----------------------------------------------------------------------
-
-
-def _select_entries(value: tx.Any, positions: tx.Any) -> tx.Any:
-    """
-    The entries of a field at `positions`. No positions (the axis was
-    dropped, or the selection is unknown), or a position beyond the
-    field, clears it.
-    """
-    if value is None or positions is None:
-        return None
-    positions = np.asarray(positions)
-    if positions.ndim != 1 or positions.dtype.kind not in "iu":
-        return None
-    try:
-        size = len(value)
-    except TypeError:
-        return None
-    if positions.size and not (0 <= positions.min() <= positions.max() < size):
-        return None
-    return tuple(value[int(i)] for i in positions)
