@@ -1131,3 +1131,53 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+270. A TrakEM2 affine (`io/transformations/trakem2/_xform.py`) is
+     written only into the project that it was read from, by replacing
+     the value of the `transform` attribute of its patch, as the
+     BigDataViewer registration of #441 replaces one element. An affine
+     without a record, such as one built from data or converted from
+     another format, is refused by `consolidate` with
+     `UnrepresentableTransformationError`, because a project cannot be
+     made from an affine alone: a patch needs an image file, a layer and
+     a project. The conformance harness has a new field,
+     `Exemplar.template`, which writes a project by hand, and checks 8 and
+     9 check the refusal for such a format. Status: open, for the
+     maintainer to decide whether a format may refuse to write an object
+     without a record.
+271. A TrakEM2 patch is placed by a 2D affine in the plane of its layer,
+     and the layer has a z and a thickness. The affine is read as a 2D
+     `Affine` of shape `(2, 3)`, and the z, the thickness and the
+     calibration stay in the record of the patch. A 3D placement would
+     need a convention for the third axis of a patch, which has none:
+     either a unit axis at the z of the layer, or an axis scaled by the
+     thickness of the layer, and in either case whether z is the top or
+     the middle of the section and whether it is calibrated by
+     `pixelWidth`, as TrakEM2 does, or by `pixelDepth`. The datamodel has
+     no embedding of a 2D transformation in 3D that would carry it.
+     Status: open.
+272. The coordinate transform of a TrakEM2 patch is not composed with
+     its affine. TrakEM2 shifts the image between the two by the corner of
+     the bounding box of a mesh of the image
+     (`Patch.getFullCoordinateTransform`), which depends on the mesh
+     resolution and on a truncation to integers, and brainhops does not
+     compute it. The `input` of an affine whose patch has a coordinate
+     transform is therefore `None`. Only an affine model and a similarity
+     model written inside the patch are decoded, by
+     `coordinate_transform()`, and lists, other models and transforms
+     kept in separate `.ct` files are refused when decoded and kept in
+     the file as they are. Status: accepted.
+273. The TrakEM2 reader parses XML with expat to know the byte spans of
+     its elements and attributes (`io/transformations/trakem2/_xml.py`),
+     as the BigDataViewer reader of #441 does in
+     `io/common/bdv/_xml.py`. The two helpers overlap, and are to be
+     merged into one module under `io/common/` once both are on `main`.
+     Status: open.
+274. The similarity model of TrakEM2 reads its four values in single
+     precision with Java's `Float.parseFloat`, and brainhops reads them
+     with `numpy.float32`, which rounds the decimal text through a double
+     and may differ from Java in the last bit for rare values. Status:
+     accepted.
+275. Check 6 of the conformance test is vacuous for TrakEM2, because the
+     metadata holds the whole file, as for LTA and M3Z (item 66), and
+     check 18 does not apply, because the format has no `raw`. Status:
+     accepted.
