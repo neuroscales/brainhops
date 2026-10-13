@@ -33,13 +33,15 @@ class _Element:
 
     __slots__ = ("attrs", "children", "end", "name", "parts", "start")
 
-    def __init__(self, name: str, attrs: tx.Dict[str, str], start: int):
+    def __init__(
+        self, name: str, attrs: tx.Dict[str, str], start: int
+    ) -> None:
         self.name = name
         self.attrs = attrs
         self.start = start
         self.end = start
         self.parts: tx.List[str] = []
-        self.children: tx.List["_Element"] = []
+        self.children: tx.List[_Element] = []
 
     @property
     def text(self) -> str:
@@ -152,7 +154,9 @@ def parse_xml(content: bytes) -> _Element:
     try:
         parser.Parse(bytes(content), True)
     except expat.ExpatError as error:
-        raise ParserContentError(f"This XML file is malformed: {error}.")
+        raise ParserContentError(
+            f"This XML file is malformed: {error}."
+        ) from error
     return roots[0]
 
 

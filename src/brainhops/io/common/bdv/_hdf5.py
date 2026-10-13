@@ -33,9 +33,10 @@ _LEGACY_TYPE = np.dtype("uint16")
 class _BdvProxy:
     """A lazy array of the voxels of one level of one view.
 
-    The proxy holds a [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array]
-    of the `cells` dataset, which opens the HDF5 file by its name each
-    time values are read, and the type of the voxels that the record
+    The proxy holds a
+    [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] of the
+    `cells` dataset, which opens the HDF5 file by its name each time
+    values are read, and the type of the voxels that the record
     gives. The values are presented in the order of the file, z, y, x,
     and in that type. The 16-bit signed values of an older file are
     reinterpreted as unsigned, bit for bit, as BigDataViewer reads them,
@@ -211,9 +212,7 @@ def level_count(
 # ----------------------------------------------------------------------
 
 
-def _pyramids(
-    h5file: h5py.File, raw: BdvRaw
-) -> tx.Tuple[BdvRaw.Pyramid, ...]:
+def _pyramids(h5file: h5py.File, raw: BdvRaw) -> tx.Tuple[BdvRaw.Pyramid, ...]:
     """Read the resolution levels of the setups that the file describes.
 
     The groups follow `bdv/img/hdf5/Util.java` (bigdataviewer-core,
@@ -221,7 +220,7 @@ def _pyramids(
     """
     pyramids = []
     for item in raw.setups:
-        group = "s%02d" % item.id
+        group = f"s{item.id:02d}"
         if group not in h5file:
             continue
         subdivisions = h5file.get(group + "/subdivisions")
@@ -236,7 +235,9 @@ def _pyramids(
                     tuple(int(v) for v in row)
                     for row in np.asarray(subdivisions).reshape(-1, 3)
                 ),
-                data_type=None if data_type is None else read_string(data_type),
+                data_type=None
+                if data_type is None
+                else read_string(data_type),
             )
         )
     return tuple(pyramids)
@@ -250,7 +251,7 @@ def _resolutions(h5file: h5py.File, setup: int) -> tx.Tuple[tx.Any, ...]:
     ParserContentError
         If the file has no resolutions for the setup.
     """
-    name = "s%02d/resolutions" % setup
+    name = f"s{setup:02d}/resolutions"
     if name not in h5file:
         raise ParserContentError(
             f"The HDF5 file of this BigDataViewer dataset has no {name} "
@@ -275,7 +276,7 @@ def _level(
         If the file has no voxels for that level, or if the declared type
         of the voxels is unknown.
     """
-    name = "t%05d/s%02d/%d/cells" % (timepoint, pyramid.setup, level)
+    name = f"t{timepoint:05d}/s{pyramid.setup:02d}/{level}/cells"
     if name not in h5file:
         raise ParserContentError(
             f"The HDF5 file of this BigDataViewer dataset has no {name} "

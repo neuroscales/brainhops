@@ -78,9 +78,7 @@ def _matrix_to_disk(data: ArrayProtocol) -> tx.Tuple[float, ...]:
     return tuple(float(v) for v in matrix.reshape(-1))
 
 
-def _decode(
-    registration: BdvRaw.Registration, index: int
-) -> _xforms.Affine:
+def _decode(registration: BdvRaw.Registration, index: int) -> _xforms.Affine:
     """Decode the transform of a registration at an index of the file.
 
     The transform applied first, which is the last one of the file, maps
@@ -427,7 +425,9 @@ class BdvViewRegistration(
         ParserContentError
             If the record has no registration for the view.
         """
-        setup, timepoint = raw.view(kwargs.pop("setup", None), kwargs.pop("timepoint", None))
+        setup, timepoint = raw.view(
+            kwargs.pop("setup", None), kwargs.pop("timepoint", None)
+        )
         raw.registration(timepoint, setup)
         return cls(
             metadata=BdvMetadata.from_raw(raw),

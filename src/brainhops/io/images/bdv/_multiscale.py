@@ -227,9 +227,7 @@ class BdvMultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
         )
 
     @classmethod
-    def from_fileobj(
-        cls, file: tx.BinaryIO, **kwargs
-    ) -> "BdvMultiScaleImage":
+    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "BdvMultiScaleImage":
         """Refuse to read a pyramid from a stream.
 
         The reason is given in [`BdvImage.from_fileobj`][].
