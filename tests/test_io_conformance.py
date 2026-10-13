@@ -117,6 +117,26 @@ from brainhops.io.transformations.freesurfer.m3z import (
     M3zMetadata,
     M3zMorph,
 )
+from brainhops.io.transformations.matrix import (
+    CsvMatrixAffine,
+    CsvMatrixMetadata,
+    Mat73MatrixAffine,
+    Mat73MatrixMetadata,
+    MatLegacyMatrixAffine,
+    MatLegacyMatrixMetadata,
+    NpyMatrixAffine,
+    NpyMatrixMetadata,
+    NpzMatrixAffine,
+    NpzMatrixMetadata,
+    TsvMatrixAffine,
+    TsvMatrixMetadata,
+    TxtMatrixAffine,
+    TxtMatrixMetadata,
+)
+from brainhops.io.transformations.niftyreg import (
+    NiftyRegAffine,
+    NiftyRegAffineMetadata,
+)
 from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
@@ -779,6 +799,16 @@ class Exemplar(tx.NamedTuple):
     so the checks give it values that the stored type changes.
     """
 
+    hint: tx.Optional[str] = None
+    """Hint that selects the metadata of the format among the metadata.
+
+    It is `None` for a format whose metadata the dispatcher of metadata
+    chooses from the file alone. A NiftyReg affine is a plain matrix with
+    nothing that marks it, so its metadata loses a `.txt` file to the
+    metadata of a plain matrix, as the transformation does, unless it is
+    selected by a hint.
+    """
+
 
 def _nifti_edit_record(record: tx.Any) -> tx.Any:
     record.header["descrip"] = b"edited"
@@ -1184,6 +1214,148 @@ _M3Z = Exemplar(
 )
 EXEMPLARS[M3zMorph] = _M3Z
 
+
+# A NiftyReg affine is a one-pass text format, as LTA is, and its record
+# keeps the text of the file, which is written back while it still holds
+# the matrix of the record. The record holds nothing beside the matrix
+# and its text, and a changed matrix replaces the text, so the check that
+# an edit of the record survives a save has nothing to edit and is
+# vacuous. The metadata reads the whole file, as for LTA, and it is
+# selected by its hint, since a `.txt` file of a bare matrix goes to the
+# metadata of a plain matrix.
+
+
+def _record_matrix(xform: tx.Any) -> tx.Any:
+    # The matrix of a one-pass format lives in its record, so it is a
+    # tuple of rows just after a read. A transformation without a record
+    # stores nothing until it is consolidated.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+EXEMPLARS[NiftyRegAffine] = Exemplar(
+    metadata=NiftyRegAffineMetadata,
+    suffix=".txt",
+    proxies=(tuple,),
+    to_model=matrix_to_model,
+    to_disk=matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=lambda record: record,
+    record_edited=lambda raw: True,
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=RASmm(), output=RASmm()),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_record_matrix,
+    hint="aladin",
+)
+
+
+# The plain matrix formats read files but do not write them, so the
+# checks write their files with NumPy, SciPy and h5py, as the tests of
+# the format do, and the checks of writing make sure that they refuse to
+# write. A plain matrix is parsed in one pass, and its record holds the
+# matrix, so the copy that the metadata check reads is the whole file,
+# and the record is compared as it is, since the metadata cannot write
+# bytes. The edit of the record renames the variable, which the record
+# keeps outside of its matrix. The text matrix is written to a `.dat`
+# file, because `io.save` writes a `.txt` file as a NiftyReg affine.
+
+
+def _homogeneous(data: tx.Any) -> np.ndarray:
+    return np.asarray(matrix_to_disk(data))
+
+
+def _write_text(delimiter: str) -> tx.Callable[[tx.Any, tx.Any], None]:
+    def write(path: tx.Any, data: tx.Any) -> None:
+        np.savetxt(path, _homogeneous(data), delimiter=delimiter)
+
+    return write
+
+
+def _write_npz(path: tx.Any, data: tx.Any) -> None:
+    np.savez(path, M=_homogeneous(data))
+
+
+def _write_mat(path: tx.Any, data: tx.Any) -> None:
+    import scipy.io
+
+    scipy.io.savemat(path, {"M": _homogeneous(data)})
+
+
+def _write_mat73(path: tx.Any, data: tx.Any) -> None:
+    # A MATLAB v7.3 file is an HDF5 file with a 512-byte user block that
+    # starts with the MATLAB header, and its arrays are stored transposed.
+    h5 = pytest.importorskip("h5py")
+    with h5.File(path, "w", userblock_size=512) as f:
+        dataset = f.create_dataset("M", data=_homogeneous(data).T)
+        dataset.attrs["MATLAB_class"] = np.bytes_(b"double")
+    with open(path, "r+b") as file:
+        file.write(b"MATLAB 7.3 MAT-file".ljust(116, b" "))
+
+
+def _copy(source: tx.Any, target: tx.Any) -> None:
+    with open(source, "rb") as file:
+        content = file.read()
+    with open(target, "wb") as file:
+        file.write(content)
+
+
+def _matrix_record(metadata: tx.Any) -> tx.Any:
+    record = metadata.raw
+    return record.matrix, record.variable, record.text
+
+
+_MATRIX = Exemplar(
+    metadata=TxtMatrixMetadata,
+    suffix=".dat",
+    proxies=(tuple,),
+    to_model=matrix_to_model,
+    to_disk=matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=lambda record: replace(record, variable="edited"),
+    record_edited=lambda raw: raw.variable == "edited",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=RASmm(), output=RASmm()),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_record_matrix,
+    cut=_copy,
+    header=_matrix_record,
+    source=_write_text(" "),
+)
+EXEMPLARS[TxtMatrixAffine] = _MATRIX
+EXEMPLARS[CsvMatrixAffine] = _MATRIX._replace(
+    metadata=CsvMatrixMetadata, suffix=".csv", source=_write_text(",")
+)
+EXEMPLARS[TsvMatrixAffine] = _MATRIX._replace(
+    metadata=TsvMatrixMetadata, suffix=".tsv", source=_write_text("\t")
+)
+EXEMPLARS[NpyMatrixAffine] = _MATRIX._replace(
+    metadata=NpyMatrixMetadata,
+    suffix=".npy",
+    binary=True,
+    source=lambda path, data: np.save(path, _homogeneous(data)),
+)
+EXEMPLARS[NpzMatrixAffine] = _MATRIX._replace(
+    metadata=NpzMatrixMetadata, suffix=".npz", binary=True, source=_write_npz
+)
+EXEMPLARS[MatLegacyMatrixAffine] = _MATRIX._replace(
+    metadata=MatLegacyMatrixMetadata,
+    suffix=".mat",
+    binary=True,
+    source=_write_mat,
+)
+EXEMPLARS[Mat73MatrixAffine] = _MATRIX._replace(
+    metadata=Mat73MatrixMetadata,
+    suffix=".mat",
+    binary=True,
+    source=_write_mat73,
+)
+
 # An MGH file keeps its footer of acquisition parameters and its tags
 # after the voxels, and both belong to the record. The edit of the record
 # changes one parameter of the footer and the tags. The metadata writes
@@ -1429,14 +1601,6 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.transformations.itk.h5.H5Transform",
     "brainhops.io.transformations.itk.mat.MatTransform",
     "brainhops.io.transformations.itk.tfm.TfmTransform",
-    "brainhops.io.transformations.matrix.CsvMatrixAffine",
-    "brainhops.io.transformations.matrix.Mat73MatrixAffine",
-    "brainhops.io.transformations.matrix.MatLegacyMatrixAffine",
-    "brainhops.io.transformations.matrix.NpyMatrixAffine",
-    "brainhops.io.transformations.matrix.NpzMatrixAffine",
-    "brainhops.io.transformations.matrix.TsvMatrixAffine",
-    "brainhops.io.transformations.matrix.TxtMatrixAffine",
-    "brainhops.io.transformations.niftyreg.NiftyRegAffine",
     "brainhops.io.transformations.zarr.OmeZarrField",
 )
 """The registered formats that do not follow the design yet."""
@@ -1511,6 +1675,11 @@ VARIANTS.append(
         LtaTransformationRASToRAS,
         _LTA._replace(build=LtaTransformationRASToRAS),
     )
+)
+
+# The whitespace-separated reader also reads AFNI `.1D` files.
+VARIANTS.append(
+    ("TxtMatrixAffine-1D", TxtMatrixAffine, _MATRIX._replace(suffix=".1D"))
 )
 
 # A morph whose name ends in `.m3d` is written without compression.
@@ -1851,7 +2020,10 @@ def test_06_metadata_never_reads_data(
     truncated = _path(tmp_path, exemplar, "header")
     _cut(exemplar, source, metadata, truncated)
     assert _header(exemplar, exemplar.metadata.load(truncated)) == header
-    dispatched = MetadataFormat.load(truncated)
+    if exemplar.hint is None:
+        dispatched = MetadataFormat.load(truncated)
+    else:
+        dispatched = MetadataFormat.load(truncated, hint=exemplar.hint)
     assert isinstance(dispatched, exemplar.metadata)
     assert _header(exemplar, dispatched) == header
 
@@ -2148,19 +2320,27 @@ def test_16_consolidate_is_idempotent(
 def _check_data_only(exemplar: Exemplar, loaded: tx.Any) -> None:
     """Check the consolidation of a format that cannot write.
 
-    No record can be encoded, so only the pending data is moved into
-    `raw`, and the metadata and the assigned transformations are kept.
+    A format whose data lives in `raw` cannot encode a record, so only the
+    pending data is moved into `raw`, and the metadata and the assigned
+    transformations are kept. A format whose data lives in its record, as
+    a plain matrix does, encodes the pending data into a new record,
+    which is held by new metadata.
     """
     data, chain = _pending(loaded)
     once = loaded.consolidate()
-    assert once._data is None
-    assert once._transformations is chain
-    assert once.metadata is loaded.metadata
+    data_once, chain_once = _pending(once)
+    assert data_once is None
+    assert chain_once is chain
+    if exemplar.stored is None:
+        assert once.metadata is loaded.metadata
+    else:
+        assert once.metadata is not loaded.metadata
     assert np.array_equal(
         np.asarray(_stored(exemplar, once)), exemplar.to_disk(data)
     )
     twice = once.consolidate()
     assert _raw(twice) is _raw(once)
+    assert twice.metadata is once.metadata
     assert loaded._data is data
 
 
