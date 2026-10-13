@@ -149,9 +149,7 @@ def _apply(matrix, points):  # noqa: ANN001, ANN202
 
 
 def _coefficients(degree, ksp, seed=0):  # noqa: ANN001, ANN202
-    shape = tuple(
-        _ncoef(size, k, degree) for size, k in zip(REF_SHAPE, ksp)
-    )
+    shape = tuple(_ncoef(size, k, degree) for size, k in zip(REF_SHAPE, ksp))
     rng = np.random.default_rng(seed)
     return rng.normal(size=shape + (3,)).astype(np.float32)
 
@@ -166,9 +164,7 @@ def _coefficient_file(coef, degree, ksp, premat=None):  # noqa: ANN001, ANN202
     image = nb.Nifti1Image(coef, None)
     header = image.header
     header["intent_code"] = CUBIC if degree == 3 else QUADRATIC
-    header["intent_p1"], header["intent_p2"], header["intent_p3"] = (
-        REF_PIXDIM
-    )
+    header["intent_p1"], header["intent_p2"], header["intent_p3"] = REF_PIXDIM
     header.set_zooms(tuple(float(k) for k in ksp) + (1.0,))
     qform = np.diag([float(k) for k in ksp] + [1.0])
     qform[:3, 3] = REF_SHAPE
@@ -205,7 +201,10 @@ def _warp(image, reference):  # noqa: ANN001, ANN202
 @pytest.mark.parametrize("neurological", [False, True])
 @pytest.mark.parametrize("initial", ["identity", "oblique"])
 def test_the_field_is_evaluated_as_fsl_evaluates_it(
-    degree, ksp, neurological, initial  # noqa: ANN001
+    degree: int,
+    ksp: tuple,
+    neurological: bool,
+    initial: str,
 ) -> None:
     """The chain gives the positions that the formulas of FSL give."""
     premat = np.eye(4) if initial == "identity" else PREMAT
@@ -297,7 +296,9 @@ def test_a_header_without_spline_parameters_has_no_chain(name) -> None:  # noqa:
 # ----------------------------------------------------------------------
 
 
-def test_an_untouched_coefficient_file_is_saved_byte_for_byte(tmp_path) -> None:  # noqa: ANN001
+def test_an_untouched_coefficient_file_is_saved_byte_for_byte(
+    tmp_path,  # noqa: ANN001
+) -> None:
     ksp = (3, 4, 2)
     path = tmp_path / "coef.nii.gz"
     nb.save(_coefficient_file(_coefficients(3, ksp), 3, ksp, PREMAT), path)
@@ -370,4 +371,6 @@ def test_a_hand_built_cubic_file_matches_fslpy(
     oracle = np.asarray(nonlinear.convertDeformationType(world, "absolute"))
 
     warp = FnirtWarpField.load(path, reference=reference, moving=moving)
-    assert np.allclose(_world(warp, reference), oracle.reshape(-1, 3), atol=1e-4)
+    assert np.allclose(
+        _world(warp, reference), oracle.reshape(-1, 3), atol=1e-4
+    )

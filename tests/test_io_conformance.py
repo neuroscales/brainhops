@@ -1579,9 +1579,7 @@ if nb is not None:
         (
             "FnirtWarpField-coefficients",
             FnirtWarpField,
-            _FNIRT._replace(
-                suffix=".nii.gz", fixture=_fnirt_coefficient_file
-            ),
+            _FNIRT._replace(suffix=".nii.gz", fixture=_fnirt_coefficient_file),
         )
     )
 

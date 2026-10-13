@@ -38,7 +38,8 @@ from .._formats import FslTransformationFormat
 from .._keywords import pop_aliased
 from .._repr import stored_repr
 
-# Intent codes from `nifti1.h`.
+# Intent codes of FSL, which its own copy of `nifti1.h` defines, as
+# listed in `fsl/data/constants.py` of fslpy 3.29.1.
 FSL_FNIRT_DISPLACEMENT_FIELD = 2006
 FSL_CUBIC_SPLINE_COEFFICIENTS = 2007
 FSL_DCT_COEFFICIENTS = 2008
@@ -81,10 +82,14 @@ class FnirtWarpField(
 ):
     """Non-linear transformation stored in an FSL FNIRT NIfTI file.
 
-    A deformation field stores, for every reference voxel, the matching moving
-    location in scaled millimetres. A coefficient field stores B-spline
-    coefficients on a coarse knot grid over the reference. Both are B-spline
-    fields on a regular grid, so one reader handles them.
+    FNIRT saves the warp that it computes in two kinds of files, and the
+    intent code of the file tells them apart. A deformation field, which
+    FNIRT writes with `--fout`, stores for every reference voxel the
+    matching moving location in scaled millimetres, or the displacement to
+    it. A coefficient field, which FNIRT writes with `--cout`, stores the
+    coefficients of a B-spline on a coarse grid of knots over the
+    reference. Both are B-spline fields on a regular grid, so one reader
+    handles them.
 
     | Intent | Kind | Degree | Grid |
     | ------ | ---- | ------ | ---- |
@@ -95,15 +100,38 @@ class FnirtWarpField(
     The transformation is an
     [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]
     of three transformations from reference RAS to moving RAS: an affine to
-    warp-grid voxels, the field, and an affine to moving RAS. The field stays
-    on its own grid and the spline is evaluated only when the sequence is
-    computed.
+    warp-grid coordinates, the field, and an affine to moving RAS. The field
+    stays on its own grid and the spline is evaluated only when the sequence
+    is computed. A coefficient field becomes a
+    [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField]
+    that stores coefficients, because FSL evaluates the same centred
+    B-splines, and the two affines place its knots where FSL places them.
+
+    A coefficient file uses its header in a way of its own. The pixdims
+    hold the knot spacing in voxels of the reference, the intent parameters
+    hold the voxel sizes of the reference, the offsets of the qform hold the
+    shape of the reference, and the sform holds the initial affine from
+    the source to the reference in scaled millimetres. The values are
+    relative displacements in scaled millimetres, which FSL adds to the
+    reference position moved by the inverse of the initial affine.
+    Coefficients beyond the grid count as zero. These conventions are those
+    of `src/warpfns/fnirt_file_writer.cpp`, `src/warpfns/fnirt_file_reader.cpp`
+    and `src/basisfield/fsl_splines.h` of FSL 5.0.9, as mirrored at
+    https://github.com/neurodebian/fsl (commit 513f6a0), and they agree
+    with `fsl/transform/fnirt.py` and `fsl/transform/nonlinear.py` of
+    fslpy 3.29.1 (https://github.com/pauldmccarthy/fslpy, commit 0eaff98).
+    FSL places the knots in the radiological order of the reference, so
+    for a reference whose voxel-to-world matrix has a positive determinant
+    this reader follows FSL, while fslpy places them from the stored
+    voxels.
 
     A deformation field carries the reference geometry itself, so only the
     moving image is required. A coefficient field carries neither image's
     geometry, so both the reference and the moving image are required. A
-    discrete-cosine-transform coefficient field (intent 2008) is
-    recognized but not supported.
+    reference of another resolution than the one used at registration is
+    placed by its scaled-mm positions, as fslpy does, while FSL refuses
+    it. A discrete-cosine-transform coefficient field (intent 2008) is
+    recognized but not supported, and FSL cannot write one either.
 
     !!! note "Images remain external"
         A FNIRT file does not hold everything its map depends on: the moving
@@ -111,9 +139,11 @@ class FnirtWarpField(
         separately, and so is whether a deformation field holds absolute or
         relative positions, which is otherwise guessed from the values. Save
         writes this FNIRT file, but those inputs are not embedded; retain them
-        to read the same map back. A coefficient field also needs a knot grid,
-        a spline anchoring and an initial affine that a general field does not
-        have.
+        to read the same map back. A coefficient file keeps its knot spacing,
+        the voxel sizes and the shape of its reference and its initial affine
+        in its header, so a field read from such a file is written back as
+        a coefficient file. A field built from an array alone is written as
+        a deformation field.
     """
 
     HINTS = ("fnirt",)
@@ -345,7 +375,7 @@ class FnirtWarpField(
         return "constant" if self._is_coeff() else "nearest"
 
     def _stored_knot_spacing(self) -> np.ndarray:
-        """Knot spacing in voxels of the reference, as stored in the pixdims."""
+        """Knot spacing in reference voxels, as stored in the pixdims."""
         zooms = _header(self).get_zooms()[:3]
         return np.abs(np.asarray(zooms, dtype=np.float64))
 
