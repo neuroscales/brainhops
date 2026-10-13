@@ -392,8 +392,9 @@ def test_an_assigned_system_is_encoded(tmp_path, side: str) -> None:  # noqa: AN
 
 def test_assigned_metadata_is_read(tmp_path) -> None:  # noqa: ANN001
     xform = _loaded(tmp_path)
+    # The output scale of z is 40 nm, so its translation is 7 * 40 nm.
     np.testing.assert_array_equal(
-        xform.matrix, [[1, 0, 0, 5], [0, 1, 0, 6], [0, 0, 1, 7]]
+        xform.matrix, [[1, 0, 0, 5], [0, 1, 0, 6], [0, 0, 1, 280]]
     )
     xform.metadata = NeuroglancerTransformMetadata.from_text(GALLERY)
     np.testing.assert_array_equal(xform.matrix, np.eye(4)[:-1])
