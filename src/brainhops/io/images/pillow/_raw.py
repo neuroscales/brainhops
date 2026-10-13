@@ -86,11 +86,11 @@ class PillowRaw(Magic, BinaryFileReader, frozen=True):
         to.
 
         The frame decodes to `(rows, columns)`, or to `(rows, columns,
-        samples)` when a pixel has several samples, as
-        [`read_pillow`][brainhops.io.images.pillow._utils.read_pillow]
-        decodes it. The shape and the type follow from the mode, the size
-        and, for a palette image, the transparency that `info` records,
-        so nothing is decoded.
+        samples)` when a pixel has several samples, as the lazy array of
+        [`PillowImage`][brainhops.io.images.pillow.PillowImage] decodes
+        it. The shape and the type follow from the mode, the size and,
+        for a palette image, the transparency that `info` records, so
+        nothing is decoded.
 
         Parameters
         ----------
