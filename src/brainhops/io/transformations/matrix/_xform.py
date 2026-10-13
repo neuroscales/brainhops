@@ -220,33 +220,6 @@ class MatrixAffine(
         )
 
     @classmethod
-    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Build a transformation from a record, a file or a data model.
-
-        A [`MatrixAffineRaw`][] is read with `from_raw`, and any other
-        value as the bases read it.
-
-        Parameters
-        ----------
-        other : object
-            A record, a file, its content, a transformation, a mapping, or
-            an instance of a similar class.
-        *args : Any
-            Constructor arguments. A record and a file take keyword
-            arguments only.
-        **kwargs : Any
-            Options of the reader, and field values otherwise.
-
-        Returns
-        -------
-        Self
-            The new transformation.
-        """
-        if isinstance(other, MatrixAffineRaw) and not args:
-            return cls.from_raw(other, **kwargs)
-        return super().from_any(other, *args, **kwargs)
-
-    @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """Copy a transformation, sharing the record of the same format.
 
@@ -376,6 +349,33 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
         metadata = TxtMatrixMetadata.from_lines(lines, **options)
         return _with_record(cls, metadata, kwargs)
 
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        A [`MatrixAffineRaw`][] is read with `from_raw`, and any other
+        value as the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, MatrixAffineRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
+
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
@@ -497,6 +497,33 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
         metadata = CsvMatrixMetadata.from_lines(lines, **options)
         return _with_record(cls, metadata, kwargs)
 
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        A [`MatrixAffineRaw`][] is read with `from_raw`, and any other
+        value as the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, MatrixAffineRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
+
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
@@ -617,6 +644,33 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
         options = _reader_options(kwargs)
         metadata = TsvMatrixMetadata.from_lines(lines, **options)
         return _with_record(cls, metadata, kwargs)
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        A [`MatrixAffineRaw`][] is read with `from_raw`, and any other
+        value as the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, MatrixAffineRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -742,6 +796,33 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
         metadata = NpyMatrixMetadata.from_bytes(content, **options)
         return _with_record(cls, metadata, kwargs)
 
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        A [`MatrixAffineRaw`][] is read with `from_raw`, and any other
+        value as the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, MatrixAffineRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
+
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
@@ -865,6 +946,33 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
         options = _reader_options(kwargs)
         metadata = NpzMatrixMetadata.from_bytes(content, **options)
         return _with_record(cls, metadata, kwargs)
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        A [`MatrixAffineRaw`][] is read with `from_raw`, and any other
+        value as the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, MatrixAffineRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -1002,6 +1110,33 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
         metadata = MatLegacyMatrixMetadata.from_bytes(content, **options)
         return _with_record(cls, metadata, kwargs)
 
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        A [`MatrixAffineRaw`][] is read with `from_raw`, and any other
+        value as the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, MatrixAffineRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
+
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
@@ -1125,6 +1260,33 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
         options = _reader_options(kwargs)
         metadata = Mat73MatrixMetadata.from_bytes(content, **options)
         return _with_record(cls, metadata, kwargs)
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        A [`MatrixAffineRaw`][] is read with `from_raw`, and any other
+        value as the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, MatrixAffineRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
