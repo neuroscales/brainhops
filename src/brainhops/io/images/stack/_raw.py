@@ -65,7 +65,7 @@ class StackMember(Magic, frozen=True):
     PNG. The member records the name of the file, the number that the name
     carries, and the header that the reader of that format parses. TIFF
     and Pillow images have no record class yet, so the header is the
-    structure that their readers already parse: a `TiffMetadata` from
+    structure that their readers already parse: a `SeriesMetadata` from
     `brainhops.io.images.tiff._utils` for a TIFF file, and a
     `PillowHeader` from `brainhops.io.images.pillow._utils` for any other
     file. When TIFF and Pillow images have records, a member is to hold
@@ -100,7 +100,7 @@ class StackMember(Magic, frozen=True):
     header: tx.Any = None
     """The header that the reader of the format parses, or `None`.
 
-    It is a `TiffMetadata` for a TIFF file, which holds its tags, its
+    It is a `SeriesMetadata` for a TIFF file, which holds its tags, its
     OME-XML and its ImageJ metadata, and a `PillowHeader` for any other
     file, which holds its mode and the `info` dictionary of Pillow. It is
     `None` in a record that was encoded for files that are not written

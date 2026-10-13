@@ -1421,7 +1421,7 @@ its status.
      header of each one, with the stacking axis and the geometry of the
      stack. TIFF and Pillow images have no record on the main branch
      yet, so the header of a member is the structure that their readers
-     already parse: the `TiffMetadata` of the TIFF backend, and a
+     already parse: the `SeriesMetadata` of the TIFF backend, and a
      `PillowHeader` that the Pillow backend reads without decoding the
      pixels. Status: open. The members are to hold `TiffRaw` and
      `PillowRaw` once the TIFF (#459) and Pillow (#458) records are on
