@@ -375,8 +375,9 @@ def imagej_scales(
     ----------
     metadata : Mapping[str, Any]
         The `imagej_metadata` of tifffile.
-    page : TiffPage
-        The first page, whose resolution tags hold the pixel size.
+    page : TiffPage or None
+        The first page, whose resolution tags hold the pixel size. Without
+        a page, only the slice step and the frame interval are returned.
     names : Collection[str]
         The names of the axes of the series. Only these axes are given a size.
 
@@ -398,8 +399,10 @@ def imagej_scales(
         "z": length_unit(metadata.get("zunit")) or unit,
     }
     for name, code in (("x", 282), ("y", 283)):
+        if page is None or name not in names:
+            continue
         resolution = _positive(_rational(page.tags.valueof(code)))
-        if name in names and units[name] and resolution is not None:
+        if units[name] and resolution is not None:
             scales[name] = (1.0 / resolution, units[name])
     if "z" in names and units["z"]:
         try:

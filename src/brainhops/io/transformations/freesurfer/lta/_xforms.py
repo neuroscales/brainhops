@@ -28,6 +28,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
+from brainhops.io.common.freesurfer import FreesurferTkrSystem
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
@@ -46,10 +47,16 @@ from ._matrix_utils import (
     _get_phys2phys,
     _get_ras2ras,
     _get_vox2vox,
+    _volume_info,
 )
 from ._metadata import LtaMetadata
 from ._raw import LtaRaw
-from ._systems import LtaCoordinateSystem, LtaPhysicalSystem, LtaVoxelSystem
+from ._systems import (
+    LtaCoordinateSystem,
+    LtaPhysicalSystem,
+    LtaVoxelSystem,
+    _name,
+)
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -78,8 +85,10 @@ def _typed_system(
     """Return the system of a volume as the type of a record defines it.
 
     The system is `RASmm` for the RAS type and `RSAmm` for the RSA type.
-    For the voxel and physical types, it is built from the geometry of the
-    volume, `info`. Without a record, the system is unknown and `None` is
+    For the `REGISTER_DAT` type, it is the tkregister space of the volume,
+    named after the volume, whose geometry stays in the record. For the
+    voxel and physical types, it is built from the geometry of the volume,
+    `info`. Without a record, the system is unknown and `None` is
     returned.
     """
     if record is None:
@@ -88,6 +97,8 @@ def _typed_system(
         return _systems.RASmm()
     if record.type == LtaType.LINEAR_RSA_TO_RSA:
         return _systems.RSAmm()
+    if record.type == LtaType.REGISTER_DAT:
+        return FreesurferTkrSystem(**({} if info is None else _name(info)))
     if record.type == LtaType.LINEAR_VOX_TO_VOX:
         return _system(LtaVoxelSystem, info)
     if record.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
@@ -108,6 +119,21 @@ def _typed_system(
 # and the writer would trust them. The helpers that read the record and
 # decode and encode its matrix are shared with the other formats whose
 # matrix lives in their record (`io/transformations/base/_records.py`).
+
+
+def _record_to_model(record: LtaRaw) -> np.ndarray:
+    """Return the data of a transformation from a record, in its systems.
+
+    A record of the `REGISTER_DAT` type stores the matrix from the
+    tkregister space of `dst` to that of `src`, as FreeSurfer defines it
+    (`LTAchangeType` in `utils/transform.cpp`, commit 4f8728e), so the
+    data is its inverse, which maps `src` to `dst` as the other types do.
+    Any other record stores the matrix from `src` to `dst`.
+    """
+    matrix = np.asarray(record.affine.matrix, dtype=np.float64)
+    if record.type == LtaType.REGISTER_DAT and matrix.shape == (4, 4):
+        matrix = np.linalg.inv(matrix)
+    return matrix_to_model(matrix)
 
 
 # ----------------------------------------------------------------------
@@ -159,14 +185,32 @@ class LtaTransformation(
         affine, is consolidated, and written with the LTA type that
         matches its systems:
 
-        | `input` and `output`  | LTA type                    |
-        | --------------------- | --------------------------- |
-        | both `RASmm`          | `LINEAR_RAS_TO_RAS`         |
-        | both `RSAmm`          | `LINEAR_RSA_TO_RSA`         |
-        | both `LtaVoxelSystem` | `LINEAR_VOX_TO_VOX`         |
-        | both `LtaPhysicalSystem` | `LINEAR_PHYSVOX_TO_PHYSVOX` |
+        | `input` and `output`       | LTA type                    |
+        | -------------------------- | --------------------------- |
+        | both `RASmm`               | `LINEAR_RAS_TO_RAS`         |
+        | both `RSAmm`               | `LINEAR_RSA_TO_RSA`         |
+        | both `LtaVoxelSystem`      | `LINEAR_VOX_TO_VOX`         |
+        | both `LtaPhysicalSystem`   | `LINEAR_PHYSVOX_TO_PHYSVOX` |
+        | both `FreesurferTkrSystem` | `REGISTER_DAT`              |
 
         Writing any other pair raises [`UnrepresentableTransformationError`][].
+        In particular, a tkregister space, a
+        [`FreesurferTkrSystem`][brainhops.io.common.freesurfer.FreesurferTkrSystem],
+        is never written as scanner RAS.
+
+    !!! note "The `REGISTER_DAT` type"
+        An LTA file of type 14, `REGISTER_DAT`, holds the matrix of a
+        `register.dat` file, which maps the tkregister RAS space of the
+        destination volume to that of the source volume, as FreeSurfer
+        defines it (`LTAchangeType` and `ltaReadRegisterDat` in
+        `utils/transform.cpp`, commit 4f8728e). The transformation reads
+        the inverse of that matrix, so that it maps the source to the
+        destination as every other type does, and its systems are the
+        tkregister spaces of the two volumes. The views read the file in
+        their own systems, as FreeSurfer converts it, which needs both
+        volume geometries. A matrix that is assigned between two
+        tkregister spaces is written with this type, and its inverse is
+        stored.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".lta",)
@@ -218,7 +262,7 @@ class LtaTransformation(
         record = record_of(self)
         if record is None:
             return None
-        return read_only(matrix_to_model(record.affine.matrix))
+        return read_only(_record_to_model(record))
 
     # --- sniff --------------------------------------------------------
 
@@ -370,9 +414,12 @@ class LtaTransformation(
         and `output` were not set, is left as it is, since its record also
         holds its matrix. Otherwise, a new record is built. Its type
         follows from the systems, as described in [`LtaTransformation`][],
-        and its matrix is `matrix`. Its volume geometries come from the
-        systems for the voxel and physical types, and from the current
-        record for the RAS and RSA types. Its other fields are copied from
+        and its matrix is `matrix`, or its inverse for the `REGISTER_DAT`
+        type. Its volume geometries come from the systems for the voxel
+        and physical types, and from the current record for the RAS and
+        RSA types. For the `REGISTER_DAT` type, they come from the
+        geometry of each tkregister system when it has one, and from the
+        current record otherwise. Its other fields are copied from
         the current record. A transformation without a record is encoded in
         the same way. The new record is held by new metadata, and the
         matrix and the systems are then decoded from it.
@@ -649,6 +696,12 @@ def _build_raw(xform: LtaTransformation) -> LtaRaw:
             else LtaType.LINEAR_RSA_TO_RSA
         )
         src, dst = _as_block(old.src, Src), _as_block(old.dst, Dst)
+    elif both(FreesurferTkrSystem):
+        # FreeSurfer stores the matrix of a register.dat file, from the
+        # tkregister space of `dst` to that of `src`.
+        lta_type = LtaType.REGISTER_DAT
+        src = _tkr_block(src_system, old.src, Src)
+        dst = _tkr_block(dst_system, old.dst, Dst)
     elif both(LtaVoxelSystem) or both(LtaPhysicalSystem):
         lta_type = (
             LtaType.LINEAR_VOX_TO_VOX
@@ -667,21 +720,48 @@ def _build_raw(xform: LtaTransformation) -> LtaRaw:
         raise UnrepresentableTransformationError(
             f"An LTA file cannot encode an affine from {name(src_system)} "
             f"to {name(dst_system)}: it encodes RASmm to RASmm, RSAmm to "
-            f"RSAmm, LtaVoxelSystem to LtaVoxelSystem, and "
-            f"LtaPhysicalSystem to LtaPhysicalSystem. Set the input and "
-            f"output of the affine to say which it is."
+            f"RSAmm, LtaVoxelSystem to LtaVoxelSystem, LtaPhysicalSystem "
+            f"to LtaPhysicalSystem, and FreesurferTkrSystem to "
+            f"FreesurferTkrSystem. Set the input and output of the affine "
+            f"to say which it is."
         )
 
+    matrix = matrix_to_disk(xform.matrix)
+    if lta_type == LtaType.REGISTER_DAT and np.shape(matrix) == (4, 4):
+        try:
+            inverse = np.linalg.inv(np.asarray(matrix, dtype=np.float64))
+        except np.linalg.LinAlgError:
+            raise UnrepresentableTransformationError(
+                "An LTA file of type REGISTER_DAT stores the inverse of an "
+                "affine between tkregister spaces, and this affine is not "
+                "invertible."
+            ) from None
+        matrix = tuple(tuple(float(v) for v in row) for row in inverse)
     return LtaRaw(
         type=lta_type,
         nxforms=old.nxforms,
         mean=old.mean,
         sigma=old.sigma,
-        affine=LtaRaw.Affine(matrix=matrix_to_disk(xform.matrix)),
+        affine=LtaRaw.Affine(matrix=matrix),
         label=old.label,
         src=src,
         dst=dst,
     )
+
+
+def _tkr_block(
+    system: FreesurferTkrSystem,
+    old: tx.Optional[LtaRaw.VolumeInfo],
+    cls: tx.Type[LtaRaw.VolumeInfo],
+) -> LtaRaw.VolumeInfo:
+    """Return the geometry block of the volume of a tkregister system.
+
+    The block is encoded from the geometry of the system when it has one,
+    and is otherwise that of the current record, or an invalid block.
+    """
+    if system.geometry is not None:
+        return _volume_info(system.geometry, cls)
+    return _as_block(old, cls)
 
 
 def _lta_written(xform: LtaTransformation) -> LtaRaw:
