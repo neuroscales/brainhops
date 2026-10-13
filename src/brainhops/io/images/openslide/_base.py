@@ -331,8 +331,10 @@ class OpenSlideImage(
     ) -> float:
         """Return the confidence that a local file is a level of a slide.
 
-        The base class reads the slides of every vendor, as
-        [`sniff_level`][] scores them.
+        The base class reads the slides of every vendor. A slide scores
+        `CERTAIN` when a level is requested or when it has a single level,
+        and 0.8 times that otherwise, so that the multiscale class reads a
+        pyramid.
 
         Parameters
         ----------
@@ -611,8 +613,9 @@ class OpenSlideMultiScaleImage(
     ) -> float:
         """Return the confidence that a local file is a pyramidal slide.
 
-        The base class reads the slides of every vendor, as
-        [`sniff_pyramid`][] scores them.
+        The base class reads the slides of every vendor. A slide of several
+        levels scores `CERTAIN` when no level is requested, and any other
+        file scores `NO`.
 
         Parameters
         ----------
