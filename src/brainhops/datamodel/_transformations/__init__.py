@@ -85,6 +85,7 @@ from .concrete import (
     is_scaling,
     is_translation,
 )
+from .derived import UNARY_OPERATORS, Sqrt
 from .inverse import (
     Inverse,
     InverseAffine,
@@ -104,7 +105,6 @@ from .inverse import (
 from .meta import Bijection, Projection, SubspaceTransformation
 from .modes import ModeLike
 from .multiscale import Multiscale, MultiscaleField
-from .operators import UNARY_OPERATORS, Sqrt
 from .sequence import ImmutableSequence, MutableSequence, Sequence
 from .tangents import (
     AffineExponential,
