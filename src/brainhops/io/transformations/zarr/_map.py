@@ -372,6 +372,11 @@ def _(
     mapping = [int(index) for index in transform.mapAxis]
     if sorted(mapping) == list(range(len(mapping))):
         _check_same_dimension(transform, source, target)
+        if len(mapping) != len(source):
+            raise OmeMappingError(
+                f"This OME mapAxis {mapping} does not fit coordinate "
+                f"systems of {len(source)} axes."
+            )
         position = _positions(source)
         try:
             permutation = [position[mapping[stored]] for stored in target]
@@ -381,17 +386,13 @@ def _(
                 f"systems of {len(source)} axes."
             ) from None
         return Permutation(permutation=permutation)
-    if mapping == sorted(set(mapping)) and len(mapping) == len(target):
-        # The 0.6.dev1 draft let mapAxis list an increasing subset of the
-        # input axes, which drops the others. Version 0.6 spells this
-        # `projectAxis`, but the meaning is unambiguous, so it is read.
-        dropped = [i for i in range(len(source)) if i not in mapping]
-        return in_stored_order(
-            Projection(dropped=dropped, created=[]), source, target
-        )
+    # A subset of the input axes was never a valid mapAxis, so it is
+    # refused, and `projectAxis` is the spelling of a drop
+    # (docs/design/compute-api-and-open-systems.md, section A.8).
     raise OmeMappingError(
         f"This OME mapAxis {mapping} is not a permutation of the input "
-        "axes, which OME-NGFF 0.6 requires."
+        "axes, which OME-NGFF 0.6 requires. A transformation that drops "
+        "axes is spelled projectAxis."
     )
 
 
@@ -406,6 +407,8 @@ def _(
     # stored order and surrounded by the permutations to and from it.
     dropped = [int(index) for index in transform.droppedInputs or []]
     created = [int(index) for index in transform.createdOutputs or []]
+    _check_indices(transform, "droppedInputs", dropped, len(source))
+    _check_indices(transform, "createdOutputs", created, len(target))
     if len(target) != len(source) - len(dropped) + len(created):
         raise OmeMappingError(
             f"This OME projectAxis drops {len(dropped)} and creates "
@@ -793,6 +796,22 @@ def _check_entries(
         raise OmeMappingError(
             f"This OME {transform.type} has {values.shape[0]} entries, "
             f"which does not fit a coordinate system of {len(source)} axes."
+        )
+
+
+def _check_indices(
+    transform: tx.Any, name: str, indices: tx.Sequence[int], count: int
+) -> None:
+    # OME-NGFF 0.6 requires valid, unique and zero-based axis indices.
+    if len(set(indices)) != len(indices):
+        raise OmeMappingError(
+            f"The {name} {list(indices)} of this OME {transform.type} "
+            "repeat an axis."
+        )
+    if any(not 0 <= index < count for index in indices):
+        raise OmeMappingError(
+            f"The {name} {list(indices)} of this OME {transform.type} name "
+            f"an axis that a coordinate system of {count} axes lacks."
         )
 
 

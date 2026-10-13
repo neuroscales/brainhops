@@ -12,7 +12,7 @@ import abczarr
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import Forget
+from bagof.magic import Forget, KwOnly
 
 from brainhops._core.affines import inv as _affine_inv
 from brainhops.backends import get_array_backend
@@ -123,6 +123,16 @@ class OmeZarrField(ZarrReaderWriter, TransformationFormat, MultiscaleField):
             """
         ),
     ] = None
+
+    # The degree is an option of the reading, so it is keyword-only and does
+    # not move the positional fields of the reader.
+    degree: KwOnly[tx.Optional[int]] = None
+    """The spline degree with which the vectors of every level are read.
+
+    A transformation that names the field may ask for an interpolation,
+    such as `nearest`, which is degree 0. `None` keeps the default, which
+    is linear.
+    """
 
     # scales is built on demand from the arrays and the placement, not stored.
     # Forgetting the field inherited from MultiscaleField keeps it out of
@@ -337,13 +347,14 @@ class OmeZarrField(ZarrReaderWriter, TransformationFormat, MultiscaleField):
         ndim = int(raw.shape[-1])
         voxel2world = self._level_voxel2world(index, ndim)
         world2voxel = voxel2world.inverse()
+        options = {} if self.degree is None else {"degree": self.degree}
         if self._kind == "displacement":
             field = DisplacementField(
-                field=_to_voxel_displacement(raw, voxel2world)
+                field=_to_voxel_displacement(raw, voxel2world), **options
             )
             elements = [world2voxel, field, voxel2world]
         else:
-            elements = [world2voxel, CoordinatesField(field=raw)]
+            elements = [world2voxel, CoordinatesField(field=raw, **options)]
         return Sequence(
             transformations=elements,
             input=self.input,

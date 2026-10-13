@@ -27,7 +27,9 @@ from brainhops.datamodel.transformations import (
     CoordinatesField,
     DisplacementField,
     Identity,
+    Projection,
     Sequence,
+    SubspaceTransformation,
     Transformation,
 )
 from brainhops.io.base.parsers import ParserContentError, WriterError
@@ -195,11 +197,10 @@ def _make_read_field(
             raise OmeImageError(
                 f"The {kind} field at {path!r} could not be opened. {error}"
             ) from error
+        degree = _interpolation_degree(transform, kind, path)
         if isinstance(field_node, ZarrGroup):
-            return _field_group(field_node, kind, path, source, target)
-        return _field_array(
-            transform, field_node, store_axes, kind, path, target
-        )
+            return _field_group(field_node, kind, path, source, target, degree)
+        return _field_array(field_node, store_axes, kind, path, target, degree)
 
     return read_field
 
@@ -210,6 +211,7 @@ def _field_group(
     path: str,
     source: tx.Sequence[int],
     target: tx.Sequence[int],
+    degree: int,
 ) -> Transformation:
     # In OME-NGFF 0.6, `path` names a multiscale group whose own
     # transformation places the vectors in the input system of the
@@ -220,7 +222,7 @@ def _field_group(
     from brainhops.io.transformations.zarr import OmeZarrField
 
     try:
-        field = OmeZarrField.from_node(field_node)
+        field = OmeZarrField.from_node(field_node, degree=degree)
     except Exception as error:
         raise OmeImageError(
             f"The {kind} field at {path!r} could not be read as an "
@@ -238,16 +240,24 @@ def _field_group(
             f"The {kind} field at {path!r} has {count} spatial axes, but "
             f"its input coordinate system has {len(source)} axes."
         )
+    # The vector axis holds one component per output axis (ngff-spec 0.6,
+    # "coordinates and displacements", "Vector dimension length").
+    components = field.raw_levels[0].shape[types.index(kind[:-1])]
+    if components != len(target):
+        raise OmeImageError(
+            f"The {kind} field at {path!r} has {components} components, "
+            f"but its output coordinate system has {len(target)} axes."
+        )
     return _map.in_stored_order(field, source, target)
 
 
 def _field_array(
-    transform: tx.Any,
     field_node: tx.Any,
     store_axes: tx.Optional[tx.Sequence[Axis]],
     kind: str,
     path: str,
     target: tx.Sequence[int],
+    degree: int,
 ) -> Transformation:
     # Drafts of OME-NGFF 0.6 let `path` name the array of the field itself,
     # with its axes named by its own typed metadata or by its dimension
@@ -271,13 +281,26 @@ def _field_array(
         )
     if list(target) != list(range(len(target))):
         data = data[..., list(target)]
-    degree = _INTERPOLATION_DEGREE.get(
-        getattr(transform, "interpolation", None), 1
-    )
     field_cls = (
         DisplacementField if kind == "displacements" else CoordinatesField
     )
     return field_cls(field=data, degree=degree)
+
+
+def _interpolation_degree(transform: tx.Any, kind: str, path: str) -> int:
+    # The interpolation of the vectors defaults to `linear` (ngff-spec 0.6,
+    # "coordinates and displacements"). abczarr marks an absent field with
+    # a sentinel that is false.
+    name = getattr(transform, "interpolation", None)
+    if not name:
+        return _INTERPOLATION_DEGREE["linear"]
+    if name not in _INTERPOLATION_DEGREE:
+        known = ", ".join(repr(key) for key in _INTERPOLATION_DEGREE)
+        raise OmeImageError(
+            f"The {kind} field at {path!r} is interpolated with {name!r}, "
+            f"which brainhops does not know. The known methods are {known}."
+        )
+    return _INTERPOLATION_DEGREE[name]
 
 
 def _field_from_names(
@@ -415,9 +438,12 @@ def common_transformations(
     OME-NGFF 0.6 lets a common transformation either start from the
     intrinsic space or end there. One that ends there is read as the
     inverse of the declared transformation, so that every placement of the
-    pyramid starts from the intrinsic space. The inverse is exact, but it is
-    only computed in closed form for the types that have one, such as an
-    affine. A transformation that refers to a coordinate system of another
+    pyramid starts from the intrinsic space. The inverse is only computed
+    in closed form for the types that have one, such as an affine. A
+    `projectAxis` that drops axes has no inverse, so such a transformation
+    is refused, while one that only creates axes is read as the projection
+    that drops them again, which undoes it on the points that it reaches.
+    A transformation that refers to a coordinate system of another
     group, such as a labels image, by a `path` does not place this pyramid
     and is skipped.
 
@@ -477,7 +503,14 @@ def common_transformations(
         )
         if target == root and source not in (None, root):
             # The transformation ends in the intrinsic space, so its inverse
-            # starts there.
+            # starts there. A projection that drops axes has no inverse
+            # (docs/design/compute-api-and-open-systems.md, section A.8).
+            if _drops_axes(mapped):
+                raise OmeImageError(
+                    f"This OME multiscale reaches its intrinsic space from "
+                    f"{source!r} by dropping axes, which cannot be inverted "
+                    "to place the pyramid."
+                )
             edges.append((target, source, mapped.inverse()))
         else:
             edges.append((source, target, mapped))
@@ -711,3 +744,15 @@ def _other_group(space: tx.Any) -> bool:
     # A space that gives a path lies in another group of the hierarchy.
     path = getattr(space, "path", None)
     return isinstance(path, str) and path not in ("", ".")
+
+
+def _drops_axes(xform: Transformation) -> bool:
+    # Return whether a mapped transformation contains a projection that
+    # drops axes, looking into sequences and subspace transformations.
+    if isinstance(xform, Projection):
+        return len(xform.dropped) > 0
+    if isinstance(xform, SubspaceTransformation):
+        return _drops_axes(xform.transformation)
+    if isinstance(xform, Sequence):
+        return any(_drops_axes(part) for part in xform.transformations)
+    return False

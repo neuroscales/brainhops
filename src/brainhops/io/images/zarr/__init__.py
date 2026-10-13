@@ -51,7 +51,8 @@ a `Permutation`, so that the result stays exact. A `byDimension` whose
 parts are not all affine becomes a `Sequence` of
 `SubspaceTransformation` objects. Version 0.6 also allows a
 transformation of the multiscale to end in the intrinsic system instead
-of starting there, and such a transformation is read as its inverse.
+of starting there, and such a transformation is read as its inverse,
+unless it drops axes and so has no inverse, in which case it is refused.
 
 A field transformation, `displacements` or `coordinates`, names a
 multiscale group that holds the vectors, with an axis of type
