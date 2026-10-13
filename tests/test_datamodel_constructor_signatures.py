@@ -303,6 +303,12 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.images.imaris._multiscale": {
         "ImarisMultiScaleImage": ("images", "transformations"),
     },
+    "brainhops.io.images.jpeg2000._image": {
+        "Jpeg2000Image": ("data", "transformations"),
+    },
+    "brainhops.io.images.jpeg2000._multiscale": {
+        "Jpeg2000MultiScaleImage": ("images", "transformations"),
+    },
     "brainhops.io.images.minc._image": {
         name: ("data", "transformations")
         for name in ("Minc1Image", "Minc2Image", "MincImage")
