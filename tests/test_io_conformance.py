@@ -226,6 +226,28 @@ except ImportError:
     tifffile = None
 
 try:
+    # OpenSlide needs its library as well as openslide-python, and the
+    # samples of its exemplars are tiled TIFF files that tifffile writes.
+    import openslide
+    import tifffile
+
+    from brainhops.io.images.base import _utils_raster as raster
+    from brainhops.io.images.openslide import (
+        GenericTiffImage,
+        GenericTiffMultiScaleImage,
+        OpenSlideMetadata,
+    )
+    from brainhops.io.images.openslide._data import _SlideArray
+    from brainhops.io.images.openslide._views import (
+        _image_to_disk as _slide_to_disk,
+    )
+    from brainhops.io.images.openslide._views import (
+        _image_to_model as _slide_to_model,
+    )
+except (ImportError, OSError):
+    openslide = None
+
+try:
     import h5py
 
     from brainhops.io.common.hdf5 import DelayedH5Array
@@ -1598,6 +1620,16 @@ class Exemplar(tx.NamedTuple):
     `{"dialect": "imagej"}`.
     """
 
+    hint: tx.Optional[str] = None
+    """Hint with which the generic loaders choose the format, or `None`.
+
+    It is `None` for a format that the content of its files chooses. A
+    generic tiled TIFF is read by OpenSlide and by the TIFF reader, which
+    reads more of its metadata and is therefore preferred, so the checks
+    load the metadata of the generic TIFF vendor of OpenSlide with the
+    hint `"openslide"`.
+    """
+
 
 def _nifti_edit_record(record: tx.Any) -> tx.Any:
     record.header["descrip"] = b"edited"
@@ -2243,12 +2275,15 @@ def _tiff_change_geometry(image: tx.Any) -> None:
     )
 
 
-def _tiff_cut(source: tx.Any, target: tx.Any) -> None:
+def _tiff_cut(
+    source: tx.Any, target: tx.Any, keep: tx.FrozenSet[int] = frozenset()
+) -> None:
     """Copy a TIFF file whose pixels cannot be read.
 
     Every IFD is kept, including the SubIFDs of a pyramid, so the copy
     has the same record. The strip and tile offsets point beyond the end
-    of the copy, so that any read of a pixel fails. tifffile finds the
+    of the copy, so that any read of a pixel fails, except those of the
+    IFDs whose positions in the file are in `keep`. tifffile finds the
     pages of an ImageJ hyperstack from the size of the file and the
     offsets of its first page, so the offsets of an ImageJ file are kept,
     and its pixels are overwritten instead, which a read would not notice.
@@ -2286,7 +2321,13 @@ def _tiff_cut(source: tx.Any, target: tx.Any) -> None:
                 )
             if code == 270:
                 imagej |= bytes(content[value : value + 7]) == b"ImageJ="
-            if code in (273, 279, 324, 325, 330) and kind in kinds:
+            # The pixels of an IFD in `keep` stay readable.
+            readable = ifd in keep and code != 330
+            if (
+                code in (273, 279, 324, 325, 330)
+                and kind in kinds
+                and not readable
+            ):
                 element = order + kinds[kind]
                 step = struct.calcsize(element)
                 values = [(value + k * step, element) for k in range(count)]
@@ -2336,29 +2377,144 @@ if tifffile is not None:
     )
     EXEMPLARS[TiffImage] = _TIFF
 
+# OpenSlide cannot write, so the checks write its slides with tifffile, as
+# generic tiled TIFF files that OpenSlide reads with its generic TIFF
+# vendor, and the checks of writing make sure that it refuses to write.
+# The files have the suffix `.slide`, which no writer claims: the generic
+# writer would otherwise convert a level to `TiffImage` and write it, which
+# is right for `io.save` but is not what the checks of a format that cannot
+# write test. The TIFF reader is preferred for a generic tiled TIFF, so the
+# metadata is dispatched with the hint `"openslide"`. OpenSlide reads the
+# raw tiles of the coarsest level of a TIFF-based slide when it opens it,
+# to compute the property `openslide.quickhash-1`, so the copy of check 6
+# keeps the pixels of that level readable and cuts those of the other
+# levels. The file of a level read alone is therefore a slide whose first
+# level is the sample, followed by a coarser level that OpenSlide hashes.
+# The edit of a record adds a property, and the geometry is changed to a
+# pixel size in millimetres.
+
+
+def _slide_sample() -> np.ndarray:
+    values = np.arange(32 * 48 * 3).reshape(32, 48, 3) % 250
+    return values.astype(np.uint8)
+
+
+def _slide_levels() -> tx.List[np.ndarray]:
+    base = _slide_sample()
+    return [base, base[::2, ::2] + 1, base[::4, ::4] + 2]
+
+
+def _write_slide(path: tx.Any, levels: tx.List[np.ndarray]) -> None:
+    """Write the `(x, y, c)` levels of a slide as a generic tiled TIFF.
+
+    The coarser levels are reduced-resolution images, and the resolution
+    tags give a pixel size of 0.5 micrometres, which OpenSlide reports as
+    `openslide.mpp-x` and `openslide.mpp-y`.
+    """
+    with tifffile.TiffWriter(path) as tif:
+        for index, data in enumerate(levels):
+            tif.write(
+                np.ascontiguousarray(np.transpose(data, (1, 0, 2))),
+                tile=(16, 16),
+                photometric="rgb",
+                compression="zlib",
+                subfiletype=1 if index else 0,
+                metadata=None,
+                resolution=(2e4, 2e4),
+                resolutionunit="CENTIMETER",
+            )
+
+
+def _slide_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy a slide whose pixels cannot be read, except those that OpenSlide
+    hashes when it opens the slide, which are those of its coarsest level.
+    """
+    with tifffile.TiffFile(source) as tif:
+        coarsest = tif.pages[len(tif.pages) - 1].offset
+    _tiff_cut(source, target, keep=frozenset({coarsest}))
+
+
+def _slide_edit_record(record: tx.Any) -> tx.Any:
+    return replace(
+        record, properties={**record.properties, "brainhops.note": "edited"}
+    )
+
+
+def _slide_axes() -> tx.List[tx.Any]:
+    axes = raster.storage_axes("YXS")
+    return [axes[p] for p in raster.canonical_permutation(axes)]
+
+
+def _slide_change_geometry(image: tx.Any) -> None:
+    sizes = {"x": (0.5, "mm"), "y": (0.25, "mm")}
+    image.transformations = raster.raster_transformations(_slide_axes(), sizes)
+
+
+def _slide_place(pyramid: tx.Any) -> None:
+    # A slide stores no placement, and OpenSlide cannot write, so the
+    # placement is kept as it is assigned.
+    axes = _slide_axes()
+    pyramid.transformations = [
+        Scaling(
+            [2.0, 3.0, 1.0],
+            input=raster.physical_system(axes, {"x": "um", "y": "um"}),
+            output=raster.physical_system(axes, {"x": "mm", "y": "mm"}),
+        )
+    ]
+
+
+if openslide is not None:
+    EXEMPLARS[GenericTiffImage] = Exemplar(
+        metadata=OpenSlideMetadata,
+        suffix=".slide",
+        proxies=(_SlideArray,),
+        to_model=_slide_to_model,
+        to_disk=_slide_to_disk,
+        sample=_slide_sample,
+        edit_record=_slide_edit_record,
+        record_edited=lambda record: (
+            record.properties.get("brainhops.note") == "edited"
+        ),
+        geometry=_tiff_geometry,
+        change_geometry=_slide_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_slide_cut,
+        header=lambda metadata: metadata.raw,
+        source=lambda path, data: _write_slide(path, [data, data[::2, ::2]]),
+        hint="openslide",
+    )
+
+SHARED: tx.Dict[str, str] = {
+    f"brainhops.io.images.openslide.{vendor}{kind}": (
+        f"brainhops.io.images.openslide.GenericTiff{kind}"
+    )
+    for vendor in (
+        "Aperio",
+        "DicomWsi",
+        "Hamamatsu",
+        "Leica",
+        "Mirax",
+        "Philips",
+        "Sakura",
+        "Trestle",
+        "Ventana",
+        "Zeiss",
+    )
+    for kind in ("Image", "MultiScaleImage")
+}
+"""Formats that the checks cover through another class, by dotted name.
+
+The single-scale classes of the OpenSlide vendors share their base, and
+so do the multiscale classes. A vendor class only declares its extensions
+and its hints, sniffs its own vendor, and decodes the levels of a pyramid
+as objects of its single-scale class. tifffile cannot write a slide of
+most vendors, so the checks run on the generic TIFF vendor, and each
+other vendor class is mapped to the class of that vendor whose checks
+cover it. A test makes sure that the two classes differ in nothing else.
+"""
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
-    "brainhops.io.images.openslide.AperioImage",
-    "brainhops.io.images.openslide.AperioMultiScaleImage",
-    "brainhops.io.images.openslide.DicomWsiImage",
-    "brainhops.io.images.openslide.DicomWsiMultiScaleImage",
-    "brainhops.io.images.openslide.GenericTiffImage",
-    "brainhops.io.images.openslide.GenericTiffMultiScaleImage",
-    "brainhops.io.images.openslide.HamamatsuImage",
-    "brainhops.io.images.openslide.HamamatsuMultiScaleImage",
-    "brainhops.io.images.openslide.LeicaImage",
-    "brainhops.io.images.openslide.LeicaMultiScaleImage",
-    "brainhops.io.images.openslide.MiraxImage",
-    "brainhops.io.images.openslide.MiraxMultiScaleImage",
-    "brainhops.io.images.openslide.PhilipsImage",
-    "brainhops.io.images.openslide.PhilipsMultiScaleImage",
-    "brainhops.io.images.openslide.SakuraImage",
-    "brainhops.io.images.openslide.SakuraMultiScaleImage",
-    "brainhops.io.images.openslide.TrestleImage",
-    "brainhops.io.images.openslide.TrestleMultiScaleImage",
-    "brainhops.io.images.openslide.VentanaImage",
-    "brainhops.io.images.openslide.VentanaMultiScaleImage",
-    "brainhops.io.images.openslide.ZeissImage",
-    "brainhops.io.images.openslide.ZeissMultiScaleImage",
     "brainhops.io.images.pillow.PillowImage",
     "brainhops.io.images.zarr.OmeZarrImage",
     "brainhops.io.images.zarr.ZarrImage",
@@ -2632,6 +2788,17 @@ if tifffile is not None:
         level_geometry=False,
     )
 
+# OpenSlide cannot write, so the checks write its pyramids with tifffile,
+# as for its levels, and an assigned placement is kept.
+if openslide is not None:
+    PYRAMIDS[GenericTiffMultiScaleImage] = PyramidExemplar(
+        level=GenericTiffImage,
+        levels=_slide_levels,
+        place=_slide_place,
+        placements=False,
+        source=_write_slide,
+    )
+
 
 def _toyp_sample() -> tx.List[np.ndarray]:
     return [
@@ -2750,6 +2917,11 @@ def _header(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
     return exemplar.header(metadata)
 
 
+def _hinted(exemplar: Exemplar) -> tx.Dict[str, str]:
+    """Return the options with which the generic loaders choose a format."""
+    return {} if exemplar.hint is None else {"hint": exemplar.hint}
+
+
 def _writes_bytes(exemplar: Exemplar) -> bool:
     """Tell whether the metadata of a format writes the bytes of a header.
 
@@ -2862,6 +3034,8 @@ def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
 def test_every_registered_format_is_in_one_table() -> None:
     assert len(set(NOT_MIGRATED)) == len(NOT_MIGRATED)
     not_migrated = {_resolve(name) for name in NOT_MIGRATED} - {None}
+    shared = {_resolve(name) for name in SHARED} - {None}
+    assert not shared & not_migrated
     assert not set(EXEMPLARS) & not_migrated
     registered = {
         cls
@@ -2874,8 +3048,28 @@ def test_every_registered_format_is_in_one_table() -> None:
     assert {exemplar.level for exemplar in PYRAMIDS.values()} <= set(EXEMPLARS)
     metadata = {exemplar.metadata for exemplar in EXEMPLARS.values()}
     assert registered == (
-        set(EXEMPLARS) | set(PYRAMIDS) | metadata | not_migrated
+        set(EXEMPLARS) | set(PYRAMIDS) | metadata | not_migrated | shared
     )
+
+
+@pytest.mark.parametrize("name", sorted(SHARED))
+def test_a_shared_format_differs_only_in_its_sniffing(name: str) -> None:
+    cls, checked = _resolve(name), _resolve(SHARED[name])
+    if cls is None:
+        pytest.skip("The format needs an optional dependency.")
+    assert checked in EXEMPLARS or checked in PYRAMIDS
+    assert cls.__bases__ == checked.__bases__
+    assert [field.name for field in fields(cls)] == [
+        field.name for field in fields(checked)
+    ]
+    # Besides what bagof generates, each class declares the same names, and
+    # only these.
+    declared = {"EXTENSIONS", "HINTS", "sniff_filename", "images"}
+    names = {name for name in vars(cls) if not name.startswith("_")}
+    assert names == {
+        name for name in vars(checked) if not name.startswith("_")
+    }
+    assert names <= declared
 
 
 def test_the_metadata_registry_is_isolated() -> None:
@@ -3010,7 +3204,7 @@ def test_06_metadata_never_reads_data(
     truncated = _path(tmp_path, exemplar, "header")
     _cut(exemplar, source, metadata, truncated)
     assert _header(exemplar, exemplar.metadata.load(truncated)) == header
-    dispatched = MetadataFormat.load(truncated)
+    dispatched = MetadataFormat.load(truncated, **_hinted(exemplar))
     assert isinstance(dispatched, exemplar.metadata)
     assert _header(exemplar, dispatched) == header
 
@@ -4157,7 +4351,7 @@ def test_p12_metadata_never_reads_data(
     truncated = _path(tmp_path, level, "header")
     _cut(level, source, metadata, truncated)
     assert _header(level, level.metadata.load(document(truncated))) == header
-    dispatched = MetadataFormat.load(document(truncated))
+    dispatched = MetadataFormat.load(document(truncated), **_hinted(level))
     assert isinstance(dispatched, level.metadata)
     assert _header(level, dispatched) == header
 
