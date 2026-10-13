@@ -113,6 +113,13 @@ from brainhops.io.transformations.afni._views import (
 )
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.c3d import C3dAffine, C3dAffineMetadata
+from brainhops.io.transformations.c3d._affine import (
+    _matrix_to_disk as _c3d_to_disk,
+)
+from brainhops.io.transformations.c3d._affine import (
+    _matrix_to_model as _c3d_to_model,
+)
 from brainhops.io.transformations.freesurfer.lta import (
     LtaMetadata,
     LtaPhysicalSystem,
@@ -1076,6 +1083,37 @@ _LTA = Exemplar(
     stored=_lta_stored,
 )
 EXEMPLARS[LtaTransformation] = _LTA
+
+
+# A Convert3D matrix file is parsed in one pass, as an LTA file is, and
+# its record holds the matrix. The only field of the record outside the
+# matrix is the layout of its rows, which the edit of check 10 changes to
+# the layout of Greedy. Check 6 is vacuous, because the file holds no
+# data beside its record (item 170 of the design memo).
+
+
+def _c3d_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+EXEMPLARS[C3dAffine] = Exemplar(
+    metadata=C3dAffineMetadata,
+    suffix=".mat",
+    proxies=(tuple,),
+    to_model=_c3d_to_model,
+    to_disk=_c3d_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=lambda record: replace(record, row_end=" "),
+    record_edited=lambda raw: raw.row_end == " ",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=RASmm(), output=RASmm()),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_c3d_stored,
+)
 
 
 # The model of an X5 file is a chain, whose first element here is a field
