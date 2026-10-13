@@ -145,8 +145,8 @@ def axis_counts(
         Scaling,
         Translation,
     )
+    from ..derived import DerivedTransformation
     from ..inverse import Inverse
-    from ..operators import Operation
     from ..sequence import Sequence
     from .checkers import _matrix_dims
 
@@ -159,7 +159,7 @@ def axis_counts(
         # are checked before the concrete families.
         if t.forward is not None:
             no, ni = axis_counts(t.forward)
-    elif isinstance(t, Operation):
+    elif isinstance(t, DerivedTransformation):
         # A lazy operator maps a space to itself, so its counts are those of
         # its forward transformation.
         if t.forward is not None:
