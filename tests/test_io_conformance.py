@@ -69,6 +69,7 @@ from brainhops.io.common._geometry import same_transformations
 from brainhops.io.common.afni._data import _BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
+from brainhops.io.common.freesurfer import FreesurferTkrSystem
 from brainhops.io.common.mrtrix._data import _MrtrixProxy
 from brainhops.io.common.nrrd._data import _NrrdProxy
 from brainhops.io.images.afni import AfniImage, AfniMetadata
@@ -135,7 +136,6 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
 )
 from brainhops.io.transformations.freesurfer.regdat import (
     RegisterDatMetadata,
-    RegisterDatTkrSystem,
     RegisterDatTransformation,
 )
 from brainhops.io.transformations.minc import (
@@ -1080,8 +1080,8 @@ _REGDAT = Exemplar(
     change_geometry=_matrix_change_geometry,
     foreign=lambda data: Affine(
         data,
-        input=RegisterDatTkrSystem(name="reference"),
-        output=RegisterDatTkrSystem(name="moving"),
+        input=FreesurferTkrSystem(name="reference"),
+        output=FreesurferTkrSystem(name="moving"),
     ),
     options=frozenset({"reference", "moving"}),
     derived=("homogeneous_matrix",),

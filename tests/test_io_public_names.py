@@ -84,6 +84,9 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.common.freesurfer": Package(
+        names=frozenset({"FreesurferFormat", "FreesurferTkrSystem"}),
+    ),
     "brainhops.io.common.mgh": Package(
         names=frozenset({"MghMetadata", "MghRaw"}),
         needs=("nibabel",),
@@ -162,7 +165,6 @@ PACKAGES: tx.Dict[str, Package] = {
             {
                 "RegisterDatMetadata",
                 "RegisterDatRaw",
-                "RegisterDatTkrSystem",
                 "RegisterDatTransformation",
                 "RegisterDatTransformationRASToRAS",
             }
