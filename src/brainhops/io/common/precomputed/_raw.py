@@ -173,9 +173,9 @@ class PrecomputedRaw(Magic, BinaryFileReader, frozen=True):
     `data_type` and `num_channels`) and lists the scales, finest first.
     The record holds these members as the file stores them, and reading
     it never reads a chunk. Members that the specification does not
-    define, and the members that only a segmentation uses besides
-    `mesh`, `skeletons` and `segment_properties`, are not read. A record
-    is frozen, and two records are equal when their fields are.
+    define, such as the `jpeg_quality` that TensorStore writes, are not
+    read. A record is frozen, and two records are equal when their
+    fields are.
 
     The record is held by
     [`PrecomputedMetadata`][brainhops.io.common.precomputed.PrecomputedMetadata].
