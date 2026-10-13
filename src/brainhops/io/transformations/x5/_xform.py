@@ -11,6 +11,7 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import Metadata
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
@@ -21,7 +22,7 @@ from ._blocks import (
     node_to_transformation,
     transformation_to_nodes,
 )
-from ._metadata import X5Metadata
+from ._metadata import X5Metadata, _vocabulary_node
 from ._raw import X5_VERSION, X5Header, X5Node, X5Raw
 
 # ----------------------------------------------------------------------
@@ -215,6 +216,13 @@ class X5Transform(
         so that the writer can recognise it by identity. Assigning other
         metadata forgets the decoded nodes.
 
+        The node that holds the vocabulary of the file (see
+        [`X5Metadata`][]) gives its transformation a copy of the
+        vocabulary, as generic metadata without the record, so that
+        converting that transformation into another format carries it.
+        The copy is made when the node is decoded, so a later change of
+        the metadata in place is not seen by it.
+
         Parameters
         ----------
         index : int
@@ -235,7 +243,10 @@ class X5Transform(
             raise ParserContentError("This X5 transformation has no record.")
         decoded = self.__dict__.setdefault("_cache_decoded_nodes", {})
         if index not in decoded:
-            decoded[index] = node_to_transformation(record.nodes[index])
+            block = node_to_transformation(record.nodes[index])
+            if index == _vocabulary_node(record):
+                block.metadata = Metadata.from_instance(self.metadata)
+            decoded[index] = block
         return decoded[index]
 
     @smartproperty(cache=True)

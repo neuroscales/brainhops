@@ -6,13 +6,20 @@ the metadata of its own class, which also holds the header of a file.
 """
 
 import inspect
+from pathlib import Path
 
+import nibabel as nb
 import numpy as np
 import pytest
-from bagof.magic import fields
+from bagof.magic import fields, replace
 
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.metadata import Metadata, metadata_loss_policy
+from brainhops.datamodel.metadata import (
+    EncodingDirection,
+    Metadata,
+    metadata_loss_policy,
+)
+from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
     Affine,
     Transformation,
@@ -109,3 +116,71 @@ def test_a_format_takes_the_metadata_of_the_root_over(
 def test_metadata_fields_is_renamed_encoding_fields() -> None:
     assert not hasattr(Transformation, "metadata_fields")
     assert Affine.encoding_fields == ("log",)
+
+
+# ----------------------------------------------------------------------
+#   OPERATIONS AND CONVERSIONS
+# ----------------------------------------------------------------------
+
+
+def _nifti(tmp_path: Path) -> NiftiImage:
+    """Return a 4-D NIfTI image read from a file with a described header."""
+    image = nb.Nifti1Image(
+        np.zeros((4, 5, 6, 3), np.float32), np.diag([2.0, 2.0, 2.0, 1.0])
+    )
+    header = image.header
+    header["descrip"] = b"T1w"
+    header.set_xyzt_units("mm", "sec")
+    header["pixdim"][4] = 2.0
+    header.set_dim_info(phase=1, slice=2)
+    header["slice_code"] = 1
+    header["slice_duration"] = 0.1
+    header["slice_end"] = 5
+    path = tmp_path / "series.nii.gz"
+    nb.save(image, str(path))
+    return NiftiImage.load(path)
+
+
+def test_an_index_along_time_keeps_the_class_and_the_record(
+    tmp_path: Path,
+) -> None:
+    image = _nifti(tmp_path)
+    first = image[..., :2]
+    assert type(first.metadata) is NiftiMetadata
+    assert first.metadata.raw is image.metadata.raw
+    assert first.metadata.description == "T1w"
+    assert first.metadata.slice_timing == image.metadata.slice_timing
+
+
+def test_a_reslice_clears_the_spatial_fields_and_keeps_the_class(
+    tmp_path: Path,
+) -> None:
+    image = _nifti(tmp_path)
+    resliced = image.reslice()
+    assert type(resliced.metadata) is NiftiMetadata
+    assert resliced.metadata.description == "T1w"
+    assert resliced.metadata.slice_timing is None
+    # The slots of the old voxel axes are cleared from a copy of the
+    # record, and the record of the image is not changed.
+    assert resliced.metadata.raw is not image.metadata.raw
+    assert int(image.metadata.raw.header["slice_code"]) == 1
+    flipped = image[:, ::-1]
+    assert flipped.metadata.phase_encoding_direction == EncodingDirection("j-")
+
+
+def test_a_conversion_into_a_nifti_affine_carries_the_metadata() -> None:
+    affine = Affine(np.eye(4)[:-1], metadata=Metadata(description="reg"))
+    converted = affine.to(NiftiVoxelToRAS)
+    assert type(converted.metadata) is NiftiMetadata
+    assert converted.metadata.description == "reg"
+    assert converted.metadata.raw is None
+
+
+def test_the_node_of_the_vocabulary_gives_its_block_the_metadata() -> None:
+    affine = Affine(np.eye(4)[:-1], input=RASmm(), output=RASmm())
+    empty = X5Transform(transformations=[affine]).consolidate()
+    metadata = replace(empty.metadata, description="hi").consolidate()
+    block = X5Transform(metadata=metadata).transformations[0]
+    # The block holds generic metadata, without the record of the file.
+    assert type(block.metadata) is Metadata
+    assert block.metadata.description == "hi"
