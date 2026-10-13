@@ -41,6 +41,14 @@ else:
         ["minc", "minc1", "minc2", "minc.1", "minc.2"], "nibabel", "minc"
     )
 
+# BigDataViewer datasets keep their voxels in an HDF5 file.
+if HAS_H5PY:
+    from . import bdv
+
+    __all__ += ["bdv"]
+else:
+    register_missing_format(["bdv", "bigdataviewer"], "h5py", "bdv")
+
 # Imaris files are HDF5 files and need h5py to be read.
 if HAS_H5PY:
     from . import imaris
@@ -49,13 +57,17 @@ if HAS_H5PY:
 else:
     register_missing_format(["imaris", "ims"], "h5py", "imaris")
 
-# Raster formats (PNG, JPEG, ...) are read and written through Pillow.
+# Raster formats (PNG, JPEG, ...) are read and written through Pillow, and
+# so are JPEG 2000 files, whose resolution levels form a multiscale image.
 if HAS_PILLOW:
-    from . import pillow
+    from . import jpeg2000, pillow
 
-    __all__ += ["pillow"]
+    __all__ += ["jpeg2000", "pillow"]
 else:
     register_missing_format(["pillow"], "Pillow", "pillow")
+    register_missing_format(
+        ["jpeg2000", "jp2", "j2k", "j2c"], "Pillow", "pillow"
+    )
 
 # Without tifffile, Pillow still reads TIFF files as raster images, but
 # with weaker sniffing.
@@ -65,6 +77,15 @@ if HAS_TIFFFILE:
     __all__ += ["tiff"]
 else:
     register_missing_format(["tiff", "tifffile"], "tifffile", "tiff")
+
+# A stack of image files is read with tifffile or Pillow, so it needs at
+# least one of them.
+if HAS_TIFFFILE or HAS_PILLOW:
+    from . import stack
+
+    __all__ += ["stack"]
+else:
+    register_missing_format(["stack"], "tifffile or Pillow", "tiff")
 
 # OpenSlide needs both the Python package and the C library. Without it,
 # TIFF-based slides fall back to the TIFF reader.

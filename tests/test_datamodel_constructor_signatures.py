@@ -123,10 +123,16 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "LPSCoordinatesField": ("data",),
         "RASCoordinatesField": ("data",),
     },
+    "brainhops.io.transformations.c3d._affine": {
+        "C3dAffine": ("data",),
+    },
     "brainhops.io.transformations.elastix._xform": {
         "ElastixParameterTransform": ("transformations",),
         "ElastixTomlTransform": ("transformations",),
         "ElastixTransform": ("transformations",),
+    },
+    "brainhops.io.transformations.bdv._xform": {
+        "BdvViewRegistration": ("transformations",),
     },
     "brainhops.io.transformations.freesurfer.lta._xforms": {
         "LtaTransformation": ("data",),
@@ -134,8 +140,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "LtaTransformationRASToRAS": ("data",),
         "LtaTransformationVoxToVox": ("data",),
     },
+    "brainhops.io.transformations.trakem2._xform": {
+        "TrakEM2PatchAffine": ("data",),
+    },
     "brainhops.io.transformations.freesurfer.m3z._xform": {
         "M3zMorph": ("transformations",),
+    },
+    "brainhops.io.transformations.freesurfer.regdat._xforms": {
+        "RegisterDatTransformation": ("data",),
+        "RegisterDatTransformationRASToRAS": ("data",),
     },
     "brainhops.io.transformations.fsl._affines": {
         "ScaledMmToScaledMm": ("data",),
@@ -288,6 +301,12 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.images.base._base": {
         "ImageFormat": (),
     },
+    "brainhops.io.images.bdv._image": {
+        "BdvImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.bdv._multiscale": {
+        "BdvMultiScaleImage": ("images", "transformations"),
+    },
     "brainhops.io.images.freesurfer.mgh._image": {
         "MghImage": ("data", "transformations"),
     },
@@ -296,6 +315,12 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     },
     "brainhops.io.images.imaris._multiscale": {
         "ImarisMultiScaleImage": ("images", "transformations"),
+    },
+    "brainhops.io.images.jpeg2000._image": {
+        "Jpeg2000Image": ("data", "transformations"),
+    },
+    "brainhops.io.images.jpeg2000._multiscale": {
+        "Jpeg2000MultiScaleImage": ("images", "transformations"),
     },
     "brainhops.io.images.minc._image": {
         name: ("data", "transformations")
@@ -357,6 +382,9 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     },
     "brainhops.io.images.pillow._image": {
         "PillowImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.stack._image": {
+        "StackImage": ("data", "transformations"),
     },
     "brainhops.io.images.precomputed._image": {
         "PrecomputedImage": ("data", "transformations"),

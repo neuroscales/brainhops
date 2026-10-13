@@ -70,6 +70,25 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.images.stack": Package(
+        names=frozenset(
+            {
+                "StackImage",
+                "StackMember",
+                "StackMetadata",
+                "StackRaw",
+            }
+        ),
+    ),
+    "brainhops.io.common.bdv": Package(
+        names=frozenset({"BdvMetadata", "BdvRaw"}),
+    ),
+    "brainhops.io.images.bdv": Package(
+        names=frozenset(
+            {"BdvImage", "BdvMetadata", "BdvMultiScaleImage", "BdvRaw"}
+        ),
+        needs=("h5py",),
+    ),
     "brainhops.io.images.imaris": Package(
         names=frozenset(
             {
@@ -120,6 +139,20 @@ PACKAGES: tx.Dict[str, Package] = {
                 "NrrdRaw",
             }
         ),
+    ),
+    "brainhops.io.common.freesurfer": Package(
+        names=frozenset({"FreesurferFormat", "FreesurferTkrSystem"}),
+    ),
+    "brainhops.io.images.jpeg2000": Package(
+        names=frozenset(
+            {
+                "Jpeg2000Image",
+                "Jpeg2000Metadata",
+                "Jpeg2000MultiScaleImage",
+                "Jpeg2000Raw",
+            }
+        ),
+        needs=("PIL",),
     ),
     "brainhops.io.common.mgh": Package(
         names=frozenset({"MghMetadata", "MghRaw"}),
@@ -175,6 +208,9 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.transformations.c3d": Package(
+        names=frozenset({"C3dAffine", "C3dAffineMetadata", "C3dAffineRaw"}),
+    ),
     "brainhops.io.transformations.freesurfer.lta": Package(
         names=frozenset(
             {
@@ -192,6 +228,21 @@ PACKAGES: tx.Dict[str, Package] = {
                 "LtaValidity",
                 "LtaVoxelSystem",
             }
+        ),
+    ),
+    "brainhops.io.transformations.freesurfer.regdat": Package(
+        names=frozenset(
+            {
+                "RegisterDatMetadata",
+                "RegisterDatRaw",
+                "RegisterDatTransformation",
+                "RegisterDatTransformationRASToRAS",
+            }
+        ),
+    ),
+    "brainhops.io.transformations.trakem2": Package(
+        names=frozenset(
+            {"TrakEM2Metadata", "TrakEM2PatchAffine", "TrakEM2Raw"}
         ),
     ),
     "brainhops.io.transformations.freesurfer.m3z": Package(
@@ -235,6 +286,9 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
         needs=("h5py",),
+    ),
+    "brainhops.io.transformations.bdv": Package(
+        names=frozenset({"BdvMetadata", "BdvRaw", "BdvViewRegistration"}),
     ),
     "brainhops.io.transformations.afni": Package(
         names=frozenset(

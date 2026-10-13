@@ -159,24 +159,28 @@ an assigned array in `raw` at once.
 
 The transformations of an image are compared at consolidation instead
 of being pending by assignment. An image takes the `transformations`
-field of its model over as `_transformations`, where `None` means that
-the transformations were neither read nor assigned. The property
-decodes the record on first access and stores the list in
-`_transformations`, so a change made to the list in place, such as an
-appended transformation, acts on the stored list. `consolidate()` and
-every write compare the list that the image holds with a fresh decode of
-the record, in the data model and exactly: each transformation must have
+field of its model over as `_transformations`, which holds an assigned
+list only, and `None` means that no list was assigned. The property is
+a `smartproperty(cache=True)`: it decodes the record on first access
+and caches the list apart from `_transformations`, so a change made to
+the list in place, such as an appended transformation, acts on the
+cached list. The list that the image holds is the assigned list, or
+else the cached list (`held_transformations` in
+`io/common/_geometry.py`). `consolidate()` and every write compare that
+list with a fresh decode of the record, in the data model and exactly:
+each transformation must have
 the same type, the same input and output spaces, and the same affine
 matrix (`same_transformations` in `io/common/_geometry.py`). The
 encoded bytes are never compared. When the lists are the same, or when
-`_transformations` is `None`, the geometry of the record is kept as it
+the image holds no list, the geometry of the record is kept as it
 is stored, byte for byte, and otherwise it is encoded again from the
 list. An image that was read and whose list was only read is therefore
 saved byte for byte, and assigning an equal list keeps the record. The
 encoders read the list without storing it, so that a write leaves the
-image as it was, and assigning other metadata drops the list. This
-applies to the images that take `transformations` over: the toy image
-of the tests, NIfTI, MGH, AFNI, MRtrix, NRRD and MINC. MINC cannot be
+image as it was. Assigning other metadata drops the cached list and
+keeps an assigned one, as the rules below require. This applies to the
+images that take `transformations` over: the toy image of the tests,
+NIfTI, MGH, AFNI, MRtrix, NRRD, MINC and image stacks. MINC cannot be
 written, so it keeps the list that it holds.
 
 Within a format, `replace` and `from_instance` copy `_data` and
@@ -296,6 +300,24 @@ without options, shares `raw` and its metadata with its copy, so that
 `obj.consolidate().metadata is obj.metadata` and
 `obj.consolidate().raw is obj.raw`. After `consolidate()`, nothing is
 pending, and a second `consolidate()` changes nothing.
+
+Assigning other metadata drops what an object decodes from its record
+and keeps what was assigned to it. This was decided by the maintainer on
+2026-10-13, for every format. A value that was never assigned therefore
+follows the new metadata, whether it was read before or not, and an
+assigned value is pending and is put over the new record by
+`consolidate()`. The decoded value is a cached `smartproperty`, apart
+from the private field that holds an assigned value, and `metadata` is a
+`smartproperty` that names it in `invalidates=`, which deletes the cache
+and never the assigned value. This holds for the transformations of
+images and of chains, for the matrix of the NIfTI and LTA affines, held
+as `data`, and for the views derived from it. The ITK endpoints, which
+follow from the dimension of the header unless a chain is assigned, and
+the X5 nodes, which index the old record, are dropped in the same way.
+Conformance check 20 tests the rule. A change made in place to a decoded
+list of transformations lives in the cache, so it is lost when other
+metadata is assigned, and a copy made with `replace` or `from_instance`
+decodes the list again instead of copying the cache.
 
 For chain formats (X5, M3Z), assigned `input` and `output` systems count
 as overrides. `consolidate()` encodes them, and it checks that the file
@@ -463,6 +485,13 @@ format.
     list that was only read keeps the record and the bytes, an equal
     list that is assigned keeps the record, a list changed in place is
     written, and a copy of a read image stays lazy.
+20. Assigning other metadata keeps what was assigned and drops what was
+    decoded, whether it was read before or not. Transformations, or the
+    data of a format whose data is its matrix, that were not assigned
+    follow the new metadata, as in an object built with it, and a saved
+    file holds them with an edit of the new record. Those that were
+    assigned survive the new metadata, and a consolidated copy and a
+    saved file hold them with the edit of its record.
 
 The second pass moves LTA first, so that the reference format matches
 this design. `LtaStruct` becomes `LtaRaw`, its field becomes a
@@ -549,12 +578,16 @@ its status.
    clashes with `Transformation.metadata_fields`, which may be renamed.
    Status: open.
 8. Views that are decoded from `metadata` and cached, such as
-   `transformations`, become stale when `metadata` is assigned again.
-   The fix is a private `_metadata` field behind a public `metadata`
-   `smartproperty` with `invalidates=("transformations",)`, because
-   bagof does not allow a field and a property with the same name in
-   one class. Status: resolved in pass 1c, where every NIfTI
-   transformation class applies this fix.
+   `transformations`, would become stale when `metadata` is assigned
+   again. Each format holds a private `_metadata` field behind a public
+   `metadata` `smartproperty` with `invalidates=` naming those views,
+   because bagof does not allow a field and a property with the same
+   name in one class. Status: resolved in pass 1c for the NIfTI
+   transformations, and for every format by the maintainer decision of
+   2026-10-13, described in the rules, which also covers the images.
+   Their decoded list now lives in the cache of `transformations`, apart
+   from an assigned list, so the invalidation drops only the decoded
+   one.
 9. A proxy built over a stream that the caller passed in must keep that
    stream alive for as long as the proxy is used. For the same reason,
    a format whose `raw` is a proxy must override `from_filename` or
@@ -865,8 +898,8 @@ its status.
     the same way (item 51), and the problem is older than this work.
     Status: open.
 66. Check 6 of the conformance test is vacuous for the formats that are
-    parsed in one pass, which are LTA and M3Z, because the truncated
-    copy is the whole file. Status: accepted in pass 2c.
+    parsed in one pass, which are LTA, M3Z and `register.dat`, because
+    the truncated copy is the whole file. Status: accepted in pass 2c.
 67. The record of an MGH image keeps the geometry of a file whose
     `goodRASFlag` is 0 as it is stored, although the reader ignores it.
     nibabel overwrites that geometry when it builds or copies a header,
@@ -1131,6 +1164,132 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+115. JPEG 2000 has a pyramid before the fourth pass decides the levels of
+     a multiscale image (item 15). `Jpeg2000MultiScaleImage` holds a lazy
+     array of the full resolution in `raw`, takes `images` and
+     `transformations` over as `OmeZarrImage` does, and decodes its levels
+     from `raw` and the record as `Jpeg2000Image` objects that share its
+     metadata (`io/images/jpeg2000/_multiscale.py`). It is consolidated
+     through its full-resolution level alone. As the maintainer decided,
+     the coarser levels are taken to be downsampled versions of the first
+     one, which the codec derives again: whatever was assigned to them,
+     data or transformations, is ignored rather than refused, and the
+     ratios of their shapes are not checked, here as for any format. The
+     pyramid is listed in `NOT_MIGRATED`, and its full-resolution level
+     is an exemplar. Status: accepted for the coarser levels, and open
+     until the fourth pass.
+116. A raw JPEG 2000 codestream has no resolution box, so the pixel size
+     of an image written as a `.j2k` file is lost, as for the Pillow
+     formats that store no resolution. The checks of geometry would be
+     vacuous for such a file, which is therefore not a variant of the
+     conformance harness. Status: open.
+117. The JPEG 2000 record keeps the bytes of the file up to its first tile
+     (`Jpeg2000Raw.stored`), as NRRD does, so that the metadata can be
+     written. An untouched full-resolution image copies its file. When
+     only the comments, the resolutions, the XML and UUID boxes or the
+     container change, the header is rewritten around the coded image,
+     which is copied (`io/images/jpeg2000/_boxes.py`), and a record that
+     changes a field that the coded image decides is refused with
+     `WriterError`. Any other change encodes the pixels again with
+     Pillow, and the comments of the record, including the version
+     comment of the encoder of the source, are written over those of the
+     new encoder. Status: accepted.
+118. A JPEG 2000 image read with `level=r` for `r > 0` is not the file
+     that it reads, so it is encoded again whenever it is consolidated,
+     even untouched. The level is the level that `raw` reads, and not a
+     field, so that the consolidated copy, whose `raw` reads the new
+     file, holds level 0. The options `pixel_size=` and `unit=` of the
+     readers become assigned transformations, so a file read with them
+     is written with that pixel size, and not byte for byte (item 11).
+     Status: accepted.
+119. Pillow decodes a whole JPEG 2000 level at once, so a Dask array
+     built over the lazy array of a large level, which Dask cuts into
+     several chunks, decodes the level once per chunk. Status: open.
+120. Pillow reads signed JPEG 2000 samples but cannot encode them, so an
+     image of signed samples can be written only while its coded image is
+     copied. Status: open, and older than this work.
+121. An image stack (#193) is an image whose file is a folder of
+     numbered two-dimensional files (`io/images/stack`). The folder has
+     no header, so its record, `StackRaw`, lists the files and holds the
+     header of each one, with the stacking axis and the geometry of the
+     stack. TIFF and Pillow images have no record on the main branch
+     yet, so the header of a member is the structure that their readers
+     already parse: the `TiffMetadata` of the TIFF backend, and a
+     `PillowHeader` that the Pillow backend reads without decoding the
+     pixels. Status: open. The members are to hold `TiffRaw` and
+     `PillowRaw` once the TIFF (#459) and Pillow (#458) records are on
+     the main branch.
+122. Image stacks are written as folders of numbered files, through the
+     TIFF and Pillow writers of single files. `StackImage.consolidate()`
+     is the only encoding, and a save writes a consolidated copy and
+     leaves the image unchanged. An untouched stack copies the bytes of
+     its files, so a folder that is saved again is identical file for
+     file. A slice without a file is not written. A folder is written
+     beside its target and moved in its place by `_replace_folder`
+     (`io/images/stack/_files.py`), which follows `replace_directory` of
+     the pyramid core (#451) and replaces an existing folder only if it
+     holds nothing but images, and nothing but the files that the image
+     reads when it reads some of them. Files with numbered names, such as
+     `out_0.tif` for the path `out.tif`, are all written under hidden
+     names before any of them is renamed. Status: implemented. The
+     helper is to be replaced with `replace_directory` once #451 is on
+     the main branch.
+123. The conformance harness has a field `Exemplar.folder` for a format
+     whose object is a folder. Check 12 then checks that the format and
+     its metadata refuse bytes and streams, since neither can hold a
+     folder. Check 5 compares the folders file by file, and writes the
+     copy of the generic writer with `from_instance` and the format
+     itself, since no extension names a folder for `io.save` to choose
+     from. The metadata of a stack is written only with its image, so
+     checks 7 and 10 compare the records of metadata that cannot write.
+     The stack has no writer option that changes its stored data, so
+     check 16a is skipped. Check 6 cuts each TIFF file of the folder
+     before its pixels, which tifffile writes after the tags. Status:
+     accepted in the review of #431.
+124. The size of the pixels, the spacing of the slices and their unit
+     are fields of `StackRaw`, decoded from the files where they record
+     them, and the reader options `pixel_size`, `spacing` and `unit` set
+     them on load, as the review of #431 asks "for now". An untouched
+     stack is copied byte for byte, so a size that an option set is not
+     written into its files. A consolidated record holds only what the
+     files record: a TIFF file records the pixel size when it has a unit
+     of length, and the magnitude of the spacing, as the `PhysicalSizeZ`
+     of a volume of one slice, when it has no channels, and a Pillow file
+     records no size. A translation, a rotation and a flip within a file
+     are not recorded. Status: open, until the TIFF and Pillow records
+     decide where these sizes live.
+125. `StackImage` and `StackMetadata` claim a local folder that is not a
+     Zarr store and whose image files follow one numbering, with the
+     confidence `LIKELY`, judged by the names alone. They never claim a
+     file, a stream or bytes, so they take nothing from the TIFF and
+     Pillow readers. Status: accepted in the review of #431.
+126. A number that no file carries is a missing slice. The record does
+     not store the missing numbers, which follow from the numbers of its
+     members (`StackRaw.missing`), so a record cannot contradict itself.
+     The lazy array fills a missing slice with the reader option `fill`,
+     NaN or zero by default, without reading a file. `fill` describes
+     how the pixels are read, so it is held by the lazy array and is not
+     a field. Assigned data covers every slice, so a stack consolidated
+     with assigned data has no missing slice, and the values that filled
+     a missing slice are written as a file. Status: open, for the
+     maintainer to decide whether assigned data should keep the missing
+     slices of the record.
+127. The stacking axis is the field `StackRaw.axis`, which the reader
+     option `axis` sets and the writer option `axis` changes. Names that
+     carry several numbers, one per axis, are refused. Supporting them
+     would give each member one number per stacking axis and the record
+     one axis per number, which the fields `StackMember.number` and
+     `StackRaw.axis` leave room for. Status: open, for a later pull
+     request.
+128. `StackImage` declares no extension, so `io.save` writes an image
+     stack to `volume.tif` as one multi-page TIFF file, and cannot
+     choose the stack for a path without an extension. A folder is
+     written with `StackImage.save`, or with
+     `StackImage.from_instance(image).save` for another image. Declaring
+     the TIFF and Pillow extensions would let `io.save(stack, "out.tif")`
+     write numbered files, but would also make the stack a candidate for
+     every TIFF and Pillow file that is loaded. Status: open, for the
+     maintainer to decide.
 130. An OME-Zarr pyramid that is saved unchanged does not keep the bytes
      of its metadata, because the writer encodes the metadata again from
      the levels and the placements (`io/images/zarr/_multiscale.py`).
@@ -1232,6 +1391,68 @@ its status.
      values with a zero boundary and the inverse of the data model. The
      two agree at the nodes of the grid only. Status: accepted and
      documented in `XfmGridTransform`.
+150. A `register.dat` file holds no volume geometry, so the geometries
+     of the reference and the movable volume are options of the reader,
+     `reference=` and `moving=`, which are kept on the transformation and
+     never written (`io/transformations/freesurfer/regdat/_xforms.py`).
+     The view `RegisterDatTransformationRASToRAS` reads no matrix without
+     them, and the conformance checks load files without options, so the
+     view is not one of their variants and is tested in
+     `tests/test_io_regdat.py` instead. Status: accepted.
+151. The tkregister RAS space of a volume is one class,
+     `FreesurferTkrSystem` (`io/common/freesurfer/_tkr.py`), which MGH
+     images, `register.dat` and LTA files share. It is not `RASmm`, so
+     the formats that check the class of their systems, such as LTA and
+     MINC, do not write a tkregister space as scanner RAS. The data model
+     compares systems by their axes only, and the axes of a tkregister
+     space are those of RAS in millimetres, so a converter that bridges
+     or checks endpoints by their axes, such as those of the MRtrix
+     linear transform and of the NIfTI voxel-to-RAS affine, still accepts
+     a tkregister space as scanner RAS. The tkr space of a 4-D MGH image keeps a system of
+     four axes named `"tkr"`, as its scanner space keeps four axes named
+     `"scanner"`. Status: open, for the maintainer to decide whether a
+     system may be told apart from RAS by more than its axes.
+152. The geometries `reference` and `moving` of a `register.dat`
+     transformation (item 150) are `Geometry` values of the data model.
+     An image gives its `geometry`, and an LTA geometry block is
+     converted, without its file name. The geometry must place a 3-D
+     volume in an anatomical space in millimetres by an affine, and any
+     other geometry is refused when it is given. A `Geometry` compares
+     equal only to itself, so a tkregister system that holds a geometry
+     equals only a system that holds the same object, and the systems
+     that an LTA file decodes hold no geometry: the record keeps it.
+     Status: accepted, pending review.
+153. A `register.dat` transformation that knows both geometries converts
+     exactly to an LTA file of type `LINEAR_RAS_TO_RAS`, the type that
+     `lta_convert --inreg` writes, and an LTA file that knows both
+     geometries converts exactly to a `register.dat`
+     (`io/transformations/freesurfer/regdat/_converters.py`). Both keep
+     the map, so the reference volume is the source of the LTA file.
+     FreeSurfer keeps the roles of the volumes instead, and its LTA file
+     maps the movable volume to the reference, so the file written here
+     is the one that `lta_convert --inreg ... --invert` writes. `LtaRaw`
+     has no field for the `subject` and `fscale` lines that FreeSurfer
+     appends to an LTA file, so the subject of a `register.dat` is lost
+     through LTA. Status: accepted, pending review.
+154. LTA reads type 14, `REGISTER_DAT`, which `ltaReadFileEx` in
+     `utils/transform.cpp` of FreeSurfer reads as any other type and
+     `LTAchangeType` converts. The record stores the matrix from the
+     tkregister space of `dst` to that of `src`, so the transformation
+     reads its inverse, and a matrix assigned between two tkregister
+     spaces is written with this type and inverted. FreeSurfer refuses
+     to change the type of such a file without valid geometries, whereas
+     brainhops writes it with invalid geometry blocks when no geometry is
+     known. Status: accepted, pending review.
+155. `register.dat` and the plain matrix files both claim `.dat`. Their
+     sniffers do not accept each other's content, so reading picks the
+     right one in both directions. Writing has no content to sniff, and
+     `io.save` prefers `RegisterDatTransformation` for a plain `Affine`
+     saved to a `.dat` name, because it is the more specific format. An
+     affine between `RASmm` spaces is then refused, since a
+     `register.dat` file needs the geometries to store it, where the
+     plain matrix format wrote it before `register.dat` was added.
+     Status: open, for the maintainer to decide whether `io.save` should
+     fall back to another candidate when the chosen one refuses.
 160. A Neuroglancer precomputed volume holds several scales, so it is read
      as a pyramid, `PrecomputedMultiScaleImage`, whose levels are
      `PrecomputedImage` objects (`io/images/precomputed`). Each level
@@ -1280,6 +1501,40 @@ its status.
      because `bagof.paths.Path` merges the slashes of a nested URL. The
      tests read a remote volume through a `file://` URL and use no
      network. Status: accepted.
+170. The Convert3D matrix format of Greedy, `c3d_affine_tool` and
+     ITK-SNAP (`io/transformations/c3d`, #197) is read in one pass, as
+     LTA is, and its record `C3dAffineRaw` holds the matrix, the
+     characters that end each row and the text of the file. The text is
+     written back only while it still parses to the matrix and the
+     layout of the record, as in item 84, so an untouched file keeps its
+     bytes, including its six-digit numbers. Check 6 of the conformance
+     test is vacuous, because the file holds no data beside its record,
+     and check 10 edits `row_end`, the only field of the record outside
+     the matrix. Status: open, for review.
+171. `C3dAffine` repeats four short helpers of LTA (`_record`,
+     `_read_only`, `_matrix_to_model` and `_matrix_to_disk` in
+     `io/transformations/c3d/_affine.py` and
+     `io/transformations/freesurfer/lta/_xforms.py`), because the LTA
+     helpers are private to their package. They could move to
+     `io/transformations/base` once a third one-pass affine format needs
+     them. Status: open.
+172. A Convert3D matrix holds no marker, so `C3dAffine` never claims a
+     file from its content and is selected by the hints `c3d`, `greedy`
+     and `itksnap`. Without a hint, a `.mat` file of sixteen numbers is
+     still read as a FLIRT matrix, whose meaning differs, and a `.txt`
+     file as a plain matrix. The format declares the `.mat` extension,
+     so that `io.save` and the metadata dispatcher can choose it, and
+     `io.save` of an affine between world spaces to a `.mat` file, which
+     raised `WriterError` before, now writes a Convert3D matrix. Status:
+     open, for the maintainer to decide whether `.mat` should select this
+     writer.
+173. `RASToRAS` checks its systems only when it is built
+     (`io/transformations/base/affines.py`), so an `input` or an `output`
+     that is assigned later is not refused there. `C3dAffine.consolidate`
+     checks both systems again with the private `_check_endpoint` and
+     refuses a system that is not RAS with
+     `UnrepresentableTransformationError`. `NiftyRegAffine` has no such
+     check. Status: open.
 180. Imaris files are read only, as MINC files are (item 101). An
      untouched Imaris file could not be saved byte for byte: its `Data`
      datasets are always chunked and compressed, often with the LZ4
@@ -1333,6 +1588,147 @@ its status.
      decline and the single image certain. An open `h5py.File` is still
      sniffed without the option. Passing the options to `sniff_h5` would
      break the X5 and ITK sniffers, which take none. Status: accepted.
+190. Before the maintainer decision of 2026-10-13, an image stored the
+     list that it decoded in `_transformations`, the field of an assigned
+     list, and its setter of `metadata` set that field to `None`, so other
+     metadata dropped an assigned list too. The decoded list now lives in
+     the cache of `transformations`, and the writers and `consolidate`
+     read the assigned list, or else the cached one, through
+     `held_transformations` (`io/common/_geometry.py`), which reads the
+     cache with `cached_value` (`_core/properties.py`). The images of
+     the formats merged later (N5, Imaris, precomputed, JPEG 2000,
+     BigDataViewer and image stacks) follow the same rule, and the JPEG
+     2000 pyramid caches the levels and the placements that it decodes in
+     the same way. Status: resolved.
+191. A change made in place to a decoded list of transformations lives in
+     the cache, so it is lost when other metadata is assigned, and a copy
+     made with `replace` or `from_instance` decodes the list again instead
+     of copying the change. A write of the image itself, including
+     `io.save`, still writes the change. Assigning the changed list keeps
+     it everywhere. The images that cannot be written (N5, Imaris,
+     precomputed and BigDataViewer) have no record to encode the change into, so their
+     `consolidate` gives the copy the changed list as an assigned one.
+     Status: open, for the maintainer to decide whether copies within a
+     format should carry the cache.
+192. Check 20 cannot tell an old geometry from a new one for some
+     exemplars. The transformation of `NiftiRASCoordinatesField` and of
+     the FNIRT exemplar, which has no moving image, is its data, which
+     does not depend on the header, and the MINC files of the harness
+     have one geometry. The part of the check on assigned values still
+     applies to them. Status: accepted.
+193. The NRRD encoder kept the spacings and the positions of the base
+     record when the preferred transformation was the unit scaling that a
+     file without geometry decodes to, so the file was written with the
+     geometry of the base. A test of this work found it. Status:
+     resolved, where `_geometry_fields` (`io/images/nrrd/_image.py`)
+     drops those fields of the spatial axes whenever there is no
+     geometry to write. Check 20 likewise found that an MRtrix image or
+     warp with nothing pending copied its lazy voxels under the record of
+     other metadata that stores them with another type, which wrote a
+     file too short for its header. Its `consolidate` now encodes the
+     voxels again unless the record stores them as the file that they
+     come from (`stores_as_recorded`, `io/common/mrtrix/_files.py`).
+
+The items from 200 on were found while adding the BigDataViewer formats
+(`io/common/bdv`, `io/images/bdv` and `io/transformations/bdv`), which
+read a dataset made of an XML file and an HDF5 file, and write the
+registrations of its views back into the XML file.
+
+200. The global space of a BigDataViewer dataset has no unit of its own.
+     A dataset exported by the Fiji plugin stores the voxel size as its
+     only transform (`ExportImagePlusPlugIn`), so its global space is in
+     the unit of the voxel size, but BigStitcher stores the voxel size
+     divided by the smallest voxel size of the dataset as `calibration`
+     (`DatasetCreationUtils.createViewRegistrations`), so its global
+     space is in units of that smallest size. BigDataViewer measures the
+     global space through the voxel size along x and the scale of the
+     transform along x (`ScaleBarOverlayRenderer`). The axes of the
+     `"global"` system therefore have no unit, and each level of an image
+     also has an affine to a `"physical"` system, scaled by the voxel size
+     in its unit (`io/images/bdv/_image.py`). Status: open, for the
+     maintainer to decide whether the unit should be derived as the scale
+     bar of BigDataViewer derives it.
+201. BigDataViewer images cannot be written, as MINC images cannot
+     (item 101). A view is one dataset of a chunked and compressed HDF5
+     file that holds every setup, time point and level of the
+     acquisition, and the XML file describes the whole acquisition, so
+     writing one image would mean rewriting or editing in place a file
+     that h5py does not write back byte for byte (item 48). The
+     registration of a view is written by `BdvViewRegistration`, into
+     the same XML file. The `transformations` of an image follows item
+     190, and its `consolidate` gives a copy a decoded list changed in
+     place, as item 191 says. Status: decided in this pass.
+202. The record of an image holds the XML file and also what the HDF5
+     file says about the resolution levels of each setup
+     (`BdvRaw.pyramids`), which the image reader adds, because the
+     transformations of a level are decoded from both. `BdvMetadata.load`
+     reads the XML file alone, so its `pyramids` are `None`, and the
+     metadata of an image and the metadata of its XML file differ in this
+     field while they write the same bytes. Status: open.
+203. The XML file is read and written as bytes, by binary adapters,
+     because BigDataViewer writes it with JDOM, whose default line
+     separator is CRLF (`LineSeparator.DEFAULT`), and a text adapter
+     reads with universal newlines and would drop the carriage returns.
+     Status: accepted.
+204. A chain that is assigned to a registration is written by replacing
+     the bytes of the `<ViewRegistration>` element of its view, at the
+     offsets that expat reports, so the rest of the file is kept byte for
+     byte. An element of the chain that the registration decoded from its
+     own record is written as its `<ViewTransform>` element, with its
+     `<Name>` and the text of its values, and is recognized by its
+     identity, as X5 recognizes its nodes (item 36). An element taken
+     from another object, or from a copy made with `replace`, is written
+     again without a name. The data model has no name for a
+     transformation, so a cleaner design would need a subclass of
+     `Affine` that carries the name of its transform. The systems
+     between the elements of the chain are unknown and are `None`.
+     Status: open, as item 36.
+205. A dataset stored in HDF5 is both an image and a set of
+     registrations. `BdvViewRegistration` scores `MAYBE`, below the
+     image readers, so that `io.load` reads the dataset as an image whose
+     transformation is the registration, as it reads a NIfTI file as an
+     image rather than as an affine (`NiftiVoxelToRAS` scores `WEAK`).
+     `transformations.load` reads the registration, and a dataset stored
+     with another image loader, such as N5, is read as a registration by
+     `io.load`. No change of the data model is needed. Status: decided in
+     this pass.
+206. A view is selected by the reader options `setup` and `timepoint`,
+     which are ids, and both default to the first id, which is setup 0
+     and time point 0 in the datasets that BigDataViewer and BigStitcher
+     write. A reader stores the ids that it resolved. The options select
+     what is read and do not count as overrides, as for X5 (item 49), so
+     a registration is always written back with every view. Status:
+     decided in this pass.
+207. A file written before the `dataType` attribute existed stores 16-bit
+     unsigned voxels as signed integers, which are read back bit for bit
+     as unsigned values, as BigDataViewer reads them. BigDataViewer reads
+     any other stored type of such a file through an HDF5 conversion to
+     signed 16-bit integers, and brainhops reads it in its stored type
+     instead. Values stored in another type than the one that `dataType`
+     declares are converted with NumPy, while BigDataViewer converts them
+     with HDF5, whose rounding and clipping were not checked. Status:
+     open.
+208. `BdvMultiScaleImage` is listed in `NOT_MIGRATED`, because a pyramid
+     has no record yet (item 15). Its levels are `BdvImage` objects,
+     which follow the design and share one metadata object. Status: open,
+     as item 15.
+209. The image readers read the whole XML file to sniff it, and open the
+     HDF5 file to count the levels of the setup, so that a view with a
+     single level is read as a `BdvImage`, as the Imaris readers do.
+     Status: accepted.
+210. A generic `<ViewTransform>`, whose content a Java class reads, is
+     kept and written back as it is, but decoding the chain of its view
+     raises `ParserContentError`, so a chain assigned to that view
+     cannot keep it. Status: accepted.
+211. A registration saved under another name is the whole XML file, whose
+     `<hdf5>` path may be relative, so the copy names an HDF5 file beside
+     it that may not exist, as a `.mih` header names its data file
+     (item 91). Status: accepted.
+212. `BdvMetadata` without a record refuses to write, because a dataset
+     needs at least a setup and a time point, as `M3zMetadata` refuses
+     (item 61). A registration without a record writes a new file with
+     a single setup, a single time point and no image loader. Status:
+     accepted.
 250. An N5 pyramid, a group whose datasets are `s0`, `s1`, ..., is read
      as `N5MultiScaleImage`, whose levels are `N5Image` objects
      (`io/images/n5`). Each level follows this design: it holds the
@@ -1403,3 +1799,53 @@ its status.
      directory, so a level after a gap is not read, and the channel
      groups `c0`, `c1`, ... of the n5-viewer are read one at a time.
      Status: open.
+280. A TrakEM2 affine (`io/transformations/trakem2/_xform.py`) is
+     written only into the project that it was read from, by replacing
+     the value of the `transform` attribute of its patch, as the
+     BigDataViewer registration of #441 replaces one element. An affine
+     without a record, such as one built from data or converted from
+     another format, is refused by `consolidate` with
+     `UnrepresentableTransformationError`, because a project cannot be
+     made from an affine alone: a patch needs an image file, a layer and
+     a project. The conformance harness has a new field,
+     `Exemplar.template`, which writes a project by hand, and checks 8 and
+     9 check the refusal for such a format. Status: open, for the
+     maintainer to decide whether a format may refuse to write an object
+     without a record.
+281. A TrakEM2 patch is placed by a 2D affine in the plane of its layer,
+     and the layer has a z and a thickness. The affine is read as a 2D
+     `Affine` of shape `(2, 3)`, and the z, the thickness and the
+     calibration stay in the record of the patch. A 3D placement would
+     need a convention for the third axis of a patch, which has none:
+     either a unit axis at the z of the layer, or an axis scaled by the
+     thickness of the layer, and in either case whether z is the top or
+     the middle of the section and whether it is calibrated by
+     `pixelWidth`, as TrakEM2 does, or by `pixelDepth`. The datamodel has
+     no embedding of a 2D transformation in 3D that would carry it.
+     Status: open.
+282. The coordinate transform of a TrakEM2 patch is not composed with
+     its affine. TrakEM2 shifts the image between the two by the corner of
+     the bounding box of a mesh of the image
+     (`Patch.getFullCoordinateTransform`), which depends on the mesh
+     resolution and on a truncation to integers, and brainhops does not
+     compute it. The `input` of an affine whose patch has a coordinate
+     transform is therefore `None`. Only an affine model and a similarity
+     model written inside the patch are decoded, by
+     `coordinate_transform()`, and lists, other models and transforms
+     kept in separate `.ct` files are refused when decoded and kept in
+     the file as they are. Status: accepted.
+283. The TrakEM2 reader parses XML with expat to know the byte spans of
+     its elements and attributes (`io/transformations/trakem2/_xml.py`),
+     as the BigDataViewer reader of #441 does in
+     `io/common/bdv/_xml.py`. The two helpers overlap, and are to be
+     merged into one module under `io/common/` once both are on `main`.
+     Status: open.
+284. The similarity model of TrakEM2 reads its four values in single
+     precision with Java's `Float.parseFloat`, and brainhops reads them
+     with `numpy.float32`, which rounds the decimal text through a double
+     and may differ from Java in the last bit for rare values. Status:
+     accepted.
+285. Check 6 of the conformance test is vacuous for TrakEM2, because the
+     metadata holds the whole file, as for LTA and M3Z (item 66), and
+     check 18 does not apply, because the format has no `raw`. Status:
+     accepted.

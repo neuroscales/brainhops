@@ -11,7 +11,9 @@ space (`mri_info --vox2ras`). Tkr RAS, where surfaces live
 (`mri_info --vox2ras-tkr`), has the same voxel sizes but conformed LIA
 axes and its origin at the centre of the volume. The physical space,
 used by `LINEAR_PHYSVOX` transforms, is the scaled voxel space shifted
-to the centre of the volume.
+to the centre of the volume. The tkr RAS space of a volume is described
+by [`FreesurferTkrSystem`][], which the MGH images and the `register.dat`
+and LTA transformations share.
 
 !!! note "The centre of the volume"
     FreeSurfer puts the centre of the volume at voxel coordinate
@@ -24,6 +26,8 @@ All FreeSurfer formats derive from [`FreesurferFormat`][].
 
 __all__ = [
     "FreesurferFormat",
+    "FreesurferTkrSystem",
 ]
 
 from ._formats import FreesurferFormat
+from ._tkr import FreesurferTkrSystem
