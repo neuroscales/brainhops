@@ -28,6 +28,8 @@ as little code as possible.
 
 import gzip
 import importlib
+import json
+import math
 import os
 import pickle
 import struct
@@ -60,15 +62,22 @@ from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
+    FileWriter,
     ParserContentError,
     ParserError,
+    UnrepresentableTransformationError,
     WriterError,
     _overrides_from_fileobj,
 )
-from brainhops.io.common._geometry import same_transformations
+from brainhops.io.common._geometry import (
+    held_transformations,
+    same_transformations,
+)
 from brainhops.io.common.afni._data import _BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
+from brainhops.io.common.bdv import BdvMetadata, BdvRaw
+from brainhops.io.common.freesurfer import FreesurferTkrSystem
 from brainhops.io.common.mrtrix._data import _MrtrixProxy
 from brainhops.io.common.nrrd._data import _NrrdProxy
 from brainhops.io.images.afni import AfniImage, AfniMetadata
@@ -79,6 +88,7 @@ from brainhops.io.images.afni._views import (
     _image_to_model as _afni_to_model,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
 from brainhops.io.images.mrtrix._views import (
     _image_to_disk as _mrtrix_to_disk,
@@ -111,6 +121,20 @@ from brainhops.io.transformations.afni._views import (
 )
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.bdv import BdvViewRegistration
+from brainhops.io.transformations.bdv._xform import (
+    _matrix_to_disk as _bdv_matrix_to_disk,
+)
+from brainhops.io.transformations.bdv._xform import (
+    _matrix_to_model as _bdv_matrix_to_model,
+)
+from brainhops.io.transformations.c3d import C3dAffine, C3dAffineMetadata
+from brainhops.io.transformations.c3d._affine import (
+    _matrix_to_disk as _c3d_to_disk,
+)
+from brainhops.io.transformations.c3d._affine import (
+    _matrix_to_model as _c3d_to_model,
+)
 from brainhops.io.transformations.freesurfer.lta import (
     LtaMetadata,
     LtaPhysicalSystem,
@@ -133,6 +157,21 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
 )
+from brainhops.io.transformations.freesurfer.regdat import (
+    RegisterDatMetadata,
+    RegisterDatTransformation,
+)
+from brainhops.io.transformations.minc import (
+    XfmAffine,
+    XfmMetadata,
+    XfmTransform,
+)
+from brainhops.io.transformations.minc._affine import (
+    _matrix_to_disk as _xfm_matrix_to_disk,
+)
+from brainhops.io.transformations.minc._affine import (
+    _matrix_to_model as _xfm_matrix_to_model,
+)
 from brainhops.io.transformations.mrtrix import (
     MrtrixCoordinatesField,
     MrtrixDisplacementField,
@@ -143,6 +182,17 @@ from brainhops.io.transformations.mrtrix import (
 from brainhops.io.transformations.mrtrix._views import (
     _warp_to_disk,
     _warp_to_model,
+)
+from brainhops.io.transformations.trakem2 import (
+    TrakEM2Metadata,
+    TrakEM2PatchAffine,
+    TrakEM2Raw,
+)
+from brainhops.io.transformations.trakem2._xform import (
+    _matrix_to_disk as _trakem2_matrix_to_disk,
+)
+from brainhops.io.transformations.trakem2._xform import (
+    _matrix_to_model as _trakem2_matrix_to_model,
 )
 
 try:
@@ -227,9 +277,67 @@ except ImportError:
     PILImage = None
 
 try:
+    import tifffile
+
+    from brainhops.io.images.stack import StackImage, StackMetadata
+    from brainhops.io.images.stack._data import _StackProxy
+    from brainhops.io.images.stack._views import (
+        _image_to_disk as _stack_to_disk,
+    )
+    from brainhops.io.images.stack._views import (
+        _image_to_model as _stack_to_model,
+    )
+except ImportError:
+    tifffile = None
+
+try:
+    import tensorstore as ts
+
+    from brainhops.io.images.n5 import N5Image, N5Metadata
+    from brainhops.io.images.n5._data import _N5Proxy
+    from brainhops.io.images.n5._views import (
+        _image_to_disk as _n5_to_disk,
+    )
+    from brainhops.io.images.n5._views import (
+        _image_to_model as _n5_to_model,
+    )
+    from brainhops.io.images.precomputed import (
+        PrecomputedImage,
+        PrecomputedMetadata,
+    )
+    from brainhops.io.images.precomputed._data import _PrecomputedProxy
+    from brainhops.io.images.precomputed._views import (
+        _image_to_disk as _precomputed_to_disk,
+    )
+    from brainhops.io.images.precomputed._views import (
+        _image_to_model as _precomputed_to_model,
+    )
+
+    n5_needs = ts
+except ImportError:
+    ts = None
+    n5_needs = None
+
+try:
     import h5py
 
+    from brainhops.io.common.bdv._hdf5 import _BdvProxy
     from brainhops.io.common.hdf5 import DelayedH5Array
+    from brainhops.io.images.bdv import BdvImage
+    from brainhops.io.images.bdv._views import (
+        _image_to_disk as _bdv_to_disk,
+    )
+    from brainhops.io.images.bdv._views import (
+        _image_to_model as _bdv_to_model,
+    )
+    from brainhops.io.images.imaris import ImarisImage, ImarisMetadata
+    from brainhops.io.images.imaris._data import _ImarisProxy
+    from brainhops.io.images.imaris._views import (
+        _image_to_disk as _imaris_to_disk,
+    )
+    from brainhops.io.images.imaris._views import (
+        _image_to_model as _imaris_to_model,
+    )
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
     )
@@ -249,6 +357,19 @@ try:
     )
 except ImportError:
     h5py = None
+
+try:
+    from brainhops.io.images.base import _utils_raster as raster
+    from brainhops.io.images.jpeg2000 import Jpeg2000Image, Jpeg2000Metadata
+    from brainhops.io.images.jpeg2000._data import _Jpeg2000Proxy
+    from brainhops.io.images.jpeg2000._views import (
+        _image_to_disk as _jpeg2000_to_disk,
+    )
+    from brainhops.io.images.jpeg2000._views import (
+        _image_to_model as _jpeg2000_to_model,
+    )
+except ImportError:
+    Jpeg2000Image = None
 
 # ----------------------------------------------------------------------
 #   TOY FORMAT
@@ -423,17 +544,23 @@ class ToyImage(
     read, or as it was last consolidated. Assigned data are pending: they
     are stored in the private field `_data` until `consolidate` encodes
     them into a new `raw` and a new record, or until the image is written.
-    The transformations are decoded from the record on first access and
-    stored in the private field `_transformations`, where an assigned list
-    is stored too. `consolidate` compares that list with a fresh decode of
-    the record, and encodes it only when they differ, so that a list
-    changed in place is written and an untouched one keeps the record.
+    An assigned list of transformations is stored in the private field
+    `_transformations`, and the list that the record decodes to is cached
+    apart on first access. Assigning other metadata drops the cached list
+    and keeps an assigned one. `consolidate` compares the list that the
+    image holds, assigned or else cached, with a fresh decode of the
+    record, and encodes it only when they differ, so that a list changed
+    in place is written and an untouched one keeps the record.
     """
 
     EXTENSIONS = (".toy",)
 
     raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
+    _metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
+
+    # Other metadata drops the transformations decoded from the old record,
+    # and keeps those that were assigned.
+    metadata = smartproperty("metadata", invalidates="transformations")
 
     # The image takes the `data` and `transformations` fields over under
     # private names, where `None` means that they are decoded from `raw`
@@ -451,26 +578,26 @@ class ToyImage(
             return None
         return _toy_to_model(self.raw)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         # The geometry is decoded from the record on first access and
-        # stored, so that a change made to the list in place is kept. A
-        # list, which may be empty, can also be assigned.
-        self._transformations = _toy_to_transformations(self.metadata)
-        return self._transformations
+        # cached, so that a change made to the list in place is kept. A
+        # list, which may be empty, can also be assigned, and is stored in
+        # `_transformations`.
+        return _toy_to_transformations(self.metadata)
 
     def consolidate(self, *, inplace: bool = False, **options) -> "ToyImage":
         # Nothing is encoded for an image that has a record, no pending
         # data, and transformations that are never read or the same as a
         # fresh decode of the record, so its copy shares `raw` and the
         # metadata.
+        held = held_transformations(self)
         if (
             self._data is None
             and (
-                self._transformations is None
+                held is None
                 or same_transformations(
-                    self._transformations,
-                    _toy_to_transformations(self.metadata),
+                    held, _toy_to_transformations(self.metadata)
                 )
             )
             and not options
@@ -581,7 +708,7 @@ def _toy_encoded(
         base = image.metadata.raw
     # The list of the image is read without being stored, so that a write
     # leaves the image as it was.
-    transformations = image._transformations
+    transformations = held_transformations(image)
     if transformations is None:
         transformations = _toy_to_transformations(image.metadata)
     preferred = transformations[-1] if transformations else Identity()
@@ -809,6 +936,41 @@ class Exemplar(tx.NamedTuple):
     then the header file, beside an empty file of data.
     """
 
+    fixture: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
+    """Function that writes the file that the checks read, or `None`.
+
+    The function receives a path and data. It is `None` when the checks
+    write that file by saving an object built from data. A format that
+    reads several kinds of files from the header that it keeps, such as
+    the coefficient files of FNIRT, writes only the default kind from
+    data alone, because a record is never made up. A variant for another
+    kind therefore writes its file with this function, while the format
+    still writes the files that it reads.
+    """
+
+    folder: bool = False
+    """Whether an object of the format is a folder of files.
+
+    An image stack is a folder of numbered files, so its checks write
+    and read a folder, whose path is the path of the other formats. Bytes
+    and streams cannot hold a folder, so the format and its metadata must
+    refuse them, and check 12 tests that they do instead of reading them.
+    No extension names a folder, so `io.save` cannot choose the format of
+    a folder from its name, and check 5 writes the copy that `io.save`
+    would make with the format itself.
+    """
+
+    template: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
+    """Function that writes a file of a format that writes only over a file.
+
+    The function receives a path and data. It is `None` for a format that
+    writes an object built from data alone. A TrakEM2 affine is written
+    into the project that it was read from, and an affine without a
+    project is refused, so the checks write a project with this function,
+    and check that an object without a record refuses to be consolidated
+    and saved.
+    """
+
     storage: tx.Optional[tx.Dict[str, tx.Any]] = None
     """Options of `consolidate` that change how the data is stored.
 
@@ -838,6 +1000,15 @@ def _nifti_geometry(image: tx.Any) -> np.ndarray:
 
 def _nifti_change_geometry(image: tx.Any) -> None:
     image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+
+
+def _scaled_change_geometry(image: tx.Any) -> None:
+    # The voxel sizes of some exemplars are already those that
+    # `_nifti_change_geometry` assigns, and some have more than three axes,
+    # so they are given voxel sizes 5, 6, 7... along all their axes.
+    ndim = len(image.shape)
+    sizes = np.arange(5.0, 5.0 + ndim)
+    image.transformations = [Affine(matrix=np.diag([*sizes, 1.0])[:ndim])]
 
 
 def _header_matrix(xform: tx.Any) -> tx.Optional[np.ndarray]:
@@ -893,6 +1064,26 @@ _VOXEL_TO_RAS = np.array(
 )
 """An affine whose inverse is exact in single precision, as NIfTI stores
 it."""
+
+
+def _fnirt_coefficient_file(path: tx.Any, data: np.ndarray) -> None:
+    # The header that FNIRT writes with --cout: the intent of cubic
+    # coefficients, the voxel sizes of the reference in the intent
+    # parameters, the knot spacing in the pixdims, the shape of the
+    # reference in the offsets of the qform and the initial affine in the
+    # sform (`common_coef_construction` in
+    # `src/warpfns/fnirt_file_writer.cpp` of FSL 5.0.9).
+    image = nb.Nifti1Image(data, None)
+    image.header["intent_code"] = 2007
+    image.header["intent_p1"] = 2.0
+    image.header["intent_p2"] = 2.0
+    image.header["intent_p3"] = 2.0
+    image.header.set_zooms((5.0, 5.0, 5.0, 1.0))
+    qform = np.diag([5.0, 5.0, 5.0, 1.0])
+    qform[:3, 3] = (5, 10, 15)
+    image.set_qform(qform, 1)
+    image.set_sform(np.eye(4), 1)
+    nb.save(image, str(path))
 
 
 def _vectors() -> np.ndarray:
@@ -996,7 +1187,7 @@ if nb is not None:
         EXEMPLARS[_cls] = _ITK._replace(
             build=lambda data, cls=_cls: cls(raw=_itk_field_to_disk(data))
         )
-    EXEMPLARS[FnirtWarpField] = _NIFTI._replace(
+    _FNIRT = _NIFTI._replace(
         sample=_vectors,
         # FNIRT holds no grid that the model encodes, so its data stands in.
         geometry=_data_geometry,
@@ -1005,6 +1196,7 @@ if nb is not None:
         options=frozenset({"moving", "reference", "deformation_type"}),
         storage={"dtype": "int16"},
     )
+    EXEMPLARS[FnirtWarpField] = _FNIRT
 
 
 def _lta_stored(xform: tx.Any) -> tx.Any:
@@ -1051,6 +1243,165 @@ _LTA = Exemplar(
     stored=_lta_stored,
 )
 EXEMPLARS[LtaTransformation] = _LTA
+
+# A TrakEM2 project is an XML file that places the patches of each layer
+# by a 2D affine, whose six values live in the record, which is parsed in
+# one pass, as LTA keeps its matrix. The affine is written into the
+# project that it was read from, by replacing the value of the
+# `transform` attribute of its patch, and an affine without a project is
+# refused, so the checks write a project by hand (`template`). A record
+# is frozen, so the edit of a record gives a new record, read from edited
+# bytes. The checks that build an object from data alone, or convert one
+# from another format, check that it refuses to be consolidated. Check 6
+# is vacuous, as for LTA, since the metadata holds the whole file, and
+# check 18 does not apply, since the format has no `raw`.
+
+_TRAKEM2_XML = """<?xml version="1.0" encoding="ISO-8859-1"?>
+<!DOCTYPE trakem2_anything [
+\t<!ELEMENT t2_patch (t2_prop,t2_annot,ict_transform,t2_filter)>
+\t<!ATTLIST t2_patch oid NMTOKEN #REQUIRED>
+] >
+
+<trakem2>
+\t<t2_layer_set
+\t\toid="3"
+\t\ttransform="matrix(1.0,0.0,0.0,1.0,0.0,0.0)"
+\t>
+\t\t<t2_layer oid="5"
+\t\t\t thickness="1.0"
+\t\t\t z="0.0"
+\t\t>
+\t\t\t<t2_patch
+\t\t\t\toid="7"
+\t\t\t\twidth="4.0"
+\t\t\t\theight="3.0"
+\t\t\t\ttransform="matrix({transform})"
+\t\t\t\ttitle="tile.tif"
+\t\t\t>
+\t\t\t</t2_patch>
+\t\t</t2_layer>
+\t</t2_layer_set>
+</trakem2>
+"""
+
+
+def _write_trakem2(path: tx.Any, data: tx.Any) -> None:
+    """Write a project of one patch, laid out as TrakEM2 lays it out."""
+    values = _trakem2_matrix_to_disk(data)
+    text = _TRAKEM2_XML.format(transform=",".join(repr(v) for v in values))
+    with open(path, "wb") as file:
+        file.write(text.encode("latin-1"))
+
+
+def _trakem2_stored(xform: tx.Any) -> tx.Any:
+    # The six values live in the record, and a matrix that was assigned is
+    # pending until it is encoded into a new record.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.patch(xform.patch).transform
+
+
+def _trakem2_edit_record(record: tx.Any) -> tx.Any:
+    stored = record.stored.replace(b"<trakem2>", b"<!-- edited -->\n<trakem2>")
+    return TrakEM2Raw.from_bytes(stored)
+
+
+EXEMPLARS[TrakEM2PatchAffine] = Exemplar(
+    metadata=TrakEM2Metadata,
+    suffix=".xml",
+    proxies=(tuple,),
+    to_model=_trakem2_matrix_to_model,
+    to_disk=_trakem2_matrix_to_disk,
+    sample=lambda: np.array([[2.0, 0.5, 1.0], [-0.25, 4.0, 2.0]]),
+    edit_record=_trakem2_edit_record,
+    record_edited=lambda raw: b"<!-- edited -->" in raw.stored,
+    geometry=_matrix_geometry,
+    change_geometry=lambda xform: setattr(
+        xform, "data", np.array([[3.0, 0.0, 5.0], [0.0, 3.0, 6.0]])
+    ),
+    foreign=lambda data: Affine(data),
+    derived=("homogeneous_matrix",),
+    options=frozenset({"patch"}),
+    stored=_trakem2_stored,
+    template=_write_trakem2,
+)
+
+
+def _regdat_stored(xform: tx.Any) -> tx.Any:
+    # The matrix of a register.dat file lives in the record, as the matrix
+    # of an LTA file does.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+def _regdat_edit_record(record: tx.Any) -> tx.Any:
+    record.subject = "edited"
+    return record
+
+
+# A register.dat file is parsed in one pass, as an LTA file is, so the
+# checks read the matrix of the record. The file holds no geometry, and
+# the geometries `reference` and `moving` are options of the reader that
+# are never written. The view `RegisterDatTransformationRASToRAS` is not
+# a variant here, because it reads no matrix without both geometries,
+# which the checks do not give when they load a file (item 150 of the
+# tensions in `docs/design/format-records.md`). Its tests are in
+# `test_io_regdat.py`. Check 6 is vacuous, as it is for LTA, because the
+# file has no data beside its record.
+_REGDAT = Exemplar(
+    metadata=RegisterDatMetadata,
+    suffix=".dat",
+    proxies=(tuple,),
+    to_model=_matrix_to_model,
+    to_disk=_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_regdat_edit_record,
+    record_edited=lambda raw: raw.subject == "edited",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(
+        data,
+        input=FreesurferTkrSystem(name="reference"),
+        output=FreesurferTkrSystem(name="moving"),
+    ),
+    options=frozenset({"reference", "moving"}),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_regdat_stored,
+)
+EXEMPLARS[RegisterDatTransformation] = _REGDAT
+
+
+# A Convert3D matrix file is parsed in one pass, as an LTA file is, and
+# its record holds the matrix. The only field of the record outside the
+# matrix is the layout of its rows, which the edit of check 10 changes to
+# the layout of Greedy. Check 6 is vacuous, because the file holds no
+# data beside its record (item 170 of the design memo).
+
+
+def _c3d_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+EXEMPLARS[C3dAffine] = Exemplar(
+    metadata=C3dAffineMetadata,
+    suffix=".mat",
+    proxies=(tuple,),
+    to_model=_c3d_to_model,
+    to_disk=_c3d_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=lambda record: replace(record, row_end=" "),
+    record_edited=lambda raw: raw.row_end == " ",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=RASmm(), output=RASmm()),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_c3d_stored,
+)
 
 
 # The model of an X5 file is a chain, whose first element here is a field
@@ -1230,6 +1581,74 @@ _M3Z = Exemplar(
     # that `M3zMetadata` and the dispatcher read the file alone.
 )
 EXEMPLARS[M3zMorph] = _M3Z
+
+# An MNI transform file is short and parsed in one pass, so the matrices
+# of its linear transforms live in the record, as the matrix of an LTA
+# file does. A file of one linear transform is an `XfmAffine`. The
+# exemplar of the chain, `XfmTransform`, is a chain of one affine, whose
+# matrix stands for its data: a grid transform names a MINC volume, which
+# brainhops cannot write, so the checks of writing cannot build one. The
+# metadata holds the whole file, so the check that metadata never reads
+# data compares a full copy of the file, as for LTA and M3Z. Its own test
+# module checks that the metadata never reads a displacement volume.
+
+
+def _xfm_stored(xform: tx.Any) -> tx.Any:
+    # The matrix of the first transform lives in the record. A
+    # transformation without a record stores nothing until it is
+    # consolidated.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.transforms[0].matrix
+
+
+def _xfm_edit_record(record: tx.Any) -> tx.Any:
+    # A record is frozen, so the edit is made with `replace`.
+    return replace(record, comments=("%edited",))
+
+
+def _xfm_affine(data: tx.Any) -> tx.Any:
+    return Affine(data, input=RASmm(), output=RASmm())
+
+
+def _xfm_data(xform: tx.Any) -> tx.Any:
+    return xform.transformations[0].data
+
+
+def _xfm_set_data(xform: tx.Any, value: tx.Any) -> None:
+    xform.transformations = (_xfm_affine(value),)
+
+
+_XFM = Exemplar(
+    metadata=XfmMetadata,
+    suffix=".xfm",
+    # The file is parsed in one pass and has no lazy data, so the checks
+    # read the matrix of the record, a tuple of rows, as for LTA.
+    proxies=(tuple,),
+    to_model=_xfm_matrix_to_model,
+    to_disk=_xfm_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_xfm_edit_record,
+    record_edited=lambda raw: raw.comments == ("%edited",),
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=_xfm_affine,
+    build=XfmAffine,
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_xfm_stored,
+)
+EXEMPLARS[XfmAffine] = _XFM
+EXEMPLARS[XfmTransform] = _XFM._replace(
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    foreign=lambda data: Sequence([_xfm_affine(data)]),
+    build=lambda data: XfmTransform([_xfm_affine(data)]),
+    derived=(),
+    view="transformations",
+    data=_xfm_data,
+    set_data=_xfm_set_data,
+)
 
 # An MGH file keeps its footer of acquisition parameters and its tags
 # after the voxels, and both belong to the record. The edit of the record
@@ -1672,7 +2091,507 @@ if PILImage is not None:
     )
     EXEMPLARS[PillowImage] = _PILLOW
 
+
+def _stack_edit_record(record: tx.Any) -> tx.Any:
+    # The names of the files are what a record of a stack holds besides
+    # its geometry, and a folder that is written keeps them.
+    members = tuple(
+        replace(member, name="edited_" + member.name)
+        for member in record.members
+    )
+    return replace(record, members=members)
+
+
+def _stack_change_geometry(image: tx.Any) -> None:
+    # A stack records only a scaling onto axes with a unit of length.
+    axes = raster.default_axes(3)
+    image.transformations = raster.raster_transformations(
+        axes, {"x": (2.0, "mm"), "y": (3.0, "mm"), "z": (4.0, "mm")}
+    )
+
+
+def _stack_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy a folder of TIFF files, each cut before its pixels.
+
+    tifffile writes the pixels of a page after its header, so each copy
+    keeps the tags, which the record reads, and loses the pixels.
+    """
+    os.mkdir(target)
+    for name in sorted(os.listdir(source)):
+        with tifffile.TiffFile(os.path.join(source, name)) as tif:
+            offset = min(tif.pages[0].dataoffsets)
+        with open(os.path.join(source, name), "rb") as file:
+            header = file.read(offset)
+        with open(os.path.join(target, name), "wb") as file:
+            file.write(header)
+
+
+if tifffile is not None:
+    # An image stack is a folder of numbered TIFF files, which the checks
+    # write and read with the path of a folder (`folder=True`). Check 12
+    # checks that bytes and streams are refused, since they cannot hold a
+    # folder, and check 6 cuts each file of the folder before its pixels.
+    # Check 5 compares the folders file by file, and writes the copy of
+    # the generic writer with the format itself, since no extension names
+    # a folder for `io.save` to choose the format from. The metadata
+    # cannot be written on its own, so checks 7 and 10 compare records.
+    # The record holds the names of the files, which the edit of check 10
+    # changes, and only a scaling with a unit of length, which the
+    # geometry of the checks is. The format has no option that changes
+    # the stored data, so check 16a is skipped (items 121 to 128 of the
+    # memo on format records).
+    EXEMPLARS[StackImage] = Exemplar(
+        metadata=StackMetadata,
+        suffix="",
+        proxies=(_StackProxy,),
+        to_model=_stack_to_model,
+        to_disk=_stack_to_disk,
+        sample=lambda: np.arange(24, dtype="uint16").reshape(2, 3, 4),
+        edit_record=_stack_edit_record,
+        record_edited=lambda record: all(
+            name.startswith("edited_") for name in record.names
+        ),
+        geometry=_nifti_geometry,
+        change_geometry=_stack_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        cut=_stack_cut,
+        header=lambda metadata: metadata.raw,
+        folder=True,
+    )
+
+
+# A BigDataViewer dataset is an XML file, which lists the views and holds
+# their registrations, and an HDF5 file of voxels. The registration of a
+# view is a chain of affines whose values live in the record, which is
+# parsed in one pass, as LTA keeps its matrix. The exemplar is a chain of
+# one affine, whose stored data are the twelve values of its transform. A
+# record is frozen, so the edit of a record gives a new record, read from
+# edited bytes, which keeps the levels that an image read from the HDF5
+# file. The XML file is read as bytes, so that its CRLF line separators
+# are kept.
+
+
+def _bdv_stored(xform: tx.Any) -> tx.Any:
+    # The values of the transform live in the record, and a chain that
+    # was assigned is pending until it is encoded into a new record.
+    if xform.metadata is None:
+        return None
+    setup, timepoint = xform.view()
+    registration = xform.metadata.raw.registration(timepoint, setup)
+    return registration.transforms[0].affine
+
+
+def _bdv_edit_record(record: tx.Any) -> tx.Any:
+    stored = record.stored.replace(
+        b"<SpimData", b"<!-- edited -->\r\n<SpimData", 1
+    )
+    return replace(BdvRaw.from_bytes(stored), pyramids=record.pyramids)
+
+
+def _bdv_record_edited(record: tx.Any) -> bool:
+    return b"<!-- edited -->" in record.stored
+
+
+def _bdv_set_chain(xform: tx.Any, value: tx.Any) -> None:
+    xform.transformations = (Affine(value),)
+
+
+_BDV = Exemplar(
+    metadata=BdvMetadata,
+    suffix=".xml",
+    # The XML file is parsed in one pass, so the values of the transform
+    # are a tuple of the record just after a read. The metadata holds the
+    # whole file, so the check that metadata never reads data compares a
+    # full copy of the file, as for LTA.
+    proxies=(tuple,),
+    to_model=_bdv_matrix_to_model,
+    to_disk=_bdv_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_bdv_edit_record,
+    record_edited=_bdv_record_edited,
+    geometry=lambda xform: np.asarray(xform.transformations[0].matrix),
+    change_geometry=lambda xform: _bdv_set_chain(
+        xform, np.diag([2.0, 3.0, 4.0, 1.0])[:3]
+    ),
+    foreign=lambda data: Sequence([Affine(data)]),
+    build=lambda data: BdvViewRegistration([Affine(data)]),
+    options=frozenset({"setup", "timepoint"}),
+    stored=_bdv_stored,
+    view="transformations",
+    data=lambda xform: xform.transformations[0].matrix,
+    set_data=_bdv_set_chain,
+)
+EXEMPLARS[BdvViewRegistration] = _BDV
+
+# BigDataViewer images cannot be written, so the checks write their
+# datasets as BigDataViewer lays them out, with an XML file written by
+# hand and an HDF5 file written with h5py beside it. The XML file is the
+# header file of the dataset, and the bytes of the XML file alone cannot
+# hold an image. The voxels are stored as floats, which the `dataType`
+# attribute declares, and the view is registered by an affine, so that
+# the geometry of the image is not the identity.
+
+_BDV_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<SpimData version="0.2">
+  <BasePath type="relative">.</BasePath>
+  <SequenceDescription>
+    <ImageLoader format="bdv.hdf5">
+      <hdf5 type="relative">{hdf5}</hdf5>
+    </ImageLoader>
+    <ViewSetups>
+      <ViewSetup>
+        <id>0</id>
+        <name>0</name>
+        <size>{size}</size>
+        <voxelSize>
+          <unit>um</unit>
+          <size>0.5 0.5 2.0</size>
+        </voxelSize>
+      </ViewSetup>
+    </ViewSetups>
+    <Timepoints type="range">
+      <first>0</first>
+      <last>0</last>
+    </Timepoints>
+  </SequenceDescription>
+  <ViewRegistrations>
+    <ViewRegistration timepoint="0" setup="0">
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>{affine}</affine>
+      </ViewTransform>
+    </ViewRegistration>
+  </ViewRegistrations>
+</SpimData>
+"""
+
+
+def _write_bdv(path: tx.Any, data: tx.Any) -> None:
+    """Write a dataset of one view and one level, as BigDataViewer does."""
+    hdf5 = os.path.splitext(str(path))[0] + ".h5"
+    text = _BDV_XML.format(
+        hdf5=os.path.basename(hdf5),
+        size=" ".join(str(n) for n in np.shape(data)),
+        affine=" ".join(repr(float(v)) for v in _VOXEL_TO_RAS.reshape(-1)),
+    )
+    with open(path, "wb") as file:
+        file.write(text.replace("\n", "\r\n").encode())
+    with h5py.File(hdf5, "w") as f:
+        f.create_dataset("s00/resolutions", data=np.ones((1, 3)))
+        f.create_dataset("s00/subdivisions", data=np.full((1, 3), 4, "i4"))
+        f["s00"].attrs["dataType"] = "float32"
+        f.create_dataset(
+            "t00000/s00/0/cells", data=np.asarray(data, "float32").T
+        )
+
+
+if h5py is not None:
+    EXEMPLARS[BdvImage] = Exemplar(
+        metadata=BdvMetadata,
+        suffix=".xml",
+        proxies=(_BdvProxy,),
+        to_model=_bdv_to_model,
+        to_disk=_bdv_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=_bdv_edit_record,
+        record_edited=_bdv_record_edited,
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"setup", "timepoint", "level"}),
+        header_file=lambda path: path,
+        source=_write_bdv,
+    )
+
+
+# A JPEG 2000 image is one resolution level of a JP2 file, written with
+# Pillow from 8-bit grey samples. Its geometry is the pixel size that the
+# resolution box of the file stores, in millimetres, so the geometry that
+# the checks assign is a scaling of half and a quarter of a millimetre,
+# which the box stores exactly. A raw codestream has no resolution box and
+# stores no pixel size, so the checks of geometry would be vacuous for a
+# `.j2k` file, which is therefore not a variant. The checks of a storage
+# option are skipped, because no option of the writer stores the floating
+# point values that they assign, and a lossy option keeps the type of the
+# data. The pyramid of a file, `Jpeg2000MultiScaleImage`, is not listed:
+# the levels of a multiscale image have no design yet (#415, fourth pass).
+
+
+def _jpeg2000_change_geometry(image: tx.Any) -> None:
+    image.transformations = raster.raster_transformations(
+        raster.default_axes(2), {"x": (0.5, "mm"), "y": (0.25, "mm")}
+    )
+
+
+if Jpeg2000Image is not None:
+    EXEMPLARS[Jpeg2000Image] = Exemplar(
+        metadata=Jpeg2000Metadata,
+        suffix=".jp2",
+        proxies=(_Jpeg2000Proxy,),
+        to_model=_jpeg2000_to_model,
+        to_disk=_jpeg2000_to_disk,
+        sample=lambda: np.arange(24, dtype=np.uint8).reshape(4, 6),
+        edit_record=lambda record: replace(record, comments=("edited",)),
+        record_edited=lambda record: record.comments == ("edited",),
+        geometry=_nifti_geometry,
+        change_geometry=_jpeg2000_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    )
+
+
+# An N5 dataset is a directory that holds an `attributes.json` file and
+# its blocks, and it cannot be written, so the checks write a dataset as
+# the specification describes it, without TensorStore, and name it by its
+# `attributes.json` file. The blocks at the upper edges are smaller than
+# `blockSize`, as the Java tools write them. The bytes of the attributes
+# cannot hold the dataset, so `header_file` names that file itself. N5
+# datasets are sparse, so a copy without blocks would read as zeros: the
+# copy whose data cannot be read holds a block that cannot be decoded
+# instead. The record is compared as it is, since the metadata cannot
+# write bytes. The lazy array reads the blocks with TensorStore, so the
+# exemplar also checks the reader against the specification.
+
+_N5_BLOCK = (2, 2, 3)
+
+
+def _n5_writer(compression: str) -> tx.Callable[[tx.Any, tx.Any], None]:
+    """Return a function that writes an N5 dataset of one compression."""
+
+    def write(path: tx.Any, data: tx.Any) -> None:
+        directory = os.path.dirname(os.fspath(path))
+        values = np.asarray(data, dtype="float32")
+        attributes = {
+            "dimensions": list(values.shape),
+            "blockSize": list(_N5_BLOCK),
+            "dataType": "float32",
+            "compression": {"type": compression},
+            "pixelResolution": {"dimensions": [2, 3, 4], "unit": "um"},
+        }
+        os.makedirs(directory, exist_ok=True)
+        with open(path, "w") as file:
+            json.dump(attributes, file)
+        grid = [math.ceil(n / b) for n, b in zip(values.shape, _N5_BLOCK)]
+        for position in np.ndindex(*grid):
+            begin = [g * b for g, b in zip(position, _N5_BLOCK)]
+            block = values[
+                tuple(slice(i, i + b) for i, b in zip(begin, _N5_BLOCK))
+            ]
+            # A block is a big-endian header (mode, number of dimensions
+            # and size of the block), then the big-endian samples with the
+            # first dimension fastest.
+            header = struct.pack(">HH", 0, block.ndim)
+            header += struct.pack(f">{block.ndim}I", *block.shape)
+            samples = block.astype(">f4").tobytes(order="F")
+            if compression == "gzip":
+                samples = gzip.compress(samples)
+            name = os.path.join(directory, *map(str, position))
+            os.makedirs(os.path.dirname(name), exist_ok=True)
+            with open(name, "wb") as file:
+                file.write(header + samples)
+
+    return write
+
+
+def _n5_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy the attributes of a dataset beside a block that cannot be read."""
+    directory = os.path.dirname(os.fspath(target))
+    os.makedirs(os.path.join(directory, "0", "0"), exist_ok=True)
+    with open(source, "rb") as file:
+        content = file.read()
+    with open(target, "wb") as file:
+        file.write(content)
+    with open(os.path.join(directory, "0", "0", "0"), "wb") as file:
+        file.write(b"not a block")
+
+
+if n5_needs is not None:
+    _N5 = Exemplar(
+        metadata=N5Metadata,
+        suffix=os.sep + "attributes.json",
+        proxies=(_N5Proxy,),
+        to_model=_n5_to_model,
+        to_disk=_n5_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=lambda record: replace(
+            record, attributes={**record.attributes, "note": "edited"}
+        ),
+        record_edited=lambda record: record.attributes.get("note") == "edited",
+        geometry=_nifti_geometry,
+        change_geometry=_scaled_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_n5_cut,
+        header=lambda metadata: metadata.raw,
+        source=_n5_writer("gzip"),
+        header_file=lambda path: path,
+    )
+    EXEMPLARS[N5Image] = _N5
+
+
+# Brainhops cannot write Imaris files, so the checks write them with
+# h5py as the description of the format lays them out: one dataset per
+# time point and channel, ordered z, y, x and padded to whole chunks, and
+# every parameter as an array of single characters. The data have the
+# five axes of every Imaris image, `(x, y, z, t, c)`. The copy that the
+# metadata check reads keeps every group and parameter of the file, but
+# its voxels are in an external file that does not exist, so the chunk
+# shape, which that copy loses, is not part of the record. The record is
+# compared as it is, since the metadata cannot write bytes. The level is
+# a reader option that the image keeps as a field.
+
+
+def _imaris_text(value: tx.Any) -> np.ndarray:
+    """Encode a parameter as Imaris does, one character per element."""
+    return np.frombuffer(str(value).encode(), dtype="S1")
+
+
+def _write_imaris(path: tx.Any, data: tx.Any) -> None:
+    stored = np.asarray(data, dtype="float32").T
+    with h5py.File(path, "w") as f:
+        f.attrs["ImarisVersion"] = _imaris_text("5.5.0")
+        for channel, times in enumerate(stored):
+            for time, block in enumerate(times):
+                group = f.create_group(
+                    f"DataSet/ResolutionLevel 0/TimePoint {time}/"
+                    f"Channel {channel}"
+                )
+                for axis, size in zip("XYZ", reversed(block.shape)):
+                    group.attrs["ImageSize" + axis] = _imaris_text(size)
+                padded = np.zeros([n + n % 2 for n in block.shape], "float32")
+                padded[tuple(slice(n) for n in block.shape)] = block
+                group.create_dataset("Data", data=padded, chunks=(2, 2, 2))
+        image = f.create_group("DataSetInfo/Image")
+        for i, size in enumerate(reversed(stored.shape[2:])):
+            image.attrs[f"ExtMin{i}"] = _imaris_text(float(i))
+            image.attrs[f"ExtMax{i}"] = _imaris_text(float(i + 2 * size))
+        image.attrs["Unit"] = _imaris_text("um")
+
+
+def _imaris_edit_record(record: tx.Any) -> tx.Any:
+    info = record.copy().info
+    info["Image"]["Name"] = "edited"
+    return replace(record, info=info)
+
+
+if h5py is not None:
+    EXEMPLARS[ImarisImage] = Exemplar(
+        metadata=ImarisMetadata,
+        suffix=".ims",
+        proxies=(_ImarisProxy,),
+        to_model=_imaris_to_model,
+        to_disk=_imaris_to_disk,
+        sample=lambda: np.arange(48, dtype="float32").reshape(4, 3, 2, 2, 1),
+        edit_record=_imaris_edit_record,
+        record_edited=lambda record: (
+            record.info["Image"].get("Name") == "edited"
+        ),
+        geometry=_nifti_geometry,
+        change_geometry=_scaled_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_hdf5_cut,
+        header=lambda metadata: metadata.raw,
+        source=_write_imaris,
+    )
+
+
+# A Neuroglancer precomputed volume is a directory that holds an `info`
+# file and the chunks of each scale, and it cannot be written, so the
+# checks write a volume of one raw scale as `volume.md` describes it,
+# without TensorStore, and name it by its `info` file. The bytes of the
+# `info` file cannot hold the volume, so `header_file` names that file
+# itself. A copy whose data cannot be read is the `info` file alone, in
+# a directory without chunks. The record is compared as it is, since the
+# metadata cannot write bytes. The lazy array reads the chunks with
+# TensorStore, so the exemplar also checks the reader against the
+# specification.
+
+_PRECOMPUTED_CHUNK = (2, 2, 2)
+_PRECOMPUTED_OFFSET = (1, 2, 3)
+
+
+def _write_precomputed(path: tx.Any, data: tx.Any) -> None:
+    """Write a precomputed volume of one raw scale, named by its `info`."""
+    directory = os.path.dirname(os.fspath(path))
+    values = np.asarray(data, dtype="float32")
+    scale = {
+        "key": "s0",
+        "size": list(values.shape),
+        "resolution": [2, 3, 4],
+        "voxel_offset": list(_PRECOMPUTED_OFFSET),
+        "chunk_sizes": [list(_PRECOMPUTED_CHUNK)],
+        "encoding": "raw",
+    }
+    info = {
+        "@type": "neuroglancer_multiscale_volume",
+        "type": "image",
+        "data_type": "float32",
+        "num_channels": 1,
+        "scales": [scale],
+    }
+    os.makedirs(os.path.join(directory, "s0"), exist_ok=True)
+    with open(path, "w") as file:
+        json.dump(info, file)
+    grid = [math.ceil(n / c) for n, c in zip(values.shape, _PRECOMPUTED_CHUNK)]
+    for position in np.ndindex(*grid):
+        begin = [g * c for g, c in zip(position, _PRECOMPUTED_CHUNK)]
+        end = [
+            min(b + c, n)
+            for b, c, n in zip(begin, _PRECOMPUTED_CHUNK, values.shape)
+        ]
+        block = values[tuple(slice(b, e) for b, e in zip(begin, end))]
+        name = "_".join(
+            f"{b + o}-{e + o}"
+            for b, e, o in zip(begin, end, _PRECOMPUTED_OFFSET)
+        )
+        # A chunk is a little-endian [x, y, z, channel] array in Fortran
+        # order, with no header.
+        with open(os.path.join(directory, "s0", name), "wb") as file:
+            file.write(block.astype("<f4").tobytes(order="F"))
+
+
+def _precomputed_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy the `info` file of a volume into a directory without chunks."""
+    os.makedirs(os.path.dirname(os.fspath(target)), exist_ok=True)
+    with open(source, "rb") as file:
+        content = file.read()
+    with open(target, "wb") as file:
+        file.write(content)
+
+
+if ts is not None:
+    EXEMPLARS[PrecomputedImage] = Exemplar(
+        metadata=PrecomputedMetadata,
+        suffix=os.sep + "info",
+        proxies=(_PrecomputedProxy,),
+        to_model=_precomputed_to_model,
+        to_disk=_precomputed_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=lambda record: replace(record, mesh="edited"),
+        record_edited=lambda record: record.mesh == "edited",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_precomputed_cut,
+        header=lambda metadata: metadata.raw,
+        source=_write_precomputed,
+        header_file=lambda path: path,
+    )
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
+    # A pyramid has no record yet (tension 15). Its levels are
+    # `BdvImage` objects, which follow the design.
+    "brainhops.io.images.bdv.BdvMultiScaleImage",
+    # A JPEG 2000 pyramid waits for the design of the levels of a
+    # multiscale image, which the fourth pass of #415 decides with
+    # OME-Zarr. Its full-resolution level is the exemplar above.
+    "brainhops.io.images.jpeg2000.Jpeg2000MultiScaleImage",
+    # The levels of an N5 pyramid are `N5Image` exemplars, and the pyramid
+    # holds their shared metadata but no `raw`. The rules for the levels
+    # and the record of a pyramid are decided in the Zarr pass (item 15 of
+    # the memo), so the pyramid waits with the other pyramids (item 250).
+    "brainhops.io.images.n5.N5MultiScaleImage",
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
     "brainhops.io.images.openslide.DicomWsiImage",
@@ -1695,6 +2614,16 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.VentanaMultiScaleImage",
     "brainhops.io.images.openslide.ZeissImage",
     "brainhops.io.images.openslide.ZeissMultiScaleImage",
+    # The record of a pyramid is decided in the Zarr pass (item 15 of the
+    # design memo). Each level of an Imaris pyramid is an `ImarisImage`,
+    # which follows the design.
+    "brainhops.io.images.imaris.ImarisMultiScaleImage",
+    # The levels of a precomputed pyramid are `PrecomputedImage` exemplars,
+    # and the pyramid holds their shared metadata but no `raw`. The rules
+    # for the levels and the record of a pyramid are decided in the Zarr
+    # pass (item 15 of the memo), so the pyramid waits with the other
+    # pyramids (item 160).
+    "brainhops.io.images.precomputed.PrecomputedMultiScaleImage",
     "brainhops.io.images.tiff.TiffImage",
     "brainhops.io.images.tiff.TiffMultiScaleImage",
     "brainhops.io.images.zarr.OmeZarrImage",
@@ -1819,6 +2748,26 @@ VARIANTS.append(
     ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
 )
 
+# FNIRT also reads and writes the spline coefficients that it saves with
+# --cout. A field built from data alone is written as a deformation field,
+# because a record is never made up, so check 8 checks that kind for this
+# variant too, and the other checks read a coefficient file written by
+# hand.
+if nb is not None:
+    VARIANTS.append(
+        (
+            "FnirtWarpField-coefficients",
+            FnirtWarpField,
+            _FNIRT._replace(suffix=".nii.gz", fixture=_fnirt_coefficient_file),
+        )
+    )
+
+# The blocks of an N5 dataset may be uncompressed.
+if n5_needs is not None:
+    VARIANTS.append(
+        ("N5Image-raw", N5Image, _N5._replace(source=_n5_writer("raw")))
+    )
+
 VARIANTS.append(
     (
         "MrtrixCoordinatesField-gz",
@@ -1883,9 +2832,15 @@ def _resolve(name: str) -> tx.Optional[type]:
         return None
 
 
-def _decompressed(path: tx.Any) -> bytes:
+def _decompressed(path: tx.Any) -> tx.Any:
     # A gzipped file, such as a `.nii.gz` or a `.m3z` file, is compared
-    # after decompression, since only its content must be kept.
+    # after decompression, since only its content must be kept. A folder
+    # is compared file by file.
+    if os.path.isdir(path):
+        return {
+            name: _decompressed(os.path.join(path, name))
+            for name in sorted(os.listdir(path))
+        }
     with open(path, "rb") as file:
         content = file.read()
     if content[:2] == b"\x1f\x8b":
@@ -1945,15 +2900,29 @@ def _header(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
 
 
 def _written(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
-    """Return the bytes that metadata writes, or else its summary.
+    """Return what metadata writes, or its summary if it cannot write.
 
-    Metadata that cannot be written, such as the metadata of a format that
-    cannot write, or of a raster file, whose header Pillow writes only
-    with its pixels, is compared through its summary.
+    The metadata of a format that cannot write, such as MINC, the metadata
+    of an image stack, which is written only with its image, and the
+    metadata of a raster file, whose header Pillow writes only with its
+    pixels, are compared through their summary.
     """
-    if hasattr(exemplar.metadata, "to_bytes"):
+    if isinstance(metadata, FileWriter):
         return metadata.to_bytes()
     return _header(exemplar, metadata)
+
+
+def _generic_save(exemplar: Exemplar, obj: tx.Any, target: tx.Any) -> None:
+    """Write an object with the generic writer, as `io.save` does.
+
+    No extension names a folder, so `io.save` cannot choose the format of
+    a folder from its name. The copy that it would make of an object of
+    the format, with `from_instance`, is then written by the format.
+    """
+    if exemplar.folder:
+        type(obj).from_instance(obj).save(target)
+    else:
+        io.save(obj, target)
 
 
 def _cut(
@@ -2005,6 +2974,10 @@ def _saved(
     path = _path(tmp_path, exemplar, name)
     if exemplar.source is not None:
         exemplar.source(path, exemplar.sample())
+    elif exemplar.fixture is not None:
+        exemplar.fixture(path, exemplar.sample())
+    elif exemplar.template is not None:
+        exemplar.template(path, exemplar.sample())
     else:
         _built(cls, exemplar, exemplar.sample()).save(path)
     return path
@@ -2015,6 +2988,16 @@ def _refuses_writing(obj: tx.Any, target: tx.Any) -> None:
     assert not hasattr(obj, "save")
     with pytest.raises(WriterError):
         io.save(obj, target)
+
+
+def _refuses_encoding(obj: tx.Any, target: tx.Any) -> None:
+    """Check that a format that writes only over a file refuses an object
+    without a record."""
+    with pytest.raises(UnrepresentableTransformationError):
+        obj.consolidate()
+    with pytest.raises(UnrepresentableTransformationError):
+        obj.save(target)
+    assert not os.path.exists(target)
 
 
 def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
@@ -2028,7 +3011,10 @@ def _placed(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
     if exemplar.source is not None:
         return _saved(cls, exemplar, tmp_path, "placed")
     path = _path(tmp_path, exemplar, "placed")
-    obj = _built(cls, exemplar, exemplar.sample())
+    if exemplar.template is not None:
+        obj = cls.load(_saved(cls, exemplar, tmp_path, "template"))
+    else:
+        obj = _built(cls, exemplar, exemplar.sample())
     exemplar.change_geometry(obj)
     obj.save(path)
     return path
@@ -2157,7 +3143,7 @@ def test_05_untouched_save_is_byte_identical(
         assert _decompressed(target) == _decompressed(source)
         # The generic writer copies the object with `from_instance` first.
         target = _path(tmp_path, exemplar, "generic")
-        io.save(_load(cls, exemplar, source), target)
+        _generic_save(exemplar, _load(cls, exemplar, source), target)
         assert _decompressed(target) == _decompressed(source)
     # Every file of a copy under the same name, in another directory, is
     # the file of the same name beside the source.
@@ -2168,7 +3154,9 @@ def test_05_untouched_save_is_byte_identical(
         directory = tmp_path / name
         directory.mkdir()
         if write is None:
-            io.save(_load(cls, exemplar, source), directory / source.name)
+            _generic_save(
+                exemplar, _load(cls, exemplar, source), directory / source.name
+            )
         else:
             write(directory / source.name)
         for copied in directory.iterdir():
@@ -2217,6 +3205,10 @@ def test_08_an_object_built_from_data_saves(
     built = _built(cls, exemplar, value)
     assert built.metadata is None
     assert np.array_equal(np.asarray(_data(exemplar, built)), value)
+    path = _path(tmp_path, exemplar, "built")
+    if exemplar.template is not None:
+        _refuses_encoding(built, path)
+        return
     # Consolidating encodes the data and a new record, which a format
     # that cannot write cannot encode.
     consolidated = built.consolidate()
@@ -2224,7 +3216,6 @@ def test_08_an_object_built_from_data_saves(
         assert isinstance(consolidated.metadata, exemplar.metadata)
     stored = np.asarray(_stored(exemplar, consolidated))
     assert np.array_equal(stored, exemplar.to_disk(value))
-    path = _path(tmp_path, exemplar, "built")
     if exemplar.source is not None:
         _refuses_writing(built, path)
         return
@@ -2269,6 +3260,10 @@ def test_09_copies_keep_raw_and_metadata(
     value = exemplar.sample()
     converted = cls.from_instance(exemplar.foreign(value))
     assert converted.metadata is None
+    if exemplar.template is not None:
+        assert np.array_equal(np.asarray(converted.data), value)
+        _refuses_encoding(converted, _path(tmp_path, exemplar, "converted"))
+        return
     if "data" in _init_names(_model(cls)):
         assert getattr(converted, "raw", None) is None
         assert np.array_equal(np.asarray(converted.data), value)
@@ -2339,6 +3334,16 @@ def test_12_adapter_contract(
         else:
             assert klass._READ_MODE == "rt"
     path = _saved(cls, exemplar, tmp_path)
+    if exemplar.folder:
+        # Neither the bytes of one file of the folder nor a stream can
+        # hold a folder of files.
+        content = sorted(path.iterdir())[0].read_bytes()
+        for klass in (cls, exemplar.metadata):
+            with pytest.raises(ParserError):
+                klass.from_bytes(content)
+            with pytest.raises(ParserError):
+                klass.from_fileobj(BytesIO(content))
+        return
     if exemplar.header_file is None:
         data = _data(
             exemplar, cls.from_bytes(path.read_bytes(), **_options(exemplar))
@@ -2365,10 +3370,11 @@ def test_13_transformations_are_decoded_unless_assigned(
     assert loaded._transformations is None
     for copy in (replace(loaded), cls.from_instance(loaded)):
         assert copy._transformations is None
-    # Reading them decodes the record and stores the list, and the copies
-    # decode the same record.
+    # Reading them decodes the record and caches the list, apart from an
+    # assigned list, and the copies decode the same record.
     decoded = exemplar.geometry(loaded)
-    assert loaded._transformations is not None
+    assert loaded._transformations is None
+    assert held_transformations(loaded) is loaded.transformations
     for copy in (replace(loaded), cls.from_instance(loaded)):
         assert np.allclose(exemplar.geometry(copy), decoded)
     # An empty list is kept, and the copies keep it.
@@ -2629,10 +3635,10 @@ def test_19_read_transformations_keep_the_record(
     path = _compared(cls, exemplar, tmp_path)
     loaded = _load(cls, exemplar, path)
     raw, metadata = loaded.raw, loaded.metadata
-    # Reading the transformations stores them, and they are the same as
+    # Reading the transformations caches them, and they are the same as
     # those of the record, so nothing is encoded.
     assert loaded.transformations is loaded.transformations
-    assert loaded._transformations is not None
+    assert held_transformations(loaded) is loaded.transformations
     consolidated = loaded.consolidate()
     assert consolidated.raw is raw
     assert consolidated.metadata is metadata
@@ -2683,6 +3689,73 @@ def test_19_a_copy_of_a_read_image_stays_lazy(
     assert copied.raw is loaded.raw
     assert copied.metadata is loaded.metadata
     assert copied.consolidate().metadata is loaded.metadata
+
+
+@pytest.mark.parametrize("decoded", [False, True], ids=["unread", "read"])
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_20_other_metadata_keeps_only_what_was_assigned(
+    cls: type,
+    exemplar: Exemplar,
+    decoded: bool,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The maintainer decided on 2026-10-13 that assigning other metadata
+    # drops what an object decodes from its record, such as its
+    # transformations, or the matrix of an affine, and keeps what was
+    # assigned. Whether the decoded value was read before does not matter.
+    source = _saved(cls, exemplar, tmp_path)
+    placed = _placed(cls, exemplar, tmp_path)
+    old = exemplar.geometry(cls.load(source))
+
+    # A value that was not assigned follows the new metadata, as in an
+    # object built with it. The record of the new metadata carries an edit
+    # outside of the geometry, which a save keeps.
+    record = exemplar.edit_record(deepcopy(cls.load(placed).metadata.raw))
+    metadata = exemplar.metadata.from_raw(record)
+    loaded = cls.load(source)
+    expected = exemplar.geometry(replace(loaded, metadata=metadata))
+    if exemplar.source is None and exemplar.geometry is not _data_geometry:
+        assert not np.allclose(expected, old)
+    if decoded:
+        exemplar.geometry(loaded)
+    loaded.metadata = metadata
+    assert loaded.metadata is metadata
+    assert all(field is None for field in _pending(loaded))
+    assert np.allclose(exemplar.geometry(loaded), expected)
+    target = _path(tmp_path, exemplar, "followed")
+    if exemplar.source is not None:
+        _refuses_writing(loaded, target)
+    else:
+        loaded.save(target)
+        back = cls.load(target)
+        assert np.allclose(exemplar.geometry(back), expected)
+        assert exemplar.record_edited(back.metadata.raw)
+
+    # A value that was assigned survives the new metadata, here that of
+    # the source, with the edit, and is written over its record.
+    record = exemplar.edit_record(deepcopy(cls.load(source).metadata.raw))
+    metadata = exemplar.metadata.from_raw(record)
+    loaded = cls.load(source)
+    if decoded:
+        exemplar.geometry(loaded)
+    exemplar.change_geometry(loaded)
+    assigned = exemplar.geometry(loaded)
+    assert not np.allclose(assigned, old)
+    pending = _pending(loaded)
+    loaded.metadata = metadata
+    assert _same(_pending(loaded), pending)
+    assert np.allclose(exemplar.geometry(loaded), assigned)
+    consolidated = loaded.consolidate()
+    assert np.allclose(exemplar.geometry(consolidated), assigned)
+    assert exemplar.record_edited(consolidated.metadata.raw)
+    target = _path(tmp_path, exemplar, "kept")
+    if exemplar.source is not None:
+        _refuses_writing(loaded, target)
+        return
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.allclose(exemplar.geometry(back), assigned)
+    assert exemplar.record_edited(back.metadata.raw)
 
 
 # ----------------------------------------------------------------------

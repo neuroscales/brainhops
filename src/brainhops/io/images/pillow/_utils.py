@@ -18,12 +18,14 @@ without tifffile) follows the same conventions.
 """
 
 __all__ = [
+    "PillowHeader",
     "PillowRaster",
     "EXTENSIONS",
     "SNIFF_FORMATS",
     "DPI_FORMATS",
     "sniff_pillow",
     "read_pillow",
+    "read_pillow_header",
     "pillow_layout",
     "pillow_to_array",
     "pillow_dpi",
@@ -62,11 +64,6 @@ EXTENSIONS: tx.Tuple[str, ...] = (
     ".pbm",
     ".pnm",
     ".pfm",
-    ".jp2",
-    ".j2k",
-    ".jpx",
-    ".jpf",
-    ".j2c",
     ".tga",
     ".pcx",
     ".qoi",
@@ -75,7 +72,7 @@ EXTENSIONS: tx.Tuple[str, ...] = (
 
 The list is curated rather than taken from Pillow, whose registry includes
 identify-only formats (HDF5, GRIB, FITS) and formats that other readers handle
-better. TIFF is left to the dedicated TIFF reader.
+better. TIFF and JPEG 2000 are left to their dedicated readers.
 """
 
 SNIFF_FORMATS: tx.Tuple[str, ...] = (
@@ -129,6 +126,44 @@ class PillowRaster(Magic, frozen=True, eq=False):
 
     n_frames: int
     """The number of frames in the file."""
+
+    dpi: tx.Optional[tx.Tuple[float, float]]
+    """The resolution recorded by the file, in dots per inch along x and y.
+
+    Placeholder resolutions, such as 72 dpi, are kept.
+    """
+
+
+class PillowHeader(Magic, frozen=True):
+    """What the header of a raster file says about its first frame.
+
+    A reader that must know the shape and the type of many files before it
+    decodes any of them, such as the reader of image sequences, reads this
+    header with [`read_pillow_header`][]. The header gives the array that
+    [`read_pillow`][] would return for the first frame, without decoding
+    the pixels.
+    """
+
+    format: tx.Optional[str]
+    """The Pillow name of the file format, such as `"PNG"`."""
+
+    mode: str
+    """The Pillow mode of the first frame as stored, such as `"P"`."""
+
+    info: tx.Dict[str, tx.Any]
+    """The `info` dictionary of Pillow, with the format-specific metadata."""
+
+    n_frames: int
+    """The number of frames in the file."""
+
+    shape: tx.Tuple[int, ...]
+    """The shape of the decoded first frame, `(rows, columns[, samples])`."""
+
+    dtype: str
+    """The NumPy type of the decoded pixels, in native byte order."""
+
+    axes: str
+    """The storage axes of the decoded first frame, `"YX"` or `"YXS"`."""
 
     dpi: tx.Optional[tx.Tuple[float, float]]
     """The resolution recorded by the file, in dots per inch along x and y.
@@ -407,6 +442,63 @@ def pillow_layout(
     if dtype.byteorder not in ("=", "|"):
         dtype = dtype.newbyteorder("=")
     return dtype, len(descriptor.bands)
+
+
+def read_pillow_header(file: tx.Any, palette: bool = True) -> PillowHeader:
+    """Read the header of a raster file without decoding its pixels.
+
+    Pillow reads only the header of a file when it opens it, so this
+    function is much cheaper than [`read_pillow`][]. The shape and the type
+    of the decoded first frame are computed with [`pillow_layout`][].
+
+    Parameters
+    ----------
+    file : str or PathLike or IO
+        A path or a file object, which is not closed.
+    palette : bool, default=True
+        Whether the decoded frame would look its palette colours up, as in
+        [`pillow_to_array`][].
+
+    Returns
+    -------
+    PillowHeader
+        The header. The `info` of a PNG file also holds its `sCAL` chunk.
+
+    Raises
+    ------
+    ParserContentError
+        If Pillow cannot read the file, or does not describe its mode.
+    """
+    start = None
+    if hasattr(file, "tell"):
+        try:
+            start = file.tell()
+        except Exception:
+            start = None
+    with _open(file) as im:
+        n_frames = int(getattr(im, "n_frames", 1) or 1)
+        mode = im.mode
+        info = dict(im.info)
+        width, height = im.size
+        fmt = im.format
+    if fmt == "PNG" and "sCAL" not in info:
+        scal = _png_scal(file, start)
+        if scal is not None:
+            info["sCAL"] = scal
+    dtype, samples = pillow_layout(mode, info, palette)
+    shape = (int(height), int(width))
+    if samples > 1:
+        shape += (samples,)
+    return PillowHeader(
+        format=fmt,
+        mode=mode,
+        info=info,
+        n_frames=n_frames,
+        shape=shape,
+        dtype=str(dtype),
+        axes="YXS" if samples > 1 else "YX",
+        dpi=pillow_dpi(info),
+    )
 
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

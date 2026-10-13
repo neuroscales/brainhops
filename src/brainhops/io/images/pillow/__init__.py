@@ -1,7 +1,7 @@
 """Raster images, read and written with [Pillow](https://python-pillow.org).
 
-This module covers PNG, JPEG, BMP, GIF, WebP, PNM, JPEG 2000, TGA and other
-formats, and needs the `pillow` extra.
+This module covers PNG, JPEG, BMP, GIF, WebP, PNM, TGA and other formats, and
+needs the `pillow` extra.
 
 ```python
 from brainhops.io.images import load
@@ -155,6 +155,10 @@ not read for the format, so the writer refuses such a keyword with a
 * `.tif` and `.tiff` files are left to the dedicated TIFF reader. The Pillow
   reader claims TIFF only as a fallback, when tifffile (the `tiff` extra) is
   not installed.
+* JPEG 2000 files (`.jp2`, `.j2k` and the like) are left to the dedicated
+  reader of [`brainhops.io.images.jpeg2000`][], which reads their resolution
+  levels and their resolution boxes. The Pillow reader claims them only as a
+  fallback, at full resolution, or when `hint="pillow"` asks for it.
 """
 
 __all__ = ["PillowImage", "PillowMetadata", "PillowRaw"]

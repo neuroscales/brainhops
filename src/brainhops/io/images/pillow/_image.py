@@ -341,8 +341,9 @@ class PillowImage(
         """Return the confidence that a file holds an image that Pillow reads.
 
         A format that is recognised by its magic number scores `LIKELY`. TIFF
-        scores only `WEAK`, because the dedicated TIFF reader reads it better.
-        The stream is tested with [`PillowRaw.sniff_fileobj`][].
+        and JPEG 2000 score only `WEAK`, because the dedicated TIFF and JPEG
+        2000 readers read them better. The stream is tested with
+        [`PillowRaw.sniff_fileobj`][].
 
         Parameters
         ----------

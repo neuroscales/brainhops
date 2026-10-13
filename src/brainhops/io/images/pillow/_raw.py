@@ -140,8 +140,9 @@ class PillowRaw(Magic, BinaryFileReader, frozen=True):
         reads.
 
         A format that is recognised by its magic number scores `LIKELY`.
-        TIFF scores only `WEAK`, because the dedicated TIFF reader reads it
-        better. The position of the stream is restored.
+        TIFF and JPEG 2000 score only `WEAK`, because the dedicated TIFF and
+        JPEG 2000 readers read them better. The position of the stream is
+        restored.
 
         Parameters
         ----------
@@ -159,7 +160,7 @@ class PillowRaw(Magic, BinaryFileReader, frozen=True):
             The confidence, between 0 and 1.
         """
         fmt = sniff_pillow(file)
-        if fmt == "TIFF":
+        if fmt in ("TIFF", "JPEG2000"):
             return Confidence.WEAK
         if fmt is not None:
             return Confidence.LIKELY

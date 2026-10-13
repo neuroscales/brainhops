@@ -166,6 +166,40 @@ def keeps_storage(
     return True
 
 
+def stores_as_recorded(raw: tx.Any, record: MrtrixRaw) -> bool:
+    """Tell whether a record says how the voxels of `raw` are stored.
+
+    A lazy array keeps the record of the file that it reads. When other
+    metadata is assigned, the record of the metadata may store the voxels
+    otherwise, with another shape, layout, type or scaling, and the lazy
+    array must then be encoded again rather than copied under the record.
+    An array in memory is encoded by the writer, and always agrees.
+
+    Parameters
+    ----------
+    raw : array-like
+        The voxels of an object, lazy or in memory.
+    record : MrtrixRaw
+        The record of the metadata of the object.
+
+    Returns
+    -------
+    bool
+        Whether the voxels can be written under the record as they are.
+    """
+    if not isinstance(raw, _MrtrixProxy):
+        return True
+    stored = raw.record
+    if stored is record:
+        return True
+    if tuple(stored.dim) != tuple(record.dim):
+        return False
+    scaling = None if record.scaling is None else tuple(record.scaling)
+    if scaling is None and stored.scaling is not None:
+        return False
+    return keeps_storage(stored, record.layout, record.datatype, scaling)
+
+
 def writer_strides(
     layout: tx.Optional[tx.Union[str, tx.Sequence[int]]],
     held: tx.Optional[MrtrixRaw],

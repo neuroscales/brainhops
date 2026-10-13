@@ -33,7 +33,10 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     WriterError,
 )
-from brainhops.io.common._geometry import same_transformations
+from brainhops.io.common._geometry import (
+    held_transformations,
+    same_transformations,
+)
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
@@ -119,32 +122,28 @@ class NiftiImage(
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
-    property of the same name reads it. `None`, the default, means that
-    the transformations have been neither read nor assigned, so the
-    header is kept as it is. The property stores here the list that it
-    decodes, and an assigned list, even an empty one, is stored as it is.
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the header and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = None
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
     An image built from data has no metadata. The header describes the
     file as it was read, or as the image was last consolidated. Assigning
-    other metadata drops the transformations that the image holds, read
-    or assigned, so that they are decoded from the new header.
+    other metadata drops the transformations decoded from the previous
+    header, so that they are decoded from the new one, and keeps the
+    transformations that were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -161,16 +160,19 @@ class NiftiImage(
             return None
         return _image_to_model(self.raw)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the header.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. A header modified in
-        place is not noticed, so a modified copy should be assigned as new
-        metadata instead.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place, such as an appended
+        transformation, is kept.
+        Assigning other metadata drops the decoded list, so that it is
+        decoded from the new header, and keeps an assigned list. A change
+        made in place to a decoded list is therefore lost when other
+        metadata is assigned. A header modified in place is not noticed,
+        so a modified copy should be assigned as new metadata instead.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -180,8 +182,7 @@ class NiftiImage(
         and the image is then written as an image built from data alone.
         Assigning `None` decodes the header again.
         """
-        self._transformations = _header_transformations(self.metadata)
-        return self._transformations
+        return _header_transformations(self.metadata)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -482,8 +483,9 @@ class NiftiImage(
         """
         # The geometry of the header is kept when the transformations
         # were never read, or are the same as those that it decodes to.
-        kept = self._transformations is None or same_transformations(
-            self._transformations, _header_transformations(self.metadata)
+        held = held_transformations(self)
+        kept = held is None or same_transformations(
+            held, _header_transformations(self.metadata)
         )
         if (
             self._data is None
@@ -882,7 +884,7 @@ def _nifti_encoded(
         header = None
     else:
         header = image.metadata.raw.copy().header
-    transformations = image._transformations
+    transformations = held_transformations(image)
     if transformations is None:
         transformations = _header_transformations(image.metadata)
     preferred = transformations[-1] if transformations else Identity()

@@ -43,6 +43,7 @@ from ..concrete import (
     Scaling,
     Translation,
 )
+from ..derived import Sqrt
 from ..inverse import Inverse
 from ..meta import (
     Bijection,
@@ -51,7 +52,6 @@ from ..meta import (
     _same_axes,
 )
 from ..multiscale import MultiscaleField
-from ..operators import Sqrt
 from ..sequence import Sequence, _unnest
 from .check import is_kind
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
