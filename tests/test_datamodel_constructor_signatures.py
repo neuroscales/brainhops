@@ -146,6 +146,10 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.transformations.freesurfer.m3z._xform": {
         "M3zMorph": ("transformations",),
     },
+    "brainhops.io.transformations.freesurfer.regdat._xforms": {
+        "RegisterDatTransformation": ("data",),
+        "RegisterDatTransformationRASToRAS": ("data",),
+    },
     "brainhops.io.transformations.fsl._affines": {
         "ScaledMmToScaledMm": ("data",),
         "ScaledMmToVoxel": ("data",),

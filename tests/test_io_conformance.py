@@ -77,6 +77,7 @@ from brainhops.io.common.afni._data import _BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
 from brainhops.io.common.bdv import BdvMetadata, BdvRaw
+from brainhops.io.common.freesurfer import FreesurferTkrSystem
 from brainhops.io.common.mrtrix._data import _MrtrixProxy
 from brainhops.io.common.nrrd._data import _NrrdProxy
 from brainhops.io.images.afni import AfniImage, AfniMetadata
@@ -155,6 +156,10 @@ from brainhops.io.transformations.freesurfer.m3z import (
 from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
+)
+from brainhops.io.transformations.freesurfer.regdat import (
+    RegisterDatMetadata,
+    RegisterDatTransformation,
 )
 from brainhops.io.transformations.minc import (
     XfmAffine,
@@ -1263,6 +1268,52 @@ EXEMPLARS[TrakEM2PatchAffine] = Exemplar(
     stored=_trakem2_stored,
     template=_write_trakem2,
 )
+
+
+def _regdat_stored(xform: tx.Any) -> tx.Any:
+    # The matrix of a register.dat file lives in the record, as the matrix
+    # of an LTA file does.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+def _regdat_edit_record(record: tx.Any) -> tx.Any:
+    record.subject = "edited"
+    return record
+
+
+# A register.dat file is parsed in one pass, as an LTA file is, so the
+# checks read the matrix of the record. The file holds no geometry, and
+# the geometries `reference` and `moving` are options of the reader that
+# are never written. The view `RegisterDatTransformationRASToRAS` is not
+# a variant here, because it reads no matrix without both geometries,
+# which the checks do not give when they load a file (item 150 of the
+# tensions in `docs/design/format-records.md`). Its tests are in
+# `test_io_regdat.py`. Check 6 is vacuous, as it is for LTA, because the
+# file has no data beside its record.
+_REGDAT = Exemplar(
+    metadata=RegisterDatMetadata,
+    suffix=".dat",
+    proxies=(tuple,),
+    to_model=_matrix_to_model,
+    to_disk=_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_regdat_edit_record,
+    record_edited=lambda raw: raw.subject == "edited",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(
+        data,
+        input=FreesurferTkrSystem(name="reference"),
+        output=FreesurferTkrSystem(name="moving"),
+    ),
+    options=frozenset({"reference", "moving"}),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_regdat_stored,
+)
+EXEMPLARS[RegisterDatTransformation] = _REGDAT
 
 
 # A Convert3D matrix file is parsed in one pass, as an LTA file is, and

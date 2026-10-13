@@ -140,6 +140,9 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.common.freesurfer": Package(
+        names=frozenset({"FreesurferFormat", "FreesurferTkrSystem"}),
+    ),
     "brainhops.io.images.jpeg2000": Package(
         names=frozenset(
             {
@@ -224,6 +227,16 @@ PACKAGES: tx.Dict[str, Package] = {
                 "LtaType",
                 "LtaValidity",
                 "LtaVoxelSystem",
+            }
+        ),
+    ),
+    "brainhops.io.transformations.freesurfer.regdat": Package(
+        names=frozenset(
+            {
+                "RegisterDatMetadata",
+                "RegisterDatRaw",
+                "RegisterDatTransformation",
+                "RegisterDatTransformationRASToRAS",
             }
         ),
     ),
