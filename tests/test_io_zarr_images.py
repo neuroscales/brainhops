@@ -489,6 +489,117 @@ def test_writer_round_trips_a_sequence_placement(tmp_path: Path) -> None:
     )
 
 
+# ---- the 0.6 dataset rule on write -----------------------------------
+
+
+def _rotation() -> tx.Any:
+    from brainhops.datamodel.transformations import Rotation
+
+    theta = 0.4
+    return Rotation(
+        matrix=[
+            [np.cos(theta), -np.sin(theta), 0.0],
+            [np.sin(theta), np.cos(theta), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+
+
+def _dataset_entries(path: str) -> tx.List[dict]:
+    import json
+
+    with open(Path(path) / "zarr.json") as stream:
+        ome = json.load(stream)["attributes"]["ome"]
+    return [
+        dataset["coordinateTransformations"][0]
+        for dataset in ome["multiscales"][0]["datasets"]
+    ]
+
+
+def test_writer_moves_the_rotation_of_a_single_level_to_the_pyramid(
+    tmp_path: Path,
+) -> None:
+    # A 0.6 dataset only scales and translates, so the rotation of the only
+    # level becomes the placement of the pyramid, which is exact.
+    rotation = _rotation()
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5), "float32"), transformations=[rotation]
+    )
+    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
+    path = str(tmp_path / "moved.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    assert [entry["type"] for entry in _dataset_entries(path)] == ["scale"]
+    np.testing.assert_allclose(
+        _world_matrix(back.images[0].transformation), np.eye(3, 4)
+    )
+    np.testing.assert_allclose(
+        _world_matrix(back.transformation), _world_matrix(rotation)
+    )
+
+
+@pytest.mark.parametrize("levels", [1, 2])
+def test_writer_refuses_a_rotated_level_it_cannot_move(
+    tmp_path: Path, levels: int
+) -> None:
+    # Splitting the geometry of the levels into a diagonal part per level and
+    # a shared placement is not done yet (#447), so a rotated level of a
+    # pyramid of several levels, or of a pyramid that has its own
+    # placement, is refused.
+    data = np.zeros((4, 4, 4), "float32")
+    rotated = SingleScaleImage(data, transformations=[_rotation()])
+    if levels == 2:
+        coarse = SingleScaleImage(
+            data[::2, ::2, ::2],
+            transformations=[_diag_affine([2.0, 2.0, 2.0], [0.5] * 3)],
+        )
+        pyramid = OmeZarrImage(images=[rotated, coarse], axes=_spatial_axes())
+    else:
+        pyramid = OmeZarrImage(
+            images=[rotated],
+            axes=_spatial_axes(),
+            transformations=[Translation(translation=[1.0, 2.0, 3.0])],
+        )
+
+    with pytest.raises(WriterError, match="#447"):
+        pyramid.save(str(tmp_path / "refused.zarr"))
+
+
+def test_writer_writes_a_diagonal_level_as_a_scale_then_a_translation(
+    tmp_path: Path,
+) -> None:
+    # A translation followed by a scale only scales and translates each
+    # axis, so it is written in the order that the prose of 0.6 asks for.
+    from brainhops.datamodel.transformations import Scaling, Sequence
+
+    data = np.zeros((4, 4, 4), "float32")
+    shifted = Sequence(
+        [
+            Translation(translation=[1.0, 2.0, 3.0]),
+            Scaling(scale=[2.0, 3.0, 4.0]),
+        ]
+    )
+    fine = SingleScaleImage(data, transformations=[shifted])
+    coarse = SingleScaleImage(
+        data[::2, ::2, ::2],
+        transformations=[_diag_affine([4.0, 6.0, 8.0], [3.0, 7.0, 13.0])],
+    )
+    pyramid = OmeZarrImage(images=[fine, coarse], axes=_spatial_axes())
+    path = str(tmp_path / "diagonal.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    first = _dataset_entries(path)[0]
+    kinds = [step["type"] for step in first["transformations"]]
+    assert kinds == ["scale", "translation"]
+    np.testing.assert_allclose(
+        _world_matrix(back.images[0].transformation), _world_matrix(shifted)
+    )
+
+
 def test_reader_refuses_unsupported_coordinate_transformation(
     tmp_path: Path,
 ) -> None:

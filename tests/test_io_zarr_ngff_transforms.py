@@ -754,3 +754,69 @@ def test_a_dropping_projection_into_the_intrinsic_space_is_refused() -> None:
                 }
             ]
         )
+
+
+# ---- the dataset of a level on write ---------------------------------
+# brainhops orders the axes (x, y, z), and OME stores them as (z, y, x).
+_TO_ZYX = [2, 1, 0]
+
+
+def test_a_diagonal_level_is_written_as_a_scale_then_a_translation() -> None:
+    # A translation followed by a scale is the scale (2, 3, 4) followed by
+    # the translation (2, 6, 12), in the stored order (z, y, x).
+    shifted = Sequence(
+        [
+            Translation(translation=[1.0, 2.0, 3.0]),
+            Scaling(scale=[2.0, 3.0, 4.0]),
+        ]
+    )
+    entry = _map.to_dataset_ome(shifted, _TO_ZYX, 3)
+    assert entry is not None
+    scale, translation = entry["transformations"]
+    assert scale == {"type": "scale", "scale": [4.0, 3.0, 2.0]}
+    assert translation == {
+        "type": "translation",
+        "translation": [12.0, 6.0, 2.0],
+    }
+
+
+def test_a_scale_level_is_written_as_it_is() -> None:
+    entry = _map.to_dataset_ome(Scaling(scale=[2.0, 3.0, 4.0]), _TO_ZYX, 3)
+    assert entry == {"type": "scale", "scale": [4.0, 3.0, 2.0]}
+
+
+def test_a_level_that_is_not_diagonal_has_no_dataset_transformation() -> None:
+    matrix = np.eye(3, 4)
+    matrix[0, 1] = 0.5
+    assert _map.to_dataset_ome(Affine(matrix=matrix), _TO_ZYX, 3) is None
+
+
+@pytest.mark.parametrize(
+    "entry, allowed",
+    [
+        ({"type": "identity"}, True),
+        ({"type": "scale", "scale": [1.0]}, True),
+        (
+            {
+                "type": "sequence",
+                "transformations": [{"type": "scale"}, {"type": "translation"}],
+            },
+            True,
+        ),
+        (
+            {
+                "type": "sequence",
+                "transformations": [{"type": "translation"}, {"type": "scale"}],
+            },
+            False,
+        ),
+        ({"type": "translation", "translation": [1.0]}, False),
+        ({"type": "affine"}, False),
+    ],
+)
+def test_a_dataset_holds_a_scale_followed_by_a_translation(
+    entry: dict, allowed: bool
+) -> None:
+    # ngff-spec 0.6, "Constraints": "a single scale, identity or sequence of
+    # a scale followed by a translation transformation".
+    assert _map.is_dataset_transform(entry) is allowed
