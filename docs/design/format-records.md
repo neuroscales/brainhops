@@ -159,26 +159,29 @@ an assigned array in `raw` at once.
 
 The transformations of an image are compared at consolidation instead
 of being pending by assignment. An image takes the `transformations`
-field of its model over as `_transformations`, where `None` means that
-the transformations were neither read nor assigned. The property
-decodes the record on first access and stores the list in
-`_transformations`, so a change made to the list in place, such as an
-appended transformation, acts on the stored list. `consolidate()` and
-every write compare the list that the image holds with a fresh decode of
-the record, in the data model and exactly: each transformation must have
+field of its model over as `_transformations`, which holds an assigned
+list only, and `None` means that no list was assigned. The property is
+a `smartproperty(cache=True)`: it decodes the record on first access
+and caches the list apart from `_transformations`, so a change made to
+the list in place, such as an appended transformation, acts on the
+cached list. The list that the image holds is the assigned list, or
+else the cached list (`held_transformations` in
+`io/common/_geometry.py`). `consolidate()` and every write compare that
+list with a fresh decode of the record, in the data model and exactly:
+each transformation must have
 the same type, the same input and output spaces, and the same affine
 matrix (`same_transformations` in `io/common/_geometry.py`). The
 encoded bytes are never compared. When the lists are the same, or when
-`_transformations` is `None`, the geometry of the record is kept as it
+the image holds no list, the geometry of the record is kept as it
 is stored, byte for byte, and otherwise it is encoded again from the
 list. An image that was read and whose list was only read is therefore
 saved byte for byte, and assigning an equal list keeps the record. The
 encoders read the list without storing it, so that a write leaves the
-image as it was. Assigning other metadata keeps the list, as the rules
-below require. This applies to the images that take `transformations`
-over: the toy image
-of the tests, NIfTI, MGH, AFNI, MRtrix, NRRD and MINC. MINC cannot be
-written, so it keeps the list that it holds.
+image as it was. Assigning other metadata drops the cached list and
+keeps an assigned one, as the rules below require. This applies to the
+images that take `transformations` over: the toy image of the tests,
+NIfTI, MGH, AFNI, MRtrix, NRRD and MINC. MINC cannot be written, so it
+keeps the list that it holds.
 
 Within a format, `replace` and `from_instance` copy `_data` and
 `_transformations` as they are stored, so a copy of an untouched object
@@ -298,28 +301,23 @@ without options, shares `raw` and its metadata with its copy, so that
 `obj.consolidate().raw is obj.raw`. After `consolidate()`, nothing is
 pending, and a second `consolidate()` changes nothing.
 
-Assigning other metadata never changes the transformations of an
-object, nor the matrix of an affine whose matrix is decoded from the
-record, whether they were decoded before or not. This was decided by
-the maintainer on 2026-10-13, for every format. The setter of `metadata`
-first decodes what the previous record gives, unless it was decoded or
-assigned already, and stores it where an assigned value is stored. This
-is `_transformations` for images and chains, and `_data` for the affines
-of NIfTI and LTA. LTA also keeps its `input` and `output` systems in the
-same way, because its voxel and physical systems carry the geometry of
-the volumes. The object then holds these values as pending, so a copy
-within the format keeps them, and `consolidate()` puts them over the new
-record. For an image, the list is
-compared with the list that the new record decodes to, and the
-geometry of the new record is kept only when they are the same. For a
-chain or an affine, the kept value is encoded over the new record,
-whose other fields are kept, as for any assigned value. Assigning `None`
-to `transformations`, or to `data` for an affine, afterwards decodes the
-new record instead. The code is explicit in the setter of each class.
-The consolidation of each class and the save of an object over its own
-file assign the private `_metadata` instead, because they replace the
-record together with what is decoded from it. Conformance check 20
-tests the rule.
+Assigning other metadata drops what an object decodes from its record
+and keeps what was assigned to it. This was decided by the maintainer on
+2026-10-13, for every format. A value that was never assigned therefore
+follows the new metadata, whether it was read before or not, and an
+assigned value is pending and is put over the new record by
+`consolidate()`. The decoded value is a cached `smartproperty`, apart
+from the private field that holds an assigned value, and `metadata` is a
+`smartproperty` that names it in `invalidates=`, which deletes the cache
+and never the assigned value. This holds for the transformations of
+images and of chains, for the matrix of the NIfTI and LTA affines, held
+as `data`, and for the views derived from it. The ITK endpoints, which
+follow from the dimension of the header unless a chain is assigned, and
+the X5 nodes, which index the old record, are dropped in the same way.
+Conformance check 20 tests the rule. A change made in place to a decoded
+list of transformations lives in the cache, so it is lost when other
+metadata is assigned, and a copy made with `replace` or `from_instance`
+decodes the list again instead of copying the cache.
 
 For chain formats (X5, M3Z), assigned `input` and `output` systems count
 as overrides. `consolidate()` encodes them, and it checks that the file
@@ -487,13 +485,13 @@ format.
     list that was only read keeps the record and the bytes, an equal
     list that is assigned keeps the record, a list changed in place is
     written, and a copy of a read image stays lazy.
-20. Assigning other metadata keeps the transformations, and the data of
-    a format whose data is its matrix, both when they were decoded
-    before the assignment and when they were not. The new metadata comes
-    from a file of another geometry, and its record carries an edit
-    outside of the geometry. Copies within the format keep the
-    transformations, and a consolidated copy and a saved file hold them
-    with the edit of the new record.
+20. Assigning other metadata keeps what was assigned and drops what was
+    decoded, whether it was read before or not. Transformations, or the
+    data of a format whose data is its matrix, that were not assigned
+    follow the new metadata, as in an object built with it, and a saved
+    file holds them with an edit of the new record. Those that were
+    assigned survive the new metadata, and a consolidated copy and a
+    saved file hold them with the edit of its record.
 
 The second pass moves LTA first, so that the reference format matches
 this design. `LtaStruct` becomes `LtaRaw`, its field becomes a
@@ -582,12 +580,14 @@ its status.
 8. Views that are decoded from `metadata` and cached, such as
    `transformations`, would become stale when `metadata` is assigned
    again. Each format holds a private `_metadata` field behind a public
-   `metadata` `smartproperty`, because bagof does not allow a field and a
-   property with the same name in one class. Status: resolved by the
-   maintainer decision of 2026-10-13, described in the rules. The setter
-   keeps the transformations instead of dropping them, so nothing that
-   it keeps becomes stale. Only the X5 nodes decoded from the old record
-   are still dropped, because they index that record.
+   `metadata` `smartproperty` with `invalidates=` naming those views,
+   because bagof does not allow a field and a property with the same
+   name in one class. Status: resolved in pass 1c for the NIfTI
+   transformations, and for every format by the maintainer decision of
+   2026-10-13, described in the rules, which also covers the images.
+   Their decoded list now lives in the cache of `transformations`, apart
+   from an assigned list, so the invalidation drops only the decoded
+   one.
 9. A proxy built over a stream that the caller passed in must keep that
    stream alive for as long as the proxy is used. For the same reason,
    a format whose `raw` is a proxy must override `from_filename` or
@@ -1164,47 +1164,31 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
-190. To keep a transformation that was never decoded, the setter of
-     `metadata` decodes it from the previous record when the metadata is
-     assigned. For images, the NIfTI affines, LTA, M3Z and SPM, this
-     reads the header or a record that is already in memory, and no
-     voxel or vector. For the NIfTI displacement field, NiftyReg, ITK,
-     X5 fields and FNIRT, decoding the chain reads the vectors, so the
-     assignment reads them, as the first access of `transformations`
-     would. Keeping only the geometry of the previous record would avoid
-     that read, but it needs a new private field on these classes, which
-     the constructor would then take, and new encoders that write a kept
-     geometry over the new record without the chain. Status: open, for
-     the maintainer to decide whether the read at assignment is
-     acceptable.
-191. FNIRT cannot encode a chain (item 111). Assigning other metadata to
-     a FNIRT field whose chain can be built keeps that chain, so the
-     field refuses to be written afterwards, with
-     `UnrepresentableTransformationError`, rather than write another map.
-     A field whose chain cannot be built yet, because its moving image is
-     not given, has nothing to keep, and its chain is later built from the
-     new header (`io/transformations/fsl/fnirt/_base.py`). Status: open.
-192. A chain or an affine that the setter keeps is pending, so it is
-     encoded again even when the new record has the same geometry, as an
-     assigned chain is (item 114). The elements of a kept X5 chain lose
-     the content of their nodes that the data model does not hold, since
-     the decoded nodes index the old record. LTA keeps a system that the
-     old record decodes to `None`, for a volume without geometry, as
-     unset, so the new record gives it. Status: accepted.
-193. Check 20 cannot tell the two geometries apart for some exemplars.
-     The transformation of `NiftiRASCoordinatesField` does not depend on
-     the header, the FNIRT exemplar has no moving image, and the MINC
-     files of the harness have one geometry. The FNIRT and MINC rules are
-     tested in `tests/test_io_fsl.py` and `tests/test_io_minc.py`
-     instead. Status: accepted.
-194. Some properties that are decoded from the header are not part of the
-     transformation, and they follow the new metadata while the kept
-     transformation follows the old one. Examples are `NiftiImage.system`,
-     `niftyreg_type` and `extension_affines` of NiftyReg, and `degree` of
-     FNIRT. Status: open.
-195. The NRRD encoder kept the spacings and the positions of the base
+190. Before the maintainer decision of 2026-10-13, an image stored the
+     list that it decoded in `_transformations`, the field of an assigned
+     list, and its setter of `metadata` set that field to `None`, so other
+     metadata dropped an assigned list too. The decoded list now lives in
+     the cache of `transformations`, and the writers and `consolidate`
+     read the assigned list, or else the cached one, through
+     `held_transformations` (`io/common/_geometry.py`), which reads the
+     cache with `cached_value` (`_core/properties.py`). Status: resolved.
+191. A change made in place to a decoded list of transformations lives in
+     the cache, so it is lost when other metadata is assigned, and a copy
+     made with `replace` or `from_instance` decodes the list again instead
+     of copying the change. A write of the image itself, including
+     `io.save`, still writes the change. Assigning the changed list keeps
+     it everywhere. Status: open, for the maintainer to decide whether
+     copies within a format should carry the cache.
+192. Check 20 cannot tell an old geometry from a new one for some
+     exemplars. The transformation of `NiftiRASCoordinatesField` and of
+     the FNIRT exemplar, which has no moving image, is its data, which
+     does not depend on the header, and the MINC files of the harness
+     have one geometry. The part of the check on assigned values still
+     applies to them. Status: accepted.
+193. The NRRD encoder kept the spacings and the positions of the base
      record when the preferred transformation was the unit scaling that a
      file without geometry decodes to, so the file was written with the
-     geometry of the base. Check 20 found it. Status: resolved, where
-     `_geometry_fields` (`io/images/nrrd/_image.py`) drops those fields
-     of the spatial axes whenever there is no geometry to write.
+     geometry of the base. A test of this work found it. Status:
+     resolved, where `_geometry_fields` (`io/images/nrrd/_image.py`)
+     drops those fields of the spatial axes whenever there is no
+     geometry to write.
