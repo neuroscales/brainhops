@@ -27,6 +27,7 @@ from ._image import ZarrImage
 from ._ome import (
     OmeImageError,
     common_transformations,
+    group_path,
     intrinsic_name,
     level_transformation,
     looks_like_multiscale,
@@ -34,7 +35,9 @@ from ._ome import (
     read_multiscale,
     resolve_world_names,
     resolve_write_version,
+    split_system_name,
     system_axes,
+    system_name,
     write_multiscale,
 )
 
@@ -105,6 +108,20 @@ class OmeZarrImage(
         tx.Doc("The OME multiscale metadata, normalized to 0.6."),
     ] = None
 
+    _group: tx.Annotated[
+        str,
+        tx.Doc(
+            "The path of the group of the pyramid from the root of its Zarr "
+            "hierarchy, such as `labels/cells`. The coordinate systems of a "
+            "pyramid in another group than the root are named after that "
+            "path, as in `labels/cells//physical`, so that the systems of "
+            "two groups stay distinct. A Zarr group does not know its path, "
+            "so the reader that opened the root of the hierarchy gives it. "
+            "The empty string, the default, is the root group, whose "
+            "systems keep their OME names."
+        ),
+    ] = ""
+
     _images: tx.Optional[tx.List[SingleScaleImage]] = Inherit(
         "images", default=None
     )
@@ -147,6 +164,11 @@ class OmeZarrImage(
         ):
             if hasattr(self, name):
                 delattr(self, name)
+
+    @property
+    def group(self) -> str:
+        """Path of the group of the pyramid from the root of its hierarchy."""
+        return getattr(self, "_group", "")
 
     @property
     def axes(self) -> tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]]:
@@ -286,6 +308,10 @@ class OmeZarrImage(
                 "dimensions."
             )
 
+        try:
+            group = group_path(self.group)
+        except ValueError as error:
+            raise OmeImageError(str(error)) from error
         perm = _axisorder.to_canonical(store_axes)
         canonical_axes = _axisorder.permute(store_axes, perm)
         # Each named system sorts its own axes into the brainhops order, and
@@ -299,12 +325,14 @@ class OmeZarrImage(
         }
 
         def system(name: tx.Optional[str]) -> CoordinateSystem:
-            # A name that no system declares takes the axes of the array.
+            # A name that no system declares takes the axes of the array. A
+            # system is named after its group, unless it is in the root.
             axes = declared.get(name) if isinstance(name, str) else None
+            label = system_name(name, group) if isinstance(name, str) else None
             if axes is None:
-                return CoordinateSystem(name=name, axes=canonical_axes)
+                return CoordinateSystem(name=label, axes=canonical_axes)
             return CoordinateSystem(
-                name=name, axes=_axisorder.permute(axes, orders[name])
+                name=label, axes=_axisorder.permute(axes, orders[name])
             )
 
         # Stored arrays are C-ordered. A level whose permutation reverses the
@@ -482,12 +510,26 @@ class OmeZarrImage(
         # Only 0.6 and later name coordinate systems, which several world
         # spaces require.
         rich = rich or len(entries) > 1
-        worlds = resolve_world_names(
-            [
-                getattr(getattr(placement, "output", None), "name", None)
-                for placement in placements
-            ]
-        )
+        # A system of the group of the pyramid is written under its OME name.
+        # A system of another group cannot be the world space of this one.
+        try:
+            own = group_path(self.group)
+        except ValueError as error:
+            raise WriterError(str(error)) from error
+        names = []  # type: tx.List[tx.Optional[str]]
+        for placement in placements:
+            name = getattr(getattr(placement, "output", None), "name", None)
+            if isinstance(name, str):
+                group, name = split_system_name(name)
+                if group != own:
+                    raise WriterError(
+                        "This pyramid is placed in the coordinate system "
+                        f"{name!r} of the group {group!r}, which is not its "
+                        "own group, so it cannot be written as one of its "
+                        "world spaces."
+                    )
+            names.append(name)
+        worlds = resolve_world_names(names)
         commons = list(zip(worlds, entries))
 
         resolved = resolve_write_version(version, self._ome_version, rich)

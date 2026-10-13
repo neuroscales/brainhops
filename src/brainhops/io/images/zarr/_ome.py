@@ -169,6 +169,131 @@ def system_axes(multiscale: Multiscale) -> tx.Dict[str, tx.List[Axis]]:
     return axes
 
 
+# ---- names of coordinate systems -------------------------------------
+# OME-NGFF 0.6 names a coordinate system by any non-empty string, unique
+# among the systems of one `coordinateSystems` array (ngff-spec tag `0.6`
+# at 89da1da, `index.md`, section "coordinateSystems metadata", and
+# `schemas/coordinate_systems.schema`, where `name` is a string of
+# `minLength` 1 without a pattern). A transformation refers to a system of
+# another group by the `path` of that group, relative to its own group,
+# and to a system of its own group by the name alone (same file, section
+# "coordinateTransformations metadata", "Constraints"). Since no character
+# is reserved in a name, the separator is chosen against the group path
+# instead. A Zarr node name is never empty and never holds a `/` (Zarr v3
+# core specification, section "Node names"), so `//` never occurs in a
+# normalized group path, and it separates the path from the name.
+GROUP_SEPARATOR = "//"
+
+
+def system_name(name: str, group: str = "") -> str:
+    """Return the brainhops name of an OME coordinate system.
+
+    A system of the root group keeps its OME name, so that the common case
+    is unchanged. A system of another group is named by the path of that
+    group from the root, followed by `//` and its OME name, as in
+    `"labels/cells//physical"`. A name of the root group that contains
+    `//` is preceded by `//`, so that no two systems get the same name.
+    The reader that opened the root of the hierarchy knows the path of
+    each group, and passes it to the reader of that group.
+
+    Parameters
+    ----------
+    name : str
+        The OME name of the system.
+    group : str, optional
+        The normalized path of its group from the root of the hierarchy,
+        as [`group_path`][] returns it. The empty string, the default, is
+        the root group.
+
+    Returns
+    -------
+    str
+        The brainhops name of the system.
+    """
+    if group:
+        return group + GROUP_SEPARATOR + name
+    if GROUP_SEPARATOR in name:
+        return GROUP_SEPARATOR + name
+    return name
+
+
+def split_system_name(name: str) -> tx.Tuple[str, str]:
+    """Split a brainhops system name into its group path and OME name.
+
+    This undoes [`system_name`][]: the group path is everything before the
+    first `//`, which a group path never contains, and the empty string
+    stands for the root group.
+
+    Parameters
+    ----------
+    name : str
+        The brainhops name of the system.
+
+    Returns
+    -------
+    tuple of str
+        The group path and the OME name.
+    """
+    group, separator, local = name.partition(GROUP_SEPARATOR)
+    if not separator:
+        return "", name
+    return group, local
+
+
+def group_path(group: str, path: tx.Optional[str] = None) -> str:
+    """Return the normalized path from the root of a group that is referred to.
+
+    The `path` of a reference is relative to the group that holds the
+    metadata, as the labels example of ngff-spec 0.6 shows (section
+    "multiscales metadata", "Example: Additional coordinate
+    transformation"). A missing or empty path refers to that group itself.
+
+    Parameters
+    ----------
+    group : str
+        The path of the group that holds the metadata, from the root of the
+        hierarchy. The empty string is the root group.
+    path : str, optional
+        The path of the reference.
+
+    Returns
+    -------
+    str
+        The path of the referred group from the root, without leading or
+        trailing slashes and without `.` segments, or the empty string for
+        the root group.
+
+    Raises
+    ------
+    ValueError
+        If either path is absolute, has an empty segment, or leaves the root
+        of the hierarchy.
+    """
+    segments = []  # type: tx.List[str]
+    for part in (group, path or ""):
+        if part.startswith("/"):
+            raise ValueError(
+                f"The OME-Zarr group path {part!r} is absolute, while it must "
+                "be relative to the group that holds the metadata."
+            )
+        part = part.rstrip("/")
+        for segment in part.split("/") if part else []:
+            if not segment:
+                raise ValueError(
+                    f"The OME-Zarr group path {part!r} has an empty segment."
+                )
+            if segment == "..":
+                if not segments:
+                    raise ValueError(
+                        f"The OME-Zarr group path {part!r} leaves the root "
+                        "of the hierarchy."
+                    )
+                segments.pop()
+            elif segment != ".":
+                segments.append(segment)
+    return "/".join(segments)
+
+
 def _make_read_field(
     node: tx.Optional[ZarrGroup], store_axes: tx.Optional[tx.Sequence[Axis]]
 ) -> tx.Optional[tx.Callable]:
@@ -436,8 +561,15 @@ def common_transformations(
     and the path then becomes a [`Sequence`][].
 
     OME-NGFF 0.6 lets a common transformation either start from the
-    intrinsic space or end there. One that ends there is read as the
-    inverse of the declared transformation, so that every placement of the
+    intrinsic space or end there: "One of `input` or `output` MUST
+    reference the intrinsic coordinate system" (ngff-spec tag `0.6` at
+    89da1da, `index.md`, section "multiscales metadata"). Its conformance
+    case `tests/attributes/strict/valid/image/multiscales_example.json`
+    declares a `scale` from `world` to `intrinsic`, and the example
+    `examples/multiscales_strict/multiscales_reference_to_label.json` an
+    `identity` from a labels group to the intrinsic space. A transformation
+    that ends in the intrinsic space is read as the inverse of the declared
+    transformation, so that every placement of the
     pyramid starts from the intrinsic space. The inverse is only computed
     in closed form for the types that have one, such as an affine. A
     `projectAxis` that drops axes has no inverse, so such a transformation
@@ -445,7 +577,8 @@ def common_transformations(
     that drops them again, which undoes it on the points that it reaches.
     A transformation that refers to a coordinate system of another
     group, such as a labels image, by a `path` does not place this pyramid
-    and is skipped.
+    and is skipped, while a `path` that leads back to the group of the
+    multiscale refers to its own systems.
 
     The result holds one transformation per world space reached, ordered by
     the last declaration that reaches each space, so that the last
@@ -741,9 +874,16 @@ def write_multiscale(
 
 
 def _other_group(space: tx.Any) -> bool:
-    # A space that gives a path lies in another group of the hierarchy.
+    # A space whose path leads away from its own group lies in another group
+    # of the hierarchy. A path that cannot be resolved is treated the same
+    # way, so that its transformation is skipped.
     path = getattr(space, "path", None)
-    return isinstance(path, str) and path not in ("", ".")
+    if not isinstance(path, str):
+        return False
+    try:
+        return group_path("", path) != ""
+    except ValueError:
+        return True
 
 
 def _drops_axes(xform: Transformation) -> bool:

@@ -1153,12 +1153,49 @@ its status.
 132. OME-NGFF 0.6 identifies a coordinate system by its name and the path
      of its group, while two brainhops systems are equal when they have
      the same class, name and axes. Two images whose intrinsic systems are
-     both named `physical` therefore have equal systems in brainhops. The
-     reader of one multiscale is not affected, since names are unique in
-     a multiscale, but it skips the transformations that refer to another
-     group, such as a labels image (`io/images/zarr/_ome.py`,
-     `common_transformations`), and scenes are not read. Status: open,
-     for the maintainer.
+     both named `physical` therefore had equal systems in brainhops. The
+     systems of a pyramid outside the root group are now named after the
+     path of that group, as in `labels/cells//physical`, which the reader
+     of the root gives to `OmeZarrImage` as `group`
+     (`io/images/zarr/_ome.py`, `system_name`). No character is reserved
+     in an OME name, and `//` is chosen because a Zarr node name is never
+     empty and never holds a `/`, so it never occurs in a group path. The
+     systems of the root group keep their names, and one whose name holds
+     `//` is preceded by `//`, so the mapping is one-to-one. Status:
+     resolved without a datamodel change, for the systems that a reader
+     names. Item 133 lists what remains.
+133. The naming of item 132 only takes effect when a reader of the root
+     passes the path of a group down, and no reader does yet: labels and
+     scenes are not read, and the transformations of a multiscale that
+     refer to another group are still skipped (`common_transformations`).
+     Reading them needs the axes of the system of the other group, so the
+     reader must open that group. A pyramid opened directly at a subgroup
+     is a root, and its systems keep their OME names. OME-NGFF 0.6 also
+     only requires a name to be unique in its `coordinateSystems` array
+     (ngff-spec tag `0.6`, `index.md`, "coordinateSystems metadata"), while
+     a group may hold several multiscales and a reference gives only a
+     path and a name, so a reference into such a group is ambiguous in OME
+     itself. brainhops reads the first multiscale only. Status: open,
+     until labels or scenes are read.
+134. The table of transformation types of ngff-spec 0.6 lets a `scale` or
+     a `translation` store its values in an array named by `path`, but the
+     schema of version 0.6 requires the inline values
+     (`schemas/coordinate_transformations.schema`), and the conformance
+     cases `bad_scale_path_not_allowed.json` and
+     `bad_translate_path_not_allowed.json` are invalid. An `affine` or a
+     `rotation` may use `path` in both. abczarr 0.2.2 and 0.2.3 accept
+     the `path` of a scale, and convert it to version 0.5 as a scale of
+     ones with a warning. brainhops reads it (`io/transformations/zarr/
+     _map.py`, `_parameter`) and never writes it. Status: open, for the
+     specification and abczarr.
+135. The schema of version 0.6 requires every entry of a `scale` to be
+     positive (`exclusiveMinimum` 0), while the prose of the
+     specification only says that they SHOULD be non-zero. abczarr 0.2.3
+     accepts a negative scale. The writer writes an axis-aligned flip,
+     common in neuroimaging, as a `scale` with a negative entry, which the
+     schema refuses. Writing it as an `affine` instead would make such a
+     level a rotated level in the sense of item 131. Status: open, for the
+     maintainer.
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,

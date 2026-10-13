@@ -21,6 +21,21 @@ output, and the transformations declared on the whole multiscale carry
 the intrinsic system to the other systems. They become the placements in
 `transformations`, whose last entry is the preferred one.
 
+OME-NGFF 0.6 names a system by any non-empty string, unique among the
+systems of its multiscale, and refers to a system of another group by
+the path of that group and the name (ngff-spec tag `0.6` at 89da1da,
+`index.md`, sections "coordinateSystems metadata" and "Constraints").
+brainhops tells two systems apart by their name and axes, so the systems
+of a pyramid that is not in the root of its hierarchy are named after the
+path of its group, followed by `//` and their OME name, as in
+`labels/cells//physical`. A Zarr node name is never empty and never holds
+a `/`, so `//` never occurs in a group path, and the name splits back
+unambiguously. The systems of the root group keep their OME names, and
+one whose name holds `//` is preceded by `//`. A Zarr group does not know
+its path in its hierarchy, so the reader that opened the root gives it to
+[`OmeZarrImage`][] as `group`. The writer writes the systems of that
+group under their OME names.
+
 ## Transformations
 
 A transformation maps points of its input system to points of its
@@ -81,9 +96,12 @@ The draft type `inverseOf` was removed before version 0.6 and is
 refused. A `byDimension` is read only when its parts are affine, or when
 each part writes the axes that it reads. A transformation of the
 multiscale that refers to a system of another group, such as a labels
-image, is skipped (item 132 of the tensions in
-`docs/design/format-records.md`), and only the first multiscale of a
-group is read.
+image, is skipped, since labels and scenes are not read yet (items 132
+and 133 of the tensions in `docs/design/format-records.md`), and only the
+first multiscale of a group is read. A `scale` or a `translation` whose
+values are stored in an array named by `path` is read, as the table of
+transformation types of version 0.6 allows, although the schema of that
+version refuses it (item 134).
 
 The writer encodes the geometry from the levels and the placements, and
 does not keep the metadata as it was read, so a pyramid that is saved

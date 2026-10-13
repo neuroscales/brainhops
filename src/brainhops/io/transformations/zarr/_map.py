@@ -875,7 +875,10 @@ def _parameter(
 ) -> np.ndarray:
     # A parameter is given inline, or as an array of the group named by
     # `path`. The path is resolved against the group that holds the
-    # metadata, which is how the field paths are resolved too.
+    # metadata, which is how the field paths are resolved too. The schema
+    # of version 0.6 only allows `path` for an affine or a rotation, while
+    # its table of types allows it for a scale or a translation too, so it
+    # is read for every type (docs/design/format-records.md, item 134).
     # abczarr marks an absent field with a sentinel that is false.
     values = getattr(transform, name, None)
     if not values:
