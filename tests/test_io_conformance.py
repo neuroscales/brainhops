@@ -318,6 +318,18 @@ except ImportError:
     minc_needs = None
 
 try:
+    from brainhops.io.common.zarr._data import _ZarrProxy
+    from brainhops.io.images.zarr import ZarrImage, ZarrMetadata
+    from brainhops.io.images.zarr._views import (
+        _image_to_disk as _zarr_to_disk,
+    )
+    from brainhops.io.images.zarr._views import (
+        _image_to_model as _zarr_to_model,
+    )
+except ImportError:
+    ZarrImage = None
+
+try:
     from PIL import Image as PILImage
 
     from brainhops.io.images.base import _utils_raster as raster
@@ -3155,6 +3167,48 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+# A plain Zarr array is a directory store, which holds the document of the
+# array and its chunks. It stores no geometry, so the data stands in for the
+# geometry, as for FNIRT, and an image whose transformations are not the
+# identity is refused. Check 13 then compares the transformations of the
+# written store, and the part of check 19 that writes a list changed in
+# place is vacuous (item 344). The edit of the record is an attribute.
+
+
+def _zarr_edit_record(record: tx.Any) -> tx.Any:
+    document = record.document.update_attributes({"note": "edited"})
+    return replace(record, document=document)
+
+
+def _zarr_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy a Zarr array store without its chunks."""
+    os.mkdir(target)
+    for key in ("zarr.json", ".zarray", ".zattrs"):
+        name = os.path.join(source, key)
+        if os.path.exists(name):
+            shutil.copyfile(name, os.path.join(target, key))
+
+
+if ZarrImage is not None:
+    EXEMPLARS[ZarrImage] = Exemplar(
+        metadata=ZarrMetadata,
+        suffix=".zarr",
+        proxies=(_ZarrProxy,),
+        to_model=_zarr_to_model,
+        to_disk=_zarr_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=_zarr_edit_record,
+        record_edited=lambda record: record.attributes.get("note") == "edited",
+        geometry=_data_geometry,
+        change_geometry=_data_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        cut=_zarr_cut,
+        header=lambda metadata: metadata.raw,
+        storage={"dtype": "int16"},
+        container="directory",
+    )
+
+
 # A TIFF file has no header apart from its pixels: the IFDs of tifffile
 # point to the pixels that follow them, so `TiffMetadata` reads the IFDs
 # and writes nothing, and its record is compared as a summary. The copy
@@ -4150,7 +4204,6 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     # pyramids (item 160).
     "brainhops.io.images.precomputed.PrecomputedMultiScaleImage",
     "brainhops.io.images.zarr.OmeZarrImage",
-    "brainhops.io.images.zarr.ZarrImage",
     "brainhops.io.transformations.zarr.OmeZarrField",
 )
 """The registered formats that do not follow the design yet."""
@@ -5140,9 +5193,10 @@ def test_13_transformations_are_decoded_unless_assigned(
         assert copy._transformations is None
     # Reading them decodes the record and caches the list, apart from an
     # assigned list, and the copies decode the same record.
+    transformations = loaded.transformations
     decoded = exemplar.geometry(loaded)
     assert loaded._transformations is None
-    assert held_transformations(loaded) is loaded.transformations
+    assert held_transformations(loaded) is transformations
     for copy in (replace(loaded), cls.from_instance(loaded)):
         assert np.allclose(exemplar.geometry(copy), decoded)
     # An empty list is kept, and the copies keep it.
@@ -5158,10 +5212,18 @@ def test_13_transformations_are_decoded_unless_assigned(
     else:
         loaded.save(target)
         bare = _load(cls, exemplar, _saved(cls, exemplar, tmp_path, "bare"))
-        assert np.allclose(
-            exemplar.geometry(_load(cls, exemplar, target)),
-            exemplar.geometry(bare),
-        )
+        if exemplar.geometry is _data_geometry:
+            # The data stands in for the geometry of a format that stores
+            # none, so the stores are compared by what they decode.
+            assert same_transformations(
+                _load(cls, exemplar, target).transformations,
+                bare.transformations,
+            )
+        else:
+            assert np.allclose(
+                exemplar.geometry(_load(cls, exemplar, target)),
+                exemplar.geometry(bare),
+            )
     # Assigning `None` decodes the record again.
     loaded.transformations = None
     assert np.allclose(exemplar.geometry(loaded), decoded)
@@ -5441,6 +5503,8 @@ def test_19_a_list_changed_in_place_is_written(
     tmp_path,  # noqa: ANN001
 ) -> None:
     path = _compared(cls, exemplar, tmp_path)
+    if exemplar.geometry is _data_geometry:
+        pytest.skip("The format stores no geometry, so no list is written.")
     loaded = _load(cls, exemplar, path)
     metadata = loaded.metadata
     # The stored list is given the transformations that the exemplar
