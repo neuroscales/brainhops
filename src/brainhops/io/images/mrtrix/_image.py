@@ -50,6 +50,7 @@ from brainhops.io.common.mrtrix._files import (
     placed_record,
     reads_from,
     stored_voxels,
+    stores_as_recorded,
     write_mrtrix,
     writer_options,
     writer_strides,
@@ -443,10 +444,11 @@ class MrtrixImage(
         pending afterwards, so the transformations are decoded from the
         new record, with the precision of the file. The transformations
         that the image holds, read or assigned, are compared with those
-        that the record decodes to, exactly, and an image with a record,
-        no pending data, and the transformations of its record or none
-        read, consolidated without options, is left as it is: the copy
-        shares `raw` and the metadata.
+        that the record decodes to, exactly, and an image with a record
+        that stores its voxels as they are stored, no pending data, and
+        the transformations of its record or none read, consolidated
+        without options, is left as it is: the copy shares `raw` and the
+        metadata.
 
         Parameters
         ----------
@@ -495,6 +497,7 @@ class MrtrixImage(
             and all(value is None for value in options.values())
             and self.metadata is not None
             and self.metadata.raw is not None
+            and stores_as_recorded(self.raw, self.metadata.raw)
         ):
             if not inplace:
                 return replace(self, transformations=None)

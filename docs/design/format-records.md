@@ -1333,7 +1333,12 @@ its status.
      geometry of the base. A test of this work found it. Status:
      resolved, where `_geometry_fields` (`io/images/nrrd/_image.py`)
      drops those fields of the spatial axes whenever there is no
-     geometry to write.
+     geometry to write. Check 20 likewise found that an MRtrix image or
+     warp with nothing pending copied its lazy voxels under the record of
+     other metadata that stores them with another type, which wrote a
+     file too short for its header. Its `consolidate` now encodes the
+     voxels again unless the record stores them as the file that they
+     come from (`stores_as_recorded`, `io/common/mrtrix/_files.py`).
 250. An N5 pyramid, a group whose datasets are `s0`, `s1`, ..., is read
      as `N5MultiScaleImage`, whose levels are `N5Image` objects
      (`io/images/n5`). Each level follows this design: it holds the
