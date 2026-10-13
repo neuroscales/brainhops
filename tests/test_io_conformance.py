@@ -24,6 +24,15 @@ name every registered format, so a new format has to choose a table. The
 checks are parametrized over the exemplars and over a small format defined
 in this module, the toy format, which shows the mechanism end to end in
 as little code as possible.
+
+A pyramid, which is a multiscale image, holds one record for its whole
+container, which each of its levels holds too, and the arrays of its
+levels in `raw`. Each pyramid format that follows the design is listed in
+`PYRAMIDS`, and the level class of each one is listed in `EXEMPLARS`, so
+that the checks of single-scale images also run on the levels. The checks
+P1 to P12 run on the pyramids and on the toy pyramid, a directory that
+holds a JSON document and one toy file per level, which shows the rules
+of directory stores without any optional dependency.
 """
 
 import gzip
@@ -752,7 +761,9 @@ def _toyp_proxies(
     )
 
 
-def _toyp_reads(raws: tx.Optional[tx.Sequence[tx.Any]], directory: str) -> bool:
+def _toyp_reads(
+    raws: tx.Optional[tx.Sequence[tx.Any]], directory: str
+) -> bool:
     """Tell whether one of the arrays reads a file of a directory."""
     target = os.path.realpath(directory)
     return any(
@@ -815,7 +826,9 @@ def _toyp_placements(
     return [Scaling(list(metadata.raw.scale))]
 
 
-def _toyp_scale(placements: tx.Sequence[Transformation]) -> tx.Tuple[float, ...]:
+def _toyp_scale(
+    placements: tx.Sequence[Transformation],
+) -> tx.Tuple[float, ...]:
     """Encode the preferred placement of a toy pyramid as a voxel size.
 
     Raises
@@ -3371,7 +3384,7 @@ def _pyramid_built(cls: type, exemplar: PyramidExemplar) -> tx.Any:
 def _pyramid_saved(
     cls: type, exemplar: PyramidExemplar, tmp_path: tx.Any, name: str = "src"
 ) -> tx.Any:
-    """Write a new pyramid of the format and return the path of its container."""
+    """Write a new pyramid and return the path of its container."""
     path = _path(tmp_path, _level_exemplar(exemplar), name)
     if exemplar.source is not None:
         exemplar.source(path, exemplar.levels())
@@ -3397,13 +3410,17 @@ def _pyramid_placed(
     return path
 
 
-def _levels_data(exemplar: PyramidExemplar, pyramid: tx.Any) -> tx.List[tx.Any]:
+def _levels_data(
+    exemplar: PyramidExemplar, pyramid: tx.Any
+) -> tx.List[tx.Any]:
     """Return the data of each level of a pyramid, finest first."""
     level = _level_exemplar(exemplar)
     return [np.asarray(_data(level, image)) for image in pyramid.images]
 
 
-def _all_equal(first: tx.Sequence[tx.Any], second: tx.Sequence[tx.Any]) -> bool:
+def _all_equal(
+    first: tx.Sequence[tx.Any], second: tx.Sequence[tx.Any]
+) -> bool:
     """Tell whether two lists of arrays hold the same values."""
     return len(first) == len(second) and all(
         np.array_equal(np.asarray(a), np.asarray(b))
@@ -3610,8 +3627,8 @@ def test_p06_consolidating_an_untouched_pyramid_changes_nothing(
     assert _decodes_nothing(consolidated)
     # Levels and placements that were only read keep the record too.
     for image in loaded.images:
-        image.transformations
-    loaded.transformations
+        assert image.transformations is not None
+    assert loaded.transformations is not None
     consolidated = loaded.consolidate()
     assert consolidated.raw is raw
     assert consolidated.metadata is metadata
@@ -3662,7 +3679,7 @@ def test_p07_transformations_are_compared_at_consolidation(
     # The transformations of a level that were only read keep the record,
     # and so does an equal list that is assigned.
     for image in loaded.images:
-        image.transformations
+        assert image.transformations is not None
     assert loaded.consolidate().metadata is metadata
     fresh = cls.load(path)
     loaded.images[1].transformations = list(fresh.images[1].transformations)
@@ -3688,7 +3705,7 @@ def test_p07_transformations_are_compared_at_consolidation(
     placed = _pyramid_placed(cls, exemplar, tmp_path)
     loaded = cls.load(placed)
     metadata = loaded.metadata
-    loaded.transformations
+    assert loaded.transformations is not None
     assert loaded.consolidate().metadata is metadata
     loaded.transformations = list(cls.load(placed).transformations)
     assert loaded.consolidate().metadata is metadata
@@ -3849,7 +3866,7 @@ def test_p11_other_metadata_keeps_only_what_was_assigned(
         assert not np.allclose(expected, old)
     images = loaded.images if decoded else None
     if decoded:
-        loaded.transformations
+        assert loaded.transformations is not None
     loaded.metadata = metadata
     assert loaded.metadata is metadata
     assert "_cache_images" not in vars(loaded)
@@ -3877,8 +3894,8 @@ def test_p11_other_metadata_keeps_only_what_was_assigned(
     metadata = level.metadata.from_raw(record)
     loaded = cls.load(source)
     if decoded:
-        loaded.images
-        loaded.transformations
+        assert loaded.images is not None
+        assert loaded.transformations is not None
     images = list(loaded.images)
     loaded.images = images
     exemplar.place(loaded)
@@ -4001,6 +4018,95 @@ def test_copied_metadata_keeps_only_a_record_of_its_own_format() -> None:
     assert ToyMetadata.from_instance(metadata).raw is metadata.raw
     assert ToyMetadata.from_instance(_ForeignMetadata(raw="other")).raw is None
     assert _ForeignMetadata.from_instance(metadata).raw is None
+
+
+# ----------------------------------------------------------------------
+#   THE TOY PYRAMID
+# ----------------------------------------------------------------------
+
+
+def test_the_generic_loader_reads_a_toy_pyramid(tmp_path) -> None:  # noqa: ANN001
+    samples = _toyp_sample()
+    path = tmp_path / "pyramid.toyp"
+    io.save(
+        MultiScaleImage([SingleScaleImage(data) for data in samples]), path
+    )
+    pyramid = io.load(path)
+    assert isinstance(pyramid, ToyPyramid)
+    assert _all_equal([image.data for image in pyramid.images], samples)
+    assert MetadataFormat.sniff(path) is ToyPyramidMetadata
+    # The reader option `level` selects the level format.
+    level = io.load(path, level=1)
+    assert isinstance(level, ToyLevel)
+    assert level.level == 1
+    assert np.array_equal(level.data, samples[1])
+    # Unknown options are refused.
+    with pytest.raises(TypeError):
+        ToyPyramid.load(path, unknown=1)
+    with pytest.raises(TypeError):
+        pyramid.save(tmp_path / "other.toyp", unknown=1)
+    with pytest.raises(ParserError):
+        ToyLevel.load(path, level=3)
+
+
+def test_an_untouched_toy_document_is_kept_byte_for_byte(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    source = tmp_path / "source.toyp"
+    ToyPyramid([SingleScaleImage(data) for data in _toyp_sample()]).save(
+        source
+    )
+    # The document is written in another layout, with whole numbers, as
+    # another writer could write it.
+    document = b'{"toyp":1,"scale":[2,3,4],"note":"kept","levels":3}'
+    (source / _TOYP_INDEX).write_bytes(document)
+    loaded = ToyPyramid.load(source)
+    assert loaded.metadata.raw.stored == document
+    target = tmp_path / "copy.toyp"
+    loaded.save(target)
+    assert _tree(target) == _tree(source)
+    # A changed level, or an equal placement, keeps the document as read.
+    loaded = ToyPyramid.load(source)
+    loaded.images[1].data = _toyp_sample()[1] + 1
+    loaded.transformations = [Scaling([2.0, 3.0, 4.0])]
+    loaded.save(target)
+    assert (target / _TOYP_INDEX).read_bytes() == document
+    # Other placements are written into a new document.
+    loaded.transformations = [Scaling([2.0, 3.0, 5.0])]
+    loaded.save(target)
+    written = json.loads((target / _TOYP_INDEX).read_bytes())
+    assert written["scale"] == [2.0, 3.0, 5.0]
+    assert written["note"] == "kept"
+
+
+def test_a_toy_level_written_alone_narrows_the_record(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    samples = _toyp_sample()
+    source = tmp_path / "source.toyp"
+    pyramid = ToyPyramid([SingleScaleImage(data) for data in samples])
+    _toyp_place(pyramid)
+    pyramid.save(source, note="kept")
+    record = ToyPyramid.load(source).metadata.raw
+    level = ToyLevel.load(source, level=1)
+    # The level keeps the record of the pyramid until it is consolidated,
+    # which narrows the record to its level, at index 0, and keeps the note
+    # and the placement of the pyramid.
+    assert level.metadata.raw is not None
+    assert len(level.metadata.raw.levels) == 3
+    narrowed = level.consolidate()
+    assert narrowed.level == 0
+    assert narrowed.raw is level.raw
+    assert narrowed.metadata.raw.levels == (record.levels[1],)
+    assert narrowed.metadata.raw.note == "kept"
+    assert narrowed.metadata.raw.scale == record.scale
+    assert narrowed.consolidate().metadata is narrowed.metadata
+    target = tmp_path / "level.toyp"
+    level.save(target)
+    back = ToyPyramid.load(target)
+    assert len(back.images) == 1
+    assert np.array_equal(back.images[0].data, samples[1])
+    assert np.allclose(_world(back), _world(ToyPyramid.load(source)))
 
 
 # ----------------------------------------------------------------------
