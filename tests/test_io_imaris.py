@@ -25,6 +25,9 @@ from brainhops.io.base.parsers import (  # noqa: E402
     SnifferContentError,
     WriterError,
 )
+from brainhops.io.common._geometry import (  # noqa: E402
+    same_transformations,
+)
 from brainhops.io.images.imaris import (  # noqa: E402
     ImarisImage,
     ImarisLevel,
@@ -626,6 +629,8 @@ def test_consolidating_moves_pending_data_only(single_file) -> None:  # noqa: AN
     copy = image.consolidate()
     assert copy._data is None
     assert copy.metadata is image.metadata
-    assert copy.transformations is transformations
+    # The copy decodes the same record again, since the decoded list lives
+    # in the cache of the image.
+    assert same_transformations(copy.transformations, transformations)
     assert np.array_equal(copy.raw, value.T)
     assert isinstance(image.raw, _ImarisProxy)
