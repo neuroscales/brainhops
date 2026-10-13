@@ -247,13 +247,12 @@ class H5Transform(Hdf5Reader, ItkTransform):
         `position` only selects what is read, so it does not change the
         record.
 
-        Otherwise, a new record holds the root of the current record and
-        the blocks of the chain: an ITK
-        block as it is, and an affine between ITK spaces as an
-        `AffineTransform` centered on the origin. A chain of several
-        blocks is stored as a composite, as ITK writes it. A
-        transformation without a record and without a chain gives an
-        empty record. The new record is held by new metadata, and the
+        Otherwise, a new record holds the root strings of the current
+        record and the blocks of the chain: an ITK block as it is, and an
+        affine between ITK spaces as an `AffineTransform` centered on the
+        origin. A chain of several blocks is stored as a composite, as ITK
+        writes it. A transformation without a record and without a chain
+        gives an empty record. The new record is held by new metadata, and the
         option `position`, which indexed the old record, is reset.
 
         Parameters

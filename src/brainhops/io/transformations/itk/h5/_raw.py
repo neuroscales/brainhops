@@ -190,8 +190,10 @@ def _read_block(group: h5py.Group, source: tx.Optional[str]) -> ItkStruct:
             f"{kind!r}."
         ) from None
     kind = ItkTransformClass(kind)
-    parameters = _dataset(group, "TransformParameters")
-    fixed_parameters = _dataset(group, "TransformFixedParameters")
+    parameters = _dataset(group, "TransformParameters", "TranformParameters")
+    fixed_parameters = _dataset(
+        group, "TransformFixedParameters", "TranformFixedParameters"
+    )
     if parameters is None:
         parameters = np.array([])
     elif source is None or kind not in _LARGE_TYPES:
@@ -212,9 +214,11 @@ def _read_block(group: h5py.Group, source: tx.Optional[str]) -> ItkStruct:
     )
 
 
-def _dataset(group: h5py.Group, name: str) -> tx.Optional[h5py.Dataset]:
+def _dataset(
+    group: h5py.Group, name: str, misspelled: str
+) -> tx.Optional[h5py.Dataset]:
     """Return a dataset of a group under its name or its old misspelling."""
-    for key in (name, name.replace("Transform", "Tranform", 1)):
+    for key in (name, misspelled):
         if key in group:
             return group[key]
     return None

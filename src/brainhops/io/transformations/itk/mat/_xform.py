@@ -12,6 +12,7 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
+from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -457,7 +458,8 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
 
         The content is built before the file is opened, so that an
         unrepresentable transformation does not create or truncate the
-        file, and the transformation itself is not changed.
+        file, and the transformation itself is not changed. A local file
+        is replaced at once.
 
         Parameters
         ----------
@@ -475,9 +477,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         WriterError
             If `byteorder` is invalid.
         """
-        content = self.to_bytes(**kwargs)
-        with path.Path(filename).open(self._WRITE_MODE) as f:
-            f.write(content)
+        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ---------------------------------------------------------------------
