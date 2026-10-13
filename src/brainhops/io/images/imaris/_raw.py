@@ -84,7 +84,7 @@ class ImarisRaw(Magic, Hdf5Reader, frozen=True):
 
     The record never reads the voxels, so it is the same for a file whose
     `Data` datasets cannot be read. It is held by
-    [`ImarisMetadata`][brainhops.io.common.imaris.ImarisMetadata]. A
+    [`ImarisMetadata`][brainhops.io.images.imaris.ImarisMetadata]. A
     record is frozen, and two records are equal when their fields are.
     """
 

@@ -1177,7 +1177,7 @@ its status.
      conformance check of metadata reads stores its voxels in an external
      file, which has no chunks, and the record must be the same for both
      files. The lazy array reads the chunk shape from the file when Dask
-     asks for it (`io/common/imaris/_data.py`). Status: accepted.
+     asks for it (`io/images/imaris/_data.py`). Status: accepted.
 185. The adapter `Hdf5Reader` does not pass reader options to `sniff_h5`,
      so the Imaris classes override `sniff_filename`, `sniff_fileobj` and
      `sniff_bytes` to see the option `level`, which makes the pyramid

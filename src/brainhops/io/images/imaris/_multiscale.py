@@ -14,13 +14,13 @@ from brainhops.datamodel.images import MultiScaleImage
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, SnifferContentError
 from brainhops.io.common.hdf5 import Hdf5Reader
-from brainhops.io.common.imaris import ImarisMetadata, ImarisRaw
-from brainhops.io.common.imaris._data import read_imaris_level
-from brainhops.io.common.imaris._raw import no_options
 from brainhops.io.images.base import ImageFormat
 
 # this format
+from ._data import read_imaris_level
 from ._image import ImarisImage, _level_count, _source
+from ._metadata import ImarisMetadata
+from ._raw import ImarisRaw, no_options
 
 
 @register_format

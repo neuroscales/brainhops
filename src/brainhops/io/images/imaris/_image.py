@@ -19,13 +19,13 @@ from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.hdf5 import Hdf5Reader
-from brainhops.io.common.imaris import ImarisMetadata, ImarisRaw
-from brainhops.io.common.imaris._data import read_imaris_level
-from brainhops.io.common.imaris._raw import no_options
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format
+from ._data import read_imaris_level
+from ._metadata import ImarisMetadata
+from ._raw import ImarisRaw, no_options
 from ._views import _image_to_disk, _image_to_model
 
 _AXES = "XYZTC"
@@ -75,7 +75,7 @@ class ImarisImage(ImageFormat, SingleScaleImage, Hdf5Reader):
     parameter of the file, or micrometers when it has none. The time and
     channel axes are left as indices, and no orientation is attached to
     the axes. The layout is described in
-    [`brainhops.io.common.imaris`][brainhops.io.common.imaris].
+    [`brainhops.io.images.imaris`][brainhops.io.images.imaris].
 
     Imaris files cannot be written by brainhops, so the class has no
     writer: an image is saved to another format, such as NIfTI or

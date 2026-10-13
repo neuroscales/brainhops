@@ -25,20 +25,18 @@ from brainhops.io.base.parsers import (  # noqa: E402
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.common.imaris import (  # noqa: E402
+from brainhops.io.images.imaris import (  # noqa: E402
+    ImarisImage,
     ImarisLevel,
     ImarisMetadata,
+    ImarisMultiScaleImage,
     ImarisRaw,
 )
-from brainhops.io.common.imaris._data import (  # noqa: E402
+from brainhops.io.images.imaris._data import (  # noqa: E402
     _ImarisProxy,
     read_imaris_level,
 )
-from brainhops.io.common.imaris._raw import attribute_text  # noqa: E402
-from brainhops.io.images.imaris import (  # noqa: E402
-    ImarisImage,
-    ImarisMultiScaleImage,
-)
+from brainhops.io.images.imaris._raw import attribute_text  # noqa: E402
 from brainhops.io.metadata import MetadataFormat  # noqa: E402
 
 EXT_MIN = (-3.0, 2.0, 10.0)

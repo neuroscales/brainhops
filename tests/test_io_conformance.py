@@ -192,9 +192,8 @@ try:
     import h5py
 
     from brainhops.io.common.hdf5 import DelayedH5Array
-    from brainhops.io.common.imaris import ImarisMetadata
-    from brainhops.io.common.imaris._data import _ImarisProxy
-    from brainhops.io.images.imaris import ImarisImage
+    from brainhops.io.images.imaris import ImarisImage, ImarisMetadata
+    from brainhops.io.images.imaris._data import _ImarisProxy
     from brainhops.io.images.imaris._views import (
         _image_to_disk as _imaris_to_disk,
     )
