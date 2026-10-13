@@ -21,6 +21,7 @@ __all__ = [
     "complete_basis",
     "declared_axes",
     "embed_affine",
+    "held_transformations",
     "plan_axes",
     "ras_conversion",
     "reduce_to_affine",
@@ -31,6 +32,7 @@ __all__ = [
 import numpy as np
 import typing_extensions as tx
 
+from brainhops._core.properties import cached_value
 from brainhops.backends import get_array_backend
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
@@ -701,6 +703,32 @@ def arrange_voxel_to_ras(
         world,
         filled_time,
     )
+
+
+def held_transformations(image: tx.Any) -> tx.Optional[tx.List[tx.Any]]:
+    """Return the transformations that an image holds, or `None`.
+
+    An image that takes `transformations` over stores an assigned list in
+    `_transformations`, and caches the list that it decodes from its
+    record apart from it, so that assigning other metadata drops the
+    decoded list and keeps the assigned one. The list that the image
+    holds is the assigned list, or else the decoded list, which may have
+    been changed in place. `None` means that the transformations were
+    neither assigned nor read, so the record is kept as it is.
+
+    Parameters
+    ----------
+    image : Image
+        An image whose `transformations` is a cached `smartproperty`.
+
+    Returns
+    -------
+    list of Transformation or None
+        The assigned list, or else the decoded list, or `None`.
+    """
+    if image._transformations is not None:
+        return image._transformations
+    return cached_value(image, "transformations")
 
 
 def same_transformations(

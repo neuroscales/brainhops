@@ -10,7 +10,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import cached_value, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.transformations import Transformation
@@ -23,6 +23,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     WriterError,
 )
+from brainhops.io.common._geometry import held_transformations
 from brainhops.io.images.base import ImageFormat
 
 # this format
@@ -85,65 +86,67 @@ class Jpeg2000MultiScaleImage(
     _images: tx.Optional[tx.List[SingleScaleImage]] = Inherit(
         "images", default=None
     )
-    """The levels of the pyramid, or `None` when never read or set.
+    """The levels assigned to the pyramid, or `None`.
 
     The pyramid takes over the `images` field of [`MultiScaleImage`][] to
     store it under this private name. The constructor still takes
     `images` in the same place, and the property of the same name reads
-    it. `None`, the default, means that the levels are decoded from `raw`
-    and the record, while a list, even an empty one, is used as it is.
+    it. Only an assigned list, even an empty one, is stored here. `None`,
+    the default, means that no list was assigned, so the property decodes
+    the levels from `raw` and the record and caches them apart, and
+    assigning other metadata drops that cache.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The placements of the pyramid, or `None` when never read or set.
+    """The placements assigned to the pyramid, or `None`.
 
     The pyramid takes over the `transformations` field of
-    [`MultiScaleImage`][] in the same way as `images`. A file stores no
-    placement of its own, so the decoded list is empty.
+    [`MultiScaleImage`][] in the same way as `images`. Only an assigned
+    list is stored here. A file stores no placement of its own, so the
+    decoded list, which is cached apart, is empty.
     """
 
     _metadata: NoRepr[tx.Optional[Jpeg2000Metadata]] = None
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty(
+        "metadata", invalidates=("images", "transformations")
+    )
     """The metadata of the file, which holds its record, or `None`.
 
     A pyramid built from levels has no metadata. Assigning other metadata
-    drops the levels and the placements that the pyramid holds, read or
-    assigned, so that they are decoded again.
+    drops the levels and the placements decoded from the previous record,
+    so that they are decoded again, and keeps the levels and the
+    placements that were assigned.
     """
 
-    @metadata.setter
-    def metadata(self, value: tx.Optional[Jpeg2000Metadata]) -> None:
-        self._metadata = value
-        self._images = None
-        self._transformations = None
-
-    @smartproperty
+    @smartproperty(cache=True)
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the pyramid, decoded from `raw` on first access.
 
         The levels are [`Jpeg2000Image`][] objects whose `raw` reads one
         level of the file and whose metadata is that of the pyramid, so
-        decoding them reads nothing. The list is stored in the pyramid, so
-        a level changed in place is kept. Assigning a list replaces it, and
-        assigning `None` decodes the levels again.
+        decoding them reads nothing. The list is cached, apart from an
+        assigned list, so a level changed in place is kept. Assigning
+        other metadata drops the decoded list and keeps an assigned one.
+        Assigning a list replaces it, and assigning `None` decodes the
+        levels again.
         """
-        self._images = _record_levels(self.raw, self.metadata)
-        return self._images
+        return _record_levels(self.raw, self.metadata)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """The placements of the pyramid, which a file never stores.
 
         The decoded list is empty, because every level maps onto the
-        `"physical"` system. An assigned list is composed with the
-        transformation of the full-resolution level when the pyramid is
-        written. Assigning `None` decodes the empty list again.
+        `"physical"` system, and it is cached apart from an assigned list.
+        An assigned list is composed with the transformation of the
+        full-resolution level when the pyramid is written. Assigning other
+        metadata drops the decoded list and keeps an assigned one.
+        Assigning `None` decodes the empty list again.
         """
-        self._transformations = []
-        return self._transformations
+        return []
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -157,6 +160,8 @@ class Jpeg2000MultiScaleImage(
             If the pyramid has no level.
         """
         images = self._images
+        if images is None:
+            images = cached_value(self, "images")
         if images is None:
             images = _record_levels(self.raw, self.metadata)
         return tuple(int(n) for n in images[0].shape)
@@ -417,6 +422,8 @@ class Jpeg2000MultiScaleImage(
         """
         images = self._images
         if images is None:
+            images = cached_value(self, "images")
+        if images is None:
             images = _record_levels(self.raw, self.metadata)
         base = _base_level(self, images)
         if num_resolutions is None and len(images) != _file_levels(base):
@@ -613,7 +620,7 @@ def _base_level(
     if not isinstance(base, Jpeg2000Image):
         base = Jpeg2000Image.from_instance(base, metadata=pyramid.metadata)
     first = _preferred(base)
-    if pyramid._transformations:
+    if held_transformations(pyramid):
         xform = pyramid.transformation
         if first is not None:
             xform = xform @ first
