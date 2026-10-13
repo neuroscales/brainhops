@@ -191,6 +191,22 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("h5py",),
     ),
+    "brainhops.io.transformations.afni": Package(
+        names=frozenset(
+            {
+                "AfniAffine",
+                "AfniAffineMetadata",
+                "AfniAffineRaw",
+                "AfniBrikWarp",
+                "AfniMetadata",
+                "AfniNiftiWarp",
+                "AfniRaw",
+                "AfniWarp",
+                "cardinal_to_real",
+            }
+        ),
+        needs=("nibabel",),
+    ),
     "brainhops.io.transformations.mrtrix": Package(
         names=frozenset(
             {
