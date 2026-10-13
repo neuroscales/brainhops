@@ -20,6 +20,7 @@ __all__ = [
     "mrtrix",
     "niftyreg",
     "sniff",
+    "trakem2",
 ]
 
 from brainhops._core.dependencies import has_abczarr_driver
@@ -35,6 +36,7 @@ from . import (
     matrix,
     mrtrix,
     niftyreg,
+    trakem2,
 )
 from .base import (
     TransformationFormat,

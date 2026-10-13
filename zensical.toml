@@ -89,6 +89,7 @@ nav = [
         {"afni" = "api/io/transformations/afni.md"},
         {"niftyreg" = "api/io/transformations/niftyreg.md"},
         {"c3d" = "api/io/transformations/c3d.md"},
+        {"trakem2" = "api/io/transformations/trakem2.md"},
         "api/io/transformations/zarr.md",
       ]},
       {"metadata" = "api/io/metadata.md"},
