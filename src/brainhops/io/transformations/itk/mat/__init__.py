@@ -51,8 +51,10 @@ The NUL-terminated name and `mrows * ncols` values follow. The digits of
   the native order of the machine, for the header and the values alike.
 - O, which MATLAB reserves as 0. VNL sets it to 1 for row-by-row
   matrices, which for a vector is the same thing.
-- P, the precision: 0 for double and 1 for float. The fixed parameters
-  are always double.
+- P, the precision: 0 for double and 1 for float. ITK writes the fixed
+  parameters in the precision of its writer, which is the precision of
+  the transform (`itkMatlabTransformIO.cxx`, ITK v5.4.0), while brainhops
+  writes them in double precision.
 - T, the matrix type: 0 for a full numeric matrix.
 
 The layout follows `itk::MatlabTransformIOTemplate::Read` and `Write`,
@@ -74,12 +76,23 @@ in moving space, so the transform pulls the moving image onto the fixed
 grid. This is the chain held by
 [`ItkAffineBase`][brainhops.io.transformations.itk.ItkAffineBase].
 
-## Writing
+## Records and writing
+
+A `.mat` file is short and is read in one pass. Its blocks, its byte
+order and its bytes are held as a
+[`MatRaw`][brainhops.io.transformations.itk.mat.MatRaw] record by
+[`MatMetadata`][brainhops.io.transformations.itk.mat.MatMetadata], the
+metadata of the file, and a
+[`MatTransform`][brainhops.io.transformations.itk.mat.MatTransform]
+decodes its chain from the record when it is first used. A transformation
+that is read and written again without changes is written as its bytes,
+with every block of the file, since encoding the blocks again does not
+always give the same bytes.
 
 [`MatTransform`][brainhops.io.transformations.itk.mat.MatTransform] writes
-a single block, as ANTs does, in little-endian double precision by
-default. A block read from an ITK file is written back unchanged, center
-included. Any other affine is written as an `AffineTransform` centered on
+any other chain as a single block, as ANTs does, in little-endian double
+precision by default. A block read from an ITK file is written back
+unchanged, center included. Any other affine is written as an `AffineTransform` centered on
 the origin, which gives exactly `y = A x + t`. The endpoints of such an
 affine must be the ITK space or left unspecified, and an affine between RAS
 spaces is refused rather than reinterpreted. A chain of several
@@ -124,7 +137,8 @@ The first one is read by default, with a warning, and another one can be
 selected with `position=`, as in `MatTransform.from_file(path, position=1)`.
 """
 
-__all__ = ["MatTransform", "MatTransformReaderWriter"]
+__all__ = ["MatMetadata", "MatRaw", "MatTransform"]
 
-from ._parser import MatTransformReaderWriter
+from ._metadata import MatMetadata
+from ._raw import MatRaw
 from ._xform import MatTransform
