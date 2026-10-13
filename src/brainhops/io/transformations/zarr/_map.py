@@ -23,8 +23,6 @@ incomparable types tie, the converter that was registered first is used. A
 new kind of transformation is supported by registering a converter for it.
 """
 
-import itertools
-
 import numpy as np
 import typing_extensions as tx
 from abczarr.ome.v0_6 import transformations as _ot
@@ -126,21 +124,7 @@ def _map_axis_transform(
 #   read: OME-Zarr coordinate transformation -> brainhops transformation
 # ----------------------------------------------------------------------
 _from_ome_fn: Function = Function("from_ome")
-_from_order = itertools.count()
-
-
-def _from_ome(ome_type: type) -> tx.Callable:
-    # The dispatch looks only at the OME transform, because the other
-    # arguments are matched by `object`. Each registration has a lower
-    # priority than the previous one, so the earliest registration wins a tie.
-    def register(func: tx.Callable) -> tx.Callable:
-        _from_ome_fn.register(
-            (ome_type, object, object, object),
-            priority=-next(_from_order),
-        )(func)
-        return func
-
-    return register
+_from_ome = _from_ome_fn.register
 
 
 def from_ome(
@@ -180,9 +164,9 @@ def from_ome(
         ) from None
 
 
-@_from_ome(_ot.Identity)
+@_from_ome
 def _(
-    transform: tx.Any,
+    transform: _ot.Identity,
     perm: tx.Sequence[int],
     ndim: int,
     read_field: tx.Optional[tx.Callable],
@@ -190,9 +174,9 @@ def _(
     return Identity()
 
 
-@_from_ome(_ot.Scale)
+@_from_ome
 def _(
-    transform: tx.Any,
+    transform: _ot.Scale,
     perm: tx.Sequence[int],
     ndim: int,
     read_field: tx.Optional[tx.Callable],
@@ -200,9 +184,9 @@ def _(
     return Scaling(scale=permute_vector(transform.scale, perm))
 
 
-@_from_ome(_ot.Translation)
+@_from_ome
 def _(
-    transform: tx.Any,
+    transform: _ot.Translation,
     perm: tx.Sequence[int],
     ndim: int,
     read_field: tx.Optional[tx.Callable],
@@ -210,9 +194,9 @@ def _(
     return Translation(translation=permute_vector(transform.translation, perm))
 
 
-@_from_ome(_ot.Affine)
+@_from_ome
 def _(
-    transform: tx.Any,
+    transform: _ot.Affine,
     perm: tx.Sequence[int],
     ndim: int,
     read_field: tx.Optional[tx.Callable],
@@ -223,9 +207,9 @@ def _(
     return Affine(matrix=permute_affine(matrix, perm))
 
 
-@_from_ome(_ot.Rotation)
+@_from_ome
 def _(
-    transform: tx.Any,
+    transform: _ot.Rotation,
     perm: tx.Sequence[int],
     ndim: int,
     read_field: tx.Optional[tx.Callable],
@@ -233,9 +217,9 @@ def _(
     return Rotation(matrix=permute_linear(transform.rotation, perm))
 
 
-@_from_ome(_ot.MapAxis)
+@_from_ome
 def _(
-    transform: tx.Any,
+    transform: _ot.MapAxis,
     perm: tx.Sequence[int],
     ndim: int,
     read_field: tx.Optional[tx.Callable],
@@ -243,9 +227,32 @@ def _(
     return _map_axis_transform(transform.mapAxis, perm, ndim)
 
 
-@_from_ome(_ot.Displacements)
+@_from_ome
 def _(
-    transform: tx.Any,
+    transform: _ot.ProjectAxis,
+    perm: tx.Sequence[int],
+    ndim: int,
+    read_field: tx.Optional[tx.Callable],
+) -> Transformation:
+    # The dropped inputs are stored indices, and the inverse permutation maps
+    # each of them to its brainhops position.
+    inverse = _invert_perm(perm)
+    dropped = sorted(inverse[i] for i in transform.droppedInputs or [])
+    created = list(transform.createdOutputs or [])
+    if created and list(perm) != list(range(ndim)):
+        # The created outputs index the output axes, whose brainhops order
+        # cannot be deduced from the permutation of the input axes.
+        raise OmeMappingError(
+            "This OME-Zarr image is placed by a projectAxis transformation "
+            "that creates axes in a space whose axes are reordered, which "
+            "brainhops does not read."
+        )
+    return Projection(dropped=dropped, created=created)
+
+
+@_from_ome
+def _(
+    transform: _ot.Displacements,
     perm: tx.Sequence[int],
     ndim: int,
     read_field: tx.Optional[tx.Callable],
@@ -253,9 +260,9 @@ def _(
     return _read_field(transform, "displacements", read_field)
 
 
-@_from_ome(_ot.Coordinates)
+@_from_ome
 def _(
-    transform: tx.Any,
+    transform: _ot.Coordinates,
     perm: tx.Sequence[int],
     ndim: int,
     read_field: tx.Optional[tx.Callable],
@@ -263,9 +270,9 @@ def _(
     return _read_field(transform, "coordinates", read_field)
 
 
-@_from_ome(_ot.Sequence)
+@_from_ome
 def _(
-    transform: tx.Any,
+    transform: _ot.Sequence,
     perm: tx.Sequence[int],
     ndim: int,
     read_field: tx.Optional[tx.Callable],
@@ -300,21 +307,7 @@ _RICH_TYPES = frozenset(
 )
 
 _to_ome_fn: Function = Function("to_ome")
-_to_order = itertools.count()
-
-
-def _to_ome_for(brainhops_type: type) -> tx.Callable:
-    # The dispatch looks only at the transformation, because the other
-    # arguments are matched by `object`. Each registration has a lower
-    # priority than the previous one, so the earliest registration wins a tie.
-    def register(func: tx.Callable) -> tx.Callable:
-        _to_ome_fn.register(
-            (brainhops_type, object, object),
-            priority=-next(_to_order),
-        )(func)
-        return func
-
-    return register
+_to_ome_for = _to_ome_fn.register
 
 
 def to_ome(
@@ -426,17 +419,17 @@ def _affine_to_ome(
     return _scale_translation_entry(scale, translation)
 
 
-@_to_ome_for(Identity)
+@_to_ome_for
 def _(
-    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
+    transform: Identity, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     scale, translation = scale_translation_from_affine(None, ndim)
     return _scale_translation_entry(scale, translation)
 
 
-@_to_ome_for(Scaling)
+@_to_ome_for
 def _(
-    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
+    transform: Scaling, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     if transform.scale is None:
         scale, translation = scale_translation_from_affine(None, ndim)
@@ -447,9 +440,9 @@ def _(
     }
 
 
-@_to_ome_for(Translation)
+@_to_ome_for
 def _(
-    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
+    transform: Translation, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     if transform.translation is None:
         scale, translation = scale_translation_from_affine(None, ndim)
@@ -460,9 +453,9 @@ def _(
     }
 
 
-@_to_ome_for(Rotation)
+@_to_ome_for
 def _(
-    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
+    transform: Rotation, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     affine = transform.to(Affine, error=None)
     if affine is None:
@@ -476,9 +469,9 @@ def _(
     return {"type": "rotation", "rotation": _matrix_to_list(linear)}
 
 
-@_to_ome_for(Sequence)
+@_to_ome_for
 def _(
-    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
+    transform: Sequence, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     children = transform.transformations or []
     return {
@@ -491,15 +484,15 @@ def _(
 
 # Affine is registered explicitly, like Linear, so that dispatch selects the
 # affine writer exactly instead of through the fallback.
-@_to_ome_for(Affine)
+@_to_ome_for
 def _(
-    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
+    transform: Affine, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     return _affine_to_ome(transform, storage_perm, ndim)
 
 
-@_to_ome_for(Linear)
+@_to_ome_for
 def _(
-    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
+    transform: Linear, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     return _affine_to_ome(transform, storage_perm, ndim)
