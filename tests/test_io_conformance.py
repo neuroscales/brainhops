@@ -45,7 +45,7 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import Metadata
-from brainhops.datamodel.systems import RASmm
+from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.datamodel.transformations import (
     Affine,
     DisplacementField,
@@ -98,6 +98,17 @@ from brainhops.io.images.nrrd._views import (
     _image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
+from brainhops.io.transformations.afni import (
+    AfniAffine,
+    AfniAffineMetadata,
+    AfniBrikWarp,
+)
+from brainhops.io.transformations.afni._views import (
+    _warp_to_disk as _afni_warp_to_disk,
+)
+from brainhops.io.transformations.afni._views import (
+    _warp_to_model as _afni_warp_to_model,
+)
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.c3d import C3dAffine, C3dAffineMetadata
@@ -129,6 +140,17 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
 )
+from brainhops.io.transformations.minc import (
+    XfmAffine,
+    XfmMetadata,
+    XfmTransform,
+)
+from brainhops.io.transformations.minc._affine import (
+    _matrix_to_disk as _xfm_matrix_to_disk,
+)
+from brainhops.io.transformations.minc._affine import (
+    _matrix_to_model as _xfm_matrix_to_model,
+)
 from brainhops.io.transformations.mrtrix import (
     MrtrixCoordinatesField,
     MrtrixDisplacementField,
@@ -157,6 +179,7 @@ try:
         _image_to_disk,
         _image_to_model,
     )
+    from brainhops.io.transformations.afni import AfniNiftiWarp
     from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
     from brainhops.io.transformations.itk.nifti import (
         ItkNiftiCoordinatesField,
@@ -1233,6 +1256,74 @@ _M3Z = Exemplar(
 )
 EXEMPLARS[M3zMorph] = _M3Z
 
+# An MNI transform file is short and parsed in one pass, so the matrices
+# of its linear transforms live in the record, as the matrix of an LTA
+# file does. A file of one linear transform is an `XfmAffine`. The
+# exemplar of the chain, `XfmTransform`, is a chain of one affine, whose
+# matrix stands for its data: a grid transform names a MINC volume, which
+# brainhops cannot write, so the checks of writing cannot build one. The
+# metadata holds the whole file, so the check that metadata never reads
+# data compares a full copy of the file, as for LTA and M3Z. Its own test
+# module checks that the metadata never reads a displacement volume.
+
+
+def _xfm_stored(xform: tx.Any) -> tx.Any:
+    # The matrix of the first transform lives in the record. A
+    # transformation without a record stores nothing until it is
+    # consolidated.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.transforms[0].matrix
+
+
+def _xfm_edit_record(record: tx.Any) -> tx.Any:
+    # A record is frozen, so the edit is made with `replace`.
+    return replace(record, comments=("%edited",))
+
+
+def _xfm_affine(data: tx.Any) -> tx.Any:
+    return Affine(data, input=RASmm(), output=RASmm())
+
+
+def _xfm_data(xform: tx.Any) -> tx.Any:
+    return xform.transformations[0].data
+
+
+def _xfm_set_data(xform: tx.Any, value: tx.Any) -> None:
+    xform.transformations = (_xfm_affine(value),)
+
+
+_XFM = Exemplar(
+    metadata=XfmMetadata,
+    suffix=".xfm",
+    # The file is parsed in one pass and has no lazy data, so the checks
+    # read the matrix of the record, a tuple of rows, as for LTA.
+    proxies=(tuple,),
+    to_model=_xfm_matrix_to_model,
+    to_disk=_xfm_matrix_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_xfm_edit_record,
+    record_edited=lambda raw: raw.comments == ("%edited",),
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=_xfm_affine,
+    build=XfmAffine,
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_xfm_stored,
+)
+EXEMPLARS[XfmAffine] = _XFM
+EXEMPLARS[XfmTransform] = _XFM._replace(
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    foreign=lambda data: Sequence([_xfm_affine(data)]),
+    build=lambda data: XfmTransform([_xfm_affine(data)]),
+    derived=(),
+    view="transformations",
+    data=_xfm_data,
+    set_data=_xfm_set_data,
+)
+
 # An MGH file keeps its footer of acquisition parameters and its tags
 # after the voxels, and both belong to the record. The edit of the record
 # changes one parameter of the footer and the tags. The metadata writes
@@ -1295,6 +1386,79 @@ _AFNI = Exemplar(
     storage={"datatype": "int16"},
 )
 EXEMPLARS[AfniImage] = _AFNI
+
+# An AFNI warp is a dataset of three sub-bricks of DICOM displacements,
+# checked as an AFNI dataset and as a NIfTI file, whose models are
+# chains. The exemplar that is converted is a chain on a grid whose voxels
+# run along the DICOM axes, so that its displacements in voxel units are
+# the stored DICOM displacements.
+
+
+def _afni_displacements(data: np.ndarray) -> tx.Any:
+    lps = np.diag([-1.0, -1.0, 1.0, 1.0])
+    return Sequence(
+        [
+            RASToVoxel(matrix=lps[:-1]),
+            DisplacementField(
+                data, input=RASToVoxel().output, output=RASToVoxel().output
+            ),
+            VoxelToRAS(matrix=lps[:-1]),
+        ]
+    )
+
+
+_AFNI_WARP = _AFNI._replace(
+    to_model=_afni_warp_to_model,
+    to_disk=_afni_warp_to_disk,
+    sample=_vectors,
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    foreign=_afni_displacements,
+    build=lambda data: AfniBrikWarp(data=data),
+    derived=("transformations",),
+)
+EXEMPLARS[AfniBrikWarp] = _AFNI_WARP
+if nb is not None:
+    EXEMPLARS[AfniNiftiWarp] = _NIFTI_FIELD._replace(
+        build=lambda data: AfniNiftiWarp(data=data),
+        foreign=_afni_displacements,
+    )
+
+# An AFNI matrix file is a short text file, parsed in one pass, so its
+# matrices live in the record of its metadata and are a read-only array
+# just after a read, as for LTA. The record stores the matrices of every
+# volume, and the model holds the matrix of one.
+
+
+def _afni_affine_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrices
+
+
+def _afni_affine_edit_record(record: tx.Any) -> tx.Any:
+    record.comment = "# edited"
+    return record
+
+
+EXEMPLARS[AfniAffine] = Exemplar(
+    metadata=AfniAffineMetadata,
+    suffix=".aff12.1D",
+    proxies=(np.ndarray,),
+    to_model=lambda raw: np.asarray(raw)[0],
+    to_disk=lambda data: np.asarray(data)[None],
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_afni_affine_edit_record,
+    record_edited=lambda raw: raw.comment == "# edited",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=LPSmm(), output=LPSmm()),
+    build=AfniAffine,
+    options=frozenset({"volume", "base", "source"}),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_afni_affine_stored,
+)
 
 # An MRtrix image is checked as a `.mif` file, which holds the header and
 # the voxels, and as a gzipped `.mif.gz` file. A `.mih` header names its
@@ -1662,6 +1826,13 @@ VARIANTS.append(
     ("AfniImage-BRIK-gz", AfniImage, _AFNI._replace(suffix=".BRIK.gz"))
 )
 
+VARIANTS.append(
+    (
+        "AfniBrikWarp-BRIK-gz",
+        AfniBrikWarp,
+        _AFNI_WARP._replace(suffix=".BRIK.gz"),
+    )
+)
 VARIANTS.append(
     ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
 )
