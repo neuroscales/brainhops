@@ -190,7 +190,10 @@ try:
         NiftyRegVelocityField,
         NiftyRegVelocityGrid,
     )
-    from brainhops.io.transformations.spm import SpmCoordinatesField
+    from brainhops.io.transformations.spm import (
+        DartelFlowField,
+        SpmCoordinatesField,
+    )
 except ImportError:
     nb = None
 
@@ -895,6 +898,26 @@ def _spm_coordinates(data: np.ndarray) -> tx.Any:
     )
 
 
+def _dartel_velocity(data: np.ndarray) -> tx.Any:
+    # A stationary velocity, in voxels of its grid, as DARTEL integrates
+    # it: interpolated linearly and wrapped around its grid.
+    voxel = RASToVoxel().output
+    return Sequence(
+        [
+            RASToVoxel(matrix=np.eye(4)[:-1]),
+            DisplacementField(
+                data,
+                input=voxel,
+                output=voxel,
+                log=True,
+                steps=6,
+                bound="grid-wrap",
+            ),
+            VoxelToRAS(matrix=np.eye(4)[:-1]),
+        ]
+    )
+
+
 EXEMPLARS: tx.Dict[type, Exemplar] = {}
 """The registered formats that follow the design."""
 
@@ -957,6 +980,12 @@ if nb is not None:
         build=lambda data: SpmCoordinatesField(raw=_field_to_disk(data)),
         foreign=_spm_coordinates,
         prefix="y_",
+    )
+    EXEMPLARS[DartelFlowField] = _NIFTI_FIELD._replace(
+        build=lambda data: DartelFlowField(raw=_field_to_disk(data)),
+        foreign=_dartel_velocity,
+        prefix="u_",
+        options=frozenset({"steps"}),
     )
     for _cls in (
         NiftyRegControlPointGrid,
@@ -1614,6 +1643,13 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.transformations.matrix.TsvMatrixAffine",
     "brainhops.io.transformations.matrix.TxtMatrixAffine",
     "brainhops.io.transformations.niftyreg.NiftyRegAffine",
+    # An SPM normalisation file follows the design of records, but it can
+    # only be read and its model is a chain that it cannot encode, so the
+    # checks of assigned data (3, 8 and 16), which expect consolidation to
+    # leave nothing pending, do not apply. `tests/test_io_spm_sn.py` runs
+    # the checks that do (design memo, item 260).
+    "brainhops.io.transformations.spm.SpmSnMetadata",
+    "brainhops.io.transformations.spm.SpmSnTransformation",
     "brainhops.io.transformations.zarr.OmeZarrField",
 )
 """The registered formats that do not follow the design yet."""

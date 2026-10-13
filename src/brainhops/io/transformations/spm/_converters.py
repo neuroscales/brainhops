@@ -1,4 +1,16 @@
-"""Private converters into SPM transformation formats."""
+"""Private converters into SPM transformation formats.
+
+An SPM deformation field ([`SpmCoordinatesField`][]) holds another
+transformation exactly, or refuses it with the reason. An SPM
+normalisation ([`SpmSnTransformation`][]) holds the coefficients of a
+basis of discrete cosines, which brainhops does not fit to another
+transformation, and it cannot be written, so every other transformation
+is refused. A DARTEL flow field ([`DartelFlowField`][]) holds a chain
+of an affine that a qform holds, a stationary velocity that DARTEL would
+integrate into the same map, and an affine, exactly, or refuses it with
+the reason. A transformation that is already of one of these formats is
+changed by the rules of any chain.
+"""
 
 import numpy as np
 import typing_extensions as tx
@@ -13,7 +25,7 @@ from brainhops.io.transformations.base._conversions import (
     split_field_chain,
     unrepresentable,
 )
-from brainhops.io.transformations.base.affines import RASToVoxel
+from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.nifti._converters import (
     RAS,
@@ -21,7 +33,9 @@ from brainhops.io.transformations.nifti._converters import (
     ras_coordinate_values,
 )
 
+from ._dartel import DartelFlowField, qform_refusal, velocity_refusal
 from ._fields import SpmCoordinatesField
+from ._sn import SpmSnTransformation
 
 
 @converter(_xforms.DisplacementField, SpmCoordinatesField)
@@ -52,6 +66,73 @@ def _(
     cls: tx.Type[SpmCoordinatesField],
     **kwargs,
 ) -> SpmCoordinatesField:
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type.
+    return smart_replace(t, cls, **kwargs)
+
+
+@converter
+def _(
+    t: _xforms.Transformation,
+    cls: tx.Type[SpmSnTransformation],
+    **kwargs,
+) -> SpmSnTransformation:
+    # A normalisation file stores the coefficients of a warp in a basis of
+    # discrete cosines, and nothing is fitted to them.
+    raise unrepresentable(
+        t,
+        cls,
+        "an SPM normalisation file holds the coefficients of a warp in a "
+        "basis of discrete cosines, which brainhops does not fit, and it "
+        "cannot be written. An SpmCoordinatesField holds a deformation "
+        "field that SPM reads.",
+    )
+
+
+@converter
+def _(
+    t: SpmSnTransformation,
+    cls: tx.Type[SpmSnTransformation],
+    **kwargs,
+) -> SpmSnTransformation:
+    # A transformation that is already in this format is changed by the
+    # rules of any chain, and these rules keep its type.
+    return smart_replace(t, cls, **kwargs)
+
+
+@converter(_xforms.DisplacementField, DartelFlowField)
+@converter
+def _(
+    t: _xforms.Sequence,
+    cls: tx.Type[DartelFlowField],
+    **kwargs,
+) -> DartelFlowField:
+    # Exactly, or raise: an affine from RAS to a grid that a qform holds, a
+    # stationary velocity on that grid as DARTEL integrates it, and an
+    # affine into RAS. The steps of the velocity become the option of the
+    # format, since the file does not store them.
+    format_options(t, cls, kwargs)
+    ras2voxel, velocity, voxel2ras = split_field_chain(t, RAS, RAS, cls)
+    for reason in (
+        velocity_refusal(velocity),
+        qform_refusal(np.linalg.inv(ras2voxel)),
+    ):
+        if reason is not None:
+            raise unrepresentable(t, cls, reason)
+    chain = (
+        RASToVoxel(matrix=ras2voxel[:-1]),
+        velocity,
+        VoxelToRAS(matrix=voxel2ras[:-1]),
+    )
+    return cls(transformations=chain, steps=int(velocity._compute_steps))
+
+
+@converter
+def _(
+    t: DartelFlowField,
+    cls: tx.Type[DartelFlowField],
+    **kwargs,
+) -> DartelFlowField:
     # A transformation that is already in this format is changed by the
     # rules of any chain, and these rules keep its type.
     return smart_replace(t, cls, **kwargs)

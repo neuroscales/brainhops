@@ -1131,3 +1131,85 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+260. An SPM normalisation file (`*_sn.mat`) follows the design of
+     records: `SpmSnRaw` holds the whole file, `SpmSnMetadata` holds
+     the record, and `SpmSnTransformation` decodes its chain from the
+     record and has no `raw` field, as M3Z does (item 56). The file can
+     only be read, and the model is a chain that it cannot encode, so
+     `consolidate()` keeps an assigned chain and assigned systems, as
+     MINC keeps assigned transformations (item 101). The checks 3, 8 and
+     16 of the conformance test expect consolidation to leave nothing
+     pending, and they assume that data which is assigned can be stored,
+     so the two classes are listed as not migrated, and
+     `tests/test_io_spm_sn.py` runs the checks that apply. Status: open,
+     for the maintainer to decide whether the harness gains a branch for
+     a read-only chain, or whether such a format refuses to consolidate
+     an assigned chain.
+261. The data model has no field of discrete cosines, and
+     `InterpolationOrder.fourier` is declared but not implemented. The
+     warp of an SPM normalisation is therefore sampled on the grid of the
+     template, as SPM12's `get_sn2def` samples it, into a field of
+     coordinates that is linear between voxels and takes the nearest
+     value outside the grid (`io/transformations/spm/_sn.py`). The values
+     at the voxels are exact, and a conversion to a `y_*.nii` field is
+     exact, but the cosines are smooth between voxels and extend
+     outside the grid by symmetry. Status: open, since an exact map
+     would need a new type of transformation in the data model.
+262. Conversion into `SpmSnTransformation` is refused by an explicit
+     converter, rather than relabelled, because the format cannot be
+     written and a relabelled chain could never be encoded
+     (`io/transformations/spm/_converters.py`). This departs from the
+     rule that a format without an exact converter registers
+     `relabelling`. Status: open.
+263. The record of an SPM normalisation keeps only the `fname`, `dim`,
+     `mat` and `descrip` of each `spm_vol` structure and the text and
+     numeric fields of `flags`. The `private` field holds a MATLAB
+     `nifti` object, which `scipy.io` reads but which cannot be written
+     back as MATLAB wrote it. A file saved in the MATLAB v7.3 format is
+     refused, and the `*_sn3d.mat` files of SPM99, which are MATLAB v4
+     files with other variables, are not read. Status: accepted.
+264. Decoding the chain of an SPM normalisation evaluates the warp, which
+     NumPy does at once and Dask keeps lazy, so reading only the first
+     affine of the chain evaluates the field with NumPy. An
+     `SpmCoordinatesField` gives its element the lazy NIfTI proxy
+     instead. Status: accepted, since the evaluation costs a few
+     products of small matrices per voxel.
+265. The SPM package imports nibabel through `SpmCoordinatesField`, so
+     the reader of normalisation files, which needs only SciPy, is not
+     available without nibabel (`io/transformations/spm/__init__.py`).
+     Status: open.
+266. A DARTEL flow field (`u_*.nii`) is placed by two affines of its
+     header: the qform (`mat0`) places the grid that the map reads from,
+     and the sform (`mat`) carries the integrated positions to the world
+     (`get_dartel` in SPM12's `spm_deformations.m`). No other NIfTI
+     transformation of brainhops uses the two forms separately.
+     `DartelFlowField` writes an assigned chain with the inverse of its
+     first affine as the qform and its last affine as the sform, and it
+     refuses a first affine that a qform cannot hold, rather than let
+     nibabel remove its shears (`io/transformations/spm/_dartel.py`).
+     Status: open.
+267. A DARTEL flow field does not store `K`, the number of squaring
+     steps, which is an option of SPM's batch whose default is 6. It is
+     the reader option `steps` of `DartelFlowField`, and a consolidated
+     copy takes the steps of its velocity as that option, so a file
+     written from a velocity with other steps must be read with the same
+     `steps`. This is the same kind of option as `log` and `steps` of a
+     NIfTI displacement field (items 11 and 13). Status: open.
+268. The velocity of a DARTEL flow field wraps around its grid, as DARTEL
+     composes it, while an SPM deformation field (`y_*.nii`) takes the
+     nearest value outside its grid. The exact converter into
+     `SpmCoordinatesField` therefore refuses a flow field, although
+     SPM's Deformations utility writes a `y_` file from a flow field by
+     sampling it on its grid. Status: open, for the maintainer to decide
+     whether a conversion that samples a map on a grid, and changes it
+     outside that grid, should be offered.
+269. SPM decodes a qform whose code is 0 with an orientation that it
+     guesses from its defaults (`decode_qform0.m`), and it rescales `mat`
+     and `mat0` by the spatial unit of the header. `DartelFlowField`
+     refuses a header without a qform when its chain is decoded, and it
+     does not rescale units, as the other NIfTI transformations of
+     brainhops do not. DARTEL writes both forms, in millimetres. Status:
+     accepted.
+270. The affine from a DARTEL template to MNI space, which `get_dartel`
+     reads from a `*_2mni.mat` file when a template is given, is another
+     file and is not read. Status: accepted.

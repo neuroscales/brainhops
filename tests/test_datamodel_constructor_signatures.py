@@ -238,8 +238,14 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "NiftyRegVelocityField": ("transformations",),
         "NiftyRegVelocityGrid": ("transformations",),
     },
+    "brainhops.io.transformations.spm._dartel": {
+        "DartelFlowField": ("transformations",),
+    },
     "brainhops.io.transformations.spm._fields": {
         "SpmCoordinatesField": ("transformations",),
+    },
+    "brainhops.io.transformations.spm._sn": {
+        "SpmSnTransformation": ("transformations",),
     },
     "brainhops.io.transformations.x5._blocks": {
         "X5BSplineField": ("transformations",),
