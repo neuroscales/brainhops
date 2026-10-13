@@ -195,6 +195,9 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
             "TxtMatrixAffine",
         )
     },
+    "brainhops.io.transformations.neuroglancer._xform": {
+        "NeuroglancerTransform": ("data",),
+    },
     "brainhops.io.transformations.nifti._affines": {
         "NiftiRASToVoxel": ("data",),
         "NiftiVoxelToRAS": ("data",),

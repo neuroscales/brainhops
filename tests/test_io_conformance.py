@@ -121,6 +121,10 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
 )
+from brainhops.io.transformations.neuroglancer import (
+    NeuroglancerTransform,
+    NeuroglancerTransformMetadata,
+)
 
 try:
     import nibabel as nb
@@ -1004,6 +1008,53 @@ _LTA = Exemplar(
     stored=_lta_stored,
 )
 EXEMPLARS[LtaTransformation] = _LTA
+
+
+def _ng_stored(xform: tx.Any) -> tx.Any:
+    # The matrix of a Neuroglancer transform lives in the record, which is
+    # parsed in one pass, so it is a tuple of rows just after a read. A
+    # transformation without a record stores nothing until it is
+    # consolidated.
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+def _ng_to_disk(data: tx.Any) -> tx.Tuple:
+    # In millimeters on both sides, the stored rows are the matrix itself.
+    return tuple(tuple(float(v) for v in row) for row in np.asarray(data))
+
+
+def _ng_edit_record(record: tx.Any) -> tx.Any:
+    record.content["sourceRank"] = 2
+    return record
+
+
+# A Neuroglancer transform is parsed in one pass and has no lazy data, as
+# an LTA file, so the checks read the matrix of the record, and check 6
+# is vacuous, since the copy cut after its header is the whole file. The
+# record of an affine between RASmm systems has dimensions in millimeters,
+# whose stored matrix is the matrix of the model.
+_NEUROGLANCER = Exemplar(
+    metadata=NeuroglancerTransformMetadata,
+    suffix=".ngtransform.json",
+    proxies=(tuple,),
+    to_model=lambda rows: np.asarray(rows, dtype=np.float64),
+    to_disk=_ng_to_disk,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_ng_edit_record,
+    record_edited=lambda raw: raw.content.get("sourceRank") == 2,
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=RASmm(), output=RASmm()),
+    build=lambda data: NeuroglancerTransform(
+        data, input=RASmm(), output=RASmm()
+    ),
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_ng_stored,
+)
+EXEMPLARS[NeuroglancerTransform] = _NEUROGLANCER
 
 
 # The model of an X5 file is a chain, whose first element here is a field

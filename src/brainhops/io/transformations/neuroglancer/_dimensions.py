@@ -8,65 +8,9 @@ reads them, decode them into the coordinate systems of the data model,
 encode the systems of the data model back into dimensions, and convert the
 matrix between the two.
 
-## The conventions of Neuroglancer
-
-The conventions were read in the source of Neuroglancer at
-google/neuroglancer@abbdfc5ea97b81c0c0bf04a414f5c59f4d84d27f.
-
-- `src/coordinate_transform.ts`, `coordinateTransformSpecificationFromJson`
-  and `coordinateTransformSpecificationToJson`: the transform is an object
-  with the keys `outputDimensions`, `inputDimensions`, `matrix` and
-  `sourceRank`. Its rank is the number of output dimensions, the input
-  dimensions must be as many, and `matrix` is a list of `rank` rows of
-  `rank + 1` numbers, the last of which is the translation. A missing
-  `matrix` is the identity, and a missing `sourceRank` equals the rank.
-- `coordinateSpaceFromJson` in the same file: a dimension is
-  `[scale, unit]`, with a finite positive scale, or a coordinate array
-  `{"coordinates": [...], "labels": [...]}`, which has no unit and a scale
-  of 1. `src/util/si_units.ts` lists the units: `""` (no unit) and `m`,
-  `s`, `Hz` and `rad/s` with an SI prefix from `y` to `Y`, including `h`,
-  `da`, `d`, `c` and `u` for micro. A prefixed unit is folded into the
-  scale by `scaleByExp10`, so `[4, "nm"]` is the same as `[4e-09, "m"]`.
-- `isValidDimensionName` in the same file: a name starts with a letter,
-  continues with letters, digits and underscores, and may end with `'` (a
-  local dimension) or `^` (a channel dimension). An input dimension may
-  also be named by a non-negative integer.
-- `transformBoundingBox` in the same file, and `scaleTransformSubmatrix`
-  in `src/render_coordinate_transform.ts`: the linear coefficients are
-  multiplied by the input scale and divided by the output scale, and the
-  translation is not. The linear part therefore maps physical input
-  coordinates to physical output coordinates, and the translation is in
-  multiples of the output scale. `docs/concepts/coordinate_spaces.rst`
-  says the same: "the translation coefficients are in the units specified
-  for the output (layer) dimension". The matrix maps the source to the
-  layer, that is the input to the output.
-- `set spec` of `WatchableCoordinateSpaceTransform` in the same file: a
-  transform without `inputDimensions` takes its input scales and units
-  from the data source, or from `outputDimensions` when the source has
-  none of its own. The file alone cannot say what a data source gives, so
-  the input is decoded with the units of the output.
-
-Where a voxel lies is not part of the transform. A data source places its
-voxels in its own coordinate space, where the voxel of index `i` covers
-`[i, i + 1)` and so has its centre at `i + 0.5` (`computeCombinedBounds`
-and `voxelCenterAtIntegerCoordinates` in the same file), and the transform
-maps that space as it is. An affine whose input is a voxel system of the
-data model, whose voxel centres are at integers, would need the scale of
-the voxels and that half voxel, which only the data source knows, so such
-an affine is not encoded.
-
-## The units of the data model
-
-A dimension of the file is decoded as an axis whose unit is the unit of
-the dimension with the SI prefix that Neuroglancer would display for its
-scale (`pickSiPrefix` in `src/util/si_units.ts`), which is a multiple of
-three. A coordinate of the axis is a physical coordinate in that unit, so
-the scale of an input dimension changes no coefficient of the decoded
-matrix: it says how the data source is scaled, and it stays in the
-record. A dimension without a unit is decoded as an axis without a unit.
-The coefficients are converted with decimal arithmetic on the shortest
-representation of each number, so that a matrix whose units match is
-decoded and encoded without any change.
+The conventions, and the source of Neuroglancer that they were read
+in, are given in the documentation of the package,
+[`brainhops.io.transformations.neuroglancer`][].
 """
 
 # stdlib

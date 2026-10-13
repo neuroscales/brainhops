@@ -1131,3 +1131,48 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+230. The Neuroglancer coordinate transform (#227,
+     `io/transformations/neuroglancer`) answers to the hints
+     `"neuroglancer"` and `"ngtransform"`, and its metadata answers to
+     `"ngtransform"` only, because the metadata of Neuroglancer volumes in
+     #436 also answers to `"neuroglancer"`, and one hint would then select
+     two classes of the isolated metadata registry. Status: open, for the
+     maintainer to decide the hints of the two formats together.
+231. Neuroglancer has no file for a coordinate transform, which lives in
+     the state of the viewer. The format reads a `.json` file whose keys
+     are among the four that Neuroglancer reads and that is a valid
+     transform, and any file with a hint. It claims the extension
+     `.ngtransform.json`, a convention of brainhops, so that `io.save`
+     can choose it, since `io.save` takes no hint, and so that check 5 of
+     the conformance test applies. A plain `.json` name is never claimed.
+     Status: open, for the maintainer to accept the convention or to
+     choose a hint for `io.save`.
+232. Check 6 of the conformance test is vacuous for the Neuroglancer
+     transform, which is parsed in one pass, as for LTA and M3Z (item 66).
+     Status: accepted.
+233. A Neuroglancer dimension has a name, a scale and a unit, and no
+     orientation, so the systems of a transform are decoded as generic
+     systems of named axes (`io/transformations/neuroglancer/_dimensions.py`).
+     An affine between `RASmm` systems is written with dimensions named
+     `x`, `y` and `z` in millimeters, and is read back between systems
+     that are compatible with `RASmm` but not equal to it. Status: open.
+234. A transform without `inputDimensions` is decoded with an input whose
+     axes have no name and the units of its output, as Neuroglancer reads
+     a transform whose source has no dimensions of its own. A data source
+     whose units differ from those of the output would give another map,
+     which the file cannot say. Status: accepted and documented.
+235. An axis without a unit is written as a dimension without a unit, and
+     a dimension without a unit is read as an axis without a unit, so an
+     unknown unit and the absence of a unit are not told apart. pint
+     treats the radian as dimensionless, so a unit is written as `rad/s`
+     rather than `Hz` when its name contains `radian`
+     (`_scale_and_unit`). Status: open.
+236. The coefficients are converted between the SI prefixes of the input
+     and output axes with decimal arithmetic on the shortest
+     representation of each number. When the two prefixes are equal,
+     nothing is converted and the matrix is kept exactly. When they
+     differ, a coefficient may in rare cases differ in its last bit after
+     a write and a read. Status: accepted.
+237. `NeuroglancerTransformRaw.output_dimensions` and `input_dimensions`
+     return the private `Dimension` named tuple. Status: open, to decide
+     whether `Dimension` becomes public.

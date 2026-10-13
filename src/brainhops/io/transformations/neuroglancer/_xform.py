@@ -80,7 +80,7 @@ class NeuroglancerTransform(
         for its scale, so `[4e-09, "m"]` is an axis in nanometers. The
         decoded matrix maps coordinates in those units. A transform
         without `inputDimensions` has an input whose axes have no name
-        and the units of its output. The module `_dimensions` gives the
+        and the units of its output. The package documentation gives the
         conventions and their sources in Neuroglancer.
 
     !!! note "What is written"
@@ -312,8 +312,9 @@ class NeuroglancerTransform(
         A transformation that holds a record, and whose matrix, `input`
         and `output` were not set, is left as it is, since its record also
         holds its matrix. Otherwise a new record is built from a copy of
-        the content of the current record, which keeps `sourceRank` and
-        the keys that Neuroglancer does not read. A system that is set,
+        the content of the current record, which keeps the keys that
+        Neuroglancer does not read, and keeps `sourceRank` unless the rank
+        changes. A system that is set,
         or both systems of a transformation without a record, are encoded
         as dimensions, and the matrix is encoded with the dimensions of
         the new record. The new record is held by new metadata, and the
@@ -484,8 +485,9 @@ def _encoded(xform: NeuroglancerTransform) -> NeuroglancerTransformRaw:
         content["inputDimensions"] = encode_dimensions(
             xform.input, "inputDimensions", rank
         )
-    if content.get("sourceRank", 0) > rank:
-        del content["sourceRank"]
+    if old is not None and old.rank != rank:
+        # The rank of the source described the old dimensions.
+        content.pop("sourceRank", None)
     content["matrix"] = encode_matrix(matrix, content)
     try:
         return NeuroglancerTransformRaw(content=content)

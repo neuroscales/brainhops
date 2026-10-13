@@ -46,8 +46,8 @@ class NeuroglancerTransformRaw(
     was read from in `text`. The JSON is short and is read in one pass,
     so the matrix of the transform lives in the record, as the matrix of
     an LTA file does. The record checks its content as Neuroglancer reads
-    it (see the module `_dimensions` for the conventions and their
-    sources), and it keeps keys that Neuroglancer does not read.
+    it (see [`brainhops.io.transformations.neuroglancer`][] for the
+    conventions and their sources), and it keeps keys that Neuroglancer does not read.
 
     A record is never changed in place, so that several objects can
     share it. It is held by

@@ -157,6 +157,15 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.transformations.neuroglancer": Package(
+        names=frozenset(
+            {
+                "NeuroglancerTransform",
+                "NeuroglancerTransformMetadata",
+                "NeuroglancerTransformRaw",
+            }
+        ),
+    ),
     "brainhops.io.transformations.freesurfer.m3z": Package(
         names=frozenset(
             {
