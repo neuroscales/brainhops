@@ -367,6 +367,145 @@ Historical names are not kept as aliases. The attributes `header`,
 `struct`, `keyval` and `image`, and the parser mixins, are removed.
 This breaks the public API, which is accepted.
 
+### Pyramids
+
+A pyramid, or multiscale image, stores the same image at several
+resolutions, which are its levels. Every container of a pyramid that
+brainhops reads stores one document that describes the whole pyramid and
+each of its levels. This document is the group document of an OME-Zarr
+store, the IFDs and the OME-XML of a TIFF file, the properties of an
+OpenSlide slide, the boxes of a JPEG 2000 codestream, the `info` file of
+a precomputed volume, the attributes of an N5 group, the `DataSetInfo`
+groups of an Imaris file, or the XML file of a BigDataViewer dataset.
+OME-Zarr also gives each level an array document of its own, inside the
+same store. No container stores a level that can be read without the
+document of its pyramid.
+
+A pyramid format therefore has one record, `<X>Raw`, for its whole
+container. The record holds the metadata of the pyramid and a tuple
+`levels`, which holds the storage description of each level, such as its
+shape, its data type and its chunks, but never its data. One
+`<X>Metadata` holds the record, and the pyramid and each of its levels
+hold the same metadata object, by identity. A level is an object of the
+single-scale format of the same package, such as `OmeZarrLevel` or
+`TiffImage`. It holds the lazy array of its level in `raw`, the shared
+metadata, and the index `level` of its level in the record. The level
+classes are public, and each one reads a single level of a container
+with the reader option `level`. The fourth pass first planned one record
+per level, and this design replaces that plan.
+
+The pyramid holds the tuple of the arrays of its levels in `raw`, finest
+first, so that `raw` stays the only attribute that stores data and an
+untouched copy shares it. Unlike a list, a tuple cannot be changed in
+place. The pyramid takes the `images` and `transformations` fields of
+`MultiScaleImage` over as `_images` and `_transformations`, which hold
+assigned lists only. Its `images` property is a `smartproperty` with a
+cache, which decodes one level object for each array of `raw`, all
+sharing the metadata, and caches the list. Its `transformations`
+property decodes the placements of the pyramid, which map the space of
+its levels to the world, in the same way, and is empty for a container
+that stores no placement. The `metadata` property names both of them in
+`invalidates=`, so other metadata drops the cached levels and placements
+and keeps the assigned ones, as the rules above require. The level
+objects that are dropped keep the old metadata. Within the format,
+`replace` and `from_instance` copy `raw`, the metadata and the assigned
+lists, but not the cache, so a copy of an untouched pyramid decodes
+nothing. From another class, `from_instance` reads the `images` and the
+`transformations` of the other object. Each pyramid gives an explicit
+`shape`, read from the levels that it holds or else from the first array
+of `raw`, without reading the voxels. `MultiScaleImage.data` stays a
+read-only property that returns the data of the finest level.
+
+The helpers of `io/common/_pyramids.py` tell which levels of a pyramid
+are still the levels of its file. `held_images` returns the assigned
+list of levels, or else the cached one, or `None` when the levels were
+neither assigned nor read. `own_level` tells whether a held level is an
+object of the level class that holds the metadata of the pyramid at the
+same index, whose `raw` is the array of that index in the `raw` of the
+pyramid, with no pending data, and with transformations that were never
+read or are the same as a fresh decode. `own_levels` applies that test
+to every held level. Each format calls them explicitly, with its level
+class and its function that decodes the transformations of a level.
+
+A pyramid that has a record, whose levels are those of its file, whose
+placements were never read or are the same as a fresh decode, and which
+is consolidated without options, gives a copy that shares `raw` and the
+metadata. Otherwise each level gives a stored array and a storage
+description. A level of the file gives them as they are stored. A level
+with pending data gives `to_disk` of that data, and a level of another
+class, or one that holds other metadata, gives `to_disk` of its decoded
+data. The transformations of a level are compared with a fresh decode
+and encoded only when they differ, and so are the placements. The new
+record is a copy of the held record with new levels, and the
+consolidated copy holds the new arrays in `raw`, new metadata, and no
+assigned list, so its levels are decoded from the new record.
+
+Zarr and TIFF write every level as it is given, and no ratio between the
+shapes of the levels is checked, for any format. A format whose writer
+derives the coarser levels from the finest one, such as JPEG 2000,
+writes from the finest level only, and assumes that the coarser levels
+that the user assigned are downsampled versions of it. It never refuses
+them. A format that cannot write, such as OpenSlide, consolidates only
+its data, as MINC does (item 101). The pending data of each level then
+moves into the tuple `raw`, the metadata and the transformations are
+kept, and a level of another class is refused with `WriterError`,
+because no record can describe it. The maintainer decided these rules on
+2026-10-13.
+
+OME-NGFF 0.6 lets a dataset of a multiscale hold only a scale, an
+identity, or a scale followed by a translation. The OME-Zarr writer
+encodes a level transformation that is an axis-aligned scale with an
+optional translation, and refuses any other with
+`UnrepresentableTransformationError`, whose message says to move the
+rotation or the shear into the placements of the pyramid, which version
+0.6 stores as common transformations. Factoring a level transformation
+into a common part and a part for each level is tracked in #447. A
+container that stores no placement, such as TIFF or JPEG 2000, composes
+an assigned preferred placement into the transformation of each level
+that it writes, and its class docstring says so.
+
+The reader options `level`, `series`, `setup`, `timepoint` and `frame`
+select what is read. They are kept as fields and never change the record
+(item 49). Options that describe the geometry, such as `pixel_size=`,
+`unit=` and `origin=`, become assigned transformations, so a file read
+with them is written with that geometry, and not byte for byte.
+
+A level is a single-scale image, so a level that is consolidated or
+written alone narrows the record to its own level, at index 0, and keeps
+the rest of the record. `TiffImage.load(path, level=1).save(other)`
+therefore writes a file of one level, and the pyramid class is the way
+to keep the other levels.
+
+An untouched pyramid in a local directory is saved as a copy, file for
+file, of its directory. A pyramid in which one level changed writes
+again only the files of that level and the documents that changed, so
+every other file keeps its bytes. A record keeps the bytes of each
+document as read, and the writer writes them again when the encoded
+document equals the parsed bytes, under a comparison that tells `1` from
+`1.0`. A local directory is written with `replace_directory`
+(`io/base/_utils_files.py`), which fills a new directory beside the
+target and then moves it into place, so a failed write leaves the old
+directory as it was. A save over the directory that the proxies of the
+object read (#426) consolidates the object in place, copies the files of
+the untouched levels from the old directory into the new one, moves the
+new directory into place, and reads the proxies and the record again
+from it. A remote store cannot be renamed, so it is written in place,
+level by level, and the save is not atomic. A remote save over the store
+that the object reads is refused with `WriterError`, so that the proxies
+never read a store that is half written. New Zarr stores are written in
+version 3, and a store that was read keeps its version.
+
+The maintainer decided this design on 2026-10-13. Pass 4a implements
+the helpers, `replace_directory`, the toy pyramid of the conformance
+tests and the checks P1 to P12. Zarr and OME-Zarr, TIFF, OpenSlide and
+Pillow move to the design in the later steps of the fourth pass, which
+also move the format fields of TIFF and Pillow into their records and
+make `OmeZarrField` read its levels lazily. The pyramids of JPEG 2000
+(#273), precomputed (#436), Imaris (#437), N5 (#438) and BigDataViewer
+(#441) were merged before pass 4a. They stay among the formats that are
+not migrated, which the checks P1 to P12 never run on, and move to this
+design after pass 4a.
+
 ### Public surface
 
 Each format package is split into private submodules, such as
@@ -494,6 +633,55 @@ format.
     assigned survive the new metadata, and a consolidated copy and a
     saved file hold them with the edit of its record.
 
+The checks above run on the level class of each pyramid format, which
+reads one level with the option `level`. A level class whose container is
+a directory has no bytes, so its metadata is compared through a summary,
+and its saves are compared file for file. Pass 4a adds the following
+checks, P1 to P12, which run on each pyramid format and on the toy
+pyramid of the test. A format that cannot write consolidates only its
+data in P4, refuses a level of another class in P5, and refuses to write
+in the other checks that write, while P7 and P9 do not apply to it.
+
+- P1. The constructor fields of the pyramid are `images`,
+  `transformations`, `raw`, `metadata` and the options that it declares,
+  and none of them is named `node`, `_slide` or `_source`. `images` and
+  `transformations` are cached properties, and `metadata` invalidates
+  both.
+- P2. Loading is lazy. After a load, `raw` is a tuple of proxies of the
+  level class, and the levels are not decoded. Reading `images` caches a
+  list of objects of the level class, each with its index in `level`, its
+  array of `raw` and the metadata of the pyramid, and no data is decoded.
+- P3. A level of a loaded pyramid holds the data, the geometry and the
+  record of the same level read alone with the option `level`.
+- P4. Data assigned to a level is pending. The arrays and the record of
+  the pyramid do not change, and `consolidate()` gives a copy whose array
+  of that level is `to_disk` of the data, whose other arrays are the same
+  objects, and in which nothing is pending, while the pyramid keeps its
+  pending state.
+- P5. An assigned list of levels, in which one level is an image of
+  another class, is pending and is written.
+- P6. Consolidating an untouched pyramid, or one whose levels and
+  placements were only read, gives a copy that shares `raw` and the
+  metadata and decodes nothing, and consolidating is idempotent.
+- P7. The transformations of a level, and the placements of the pyramid,
+  are compared at consolidation. A list that was only read keeps the
+  record, and so does an equal list that is assigned, while a changed
+  list is written. A container that stores no placement writes the same
+  world geometry into its levels.
+- P8. An untouched pyramid is saved identically, file for file. In a
+  directory, the files that change when one level changes never change
+  when another level changes.
+- P9. A save over the container that the proxies read consolidates the
+  pyramid in place (#426). Its `raw` is then a new tuple of proxies of the
+  new container, and its record is that of a fresh load.
+- P10. `replace` and `from_instance` within the format share `raw` and
+  the metadata and decode nothing, and `from_instance` from another class
+  carries the levels of that object, which are written.
+- P11. Assigning other metadata drops the cached levels and placements
+  and keeps the assigned ones, as check 20 tests for single images.
+- P12. The metadata of a container reads no data, which is tested on a
+  copy of the container that holds no data.
+
 The second pass moves LTA first, so that the reference format matches
 this design. `LtaStruct` becomes `LtaRaw`, its field becomes a
 keyword-only `raw`, and `reverse=False` is dropped. The pass then moves
@@ -528,10 +716,15 @@ parameter file is parsed in one pass. Their record also holds the records
 of the files of their chain of initial transforms, as items 320 to 329
 describe.
 
-The fourth pass moves Zarr, with one record per resolution level, and
-FLIRT. The class variable workaround of FLIRT is removed once it is
-decided whether `moving` and `reference` belong to the format or to the
-record.
+The fourth pass moves FLIRT and the formats of pyramids. A pyramid has
+one record for its whole container, which the pyramid and each of its
+levels hold, and in which a level is found by its index `level`, as the
+section on pyramids describes. Pass 4a adds the helpers, the extensions
+of the conformance test and the toy pyramid. The later steps move
+Pillow, then Zarr and OME-Zarr, TIFF and OpenSlide, and then update the
+open pull requests of pyramid formats. The class variable workaround of
+FLIRT is removed once it is decided whether `moving` and `reference`
+belong to the format or to the record.
 
 The move of FLIRT and of the three ITK formats that store parameters, the
 text `.tfm`, MATLAB `.mat` and HDF5 `.h5` files, is in progress. The
@@ -618,7 +811,11 @@ its status.
     take every constructor field of its model. A format must therefore
     keep `data` in its constructor even though `data` becomes a view,
     and `MultiScaleImage.data` is a read-only property for which a rule
-    is set in the fourth pass. Status: open.
+    is set in the fourth pass. Status: open for `data`, and decided for
+    pyramids in pass 4a. `MultiScaleImage.data` stays a read-only property
+    that returns the data of the finest level, and `_holds` is unaffected,
+    because a pyramid format takes `images` and `transformations` over
+    under the same public names.
 11. Reader options fall into two groups. Some describe the object, such
     as `moving`, `reference`, `log` and `steps`, and others describe
     the reading, such as `mmap` and `keep_file_open`. Until the two
@@ -655,8 +852,11 @@ its status.
     PyPI yet, so the checks before each pull request need it installed
     from another source. Status: open.
 15. The levels of a `MultiScaleImage` and the metadata of a pyramid
-    have no record yet. They are decided in the Zarr pass. Status:
-    open.
+    had no record. Status: decided by the maintainer on 2026-10-13, as
+    the section on pyramids describes. A pyramid has one record for its
+    container, which each of its levels holds. Pass 4a implements it for
+    the toy pyramid of the conformance test, and the formats move to it in
+    the later steps of the fourth pass.
 16. `_foreign_format_fields` counted the `MetadataFormat` dispatcher as
     a format that owns `raw`, so `raw` was reset when it should have
     been copied. Status: resolved in pass 1a, where dispatchers are no
@@ -911,7 +1111,9 @@ its status.
     accepted in pass 2c.
 64. The helper `_decompressed` of the conformance harness recognizes a
     compressed file by the gzip magic number and not by a `.gz` suffix.
-    Status: accepted in pass 2c.
+    Status: accepted in pass 2c. In pass 4a, the checks compare saves
+    with `_tree`, which decompresses each file of a directory in the same
+    way.
 65. `M3zMorph.from_instance` given a sequence of transformations
     relabels any chain, and the writer refuses it later. X5 behaves in
     the same way (item 51), and the problem is older than this work.
@@ -1842,6 +2044,96 @@ registrations of its views back into the XML file.
      metadata holds the whole file, as for LTA and M3Z (item 66), and
      check 18 does not apply, because the format has no `raw`. Status:
      accepted.
+
+The items from 290 on were found in pass 4a, which adds the helpers
+of pyramids (`io/common/_pyramids.py`), `replace_directory`, the toy
+pyramid of the conformance test and the checks P1 to P12.
+
+290. A level that is consolidated or written alone narrows the record to
+     its own level, at index 0, and keeps the rest of the record, such as
+     the placement of its pyramid. A level of a pyramid of several levels
+     is therefore never untouched in the sense of check 15, even when
+     nothing was assigned to it, because its record describes more than
+     the file that it writes. Status: decided by the maintainer on
+     2026-10-13, and implemented for the toy level of the conformance test
+     in pass 4a.
+291. A remote store cannot be renamed, so a pyramid in a remote store is
+     written in place, level by level, and the save is not atomic. A
+     remote save over the store that the object reads is refused with
+     `WriterError`. The conformance checks of atomic saves and of #426
+     therefore run on local paths only. Status: decided by the maintainer
+     on 2026-10-13, and to be implemented with Zarr in pass 4b.
+292. tifffile encodes again everything that it writes, so an untouched
+     TIFF file can be saved byte for byte only by copying the bytes of its
+     source. A TIFF file whose dialect or levels changed is encoded again.
+     Status: decided, to be implemented in pass 4c.
+293. OpenSlide cannot write, so its pyramids and levels consolidate only
+     their data. Its 22 classes are to leave the list of formats that are
+     not migrated through the exemplars of the generic TIFF vendor, which
+     share their bases with the other vendors. The maintainer has not
+     answered this point, so the default stands. Status: open, for pass
+     4d.
+294. The toy pyramid of the conformance test is a directory that holds a
+     JSON document and one toy file per level, and its level class is the
+     toy level. They exercise the rules of directory stores without any
+     optional dependency. The toy container stores its preferred placement
+     only, so the branches of the checks for a container that composes the
+     placements into its levels, for a writer that derives its levels, and
+     for a format that cannot write are first run by TIFF, JPEG 2000 and
+     OpenSlide. The generic loader reads a toy pyramid as a pyramid, whose
+     sniffer is more confident, and reads it as a level when the option
+     `level` is given, which the pyramid refuses. Status: accepted in pass
+     4a.
+295. A level changed in place, as in `pyramid.images[1].data = value`,
+     lives in the cache of `images`, as a list of transformations changed
+     in place does (item 191). A copy made with `replace` or
+     `from_instance` within the format decodes the levels again, so it
+     loses that change, while a write of the pyramid itself, including
+     `io.save`, writes it. Assigning the list of levels keeps the change
+     everywhere. Status: open, together with item 191.
+296. `replace_directory` (`io/base/_utils_files.py`) cannot exchange two
+     directories in one step. It moves the old directory aside and then
+     the new one into place, so a reader that opens the target between
+     the two moves finds no directory, but never a half-written one. The
+     old directory is moved back when the second move fails. The new
+     directory has a hidden name that ends like the name of the target,
+     as the new file of `replace_file` has, so that a library that chooses
+     an encoding from the suffix of a name chooses the same. Status:
+     accepted in pass 4a.
+297. The conformance harness has a new field, `Exemplar.container`, which
+     says whether an object is stored in a file or in a directory. The
+     metadata of a directory writes no bytes, so checks 7 and 10 compare
+     its summary through `Exemplar.header`, and check 12 checks that the
+     format refuses bytes. Every check that compares saves uses `_tree`,
+     which reads a directory file by file. `PyramidExemplar` reads the
+     metadata class, the suffix, the proxies, the edit of a record and the
+     hooks `cut` and `header` from the exemplar of the level class, so it
+     declares no `container`, `cut` or `storage` of its own. Image
+     stacks (#431) added `Exemplar.folder` for a folder of numbered files
+     that no extension names, which checks 5 and 12 treat apart, so the
+     two fields are kept side by side, and checks 7 and 10 compare the
+     summary of any metadata that writes no bytes of its own. Status:
+     accepted in pass 4a.
+298. Check P8 cannot tell which files of a directory belong to which level
+     without a hook in the exemplar. It checks instead that the files
+     that change when one level changes never change when another level
+     changes. A save that writes again the files of every level with the
+     same bytes passes, because only the bytes are compared. Status:
+     accepted in pass 4a.
+299. The pyramid formats merged before pass 4a log tensions that their
+     move to the design of pyramids closes. Items 160 and 250 note that
+     the precomputed and N5 pyramids have no `raw` of their own, items
+     161 and 251 note that the rules of atomic and untouched saves were
+     defined for files only, and items 181 and 208 note that the Imaris
+     and BigDataViewer pyramids have no record. The JPEG 2000 pyramid
+     already keeps the cache model of this design, with metadata that
+     drops its decoded `images` and `transformations`, and its writer no
+     longer refuses coarse data that was assigned, as the maintainer
+     decided on 2026-10-13 for every format that derives its levels. The
+     design of pyramids also answers items 130 and 131 of #433, because
+     each record keeps the bytes of its documents, and a level
+     transformation that is not diagonal is refused (#447). Status: open
+     until those pyramids move to the design.
 300. The seven plain matrix formats (`io/transformations/matrix`) share
      one record, `MatrixAffineRaw`, because a text container and a binary
      container differ only by the text that a text file keeps and the
