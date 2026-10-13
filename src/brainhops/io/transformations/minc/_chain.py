@@ -296,12 +296,12 @@ class XfmTransform(
     ) -> float:
         """Score the text of a file as an MNI transform file.
 
-        A file that libminc reads is likely of this format, whatever it
-        holds, so that
-        [`XfmAffine`][brainhops.io.transformations.minc.XfmAffine]
-        is preferred for a file of one linear transform. A text that starts
-        with the header line but that libminc would not read scores
-        `Confidence.MAYBE`, so that reading it reports what is wrong.
+        A file that libminc reads is certainly of this format, unless it
+        holds a single linear transform, which is only likely, so that
+        [`XfmAffine`][brainhops.io.transformations.minc.XfmAffine] is
+        preferred for it. A text that starts with the header line but that
+        libminc would not read scores `Confidence.MAYBE`, so that reading
+        it reports what is wrong.
 
         Parameters
         ----------
@@ -318,9 +318,12 @@ class XfmTransform(
         float
             The confidence, between 0 and 1.
         """
-        if sniff_transforms(text) is not None:
+        transforms = sniff_transforms(text)
+        if transforms is None:
+            return _score(False, text, error)
+        if len(transforms) == 1 and isinstance(transforms[0], XfmRaw.Linear):
             return Confidence.LIKELY
-        return _score(False, text, error)
+        return Confidence.CERTAIN
 
     @classmethod
     def sniff_lines(
