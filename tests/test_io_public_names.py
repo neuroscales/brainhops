@@ -82,6 +82,19 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("h5py",),
     ),
+    "brainhops.io.images.precomputed": Package(
+        names=frozenset(
+            {
+                "PrecomputedImage",
+                "PrecomputedMetadata",
+                "PrecomputedMultiScaleImage",
+                "PrecomputedRaw",
+                "PrecomputedScale",
+                "PrecomputedSharding",
+            }
+        ),
+        needs=("tensorstore",),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),

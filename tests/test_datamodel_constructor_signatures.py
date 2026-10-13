@@ -352,6 +352,12 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.images.pillow._image": {
         "PillowImage": ("data", "transformations"),
     },
+    "brainhops.io.images.precomputed._image": {
+        "PrecomputedImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.precomputed._multiscale": {
+        "PrecomputedMultiScaleImage": ("images", "transformations"),
+    },
     "brainhops.io.images.tiff._image": {
         "TiffImage": ("data", "transformations"),
     },
