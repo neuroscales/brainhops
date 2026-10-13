@@ -332,17 +332,20 @@ def test_the_metadata_reads_and_writes_the_whole_file(tmp_path: Path) -> None:
     assert not (tmp_path / "empty.m3z").exists()
 
 
-def test_other_metadata_gives_another_chain(tmp_path: Path) -> None:
+def test_other_metadata_keeps_the_chain(tmp_path: Path) -> None:
+    # Other metadata never changes the chain (2026-10-13), even one that
+    # was never decoded, and assigning `None` decodes the new record.
     morph = io.load(_write(tmp_path, _encode(_positions())))
-    chain = morph.transformations
     other = M3zMetadata.load(_write(tmp_path, _encode(_positions() * 2)))
     morph.metadata = other
-    assert morph.transformations is not chain
-    np.testing.assert_array_equal(morph[1].data, _positions() * 2)
-    # An assigned chain is kept when the metadata changes.
-    morph.transformations = list(chain)
+    np.testing.assert_array_equal(morph[1].data, _positions())
+    np.testing.assert_allclose(morph.consolidate()[1].data, _positions())
+    # A chain that is held is kept when the metadata changes again.
+    chain = morph.transformations
     morph.metadata = M3zMetadata.from_raw(other.raw)
-    assert morph.transformations == chain
+    assert morph.transformations is chain
+    morph.transformations = None
+    np.testing.assert_array_equal(morph[1].data, _positions() * 2)
 
 
 def test_a_morph_reads_a_record_a_stream_and_bytes(tmp_path: Path) -> None:

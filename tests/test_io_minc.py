@@ -264,6 +264,40 @@ def test_an_image_whose_transformations_are_emptied_has_no_geometry(
     )
 
 
+@pytest.mark.parametrize("decoded", [False, True], ids=["unread", "read"])
+def test_other_metadata_keeps_the_transformations(
+    tmp_path,  # noqa: ANN001
+    anyminc,  # noqa: ANN001
+    decoded: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Other metadata never changes the transformations (2026-10-13).
+
+    The conformance check writes its MINC files with one geometry, so this
+    check gives the image the metadata of a file without geometry. The
+    transformations that were never read are decoded from the previous
+    record without reading the voxels.
+    """
+    version, filename = anyminc
+    plain = str(tmp_path / "plain.mnc")
+    (write_minc1 if version == 1 else write_minc2)(plain, geometry=False)
+    metadata = MincMetadata.load(plain)
+    reads = _CountedReads(monkeypatch)
+    image = io.images.load(filename)
+    expected = image.metadata.raw.vox2world[:3]
+    if decoded:
+        assert image.transformations
+    image.metadata = metadata
+    assert image.metadata is metadata
+    assert reads.count == 0
+    np.testing.assert_allclose(image.transformation.matrix, expected)
+    np.testing.assert_allclose(
+        image.consolidate().transformation.matrix, expected
+    )
+    image.transformations = None
+    np.testing.assert_allclose(image.transformation.matrix, np.eye(4)[:3])
+
+
 def test_dimensions_are_kept(anyminc) -> None:  # noqa: ANN001
     _, filename = anyminc
     image = io.images.load(filename)

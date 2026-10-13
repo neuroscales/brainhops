@@ -573,15 +573,22 @@ def test_a_view_stores_its_matrix_under_its_own_type(tmp_path) -> None:  # noqa:
     np.testing.assert_allclose(back.matrix, xform.matrix)
 
 
-def test_other_metadata_gives_another_matrix(tmp_path) -> None:  # noqa: ANN001
+def test_other_metadata_keeps_the_matrix(tmp_path) -> None:  # noqa: ANN001
+    # Other metadata never changes the transformation (2026-10-13): the
+    # matrix and the systems of the old record are kept as pending, and
+    # assigning `None` decodes those of the new record.
     xform = LtaTransformation.load(_write(tmp_path, _raw()))
-    first = xform.data
+    first = np.array(LtaTransformation.load(_write(tmp_path, _raw())).data)
+    systems = (xform.input, xform.output)
     record = replace(
         xform.metadata.raw,
         affine=LtaRaw.Affine(matrix=tuple(map(tuple, np.eye(4)))),
     )
     xform.metadata = LtaMetadata.from_raw(record)
-    assert xform.data is not first
+    np.testing.assert_array_equal(xform.data, first)
+    assert (xform.input, xform.output) == systems
+    np.testing.assert_allclose(xform.consolidate().data, first)
+    xform.data = None
     np.testing.assert_array_equal(xform.data, np.eye(4)[:-1])
 
 

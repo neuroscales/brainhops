@@ -390,12 +390,25 @@ class ToyImage(
     is stored too. `consolidate` compares that list with a fresh decode of
     the record, and encodes it only when they differ, so that a list
     changed in place is written and an untouched one keeps the record.
+    Assigning other metadata keeps the transformations, which are first
+    decoded from the previous record when they were never read.
     """
 
     EXTENSIONS = (".toy",)
 
     raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
+    _metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
+
+    metadata = smartproperty("metadata")
+
+    @metadata.setter
+    def metadata(self, value: tx.Optional[ToyMetadata]) -> None:
+        # Other metadata never changes the transformations. Those that
+        # were never read are decoded from the previous record first, and
+        # the image then holds them as if they were assigned, so that
+        # `consolidate` compares them with the new record.
+        self._transformations = self.transformations
+        self._metadata = value
 
     # The image takes the `data` and `transformations` fields over under
     # private names, where `None` means that they are decoded from `raw`
@@ -457,7 +470,9 @@ class ToyImage(
                 metadata=metadata,
             )
         self.raw = raw
-        self.metadata = metadata
+        # The transformations are decoded from the new record afterwards,
+        # so the setter of `metadata`, which would keep them, is bypassed.
+        self._metadata = metadata
         self.data = None
         self.transformations = None
         return self
@@ -919,6 +934,8 @@ if nb is not None:
         derived=("homogeneous_matrix",),
         stored=_header_matrix,
     )
+    # The transformation of a field of coordinates does not depend on its
+    # header, so check 20 cannot fail for it.
     EXEMPLARS[NiftiRASCoordinatesField] = _NIFTI_FIELD._replace(
         geometry=_data_geometry,
         change_geometry=_data_change_geometry,
@@ -949,6 +966,9 @@ if nb is not None:
         EXEMPLARS[_cls] = _ITK._replace(
             build=lambda data, cls=_cls: cls(raw=_itk_field_to_disk(data))
         )
+    # The exemplar has no moving image, so its chain cannot be built, and
+    # check 20 cannot fail for it. `tests/test_io_fsl.py` checks that a
+    # chain that can be built is kept.
     EXEMPLARS[FnirtWarpField] = _NIFTI._replace(
         sample=_vectors,
         # FNIRT holds no grid that the model encodes, so its data stands in.
@@ -1317,7 +1337,10 @@ EXEMPLARS[DetachedNrrdImage] = _NRRD._replace(
 # that MINC refuses to write. A MINC1 copy that the metadata check reads
 # is the file cut after its NetCDF header, and a MINC2 copy keeps every
 # group and attribute of the file but not its image. The record is
-# compared as it is, since the metadata cannot write bytes.
+# compared as it is, since the metadata cannot write bytes. The files have
+# one geometry, so check 20 cannot tell the old geometry from the new one,
+# and `tests/test_io_minc.py` checks the rule with a file without
+# geometry.
 
 
 def _minc_dimensions(data: tx.Any) -> tx.Tuple[str, ...]:
@@ -2340,6 +2363,61 @@ def test_19_a_copy_of_a_read_image_stays_lazy(
     assert copied.consolidate().metadata is loaded.metadata
 
 
+@pytest.mark.parametrize("decoded", [False, True], ids=["unread", "read"])
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_20_assigning_other_metadata_keeps_the_transformations(
+    cls: type,
+    exemplar: Exemplar,
+    decoded: bool,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The maintainer decided on 2026-10-13 that other metadata never
+    # changes the transformations of an object, or the matrix of an affine,
+    # whether they were decoded before or not. The new metadata comes from
+    # a file of another geometry, and its record carries an edit outside
+    # of the geometry. A format that cannot write, such as MINC, has its
+    # files written with one geometry, so the check cannot tell the two
+    # geometries apart for it.
+    source = _saved(cls, exemplar, tmp_path)
+    reference = cls.load(source)
+    geometry = exemplar.geometry(reference)
+    data = np.asarray(_data(exemplar, reference))
+    other = cls.load(_placed(cls, exemplar, tmp_path))
+    if exemplar.source is None:
+        assert not np.allclose(exemplar.geometry(other), geometry)
+    record = exemplar.edit_record(deepcopy(other.metadata.raw))
+    metadata = exemplar.metadata.from_raw(record)
+    loaded = cls.load(source)
+    if decoded:
+        exemplar.geometry(loaded)
+    else:
+        assert all(field is None for field in _pending(loaded))
+        assert "_cache_transformations" not in vars(loaded)
+        assert "_cache_data" not in vars(loaded)
+    loaded.metadata = metadata
+    assert loaded.metadata is metadata
+    assert np.allclose(exemplar.geometry(loaded), geometry)
+    assert np.array_equal(np.asarray(_data(exemplar, loaded)), data)
+    # Copies within the format hold the same transformations.
+    for copy in (replace(loaded), cls.from_instance(loaded)):
+        assert copy.metadata is metadata
+        assert np.allclose(exemplar.geometry(copy), geometry)
+    # The transformations win over the geometry of the new record, whose
+    # other content is kept.
+    consolidated = loaded.consolidate()
+    assert np.allclose(exemplar.geometry(consolidated), geometry)
+    assert exemplar.record_edited(consolidated.metadata.raw)
+    target = _path(tmp_path, exemplar, "kept")
+    if exemplar.source is not None:
+        _refuses_writing(loaded, target)
+        return
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.allclose(exemplar.geometry(back), geometry)
+    assert np.array_equal(np.asarray(_data(exemplar, back)), data)
+    assert exemplar.record_edited(back.metadata.raw)
+
+
 # ----------------------------------------------------------------------
 #   THE TOY FORMAT THROUGH THE GENERIC ENTRY POINTS
 # ----------------------------------------------------------------------
@@ -2479,12 +2557,15 @@ def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: AN
     assert isinstance(loaded.raw, ArrayProxy)
     assert isinstance(loaded.metadata.raw.header, nb.Nifti1Header)
     assert MetadataFormat.load(source).raw.header == loaded.metadata.raw.header
-    # Other metadata gives other transformations.
+    # Other metadata keeps the transformations, and assigning `None`
+    # decodes those of the new header.
     first = loaded.transformation
     assert loaded.transformation is first
     edited = loaded.metadata.raw.copy()
     edited.header.set_sform(np.diag([2.0, 2.0, 2.0, 1.0]), code=2)
     loaded.metadata = NiftiMetadata.from_raw(edited)
+    assert loaded.transformation is first
+    loaded.transformations = None
     assert loaded.transformation is not first
     expected = np.diag([2.0, 2.0, 2.0, 1.0])[:3]
     assert np.allclose(_nifti_geometry(loaded), expected)

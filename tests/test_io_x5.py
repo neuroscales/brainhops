@@ -413,19 +413,26 @@ def test_only_the_selected_chain_is_written_when_assigned(
     assert [node.type for node in selected.nodes] == ["nonlinear", "linear"]
 
 
-def test_other_metadata_gives_another_chain(chain_x5: Path) -> None:
+def test_other_metadata_keeps_the_chain(chain_x5: Path) -> None:
+    # Other metadata never changes the chain (2026-10-13), whether it was
+    # decoded or not, and assigning `None` decodes the new record.
+    record = io.load(chain_x5).metadata.raw.copy()
+    record.header.chains = [(1,)]
+    xform = io.load(chain_x5)
+    xform.metadata = X5Metadata.from_raw(record)
+    assert isinstance(xform[0], xforms.Affine)
     xform = io.load(chain_x5)
     first = xform.transformations
     assert isinstance(first[0], xforms.Affine)
-    record = xform.metadata.raw.copy()
-    record.header.chains = [(1,)]
     xform.metadata = X5Metadata.from_raw(record)
+    assert xform.transformations is first
+    xform.transformations = None
     assert isinstance(xform[0], X5DisplacementField)
-    assert xform.transformations is not first
-    # Selecting another chain also drops the decoded chain.
+    # Selecting another chain drops the decoded chain.
     xform.chain = 0
     assert isinstance(xform[0], X5DisplacementField)
     xform.metadata = io.load(chain_x5).metadata
+    xform.transformations = None
     xform.chain = 1
     assert xform.selection == (1, 0)
     assert isinstance(xform[0], X5DisplacementField)
