@@ -18,8 +18,8 @@ from .concrete import (
     _data2coeffs,
     _data2values,
 )
-from .nocycles import register_operator
-from .operators import Operation
+from .derived import DerivedTransformation
+from .nocycles import register_derived
 from .tangents import (
     AffineExponential,
     LinearExponential,
@@ -41,8 +41,10 @@ _OptionalArray: tx.TypeAlias = tx.Optional[_Array]
 # ======================================================================
 
 
-@register_operator("inverse")
-class Inverse(Operation, tx.Generic[TRANSFORMATION], polymorphic=True):
+@register_derived("inverse")
+class Inverse(
+    DerivedTransformation, tx.Generic[TRANSFORMATION], polymorphic=True
+):
     """Lazy inverse of a forward transformation, resolved on demand.
 
     The inverse is resolved when it is applied, computed or converted. When
@@ -55,9 +57,9 @@ class Inverse(Operation, tx.Generic[TRANSFORMATION], polymorphic=True):
     `t.inverse()` returns the same wrapper. Such a typed inverse is an instance
     of the family it inverts, so composition and the kind checks treat it like
     any other member of that family. Unlike the other kinds of
-    [`Operation`][], an inverse reverses the direction of its forward
-    transformation, so its input and output systems are those of the forward,
-    swapped.
+    [`DerivedTransformation`][], an inverse reverses the direction of
+    its forward transformation, so its input and output systems are those
+    of the forward, swapped.
     """
 
     # --- class attributes ---------------------------------------------

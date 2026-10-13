@@ -1131,6 +1131,42 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+140. MNI transform files (#222) are parsed in one pass, so the matrices
+     of their linear transforms live in the record, as for LTA. The
+     displacements of a grid transform live in a separate MINC volume,
+     which `XfmTransform` reads into `raw` as a tuple of lazy
+     `MincImage` objects, one per grid transform
+     (`io/transformations/minc/_chain.py`). A file without a grid
+     transform has no `raw`, so check 18 does not apply to the exemplar,
+     and check 6 is vacuous, as for LTA and M3Z (item 66). Status:
+     accepted, pending review.
+141. brainhops cannot write MINC volumes, so an `XfmTransform` writes a
+     grid transform only as the volume that it was read from, which it
+     recognizes by the identity of the decoded element, as X5 does (item
+     36), and which it copies beside a file written elsewhere. A new
+     displacement field raises `UnrepresentableTransformationError`.
+     Status: open, until a MINC writer exists.
+142. libminc writes a MINC1 displacement volume without a variable for
+     `vector_dimension` (`volume_io/Volumes/output_mnc.c`), and both the
+     MINC reader of brainhops and nibabel refuse such a file, so only
+     MINC2 displacement volumes, whose HDF5 layer gives every dimension a
+     dataset, are read. Status: open. Reading these volumes would need
+     `io/common/minc` to read the voxels of MINC1 without nibabel's
+     `Minc1File`.
+143. The record of an MNI transform file keeps the text that it was read
+     from, and writes it while it still parses to the fields of the
+     record, as AFNI and MRtrix do (item 84). Comments, the layout of the
+     numbers, line endings and bytes that do not decode as UTF-8 are
+     therefore kept by an untouched save. A record that is encoded again
+     keeps only the comments at the top of the file. Status: accepted,
+     pending review.
+144. libminc interpolates a grid transform with cubic interpolating
+     splines, lowers the degree near the edges, and applies no
+     displacement beyond half a voxel outside the grid, and it inverts a
+     grid transform by an iteration. brainhops uses cubic B-splines of the
+     values with a zero boundary and the inverse of the data model. The
+     two agree at the nodes of the grid only. Status: accepted and
+     documented in `XfmGridTransform`.
 160. A Neuroglancer precomputed volume holds several scales, so it is read
      as a pyramid, `PrecomputedMultiScaleImage`, whose levels are
      `PrecomputedImage` objects (`io/images/precomputed`). Each level
