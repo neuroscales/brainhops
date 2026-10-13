@@ -211,6 +211,17 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.transformations.c3d": Package(
         names=frozenset({"C3dAffine", "C3dAffineMetadata", "C3dAffineRaw"}),
     ),
+    "brainhops.io.transformations.elastix": Package(
+        names=frozenset(
+            {
+                "ElastixMetadata",
+                "ElastixParameterTransform",
+                "ElastixRaw",
+                "ElastixTomlTransform",
+                "ElastixTransform",
+            }
+        ),
+    ),
     "brainhops.io.transformations.freesurfer.lta": Package(
         names=frozenset(
             {
