@@ -15,6 +15,7 @@ from brainhops._core.dependencies import (
     HAS_NIBABEL,
     HAS_OPENSLIDE,
     HAS_PILLOW,
+    HAS_TENSORSTORE,
     HAS_TIFFFILE,
     has_abczarr_driver,
 )
@@ -92,6 +93,15 @@ else:
         "openslide-python",
         "openslide",
     )
+
+# The samples of an N5 dataset are read with TensorStore, so the format
+# is registered only when it is installed.
+if HAS_TENSORSTORE:
+    from . import n5
+
+    __all__ += ["n5"]
+else:
+    register_missing_format(["n5"], "tensorstore", "n5")
 
 # abczarr cannot open stores without at least one backend driver, so the
 # Zarr format is registered only when a driver is available.
