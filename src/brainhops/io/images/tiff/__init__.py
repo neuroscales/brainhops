@@ -84,14 +84,25 @@ pyramid has no transformation of its own.
 
 ## Metadata
 
-The image keeps `dialect` (`"ome"`, `"imagej"` or `None`), `ome_xml`,
-`imagej_metadata`, `tags` (resolution, description, software, date, artist,
-copyright and others), `series`, `level`, `n_series`, `n_levels` and
-`storage_axes` (the axes of tifffile, such as `"TZCYX"`).
+An image holds the record of the series that it was read from, a
+[`TiffRaw`][brainhops.io.images.tiff.TiffRaw], through its
+[`TiffMetadata`][brainhops.io.images.tiff.TiffMetadata], and every level of
+a pyramid holds the same record. The record keeps what the file records: the
+`dialect` (`"ome"`, `"imagej"` or `None`), the `ome_xml`, the `imagej`
+metadata, the `tags` (resolution, description, software, date, artist,
+copyright and others), the `storage_axes` (the axes of tifffile, such as
+`"TZCYX"`), the index of the `series`, the number of series `n_series`, and
+the shape and the data type of each of its `levels`. They are read as
+`image.metadata.raw.dialect`. The reader options `series` and `level` are
+fields of the image. `TiffMetadata.load(file)` reads the record from the
+IFDs of the file and never reads a pixel.
 
 ## Writing
 
-Images are written with tifffile, in one of three dialects:
+An image or a pyramid that was read and not changed is written by copying the
+bytes of its file, since tifffile encodes again everything that it writes. Any
+other image is encoded by tifffile, with its record as the base of what is
+written, in one of three dialects:
 
 * OME-TIFF is written when the name ends with `.ome.tif`, `.ome.tiff`,
   `.ome.btf`, `.ome.tf2` or `.ome.tf8`. It is also written when the image was
@@ -107,6 +118,8 @@ Images are written with tifffile, in one of three dialects:
   precedence over the second OME-TIFF rule. The file records the unit, the
   signed spacing, the frame interval and the rest of the ImageJ metadata
   (display ranges, LUTs, labels and so on) that still applies.
+* An image read from a plain TIFF or an OME-TIFF file whose transformation
+  is still the one of its record keeps the dialect of its record.
 * Plain TIFF is written otherwise. The axes are recorded in the tifffile
   metadata, and a known pixel size is recorded in resolution tags, in pixels
   per centimetre.
@@ -115,13 +128,21 @@ Images are written with tifffile, in one of three dialects:
 tags, for readers that do not read OME-XML. The axes keep the order in which
 they were read, or else follow the order `TZCYX`, and the channel axis of an
 RGB or RGBA `uint8` image is stored as samples (`S`). The data type is stored
-as is. BigTIFF is used when the data exceeds 4 GiB, or with `bigtiff=True`,
-and other keywords are passed to tifffile, such as `compression="zlib"` or
-`tile=(256, 256)`.
+as is. BigTIFF is used when the data exceeds 4 GiB, or with `bigtiff=True`.
+The writers also pass `compression`, `compressionargs`, `predictor`, `tile`
+and `rowsperstrip` to tifffile, such as `compression="zlib"` or
+`tile=(256, 256)`, and refuse any other option. These options change how the
+pixels are packed but nothing that the record holds, so `consolidate` takes
+only `dialect`, `name` and `bigtiff`. A level of a pyramid is a single-scale
+image, so `TiffImage.load(file, level=1).save(other)` writes a file of that
+level alone.
 
 A `TiffMultiScaleImage` is written as a pyramid in which the coarser levels
-are SubIFDs of the first level. The placement of the levels is not stored, and
-it is derived again from their shapes when the file is read. The software,
+are SubIFDs of the first level, as they are given, with no check of the ratios
+of their shapes. The placement of the levels is not stored, and it is derived
+again from their shapes when the file is read, so the transformations of the
+coarser levels are not written. A preferred transformation assigned to the
+pyramid is composed into the geometry of the first level. The software,
 date, artist, copyright and a few other tags are written back.
 
 ## Without tifffile

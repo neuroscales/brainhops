@@ -714,7 +714,9 @@ levels hold, and in which a level is found by its index `level`, as the
 section on pyramids describes. Pass 4a adds the helpers, the extensions
 of the conformance test and the toy pyramid. The later steps move
 Pillow, then Zarr and OME-Zarr, TIFF and OpenSlide, and then update the
-open pull requests of pyramid formats. The class variable workaround of
+open pull requests of pyramid formats. Pass 4c moves TIFF: `TiffRaw`
+records one series of a TIFF file, `TiffMetadata` holds it, and the lazy
+array `_TiffProxy` reads one level. The class variable workaround of
 FLIRT is removed once it is decided whether `moving` and `reference`
 belong to the format or to the record.
 
@@ -1410,7 +1412,9 @@ its status.
 292. tifffile encodes again everything that it writes, so an untouched
      TIFF file can be saved byte for byte only by copying the bytes of its
      source. A TIFF file whose dialect or levels changed is encoded again.
-     Status: decided, to be implemented in pass 4c.
+     Status: implemented in pass 4c, where an image or a pyramid that
+     `consolidate` leaves as it is, and whose `raw` holds the lazy arrays
+     of its record, is written by copying the bytes of its file.
 293. OpenSlide cannot write, so its pyramids and levels consolidate only
      their data. Its 22 classes are to leave the list of formats that are
      not migrated through the exemplars of the generic TIFF vendor, which
@@ -1472,3 +1476,71 @@ its status.
      items 130 and 131 of #433, because each record keeps the bytes of its
      documents, and a level transformation that is not diagonal is
      refused (#447). Status: open until those pull requests are updated.
+
+350. The record of a TIFF file, `TiffRaw`, describes the series that was
+     read, with its levels, and not the whole file, because the dialect,
+     the OME image and the geometry belong to one series. The index of
+     the series is a reader option, as the level is, and never changes the
+     record. An untouched image read from another series than the first is
+     therefore saved as a copy of the whole file, which holds every series,
+     as an X5 file read with `chain=1` is written whole (item 49). An image
+     that is encoded again is written as a file of its series alone.
+     Status: decided in pass 4c.
+351. tifffile cannot write a record apart from pixels, so the record of a
+     consolidated TIFF image or pyramid is read from a file of the same
+     plan that tifffile writes without pixels into a sparse buffer in
+     memory (`planned_record` in `io/images/tiff/_writer.py`). The record
+     then holds what the written file holds, as the reader reads it,
+     without encoding a pixel and without repeating the rules of the
+     reader. Its OME-XML differs from that of a written file in its UUID
+     only, which tifffile makes anew for each file. tifffile cannot write
+     a compressed or tiled file without pixels, and the record holds no
+     compression, so `consolidate` takes only `dialect`, `name` and
+     `bigtiff`, while the writers also take `compression`,
+     `compressionargs`, `predictor`, `tile` and `rowsperstrip`. A
+     consolidated copy is therefore written without compression unless
+     the writer is asked for it. Status: decided in pass 4c, for the
+     maintainer to review.
+352. `TiffMetadata` writes no bytes, because a TIFF file has no header apart
+     from its pixels: the IFDs of tifffile point to the pixels that follow
+     them. Checks 7 and 10 compare the summary of metadata that writes no
+     bytes, as they compare that of a directory (`_writes_bytes` in
+     `tests/test_io_conformance.py`). The copy of check 6 keeps every IFD
+     and points the strip and tile offsets beyond the end of the file, so
+     that any read of a pixel fails. tifffile finds the pages of an ImageJ
+     hyperstack from the size of the file, so the copy of an ImageJ file
+     keeps its offsets and overwrites its pixels instead, and check 6 is
+     weaker for it. The new field `Exemplar.writer_options` writes the
+     files of the ImageJ variant, which no name asks for. Status: accepted
+     in pass 4c.
+353. A TIFF file stores the geometry of the finest level of a pyramid only,
+     and a reader derives that of the coarser levels from their shapes. A
+     changed transformation of a coarser level is therefore neither written
+     nor refused, in the same way as the coarser data that a writer which
+     derives its levels assumes to be compatible, and the class docstring
+     says so. The new field `PyramidExemplar.level_geometry` makes check P7
+     change the finest level of such a container instead. Status: open,
+     for the maintainer to decide whether such a transformation should be
+     refused.
+354. A transformation that TIFF cannot store, such as a rotation, a shear,
+     or a scaling onto axes without a unit of length, is written as a file
+     without geometry, so it is neither honoured nor refused. A preferred
+     placement of a TIFF pyramid is composed into the geometry of the
+     finest level, and a placement without a unit of length is lost in the
+     same way. The problem is older than this work. Status: open.
+355. Pass 4c changes the public API of TIFF, to be announced with item 13.
+     The fields `dialect`, `ome_xml`, `imagej_metadata`, `tags`, `n_series`,
+     `n_levels` and `storage_axes` of `TiffImage`, and `dialect`, `ome_xml`,
+     `imagej_metadata`, `tags`, `n_series` and `storage_axes` of
+     `TiffMultiScaleImage`, leave the constructors and are read from the
+     record, as `image.metadata.raw.dialect`, `imagej` instead of
+     `imagej_metadata` and `len(levels)` instead of `n_levels`. The record
+     class of the backend, `_utils.TiffMetadata`, becomes `SeriesMetadata`.
+     The writers refuse any option other than `dialect`, `name`, `bigtiff`
+     and the five options of tifffile of item 351, where they passed every
+     option to tifffile. The decoded data is read-only, where a memory map
+     was copied on write. An untouched file is saved as a copy of its
+     bytes, and a file read as plain TIFF stays plain TIFF while its
+     geometry is that of its record, where it became OME-TIFF when its
+     resolution tags gave a pixel size. A pyramid decodes its levels on
+     first access. Status: open, as for item 13.
