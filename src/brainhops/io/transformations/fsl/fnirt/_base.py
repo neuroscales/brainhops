@@ -74,6 +74,23 @@ _SPLINE_DEGREE = {
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
+# Developer notes on the coefficient files (see also items 220 to 223 of
+# docs/design/format-records.md):
+# - The header conventions are those of `src/warpfns/fnirt_file_writer.cpp`,
+#   `src/warpfns/fnirt_file_reader.cpp` and `src/basisfield/fsl_splines.h`
+#   of FSL 5.0.9, as mirrored at https://github.com/neurodebian/fsl (commit
+#   513f6a0), and they agree with `fsl/transform/fnirt.py` and
+#   `fsl/transform/nonlinear.py` of fslpy 3.29.1
+#   (https://github.com/pauldmccarthy/fslpy, commit 0eaff98).
+# - A coefficient field is a `DisplacementField` that stores coefficients
+#   because FSL evaluates the same centred B-splines.
+# - FSL places the knots in the radiological order of the reference, so for
+#   a reference whose voxel-to-world matrix has a positive determinant this
+#   reader follows FSL, while fslpy places them from the stored voxels.
+# - A reference of another resolution is placed by its scaled-mm positions,
+#   as fslpy does, while FSL's reader evaluates the field on the grid stored
+#   in the file (item 223).
+# - FSL cannot write a DCT coefficient field (intent 2008) either.
 @register_format
 class FnirtWarpField(
     FslTransformationFormat,
@@ -104,8 +121,8 @@ class FnirtWarpField(
     stays on its own grid and the spline is evaluated only when the sequence
     is computed. A coefficient field becomes a
     [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField]
-    that stores coefficients, because FSL evaluates the same centred
-    B-splines, and the two affines place its knots where FSL places them.
+    that stores coefficients, and the two affines place its knots where FSL
+    places them.
 
     A coefficient file uses its header in a way of its own. The pixdims
     hold the knot spacing in voxels of the reference, the intent parameters
@@ -114,25 +131,14 @@ class FnirtWarpField(
     the source to the reference in scaled millimetres. The values are
     relative displacements in scaled millimetres, which FSL adds to the
     reference position moved by the inverse of the initial affine.
-    Coefficients beyond the grid count as zero. These conventions are those
-    of `src/warpfns/fnirt_file_writer.cpp`, `src/warpfns/fnirt_file_reader.cpp`
-    and `src/basisfield/fsl_splines.h` of FSL 5.0.9, as mirrored at
-    https://github.com/neurodebian/fsl (commit 513f6a0), and they agree
-    with `fsl/transform/fnirt.py` and `fsl/transform/nonlinear.py` of
-    fslpy 3.29.1 (https://github.com/pauldmccarthy/fslpy, commit 0eaff98).
-    FSL places the knots in the radiological order of the reference, so
-    for a reference whose voxel-to-world matrix has a positive determinant
-    this reader follows FSL, while fslpy places them from the stored
-    voxels.
+    Coefficients beyond the grid count as zero.
 
     A deformation field carries the reference geometry itself, so only the
     moving image is required. A coefficient field carries neither image's
     geometry, so both the reference and the moving image are required. A
     reference of another resolution than the one used at registration is
-    placed by its scaled-mm positions, as fslpy does, while FSL's reader
-    evaluates the field on the grid stored in the file. A
-    discrete-cosine-transform coefficient field (intent 2008) is
-    recognized but not supported, and FSL cannot write one either.
+    placed by its scaled-mm positions. A discrete-cosine-transform
+    coefficient field (intent 2008) is recognized but not supported.
 
     !!! note "Images remain external"
         A FNIRT file does not hold everything its map depends on: the moving
@@ -378,10 +384,11 @@ class FnirtWarpField(
     def _stored_knot_spacing(self) -> np.ndarray:
         """Knot spacing in reference voxels, as stored in the pixdims.
 
-        FSL rounds the pixdims to whole numbers of voxels
-        (`FnirtFileReader::read_coef_file` in
-        `src/warpfns/fnirt_file_reader.cpp` of FSL 5.0.9).
+        The pixdims are rounded to whole numbers of voxels, as FSL reads
+        them.
         """
+        # `FnirtFileReader::read_coef_file` in
+        # `src/warpfns/fnirt_file_reader.cpp` of FSL 5.0.9.
         zooms = np.abs(np.asarray(_header(self).get_zooms()[:3], float))
         return np.floor(zooms + 0.5)
 
@@ -415,30 +422,33 @@ class FnirtWarpField(
         """Affine from reference voxels to the coordinates of the warp grid.
 
         The warp grid of a dense field is the voxel grid of the reference,
-        so the affine is the identity. For a coefficient field, FSL places
-        coefficient `c` of an axis at the voxel `(c - degree // 2) * ksp`
-        of the reference that it registered to, or at voxel `c` when the
-        knot spacing `ksp` is one (`Spline1D::OffsetIntoField` in
-        `src/basisfield/fsl_splines.h` of FSL). These voxels are those of
-        the image as FSL holds it in memory, which FSL flips to the
-        radiological order on read when the voxel-to-world matrix has a
-        positive determinant (`read_volumeROI` in
-        `src/newimage/generalio.cc`, and `read_volume` in
-        `src/fnirt/fnirt.cpp`), while it writes the coefficients without
-        any flip (`common_coef_construction` in
-        `src/warpfns/fnirt_file_writer.cpp`). A voxel in memory is
-        therefore the FSL scaled-mm position divided by the voxel size of
-        the reference, and the grid is placed from the scaled-mm position.
-        These files are those of FSL 5.0.9 in the NeuroDebian mirror,
-        https://github.com/neurodebian/fsl at commit 513f6a0.
-
-        A reference of another resolution than the one used at
-        registration is placed by its scaled-mm positions too, which fslpy
-        also assumes (`_readFnirtCoefficientField` in
-        `fsl/transform/fnirt.py` of fslpy 3.29.1). fslpy places the grid
-        from the stored voxels instead, which differs from FSL when the
-        reference has a positive determinant.
+        so the affine is the identity. The grid of a coefficient field is
+        placed from the scaled-mm positions of the reference, divided by
+        the knot spacing in millimetres and shifted by the offset of the
+        knots of FSL.
         """
+        # FSL places coefficient `c` of an axis at the voxel
+        # `(c - degree // 2) * ksp` of the reference that it registered to,
+        # or at voxel `c` when the knot spacing `ksp` is one
+        # (`Spline1D::OffsetIntoField` in `src/basisfield/fsl_splines.h`).
+        # These voxels are those of the image as FSL holds it in memory,
+        # which FSL flips to the radiological order on read when the
+        # voxel-to-world matrix has a positive determinant (`read_volumeROI`
+        # in `src/newimage/generalio.cc`, and `read_volume` in
+        # `src/fnirt/fnirt.cpp`), while it writes the coefficients without
+        # any flip (`common_coef_construction` in
+        # `src/warpfns/fnirt_file_writer.cpp`). A voxel in memory is
+        # therefore the FSL scaled-mm position divided by the voxel size of
+        # the reference. These files are those of FSL 5.0.9 in the
+        # NeuroDebian mirror, https://github.com/neurodebian/fsl at commit
+        # 513f6a0.
+        #
+        # A reference of another resolution than the one used at
+        # registration is placed by its scaled-mm positions too, which
+        # fslpy also assumes (`_readFnirtCoefficientField` in
+        # `fsl/transform/fnirt.py` of fslpy 3.29.1). fslpy places the grid
+        # from the stored voxels instead, which differs from FSL when the
+        # reference has a positive determinant (item 220 of the memo).
         if not self._is_coeff():
             return np.eye(4, dtype=np.float64)
         knot_mm = self._reference_pixdim() * self._stored_knot_spacing()
@@ -452,13 +462,13 @@ class FnirtWarpField(
         """The initial affine, from reference to source scaled millimetres.
 
         A deformation field already includes it, so it is the identity. A
-        coefficient field stores its inverse in the sform, and FSL adds
-        `(inv(sform) - I) @ x` to the displacement at the reference
-        position `x` in scaled millimetres (`add_affine_part` in
-        `src/warpfns/fnirt_file_reader.cpp` of FSL 5.0.9), which is what
-        fslpy does too (`coefficientFieldToDeformationField` in
-        `fsl/transform/nonlinear.py` of fslpy 3.29.1).
+        coefficient field stores its inverse in the sform, and
+        `(inv(sform) - I) @ x` is added to the displacement at the
+        reference position `x` in scaled millimetres.
         """
+        # `add_affine_part` in `src/warpfns/fnirt_file_reader.cpp` of FSL
+        # 5.0.9, and `coefficientFieldToDeformationField` in
+        # `fsl/transform/nonlinear.py` of fslpy 3.29.1.
         if not self._is_coeff():
             return np.eye(4, dtype=np.float64)
         sform = np.asarray(_header(self).get_sform(), dtype=np.float64)
@@ -735,12 +745,13 @@ def _anchor_offsets(degree: int, knot_spacing: np.ndarray) -> np.ndarray:
     """Return the shift of the knots of FSL on each axis, in knots.
 
     FSL centres coefficient `c` at `(c - degree // 2) * ksp`, and at `c`
-    when the knot spacing `ksp` is one (`Spline1D::OffsetIntoField` in
-    `src/basisfield/fsl_splines.h` of FSL 5.0.9), while the data model
-    centres it at `c`. The shift is therefore `degree // 2` grid units, or
-    zero where the stored knot spacing is one. A dense field has a knot
-    spacing of one, so it has no shift.
+    when the knot spacing `ksp` is one, while the data model centres it at
+    `c`. The shift is therefore `degree // 2` grid units, or zero where the
+    stored knot spacing is one. A dense field has a knot spacing of one, so
+    it has no shift.
     """
+    # `Spline1D::OffsetIntoField` in `src/basisfield/fsl_splines.h` of FSL
+    # 5.0.9.
     spacing = np.asarray(knot_spacing, dtype=np.float64)
     step = float(int(degree) // 2)
     return np.where(spacing == 1.0, 0.0, step).astype(np.float64)
