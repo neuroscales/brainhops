@@ -1458,7 +1458,7 @@ if tifffile is not None:
     # write, and checks 16a, 17, 18 and 19 are skipped. Check 12 checks
     # that bytes and streams are refused, since they cannot hold a
     # folder, and check 6 cuts each file of the folder before its pixels
-    # (items 115 to 119 of the memo on format records).
+    # (items 121 to 125 of the memo on format records).
     EXEMPLARS[SequenceImage] = Exemplar(
         metadata=SequenceMetadata,
         suffix="",
