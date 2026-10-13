@@ -14,7 +14,6 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
-from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -107,24 +106,12 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             return None
         return _field_to_model(self.raw)
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
-    Assigning other metadata keeps the chain. A chain that was never
-    decoded is first decoded from the previous header, which reads no
-    coordinates, and the field then holds it as if it were assigned, so
-    that [`consolidate`][] encodes it over the new header. Assigning
-    `None` to `transformations` afterwards decodes the chain from the new
-    header instead.
+    Assigning other metadata drops the chain decoded from the previous
+    header.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
-        # Other metadata never changes the chain, as the maintainer
-        # decided on 2026-10-13. The decoded chain holds lazy views of
-        # the previous header and of `raw`, so nothing is read here.
-        self._transformations = self.transformations
-        self._metadata = value
 
     # --- chain --------------------------------------------------------
     # The stored chain is a tuple, as `ImmutableSequence` declares it, so
@@ -250,9 +237,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
                 transformations=None,
             )
         self.raw = raw
-        # The chain is decoded from the new header afterwards, so the
-        # setter of `metadata`, which would keep it, is bypassed.
-        self._metadata = metadata
+        self.metadata = metadata
         self.data = None
         self.transformations = None
         return self

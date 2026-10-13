@@ -180,9 +180,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
                 data=None,
             )
         self.raw = None
-        # The matrix is decoded from the new header afterwards, so the
-        # setter of `metadata`, which would keep it, is bypassed.
-        self._metadata = metadata
+        self.metadata = metadata
         self.data = None
         return self
 
@@ -273,25 +271,13 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
             return None
         return _read_only(np.linalg.inv(header.get_best_affine())[:-1])
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds its header, or `None`.
 
-    Assigning other metadata keeps the matrix. A matrix that is decoded
-    from the header is first decoded from the previous header, and the
-    affine then holds it as if it were assigned, so that
-    [`consolidate`][] encodes it over the new header. Assigning `None` to
-    `data` afterwards decodes the matrix from the new header instead.
+    Without an assigned matrix, the matrix is decoded from the header, so
+    assigning other metadata drops the matrix decoded from the previous
+    header.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
-        # Other metadata never changes the matrix, as the maintainer
-        # decided on 2026-10-13. A matrix that `raw` holds does not
-        # depend on the header, and the views derived from the matrix
-        # stay right, so nothing is dropped.
-        if self._data is None and self.raw is None:
-            self._data = self.data
-        self._metadata = value
 
     # --- conversions --------------------------------------------------
     # `TransformationFormat.from_any` converts another transformation, as
@@ -403,25 +389,13 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
             return None
         return _read_only(header.get_best_affine()[:-1])
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds its header, or `None`.
 
-    Assigning other metadata keeps the matrix. A matrix that is decoded
-    from the header is first decoded from the previous header, and the
-    affine then holds it as if it were assigned, so that
-    [`consolidate`][] encodes it over the new header. Assigning `None` to
-    `data` afterwards decodes the matrix from the new header instead.
+    Without an assigned matrix, the matrix is decoded from the header, so
+    assigning other metadata drops the matrix decoded from the previous
+    header.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
-        # Other metadata never changes the matrix, as the maintainer
-        # decided on 2026-10-13. A matrix that `raw` holds does not
-        # depend on the header, and the views derived from the matrix
-        # stay right, so nothing is dropped.
-        if self._data is None and self.raw is None:
-            self._data = self.data
-        self._metadata = value
 
     # --- conversions --------------------------------------------------
     # `TransformationFormat.from_any` converts another transformation, as

@@ -14,7 +14,6 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -157,27 +156,6 @@ class FnirtWarpField(
             return None
         return _image_to_model(self.raw)
 
-    metadata = smartproperty("metadata")
-    """The metadata of the file, which holds its header, or `None`.
-
-    Assigning other metadata keeps the chain. A chain that can be built,
-    because the images that it needs are given, is first built from the
-    previous header, and the field then holds it as if it were assigned.
-    FNIRT cannot encode a chain, so such a field refuses to be written
-    afterwards, rather than write another map. A chain that cannot be
-    built yet is built from the new header once it can. Assigning `None`
-    to `transformations` afterwards builds the chain from the new header.
-    """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
-        # Other metadata never changes the chain, as the maintainer
-        # decided on 2026-10-13. Building the chain reads the field, as
-        # its first access would.
-        if self._transformations is None and self._resolvable():
-            self._transformations = self.transformations
-        self._metadata = value
-
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
         if _nifti_intent(header) in _FNIRT_INTENTS:
@@ -309,9 +287,7 @@ class FnirtWarpField(
                 data=None,
             )
         self.raw = raw
-        # The setter of `metadata` would keep the chain, which is built
-        # from the new header instead, so it is bypassed.
-        self._metadata = metadata
+        self.metadata = metadata
         self.data = None
         return self
 

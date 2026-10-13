@@ -11,7 +11,7 @@ import typing_extensions as tx
 from bagof.magic import KwOnly, NoRepr, replace
 
 from brainhops._core import affines as _affines
-from brainhops._core.properties import drop_cache, smartproperty
+from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
@@ -24,7 +24,6 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
@@ -189,27 +188,14 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             return None
         return _itk_field_to_model(self.raw)
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty(
+        "metadata", invalidates=("transformations", "input", "output")
+    )
     """The metadata of the file, which holds its header, or `None`.
 
-    Assigning other metadata keeps the chain and the endpoints. A chain
-    that was never decoded is first decoded from the previous header and
-    the stored vectors, and the field then holds it as if it were
-    assigned, so that [`consolidate`][] encodes it over the new header.
-    The endpoints follow from the dimension of that chain, so they are
-    kept too. Assigning `None` to `transformations` afterwards decodes the
-    chain from the new header instead.
+    Assigning other metadata drops the chain and the endpoints decoded
+    from the previous header.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
-        # Other metadata never changes the chain, as the maintainer
-        # decided on 2026-10-13. Decoding the chain reads the vectors,
-        # as its first access would. The endpoints are part of the
-        # transformation, and they follow from the dimension that `_ndim`
-        # reads from the kept chain, so a cached endpoint stays right.
-        self._transformations = self.transformations
-        self._metadata = value
 
     # --- endpoints ----------------------------------------------------
     # The endpoints are declared rather than read off the chain, which would
@@ -361,13 +347,9 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
                 transformations=None,
             )
         self.raw = raw
-        # The chain and the endpoints are decoded from the new header
-        # afterwards, so the setter of `metadata`, which would keep them,
-        # is bypassed.
-        self._metadata = metadata
+        self.metadata = metadata
         self.data = None
         self.transformations = None
-        drop_cache(self, "input", "output")
         return self
 
     def _encoded(

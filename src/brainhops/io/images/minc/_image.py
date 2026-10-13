@@ -135,22 +135,14 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     """The metadata of the file, which holds its record, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
-    keeps the transformations that the image holds. Those that were never
-    read are first decoded from the previous record, and the image then
-    holds them as if they were assigned, so that [`consolidate`][]
-    compares them with the new record and encodes them over it when they
-    differ. Assigning `None` to `transformations` afterwards takes the
-    geometry of the new record instead.
+    drops the transformations that the image holds, read or assigned, so
+    that they are decoded from the new record.
     """
 
     @metadata.setter
     def metadata(self, value: tx.Optional[MincMetadata]) -> None:
-        # Other metadata never changes the transformations, as the
-        # maintainer decided on 2026-10-13. Those that were never
-        # read are decoded from the previous record first, which reads
-        # no voxel, and the image then holds them as assigned.
-        self._transformations = self.transformations
         self._metadata = value
+        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -173,8 +165,7 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         The list is decoded on first access and stored in the image, so
         `img.transformation is img.transformation`, and a change made to
         the list in place, such as an appended transformation, is kept.
-        Assigning other metadata keeps the list, which is first decoded
-        from the previous record when it was never read. An image without
+        Assigning other metadata drops the list. An image without
         metadata has no transformations.
 
         Assigning a list replaces the stored one. In both cases, the list
