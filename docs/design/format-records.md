@@ -1812,8 +1812,10 @@ registrations of its views back into the XML file.
      new record, and the harness accepts new metadata in that case
      (`_check_data_only` in `tests/test_io_conformance.py`). Check 6 is
      vacuous, as in item 66, and check 10 edits `variable`. The text
-     exemplar writes `.dat` files, because `io.save` writes a `.txt` file
-     as a NiftyReg affine. For a future writer, rewriting the same
+     exemplar writes `.dat` files, and its variant `.1D` files, which
+     `io.save` writes as a `register.dat` file and an AFNI affine (item
+     306), as it writes a `.txt` file as a NiftyReg affine. For a future
+     writer, rewriting the same
      content gives the same bytes with `np.save`, `np.savez`,
      `scipy.io.savemat` in format 4 and h5py, but not with
      `scipy.io.savemat` in format 5, whose header holds the time of
@@ -1846,8 +1848,14 @@ registrations of its views back into the XML file.
 304. The four helpers that LTA and the Convert3D format repeated (item
      171) live in `io/transformations/base/_records.py` as `record_of`,
      `read_only`, `matrix_to_model` and `matrix_to_disk`, and LTA and
-     NiftyReg call them. The Convert3D format of #435 is not on `main`
-     yet and can switch to them when it is rebased. Status: open.
+     NiftyReg call them, and so does `register.dat` (#432), which called
+     the private helpers of LTA. The Convert3D format of #435 still
+     repeats all four, unchanged, in `io/transformations/c3d/_affine.py`,
+     and can switch to them in a later pull request. The MNI transform,
+     BigDataViewer and TrakEM2 formats repeat `_record`, but their
+     helpers `_matrix_to_model` and `_matrix_to_disk` store three rows,
+     or a flat row of twelve or six numbers, rather than a homogeneous
+     matrix, so they are not the same helpers. Status: open.
 305. The readers refuse the options that they do not take with
      `TypeError`. A plain matrix file of a single array refuses
      `variable` and `key`, which it used to ignore, and `variable` and
@@ -1859,10 +1867,19 @@ registrations of its views back into the XML file.
      open, for the maintainer to decide whether the adapters of
      `io/base/parsers.py` should open a text file with the given
      encoding.
-306. The Convert3D format of #435 declares the `.mat` extension and
-     converts an affine whose systems are unknown, so once it is merged,
-     `io.save` of a plain `.mat` matrix built from data writes a
-     Convert3D matrix instead of raising `WriterError`. The checks of
-     writing of `MatLegacyMatrixAffine` and `Mat73MatrixAffine` would then
-     fail, and need another way to check that a format refuses to write.
-     Status: open.
+306. The Convert3D format of #435 declares the `.mat` extension,
+     `register.dat` (#432) the `.dat` extension and the AFNI affine the
+     `.1D` extension, and each converts an affine whose systems are
+     unknown, so `io.save` of a plain matrix built from data writes a
+     file of that format instead of raising `WriterError`. The checks of
+     writing of a format that cannot write therefore accept a save by
+     another format, and check only that the format is not a writer and
+     that the file does not read back as the format
+     (`_refuses_writing` in `tests/test_io_conformance.py`). A
+     Convert3D matrix holds no marker, so the metadata of a NiftyReg
+     affine, which scores a text file of a homogeneous matrix from its
+     content, wins over the metadata of Convert3D, which a `.mat` name
+     alone selects, and check 6 selects the Convert3D metadata with
+     `Exemplar.hint`, as it does for NiftyReg (item 303). Status: open,
+     for the maintainer to decide whether a `.mat` text file should
+     dispatch to the Convert3D metadata without a hint.
