@@ -28,6 +28,8 @@ as little code as possible.
 
 import gzip
 import importlib
+import inspect
+import json
 import os
 import pickle
 import struct
@@ -43,7 +45,7 @@ import brainhops.io as io
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
-from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
@@ -55,12 +57,14 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.base._base import Format, register_format
 from brainhops.io.base._save import _model
+from brainhops.io.base._utils_files import replace_directory
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
     ParserError,
+    ParserTypeError,
     WriterError,
     _overrides_from_fileobj,
 )
@@ -68,6 +72,7 @@ from brainhops.io.common._geometry import (
     held_transformations,
     same_transformations,
 )
+from brainhops.io.common._pyramids import held_images, own_level, own_levels
 from brainhops.io.common.afni._data import _BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
@@ -614,14 +619,767 @@ def _toy_change_geometry(image: ToyImage) -> None:
     image.transformations = [Scaling([2.0, 3.0, 4.0])]
 
 
+# ----------------------------------------------------------------------
+#   TOY PYRAMID
+# ----------------------------------------------------------------------
+# A toy pyramid is a directory whose name ends in `.toyp`. It holds a JSON
+# document, `index.json`, and one toy file per level, named `0.toy` for
+# the finest level, `1.toy` for the next one, and so on. The document
+# holds the number of levels, a free-form note, and the voxel size of the
+# placement of the pyramid, which maps the space of its finest voxels to
+# the world and is empty when the pyramid has no placement. The header of
+# each level file describes how that level is stored. The record of the
+# pyramid holds the document, the headers of the levels, and the bytes of
+# the document as read, which a save writes again whenever they hold the
+# same document. The pyramid and each of its levels share that record, as
+# the design of pyramids requires, and the pyramid exercises the rules of
+# a directory store: atomic saves, untouched files kept byte for byte,
+# and a save over the directory that the proxies read (#426).
+
+_TOYP_INDEX = "index.json"
+
+
+def _toyp_level_name(index: int) -> str:
+    """Return the name of the file of a level in a toy pyramid."""
+    return f"{index}.toy"
+
+
+class ToyPyramidRaw(Magic, frozen=True):
+    """Record of a toy pyramid: its document and the headers of its levels."""
+
+    levels: tx.Tuple[ToyRaw, ...] = ()
+    """Header of the file of each level, finest first."""
+
+    note: str = ""
+    """Free-form text of the document, which only the record keeps."""
+
+    scale: tx.Tuple[float, ...] = ()
+    """Voxel size of the placement of the pyramid, or empty for none.
+
+    The values are kept as the document stores them, so that a whole
+    number stays a whole number when the document is written again.
+    """
+
+    stored: NoRepr[bytes] = b""
+    """Bytes of the document as read, or empty for a record built in memory."""
+
+
+def _toyp_document(record: ToyPyramidRaw) -> tx.Dict[str, tx.Any]:
+    """Return the document of a toy pyramid that a record describes."""
+    return {
+        "toyp": 1,
+        "levels": len(record.levels),
+        "note": record.note,
+        "scale": list(record.scale),
+    }
+
+
+def _toyp_same_document(first: tx.Any, second: tx.Any) -> bool:
+    """Tell whether two parsed JSON documents are the same.
+
+    The documents are compared through a canonical serialization, which
+    tells the whole number `1` from the number `1.0`.
+    """
+    options = {"sort_keys": True, "separators": (",", ":")}
+    return json.dumps(first, **options) == json.dumps(second, **options)
+
+
+def _toyp_stored(record: ToyPyramidRaw) -> bytes:
+    """Return the bytes of the document of a record, as a writer writes them.
+
+    The bytes as read are written again when they hold the same document,
+    so that an untouched document is kept byte for byte, whatever its
+    layout. Otherwise the document is serialized again.
+    """
+    document = _toyp_document(record)
+    if record.stored:
+        try:
+            kept = json.loads(record.stored)
+        except ValueError:
+            kept = None
+        if _toyp_same_document(kept, document):
+            return record.stored
+    return json.dumps(document, indent=2).encode("utf-8")
+
+
+def _toyp_sniffed(filename: tx.Any) -> bool:
+    """Tell whether a path names the directory of a toy pyramid."""
+    try:
+        index = os.path.join(os.fspath(filename), _TOYP_INDEX)
+        with open(index, "rb") as file:
+            document = json.loads(file.read())
+    except (OSError, TypeError, ValueError):
+        return False
+    return isinstance(document, dict) and document.get("toyp") == 1
+
+
+def _toyp_read_record(directory: str) -> ToyPyramidRaw:
+    """Read the record of a toy pyramid, without reading any voxel.
+
+    Raises
+    ------
+    ParserContentError
+        If the directory does not hold a toy pyramid.
+    """
+    with open(os.path.join(directory, _TOYP_INDEX), "rb") as file:
+        stored = file.read()
+    try:
+        document = json.loads(stored)
+    except ValueError as error:
+        raise ParserContentError("Not a toy pyramid.") from error
+    if not isinstance(document, dict) or document.get("toyp") != 1:
+        raise ParserContentError("Not a toy pyramid.")
+    levels = []
+    for index in range(document["levels"]):
+        name = os.path.join(directory, _toyp_level_name(index))
+        with open(name, "rb") as file:
+            levels.append(ToyRaw.from_fileobj(file))
+    return ToyPyramidRaw(
+        levels=tuple(levels),
+        note=document.get("note", ""),
+        scale=tuple(document.get("scale", ())),
+        stored=stored,
+    )
+
+
+def _toyp_proxies(
+    directory: str, record: ToyPyramidRaw
+) -> tx.Tuple[_ToyProxy, ...]:
+    """Return the proxy of each level of a toy pyramid, finest first."""
+    return tuple(
+        _toy_proxy(os.path.join(directory, _toyp_level_name(index)), 0, level)
+        for index, level in enumerate(record.levels)
+    )
+
+
+def _toyp_reads(raws: tx.Optional[tx.Sequence[tx.Any]], directory: str) -> bool:
+    """Tell whether one of the arrays reads a file of a directory."""
+    target = os.path.realpath(directory)
+    return any(
+        isinstance(raw, _ToyProxy)
+        and isinstance(raw.source, str)
+        and os.path.dirname(os.path.realpath(raw.source)) == target
+        for raw in raws or ()
+    )
+
+
+def _toyp_write(
+    directory: str, record: ToyPyramidRaw, raws: tx.Sequence[tx.Any]
+) -> None:
+    """Fill a directory with the files of a consolidated toy pyramid.
+
+    A level whose `raw` is a proxy is copied from its file without being
+    decoded, so that an untouched level is written byte for byte.
+    """
+    with open(os.path.join(directory, _TOYP_INDEX), "wb") as file:
+        file.write(_toyp_stored(record))
+    for index, (level, raw) in enumerate(zip(record.levels, raws)):
+        if isinstance(raw, _ToyProxy):
+            data = raw.read_bytes()
+        else:
+            data = np.ascontiguousarray(raw).tobytes()
+        name = os.path.join(directory, _toyp_level_name(index))
+        with open(name, "wb") as file:
+            file.write(level.to_bytes() + data)
+
+
+def _toyp_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy a toy pyramid whose levels hold their headers and no data."""
+    os.mkdir(target)
+    record = _toyp_read_record(os.fspath(source))
+    with open(os.path.join(target, _TOYP_INDEX), "wb") as file:
+        file.write(record.stored)
+    for index, level in enumerate(record.levels):
+        name = os.path.join(target, _toyp_level_name(index))
+        with open(name, "wb") as file:
+            file.write(level.to_bytes())
+
+
+def _toyp_level_transformations(
+    metadata: tx.Optional["ToyPyramidMetadata"], index: int
+) -> tx.List[Transformation]:
+    """Decode the transformations of a level of a toy pyramid."""
+    if metadata is None or metadata.raw is None:
+        return []
+    if not 0 <= index < len(metadata.raw.levels):
+        return []
+    return [Scaling(list(reversed(metadata.raw.levels[index].spacing)))]
+
+
+def _toyp_placements(
+    metadata: tx.Optional["ToyPyramidMetadata"],
+) -> tx.List[Transformation]:
+    """Decode the placements of a toy pyramid from its record."""
+    if metadata is None or metadata.raw is None or not metadata.raw.scale:
+        return []
+    return [Scaling(list(metadata.raw.scale))]
+
+
+def _toyp_scale(placements: tx.Sequence[Transformation]) -> tx.Tuple[float, ...]:
+    """Encode the preferred placement of a toy pyramid as a voxel size.
+
+    Raises
+    ------
+    WriterError
+        If the toy format cannot store the placement.
+    """
+    if not placements or isinstance(placements[-1], Identity):
+        return ()
+    if isinstance(placements[-1], Scaling):
+        return tuple(float(x) for x in np.asarray(placements[-1].data))
+    raise WriterError("A toy pyramid stores a voxel size, not a general map.")
+
+
+def _toyp_level_encoded(image: tx.Any) -> tx.Tuple[ArrayProtocol, ToyRaw]:
+    """Encode a level into its stored array and the header of its file.
+
+    A level of the toy format gives its pending data, or else its `raw`,
+    and the header of its level in its record is the base of the new one.
+    An image of another class gives its decoded data.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data, or a geometry that the toy format cannot
+        store.
+    """
+    if type(image) is ToyLevel:
+        if image._data is not None:
+            raw = _toy_to_disk(image._data)
+        else:
+            raw = image.raw
+        metadata = image.metadata
+        if metadata is None or metadata.raw is None or not metadata.raw.levels:
+            base = ToyRaw()
+        else:
+            base = metadata.raw.levels[image.level]
+        # The list of the level is read without being stored, so that a
+        # write leaves the level as it was.
+        transformations = held_transformations(image)
+        if transformations is None:
+            transformations = _toyp_level_transformations(
+                metadata, image.level
+            )
+    else:
+        data = image.data
+        raw = None if data is None else _toy_to_disk(data)
+        base = ToyRaw()
+        transformations = image.transformations
+    if raw is None:
+        raise WriterError("A toy level without data cannot be encoded.")
+    preferred = transformations[-1] if transformations else Identity()
+    spacing = _toy_spacing(preferred, len(raw.shape))
+    level = replace(
+        base,
+        shape=tuple(int(n) for n in raw.shape),
+        dtype=np.dtype(raw.dtype).str,
+        spacing=tuple(float(x) for x in reversed(spacing)),
+    )
+    return raw, level
+
+
+def _toyp_levels(
+    raw: tx.Optional[tx.Tuple[ArrayProtocol, ...]],
+    metadata: tx.Optional["ToyPyramidMetadata"],
+) -> tx.List["ToyLevel"]:
+    """Return a level object for each array of a pyramid, finest first."""
+    if raw is None:
+        return []
+    return [
+        ToyLevel(raw=array, metadata=metadata, level=index)
+        for index, array in enumerate(raw)
+    ]
+
+
+def _toyp_encoded(
+    pyramid: "ToyPyramid", note: tx.Optional[str] = None
+) -> tx.Tuple[tx.Tuple[ArrayProtocol, ...], ToyPyramidRaw]:
+    """Encode the pending state of a toy pyramid into `raw` and a record.
+
+    A level that is still a level of the file keeps its array and its
+    header as they are stored. Any other level is encoded from its data
+    and its transformations. The placements are compared with a fresh
+    decode of the record and encoded only when they differ. The held
+    record is the base of the new one, which is a new object.
+
+    Raises
+    ------
+    WriterError
+        If the pyramid has no level, or a level or a placement that the
+        toy format cannot store.
+    """
+    metadata = pyramid.metadata
+    if metadata is None or metadata.raw is None:
+        base = ToyPyramidRaw()
+    else:
+        base = metadata.raw
+    # The levels and the placements are read without being stored, so
+    # that a write leaves the pyramid as it was.
+    images = held_images(pyramid)
+    if images is None:
+        images = _toyp_levels(pyramid.raw, metadata)
+    if not images:
+        raise WriterError("A toy pyramid without levels cannot be encoded.")
+    raws, levels = [], []
+    for index, image in enumerate(images):
+        if own_level(
+            pyramid, image, index, ToyLevel, _toyp_level_transformations
+        ):
+            raws.append(pyramid.raw[index])
+            levels.append(base.levels[index])
+        else:
+            raw, level = _toyp_level_encoded(image)
+            raws.append(raw)
+            levels.append(level)
+    placements = held_transformations(pyramid)
+    if placements is None or same_transformations(
+        placements, _toyp_placements(metadata)
+    ):
+        scale = base.scale
+    else:
+        scale = _toyp_scale(placements)
+    record = replace(
+        base,
+        levels=tuple(levels),
+        note=base.note if note is None else note,
+        scale=scale,
+    )
+    return tuple(raws), replace(record, stored=_toyp_stored(record))
+
+
+class ToyPyramidMetadata(MetadataFormat, BinaryFileReader):
+    """Metadata of a toy pyramid, which holds the record of its directory.
+
+    The record is read from the document and from the header of each
+    level file, and never from the data. A directory has no bytes, so the
+    metadata is read from a path only, and it writes nothing by itself.
+    """
+
+    EXTENSIONS = (".toyp",)
+
+    raw: NoRepr[tx.Optional[ToyPyramidRaw]] = None
+
+    @classmethod
+    def sniff_filename(
+        cls,
+        filename: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        # The inherited sniffer opens the name as a stream, which fails on
+        # a directory.
+        return Confidence.CERTAIN if _toyp_sniffed(filename) else Confidence.NO
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return Confidence.NO
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return Confidence.NO
+
+    @classmethod
+    def from_filename(cls, filename: tx.Any) -> "ToyPyramidMetadata":
+        return cls.from_raw(_toyp_read_record(os.fspath(filename)))
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO) -> "ToyPyramidMetadata":
+        raise ParserTypeError("A toy pyramid is a directory, not a stream.")
+
+
+class ToyLevel(
+    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+):
+    """One level of a toy pyramid.
+
+    The level is the single-scale format of the toy pyramid, as a level of
+    an OME-Zarr store or a page of a TIFF file is. It holds the lazy array
+    of its level in `raw`, the metadata of its pyramid, which describes
+    every level, and the index `level` of its level in that record, which
+    is a reader option. Its data and its transformations are pending and
+    compared at `consolidate` as for [`ToyImage`][]. A level is a
+    single-scale image, so a level that is consolidated or written alone
+    narrows the record to its own level, at index 0, and keeps the rest
+    of the record, such as the note and the placement of the pyramid.
+    """
+
+    EXTENSIONS = (".toyp",)
+
+    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    _metadata: KwOnly[NoRepr[tx.Optional[ToyPyramidMetadata]]] = None
+    level: KwOnly[int] = 0
+
+    # Other metadata drops the transformations decoded from the old record,
+    # and keeps those that were assigned.
+    metadata = smartproperty("metadata", invalidates="transformations")
+
+    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+
+    @smartproperty(cache=True)
+    def data(self) -> tx.Optional[np.ndarray]:
+        if self.raw is None:
+            return None
+        return _toy_to_model(self.raw)
+
+    @smartproperty(cache=True)
+    def transformations(self) -> tx.List[Transformation]:
+        return _toyp_level_transformations(self.metadata, self.level)
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        # The shape is read from the pending data, or else from `raw`,
+        # whose axes are in reverse order, without reading the voxels.
+        if self._data is not None:
+            return tuple(np.shape(self._data))
+        if self.raw is not None:
+            return tuple(reversed(self.raw.shape))
+        return ()
+
+    def consolidate(self, *, inplace: bool = False, **options) -> "ToyLevel":
+        # A level whose record describes it alone, at index 0, with nothing
+        # pending, keeps its `raw` and its metadata. Any other level is
+        # encoded into a record of its level alone.
+        metadata = self.metadata
+        held = held_transformations(self)
+        if (
+            self._data is None
+            and not options
+            and metadata is not None
+            and metadata.raw is not None
+            and len(metadata.raw.levels) == 1
+            and self.level == 0
+            and (
+                held is None
+                or same_transformations(
+                    held, _toyp_level_transformations(metadata, 0)
+                )
+            )
+        ):
+            if not inplace:
+                return replace(self, transformations=None)
+            self.transformations = None
+            return self
+        raw, record = _toyp_level_narrowed(self, **options)
+        if metadata is None:
+            metadata = ToyPyramidMetadata.from_raw(record)
+        else:
+            metadata = replace(metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                data=None,
+                transformations=None,
+                raw=raw,
+                metadata=metadata,
+                level=0,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.level = 0
+        self.data = None
+        self.transformations = None
+        return self
+
+    @classmethod
+    def sniff_filename(
+        cls,
+        filename: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        # A toy pyramid is read as a pyramid first, which sniffs higher.
+        return Confidence.MAYBE if _toyp_sniffed(filename) else Confidence.NO
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return Confidence.NO
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return Confidence.NO
+
+    @classmethod
+    def from_filename(cls, filename: tx.Any, *, level: int = 0) -> "ToyLevel":
+        directory = os.fspath(filename)
+        metadata = ToyPyramidMetadata.from_filename(directory)
+        records = metadata.raw.levels
+        if not 0 <= level < len(records):
+            raise ParserContentError(
+                f"A toy pyramid of {len(records)} levels has no level {level}."
+            )
+        name = os.path.join(directory, _toyp_level_name(level))
+        proxy = _toy_proxy(name, 0, records[level])
+        return cls(raw=proxy, metadata=metadata, level=level)
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyLevel":
+        raise ParserTypeError("A toy pyramid is a directory, not a stream.")
+
+    def to_filename(self, filename: tx.Any, **options) -> None:
+        directory = os.fspath(filename)
+        if not _toyp_reads((self.raw,), directory):
+            copy = self.consolidate(**options)
+            replace_directory(
+                directory,
+                lambda name: _toyp_write(name, copy.metadata.raw, (copy.raw,)),
+            )
+            return
+        # The level is written over the directory that its proxy reads, so
+        # it is consolidated in place and then holds what the directory
+        # holds (#426). The new directory is filled while the old one is
+        # in place, and then the proxy and the record are read again from
+        # the new directory.
+        self.consolidate(inplace=True, **options)
+        replace_directory(
+            directory,
+            lambda name: _toyp_write(name, self.metadata.raw, (self.raw,)),
+        )
+        metadata = ToyPyramidMetadata.from_filename(directory)
+        self.raw = _toyp_proxies(directory, metadata.raw)[0]
+        self.metadata = metadata
+        self.data = None
+
+
+def _toyp_level_narrowed(
+    image: ToyLevel, note: tx.Optional[str] = None
+) -> tx.Tuple[ArrayProtocol, ToyPyramidRaw]:
+    """Encode a level written alone into `raw` and a record of one level.
+
+    The record of its pyramid is the base of the new one, which keeps its
+    note and its placement and describes the level alone.
+
+    Raises
+    ------
+    WriterError
+        If the level has no data, or a geometry that the toy format cannot
+        store.
+    """
+    raw, level = _toyp_level_encoded(image)
+    metadata = image.metadata
+    if metadata is None or metadata.raw is None:
+        base = ToyPyramidRaw()
+    else:
+        base = metadata.raw
+    record = replace(
+        base,
+        levels=(level,),
+        note=base.note if note is None else note,
+    )
+    return raw, replace(record, stored=_toyp_stored(record))
+
+
+class ToyPyramid(
+    ImageFormat, MultiScaleImage, BinaryFileReader, BinaryFileWriter
+):
+    """Pyramid stored in a toy pyramid directory.
+
+    The pyramid is the reference that the pyramid formats of the package
+    follow. It holds one record for its whole directory, which every one
+    of its levels holds too, by identity, and the tuple of the lazy arrays
+    of its levels in `raw`. Its levels are [`ToyLevel`][] objects decoded
+    from `raw` and the record on first access and cached apart from an
+    assigned list, which is stored in the private field `_images`. Its
+    placements are decoded and cached in the same way, and an assigned
+    list is stored in `_transformations`. Assigning other metadata drops
+    the cached levels and placements and keeps the assigned ones.
+    `consolidate` keeps the array and the header of each level that is
+    still a level of the file, encodes the others, and encodes the
+    placements only when they differ from a fresh decode of the record.
+    """
+
+    EXTENSIONS = (".toyp",)
+
+    raw: KwOnly[NoRepr[tx.Optional[tx.Tuple[ArrayProtocol, ...]]]] = None
+    _metadata: KwOnly[NoRepr[tx.Optional[ToyPyramidMetadata]]] = None
+
+    # Other metadata drops the levels and the placements decoded from the
+    # old record, and keeps those that were assigned.
+    metadata = smartproperty(
+        "metadata", invalidates=("images", "transformations")
+    )
+
+    _images: tx.Optional[tx.List[SingleScaleImage]] = Inherit(
+        "images", default=None
+    )
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+
+    @smartproperty(cache=True)
+    def images(self) -> tx.List[SingleScaleImage]:
+        # One level object per array of `raw`, sharing the metadata.
+        return _toyp_levels(self.raw, self.metadata)
+
+    @smartproperty(cache=True)
+    def transformations(self) -> tx.List[Transformation]:
+        return _toyp_placements(self.metadata)
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        # The shape of the finest level, read from the levels that the
+        # pyramid holds, or else from `raw`, without reading the voxels.
+        images = held_images(self)
+        if images is not None:
+            return tuple(images[0].shape) if images else ()
+        if self.raw:
+            return tuple(reversed(self.raw[0].shape))
+        return ()
+
+    def consolidate(self, *, inplace: bool = False, **options) -> "ToyPyramid":
+        # Nothing is encoded for a pyramid that has a record, whose levels
+        # are those of its file, and whose placements are never read or the
+        # same as a fresh decode of the record, so its copy shares `raw` and
+        # the metadata.
+        metadata = self.metadata
+        held = held_transformations(self)
+        if (
+            not options
+            and metadata is not None
+            and metadata.raw is not None
+            and self.raw is not None
+            and own_levels(self, ToyLevel, _toyp_level_transformations)
+            and (
+                held is None
+                or same_transformations(held, _toyp_placements(metadata))
+            )
+        ):
+            if not inplace:
+                return replace(self, images=None, transformations=None)
+            self.images = None
+            self.transformations = None
+            return self
+        raw, record = _toyp_encoded(self, **options)
+        if metadata is None:
+            metadata = ToyPyramidMetadata.from_raw(record)
+        else:
+            metadata = replace(metadata, raw=record)
+        if not inplace:
+            return replace(
+                self,
+                images=None,
+                transformations=None,
+                raw=raw,
+                metadata=metadata,
+            )
+        self.raw = raw
+        self.metadata = metadata
+        self.images = None
+        self.transformations = None
+        return self
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> "ToyPyramid":
+        # Within the class, the stored fields are copied, so a copy of an
+        # untouched pyramid shares `raw` and the metadata and decodes
+        # nothing. From another class, the levels that `other` reports are
+        # copied, because its private fields mean nothing to this class.
+        if not isinstance(other, cls):
+            images = getattr(other, "images", None)
+            if images is not None:
+                kwargs.setdefault("images", list(images))
+        return super().from_instance(other, *args, **kwargs)
+
+    @classmethod
+    def sniff_filename(
+        cls,
+        filename: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return Confidence.CERTAIN if _toyp_sniffed(filename) else Confidence.NO
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return Confidence.NO
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return Confidence.NO
+
+    @classmethod
+    def from_filename(cls, filename: tx.Any) -> "ToyPyramid":
+        directory = os.fspath(filename)
+        metadata = ToyPyramidMetadata.from_filename(directory)
+        raw = _toyp_proxies(directory, metadata.raw)
+        return cls(raw=raw, metadata=metadata)
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyPyramid":
+        raise ParserTypeError("A toy pyramid is a directory, not a stream.")
+
+    def to_filename(self, filename: tx.Any, **options) -> None:
+        directory = os.fspath(filename)
+        if not _toyp_reads(self.raw, directory):
+            copy = self.consolidate(**options)
+            replace_directory(
+                directory,
+                lambda name: _toyp_write(name, copy.metadata.raw, copy.raw),
+            )
+            return
+        # The pyramid is written over the directory that its proxies read,
+        # so it is consolidated in place and then holds what the directory
+        # holds (#426). The files of the levels that did not change are
+        # copied from the old directory while it is still in place, and
+        # then the proxies and the record are read again from the new
+        # directory.
+        self.consolidate(inplace=True, **options)
+        replace_directory(
+            directory,
+            lambda name: _toyp_write(name, self.metadata.raw, self.raw),
+        )
+        metadata = ToyPyramidMetadata.from_filename(directory)
+        self.raw = _toyp_proxies(directory, metadata.raw)
+        self.metadata = metadata
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _register_the_toy_format() -> tx.Iterator[None]:
     # The toy classes are registered only while this module runs, so that
     # they never reach the readers that other tests use.
-    register_format(ToyMetadata)
-    register_format(ToyImage)
+    classes = (
+        ToyMetadata,
+        ToyImage,
+        ToyPyramidMetadata,
+        ToyLevel,
+        ToyPyramid,
+    )
+    for cls in classes:
+        register_format(cls)
     yield
-    for cls in (ToyMetadata, ToyImage):
+    for cls in classes:
         for base in cls.__mro__:
             base.__dict__.get("_REGISTRY", set()).discard(cls)
 
@@ -786,6 +1544,16 @@ class Exemplar(tx.NamedTuple):
     They are `None` for a format whose writer has no such option. A copy
     consolidated with them must hold what a file written with them holds,
     so the checks give it values that the stored type changes.
+    """
+
+    container: str = "file"
+    """Whether an object is stored in a `"file"` or in a `"directory"`.
+
+    A directory, such as the store of a pyramid, has no bytes, so the
+    format refuses bytes and streams, its metadata writes no bytes and is
+    compared through `header`, which a directory format must give, and an
+    untouched save is compared file for file. A copy whose data cannot be
+    read is made by `cut`, which a directory format must give too.
     """
 
 
@@ -1464,6 +2232,25 @@ TEST_EXEMPLARS: tx.Dict[type, Exemplar] = {
         change_geometry=_toy_change_geometry,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
     ),
+    # A level of a toy pyramid is checked as a pyramid of one level, which
+    # is what a level written alone is.
+    ToyLevel: Exemplar(
+        metadata=ToyPyramidMetadata,
+        suffix=".toyp",
+        proxies=(_ToyProxy,),
+        to_model=_toy_to_model,
+        to_disk=_toy_to_disk,
+        sample=lambda: np.arange(24.0).reshape(2, 3, 4),
+        edit_record=lambda record: replace(record, note="edited"),
+        record_edited=lambda record: record.note == "edited",
+        geometry=lambda image: _toy_spacing(image.transformation, image.ndim),
+        change_geometry=_toy_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_toyp_cut,
+        header=lambda metadata: metadata.raw,
+        container="directory",
+    ),
 }
 """Formats defined by the tests, which the checks also run on."""
 
@@ -1561,6 +2348,103 @@ IMAGE_CASES = [
 ]
 """The cases whose format is an image, which decodes its transformations."""
 
+
+class PyramidExemplar(tx.NamedTuple):
+    """What the checks need to know about a pyramid format.
+
+    A pyramid and its levels hold one record, which describes the whole
+    container, so most of what the checks need is read from the exemplar
+    of the level class: the metadata class, the suffix of the containers,
+    the types of the proxies, the views of the data, the edit of a
+    record, and the hooks that summarize metadata and cut a container.
+    The pyramid is built from the data of `levels()`, without
+    transformations, and written to a container with the suffix of the
+    level exemplar, which the checks read.
+    """
+
+    level: type
+    """Level class of the format, a key of `EXEMPLARS` or `TEST_EXEMPLARS`.
+
+    The level class is loaded with the reader option `level`, which its
+    exemplar declares.
+    """
+
+    levels: tx.Callable[[], tx.List[np.ndarray]]
+    """Function that returns the data of three levels, finest first."""
+
+    place: tx.Callable[[tx.Any], None]
+    """Function that gives a pyramid other placements, by assignment."""
+
+    placements: bool = False
+    """Whether the container stores the placements of the pyramid.
+
+    A container that stores none composes the preferred placement of the
+    pyramid into the transformation of each level that it writes, so the
+    file that it writes has no placement but the same world geometry.
+    """
+
+    derive: bool = False
+    """Whether the writer derives the coarser levels from the finest one.
+
+    Such a writer writes from the finest level only, and assumes that the
+    coarser levels that the user assigned are downsampled versions of it.
+    It never refuses them, as the maintainer decided on 2026-10-13.
+    """
+
+    options: tx.FrozenSet[str] = frozenset()
+    """Reader options that the pyramid format declares as fields."""
+
+    document: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+    """Function that returns what the metadata of a container reads.
+
+    It is `None` when the metadata reads the container itself. A format
+    whose metadata lives in one file of a directory, such as the `info`
+    file of a precomputed volume, gives the path of that file.
+    """
+
+    source: tx.Optional[tx.Callable[[tx.Any, tx.List[np.ndarray]], None]] = (
+        None
+    )
+    """Function that writes a container of a format that cannot write.
+
+    The function receives a path and the data of the levels. It is `None`
+    for a format that writes its own containers. The checks of writing
+    then make sure that the format refuses to write, and the format
+    consolidates only its data.
+    """
+
+
+PYRAMIDS: tx.Dict[type, PyramidExemplar] = {}
+"""The registered pyramid formats that follow the design."""
+
+
+def _toyp_sample() -> tx.List[np.ndarray]:
+    return [
+        np.arange(64.0).reshape(4, 4, 4),
+        np.arange(8.0).reshape(2, 2, 2) + 100,
+        np.arange(2.0).reshape(1, 1, 2) + 200,
+    ]
+
+
+def _toyp_place(pyramid: tx.Any) -> None:
+    pyramid.transformations = [Scaling([2.0, 3.0, 4.0])]
+
+
+TEST_PYRAMIDS: tx.Dict[type, PyramidExemplar] = {
+    ToyPyramid: PyramidExemplar(
+        level=ToyLevel,
+        levels=_toyp_sample,
+        place=_toyp_place,
+        placements=True,
+    ),
+}
+"""Pyramid formats defined by the tests, which the checks also run on."""
+
+PYRAMID_CASES = [
+    pytest.param(cls, exemplar, id=cls.__name__)
+    for cls, exemplar in {**PYRAMIDS, **TEST_PYRAMIDS}.items()
+]
+
 # Names that belonged to the parsers that the design removes.
 _PARSER_STATE = {"image", "header", "_header", "struct", "dataobj", "node"}
 
@@ -1588,6 +2472,26 @@ def _decompressed(path: tx.Any) -> bytes:
     if content[:2] == b"\x1f\x8b":
         content = gzip.decompress(content)
     return content
+
+
+def _tree(path: tx.Any) -> tx.Dict[str, bytes]:
+    """Return the content of a file, or of every file of a directory.
+
+    A file gives its content under the empty name. A directory, such as
+    the store of a pyramid, gives the content of each of its files, under
+    its path relative to the directory, with `/` between the parts. The
+    content of a gzipped file is decompressed. Two saves are the same,
+    file for file, when their trees are equal.
+    """
+    if not os.path.isdir(path):
+        return {"": _decompressed(path)}
+    tree = {}
+    for root, _, names in os.walk(path):
+        for name in names:
+            full = os.path.join(root, name)
+            relative = os.path.relpath(full, path).replace(os.sep, "/")
+            tree[relative] = _decompressed(full)
+    return tree
 
 
 def _write_header(path: tx.Any, header: bytes) -> None:
@@ -1629,6 +2533,17 @@ def _header(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
     if exemplar.header is None:
         return metadata.to_bytes()
     return exemplar.header(metadata)
+
+
+def _written(exemplar: Exemplar, metadata: tx.Any) -> tx.Any:
+    """Return what metadata writes, or a copy of its summary.
+
+    The metadata of a directory writes no bytes, so its summary is
+    copied, so that a later change made to the record in place shows.
+    """
+    if exemplar.container == "directory":
+        return deepcopy(_header(exemplar, metadata))
+    return metadata.to_bytes()
 
 
 def _cut(
@@ -1723,9 +2638,14 @@ def test_every_registered_format_is_in_one_table() -> None:
         for cls in Format._REGISTRY | MetadataFormat._REGISTRY
         if cls.__module__.startswith("brainhops.")
     }
-    # The metadata class of an exemplar is registered with it.
+    assert not set(PYRAMIDS) & not_migrated
+    # The level class of a pyramid is an exemplar, and the metadata class of
+    # an exemplar is registered with it.
+    assert {exemplar.level for exemplar in PYRAMIDS.values()} <= set(EXEMPLARS)
     metadata = {exemplar.metadata for exemplar in EXEMPLARS.values()}
-    assert registered == set(EXEMPLARS) | metadata | not_migrated
+    assert registered == (
+        set(EXEMPLARS) | set(PYRAMIDS) | metadata | not_migrated
+    )
 
 
 def test_the_metadata_registry_is_isolated() -> None:
@@ -1827,11 +2747,11 @@ def test_05_untouched_save_is_byte_identical(
     if exemplar.renamed:
         target = _path(tmp_path, exemplar, "copy")
         cls.load(source).save(target)
-        assert _decompressed(target) == _decompressed(source)
+        assert _tree(target) == _tree(source)
         # The generic writer copies the object with `from_instance` first.
         target = _path(tmp_path, exemplar, "generic")
         io.save(cls.load(source), target)
-        assert _decompressed(target) == _decompressed(source)
+        assert _tree(target) == _tree(source)
     # Every file of a copy under the same name, in another directory, is
     # the file of the same name beside the source.
     for name, write in (("same", cls.load(source).save), ("io", None)):
@@ -1843,7 +2763,7 @@ def test_05_untouched_save_is_byte_identical(
             write(directory / source.name)
         for copied in directory.iterdir():
             original = tmp_path / copied.name
-            assert _decompressed(copied) == _decompressed(original), copied
+            assert _tree(copied) == _tree(original), copied
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
@@ -1874,10 +2794,11 @@ def test_07_metadata_pickles(
     loaded = cls.load(_saved(cls, exemplar, tmp_path))
     clone = pickle.loads(pickle.dumps(loaded.metadata))
     assert type(clone) is type(loaded.metadata)
-    if exemplar.source is None:
+    if exemplar.source is None and exemplar.container == "file":
         assert clone.to_bytes() == loaded.metadata.to_bytes()
     else:
-        # Metadata that cannot be written is compared through its summary.
+        # Metadata that cannot be written, or that describes a directory,
+        # is compared through its summary.
         assert _header(exemplar, clone) == _header(exemplar, loaded.metadata)
 
 
@@ -1971,10 +2892,10 @@ def test_10_record_edits_survive_and_geometry_wins(
         assert exemplar.record_edited(loaded.metadata.raw)
         _refuses_writing(loaded, target)
         return
-    header = loaded.metadata.to_bytes()
+    header = _written(exemplar, loaded.metadata)
     loaded.save(target)
     # Writing encodes into a copy of the record, never into the record.
-    assert loaded.metadata.to_bytes() == header
+    assert _written(exemplar, loaded.metadata) == header
     back = cls.load(target)
     assert exemplar.record_edited(back.metadata.raw)
     assert np.allclose(exemplar.geometry(back), exemplar.geometry(loaded))
@@ -2009,6 +2930,15 @@ def test_12_adapter_contract(
         else:
             assert klass._READ_MODE == "rt"
     path = _saved(cls, exemplar, tmp_path)
+    if exemplar.container == "directory":
+        # A directory has no bytes, so the format and its metadata refuse
+        # them, and the metadata is read from the directory.
+        with pytest.raises(ParserError):
+            cls.from_bytes(b"")
+        with pytest.raises(ParserError):
+            exemplar.metadata.from_bytes(b"")
+        assert isinstance(exemplar.metadata.load(path), exemplar.metadata)
+        return
     if exemplar.header_file is None:
         data = _data(exemplar, cls.from_bytes(path.read_bytes()))
         assert np.array_equal(np.asarray(data), exemplar.sample())
@@ -2304,7 +3234,7 @@ def test_19_read_transformations_keep_the_record(
     assert consolidated._transformations is None
     (tmp_path / "copy").mkdir()
     loaded.save(tmp_path / "copy" / path.name)
-    assert _decompressed(tmp_path / "copy" / path.name) == _decompressed(path)
+    assert _tree(tmp_path / "copy" / path.name) == _tree(path)
     # An equal list that is assigned keeps the record too.
     loaded.transformations = cls.load(path).transformations
     consolidated = loaded.consolidate()
