@@ -1416,9 +1416,9 @@ its status.
      header of each one, with the stacking axis and the geometry of the
      stack. TIFF and Pillow images have no record on the main branch
      yet, so the header of a member is the structure that their readers
-     already parse: the `TiffMetadata` of the TIFF backend, and a
-     `PillowHeader` that the Pillow backend reads without decoding the
-     pixels. Status: open. The members are to hold `TiffRaw` and
+     already parse: the `SeriesMetadata` of the TIFF backend (named
+     `TiffMetadata` before #459), and a `PillowHeader` that the Pillow
+     backend reads without decoding the pixels. Status: open. The members are to hold `TiffRaw` and
      `PillowRaw` once the TIFF (#459) and Pillow (#458) records are on
      the main branch.
 122. Image stacks are written as folders of numbered files, through the
@@ -1734,9 +1734,9 @@ its status.
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
      the formats merged later (N5, Imaris, precomputed, JPEG 2000,
-     BigDataViewer and image stacks) follow the same rule, and the JPEG
-     2000 pyramid caches the levels and the placements that it decodes in
-     the same way. Status: resolved.
+     BigDataViewer, image stacks and TIFF) follow the same rule, and the
+     JPEG 2000 and TIFF pyramids cache the levels and the placements that
+     they decode in the same way. Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
      the cache, so it is lost when other metadata is assigned, and a copy
      made with `replace` or `from_instance` decodes the list again instead
