@@ -1541,9 +1541,9 @@ its status.
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
      the formats merged later (N5, Imaris, precomputed, JPEG 2000,
-     BigDataViewer and image stacks) follow the same rule, and the JPEG
-     2000 pyramid caches the levels and the placements that it decodes in
-     the same way. Status: resolved.
+     BigDataViewer, image stacks and Pillow) follow the same rule, and
+     the JPEG 2000 pyramid caches the levels and the placements that it
+     decodes in the same way. Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
      the cache, so it is lost when other metadata is assigned, and a copy
      made with `replace` or `from_instance` decodes the list again instead
@@ -1912,4 +1912,13 @@ registrations of its views back into the XML file.
      gives the options with which the checks read every file of a format.
      A raster file records a resolution that the Pillow reader applies
      only with `dpi=True`, so the geometry that the checks assign is read
-     back only with that option. Status: proposed in pass 4e.
+     back only with that option. Checks 13 and 20, which were added
+     while this pass was open, read their files with these options too.
+     Status: proposed in pass 4e.
+339. Check 20 found that a raster image with nothing pending, given
+     other metadata whose record decodes the same transformations as
+     those that the image held, was written as the bytes of its file
+     under the record of the other metadata, which may record another
+     resolution. `PillowImage.consolidate` now keeps the bytes of the file
+     only when the lazy array reads the record that the image holds, as
+     the JPEG 2000 image does. Status: resolved.
