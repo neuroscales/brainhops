@@ -67,7 +67,10 @@ from brainhops.io.base.parsers import (
     WriterError,
     _overrides_from_fileobj,
 )
-from brainhops.io.common._geometry import same_transformations
+from brainhops.io.common._geometry import (
+    held_transformations,
+    same_transformations,
+)
 from brainhops.io.common.afni._data import _BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
@@ -493,17 +496,23 @@ class ToyImage(
     read, or as it was last consolidated. Assigned data are pending: they
     are stored in the private field `_data` until `consolidate` encodes
     them into a new `raw` and a new record, or until the image is written.
-    The transformations are decoded from the record on first access and
-    stored in the private field `_transformations`, where an assigned list
-    is stored too. `consolidate` compares that list with a fresh decode of
-    the record, and encodes it only when they differ, so that a list
-    changed in place is written and an untouched one keeps the record.
+    An assigned list of transformations is stored in the private field
+    `_transformations`, and the list that the record decodes to is cached
+    apart on first access. Assigning other metadata drops the cached list
+    and keeps an assigned one. `consolidate` compares the list that the
+    image holds, assigned or else cached, with a fresh decode of the
+    record, and encodes it only when they differ, so that a list changed
+    in place is written and an untouched one keeps the record.
     """
 
     EXTENSIONS = (".toy",)
 
     raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
+    _metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
+
+    # Other metadata drops the transformations decoded from the old record,
+    # and keeps those that were assigned.
+    metadata = smartproperty("metadata", invalidates="transformations")
 
     # The image takes the `data` and `transformations` fields over under
     # private names, where `None` means that they are decoded from `raw`
@@ -521,26 +530,26 @@ class ToyImage(
             return None
         return _toy_to_model(self.raw)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         # The geometry is decoded from the record on first access and
-        # stored, so that a change made to the list in place is kept. A
-        # list, which may be empty, can also be assigned.
-        self._transformations = _toy_to_transformations(self.metadata)
-        return self._transformations
+        # cached, so that a change made to the list in place is kept. A
+        # list, which may be empty, can also be assigned, and is stored in
+        # `_transformations`.
+        return _toy_to_transformations(self.metadata)
 
     def consolidate(self, *, inplace: bool = False, **options) -> "ToyImage":
         # Nothing is encoded for an image that has a record, no pending
         # data, and transformations that are never read or the same as a
         # fresh decode of the record, so its copy shares `raw` and the
         # metadata.
+        held = held_transformations(self)
         if (
             self._data is None
             and (
-                self._transformations is None
+                held is None
                 or same_transformations(
-                    self._transformations,
-                    _toy_to_transformations(self.metadata),
+                    held, _toy_to_transformations(self.metadata)
                 )
             )
             and not options
@@ -651,7 +660,7 @@ def _toy_encoded(
         base = image.metadata.raw
     # The list of the image is read without being stored, so that a write
     # leaves the image as it was.
-    transformations = image._transformations
+    transformations = held_transformations(image)
     if transformations is None:
         transformations = _toy_to_transformations(image.metadata)
     preferred = transformations[-1] if transformations else Identity()
@@ -899,6 +908,15 @@ def _nifti_geometry(image: tx.Any) -> np.ndarray:
 
 def _nifti_change_geometry(image: tx.Any) -> None:
     image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+
+
+def _scaled_change_geometry(image: tx.Any) -> None:
+    # The voxel sizes of some exemplars are already those that
+    # `_nifti_change_geometry` assigns, and some have more than three axes,
+    # so they are given voxel sizes 5, 6, 7... along all their axes.
+    ndim = len(image.shape)
+    sizes = np.arange(5.0, 5.0 + ndim)
+    image.transformations = [Affine(matrix=np.diag([*sizes, 1.0])[:ndim])]
 
 
 def _header_matrix(xform: tx.Any) -> tx.Optional[np.ndarray]:
@@ -2013,7 +2031,7 @@ if n5_needs is not None:
         ),
         record_edited=lambda record: record.attributes.get("note") == "edited",
         geometry=_nifti_geometry,
-        change_geometry=_nifti_change_geometry,
+        change_geometry=_scaled_change_geometry,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
         options=frozenset({"level"}),
         cut=_n5_cut,
@@ -2082,7 +2100,7 @@ if h5py is not None:
             record.info["Image"].get("Name") == "edited"
         ),
         geometry=_nifti_geometry,
-        change_geometry=_nifti_change_geometry,
+        change_geometry=_scaled_change_geometry,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
         options=frozenset({"level"}),
         cut=_hdf5_cut,
@@ -2854,10 +2872,11 @@ def test_13_transformations_are_decoded_unless_assigned(
     assert loaded._transformations is None
     for copy in (replace(loaded), cls.from_instance(loaded)):
         assert copy._transformations is None
-    # Reading them decodes the record and stores the list, and the copies
-    # decode the same record.
+    # Reading them decodes the record and caches the list, apart from an
+    # assigned list, and the copies decode the same record.
     decoded = exemplar.geometry(loaded)
-    assert loaded._transformations is not None
+    assert loaded._transformations is None
+    assert held_transformations(loaded) is loaded.transformations
     for copy in (replace(loaded), cls.from_instance(loaded)):
         assert np.allclose(exemplar.geometry(copy), decoded)
     # An empty list is kept, and the copies keep it.
@@ -3114,10 +3133,10 @@ def test_19_read_transformations_keep_the_record(
     path = _compared(cls, exemplar, tmp_path)
     loaded = cls.load(path)
     raw, metadata = loaded.raw, loaded.metadata
-    # Reading the transformations stores them, and they are the same as
+    # Reading the transformations caches them, and they are the same as
     # those of the record, so nothing is encoded.
     assert loaded.transformations is loaded.transformations
-    assert loaded._transformations is not None
+    assert held_transformations(loaded) is loaded.transformations
     consolidated = loaded.consolidate()
     assert consolidated.raw is raw
     assert consolidated.metadata is metadata
@@ -3168,6 +3187,73 @@ def test_19_a_copy_of_a_read_image_stays_lazy(
     assert copied.raw is loaded.raw
     assert copied.metadata is loaded.metadata
     assert copied.consolidate().metadata is loaded.metadata
+
+
+@pytest.mark.parametrize("decoded", [False, True], ids=["unread", "read"])
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_20_other_metadata_keeps_only_what_was_assigned(
+    cls: type,
+    exemplar: Exemplar,
+    decoded: bool,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The maintainer decided on 2026-10-13 that assigning other metadata
+    # drops what an object decodes from its record, such as its
+    # transformations, or the matrix of an affine, and keeps what was
+    # assigned. Whether the decoded value was read before does not matter.
+    source = _saved(cls, exemplar, tmp_path)
+    placed = _placed(cls, exemplar, tmp_path)
+    old = exemplar.geometry(cls.load(source))
+
+    # A value that was not assigned follows the new metadata, as in an
+    # object built with it. The record of the new metadata carries an edit
+    # outside of the geometry, which a save keeps.
+    record = exemplar.edit_record(deepcopy(cls.load(placed).metadata.raw))
+    metadata = exemplar.metadata.from_raw(record)
+    loaded = cls.load(source)
+    expected = exemplar.geometry(replace(loaded, metadata=metadata))
+    if exemplar.source is None and exemplar.geometry is not _data_geometry:
+        assert not np.allclose(expected, old)
+    if decoded:
+        exemplar.geometry(loaded)
+    loaded.metadata = metadata
+    assert loaded.metadata is metadata
+    assert all(field is None for field in _pending(loaded))
+    assert np.allclose(exemplar.geometry(loaded), expected)
+    target = _path(tmp_path, exemplar, "followed")
+    if exemplar.source is not None:
+        _refuses_writing(loaded, target)
+    else:
+        loaded.save(target)
+        back = cls.load(target)
+        assert np.allclose(exemplar.geometry(back), expected)
+        assert exemplar.record_edited(back.metadata.raw)
+
+    # A value that was assigned survives the new metadata, here that of
+    # the source, with the edit, and is written over its record.
+    record = exemplar.edit_record(deepcopy(cls.load(source).metadata.raw))
+    metadata = exemplar.metadata.from_raw(record)
+    loaded = cls.load(source)
+    if decoded:
+        exemplar.geometry(loaded)
+    exemplar.change_geometry(loaded)
+    assigned = exemplar.geometry(loaded)
+    assert not np.allclose(assigned, old)
+    pending = _pending(loaded)
+    loaded.metadata = metadata
+    assert _same(_pending(loaded), pending)
+    assert np.allclose(exemplar.geometry(loaded), assigned)
+    consolidated = loaded.consolidate()
+    assert np.allclose(exemplar.geometry(consolidated), assigned)
+    assert exemplar.record_edited(consolidated.metadata.raw)
+    target = _path(tmp_path, exemplar, "kept")
+    if exemplar.source is not None:
+        _refuses_writing(loaded, target)
+        return
+    loaded.save(target)
+    back = cls.load(target)
+    assert np.allclose(exemplar.geometry(back), assigned)
+    assert exemplar.record_edited(back.metadata.raw)
 
 
 # ----------------------------------------------------------------------
