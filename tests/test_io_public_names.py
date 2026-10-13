@@ -124,6 +124,17 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.common.freesurfer": Package(
         names=frozenset({"FreesurferFormat", "FreesurferTkrSystem"}),
     ),
+    "brainhops.io.images.jpeg2000": Package(
+        names=frozenset(
+            {
+                "Jpeg2000Image",
+                "Jpeg2000Metadata",
+                "Jpeg2000MultiScaleImage",
+                "Jpeg2000Raw",
+            }
+        ),
+        needs=("PIL",),
+    ),
     "brainhops.io.common.mgh": Package(
         names=frozenset({"MghMetadata", "MghRaw"}),
         needs=("nibabel",),
@@ -177,6 +188,9 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
         needs=("nibabel",),
+    ),
+    "brainhops.io.transformations.c3d": Package(
+        names=frozenset({"C3dAffine", "C3dAffineMetadata", "C3dAffineRaw"}),
     ),
     "brainhops.io.transformations.freesurfer.lta": Package(
         names=frozenset(

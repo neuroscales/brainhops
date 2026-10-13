@@ -18,6 +18,10 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferTypeError,
 )
+from brainhops.io.common._geometry import (
+    held_transformations,
+    same_transformations,
+)
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base._utils_raster import (
     axis_group,
@@ -97,29 +101,27 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
-    [`SingleScaleImage`][] to store it under this private name. `None`,
-    the default, means that the transformations have been neither read
-    nor assigned. The property stores here the list that it decodes, and
-    an assigned list, even an empty one, is stored as it is.
+    [`SingleScaleImage`][] to store it under this private name. The
+    constructor still takes `transformations` in the same place, and the
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the record and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
     _metadata: NoRepr[tx.Optional[N5Metadata]] = None
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the dataset or pyramid, or `None`.
 
     An image built from data has no metadata. Assigning other metadata
-    drops the transformations that the image holds, read or assigned, so
-    that they are decoded from the new record.
+    drops the transformations decoded from the previous record, so that
+    they are decoded from the new one, and keeps the transformations that
+    were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[N5Metadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     level: tx.Annotated[
         tx.Optional[int],
@@ -144,21 +146,21 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
             return None
         return _image_to_model(self.raw)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-physical transformations, decoded from the record.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place is kept. Assigning other metadata drops the
-        list. An image without metadata has no transformations. Assigning
-        a list replaces the stored one, and assigning `None` decodes the
-        record again.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place is kept. Assigning other
+        metadata drops the decoded list, so that it is decoded from the
+        new record, and keeps an assigned list. A change made in place to
+        a decoded list is therefore lost when other metadata is assigned.
+        An image without metadata has no transformations. Assigning a list
+        replaces the stored one, and assigning `None` decodes the record
+        again.
         """
-        self._transformations = _record_transformations(
-            self.metadata, self.level
-        )
-        return self._transformations
+        return _record_transformations(self.metadata, self.level)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -194,11 +196,20 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
         N5Image
             The consolidated copy, or this image with `inplace=True`.
         """
+        # The record cannot be encoded, so a copy is given the list that
+        # the image holds when it is not the list that the record decodes
+        # to, as a list decoded and then changed in place would otherwise
+        # be decoded again and lost.
+        held = held_transformations(self)
+        if held is None or same_transformations(
+            held, _record_transformations(self.metadata, self.level)
+        ):
+            held = self._transformations
         if self._data is None:
-            return self if inplace else replace(self)
+            return self if inplace else replace(self, transformations=held)
         raw = _image_to_disk(self._data)
         if not inplace:
-            return replace(self, data=None, raw=raw)
+            return replace(self, data=None, raw=raw, transformations=held)
         self.raw = raw
         self.data = None
         return self
