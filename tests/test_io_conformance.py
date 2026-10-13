@@ -48,6 +48,7 @@ from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
     Affine,
+    DisplacementField,
     Identity,
     Scaling,
     Sequence,
@@ -121,12 +122,22 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_disk,
     _positions_to_model,
 )
+from brainhops.io.transformations.mrtrix import (
+    MrtrixCoordinatesField,
+    MrtrixDisplacementField,
+    MrtrixLinearMetadata,
+    MrtrixLinearTransform,
+    MrtrixWarpFull,
+)
+from brainhops.io.transformations.mrtrix._views import (
+    _warp_to_disk,
+    _warp_to_model,
+)
 
 try:
     import nibabel as nb
     from nibabel.arrayproxy import ArrayProxy
 
-    from brainhops.datamodel.transformations import DisplacementField
     from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.freesurfer.mgh._views import (
         _image_to_disk as _mgh_to_disk,
@@ -1275,6 +1286,87 @@ _MRTRIX = Exemplar(
 )
 EXEMPLARS[MrtrixImage] = _MRTRIX
 
+# The MRtrix warps are MRtrix images, checked as `.mif` files, whose
+# models are chains. A field of coordinates and a field of displacements
+# are built on an identity grid, which their chains replace to change the
+# geometry. A new record of either one records its kind in the header key
+# `brainhops_field_type`, with a `command_history` line of brainhops,
+# which an untouched save does not add. A
+# warpfull file holds its warps and its linear transforms, which no chain
+# can be split back into, so its data stands in for its geometry, as for
+# FNIRT, and it refuses every conversion from another format. Its grid is
+# not part of the model, and new warps of the same type keep the record,
+# so the new warps are given in double precision, which the record
+# stores, for the checks that the record is new.
+
+
+def _warpfull_change_geometry(xform: tx.Any) -> None:
+    xform.data = np.asarray(xform.data, dtype="float64") * 2 + 1
+
+
+_MRTRIX_WARP = _MRTRIX._replace(
+    to_model=_warp_to_model,
+    to_disk=_warp_to_disk,
+    sample=_vectors,
+    geometry=_chain_geometry,
+    change_geometry=_chain_change_geometry,
+    derived=("transformations",),
+)
+EXEMPLARS[MrtrixCoordinatesField] = _MRTRIX_WARP._replace(
+    build=lambda data: MrtrixCoordinatesField(data=data),
+    foreign=_spm_coordinates,
+)
+EXEMPLARS[MrtrixDisplacementField] = _MRTRIX_WARP._replace(
+    build=lambda data: MrtrixDisplacementField(data=data),
+    foreign=_ras_displacements,
+)
+EXEMPLARS[MrtrixWarpFull] = _MRTRIX_WARP._replace(
+    sample=lambda: np.arange(288, dtype="float32").reshape(2, 3, 4, 3, 4),
+    geometry=_data_geometry,
+    change_geometry=_warpfull_change_geometry,
+    foreign=None,
+    build=lambda data: MrtrixWarpFull(data=data),
+    options=frozenset({"from_image", "midway"}),
+    derived=(),
+)
+
+# An MRtrix linear transform is a short text file, parsed in one pass, so
+# its matrix lives in the record of its metadata and is a read-only array
+# just after a read, as for LTA. The record stores the `(3, 4)` matrix of
+# the model as it is. A file that a transformation without a record
+# writes names brainhops in its `command_history`, which is the signature
+# by which the metadata dispatcher recognizes it.
+
+
+def _mrtrix_linear_stored(xform: tx.Any) -> tx.Any:
+    if xform.metadata is None:
+        return None
+    return xform.metadata.raw.matrix
+
+
+def _mrtrix_linear_edit_record(record: tx.Any) -> tx.Any:
+    record.keyval["comments"] = "edited"
+    return record
+
+
+EXEMPLARS[MrtrixLinearTransform] = Exemplar(
+    metadata=MrtrixLinearMetadata,
+    suffix=".txt",
+    proxies=(np.ndarray,),
+    to_model=np.asarray,
+    to_disk=np.asarray,
+    sample=lambda: _VOXEL_TO_RAS,
+    edit_record=_mrtrix_linear_edit_record,
+    record_edited=lambda raw: raw.keyval.get("comments") == "edited",
+    geometry=_matrix_geometry,
+    change_geometry=_matrix_change_geometry,
+    foreign=lambda data: Affine(data, input=RASmm(), output=RASmm()),
+    build=MrtrixLinearTransform,
+    derived=("homogeneous_matrix",),
+    binary=False,
+    stored=_mrtrix_linear_stored,
+)
+
 # A NRRD image is checked as an attached `.nrrd` file and as a detached
 # `.nhdr` header with its `.raw.gz` data file, both gzipped by default.
 # The samples of both stay compressed in the file, and an untouched copy
@@ -1534,6 +1626,21 @@ VARIANTS.append(
 
 VARIANTS.append(
     ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
+)
+
+VARIANTS.append(
+    (
+        "MrtrixCoordinatesField-gz",
+        MrtrixCoordinatesField,
+        EXEMPLARS[MrtrixCoordinatesField]._replace(suffix=".mif.gz"),
+    )
+)
+VARIANTS.append(
+    (
+        "MrtrixWarpFull-gz",
+        MrtrixWarpFull,
+        EXEMPLARS[MrtrixWarpFull]._replace(suffix=".mif.gz"),
+    )
 )
 
 # A MINC1 file may be gzipped.
