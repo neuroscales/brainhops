@@ -1,10 +1,8 @@
-"""
-Regression tests: every `inverse()` override takes the signature of
-`Transformation.inverse`.
+"""Tests that every `inverse` override takes the signature of the base.
 
-`Sequence.inverse` forwards `compute` and the options of `compute()` to
-every child, so an override that takes fewer arguments breaks the
-inverse of any sequence that holds it.
+`Sequence.inverse` passes `compute` and the options of `compute()` to each
+of its children, so an override that accepts fewer arguments breaks the
+inverse of any sequence containing it.
 """
 
 from unittest import mock
@@ -44,8 +42,7 @@ CASES = {
     "multiscale": _multiscale,
 }
 
-# Past `compute`, the keywords are options of `compute()`, which
-# `Sequence.inverse` passes on to every child.
+# Apart from `compute`, the keywords are options of `compute()`.
 KWARGS = [
     {},
     {"compute": False},
@@ -92,7 +89,7 @@ def test_the_multiscale_inverse_reaches_every_scale(compute) -> None:  # noqa: A
         inverse = MultiscaleField.inverse(field, compute=compute, factor=False)
     assert isinstance(inverse, MultiscaleField)
     assert inverse.nscales == 2
-    # Compared by identity: `==` on a sequence compares its arrays.
+    # Compared by identity, because `==` on a sequence compares arrays.
     calls = {id(c.args[0]): c.kwargs for c in spy.call_args_list}
     for scale in field.scales:
         assert calls[id(scale)] == {"compute": compute, "factor": False}

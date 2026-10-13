@@ -1,9 +1,7 @@
-"""Tests for open coordinate systems at the I/O boundary.
+"""Tests of open coordinate systems, which contain `...`, at the I/O boundary.
 
-No file format can store `...`. A writer closes an open system from the
-shape of what it writes, filling the axes that `...` stands for as the
-format fills an axis it knows nothing about. A reader produces closed
-systems, and a closed system survives a round trip unchanged.
+No format stores `...`, so a writer closes an open system from the written
+shape, while readers always produce closed systems.
 """
 
 import numpy as np
@@ -30,8 +28,8 @@ from brainhops.datamodel.systems import (  # noqa: E402
     VoxelCoordinateSystem,
 )
 from brainhops.datamodel.transformations import Affine  # noqa: E402
-from brainhops.io.base.nifti import _voxel_to_ras  # noqa: E402
 from brainhops.io.base.parsers import WriterError  # noqa: E402
+from brainhops.io.common.nifti._geometry import _voxel_to_ras  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 
 CS = CoordinateSystem
@@ -55,8 +53,7 @@ def _affine(output: tx.Optional[CS]) -> Affine:
     "axes", [[L(), P(), S(), ...], [..., L(), P(), S()], [L(), ..., P(), S()]]
 )
 def test_nifti_closes_an_open_world_space_from_the_matrix(axes: list) -> None:
-    # Wherever `...` sits, the 3-row matrix closes it to the three LPS
-    # axes, whose orientation gives the flip to RAS.
+    # Wherever `...` sits, a 3-row matrix closes it to the three LPS axes.
     closed = _voxel_to_ras(_affine(LPSCoordinateSystem()))
     assert np.allclose(_voxel_to_ras(_affine(CS(axes=axes))), closed)
     assert np.allclose(closed, LPS_FLIP @ np.diag([2.0, 3.0, 4.0, 1.0]))
@@ -66,8 +63,7 @@ def test_nifti_closes_an_open_world_space_from_the_matrix(axes: list) -> None:
 def test_nifti_reads_an_unknown_world_space_as_unoriented(
     output: tx.Optional[CS],
 ) -> None:
-    # The axes `...` stands for carry no orientation, as any axis NIfTI
-    # knows nothing about, so no flip is applied.
+    # Axes that `...` stands for carry no orientation, so there is no flip.
     assert np.allclose(
         _voxel_to_ras(_affine(output)), np.diag([2.0, 3.0, 4.0, 1.0])
     )
@@ -96,8 +92,6 @@ def test_nifti_writes_an_open_world_space_as_its_closed_form(
 
 
 def test_nifti_round_trip_keeps_closed_systems(tmp_path) -> None:  # noqa: ANN001
-    # A file read, written and read again carries the same systems, and
-    # every system it carries is closed.
     affine = np.array(
         [
             [0.0, -1.0, 0.0, 10.0],
@@ -156,8 +150,7 @@ def test_zarr_closes_open_axes_from_the_data(
     tmp_path,  # noqa: ANN001
     axes: list,
 ) -> None:
-    # The axes `...` stands for are written as any axis with no
-    # description is: the same file as from the closed list.
+    # The axes of `...` are written undescribed, as for a closed list.
     expanded = CS(axes=axes).expand(3).axes
     _pyramid(axes).save(str(tmp_path / "open.zarr"))
     _pyramid(expanded).save(str(tmp_path / "closed.zarr"))
@@ -192,8 +185,7 @@ def test_the_pyramid_axes_are_an_axis_list() -> None:
         axes = _pyramid(given).axes
         assert type(axes) is AxisList and axes.is_open
         assert axes["x"] == SpaceAxis(name="x")
-    # `None` is not `[...]`: it leaves the axes unset, to be read from
-    # the store.
+    # None is not [...]: the axes stay unset and are read from the store.
     assert _pyramid(None).axes is None
     written = _pyramid(None)._write_axes(3)
     assert [axis.name for axis in written] == ["x", "y", "z"]
@@ -206,7 +198,6 @@ def test_the_pyramid_axes_are_an_axis_list() -> None:
 
 
 def test_a_nifti_voxel_space_is_f_ordered(tmp_path) -> None:  # noqa: ANN001
-    # NIfTI stores its array in F order, and nibabel reads it that way.
     image = nb.Nifti1Image(np.zeros((4, 5, 6), dtype="float32"), np.eye(4))
     nb.save(image, str(tmp_path / "a.nii"))
     loaded = io.images.load(tmp_path / "a.nii")
@@ -239,9 +230,7 @@ def test_a_zarr_voxel_space_read_by_reversal_is_f_ordered(
     tmp_path,  # noqa: ANN001
     axes: list,
 ) -> None:
-    # The store is C-ordered, and `(t, z, y, x)` is read as `(x, y, z, t)`:
-    # the reversal of the stored axes, so the first axis read changes
-    # fastest.
+    # A C-ordered (t, z, y, x) store reads as F-ordered (x, y, z, t).
     pytest.importorskip("zarr", minversion="3")
     system = _zarr_voxel_space(tmp_path, axes)
     assert system.order == "F"
@@ -251,8 +240,7 @@ def test_a_zarr_voxel_space_read_by_reversal_is_f_ordered(
 def test_a_zarr_voxel_space_read_otherwise_has_no_order(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # `(t, c, z, y, x)` is read as `(x, y, z, t, c)`, which is not the
-    # reversal: the levels are neither C- nor F-ordered.
+    # (t, c, z, y, x) read as (x, y, z, t, c) is neither C nor F order.
     pytest.importorskip("zarr", minversion="3")
     axes = [
         *(SpaceAxis(name=n) for n in "xyz"),

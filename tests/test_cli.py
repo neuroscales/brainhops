@@ -1,4 +1,4 @@
-"""Tests for the ``brainhops`` command-line interface."""
+"""Tests of the brainhops command-line interface."""
 
 import numpy as np
 import pytest
@@ -22,7 +22,7 @@ nb = pytest.importorskip("nibabel")
 
 
 def _write_nifti(path, shape=(4, 5, 6), scale=2.0) -> str:  # noqa: ANN001
-    """Write a small NIfTI image with a scaling affine and return its path."""
+    """Write a small NIfTI file with a scaling affine."""
     data = np.arange(int(np.prod(shape)), dtype=np.float32).reshape(shape)
     affine = np.diag([scale, scale, scale, 1.0])
     nb.save(nb.Nifti1Image(data, affine), str(path))
@@ -53,7 +53,6 @@ def test_reslice_image_resamples_onto_reference_grid(
     resliced = reslice_image(source, reference, [])
 
     assert isinstance(resliced, Image)
-    # The output lives on the reference grid.
     assert resliced.shape == (3, 3, 3)
 
 
@@ -132,14 +131,14 @@ def test_reslice_command_reports_when_writing_is_unavailable(
         ]
     )
 
-    # The reslice succeeds but the output cannot be written.
+    # No writer handles the output extension.
     assert code == WritingUnavailable.exit_code
     assert "could not be saved" in capsys.readouterr().err
     assert not output.exists()
 
 
 class _FakeTransform:
-    """A stand-in transform that records whether it was inverted."""
+    """Stub transform that records whether it was inverted."""
 
     def __init__(self, inverted: bool = False) -> None:
         self.inverted = inverted
@@ -197,10 +196,9 @@ def test_inv_operator_inverts_the_loaded_transform(monkeypatch) -> None:  # noqa
 
     transform = _load_push_transform("warp.nii.gz|inv")
 
-    # The operator is stripped before the path reaches the loader.
+    # The loader receives the path with the operator removed.
     assert str(seen["path"].path) == "warp.nii.gz"
     assert [operation.name for operation in seen["path"].operations] == ["inv"]
-    # The loaded transform is inverted before it is composed.
     assert transform.inverted is True
 
 

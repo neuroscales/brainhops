@@ -1,23 +1,21 @@
-# stdlib
 from io import BytesIO
 from numbers import Number
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# internals
 from brainhops._core import path
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.pillow._utils import (
     EXTENSIONS,
@@ -31,17 +29,18 @@ from brainhops.io.images.pillow._utils import (
 
 _DpiLike = tx.Union[None, bool, float, tx.Sequence[float]]
 
-# Metadata that Pillow reads into `info` and that its writers take back as
-# a save option of the same name. It is carried over when the image is
-# written, so that it survives a round trip.
+# Pillow writers accept these keys of `info` back as save options. They are
+# passed on when the image is saved, so that they survive a round trip.
 _ROUND_TRIP_INFO = ("icc_profile", "exif")
 
-# The format an image is written in when nothing says which.
+# The output format when neither `format=` nor a file name names one.
 _DEFAULT_FORMAT = "PNG"
 
 
 def _dpi_pair(dpi: tx.Any) -> tx.Tuple[float, float]:
-    """A resolution given as one number or as an `(x, y)` pair."""
+    """Convert a resolution, one number or an `(x, y)` pair, to a pair of
+    floats.
+    """
     if isinstance(dpi, (Number, np.number)):
         return float(dpi), float(dpi)
     values = [float(v) for v in np.ravel(dpi)]
@@ -56,22 +55,19 @@ def _dpi_pair(dpi: tx.Any) -> tx.Tuple[float, float]:
 
 @register_format
 class PillowImage(
-    BinaryFileParserWriter, WritableFileBasedImage, SingleScaleImage
+    BinaryFileReader,
+    BinaryFileWriter,
+    ImageFormat,
+    SingleScaleImage,
 ):
-    """
-    A two-dimensional raster image (PNG, JPEG, BMP, GIF, WebP, ...) read
-    and written with Pillow.
+    """A two-dimensional raster image, read and written with Pillow.
 
-    The data is F-ordered: `(x, y)` for a single-component image, and
-    `(x, y, c)` when each pixel has several samples (grey + alpha, RGB,
-    RGBA, ...). The only transformation is a scaling from the pixel system
-    to a `"physical"` system, which is the identity, in no unit, unless a
-    pixel size is known (see the module documentation).
-
-    What the file records beyond the pixels is kept on the object --
-    `image_format`, `mode`, `info`, `frame` and `n_frames` -- and the ICC
-    profile and EXIF block in `info` are written back when the image is
-    saved.
+    The data is F-ordered, `(x, y)` for single-component images and `(x, y, c)`
+    otherwise. The image has a single transformation, which scales pixels to
+    `"physical"` and is the identity, with no unit, unless the pixel size is
+    known (see [`brainhops.io.images.pillow`][]). The file metadata is kept in
+    `image_format`, `mode`, `info`, `frame` and `n_frames`, and the ICC profile
+    and EXIF block are written back on save.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = EXTENSIONS
@@ -94,7 +90,10 @@ class PillowImage(
 
     info: tx.Annotated[
         tx.Optional[tx.Dict[str, tx.Any]],
-        tx.Doc("Pillow's `info` dictionary: the format-specific metadata."),
+        tx.Doc(
+            "Pillow's `info` dictionary, which holds the format-specific "
+            "metadata."
+        ),
     ] = None
 
     frame: tx.Annotated[
@@ -116,13 +115,10 @@ class PillowImage(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """
-        Score how confident the class is that an open file holds an image
-        Pillow reads.
+        """Return the confidence that a file holds an image that Pillow reads.
 
-        A format recognized from its magic number scores `LIKELY`. TIFF
-        scores `WEAK`: Pillow reads it, but the dedicated TIFF reader
-        reads it better, so Pillow is only a fallback.
+        A format that is recognised by its magic number scores `LIKELY`. TIFF
+        scores only `WEAK`, because the dedicated TIFF reader reads it better.
         """
         fmt = sniff_pillow(file)
         if fmt == "TIFF":
@@ -142,8 +138,7 @@ class PillowImage(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the class is that bytes hold an image
-        Pillow reads."""
+        """Return the confidence that bytes hold an image that Pillow reads."""
         return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
 
     # --- load ---------------------------------------------------------
@@ -159,44 +154,41 @@ class PillowImage(
         unit: tx.Any = None,
         **kwargs,
     ) -> tx.Self:
-        """
-        Read an image from an open file.
+        """Read an image from an open file.
 
         Parameters
         ----------
         file : IO
-            A binary file object, open for reading. It is not closed.
-        frame : int
-            The frame of a multi-frame file (an animated GIF, PNG or WebP)
-            to read. Negative values count from the end. Default: the
-            first.
-        palette : bool
-            Look the colours of a palette image up, giving an RGB(A) image
-            (the default), or keep the palette indices.
-        dpi : bool | float | (float, float), optional
-            Whether to take the pixel size from the resolution, in dots
-            per inch. By default (`None` or `False`) the resolution the
-            file records is ignored, as it most often describes a screen
-            or a printer rather than the scene. `True` uses it, unless it
-            is absent or a placeholder (72 or 96 dpi). A number, or an
-            `(x, y)` pair, is a resolution to use instead. A pixel is then
-            `25.4 / dpi` millimetres.
-        pixel_size : float | Sequence[float] | Mapping[str, float], optional
-            The pixel size, which overrides the resolution: one size, or
-            `(x, y)`.
-        unit : str | Unit, optional
-            The unit of `pixel_size`, or the unit to convert the size
-            from `dpi` to (default: millimetres).
+            A binary file open for reading, which is not closed.
+        frame : int, optional
+            The frame of a multi-frame file, the first by default. A negative
+            index counts from the end.
+        palette : bool, optional
+            Whether palette colours are looked up (the default) or kept as
+            indices.
+        dpi : bool or float or tuple of float, optional
+            The resolution in dots per inch, which makes pixels `25.4 / dpi`
+            millimetres wide. By default, the resolution of the file is
+            ignored, since it usually describes a screen or a printer. `True`
+            uses the resolution of the file unless it is absent or a
+            placeholder (72 or 96 dpi), and a number or an `(x, y)` pair
+            replaces it.
+        pixel_size : float or Sequence[float] or Mapping[str, float], optional
+            The pixel size, which overrides any resolution.
+        unit : str or Unit, optional
+            The unit of `pixel_size`, or the unit to which a size derived from
+            a resolution is converted. Millimetres by default.
 
         Raises
         ------
         ParserContentError
             If Pillow cannot read the file.
         IndexError
-            If the file has no frame `frame`.
+            If the file has no such frame.
         PIL.Image.DecompressionBombError
-            If the image is larger than Pillow's safety limit,
-            `PIL.Image.MAX_IMAGE_PIXELS`.
+            If the image exceeds the limit set by `PIL.Image.MAX_IMAGE_PIXELS`.
+        TypeError
+            If an unknown option is given.
         """
         if kwargs:
             raise TypeError(
@@ -234,8 +226,10 @@ class PillowImage(
 
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
-        """Read an image from the bytes of a file. See `from_fileobj` for
-        the options."""
+        """Read an image from bytes.
+
+        The options are those of `from_fileobj`.
+        """
         return cls.from_fileobj(BytesIO(content), **kwargs)
 
     # --- save ---------------------------------------------------------
@@ -243,9 +237,9 @@ class PillowImage(
     def _storage(
         self,
     ) -> tx.Tuple[np.ndarray, tx.Optional[tx.Dict[str, float]]]:
-        """
-        The pixels as Pillow stores them, `(rows, columns[, samples])`, and
-        the pixel size along `x` and `y` in millimetres, if it is known.
+        """Return the pixels as Pillow stores them,
+        `(rows, columns[, samples])`, together with the pixel size along x and
+        y in millimetres, if it is known.
         """
         data = self.data
         if data is None:
@@ -270,8 +264,8 @@ class PillowImage(
                 )
         sizes = raster.physical_pixel_size(xform, axes, "mm")
 
-        # Keep two spatial axes and at most one channel axis; any other
-        # axis must be a singleton, and is dropped.
+        # Keep two spatial axes and at most one channel axis. Any other axis
+        # must be a singleton, and is dropped.
         space = [
             i for i, a in enumerate(axes) if raster.axis_group(a) == "space"
         ]
@@ -279,8 +273,9 @@ class PillowImage(
             i for i, a in enumerate(axes) if raster.axis_group(a) == "channel"
         ]
         if len(space) > 2:
-            # A slice of a volume: keep the two spatial axes that are not
-            # singletons (or, failing that, the first ones), in order.
+            # The image is a slice of a volume. Keep the spatial axes that are
+            # not singletons and, if fewer than two remain, add the first
+            # singleton axes, keeping the original axis order.
             wide = [i for i in space if shape[i] != 1]
             narrow = [i for i in space if shape[i] == 1]
             if len(wide) <= 2:
@@ -308,10 +303,9 @@ class PillowImage(
             )
         index = tuple(slice(None) if i in keep else 0 for i in range(ndim))
         data = data[index]
-        # The two spatial axes kept are, in order, the columns (x) and the
-        # rows (y) of the raster, whatever their names: a sagittal slice
-        # (y, z) is written with y along the columns. Pillow stores rows
-        # first, then columns, then samples.
+        # The kept spatial axes are the columns (x) and rows (y) of the raster,
+        # in order, whatever their names. For example, a sagittal (y, z) slice
+        # has y along the columns.
         position = {axis: k for k, axis in enumerate(sorted(keep))}
         order = [position[space[1]], position[space[0]]]
         order += [position[i] for i in channel]
@@ -328,33 +322,30 @@ class PillowImage(
         dpi: _DpiLike = None,
         **options,
     ) -> bytes:
-        """
-        Encode the image in a raster format.
+        """Encode the image in a raster format.
 
         Parameters
         ----------
         format : str, optional
-            Pillow's name for the format, such as `"PNG"` or `"JPEG"`. By
-            default, the format the image was read from, if Pillow can
-            write it, or else PNG.
-        dpi : bool | float | (float, float), optional
-            The resolution to record, in dots per inch, in the formats that
-            store one (PNG, JPEG, BMP, TIFF). By default (`None` or
-            `True`), it is computed from the pixel size when the
-            preferred transformation is a scaling onto axes measured in a
-            unit of length; failing that, a resolution the file was read
-            with is written back. `False` records none. A number or an
-            `(x, y)` pair is recorded as it is.
-        **options
-            Passed on to Pillow's `Image.save`, e.g. `quality=95` for JPEG
-            or `compress_level=9` for PNG.
+            The Pillow name of the format, such as `"PNG"`. By default, the
+            image is written in the format that it was read from (JPEG for
+            MPO) if Pillow can write that format, and in PNG otherwise.
+        dpi : bool or float or tuple of float, optional
+            The resolution recorded by PNG, JPEG, BMP and TIFF. By default, it
+            is computed from the pixel size when the preferred transformation
+            scales onto axes with a unit of length, and is otherwise the
+            resolution read with the image. `False` records none, and a number
+            or an `(x, y)` pair is recorded as is.
+        **options : Any
+            Options passed to `Image.save`, such as `quality=95` for JPEG. The
+            ICC profile and EXIF block of `info` are added unless they are
+            given.
 
         Raises
         ------
         WriterError
-            If the data cannot be stored in the format: more than two
-            spatial axes, a data type Pillow does not store (e.g. `float64`
-            or `int16`), or one the format does not (e.g. `uint16` in
+            If the data has more than two spatial axes, or a type that Pillow
+            or the format does not store (such as `float64`, or `uint16` in
             JPEG). Nothing is converted silently.
         """
         storage, sizes = self._storage()
@@ -386,23 +377,25 @@ class PillowImage(
         return encode_pillow(im, format, dpi=resolution, **options)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """
-        Write the image to an open binary file.
-
-        The format is the `format` keyword if given, or else the one the
-        file's name calls for, if it has one (see `to_bytes`).
+        """Write the image to an open binary file, in the `format` given or the
+        one that the name of the file calls for (see `to_bytes`).
         """
         if kwargs.get("format") is None:
             kwargs["format"] = format_for_name(_to_filename(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """
-        Write the image to a file, in the format its extension calls for
-        (or the `format` keyword). See `to_bytes` for the options.
+        """Write the image to a file, in the format its extension calls for.
 
-        The image is encoded before the file is opened, so an image the
-        format cannot store leaves no file behind.
+        The options are those of `to_bytes`. The image is encoded before the
+        file is opened, so that an image that cannot be stored leaves no file
+        behind.
+
+        Raises
+        ------
+        WriterError
+            If neither the extension nor `format` names a format, or if the
+            image cannot be stored.
         """
         if kwargs.get("format") is None:
             fmt = format_for_name(filename)

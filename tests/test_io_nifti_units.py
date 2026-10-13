@@ -1,20 +1,22 @@
-"""Tests for the NIfTI <-> brainhops unit converter, and its policies."""
+"""Tests of the unit conversion between NIfTI and brainhops."""
 
 import warnings
 
-import nibabel as nb
 import numpy as np
 import pytest
 
 import brainhops.io as io
 from brainhops.datamodel.units import IndexUnit, Unit
-from brainhops.io.base._nifti_units import (
+from brainhops.io.common.nifti import NiftiUnitWarning
+from brainhops.io.common.nifti._units import (
     NIFTI_SPACE_CODES,
     NIFTI_TIME_CODES,
-    NiftiUnitWarning,
     nifti_to_unit,
     unit_to_nifti,
 )
+
+# The converter only needs brainhops; nibabel provides real headers.
+nb = pytest.importorskip("nibabel")
 
 _REPRESENTABLE = [
     ("space", "meter", Unit("meter")),
@@ -42,8 +44,7 @@ def test_every_representable_code_round_trips(
 
 
 def test_an_unknown_spatial_unit_is_read_as_millimetres() -> None:
-    # The ecosystem's convention, and a lossy normalisation: it is written
-    # back as "mm", not as "unknown".
+    # By convention, and lossily, unknown spatial units are mm.
     for value in ("unknown", 0, None, ""):
         unit = nifti_to_unit(value, "space")
         assert unit is Unit("mm")
@@ -61,7 +62,7 @@ def test_a_temporal_code_that_is_not_a_unit_warns(label: str) -> None:
     for value in (label, NIFTI_TIME_CODES[label]):
         with pytest.warns(NiftiUnitWarning, match=label):
             assert nifti_to_unit(value, "time") is None
-    # ... and it does not come back: unspecified is written as unknown.
+    # An unspecified temporal unit is written back as unknown.
     assert unit_to_nifti(None, "time") == "unknown"
 
 
@@ -158,10 +159,26 @@ def test_every_code_survives_a_file_round_trip(
     assert written == (space, time)
 
 
-def test_an_unknown_file_is_written_back_in_millimetres(tmp_path) -> None:  # noqa: ANN001
+def test_an_unknown_file_is_read_in_millimetres_and_kept_unknown(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The header of the file is the base of the written header, and an
+    # unknown spatial unit means millimetres, so the label is kept.
     image, written = _round_trip(tmp_path, "unknown", "unknown")
     world = image.transformations[-1].output
     assert all(
         axis.unit is Unit("mm") for axis in world.axes if axis.type == "space"
     )
-    assert written == ("mm", "unknown")
+    assert written == ("unknown", "unknown")
+
+
+def test_an_unknown_file_is_written_in_millimetres_once_converted(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # Without the header of the file, millimetres are written as such.
+    from brainhops.io.images.nifti import NiftiImage
+
+    image, _ = _round_trip(tmp_path, "unknown", "unknown")
+    target = tmp_path / "converted.nii"
+    NiftiImage(image.data, image.transformations).save(target)
+    assert nb.load(str(target)).header.get_xyzt_units() == ("mm", "unknown")

@@ -4,26 +4,17 @@ __all__ = [
     "ElastixTomlTransform",
 ]
 
-# stdlib
 import os
 from warnings import warn
 
-# dependencies
 import typing_extensions as tx
-
-# externals
 from bagof.magic import HIDE_IF_NONE, Factory, NoEq
 
-# core
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
-
-# datamodel
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
-
-# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -31,13 +22,13 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     ParserNotImplementedError,
     SnifferContentError,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.itk._common import ItkStruct
 
-# locals
 from ._blocks import fixed_geometry, map_to_block, transformation_to_map
 from ._parser import (
     ParameterMap,
@@ -50,58 +41,54 @@ from ._parser import (
     read_toml_map,
 )
 
-#: The value elastix writes when a transform has no initial transform.
+#: The value elastix writes when there is no initial transform.
 _NO_INITIAL = "NoInitialTransform"
 
 
-# `TextFileParserWriter` bridges bytes and text for a text format, and
-# must come before `WritableFileBasedTransformation`, whose writer knows
-# no encoding (see `LtaTransformation`).
+# Text adapters supply byte decoding and encoding before the generic bases.
 class ElastixTransform(
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     _xforms.Sequence,
-    WritableFileBasedTransformation,
+    TransformationFormat,
     repr=HIDE_IF_NONE,
-    reverse=False,  # `transformations` stays the first positional field.
+    reverse=False,  # keep `transformations` the first positional field
 ):
-    """
-    A transformation stored in an elastix transform parameter file.
+    """Transformation stored in an elastix transform parameter file.
 
-    It is the
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] that maps
-    fixed-image LPS coordinates to moving-image LPS coordinates (the
-    direction in which transformix pulls the moving image onto the fixed
-    grid): the blocks of the initial transforms that the file chains to,
-    first, then the block of the file's own transform. Every block is an
-    ITK block (see [`brainhops.io.transformations.elastix`][]).
+    The transformation is a
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] of ITK
+    blocks, which are described in [`brainhops.io.transformations.elastix`][].
+    It maps LPS coordinates of the fixed image to LPS coordinates of the
+    moving image, which is the pull direction that transformix uses. The
+    blocks of the chained initial transforms come first, followed by the
+    block of the file's own transform. The raw parameters are kept in
+    `parameter_map`, and the initial transform is kept in `initial`.
 
-    The raw parameter map is kept in `parameter_map`, and the initial
-    transform -- itself an `ElastixTransform` -- in `initial`.
-
-    Abstract: it is not decorated with `@register_format`. Its two
-    syntaxes, [`ElastixParameterTransform`][] (`.txt`) and
-    [`ElastixTomlTransform`][] (`.toml`), register themselves.
+    This class is abstract. Its subclasses [`ElastixParameterTransform`][]
+    (`.txt`) and [`ElastixTomlTransform`][] (`.toml`) are the registered
+    formats.
     """
 
     HINTS = ("elastix", "transformix")
 
-    # Not compared: the transform parameters are an array.
+    # The map is not compared, because the transform parameters are an
+    # array.
     parameter_map: tx.Annotated[ParameterMap, NoEq()] = Factory(
         dict, repr=False
     )
-    """
-    The parameters of the file, in the order in which they were read.
+    """The parameters of the file, in the order in which they were read.
 
-    Each name maps to a tuple of values -- a `str` for a quoted value, an
-    `int` or a `float` for a number -- except the transform parameters,
-    which are a `float64` array.
+    Each name maps to a tuple of strings and numbers, except the transform
+    parameters, which are a float64 array.
     """
 
     initial: tx.Optional[tx.Any] = None
-    """
-    The initial transform that the file chains to, as an
-    `ElastixTransform`, or `None` when it has none or when it was not
-    followed (`initial=False`).
+    """The initial transform, normally an `ElastixTransform`.
+
+    The attribute is `None` when the file names no initial transform, or
+    when the file is read with `initial=False`. A transformation passed as
+    `initial` when reading is kept here as it is.
     """
 
     # --- syntax -------------------------------------------------------
@@ -123,13 +110,11 @@ class ElastixTransform(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score how confident the parser is that the lines are an
-        elastix transform parameter file.
+        """Return the confidence that the lines form an elastix transform.
 
-        The whole map is parsed: it must name a `Transform` and carry its
-        parameters. elastix's *registration* parameter files share the
-        syntax, and name a `Transform` too, but carry no parameters, and
-        are not claimed.
+        The parameters must name a `Transform` and include its parameters,
+        or at least their number. This requirement excludes registration
+        parameter files, which share the syntax of transform files.
         """
         try:
             pmap = cls._read_map(lines)
@@ -150,15 +135,18 @@ class ElastixTransform(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score the text of a file (see `sniff_lines`)."""
+        """Score the text of a file, as in [`sniff_lines`][]."""
         return cls.sniff_lines(text.splitlines(), error=error, **kwargs)
 
     # --- from ---------------------------------------------------------
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """Build the object from an open file. Its `name`, when it has
-        one, is where a relative initial transform is looked for."""
+        """Build the transformation from an open file.
+
+        When the file has a `name`, an initial transform with a relative file
+        name is also looked for next to the file.
+        """
         kwargs.setdefault("origin", getattr(file, "name", None))
         with preserve_position(file):
             content = file.read()
@@ -168,7 +156,7 @@ class ElastixTransform(
 
     @classmethod
     def from_text(cls, text: str, **kwargs) -> tx.Self:
-        """Build the object from the text of a file."""
+        """Build the transformation from the text of a file."""
         return cls.from_lines(text.splitlines(), **kwargs)
 
     @classmethod
@@ -181,34 +169,29 @@ class ElastixTransform(
         origin: tx.Optional[path.FilenameLike] = None,
         **kwargs,
     ) -> tx.Self:
-        """
-        Build the object from the lines of an elastix parameter file.
+        """Build the transformation from the lines of a file.
 
         Parameters
         ----------
-        lines : Iterable[str]
+        lines : iterable of str
             The lines of the file.
-        initial : bool | FilenameLike | Transformation, default=True
-            What to do with the initial transform that the file names in
-            `InitialTransformParameterFileName`:
-
-            - `True`: read it, and the ones it names in turn, as
-              transformix does (see [`resolve_initial`][..resolve_initial]);
-            - `False`: do not read it -- the chain then holds the file's
-              own transform alone;
-            - a file name: read that file instead;
-            - a transformation: use it as the initial transform.
-        origin : FilenameLike, optional
-            The file the lines were read from, against which a relative
-            initial transform is resolved. It is set by `from_filename`.
+        initial : bool, file name or Transformation, default=True
+            The initial transform named in `InitialTransformParameterFileName`.
+            With `True`, the initial transform is read, together with the
+            initial transforms that it names in turn, as transformix does (see
+            [`resolve_initial`][]). With `False`, only the file's own transform
+            is read. A file name or a transformation replaces the named initial
+            transform.
+        origin : file name, optional
+            The file that the lines come from, against which a relative initial
+            transform is resolved. `from_filename` sets it.
 
         Raises
         ------
         ParserNotImplementedError
-            If the file uses a transform that is not supported, or
-            combines with its initial transform by addition
-            (`HowToCombineTransforms "Add"`), which a chain of
-            transformations cannot express.
+            If the transform is not supported, or if it is added to its initial
+            transform (`HowToCombineTransforms "Add"`), which a chain cannot
+            express.
         """
         pmap = cls._read_map(lines)
         if not is_transform_map(pmap):
@@ -258,8 +241,7 @@ class ElastixTransform(
                     f"file's own transform alone."
                 )
         obj = cls(parameter_map=pmap, initial=initial_xform)
-        # Decode the file's own transform now, so that an unsupported
-        # transform fails here rather than on first use.
+        # Decode now, so that an unsupported transform fails here.
         obj.block  # noqa: B018
         return obj
 
@@ -267,7 +249,7 @@ class ElastixTransform(
 
     @property
     def initial_filename(self) -> tx.Optional[str]:
-        """The initial transform that the file names, if any."""
+        """The file name of the initial transform, if the map names one."""
         return initial_filename(self.parameter_map)
 
     @smartproperty(cache=True)
@@ -279,15 +261,12 @@ class ElastixTransform(
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
-        """
-        The chain of transformations, in the order they are applied: the
-        initial transform's (flattened), then the file's own block.
+        """The chain, in the order of application.
 
-        elastix composes a transform with its initial transform as
-        `T(x) = T1(T0(x))` (`AdvancedCombinationTransform::
-        TransformPointUseComposition`): the initial transform applies
-        first. Assigning to it overrides the decoded chain, and is what
-        the writer then encodes.
+        The flattened initial transforms come first and the block of the
+        file's own transform comes last, since elastix computes `T1(T0(x))`.
+        A chain that is assigned to this property overrides the decoded chain,
+        and the writer then encodes the assigned chain.
         """
         chain: tx.List[_xforms.Transformation] = []
         if self.initial is not None:
@@ -301,11 +280,11 @@ class ElastixTransform(
 
     @property
     def fixed_geometry(self) -> tx.Optional[Geometry]:
-        """
-        The geometry of the fixed image (`Size`, `Index`, `Spacing`,
-        `Origin`, `Direction`), which is the grid transformix resamples
-        the moving image onto. Its transformation maps voxels of that
-        grid to LPS millimetres. `None` when the file does not say.
+        """The geometry of the fixed image, or `None` if the file omits it.
+
+        The geometry is the grid onto which transformix resamples the moving
+        image. It is built from `Size`, `Index`, `Spacing`, `Origin` and
+        `Direction`, and its transformation maps voxels to LPS millimetres.
         """
         return fixed_geometry(self.parameter_map)
 
@@ -314,34 +293,30 @@ class ElastixTransform(
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a file.
 
-        The content is built before the file is opened, so a
-        transformation that the format cannot hold is refused without
-        creating or truncating the file.
+        The content is built first, so an unrepresentable transformation leaves
+        the file untouched.
         """
         content = self.to_text(**kwargs) + "\n"
         with path.Path(filename).open("w") as f:
             f.write(content)
 
     def to_map(self) -> ParameterMap:
-        """
-        The parameter map that encodes this transformation.
+        """Return the parameter map that encodes the transformation.
 
-        - A transformation read from a file, and not modified, is written
-          as it was read, initial transform file name included. The
-          initial transform itself is not written: it is its own file.
-        - Otherwise the chain must be a single transformation: an elastix
-          or ITK block (a translation, an Euler, a similarity, an affine
-          or a B-spline), or anything that reduces to an affine, which is
-          written as an `AffineTransform` centered on the origin. The
-          fixed-image geometry and the other non-transform parameters of
-          `parameter_map` are kept. It has no initial transform.
+        An unmodified transformation is written as it was read, including the
+        file name of its initial transform, which lives in its own file.
+        Otherwise, the chain must be a single block that elastix supports
+        (translation, Euler, similarity, affine or B-spline), or it must
+        reduce to an affine, which is then written as an `AffineTransform`
+        centered on the origin. The fixed geometry and the other parameters
+        of `parameter_map` are kept, and the result has no initial transform.
 
         Raises
         ------
         UnrepresentableTransformationError
             If the chain cannot be written as a single elastix transform.
         """
-        if getattr(self, "_transformations", None) is None:
+        if self._transformations is None:
             if not self.parameter_map:
                 raise UnrepresentableTransformationError(
                     "This elastix transformation is empty."
@@ -366,7 +341,7 @@ class ElastixTransform(
             ) from e
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
-        """The lines of the parameter file (see `to_map`)."""
+        """Yield the lines of the parameter file (see [`to_map`][])."""
         return self._format_map(self.to_map())
 
 
@@ -377,10 +352,7 @@ class ElastixTransform(
 
 @register_format
 class ElastixParameterTransform(ElastixTransform):
-    """
-    A transformation stored in a classic elastix transform parameter file
-    (`TransformParameters.0.txt`), one `(Name value ...)` per line.
-    """
+    """Classic `(Name value ...)` elastix parameter file (`.txt`)."""
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
     HINTS = ("params",)
@@ -396,10 +368,7 @@ class ElastixParameterTransform(ElastixTransform):
 
 @register_format
 class ElastixTomlTransform(ElastixTransform):
-    """
-    A transformation stored in an elastix TOML transform parameter file
-    (`TransformParameters.0.toml`), one `Name = value` per line.
-    """
+    """TOML `Name = value` elastix parameter file (`.toml`)."""
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".toml",)
     HINTS = ("toml",)
@@ -419,11 +388,12 @@ class ElastixTomlTransform(ElastixTransform):
 
 
 def initial_filename(pmap: ParameterMap) -> tx.Optional[str]:
-    """The initial transform a map names, if any.
+    """Return the file name of the initial transform in a parameter map.
 
-    elastix reads `InitialTransformParameterFileName` and, failing it,
-    the deprecated `InitialTransformParametersFileName` (with an "s");
-    `"NoInitialTransform"` means none.
+    elastix reads `InitialTransformParameterFileName`, or else the deprecated
+    `InitialTransformParametersFileName`. The value `"NoInitialTransform"`
+    means that there is no initial transform, so the function then returns
+    `None`, as it does when neither key is set.
     """
     for key in (
         "InitialTransformParameterFileName",
@@ -436,7 +406,8 @@ def initial_filename(pmap: ParameterMap) -> tx.Optional[str]:
 
 
 def _is_absolute(name: str) -> bool:
-    # elastix's own test: a leading slash or backslash, or a drive letter.
+    # This is the test that elastix uses: a name is absolute if it starts
+    # with a slash, a backslash or a drive letter.
     return name.startswith(("/", "\\")) or (
         len(name) > 1 and name[0].isalpha() and name[1] == ":"
     )
@@ -445,21 +416,20 @@ def _is_absolute(name: str) -> bool:
 def resolve_initial(
     name: str, origin: tx.Optional[path.FilenameLike] = None
 ) -> path.Path:
-    """
-    Find the initial transform file that a parameter file names.
+    """Find the initial transform file that a parameter file names.
 
-    elastix (`TransformBase::ReadFromFile`) uses the name as it is when
-    it is absolute, or when it exists relative to the working directory;
-    otherwise it looks for it relative to the directory of the parameter
-    file that names it. The same is done here, with one more step: a name
-    that is found nowhere is looked for, by its base name, next to the
-    parameter file -- elastix writes absolute paths, which break when a
-    registration's output folder is moved.
+    As in elastix (`TransformBase::ReadFromFile`), the name is used as it is
+    when it is absolute or exists relative to the working directory, and it
+    is otherwise resolved against the directory of the naming file. The
+    absolute paths that elastix writes break when the output folder moves,
+    so a name that is found nowhere else is also looked up by its base name
+    next to the naming file.
 
     Raises
     ------
     ParserExistsError
-        If the file cannot be found. It is a `FileNotFoundError`.
+        If the file cannot be found. This error is a subclass of
+        `FileNotFoundError`.
     """
     candidates = []
     directory = None
