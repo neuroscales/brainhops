@@ -600,6 +600,125 @@ def test_writer_writes_a_diagonal_level_as_a_scale_then_a_translation(
     )
 
 
+# ---- flips on write ----------------------------------------------------
+
+
+def _scales_written(path: str) -> tx.List[tx.List[float]]:
+    # Every OME scale of the metadata, in the levels and in the placements.
+    import json
+
+    with open(Path(path) / "zarr.json") as stream:
+        ome = json.load(stream)["attributes"]["ome"]
+    found = []  # type: tx.List[tx.List[float]]
+
+    def walk(entry: dict) -> None:
+        if entry.get("type") == "scale":
+            found.append(entry["scale"])
+        for child in entry.get("transformations", []):
+            walk(child)
+
+    for multiscale in ome["multiscales"]:
+        for dataset in multiscale["datasets"]:
+            for entry in dataset["coordinateTransformations"]:
+                walk(entry)
+        for entry in multiscale.get("coordinateTransformations", []):
+            walk(entry)
+    return found
+
+
+def _flipped_pyramid(placements: tx.Optional[list] = None) -> OmeZarrImage:
+    data = np.zeros((4, 4, 4), "float32")
+    fine = SingleScaleImage(
+        data, transformations=[_diag_affine([-1.0, 2.0, 3.0], [5, 6, 7])]
+    )
+    coarse = SingleScaleImage(
+        data[::2, ::2, ::2],
+        transformations=[_diag_affine([-2.0, 4.0, 6.0], [4.5, 7, 8])],
+    )
+    return OmeZarrImage(
+        images=[fine, coarse],
+        axes=_spatial_axes(),
+        transformations=placements,
+    )
+
+
+def _world_of_level(pyramid: tx.Any, index: int) -> np.ndarray:
+    from brainhops.datamodel.transformations import Sequence
+
+    level = pyramid.images[index].transformation
+    if not pyramid.transformations:
+        return _world_matrix(level)
+    return _world_matrix(Sequence([level, pyramid.transformation]))
+
+
+@pytest.mark.parametrize("placed", [False, True])
+def test_writer_moves_a_shared_flip_to_the_placement(
+    tmp_path: Path, placed: bool
+) -> None:
+    # The flip that every level shares becomes a linear placement, written
+    # as an affine, and each level keeps a positive scale (memo item 135).
+    placements = [Translation([1.0, 2.0, 3.0])] if placed else None
+    pyramid = _flipped_pyramid(placements)
+    path = str(tmp_path / "flipped.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    assert all(value > 0 for scale in _scales_written(path) for value in scale)
+    for index in range(2):
+        np.testing.assert_allclose(
+            _world_of_level(back, index), _world_of_level(pyramid, index)
+        )
+
+
+def test_writer_writes_a_flipped_placement_as_an_affine(
+    tmp_path: Path,
+) -> None:
+    from brainhops.datamodel.transformations import Scaling
+
+    pyramid = OmeZarrImage(
+        images=[SingleScaleImage(np.zeros((3, 4, 5), "float32"))],
+        axes=_spatial_axes(),
+        transformations=[Scaling([-1.0, 1.0, 2.0])],
+    )
+    path = str(tmp_path / "flipped.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    assert all(value > 0 for scale in _scales_written(path) for value in scale)
+    np.testing.assert_allclose(
+        _world_matrix(back.transformation),
+        _world_matrix(pyramid.transformation),
+    )
+
+
+def test_writer_refuses_levels_that_flip_different_axes(
+    tmp_path: Path,
+) -> None:
+    data = np.zeros((4, 4, 4), "float32")
+    fine = SingleScaleImage(
+        data, transformations=[_diag_affine([-1.0, 2.0, 3.0], [0, 0, 0])]
+    )
+    coarse = SingleScaleImage(
+        data[::2, ::2, ::2],
+        transformations=[_diag_affine([2.0, -4.0, 6.0], [0, 0, 0])],
+    )
+    pyramid = OmeZarrImage(images=[fine, coarse], axes=_spatial_axes())
+
+    with pytest.raises(WriterError, match="#447"):
+        pyramid.save(str(tmp_path / "refused.zarr"))
+
+
+def test_writer_refuses_a_flip_in_a_version_without_affines(
+    tmp_path: Path,
+) -> None:
+    # Versions 0.4 and 0.5 only hold scales and translations, with no slot
+    # for the linear placement of a flip.
+    with pytest.raises(WriterError, match="flip"):
+        _flipped_pyramid().save(str(tmp_path / "old.zarr"), version="0.5")
+
+
 # ---- systems of other groups ------------------------------------------
 
 

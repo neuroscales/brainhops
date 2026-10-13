@@ -956,3 +956,44 @@ def test_a_transformation_to_the_same_group_by_path_is_read() -> None:
         ]
     )
     assert placement.output.name == "world"
+
+
+# ---- flips on write --------------------------------------------------
+
+
+def test_a_negative_scale_is_written_as_an_affine() -> None:
+    # A flip is never written as a negative OME scale (memo item 135).
+    entry = _map.to_ome(Scaling(scale=[-1.0, 2.0, 3.0]), _TO_ZYX, 3)
+    assert entry == {
+        "type": "affine",
+        "affine": [
+            [3.0, 0.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 0.0],
+        ],
+    }
+
+
+def test_a_flipped_diagonal_affine_is_written_as_an_affine() -> None:
+    matrix = np.zeros((3, 4))
+    matrix[[0, 1, 2], [0, 1, 2]] = [2.0, -3.0, 4.0]
+    matrix[:, 3] = [1.0, 2.0, 3.0]
+    entry = _map.to_ome(Affine(matrix=matrix), _TO_ZYX, 3)
+    assert entry["type"] == "affine"
+    assert _map.to_dataset_ome(Affine(matrix=matrix), _TO_ZYX, 3) is None
+
+
+def test_a_flip_factors_out_of_a_diagonal_geometry() -> None:
+    matrix = np.zeros((3, 4))
+    matrix[[0, 1, 2], [0, 1, 2]] = [-2.0, 3.0, 4.0]
+    matrix[:, 3] = [1.0, 2.0, 3.0]
+    geometry = Affine(matrix=matrix)
+
+    signs = _map.diagonal_signs(geometry, 3)
+    rest = _map.unflipped(geometry, signs, 3)
+
+    np.testing.assert_array_equal(signs, [-1.0, 1.0, 1.0])
+    np.testing.assert_allclose(np.diag(np.asarray(rest.matrix)), [2, 3, 4])
+    linear = np.asarray(_map.flip(signs).matrix)
+    composed = linear[:, :3] @ np.asarray(rest.matrix)
+    np.testing.assert_allclose(composed, matrix)
