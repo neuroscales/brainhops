@@ -64,7 +64,8 @@ niftyreg = ["brainhops[nifti]"]
 zarr = [
     # 0.2 for OME 0.6 support;
     # 0.2.1 opens and creates a store from any os.PathLike.
-    "abczarr >= 0.2.1",
+    # 0.2.3 checks that a 0.6 dataset only scales and translates.
+    "abczarr >= 0.2.3",
     # abczarr reads and writes Zarr through a driver.
     # The zarr-py driver needs zarr-python 3, which requires python >= 3.11
     "zarr >= 3; python_version >= '3.11'",
@@ -73,9 +74,9 @@ zarr = [
     # range 3.8-3.10.
     "tensorstore >= 0.1.43 ; python_version <= '3.10'",
 ]
-zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
-zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]
-zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
+zarr-python = ["abczarr[zarr-py] >= 0.2.3"]
+zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.3", "tensorstore >= 0.1.43"]
+zarr-zarrista = ["abczarr[zarrista] >= 0.2.3"]
 io = [
     "brainhops[h5py]",
     "brainhops[nibabel]",
