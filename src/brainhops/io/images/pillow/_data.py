@@ -38,7 +38,9 @@ class _PillowProxy:
     file that it was read from.
     """
 
-    def __init__(self, source: tx.Any, record: PillowRaw, palette: bool):
+    def __init__(
+        self, source: tx.Any, record: PillowRaw, palette: bool
+    ) -> None:
         self.source = source
         """The path of the file, or the stream that holds it."""
         self.record = record

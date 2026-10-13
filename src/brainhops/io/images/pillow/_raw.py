@@ -319,4 +319,3 @@ def _picklable(info: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
             continue
         kept[key] = value
     return kept
-

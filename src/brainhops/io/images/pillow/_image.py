@@ -995,4 +995,3 @@ def _dpi_pair(dpi: tx.Any) -> tx.Tuple[float, float]:
             f"A resolution is one number or an (x, y) pair, not {dpi!r}."
         )
     return values[0], values[1]
-

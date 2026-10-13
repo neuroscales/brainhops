@@ -118,4 +118,6 @@ class PillowMetadata(MetadataFormat, BinaryFileReader):
         PillowMetadata
             The metadata, which holds the record of the header.
         """
-        return cls.from_raw(PillowRaw.from_fileobj(file, frame=frame, **kwargs))
+        return cls.from_raw(
+            PillowRaw.from_fileobj(file, frame=frame, **kwargs)
+        )
