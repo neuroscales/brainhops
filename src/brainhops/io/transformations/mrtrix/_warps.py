@@ -49,6 +49,7 @@ from brainhops.io.common.mrtrix._files import (
     placed_record,
     reads_from,
     stored_voxels,
+    stores_as_recorded,
     write_mrtrix,
     writer_options,
     writer_strides,
@@ -609,9 +610,10 @@ class MrtrixCoordinatesField(
         read back as a field of coordinates. When
         this encoding gives the record of the metadata, the metadata is
         kept. An `input` or `output` that was assigned must be scanner
-        RAS, which is what the file stores. A field that has a record and
-        nothing pending, consolidated without options, is left as it is:
-        the copy shares `raw` and the metadata.
+        RAS, which is what the file stores. A field that has a record
+        storing its values as they are stored, and nothing pending,
+        consolidated without options, is left as it is: the copy shares
+        `raw` and the metadata.
 
         Parameters
         ----------
@@ -659,6 +661,7 @@ class MrtrixCoordinatesField(
             and all(value is None for value in options.values())
             and self.metadata is not None
             and self.metadata.raw is not None
+            and stores_as_recorded(self.raw, self.metadata.raw)
         ):
             return self if inplace else replace(self)
         if self._transformations is None:
@@ -888,6 +891,7 @@ class MrtrixDisplacementField(
             and all(value is None for value in options.values())
             and self.metadata is not None
             and self.metadata.raw is not None
+            and stores_as_recorded(self.raw, self.metadata.raw)
         ):
             return self if inplace else replace(self)
         if self._transformations is None:
@@ -1256,9 +1260,10 @@ class MrtrixWarpFull(
         record, whose linear transforms and other keys are kept, and
         `keyval` is merged into them last. The values are stored as for
         [`MrtrixCoordinatesField.consolidate`][]. A warpfull object that
-        has a record and nothing pending, consolidated without options, is
-        left as it is. `from_image` and `midway` select what is decoded,
-        and are not written.
+        has a record storing its warps as they are stored, and nothing
+        pending, consolidated without options, is left as it is.
+        `from_image` and `midway` select what is decoded, and are not
+        written.
 
         Parameters
         ----------
@@ -1311,6 +1316,7 @@ class MrtrixWarpFull(
             and all(value is None for value in options.values())
             and self.metadata is not None
             and self.metadata.raw is not None
+            and stores_as_recorded(self.raw, self.metadata.raw)
         ):
             return self if inplace else replace(self)
         source = _stored(self)
