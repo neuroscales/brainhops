@@ -250,12 +250,18 @@ def test_the_basis_is_spm_dctmtx() -> None:
         assert np.allclose(basis.T @ basis, np.eye(count))
 
 
-def test_the_field_is_what_spm_computes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("array_backend", ["numpy", "dask"])
+def test_the_field_is_what_spm_computes(
+    tmp_path: Path, array_backend: str
+) -> None:
+    if array_backend == "dask":
+        pytest.importorskip("dask")
     path = _save(tmp_path / "sub-01_T1w_sn.mat")
-    sn = SpmSnTransformation.load(path)
     expected = _spm_sn2def(_variables())
     # The deformation field that SPM writes holds Def on the template grid.
-    y = sn.to(SpmCoordinatesField)
+    with backend(array_backend):
+        sn = SpmSnTransformation.load(path)
+        y = sn.to(SpmCoordinatesField)
     assert np.allclose(np.asarray(y.rasfield.values), expected, atol=1e-9)
     assert np.allclose(
         np.linalg.inv(y.ras2voxel.homogeneous_matrix),
