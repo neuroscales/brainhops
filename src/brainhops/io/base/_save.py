@@ -62,13 +62,13 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
 
     A candidate that refuses `obj` gives way to the next, in step 3
     and then in step 4, until one writes it. A candidate refuses when
-    `obj` cannot be converted to it (`ConversionError`), or when it
-    cannot write what it was built from `obj` (`WriterError`, such as
-    `UnrepresentableTransformationError`), as a `register.dat` file
-    refuses an affine between scanner RAS spaces without the geometries
-    of both volumes. Any other error, such as an `OSError` when the file
-    cannot be written, is raised at once, and no other candidate is
-    tried.
+    `obj` cannot be converted to it, or when its writer cannot write
+    what was built from `obj` and raises a `ConversionError` or a
+    `WriterError`, such as `UnrepresentableTransformationError`: a
+    `register.dat` file refuses an affine between scanner RAS spaces
+    without the geometries of both volumes. An `OSError`, as when the
+    file cannot be written, is raised at once, as is any other error of
+    a writer, and no other candidate is tried.
 
     !!! note "Nothing is approximated"
         A transformation is written only in a format that holds it
