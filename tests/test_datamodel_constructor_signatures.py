@@ -383,6 +383,9 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.images.pillow._image": {
         "PillowImage": ("data", "transformations"),
     },
+    "brainhops.io.images.stack._image": {
+        "StackImage": ("data", "transformations"),
+    },
     "brainhops.io.images.precomputed._image": {
         "PrecomputedImage": ("data", "transformations"),
     },

@@ -180,8 +180,8 @@ encoders read the list without storing it, so that a write leaves the
 image as it was. Assigning other metadata drops the cached list and
 keeps an assigned one, as the rules below require. This applies to the
 images that take `transformations` over: the toy image of the tests,
-NIfTI, MGH, AFNI, MRtrix, NRRD and MINC. MINC cannot be written, so it
-keeps the list that it holds.
+NIfTI, MGH, AFNI, MRtrix, NRRD, MINC and image stacks. MINC cannot be
+written, so it keeps the list that it holds.
 
 Within a format, `replace` and `from_instance` copy `_data` and
 `_transformations` as they are stored, so a copy of an untouched object
@@ -1208,6 +1208,88 @@ its status.
 120. Pillow reads signed JPEG 2000 samples but cannot encode them, so an
      image of signed samples can be written only while its coded image is
      copied. Status: open, and older than this work.
+121. An image stack (#193) is an image whose file is a folder of
+     numbered two-dimensional files (`io/images/stack`). The folder has
+     no header, so its record, `StackRaw`, lists the files and holds the
+     header of each one, with the stacking axis and the geometry of the
+     stack. TIFF and Pillow images have no record on the main branch
+     yet, so the header of a member is the structure that their readers
+     already parse: the `TiffMetadata` of the TIFF backend, and a
+     `PillowHeader` that the Pillow backend reads without decoding the
+     pixels. Status: open. The members are to hold `TiffRaw` and
+     `PillowRaw` once the TIFF (#459) and Pillow (#458) records are on
+     the main branch.
+122. Image stacks are written as folders of numbered files, through the
+     TIFF and Pillow writers of single files. `StackImage.consolidate()`
+     is the only encoding, and a save writes a consolidated copy and
+     leaves the image unchanged. An untouched stack copies the bytes of
+     its files, so a folder that is saved again is identical file for
+     file. A slice without a file is not written. A folder is written
+     beside its target and moved in its place by `_replace_folder`
+     (`io/images/stack/_files.py`), which follows `replace_directory` of
+     the pyramid core (#451) and replaces an existing folder only if it
+     holds nothing but images, and nothing but the files that the image
+     reads when it reads some of them. Files with numbered names, such as
+     `out_0.tif` for the path `out.tif`, are all written under hidden
+     names before any of them is renamed. Status: implemented. The
+     helper is to be replaced with `replace_directory` once #451 is on
+     the main branch.
+123. The conformance harness has a field `Exemplar.folder` for a format
+     whose object is a folder. Check 12 then checks that the format and
+     its metadata refuse bytes and streams, since neither can hold a
+     folder. Check 5 compares the folders file by file, and writes the
+     copy of the generic writer with `from_instance` and the format
+     itself, since no extension names a folder for `io.save` to choose
+     from. The metadata of a stack is written only with its image, so
+     checks 7 and 10 compare the records of metadata that cannot write.
+     The stack has no writer option that changes its stored data, so
+     check 16a is skipped. Check 6 cuts each TIFF file of the folder
+     before its pixels, which tifffile writes after the tags. Status:
+     accepted in the review of #431.
+124. The size of the pixels, the spacing of the slices and their unit
+     are fields of `StackRaw`, decoded from the files where they record
+     them, and the reader options `pixel_size`, `spacing` and `unit` set
+     them on load, as the review of #431 asks "for now". An untouched
+     stack is copied byte for byte, so a size that an option set is not
+     written into its files. A consolidated record holds only what the
+     files record: a TIFF file records the pixel size when it has a unit
+     of length, and the magnitude of the spacing, as the `PhysicalSizeZ`
+     of a volume of one slice, when it has no channels, and a Pillow file
+     records no size. A translation, a rotation and a flip within a file
+     are not recorded. Status: open, until the TIFF and Pillow records
+     decide where these sizes live.
+125. `StackImage` and `StackMetadata` claim a local folder that is not a
+     Zarr store and whose image files follow one numbering, with the
+     confidence `LIKELY`, judged by the names alone. They never claim a
+     file, a stream or bytes, so they take nothing from the TIFF and
+     Pillow readers. Status: accepted in the review of #431.
+126. A number that no file carries is a missing slice. The record does
+     not store the missing numbers, which follow from the numbers of its
+     members (`StackRaw.missing`), so a record cannot contradict itself.
+     The lazy array fills a missing slice with the reader option `fill`,
+     NaN or zero by default, without reading a file. `fill` describes
+     how the pixels are read, so it is held by the lazy array and is not
+     a field. Assigned data covers every slice, so a stack consolidated
+     with assigned data has no missing slice, and the values that filled
+     a missing slice are written as a file. Status: open, for the
+     maintainer to decide whether assigned data should keep the missing
+     slices of the record.
+127. The stacking axis is the field `StackRaw.axis`, which the reader
+     option `axis` sets and the writer option `axis` changes. Names that
+     carry several numbers, one per axis, are refused. Supporting them
+     would give each member one number per stacking axis and the record
+     one axis per number, which the fields `StackMember.number` and
+     `StackRaw.axis` leave room for. Status: open, for a later pull
+     request.
+128. `StackImage` declares no extension, so `io.save` writes an image
+     stack to `volume.tif` as one multi-page TIFF file, and cannot
+     choose the stack for a path without an extension. A folder is
+     written with `StackImage.save`, or with
+     `StackImage.from_instance(image).save` for another image. Declaring
+     the TIFF and Pillow extensions would let `io.save(stack, "out.tif")`
+     write numbered files, but would also make the stack a candidate for
+     every TIFF and Pillow file that is loaded. Status: open, for the
+     maintainer to decide.
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,
@@ -1449,10 +1531,10 @@ its status.
      read the assigned list, or else the cached one, through
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
-     the formats merged later (N5, Imaris, precomputed, JPEG 2000 and
-     BigDataViewer) follow the same rule, and the JPEG 2000 pyramid caches the levels
-     and the placements that it decodes in the same way. Status:
-     resolved.
+     the formats merged later (N5, Imaris, precomputed, JPEG 2000,
+     BigDataViewer and image stacks) follow the same rule, and the JPEG
+     2000 pyramid caches the levels and the placements that it decodes in
+     the same way. Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
      the cache, so it is lost when other metadata is assigned, and a copy
      made with `replace` or `from_instance` decodes the list again instead

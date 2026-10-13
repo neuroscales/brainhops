@@ -78,6 +78,15 @@ if HAS_TIFFFILE:
 else:
     register_missing_format(["tiff", "tifffile"], "tifffile", "tiff")
 
+# A stack of image files is read with tifffile or Pillow, so it needs at
+# least one of them.
+if HAS_TIFFFILE or HAS_PILLOW:
+    from . import stack
+
+    __all__ += ["stack"]
+else:
+    register_missing_format(["stack"], "tifffile or Pillow", "tiff")
+
 # OpenSlide needs both the Python package and the C library. Without it,
 # TIFF-based slides fall back to the TIFF reader.
 if HAS_OPENSLIDE:

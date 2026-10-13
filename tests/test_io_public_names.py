@@ -70,6 +70,16 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.images.stack": Package(
+        names=frozenset(
+            {
+                "StackImage",
+                "StackMember",
+                "StackMetadata",
+                "StackRaw",
+            }
+        ),
+    ),
     "brainhops.io.common.bdv": Package(
         names=frozenset({"BdvMetadata", "BdvRaw"}),
     ),
