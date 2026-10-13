@@ -1387,8 +1387,8 @@ its status.
      read the assigned list, or else the cached one, through
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
-     the formats merged later (N5, Imaris, precomputed and JPEG 2000)
-     follow the same rule, and the JPEG 2000 pyramid caches the levels
+     the formats merged later (N5, Imaris, precomputed, JPEG 2000 and
+     BigDataViewer) follow the same rule, and the JPEG 2000 pyramid caches the levels
      and the placements that it decodes in the same way. Status:
      resolved.
 191. A change made in place to a decoded list of transformations lives in
@@ -1396,8 +1396,8 @@ its status.
      made with `replace` or `from_instance` decodes the list again instead
      of copying the change. A write of the image itself, including
      `io.save`, still writes the change. Assigning the changed list keeps
-     it everywhere. The images that cannot be written (N5, Imaris and
-     precomputed) have no record to encode the change into, so their
+     it everywhere. The images that cannot be written (N5, Imaris,
+     precomputed and BigDataViewer) have no record to encode the change into, so their
      `consolidate` gives the copy the changed list as an assigned one.
      Status: open, for the maintainer to decide whether copies within a
      format should carry the cache.
@@ -1446,7 +1446,9 @@ registrations of its views back into the XML file.
      writing one image would mean rewriting or editing in place a file
      that h5py does not write back byte for byte (item 48). The
      registration of a view is written by `BdvViewRegistration`, into
-     the same XML file. Status: decided in this pass.
+     the same XML file. The `transformations` of an image follows item
+     190, and its `consolidate` gives a copy a decoded list changed in
+     place, as item 191 says. Status: decided in this pass.
 202. The record of an image holds the XML file and also what the HDF5
      file says about the resolution levels of each setup
      (`BdvRaw.pyramids`), which the image reader adds, because the
