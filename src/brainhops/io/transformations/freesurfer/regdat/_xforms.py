@@ -36,12 +36,16 @@ from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
 )
+from brainhops.io.transformations.base._records import (
+    matrix_to_disk,
+    matrix_to_model,
+    read_only,
+)
 
 # this format
 from .._formats import FreesurferTransformationFormat
 from ..lta import LtaRaw
 from ..lta._matrix_utils import _volume_geometry
-from ..lta._xforms import _matrix_to_disk, _matrix_to_model, _read_only
 from ._metadata import RegisterDatMetadata
 from ._raw import RegisterDatRaw
 
@@ -243,7 +247,7 @@ class RegisterDatTransformation(
         record = _record(self)
         if record is None:
             return None
-        return _read_only(_matrix_to_model(record.matrix))
+        return read_only(matrix_to_model(record.matrix))
 
     # --- sniff --------------------------------------------------------
 
@@ -563,7 +567,7 @@ class RegisterDatTransformationRASToRAS(RegisterDatTransformation):
             return None
         reference, moving = _geometries(self)
         tkr = np.asarray(record.matrix, dtype=np.float64)
-        return _read_only(_tkr_to_scanner(tkr, reference, moving)[:-1])
+        return read_only(_tkr_to_scanner(tkr, reference, moving)[:-1])
 
 
 # ----------------------------------------------------------------------
@@ -640,7 +644,7 @@ def _build_raw(xform: RegisterDatTransformation) -> RegisterDatRaw:
             f"A register.dat file encodes a 3D affine, of shape (3, 4), but "
             f"the matrix has shape {shape}."
         )
-    homogeneous = np.asarray(_matrix_to_disk(data), dtype=np.float64)
+    homogeneous = np.asarray(matrix_to_disk(data), dtype=np.float64)
     if both(FreesurferTkrSystem):
         matrix = homogeneous
     elif both(_systems.RASmm):
