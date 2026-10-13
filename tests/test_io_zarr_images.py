@@ -996,22 +996,20 @@ def test_reader_maps_a_map_axis_to_a_permutation(tmp_path: Path) -> None:
     np.testing.assert_array_equal(np.asarray(geometry.permutation), [1, 0])
 
 
-def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
-    # A mapAxis over an increasing subset of the input axes, as the
-    # 0.6.dev1 draft allowed, is a Projection; tested on the mapping, since
-    # such a level is not wired through the reader.
+def test_reader_refuses_a_map_axis_over_a_subset_of_the_axes() -> None:
+    # A subset of the input axes was never a valid mapAxis, and the drop is
+    # spelled projectAxis (docs/design/compute-api-and-open-systems.md,
+    # section A.8); tested on the mapping, since such a level is not wired
+    # through the reader.
     from abczarr.ome.v0_6.transformations import CoordinateTransformation
 
-    from brainhops.datamodel.transformations import Projection
     from brainhops.io.images.zarr import _ome
 
     transform = CoordinateTransformation.from_json(
         {"type": "mapAxis", "mapAxis": [0, 2]}
     )
-    projection = _ome._map_transform(transform, [0, 1, 2], [0, 1])
-    assert isinstance(projection, Projection)
-    np.testing.assert_array_equal(np.asarray(projection.dropped), [1])
-    np.testing.assert_array_equal(np.asarray(projection.created), [])
+    with pytest.raises(OmeImageError):
+        _ome._map_transform(transform, [0, 1, 2], [0, 1])
 
 
 # Displacement and coordinate fields
@@ -1441,21 +1439,25 @@ def test_writer_writes_an_inverted_placement_forward(tmp_path: Path) -> None:
 
 
 def _displacement_group(
-    group: tx.Any, path: str, vector: tx.List[float]
+    group: tx.Any,
+    path: str,
+    vector: tx.List[float],
+    kind: str = "displacement",
 ) -> None:
-    """Write a 0.6 displacement field group with a constant vector.
+    """Write a 0.6 field group with a constant vector.
 
     The vector axis comes before the spatial axes, as OME-NGFF 0.6
-    requires, and the field is sampled every two units.
+    requires, and the field is sampled every two units. `kind` is the type
+    of the vector axis, `"displacement"` or `"coordinate"`.
     """
     from abczarr.ome import v0_6 as v6
 
-    field = np.zeros((3, 3, 3, 2), dtype="float32")
+    field = np.zeros((len(vector), 3, 3, 2), dtype="float32")
     for component, value in enumerate(vector):
         field[component] = value
     node = group.create_group(path)
     node.create_array("0", data=field)
-    axes = [{"name": "d", "type": "displacement", "discrete": True}]
+    axes = [{"name": "d", "type": kind, "discrete": True}]
     node.ome = v6.OME.from_json(
         {
             "version": "0.6",
@@ -1576,3 +1578,65 @@ def test_base_to_store_refuses_a_parser_without_a_node(
     with pytest.raises(WriterError, match="nothing to write"):
         writer.to_store(str(tmp_path / "out.zarr"))
     assert not (tmp_path / "out.zarr").exists()
+
+
+def _field_pyramid(
+    tmp_path: Path,
+    kind: str,
+    vector: tx.List[float],
+    interpolation: tx.Optional[str] = None,
+) -> str:
+    """Write a pyramid placed in `warped` by a 0.6 field group."""
+    common = {
+        "type": kind + "s",
+        "path": "fields/f",
+        "input": {"name": "intrinsic"},
+        "output": {"name": "warped"},
+    }
+    if interpolation is not None:
+        common["interpolation"] = interpolation
+    path = _named_pyramid(
+        tmp_path, [{"name": "warped", "axes": _space("zyx")}], [common]
+    )
+    group = abczarr.open_group(path, mode="r+")
+    _displacement_group(group, "fields/f", vector, kind)
+    return path
+
+
+@pytest.mark.parametrize(
+    ("interpolation", "degree"),
+    [("nearest", 0), ("linear", 1), ("bspline-cubic", 3), (None, 1)],
+)
+def test_reader_reads_the_interpolation_of_a_field_group(
+    tmp_path: Path, interpolation: tx.Optional[str], degree: int
+) -> None:
+    from brainhops.datamodel.transformations import DisplacementField
+
+    path = _field_pyramid(
+        tmp_path, "displacement", [1.0, 2.0, 3.0], interpolation
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    field = placement.transformations[1]
+    (vectors,) = [
+        part
+        for part in field.transformations
+        if isinstance(part, DisplacementField)
+    ]
+    assert int(vectors.degree) == degree
+
+
+def test_reader_refuses_an_unknown_interpolation(tmp_path: Path) -> None:
+    path = _field_pyramid(
+        tmp_path, "displacement", [1.0, 2.0, 3.0], "windowed-sinc"
+    )
+    with pytest.raises(OmeImageError, match="windowed-sinc"):
+        OmeZarrImage.from_store(path)
+
+
+def test_reader_refuses_coordinates_of_another_length(
+    tmp_path: Path,
+) -> None:
+    # The field has two components, but the output system has three axes.
+    path = _field_pyramid(tmp_path, "coordinate", [1.0, 2.0])
+    with pytest.raises(OmeImageError, match="components"):
+        OmeZarrImage.from_store(path)

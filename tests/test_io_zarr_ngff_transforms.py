@@ -698,3 +698,53 @@ def test_translation_of_a_sequence_is_exact_in_brainhops_order() -> None:
     np.testing.assert_allclose(
         np.asarray(translation.translation), [10.0, 20.0, 30.0]
     )
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        {"type": "mapAxis", "mapAxis": [0, 5]},
+        {"type": "mapAxis", "mapAxis": [0, 1, 2]},
+        {"type": "projectAxis", "droppedInputs": [5]},
+        {
+            "type": "projectAxis",
+            "droppedInputs": [0, 0],
+            "createdOutputs": [0],
+        },
+        {"type": "projectAxis", "droppedInputs": [-1]},
+    ],
+)
+def test_axis_indices_must_be_valid_and_unique(transform: dict) -> None:
+    # OME-NGFF 0.6 requires valid, unique and zero-based indices.
+    with pytest.raises(_map.OmeMappingError):
+        _map_json(transform, _system(_ZYX), _system(_YX))
+
+
+def test_project_axis_refuses_a_created_index_out_of_range() -> None:
+    with pytest.raises(_map.OmeMappingError):
+        _map_json(
+            {
+                "type": "projectAxis",
+                "droppedInputs": [0],
+                "createdOutputs": [3],
+            },
+            _system(_ZYX),
+            _system(_ZYX),
+        )
+
+
+def test_a_dropping_projection_into_the_intrinsic_space_is_refused() -> None:
+    # A projection that drops an axis has no inverse
+    # (docs/design/compute-api-and-open-systems.md, section A.8).
+    with pytest.raises(OmeImageError, match="dropping axes"):
+        _commons(
+            [
+                {
+                    "type": "projectAxis",
+                    "droppedInputs": [0],
+                    "createdOutputs": [0],
+                    "input": {"name": "world"},
+                    "output": {"name": "intrinsic"},
+                }
+            ]
+        )
