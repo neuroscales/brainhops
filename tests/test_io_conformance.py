@@ -931,6 +931,18 @@ class Exemplar(tx.NamedTuple):
     then the header file, beside an empty file of data.
     """
 
+    fixture: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
+    """Function that writes the file that the checks read, or `None`.
+
+    The function receives a path and data. It is `None` when the checks
+    write that file by saving an object built from data. A format that
+    reads several kinds of files from the header that it keeps, such as
+    the coefficient files of FNIRT, writes only the default kind from
+    data alone, because a record is never made up. A variant for another
+    kind therefore writes its file with this function, while the format
+    still writes the files that it reads.
+    """
+
     folder: bool = False
     """Whether an object of the format is a folder of files.
 
@@ -1040,6 +1052,26 @@ _VOXEL_TO_RAS = np.array(
 it."""
 
 
+def _fnirt_coefficient_file(path: tx.Any, data: np.ndarray) -> None:
+    # The header that FNIRT writes with --cout: the intent of cubic
+    # coefficients, the voxel sizes of the reference in the intent
+    # parameters, the knot spacing in the pixdims, the shape of the
+    # reference in the offsets of the qform and the initial affine in the
+    # sform (`common_coef_construction` in
+    # `src/warpfns/fnirt_file_writer.cpp` of FSL 5.0.9).
+    image = nb.Nifti1Image(data, None)
+    image.header["intent_code"] = 2007
+    image.header["intent_p1"] = 2.0
+    image.header["intent_p2"] = 2.0
+    image.header["intent_p3"] = 2.0
+    image.header.set_zooms((5.0, 5.0, 5.0, 1.0))
+    qform = np.diag([5.0, 5.0, 5.0, 1.0])
+    qform[:3, 3] = (5, 10, 15)
+    image.set_qform(qform, 1)
+    image.set_sform(np.eye(4), 1)
+    nb.save(image, str(path))
+
+
 def _vectors() -> np.ndarray:
     # Whole numbers, so that adding and removing the grid of a field that
     # stores positions is exact in single precision.
@@ -1141,7 +1173,7 @@ if nb is not None:
         EXEMPLARS[_cls] = _ITK._replace(
             build=lambda data, cls=_cls: cls(raw=_itk_field_to_disk(data))
         )
-    EXEMPLARS[FnirtWarpField] = _NIFTI._replace(
+    _FNIRT = _NIFTI._replace(
         sample=_vectors,
         # FNIRT holds no grid that the model encodes, so its data stands in.
         geometry=_data_geometry,
@@ -1150,6 +1182,7 @@ if nb is not None:
         options=frozenset({"moving", "reference", "deformation_type"}),
         storage={"dtype": "int16"},
     )
+    EXEMPLARS[FnirtWarpField] = _FNIRT
 
 
 def _lta_stored(xform: tx.Any) -> tx.Any:
@@ -2754,6 +2787,20 @@ VARIANTS.append(
     ("MrtrixImage-gz", MrtrixImage, _MRTRIX._replace(suffix=".mif.gz"))
 )
 
+# FNIRT also reads and writes the spline coefficients that it saves with
+# --cout. A field built from data alone is written as a deformation field,
+# because a record is never made up, so check 8 checks that kind for this
+# variant too, and the other checks read a coefficient file written by
+# hand.
+if nb is not None:
+    VARIANTS.append(
+        (
+            "FnirtWarpField-coefficients",
+            FnirtWarpField,
+            _FNIRT._replace(suffix=".nii.gz", fixture=_fnirt_coefficient_file),
+        )
+    )
+
 # The blocks of an N5 dataset may be uncompressed.
 if n5_needs is not None:
     VARIANTS.append(
@@ -2941,6 +2988,8 @@ def _saved(
     path = _path(tmp_path, exemplar, name)
     if exemplar.source is not None:
         exemplar.source(path, exemplar.sample())
+    elif exemplar.fixture is not None:
+        exemplar.fixture(path, exemplar.sample())
     elif exemplar.template is not None:
         exemplar.template(path, exemplar.sample())
     else:
