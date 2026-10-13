@@ -52,6 +52,7 @@ from brainhops.datamodel.metadata import (
     MetadataLossError,
     metadata_loss_policy,
 )
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
@@ -108,6 +109,7 @@ from brainhops.io.images.nrrd._views import (
     _image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.freesurfer.lta import (
@@ -440,7 +442,24 @@ class ToyImage(
         # `_transformations`.
         return _toy_to_transformations(self.metadata)
 
-    def consolidate(self, *, inplace: bool = False, **options) -> "ToyImage":
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Any = None,
+        note: tx.Optional[str] = None,
+        **fields: tx.Any,
+    ) -> "ToyImage":
+        # The metadata is consolidated first, and the toy record holds no
+        # field of the vocabulary, so a field that is set is reported as
+        # lost.
+        report = ConversionReport(source="ToyImage", target="ToyImage")
+        requested = requested_fields(self.metadata, fields)
+        consolidated = metadata_to_write(
+            self.metadata, ToyMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss)
+        options = {} if note is None else {"note": note}
         # Nothing is encoded for an image that has a record, no pending
         # data, and transformations that are never read or the same as a
         # fresh decode of the record, so its copy shares `raw` and the
@@ -455,6 +474,7 @@ class ToyImage(
                 )
             )
             and not options
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
@@ -463,10 +483,10 @@ class ToyImage(
             self.transformations = None
             return self
         raw, record = _toy_encoded(self, **options)
-        if self.metadata is None:
+        if consolidated is None:
             metadata = ToyMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(consolidated, raw=record)
         if not inplace:
             return replace(
                 self,

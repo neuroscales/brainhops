@@ -255,9 +255,8 @@ copy is decoded afresh from the new record, so a second consolidation
 changes nothing, and a truncated description reads back truncated. The
 constant `SUPPORTED_FIELDS` of each metadata class lists the fields
 that its record can store, and a conversion into the format reports
-from it a lower bound of what a write loses. The format objects do not
-consolidate their metadata yet; the wiring of pass 5a (#287) makes it
-step 2 of the precedence below.
+from it a lower bound of what a write loses. Every format object
+consolidates its metadata as step 2 of the precedence below.
 
 The methods `to_raw()` and `to_metadata()` are removed from every class,
 including `MetadataFormat`. The encoding code of each format stays
@@ -290,7 +289,11 @@ Consolidation, and therefore every write, follows four steps.
    metadata can be overridden on save, and a writer option with the
    name of a field, such as `dtype=`, is that field. The stored type is
    the override, then `metadata.dtype`, then the type of the data.
-   This step is wired in pass 5a (#287).
+   A header field that holds a field of the vocabulary, such as the
+   `descrip` of NIfTI or the `tr` of MGH, is refused as an override,
+   with the name of the field to give instead. One report collects what
+   the consolidation of the metadata and the encoding of the geometry
+   lose, and the loss policy acts on it once.
 3. The geometry is encoded from the model over that record. The image
    or the transformation owns its geometry and its data, the metadata
    owns its vocabulary, and the record supplies everything else.
@@ -1279,8 +1282,10 @@ its status.
 402. Loss is reported at consolidation, so once per write, and a
      conversion reports only a lower bound from `SUPPORTED_FIELDS`. A
      save that converts and then writes would warn twice, so the writer
-     passes one report as `on_loss=` to both. Status: decided in pass
-     5a, and the single report of a save is wired in #287.
+     passes one report as `on_loss=` to both. Status: resolved in pass
+     5a. `io.save` converts under `metadata_loss_policy(report)`, which
+     takes a report as well as a policy, passes the same report as
+     `on_loss=` to the write, and acts on it once.
 403. The format objects of the first three passes built the metadata of
      their consolidated copy with `replace(self.metadata, raw=record)`,
      which kept the decoded fields of the old record. With eager
@@ -1288,8 +1293,10 @@ its status.
      record instead (`type(self.metadata).from_raw(record)`). The fields
      that were assigned and not consolidated are dropped there until the
      wiring makes the consolidation of the metadata step 2 of every
-     write. Status: resolved in pass 5a for the formats that have a
-     vocabulary, and open for #287.
+     write. Status: resolved in pass 5a. Every format object
+     consolidates its metadata first, with the helper
+     `metadata_to_write` (`io/metadata/_base.py`), and encodes over the
+     record of the result, so an assigned field is written.
 404. `Metadata.derive` adds to `history` and `generated_by`, which NIfTI
      and MGH cannot store, so every consolidation of derived metadata
      would report them as lost. `MetadataFormat.derive` keeps the two
@@ -1300,3 +1307,37 @@ its status.
      Check 22 changes `dtype` for MGH, which the fixed header holds.
      Check 23 is vacuous for X5, whose JSON metadata stores every field,
      as the comment of its exemplar says. Status: accepted.
+410. A writer copies the description and the intent of the template
+     `like` over the record of the consolidated metadata, so a field
+     given by keyword would lose to the template, while a header
+     override won over it before. The NIfTI writers write the
+     description and the intent given by keyword again after the
+     template (`_keep_given_fields`, `io/common/nifti/_header.py`), and
+     the MGH writer does the same for the MRI parameters. A field that
+     was only changed in the metadata still loses to the template, as
+     the record did. Status: decided in pass 5a.
+411. An X5 file stores the vocabulary in the JSON metadata of the
+     transform that holds it, and a chain that is assigned gives new
+     transforms. `X5Transform.consolidate` therefore encodes the chain
+     first and then the fields of the metadata that changed, and those
+     given by keyword, over the new record, so that a reused transform
+     keeps its own JSON metadata. Status: decided in pass 5a.
+412. The images store their data with `metadata.dtype` when no `dtype=`
+     is given, as nibabel does with the type of its header, so data
+     computed in another type are converted, and scaled into an integer
+     type. The NIfTI transformations change the stored type only when
+     `dtype` is given or changed in the metadata, because their arrays
+     are computed from the chain. Status: open, for the maintainer to
+     decide whether the transformations follow the rule of the images.
+413. The records of AFNI, MRtrix, NRRD, MINC, LTA and M3Z hold no field
+     of the vocabulary yet (pass 5b), so their consolidation reports
+     every field that is set as lost. Their writers keep their option
+     `datatype=`, which is not renamed `dtype`, and the option `space=`
+     of NRRD names the space of the NRRD header, so the field `space`
+     cannot be given by keyword to a NRRD writer. Status: open, for
+     pass 5b.
+414. A format that does not take `metadata` over, such as Zarr, TIFF or
+     FLIRT, holds the generic metadata of its data model and writes
+     none of it. `io.save` reports the fields that are set as lost when
+     it converts into such a format, but a save of the object itself
+     reports nothing. Status: open, for pass 5c.

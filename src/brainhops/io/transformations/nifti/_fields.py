@@ -20,13 +20,15 @@ from brainhops._core.properties import (
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.nifti import NiftiMetadata
+from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_NIFTYREG,
@@ -36,13 +38,20 @@ from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _header,
+    _keep_given_fields,
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
     _NiftiObject,
     _record_image,
     _set_coordinates_intent,
+    _split_options,
     _stored_parts,
+)
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
 )
 from brainhops.io.transformations.base._conversions import (
     convert_instance,
@@ -181,7 +190,12 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         return _field_to_model(self.raw)
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending field into `raw` and a new header.
 
@@ -201,6 +215,13 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         A field that has a header and nothing pending, consolidated
         without options, is left as it is.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`, and a `dtype` that is given, or changed
+        in the metadata, is the type of the stored array. What the write
+        loses or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -208,9 +229,14 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description` or
+            `dtype`, and header fields, which take precedence over the
+            derived values and `like`. A header field that holds a field
+            of the metadata, such as `descrip`, is refused.
 
         Returns
         -------
@@ -219,22 +245,41 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
         Raises
         ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the field has no coordinates.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         if (
             self._data is None
             and StoreEnum(self.store) is StoreEnum.values
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
+        if "dtype" in requested:
+            overrides["dtype"] = requested["dtype"]
+        base = None if metadata is None else metadata.raw
         raw, record = _stored_parts(
-            _coordinates_encoded(self, like, overrides)
+            _coordinates_encoded(self, like, overrides, base, fields)
         )
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -532,7 +577,8 @@ transformations.StationaryVelocityField].
         inplace: bool = False,
         like: tx.Any = None,
         log: tx.Optional[bool] = None,
-        **overrides,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
         """
         Encode the pending vectors or chain into `raw` and a new header.
@@ -552,6 +598,13 @@ transformations.StationaryVelocityField].
         header and nothing pending, consolidated without options, is left
         as it is.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`, and a `dtype` that is given, or changed
+        in the metadata, is the type of the stored array. What the write
+        loses or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -562,15 +615,35 @@ transformations.StationaryVelocityField].
         log : bool, optional
             Whether to encode the velocity rather than the displacements.
             It defaults to the `log` option of the field.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description` or
+            `dtype`, and header fields, which take precedence over the
+            derived values and `like`. A header field that holds a field
+            of the metadata, such as `descrip`, is refused.
 
         Returns
         -------
         Self
             The consolidated copy, or this field with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         log = self.log if log is None else log
         if (
             self._data is None
@@ -578,14 +651,21 @@ transformations.StationaryVelocityField].
             and log == self.log
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
+        if "dtype" in requested:
+            overrides["dtype"] = requested["dtype"]
+        base = None if metadata is None else metadata.raw
         raw, record = _stored_parts(
-            _displacement_encoded(self, like, log, overrides)
+            _displacement_encoded(self, like, log, overrides, base, fields)
         )
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -658,8 +738,12 @@ def _coordinates_encoded(
     field: NiftiRASCoordinatesField,
     like: tx.Any,
     overrides: tx.Mapping[str, tx.Any],
+    base: tx.Optional[NiftiRaw],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """Encode a field of RAS coordinates over a copy of its record.
+    """Encode a field of RAS coordinates over a copy of a record.
+
+    The record, `base`, is that of the consolidated metadata.
 
     Raises
     ------
@@ -678,9 +762,11 @@ def _coordinates_encoded(
         raise WriterError(
             "This field has no coordinates, so there is nothing to write."
         )
-    image = _record_image(raw, field._record(), overrides=overrides)
+    record = None if base is None else base.copy()
+    image = _record_image(raw, record, overrides=overrides)
     _set_coordinates_intent(image.header)
     _apply_like(image, like)
+    _keep_given_fields(image, fields)
     _apply_overrides(image, overrides)
     return image
 
@@ -690,8 +776,12 @@ def _displacement_encoded(
     like: tx.Any,
     log: bool,
     overrides: tx.Mapping[str, tx.Any],
+    base: tx.Optional[NiftiRaw],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """Encode a field of RAS displacements over a copy of its record.
+    """Encode a field of RAS displacements over a copy of a record.
+
+    The record, `base`, is that of the consolidated metadata.
 
     The stored vectors, assigned or read, are kept when the chain was not
     assigned and the encoding does not change. The chain is encoded
@@ -707,7 +797,8 @@ def _displacement_encoded(
         and field._transformations is None
         and log == field.log
     ):
-        image = _record_image(stored, field._record(), overrides=overrides)
+        record = None if base is None else base.copy()
+        image = _record_image(stored, record, overrides=overrides)
         if _nifti_intent(image.header) != _NIFTI_INTENT_DISPVECT:
             image.header.set_intent(_NIFTI_INTENT_DISPVECT)
     else:
@@ -715,8 +806,10 @@ def _displacement_encoded(
             field.transformations, what, ndim=_NDIM, log=log
         )
         vectors = _field_to_disk(vectors)
-        image = _record_image(vectors, field._record(), vox2ras, overrides)
+        record = None if base is None else base.copy()
+        image = _record_image(vectors, record, vox2ras, overrides)
         image.header.set_intent(_NIFTI_INTENT_DISPVECT)
     _apply_like(image, like)
+    _keep_given_fields(image, fields)
     _apply_overrides(image, overrides)
     return image

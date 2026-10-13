@@ -4,6 +4,9 @@ __all__ = [
     "MetadataFormat",
     "consolidated",
     "lost_fields",
+    "metadata_to_write",
+    "overruled_fields",
+    "requested_fields",
     "unsupported_values",
 ]
 
@@ -453,6 +456,133 @@ def unsupported_values(
             continue
         values[name] = value
     return values
+
+
+# ----------------------------------------------------------------------
+#   HELPERS OF THE FORMAT OBJECTS
+# ----------------------------------------------------------------------
+
+
+def metadata_to_write(
+    metadata: tx.Optional[MetadataFormat],
+    cls: tx.Type[MetadataFormat],
+    fields: tx.Mapping[str, tx.Any],
+    report: ConversionReport,
+) -> tx.Optional[MetadataFormat]:
+    """Return the consolidated metadata that an object encodes over.
+
+    This is step 2 of the precedence on write. An image or a
+    transformation of a format calls it from its `consolidate`, before it
+    encodes its geometry and its data over the record of the result. The
+    fields given override those of the metadata, and the metadata is
+    consolidated with `report` as its loss policy, so that the caller
+    acts once on what the whole write lost. An object without metadata
+    gets metadata of `cls` when a field is given, and none otherwise.
+
+    Parameters
+    ----------
+    metadata : MetadataFormat, optional
+        The metadata of the object.
+    cls : type
+        The metadata class of the format, for an object without metadata.
+    fields : mapping
+        Fields to override, by name.
+    report : ConversionReport
+        The report of the write, which receives what the metadata loses.
+
+    Returns
+    -------
+    MetadataFormat or None
+        The consolidated metadata, or `None` for an object without
+        metadata to which no field is given.
+
+    Raises
+    ------
+    TypeError
+        If `fields` names no field of the metadata.
+    """
+    if metadata is None:
+        if not fields:
+            return None
+        metadata = cls()
+    return metadata.consolidate(on_loss=report, **fields)
+
+
+def requested_fields(
+    metadata: tx.Optional[MetadataFormat], fields: tx.Mapping[str, tx.Any]
+) -> tx.Dict[str, tx.Any]:
+    """Return the fields that a write is asked to store.
+
+    They are the fields given as overrides, and the fields of the metadata
+    that differ from a fresh decode of its record, with the value that
+    the write should store. A format object compares them with the
+    metadata decoded from the record that it wrote, with
+    [`overruled_fields`][], to report the fields that its model owns.
+
+    Parameters
+    ----------
+    metadata : MetadataFormat, optional
+        The metadata of the object, before its consolidation.
+    fields : mapping
+        The fields given as overrides.
+
+    Returns
+    -------
+    dict
+        Field name to the value asked for.
+    """
+    requested = dict(fields)
+    if metadata is None:
+        return requested
+    fresh = type(metadata).from_raw(metadata.raw)
+    for name in FIELDS:
+        if name in requested:
+            continue
+        value = getattr(metadata, name)
+        if _differs(value, getattr(fresh, name)):
+            requested[name] = value
+    return requested
+
+
+def overruled_fields(
+    requested: tx.Mapping[str, tx.Any],
+    written: tx.Optional[Metadata],
+    report: ConversionReport,
+) -> ConversionReport:
+    """Report the requested fields that a written record does not hold.
+
+    The model of an image or a transformation owns some slots of a
+    record, such as the time step of a NIfTI image, which is also its
+    repetition time, or the codes of its forms, which name its world
+    space. A field that the metadata stored in such a slot is then
+    encoded over by the geometry, and is reported here as approximated.
+    A field already reported by the consolidation of the metadata is
+    left as it is.
+
+    Parameters
+    ----------
+    requested : mapping
+        The fields asked for, from [`requested_fields`][].
+    written : Metadata, optional
+        The metadata decoded from the record that was written.
+    report : ConversionReport
+        The report of the write.
+
+    Returns
+    -------
+    ConversionReport
+        `report` itself.
+    """
+    for name, value in requested.items():
+        if name in report.lost or name in report.approximated:
+            continue
+        held = None if written is None else getattr(written, name)
+        if not _agrees(held, value):
+            report.approximated[name] = (
+                f"the image or the transformation decides it, and the "
+                f"file holds {short(held)}"
+            )
+    return report
 
 
 # ----------------------------------------------------------------------

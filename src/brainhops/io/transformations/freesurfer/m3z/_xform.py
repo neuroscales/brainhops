@@ -14,12 +14,18 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     UnrepresentableTransformationError,
     WriterError,
+)
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
@@ -364,6 +370,8 @@ class M3zMorph(
         spacing: tx.Optional[int] = None,
         image_shape: tx.Optional[tx.Sequence[int]] = None,
         atlas_shape: tx.Optional[tx.Sequence[int]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain into a new record.
 
@@ -389,6 +397,11 @@ class M3zMorph(
         node grid keeps its shape, and they are shared with the current
         record.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an M3Z file
+        holds no field of the vocabulary yet, so a field that is set is
+        reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -405,6 +418,11 @@ class M3zMorph(
             Shape of the atlas. The default is the shape that the
             current record records, or else the shape of the node grid
             multiplied by `spacing`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -413,6 +431,10 @@ class M3zMorph(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the chain has neither of the two shapes, if its field is
             not a 3-D grid of 3-vectors, or if a system that was assigned
@@ -421,6 +443,14 @@ class M3zMorph(
             If the morph has neither a record nor a chain, or if the
             shape of the source image is needed but unknown.
         """
+        report = ConversionReport(source="M3zMorph", target="M3zMorph")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, M3zMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         record = _record(self)
         assigned = self._transformations is not None
         declared = self._input is not None or self._output is not None
@@ -429,17 +459,21 @@ class M3zMorph(
         if not assigned:
             if record is None:
                 raise WriterError("This morph has no content to write.")
-            if not declared:
+            if not declared and not requested:
                 return self if inplace else replace(self)
-            metadata = self.metadata
+            if not declared:
+                if not inplace:
+                    return replace(self, metadata=metadata)
+                self.metadata = metadata
+                return self
         else:
             record = _encode(
                 self.transformations, record, spacing, image_shape, atlas_shape
             )
-            if self.metadata is None:
+            if metadata is None:
                 metadata = M3zMetadata.from_raw(record)
             else:
-                metadata = replace(self.metadata, raw=record)
+                metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,

@@ -14,6 +14,8 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -45,10 +47,13 @@ from brainhops.io.common.nifti._constants import (
 )
 from brainhops.io.common.nifti._geometry import _image_with_geometry
 from brainhops.io.common.nifti._header import (
+    _keep_given_fields,
     _nifti_intent,
     _nifti_shape,
     _nifti_to_axes,
     _NiftiObject,
+    _split_options,
+    _storage_override,
     _stored_parts,
     _written_nifti,
 )
@@ -60,6 +65,11 @@ from brainhops.io.common.nifti._raw import (
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -428,7 +438,12 @@ class NiftiImage(
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> "NiftiImage":
         """Encode the pending data and geometry into `raw` and the header.
 
@@ -458,6 +473,17 @@ class NiftiImage(
         options, is left as it is: the copy shares `raw` and the metadata.
         Consolidating a consolidated image changes nothing.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, so any field of
+        the metadata can be overridden here, and its record is the base of
+        the new header. The image owns its geometry, so a field that the
+        geometry encodes over, such as the repetition time, which is the
+        time step of the image, is reported as approximated when it
+        disagrees. The data are stored with the type given as `dtype=`,
+        or else with `metadata.dtype`, or else with the type of the data,
+        and nibabel scales them into an integer type. What the write
+        loses or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -465,10 +491,15 @@ class NiftiImage(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose description and intent are copied. The geometry
             always comes from this image.
-        **overrides : Any
-            Values of `dtype`, `intent` and `descrip`, or of any other
-            header field, which take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect (see
+            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        **options : Any
+            Fields of the metadata to override, such as `dtype`, `intent`
+            or `description`, and fields of the header, which are set
+            last. A header field that holds a field of the metadata, such
+            as `descrip` or `scl_slope`, is refused.
 
         Returns
         -------
@@ -477,12 +508,23 @@ class NiftiImage(
 
         Raises
         ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
         WriterError
             If the image has no data to encode.
         UnrepresentableTransformationError
             If the preferred transformation is not affine, as for a
             displacement field.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        fields, overrides = _split_options(options)
+        report = ConversionReport(source="NiftiImage", target="NiftiImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         # The geometry of the header is kept when the transformations
         # were never read, or are the same as those that it decodes to.
         held = held_transformations(self)
@@ -494,18 +536,21 @@ class NiftiImage(
             and kept
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
             return self
-        raw, record = _nifti_encoded(self, kept, like, overrides)
-        if self.metadata is None:
-            metadata = NiftiMetadata.from_raw(record)
-        else:
-            metadata = type(self.metadata).from_raw(record)
+        raw, record = _nifti_encoded(
+            self, kept, like, overrides, metadata, fields
+        )
+        metadata = type(metadata or NiftiMetadata()).from_raw(record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -536,7 +581,8 @@ class NiftiImage(
             Template whose description and intent are copied, as in
             [`consolidate`][].
         **overrides : Any
-            Header overrides, as in [`consolidate`][].
+            `on_loss`, and the fields of the metadata and of the header,
+            as in [`consolidate`][].
 
         Returns
         -------
@@ -568,7 +614,7 @@ class NiftiImage(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            The template `like` and the header overrides of
+            The template `like`, `on_loss` and the options of
             [`consolidate`][].
 
         Raises
@@ -602,7 +648,7 @@ class NiftiImage(
         file : file object
             The stream to write to, open in binary mode.
         **kwargs : Any
-            The template `like` and the header overrides of
+            The template `like`, `on_loss` and the options of
             [`consolidate`][].
 
         Raises
@@ -621,7 +667,7 @@ class NiftiImage(
         Parameters
         ----------
         **kwargs : Any
-            The template `like` and the header overrides of
+            The template `like`, `on_loss` and the options of
             [`consolidate`][].
 
         Returns
@@ -855,11 +901,15 @@ def _nifti_encoded(
     kept: bool,
     like: tx.Any,
     overrides: tx.Mapping[str, tx.Any],
+    metadata: tx.Optional[NiftiMetadata],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Tuple[ArrayProtocol, NiftiRaw]:
     """Encode the pending state of an image into `raw` and a new record.
 
     The data is the assigned array, or `raw` when no array is pending. A
-    copy of the held record is the base of the new header. The geometry
+    copy of the record of the consolidated `metadata` is the base of the
+    new header, and the data type to store is the `dtype` of `fields`,
+    or else that of the metadata of the image. The geometry
     is encoded from the transformations that the image holds, or from
     those that the record decodes to when the image holds none, so that
     the image is not changed. With `kept`, the transformations are those
@@ -882,10 +932,13 @@ def _nifti_encoded(
         raise WriterError(
             "This image has no data, so there is nothing to encode."
         )
-    if image.metadata is None or image.metadata.raw is None:
+    if metadata is None or metadata.raw is None:
         header = None
     else:
-        header = image.metadata.raw.copy().header
+        header = metadata.raw.copy().header
+    dtype = _storage_override(fields, image.metadata, source)
+    if dtype is not None:
+        overrides = {**overrides, "dtype": dtype}
     transformations = held_transformations(image)
     if transformations is None:
         transformations = _header_transformations(image.metadata)
@@ -898,8 +951,10 @@ def _nifti_encoded(
         like=like,
         overrides=overrides,
     )
-    if kept and header is not None:
-        _keep_geometry(nifti.header, image.metadata.raw.header, overrides)
+    _keep_given_fields(nifti, fields)
+    stored = None if image.metadata is None else image.metadata.raw
+    if kept and header is not None and stored is not None:
+        _keep_geometry(nifti.header, stored.header, overrides)
     return _stored_parts(nifti)
 
 

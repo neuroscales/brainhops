@@ -164,20 +164,23 @@ raising.
 
 
 @contextlib.contextmanager
-def metadata_loss_policy(policy: LossPolicy) -> tx.Iterator[None]:
+def metadata_loss_policy(policy: OnLoss) -> tx.Iterator[None]:
     """
     Set the loss policy of the conversions and writes made in a block.
 
     The policy in effect governs every conversion and every
     consolidation that takes no `on_loss=` argument, in particular the
     implicit conversions that field converters trigger. Outside of any
-    block, the policy is `"warn"`.
+    block, the policy is `"warn"`. A report given as the policy collects
+    what the block loses, and nothing is warned or raised, so that a
+    caller such as `io.save`, which converts an object and then writes
+    it, acts once on one report.
 
     Parameters
     ----------
-    policy : {"ignore", "warn", "raise"}
+    policy : {"ignore", "warn", "raise"} or ConversionReport
         The policy: ignore a loss, warn about it, or raise
-        [`MetadataLossError`][].
+        [`MetadataLossError`][], or a report to fill.
 
     Yields
     ------
@@ -196,7 +199,9 @@ def metadata_loss_policy(policy: LossPolicy) -> tx.Iterator[None]:
         mgh = metadata.to(MghMetadata)
     ```
     """
-    token = _POLICY.set(_check_policy(policy))
+    if not isinstance(policy, ConversionReport):
+        policy = _check_policy(policy)
+    token = _POLICY.set(policy)
     try:
         yield
     finally:
@@ -245,13 +250,15 @@ def apply_loss_policy(
     ValueError
         If `on_loss` is not a policy nor a report.
     """
+    if on_loss is None:
+        on_loss = _POLICY.get()
     if isinstance(on_loss, ConversionReport):
         if on_loss is not report:
             on_loss.source = on_loss.source or report.source
             on_loss.target = on_loss.target or report.target
             on_loss.merge(report)
         return report
-    policy = _check_policy(on_loss or _POLICY.get())
+    policy = _check_policy(on_loss)
     if not report.lossy or policy == "ignore":
         return report
     if policy == "raise":

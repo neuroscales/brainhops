@@ -14,6 +14,8 @@ from brainhops._core.properties import (
     smartproperty,
 )
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserExistsError
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
@@ -22,9 +24,16 @@ from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _header,
+    _keep_given_fields,
     _NiftiObject,
     _record_image,
+    _split_options,
     _written_nifti,
+)
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
 )
 from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base._conversions import (
@@ -125,7 +134,12 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         raise NotImplementedError
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix into a new header.
 
@@ -145,6 +159,12 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         the affine has no `raw` array. An affine that has a header and no
         pending matrix, consolidated without options, is left as it is.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`. What the write loses or approximates is
+        acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -152,26 +172,51 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description`, and
+            header fields, which take precedence over the derived values
+            and `like`. A header field that holds a field of the metadata,
+            such as `descrip`, is refused.
 
         Returns
         -------
         Self
             The consolidated copy, or this affine with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         if (
             self._data is None
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
-        image = _affine_encoded(self, like, overrides)
+        base = None if metadata is None else metadata.raw
+        image = _affine_encoded(self, like, overrides, base, fields)
         record = NiftiRaw(header=image.header)
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -485,18 +530,24 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
 
 def _affine_encoded(
-    xform: _NiftiAffine, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+    xform: _NiftiAffine,
+    like: tx.Any,
+    overrides: tx.Mapping[str, tx.Any],
+    base: tx.Optional[NiftiRaw],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
     """Encode an affine as the header of a single-voxel placeholder volume.
 
-    The header is built over a copy of the record, as
-    [`_NiftiAffine.consolidate`][] describes.
+    The header is built over a copy of `base`, the record of the
+    consolidated metadata, as [`_NiftiAffine.consolidate`][] describes.
     """
     matrix = xform._voxel_to_ras_matrix()
     scode, qcode = _xform_codes(_header(xform))
     data = np.zeros((1, 1, 1), dtype="float32")
-    image = _record_image(data, xform._record(), matrix, overrides)
+    record = None if base is None else base.copy()
+    image = _record_image(data, record, matrix, overrides)
     _apply_like(image, like)
+    _keep_given_fields(image, fields)
     image.header.set_sform(matrix, code=scode)
     image.header.set_qform(matrix, code=qcode)
     _apply_overrides(image, overrides)

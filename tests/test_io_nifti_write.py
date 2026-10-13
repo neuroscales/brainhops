@@ -983,7 +983,7 @@ def test_like_copies_non_geometry_but_not_geometry(tmp_path) -> None:  # noqa: A
     template = nb.Nifti1Header()
     template.set_sform(np.diag([9.0, 9.0, 9.0, 1.0]), code=2)
     template["descrip"] = b"from the template"
-    template.set_intent(1011)  # NIFTI_INTENT_ESTIMATE
+    template.set_intent(1011)  # NIFTI_INTENT_DIMLESS
 
     image = NiftiImage(
         data=np.zeros((3, 4, 5), dtype="float32"),
@@ -1081,18 +1081,19 @@ def test_the_flip_handles_an_arbitrary_orientation(tmp_path) -> None:  # noqa: A
 def test_a_keyword_override_wins_over_the_object_and_like(tmp_path) -> None:  # noqa: ANN001
     """A keyword override is applied after both the object and `like`."""
     template = nb.Nifti1Header()
-    template.set_intent(1011)  # NIFTI_INTENT_ESTIMATE
+    template.set_intent(1011)  # NIFTI_INTENT_DIMLESS
 
     image = NiftiImage(
         data=np.zeros((3, 4, 5), dtype="float32"),
         transformations=[Affine(matrix=np.eye(3, 4))],
     )
     target = tmp_path / "override.nii"
-    image.save(target, like=template, dtype="int16", intent=2001)
+    # `intent` is the field of the metadata, which takes a NIfTI name.
+    image.save(target, like=template, dtype="int16", intent="label")
 
     header = nb.load(str(target)).header
     assert header.get_data_dtype() == np.dtype("int16")
-    assert int(header["intent_code"]) == 2001
+    assert int(header["intent_code"]) == 1002
 
 
 def test_nifti_axes_are_copies_of_the_module_templates() -> None:
@@ -1140,7 +1141,7 @@ def test_like_and_overrides_take_precedence_over_the_record(tmp_path) -> None:  
     header = image.to_nibabel(like=template).header
     assert header["descrip"].item() == b"from the template"
     assert header["aux_file"].item() == b"kept"
-    header = image.to_nibabel(like=template, descrip="overridden").header
+    header = image.to_nibabel(like=template, description="overridden").header
     assert header["descrip"].item() == b"overridden"
     assert image.to_nibabel().header["descrip"].item() == b"from the record"
 
@@ -1203,14 +1204,16 @@ def test_consolidating_encodes_the_writer_options(tmp_path) -> None:  # noqa: AN
     values = np.linspace(-3.0, 7.0, 60, dtype="f4").reshape(3, 4, 5)
     source = _write_image(tmp_path, "source.nii", values)
     image = NiftiImage.load(source)
-    consolidated = image.consolidate(dtype="int16", descrip="consolidated")
+    consolidated = image.consolidate(dtype="int16", description="consolidated")
     header = consolidated.metadata.raw.header
     assert header.get_data_dtype() == np.dtype("int16")
     assert header["descrip"].item() == b"consolidated"
     # The image itself is not changed, and the copy writes what the image
     # writes with the same options.
     assert image.metadata.raw.header.get_data_dtype() == np.dtype("f4")
-    image.save(tmp_path / "saved.nii", dtype="int16", descrip="consolidated")
+    image.save(
+        tmp_path / "saved.nii", dtype="int16", description="consolidated"
+    )
     consolidated.save(tmp_path / "consolidated.nii")
     saved = nb.load(str(tmp_path / "saved.nii"))
     written = nb.load(str(tmp_path / "consolidated.nii"))

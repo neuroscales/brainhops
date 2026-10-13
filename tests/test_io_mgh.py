@@ -470,10 +470,37 @@ def test_unstorable_values_are_refused() -> None:
 
 def test_explicit_dtype_and_params(tmp_path) -> None:  # noqa: ANN001
     target = tmp_path / "out.mgz"
-    MghImage(data=_data()).save(target, dtype="int16", tr=42.0)
+    # The repetition time is a field of the metadata, in seconds.
+    MghImage(data=_data()).save(target, dtype="int16", repetition_time=0.042)
     loaded = nb.load(str(target))
     assert loaded.get_data_dtype() == np.dtype(">i2")
     assert float(loaded.header["tr"]) == pytest.approx(42.0)
+
+
+def test_the_mri_parameters_are_fields_of_the_metadata(tmp_path) -> None:  # noqa: ANN001
+    # `flip_angle` is the field, in degrees, and the header fields `tr`,
+    # `te` and `ti` are refused with the field to give instead.
+    target = tmp_path / "params.mgz"
+    MghImage(data=_data()).save(target, flip_angle=30.0)
+    loaded = NibabelMgh.load(str(target))
+    assert float(loaded.header["flip_angle"]) == pytest.approx(np.pi / 6)
+    assert MghImage.load(target).metadata.flip_angle == pytest.approx(30.0)
+    for name, field in [
+        ("tr", "repetition_time"),
+        ("te", "echo_time"),
+        ("ti", "inversion_time"),
+    ]:
+        with pytest.raises(TypeError, match=f"{field}="):
+            MghImage(data=_data()).save(target, **{name: 1.0})
+
+
+def test_a_field_given_by_keyword_wins_over_like(tmp_path) -> None:  # noqa: ANN001
+    template = _write(tmp_path, "template.mgz", _data(), tr=777.0)
+    target = tmp_path / "out.mgz"
+    MghImage(data=_data()).save(target, like=template, echo_time=0.005)
+    loaded = NibabelMgh.load(str(target))
+    assert float(loaded.header["tr"]) == pytest.approx(777.0)
+    assert float(loaded.header["te"]) == pytest.approx(5.0)
 
 
 def test_like_copies_mri_params(tmp_path) -> None:  # noqa: ANN001
@@ -760,10 +787,13 @@ def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
         np.asarray(MghImage.from_bytes(image.to_bytes()).data), _data() + 1
     )
 
-    # Another type changes the stored voxel type only.
+    # Another type is stored with the type of the metadata, and the type
+    # given by keyword changes the stored voxel type only.
     image = loaded()
     image.data = _data(dtype="int16")
-    written = image.consolidate().metadata.raw
+    kept = image.consolidate().metadata.raw
+    assert kept.header.get_data_dtype() == record.header.get_data_dtype()
+    written = image.consolidate(dtype="int16").metadata.raw
     assert written is not record
     assert written.header.get_data_dtype() == np.dtype(">i2")
     assert np.array_equal(written.header["Mdc"], record.header["Mdc"])
@@ -807,15 +837,18 @@ def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
         "tr"
     ] == pytest.approx(777.0)
     written = image.consolidate(
-        like=template, tr=55.0, dtype="uint8"
+        like=template, repetition_time=0.055, dtype="uint8"
     ).metadata.raw
     assert written.mri_params["tr"] == pytest.approx(55.0)
     assert written.header.get_data_dtype() == np.dtype("u1")
     held = image.metadata.raw
-    assert (
-        image.consolidate(te=3.5, flip_angle=0.15, tr=900.0).metadata.raw
-        is held
-    )
+    # Fields given with the values of the record change nothing.
+    same = {
+        "echo_time": image.metadata.echo_time,
+        "flip_angle": image.metadata.flip_angle,
+        "repetition_time": 0.9,
+    }
+    assert image.consolidate(**same).metadata.raw is held
 
     # The record of the metadata is never changed.
     assert record == MghImage.load(source).metadata.raw

@@ -8,6 +8,8 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -19,14 +21,21 @@ from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _header,
+    _keep_given_fields,
     _nifti_intent,
     _NiftiObject,
     _record_image,
+    _split_options,
     _stored_parts,
 )
 from brainhops.io.images.nifti._views import (
     _image_to_disk,
     _image_to_model,
+)
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
@@ -243,7 +252,12 @@ class FnirtWarpField(
         return cls._with_images(obj, moving, reference)
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending array into `raw` and a new header.
 
@@ -258,6 +272,13 @@ class FnirtWarpField(
         that has a header and nothing pending, consolidated without
         options, is left as it is.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`, and a `dtype` that is given, or changed
+        in the metadata, is the type of the stored array. What the write
+        loses or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -265,9 +286,14 @@ class FnirtWarpField(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description` or
+            `dtype`, and header fields, which take precedence over the
+            derived values and `like`. A header field that holds a field
+            of the metadata, such as `descrip`, is refused.
 
         Returns
         -------
@@ -276,22 +302,43 @@ class FnirtWarpField(
 
         Raises
         ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the field has no array.
         UnrepresentableTransformationError
             If a chain was assigned to the field.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         if (
             self._data is None
             and self._transformations is None
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
-        raw, record = _stored_parts(_fnirt_encoded(self, like, overrides))
+        if "dtype" in requested:
+            overrides["dtype"] = requested["dtype"]
+        base = None if metadata is None else metadata.raw
+        raw, record = _stored_parts(
+            _fnirt_encoded(self, like, overrides, base, fields)
+        )
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -563,9 +610,15 @@ class FnirtWarpField(
 
 
 def _fnirt_encoded(
-    field: FnirtWarpField, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+    field: FnirtWarpField,
+    like: tx.Any,
+    overrides: tx.Mapping[str, tx.Any],
+    base: tx.Any,
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Any:
-    """Encode the array of a FNIRT field over a copy of its record.
+    """Encode the array of a FNIRT field over a copy of a record.
+
+    The record, `base`, is that of the consolidated metadata.
 
     Raises
     ------
@@ -586,10 +639,12 @@ def _fnirt_encoded(
         stored = field.raw
     if stored is None:
         raise WriterError("A FNIRT file needs its field data to be written.")
-    image = _record_image(stored, field._record(), overrides=overrides)
+    record = None if base is None else base.copy()
+    image = _record_image(stored, record, overrides=overrides)
     if _header(field) is None:
         image.header.set_intent(FSL_FNIRT_DISPLACEMENT_FIELD)
     _apply_like(image, like)
+    _keep_given_fields(image, fields)
     _apply_overrides(image, overrides)
     return image
 

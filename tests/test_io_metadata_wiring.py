@@ -13,10 +13,14 @@ import numpy as np
 import pytest
 from bagof.magic import fields, replace
 
+import brainhops.io as io
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
+    ConversionReport,
     EncodingDirection,
     Metadata,
+    MetadataLossError,
+    MetadataLossWarning,
     metadata_loss_policy,
 )
 from brainhops.datamodel.systems import RASmm
@@ -202,3 +206,148 @@ def test_the_node_of_the_vocabulary_gives_its_block_the_metadata() -> None:
     # The block holds generic metadata, without the record of the file.
     assert type(block.metadata) is Metadata
     assert block.metadata.description == "hi"
+
+
+# ----------------------------------------------------------------------
+#   WRITES
+# ----------------------------------------------------------------------
+
+
+def _int16_nifti(tmp_path: Path) -> NiftiImage:
+    """Return a 3-D NIfTI image read from a file of 16-bit integers."""
+    data = np.arange(60, dtype=np.int16).reshape(3, 4, 5)
+    path = tmp_path / "int16.nii.gz"
+    nb.save(nb.Nifti1Image(data, np.eye(4)), str(path))
+    return NiftiImage.load(path)
+
+
+def test_an_assigned_field_survives_a_save(tmp_path: Path) -> None:
+    # The metadata is consolidated as step 2 of every write, so a field
+    # assigned and never consolidated is written (tension 403).
+    image = _int16_nifti(tmp_path)
+    image.metadata = replace(image.metadata, description="edited")
+    path = tmp_path / "edited.nii.gz"
+    image.save(path)
+    assert NiftiImage.load(path).metadata.description == "edited"
+    assert image.consolidate().metadata.description == "edited"
+    # A change made in place is seen by every copy that shares the
+    # metadata, and is written too.
+    image.metadata.description = "in place"
+    image.save(path)
+    assert NiftiImage.load(path).metadata.description == "in place"
+
+
+def test_a_save_option_overrides_a_field(tmp_path: Path) -> None:
+    image = _int16_nifti(tmp_path)
+    path = tmp_path / "options.nii.gz"
+    image.save(path, description="option", dtype="float32")
+    loaded = NiftiImage.load(path)
+    assert loaded.metadata.description == "option"
+    assert loaded.metadata.dtype == np.dtype("float32")
+    # The image itself is not changed.
+    assert image.metadata.description is None
+    # Any other option names a field of the header.
+    with pytest.raises(ValueError, match="no_such_field"):
+        image.consolidate(no_such_field=1)
+
+
+def test_the_metadata_decides_the_stored_type(tmp_path: Path) -> None:
+    # Data computed in another type are stored with the type of the
+    # metadata, as nibabel stores them with the type of its header.
+    image = _int16_nifti(tmp_path)
+    image.data = np.asarray(image.data, dtype=np.float64) * 2
+    path = tmp_path / "stored.nii.gz"
+    image.save(path)
+    assert nb.load(str(path)).get_data_dtype() == np.dtype("int16")
+    # nibabel scales the values into the integer type.
+    written = np.asarray(NiftiImage.load(path).data)
+    assert np.allclose(written, image.data, atol=1e-2)
+    image.save(path, dtype="float64")
+    assert nb.load(str(path)).get_data_dtype() == np.dtype("float64")
+
+
+@pytest.mark.parametrize(
+    "name, field",
+    [
+        ("descrip", "description"),
+        ("aux_file", "sources"),
+        ("cal_min", "display_range"),
+        ("cal_max", "display_range"),
+        ("scl_slope", "scale_slope"),
+        ("scl_inter", "scale_intercept"),
+        ("slice_code", "slice_timing"),
+        ("slice_duration", "slice_timing"),
+        ("dim_info", "phase_encoding_direction"),
+    ],
+)
+def test_a_header_field_of_the_vocabulary_is_refused(
+    tmp_path: Path, name: str, field: str
+) -> None:
+    image = _int16_nifti(tmp_path)
+    with pytest.raises(TypeError, match=f"{field}"):
+        image.save(tmp_path / "refused.nii.gz", **{name: 1})
+
+
+def test_the_intent_is_the_field(tmp_path: Path) -> None:
+    image = _int16_nifti(tmp_path)
+    path = tmp_path / "intent.nii.gz"
+    image.save(path, intent="label")
+    assert int(nb.load(str(path)).header["intent_code"]) == 1002
+    # An intent that changes how the axes are read is decided by the
+    # geometry, and is reported as approximated.
+    report = ConversionReport()
+    image.save(path, intent="vector", on_loss=report)
+    assert "intent" in report.approximated
+    assert int(nb.load(str(path)).header["intent_code"]) == 0
+
+
+def test_the_time_step_owns_the_repetition_time(tmp_path: Path) -> None:
+    image = _nifti(tmp_path)
+    report = ConversionReport()
+    image.consolidate(repetition_time=3.0, on_loss=report)
+    assert "repetition_time" in report.approximated
+
+
+def test_assigning_metadata_keeps_assigned_transformations(
+    tmp_path: Path,
+) -> None:
+    image = _int16_nifti(tmp_path)
+    scaling = Affine(np.diag([2.0, 3.0, 4.0, 1.0])[:-1])
+    image.transformations = [scaling]
+    image.metadata = replace(image.metadata, description="other")
+    assert image.transformations == [scaling]
+    path = tmp_path / "kept.nii.gz"
+    image.save(path)
+    assert np.allclose(
+        nb.load(str(path)).affine, np.diag([2.0, 3.0, 4.0, 1.0])
+    )
+    assert NiftiImage.load(path).metadata.description == "other"
+
+
+def test_a_save_that_converts_warns_once(tmp_path: Path) -> None:
+    meta = Metadata(description="T1w", echo_time=0.003, extra={"key": 1})
+    image = SingleScaleImage(np.zeros((2, 3, 4), np.float32), metadata=meta)
+    with pytest.warns(MetadataLossWarning) as caught:
+        io.save(image, tmp_path / "once.nii.gz")
+    assert len(caught) == 1
+    assert set(caught[0].message.report.lost) == {"echo_time", "extra"}
+    assert NiftiImage.load(tmp_path / "once.nii.gz").metadata.description == (
+        "T1w"
+    )
+    report = ConversionReport()
+    io.save(image, tmp_path / "report.mgz", on_loss=report)
+    assert set(report.lost) == {"description", "extra"}
+    with pytest.raises(MetadataLossError):
+        io.save(image, tmp_path / "raise.mgz", on_loss="raise")
+
+
+def test_an_x5_transform_of_one_node_writes_its_metadata(
+    tmp_path: Path,
+) -> None:
+    affine = Affine(np.eye(4)[:-1], input=RASmm(), output=RASmm())
+    xform = X5Transform(
+        transformations=[affine], metadata=Metadata(description="reg")
+    )
+    path = tmp_path / "one.x5"
+    xform.save(path)
+    assert X5Transform.load(path).metadata.description == "reg"
