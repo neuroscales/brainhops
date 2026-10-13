@@ -6,7 +6,7 @@ from io import BytesIO
 # dependencies
 import nibabel as nb
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
@@ -342,7 +342,7 @@ class NiftiBasedTransformation(
         # record of its header, and drops the views decoded before.
         record, proxy = read_nifti(filename)
         self.raw = proxy
-        self.metadata = replace(self.metadata, raw=record)
+        self.metadata = type(self.metadata).from_raw(record)
         self.data = None
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
@@ -418,10 +418,11 @@ def _consolidated_metadata(
 ) -> NiftiMetadata:
     """Return the metadata that holds the record of a consolidation.
 
-    The metadata of the transformation is copied to hold the new record,
-    so the metadata held before is never changed. A transformation
-    without metadata gets new metadata.
+    The new metadata, of the class of the metadata of the transformation,
+    is decoded from the new record, so its vocabulary describes that
+    record, and the metadata held before is never changed. A
+    transformation without metadata gets new NIfTI metadata.
     """
     if xform.metadata is None:
         return NiftiMetadata.from_raw(record)
-    return replace(xform.metadata, raw=record)
+    return type(xform.metadata).from_raw(record)

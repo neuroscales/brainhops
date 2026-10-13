@@ -14,6 +14,7 @@ from bagof.magic import NoRepr, replace
 
 from brainhops._core.compare import differs
 from brainhops.datamodel.metadata import ConversionReport, Metadata
+from brainhops.datamodel.metadata._derive import Indexed, Resampled
 from brainhops.datamodel.metadata._report import (
     OnLoss,
     apply_loss_policy,
@@ -202,6 +203,39 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
         report.lost.update(unsupported_values(cls, obj))
         apply_loss_policy(report, on_loss, stacklevel=2)
         return obj
+
+    def derive(
+        self,
+        operation: tx.Union[Indexed, Resampled, None] = None,
+        *,
+        history: tx.Union[str, tx.Sequence[str], None] = None,
+    ) -> tx.Self:
+        """Return the metadata of an image computed from this one.
+
+        The fields follow
+        [`Metadata.derive`][brainhops.datamodel.metadata.Metadata.derive],
+        which records the derivation in `history` and `generated_by`.
+        Those two fields keep their value when the format has no slot
+        for them, so that a derived image of the format is not reported
+        to lose a provenance that only the derivation added.
+
+        Parameters
+        ----------
+        operation : Indexed or Resampled, optional
+            What the image operation did to the axes of the image.
+        history : str or sequence of str, optional
+            The steps of the derivation, appended to `history`.
+
+        Returns
+        -------
+        MetadataFormat
+            New metadata, of the same class, which shares the record.
+        """
+        derived = super().derive(operation, history=history)
+        for name in _PROVENANCE:
+            if name in unsupported_values(type(self), derived):
+                setattr(derived, name, getattr(self, name))
+        return derived
 
     def consolidate(
         self,
@@ -424,6 +458,9 @@ def unsupported_values(
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
+
+# The fields that `Metadata.derive` adds to.
+_PROVENANCE = ("history", "generated_by")
 
 
 def _differs(value: tx.Any, decoded: tx.Any) -> bool:

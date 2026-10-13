@@ -530,3 +530,24 @@ def test_preferred_storage() -> None:
     result = preferred_storage(scaled, data + 0.1, report=report)
     assert result == (np.int16, None, None)
     assert set(report.approximated) == {"scale_slope", "scale_intercept"}
+
+
+# ----------------------------------------------------------------------
+#   DERIVATION
+# ----------------------------------------------------------------------
+
+
+def test_derived_metadata_keeps_its_class_and_its_record() -> None:
+    meta = _read()
+    derived = meta.derive(history="smooth")
+    assert type(derived) is DictMetadata
+    assert derived.raw is meta.raw
+    # The format has no slot for the provenance that the derivation
+    # adds, so the derived metadata loses nothing when consolidated.
+    assert derived.history is None and derived.generated_by is None
+    with warnings.catch_warnings(), metadata_loss_policy("raise"):
+        warnings.simplefilter("error")
+        assert derived.consolidate().raw is meta.raw
+    # A value that was there is kept as it was.
+    meta.history = ("acquired",)
+    assert meta.derive(history="smooth").history == ("acquired",)

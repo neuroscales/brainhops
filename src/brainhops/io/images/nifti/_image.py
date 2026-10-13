@@ -501,7 +501,7 @@ class NiftiImage(
         if self.metadata is None:
             metadata = NiftiMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = type(self.metadata).from_raw(record)
         if not inplace:
             return replace(
                 self,
@@ -583,7 +583,7 @@ class NiftiImage(
         # file.
         record, proxy = read_nifti(filename)
         self.raw = proxy
-        self.metadata = replace(self.metadata, raw=record)
+        self.metadata = type(self.metadata).from_raw(record)
         self.data = None
         self.transformations = None
 
