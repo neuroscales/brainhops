@@ -294,6 +294,19 @@ try:
 except ImportError:
     h5py = None
 
+try:
+    from brainhops.io.images.base import _utils_raster as raster
+    from brainhops.io.images.jpeg2000 import Jpeg2000Image, Jpeg2000Metadata
+    from brainhops.io.images.jpeg2000._data import _Jpeg2000Proxy
+    from brainhops.io.images.jpeg2000._views import (
+        _image_to_disk as _jpeg2000_to_disk,
+    )
+    from brainhops.io.images.jpeg2000._views import (
+        _image_to_model as _jpeg2000_to_model,
+    )
+except ImportError:
+    Jpeg2000Image = None
+
 # ----------------------------------------------------------------------
 #   TOY FORMAT
 # ----------------------------------------------------------------------
@@ -1745,6 +1758,41 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+# A JPEG 2000 image is one resolution level of a JP2 file, written with
+# Pillow from 8-bit grey samples. Its geometry is the pixel size that the
+# resolution box of the file stores, in millimetres, so the geometry that
+# the checks assign is a scaling of half and a quarter of a millimetre,
+# which the box stores exactly. A raw codestream has no resolution box and
+# stores no pixel size, so the checks of geometry would be vacuous for a
+# `.j2k` file, which is therefore not a variant. The checks of a storage
+# option are skipped, because no option of the writer stores the floating
+# point values that they assign, and a lossy option keeps the type of the
+# data. The pyramid of a file, `Jpeg2000MultiScaleImage`, is not listed:
+# the levels of a multiscale image have no design yet (#415, fourth pass).
+
+
+def _jpeg2000_change_geometry(image: tx.Any) -> None:
+    image.transformations = raster.raster_transformations(
+        raster.default_axes(2), {"x": (0.5, "mm"), "y": (0.25, "mm")}
+    )
+
+
+if Jpeg2000Image is not None:
+    EXEMPLARS[Jpeg2000Image] = Exemplar(
+        metadata=Jpeg2000Metadata,
+        suffix=".jp2",
+        proxies=(_Jpeg2000Proxy,),
+        to_model=_jpeg2000_to_model,
+        to_disk=_jpeg2000_to_disk,
+        sample=lambda: np.arange(24, dtype=np.uint8).reshape(4, 6),
+        edit_record=lambda record: replace(record, comments=("edited",)),
+        record_edited=lambda record: record.comments == ("edited",),
+        geometry=_nifti_geometry,
+        change_geometry=_jpeg2000_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    )
+
+
 # An N5 dataset is a directory that holds an `attributes.json` file and
 # its blocks, and it cannot be written, so the checks write a dataset as
 # the specification describes it, without TensorStore, and name it by its
@@ -1986,6 +2034,10 @@ if ts is not None:
     )
 
 NOT_MIGRATED: tx.Tuple[str, ...] = (
+    # A JPEG 2000 pyramid waits for the design of the levels of a
+    # multiscale image, which the fourth pass of #415 decides with
+    # OME-Zarr. Its full-resolution level is the exemplar above.
+    "brainhops.io.images.jpeg2000.Jpeg2000MultiScaleImage",
     # The levels of an N5 pyramid are `N5Image` exemplars, and the pyramid
     # holds their shared metadata but no `raw`. The rules for the levels
     # and the record of a pyramid are decided in the Zarr pass (item 15 of
