@@ -59,6 +59,7 @@ from brainhops.io.transformations.base._converters import (
     relabel,
     relabelling,
 )
+from brainhops.io.transformations.base._records import matrix_to_disk
 
 from ..lta import LtaRaw, LtaTransformation, LtaType, LtaValidity
 from ..lta._matrix_utils import (
@@ -66,7 +67,7 @@ from ..lta._matrix_utils import (
     _volume_geometry,
     _volume_info,
 )
-from ..lta._xforms import _lta_written, _matrix_to_disk
+from ..lta._xforms import _lta_written
 from ._raw import RegisterDatRaw
 from ._xforms import (
     RegisterDatTransformation,
@@ -129,7 +130,7 @@ def _(
     scanner = _scanner_matrix(t, cls)
     record = LtaRaw(
         type=LtaType.LINEAR_RAS_TO_RAS,
-        affine=LtaRaw.Affine(matrix=_matrix_to_disk(scanner[:-1])),
+        affine=LtaRaw.Affine(matrix=matrix_to_disk(scanner[:-1])),
         src=_volume_info(t.reference, LtaRaw.SrcVolumeInfo),
         dst=_volume_info(t.moving, LtaRaw.DstVolumeInfo),
     )
@@ -203,7 +204,7 @@ def _scanner_matrix(t: RegisterDatTransformation, cls: type) -> np.ndarray:
             f"an LTA file holds a 3D affine, of shape (3, 4), and the "
             f"matrix has shape {np.shape(data)}.",
         )
-    homogeneous = np.asarray(_matrix_to_disk(data), dtype=np.float64)
+    homogeneous = np.asarray(matrix_to_disk(data), dtype=np.float64)
     src_system, dst_system = t.input, t.output
 
     def both(system_cls: type) -> bool:
