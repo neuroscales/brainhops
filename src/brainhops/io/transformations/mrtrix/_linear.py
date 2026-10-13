@@ -88,7 +88,7 @@ class MrtrixLinearTransform(
     `hint="mrtrix.linear"`.
     """
 
-    HINTS = ("linear",)
+    HINTS = ("linear", "affine")
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
 
     PRIORITY: tx.ClassVar[int] = -1

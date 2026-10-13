@@ -1,7 +1,7 @@
 """
 Private converters into the MRtrix transformation formats.
 
-`t.to(MrtrixDeformationField)`, `MrtrixDeformationField.from_any(t)` and
+`t.to(MrtrixCoordinatesField)`, `MrtrixCoordinatesField.from_any(t)` and
 `io.save(t, "warp.mif")` all run these converters. Each one either
 returns an instance of its format that is exactly the map `t` is, or
 raises a `ConversionError` that says what the format cannot hold.
@@ -9,7 +9,7 @@ raises a `ConversionError` that says what the format cannot hold.
 | Source                             | Format                       |
 | ---------------------------------- | ---------------------------- |
 | any affine, `Sequence` of affines  | `MrtrixLinearTransform`      |
-| any field, `Sequence`              | `MrtrixDeformationField`     |
+| any field, `Sequence`              | `MrtrixCoordinatesField`     |
 | any field, `Sequence`              | `MrtrixDisplacementField`    |
 | `Sequence`                         | `MrtrixWarpFull`, refused    |
 
@@ -69,7 +69,7 @@ from brainhops.io.transformations.base.fields import RASCoordinatesField
 # this format
 from ._linear import MrtrixLinearTransform
 from ._warps import (
-    MrtrixDeformationField,
+    MrtrixCoordinatesField,
     MrtrixDisplacementField,
     MrtrixWarpFull,
 )
@@ -125,21 +125,21 @@ def _(
 # ----------------------------------------------------------------------
 
 
-@converter(_xforms.StationaryVelocityField, MrtrixDeformationField)
-@converter(_xforms.CartesianField, MrtrixDeformationField)
-@converter(_xforms.DisplacementField, MrtrixDeformationField)
-@converter(_xforms.Sequence, MrtrixDeformationField)
+@converter(_xforms.StationaryVelocityField, MrtrixCoordinatesField)
+@converter(_xforms.CartesianField, MrtrixCoordinatesField)
+@converter(_xforms.DisplacementField, MrtrixCoordinatesField)
+@converter(_xforms.Sequence, MrtrixCoordinatesField)
 @converter
 def _(
     t: _xforms.CoordinatesField,
-    cls: tx.Type[MrtrixDeformationField],
+    cls: tx.Type[MrtrixCoordinatesField],
     **kwargs,
-) -> MrtrixDeformationField:
+) -> MrtrixCoordinatesField:
     # Exactly, or raise: an affine from scanner RAS to a grid, then one
     # field of coordinates on that grid, sampled as MRtrix stores it, and
     # an affine into scanner RAS, which is carried into the coordinates. A
     # field of displacements is refused there, with the reason.
-    cls = MrtrixDeformationField
+    cls = MrtrixCoordinatesField
     format_options(t, cls, kwargs)
     ras2voxel, field, voxel2ras = split_field_chain(t, RAS, RAS, cls)
     if not isinstance(field, _xforms.CoordinatesField):
@@ -214,10 +214,10 @@ def _(
 
 @converter
 def _(
-    t: MrtrixDeformationField,
-    cls: tx.Type[MrtrixDeformationField],
+    t: MrtrixCoordinatesField,
+    cls: tx.Type[MrtrixCoordinatesField],
     **kwargs,
-) -> MrtrixDeformationField:
+) -> MrtrixCoordinatesField:
     # A transformation that is already in this format is changed by the
     # rules of any chain, and these rules keep its type.
     return smart_replace(t, cls, **kwargs)

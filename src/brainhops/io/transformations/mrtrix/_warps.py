@@ -111,17 +111,17 @@ class MrtrixWarp(
     its free-form keys, such as `command_history`, are kept.
 
     This class is abstract and is not registered as a format, so it never
-    takes part in dispatch. [`MrtrixDeformationField`][],
+    takes part in dispatch. [`MrtrixCoordinatesField`][],
     [`MrtrixDisplacementField`][] and [`MrtrixWarpFull`][] derive from it,
-    and answer to `hint="mrtrix.warp"`.
+    and answer to `hint="mrtrix.field"`.
     """
 
     # A concrete warp also lists `MrtrixTransformationFormat` among its
     # bases, after this class: hints compose along the declared bases, so
     # that is what qualifies its own hint by `"mrtrix"` alone
-    # (`"mrtrix.deformation"`) as well as by `"mrtrix.warp"`
-    # (`"mrtrix.warp.deformation"`).
-    HINTS = ("warp",)
+    # (`"mrtrix.coord"`) as well as by `"mrtrix.field"`
+    # (`"mrtrix.field.coord"`).
+    HINTS = ("field",)
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
 
     raw: NoRepr[tx.Optional[ArrayProtocol]] = None
@@ -415,7 +415,7 @@ class MrtrixWarp(
 
 
 @register_format
-class MrtrixDeformationField(
+class MrtrixCoordinatesField(
     _xforms.ImmutableSequence, MrtrixWarp, MrtrixTransformationFormat
 ):
     """
@@ -442,7 +442,7 @@ class MrtrixDeformationField(
     known to write displacements. See the package docstring.
     """
 
-    HINTS = ("deformation", "coordinates")
+    HINTS = ("coordinates", "coord")
 
     degree: tx.ClassVar[int] = 1
     """The spline degree of the interpolation (MRtrix composes warps with
@@ -668,7 +668,7 @@ class MrtrixDisplacementField(
     `hint="mrtrix.displacement"`.
     """
 
-    HINTS = ("displacement", "displacements")
+    HINTS = ("displacement", "disp", "displacements")
 
     degree: tx.ClassVar[int] = 1
     """The spline degree of the interpolation."""
@@ -780,7 +780,7 @@ class MrtrixDisplacementField(
     ) -> tx.Self:
         """Encode the pending displacements or chain into `raw` and a record.
 
-        The encoding is that of [`MrtrixDeformationField.consolidate`][],
+        The encoding is that of [`MrtrixCoordinatesField.consolidate`][],
         with RAS displacements in place of RAS coordinates. A chain that
         was assigned is split into its grid and its displacements, rotated
         back into RAS millimetres.
@@ -1194,7 +1194,7 @@ class MrtrixWarpFull(
         The warps, assigned or read, are stored under the geometry of the
         record, whose linear transforms and other keys are kept, and
         `keyval` is merged into them last. The values are stored as for
-        [`MrtrixDeformationField.consolidate`][]. A warpfull object that
+        [`MrtrixCoordinatesField.consolidate`][]. A warpfull object that
         has a record and nothing pending, consolidated without options, is
         left as it is. `from_image` and `midway` select what is decoded,
         and are not written.

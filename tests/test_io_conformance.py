@@ -123,7 +123,7 @@ from brainhops.io.transformations.freesurfer.m3z._xform import (
     _positions_to_model,
 )
 from brainhops.io.transformations.mrtrix import (
-    MrtrixDeformationField,
+    MrtrixCoordinatesField,
     MrtrixDisplacementField,
     MrtrixLinearMetadata,
     MrtrixLinearTransform,
@@ -1309,8 +1309,8 @@ _MRTRIX_WARP = _MRTRIX._replace(
     change_geometry=_chain_change_geometry,
     derived=("transformations",),
 )
-EXEMPLARS[MrtrixDeformationField] = _MRTRIX_WARP._replace(
-    build=lambda data: MrtrixDeformationField(data=data),
+EXEMPLARS[MrtrixCoordinatesField] = _MRTRIX_WARP._replace(
+    build=lambda data: MrtrixCoordinatesField(data=data),
     foreign=_spm_coordinates,
 )
 EXEMPLARS[MrtrixDisplacementField] = _MRTRIX_WARP._replace(
@@ -1627,9 +1627,9 @@ VARIANTS.append(
 
 VARIANTS.append(
     (
-        "MrtrixDeformationField-gz",
-        MrtrixDeformationField,
-        EXEMPLARS[MrtrixDeformationField]._replace(suffix=".mif.gz"),
+        "MrtrixCoordinatesField-gz",
+        MrtrixCoordinatesField,
+        EXEMPLARS[MrtrixCoordinatesField]._replace(suffix=".mif.gz"),
     )
 )
 VARIANTS.append(

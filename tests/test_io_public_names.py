@@ -190,7 +190,7 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.transformations.mrtrix": Package(
         names=frozenset(
             {
-                "MrtrixDeformationField",
+                "MrtrixCoordinatesField",
                 "MrtrixDisplacementField",
                 "MrtrixLinearMetadata",
                 "MrtrixLinearRaw",

@@ -7,17 +7,25 @@ as small text files. Each kind of file has a format class here.
 
 | Class                         | File                         |
 | ----------------------------- | ---------------------------- |
-| [`MrtrixDeformationField`][]  | 4-D warp of positions        |
+| [`MrtrixCoordinatesField`][]  | 4-D warp of positions        |
 | [`MrtrixDisplacementField`][] | 4-D warp of displacements    |
 | [`MrtrixWarpFull`][]          | 5-D `-nl_warp_full` file     |
 | [`MrtrixLinearTransform`][]   | 3x4 or 4x4 matrix (`.txt`)   |
 
-Each class answers to the hint `"mrtrix"` followed by its own name:
-`"mrtrix.deformation"`, `"mrtrix.displacement"`, `"mrtrix.warpfull"` and
-`"mrtrix.linear"`.
+Each class answers to the hint `"mrtrix"` followed by one of its own
+names. Long and short names are both accepted, as for the NiftyReg
+fields.
+
+| Class                         | Hints                                         |
+| ----------------------------- | --------------------------------------------- |
+| [`MrtrixCoordinatesField`][]  | `mrtrix.coordinates`, `mrtrix.coord`          |
+| [`MrtrixDisplacementField`][] | `mrtrix.displacement`, `mrtrix.disp`          |
+| [`MrtrixWarpFull`][]          | `mrtrix.warpfull`, `mrtrix.warp_full`         |
+| [`MrtrixLinearTransform`][]   | `mrtrix.linear`, `mrtrix.affine`              |
 
 The three warps share the abstract [`MrtrixWarp`][], which answers to
-the hint `"mrtrix.warp"`. They read the `.mif`, `.mif.gz` and `.mih`
+the hint `"mrtrix.field"`, so that `"mrtrix.field.coord"` and
+`"mrtrix.field.disp"` are accepted as well. They read the `.mif`, `.mif.gz` and `.mih`
 variants with the record and the lazy array of the MRtrix image, which
 are described in [`brainhops.io.common.mrtrix`][], and they need no
 dependency beyond NumPy.
@@ -37,8 +45,8 @@ bytes of its file, and the free-form keys of its header, such as
 ```python
 import brainhops.io as io
 
-warp = io.load("warp.mif")                    # MrtrixDeformationField
-disp = io.load("disp.mif", hint="mrtrix.displacement")
+warp = io.load("warp.mif")                    # MrtrixCoordinatesField
+disp = io.load("disp.mif", hint="mrtrix.disp")
 full = io.load("warps.mif")                   # MrtrixWarpFull (5-D)
 lin = io.load("affine.txt", hint="mrtrix.linear")
 io.save(warp, "warp.mih")
@@ -186,7 +194,7 @@ field of view on the origin (`-0.5 * (size - 1) * vox`, in
 """
 
 __all__ = [
-    "MrtrixDeformationField",
+    "MrtrixCoordinatesField",
     "MrtrixDisplacementField",
     "MrtrixLinearMetadata",
     "MrtrixLinearRaw",
@@ -203,7 +211,7 @@ from ._linear import MrtrixLinearTransform
 from ._metadata import MrtrixLinearMetadata
 from ._raw import MrtrixLinearRaw
 from ._warps import (
-    MrtrixDeformationField,
+    MrtrixCoordinatesField,
     MrtrixDisplacementField,
     MrtrixWarp,
     MrtrixWarpFull,

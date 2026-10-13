@@ -199,7 +199,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "MrtrixLinearTransform": ("data",),
     },
     "brainhops.io.transformations.mrtrix._warps": {
-        "MrtrixDeformationField": ("transformations",),
+        "MrtrixCoordinatesField": ("transformations",),
         "MrtrixDisplacementField": ("transformations",),
         "MrtrixWarp": (),
         "MrtrixWarpFull": ("transformations",),
