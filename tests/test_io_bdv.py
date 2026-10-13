@@ -170,7 +170,10 @@ def _write_hdf5(
                 data=np.full((len(levels), 3), 4, "int32"),
             )
             if data_type is not None:
-                f[group].attrs["dataType"] = data_type
+                # A string of fixed length, padded with null characters.
+                f[group].attrs["dataType"] = np.bytes_(
+                    data_type.encode() + b"\x00"
+                )
         for index, level in enumerate(levels):
             stored = np.asarray(level).T
             if data_type is None:

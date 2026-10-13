@@ -10,11 +10,28 @@ holds the voxels. This package reads and writes the XML file, as a
 are read by [`brainhops.io.images.bdv`][], and the registration of a view
 is read and written by [`brainhops.io.transformations.bdv`][].
 
-The conventions below were checked against the code of
-bigdataviewer-core (commit dfe1a66), spimdata (commit 84728ff),
-imglib2-realtransform (commit ca9039d), bigdataviewer_fiji (commit
-c154fb2), multiview-reconstruction, the code of BigStitcher (commit
-60243ba), n5 (commit 7ba6b14) and jdom (commit c6065f6).
+The conventions below were checked against the source code of the Java
+libraries that write these datasets, at the commits below, and the
+sections that follow name the class or the method that each convention
+comes from.
+
+- bigdataviewer-core, commit dfe1a66: `XmlIoSpimDataMinimal`, the
+  classes of `bdv/img/hdf5` (`Hdf5ImageLoader`, `XmlIoHdf5ImageLoader`,
+  `Util`, `Partition` and `HDF5Access`), `WriteSequenceToHdf5` and
+  `HDF5Access` of `bdv/export`, `MipmapTransforms` and
+  `ScaleBarOverlayRenderer`;
+- spimdata, commit 84728ff: `XmlKeys`, `XmlHelpers`,
+  `XmlIoAbstractSpimData`, `XmlIoAbstractSequenceDescription`,
+  `XmlIoBasicViewSetup`, `XmlIoTimePoints`, `IntegerPattern`,
+  `XmlIoMissingViews`, `ViewRegistration`, `ViewTransformAffine`,
+  `XmlIoViewRegistration`, `XmlIoViewRegistrations` and
+  `XmlIoViewTransform`;
+- imglib2-realtransform, commit ca9039d: `AffineTransform3D`;
+- bigdataviewer_fiji, commit c154fb2: `ExportImagePlusPlugIn`;
+- multiview-reconstruction, the library of BigStitcher, commit 60243ba:
+  `DatasetCreationUtils`;
+- n5, commit 7ba6b14: `DataType`;
+- jdom, commit c6065f6: `Format` and `LineSeparator`.
 
 ## The XML file
 
@@ -80,9 +97,9 @@ first transform, named `calibration`, ends up last.
 Voxel coordinates are in the order x, y, z, and an integer coordinate is
 the center of a voxel, which is the convention of ImgLib2. The default
 transform of a coarser level (`MipmapTransforms.getMipmapTransformDefault`)
-confirms it: it places voxel 0 of a level downsampled by `f` at `(f - 1)
-/ 2` in full-resolution voxels, at the center of the block that it
-averages.
+confirms it: it places voxel `i` of a level downsampled by `f` at
+`f * i + (f - 1) / 2` in full-resolution voxels, which is the center of
+the block of voxels that it averages.
 
 ## Units and the global space
 

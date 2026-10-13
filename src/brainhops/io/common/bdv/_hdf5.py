@@ -235,12 +235,23 @@ def _pyramids(h5file: h5py.File, raw: BdvRaw) -> tx.Tuple[BdvRaw.Pyramid, ...]:
                     tuple(int(v) for v in row)
                     for row in np.asarray(subdivisions).reshape(-1, 3)
                 ),
-                data_type=None
-                if data_type is None
-                else read_string(data_type),
+                data_type=_data_type(data_type),
             )
         )
     return tuple(pyramids)
+
+
+def _data_type(value: tx.Any) -> tx.Optional[str]:
+    """Decode the `dataType` attribute of a setup group, if it exists.
+
+    The attribute is a string, which may be stored as bytes of a fixed
+    length that end with null characters, and these are removed. How
+    JHDF5, with which BigDataViewer writes the file, pads the string was
+    not checked.
+    """
+    if value is None:
+        return None
+    return read_string(value).rstrip("\x00")
 
 
 def _resolutions(h5file: h5py.File, setup: int) -> tx.Tuple[tx.Any, ...]:

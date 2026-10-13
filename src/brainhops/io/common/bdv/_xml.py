@@ -65,14 +65,6 @@ class _Element:
         return None if child is None else child.text
 
 
-class _Root(Exception):
-    """Raised by the sniffer as soon as it meets the root element."""
-
-    def __init__(self, name: str) -> None:
-        super().__init__(name)
-        self.name = name
-
-
 def root_name(head: bytes) -> tx.Optional[str]:
     """Return the name of the root element of an XML document.
 
@@ -290,3 +282,11 @@ def _escape(text: str) -> bytes:
     references where needed, so that it fits any ASCII-based encoding."""
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return text.encode("ascii", "xmlcharrefreplace")
+
+
+class _Root(Exception):
+    """Raised by the sniffer as soon as it meets the root element."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.name = name
