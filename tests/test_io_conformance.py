@@ -1505,7 +1505,7 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     # The levels of an N5 pyramid are `N5Image` exemplars, and the pyramid
     # holds their shared metadata but no `raw`. The rules for the levels
     # and the record of a pyramid are decided in the Zarr pass (item 15 of
-    # the memo), so the pyramid waits with the other pyramids (item 210).
+    # the memo), so the pyramid waits with the other pyramids (item 250).
     "brainhops.io.images.n5.N5MultiScaleImage",
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
