@@ -631,8 +631,8 @@ BIDS_KEYS: tx.Dict[str, str] = {
     for field in fields(group)
     if "bids" in (field.metadata or {})
 }
-"""Vocabulary field -> its BIDS sidecar key (`Bids(...)`), for the fields
-BIDS has a key for."""
+"""The BIDS sidecar key of each vocabulary field that BIDS has a key
+for, as `Bids(...)` declares it."""
 
 
 SCOPES: tx.Dict[str, Scope] = {
@@ -640,7 +640,7 @@ SCOPES: tx.Dict[str, Scope] = {
     for group in GROUPS
     for field in fields(group)
 }
-"""Vocabulary field -> its propagation scope (`Scoped` or `Along`)."""
+"""The propagation scope of each vocabulary field (`Scoped` or `Along`)."""
 
 
 ALONG: tx.Dict[str, AxisType] = {
@@ -649,5 +649,5 @@ ALONG: tx.Dict[str, AxisType] = {
     for field in fields(group)
     if "along" in (field.metadata or {})
 }
-"""Vocabulary field in the `AXIS` scope -> the type of the axis its
-entries run along (`Along`)."""
+"""The type of the axis that the entries of each field in the `AXIS`
+scope run along, as `Along` declares it."""

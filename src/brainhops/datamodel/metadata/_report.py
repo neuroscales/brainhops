@@ -50,12 +50,12 @@ class ConversionReport(DataModelBase):
     ] = None
     lost: tx.Annotated[
         tx.Dict[str, tx.Any],
-        tx.Doc("Field name -> the value that was dropped."),
+        tx.Doc("The value that was dropped, for each field name."),
         Factory(),
     ]
     approximated: tx.Annotated[
         tx.Dict[str, str],
-        tx.Doc("Field name -> what changed in the stored value."),
+        tx.Doc("What changed in the stored value, for each field name."),
         Factory(),
     ]
 

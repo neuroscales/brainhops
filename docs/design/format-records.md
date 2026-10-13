@@ -2,9 +2,9 @@
 
 This memo is agreed and is being implemented. It is tracked in #415,
 and the work is done in the passes described at the end. The first
-two passes are written and under review, and the third is in progress.
-The design of pending data and `consolidate()` is applied across the
-whole stack.
+three passes and the design of pending data and `consolidate()` are
+merged. The fifth pass, which brings the vocabulary of #233, is in
+progress, and its first part is #310.
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides
@@ -82,9 +82,9 @@ that holds state.
 
 | Layer           | Classes                                       | Role                                                  |
 |-----------------|-----------------------------------------------|-------------------------------------------------------|
-| Model API       | `Metadata`, `Image`, `Transformation`         | In-memory objects. `Image` and `Transformation` hold a `Metadata`. |
+| Model API       | `Metadata`, `Image`, `Transformation`         | In-memory objects. `Metadata` holds the common vocabulary, and `Image` and `Transformation` hold a `Metadata`. |
 | Dispatchers     | `MetadataFormat`, `ImageFormat`, `TransformationFormat` | Find the file format to read or write.      |
-| Format metadata | `<X>Metadata(MetadataFormat)`                 | Holds `<X>Raw`, the header record, and calls its methods for input and output. |
+| Format metadata | `<X>Metadata(MetadataFormat)`                 | Holds `<X>Raw`, the header record, and calls its methods for input and output. It decodes the vocabulary from the record in `from_raw`, and encodes in `consolidate()` the fields that differ from a fresh decode. |
 | Format object   | `<X>Image(ImageFormat, SingleScaleImage)`, `<X>Transformation` | Holds a `<X>Metadata` and a `raw` data object. |
 
 A dispatcher is a class that does not read a format itself but chooses
@@ -233,12 +233,27 @@ its geometry is decoded from the new record, so it has the precision of
 the file, such as the single precision of a NIfTI sform or the
 quaternion of a qform.
 
-`MetadataFormat.consolidate(*, inplace=False)` has the same form, but
-it takes no options today. It is to encode the fields of the metadata
-that differ from a fresh decode of the record into a copy of the
-record, which the fifth pass implements. Today metadata holds only its
-record, so the method returns a copy that holds the same record, or the
-metadata itself with `inplace=True`.
+`MetadataFormat.consolidate(*, inplace=False, on_loss=None, **fields)`
+has the same form. Its keyword arguments override fields of the
+metadata by name, and a name that is not a field raises `TypeError`.
+The metadata of a format decodes the vocabulary from its record when it
+is built, with `from_raw`, and a field that the format has no slot for
+holds `None`. Consolidating compares each field with a fresh decode of
+the record. When no field differs, the copy shares the record, and
+metadata without a record and without a field set stays without a
+record. Otherwise the fields that differ are encoded into a copy of the
+record, or into a new, empty record of the format, by a module-level
+encoder of the format, which takes each field that it writes. The
+fields that are left are reported as lost, a field that the new record
+holds only approximately is reported as approximated, and the report
+goes to the loss policy, or to the report given as `on_loss=`. The
+copy is decoded afresh from the new record, so a second consolidation
+changes nothing, and a truncated description reads back truncated. The
+constant `SUPPORTED_FIELDS` of each metadata class lists the fields
+that its record can store, and a conversion into the format reports
+from it a lower bound of what a write loses. The format objects do not
+consolidate their metadata yet; the wiring of pass 5a (#287) makes it
+step 2 of the precedence below.
 
 The methods `to_raw()` and `to_metadata()` are removed from every class,
 including `MetadataFormat`. The encoding code of each format stays
@@ -261,9 +276,17 @@ Consolidation, and therefore every write, follows four steps.
 
 1. The data to store is `to_disk(_data)` when data is pending, and
    `raw` otherwise.
-2. The base record is a copy of the record of the metadata. In the
-   fifth pass, only the metadata fields that differ from a fresh decode
-   of the record are encoded over it.
+2. The base record is a copy of the record of the metadata. The
+   metadata is consolidated first: its fields that differ from a fresh
+   decode of the record are encoded over a copy of it. A field that the
+   model owns, such as the repetition time of a NIfTI image, which is
+   its time step, is reported as approximated when it disagrees with
+   the model. The keyword arguments of `save` and `consolidate` are
+   forwarded to the consolidation of the metadata, so any field of the
+   metadata can be overridden on save, and a writer option with the
+   name of a field, such as `dtype=`, is that field. The stored type is
+   the override, then `metadata.dtype`, then the type of the data.
+   This step is wired in pass 5a (#287).
 3. The geometry is encoded from the model over that record. The image
    or the transformation owns its geometry and its data, the metadata
    owns its vocabulary, and the record supplies everything else.
@@ -326,6 +349,18 @@ A save never removes or overwrites a file that a live proxy reads. When
 it replaces that file, the object is consolidated in place with the
 writer options, and its `raw` reads the new file (#426).
 
+Loss of metadata is reported when the metadata is consolidated, so once
+per write. A conversion into a format reports only a lower bound, from
+the constant `SUPPORTED_FIELDS` of the format, and the values ride
+along until the next consolidation.
+
+Derived metadata keeps its class and its record. Copies within a format
+share the metadata object, which stays mutable, and a record is never
+changed, so sharing is safe; assigning `replace(metadata, ...)`
+changes one copy only. Assigning metadata clears the cache of the
+transformations that an object decoded from the record, never a list
+that was assigned.
+
 A conformance check that is vacuous for a format is logged in the comment
 of the exemplar of that format and in the list of tensions, instead of
 getting a generic hook.
@@ -383,16 +418,22 @@ one. The historical accessors that the memo planned to keep, such as
 This memo keeps the name `raw` and the `<X>Raw` types that the memo
 chose in its section 6.1. `LtaStruct` therefore becomes `LtaRaw`, and
 `from_struct` becomes `from_raw`, while `to_struct` is removed in favor
-of `consolidate()` (see Consolidation). It also keeps the vocabulary of
-common metadata fields and the `to` conversion.
+of `consolidate()` (see Consolidation).
 
-The vocabulary itself arrives in the fifth pass, after the formats have
-moved to records. That pass takes the vocabulary from #310 and #287 and
-adds it to `Metadata`. Each format gets module-level functions that
-decode and encode the vocabulary, and `consolidate()` encodes only the
-fields that differ from a fresh decode. The same pass adds the BIDS
-codec, puts metadata on the roots of the data model, propagates metadata
-through operations, and updates section 6.1 of the memo.
+The fifth pass adapts the work of #310 and #287 to the records, and the
+#306 memo records the result. The following parts are kept: the
+vocabulary, in seven groups that `Metadata` inherits, with `extra`,
+`to` and `derive`; the records `Indexed` and `Resampled` that image
+operations give to `derive`; the BIDS codec, as the metadata format
+`BidsSidecar`; and the loss reports and policy. The following parts are
+replaced: the snapshot, by the comparison with a fresh decode;
+`FileBasedMetadata` and its hooks, by `MetadataFormat`, `from_raw`,
+`consolidate` and module-level `_decode` and `_encode` functions in each
+format; the `UNSUPPORTED` sentinel and `supports=`, by `None` and the
+constant `SUPPORTED_FIELDS`; the polymorphic `format` field, by the
+class; the registry of propagation handlers, by one loop in `derive`;
+and the field `data_type`, by `dtype`. The historical accessors of
+section 6.1 of that memo are removed, and `struct` became `raw`.
 
 ## Implementation passes
 
@@ -463,6 +504,15 @@ format.
     list that was only read keeps the record and the bytes, an equal
     list that is assigned keeps the record, a list changed in place is
     written, and a copy of a read image stays lazy.
+21. The metadata of a format decodes its vocabulary when it is read, so
+    `from_raw(raw).consolidate()` shares `raw`, and
+    `replace(metadata, **vocabulary).consolidate()` holds the value,
+    decoded afresh. `Exemplar.vocabulary` gives a field and a value.
+22. A changed field of the vocabulary survives a save and a load of the
+    metadata, and the other fields read back as before.
+23. A field that the format has no slot for is reported as lost by
+    `consolidate` and is absent from the copy, and `on_loss="raise"`
+    raises `MetadataLossError`.
 
 The second pass moves LTA first, so that the reference format matches
 this design. `LtaStruct` becomes `LtaRaw`, its field becomes a
@@ -499,7 +549,13 @@ decided whether `moving` and `reference` belong to the format or to the
 record.
 
 The fifth pass brings the #233 vocabulary, as described in the previous
-section.
+section, in three parts. Pass 5a is #310, which adds the vocabulary, the
+consolidation of the metadata of a format, the BIDS sidecar, and the
+vocabulary of NIfTI, MGH and X5, and #287, which wires the vocabulary
+into images, transformations, their copies, their operations and their
+writers, with the conformance checks 24 and 25. Pass 5b brings the
+vocabulary of LTA, AFNI, MRtrix, NRRD and MINC, and pass 5c that of
+Zarr, OME-Zarr, FLIRT and ITK-H5, after pass 4.
 
 ## Open tensions and workarounds
 
@@ -547,7 +603,10 @@ its status.
 7. In the first pass, `metadata` is a field of the format classes,
    while #287 puts it on the roots of the data model. The name also
    clashes with `Transformation.metadata_fields`, which may be renamed.
-   Status: open.
+   Status: decided in the fifth pass. `metadata` goes on the roots, each
+   format takes it over with `Inherit("metadata")`, and
+   `metadata_fields` becomes `encoding_fields` without an alias. The
+   wiring of pass 5a (#287) implements it.
 8. Views that are decoded from `metadata` and cached, such as
    `transformations`, become stale when `metadata` is assigned again.
    The fix is a private `_metadata` field behind a public `metadata`
@@ -938,7 +997,9 @@ its status.
     proxy, as for `NiftiImage` (item 18). Status: resolved by pending
     data, as in item 18.
 82. `Metadata.__eq__` is based on identity, not on content. This is a
-    matter of the base class and not of MGH. Status: open.
+    matter of the base class and not of MGH. Status: decided in pass 5a.
+    The metadata of a format compares by identity (`MetadataFormat` is
+    declared with `eq=False`), and generic `Metadata` compares by value.
 83. The axis changes that depend on the record live in the lazy arrays
     of AFNI and MRtrix, and not in `to_model` and `to_disk`, which are
     the identity. For AFNI this is the squeeze of a single sub-brick
@@ -1131,3 +1192,39 @@ its status.
      Assigning an equal chain therefore still encodes it again. Status:
      open, for the maintainer to decide whether these formats compare
      their chain at consolidation too.
+115. `bagof` takes an inherited field from the first base that has it,
+     so a NIfTI transformation whose first base is a generic model
+     (`NiftiRASToVoxel(VoxelToRAS, _NiftiAffine)`) gets the generic
+     `metadata` of the root before the takeover of
+     `NiftiBasedTransformation`. The wiring probes it, and falls back on
+     the takeover in each concrete class. Status: open, for #287.
+116. The metadata of a format decodes its vocabulary at once, in
+     `from_raw`, instead of in lazy properties: a field may be `None`,
+     so a lazy field would need a sentinel or a flag, which is the state
+     that the comparison with a fresh decode removes. Reading the
+     metadata of an MGZ file decompresses it to its tags. Status:
+     decided in pass 5a.
+117. Loss is reported at consolidation, so once per write, and a
+     conversion reports only a lower bound from `SUPPORTED_FIELDS`. A
+     save that converts and then writes would warn twice, so the writer
+     passes one report as `on_loss=` to both. Status: decided in pass
+     5a, and the single report of a save is wired in #287.
+118. The format objects of the first three passes built the metadata of
+     their consolidated copy with `replace(self.metadata, raw=record)`,
+     which kept the decoded fields of the old record. With eager
+     decoding, the metadata of NIfTI, MGH and X5 is decoded from the new
+     record instead (`type(self.metadata).from_raw(record)`). The fields
+     that were assigned and not consolidated are dropped there until the
+     wiring makes the consolidation of the metadata step 2 of every
+     write. Status: resolved in pass 5a for the formats that have a
+     vocabulary, and open for #287.
+119. `Metadata.derive` adds to `history` and `generated_by`, which NIfTI
+     and MGH cannot store, so every consolidation of derived metadata
+     would report them as lost. `MetadataFormat.derive` keeps the two
+     fields as they were when the format has no slot for them. Status:
+     decided in pass 5a.
+120. The metadata of an MGH file writes the fixed header alone, so the
+     footer and the tags reach a file only through the image (item 68).
+     Check 22 changes `dtype` for MGH, which the fixed header holds.
+     Check 23 is vacuous for X5, whose JSON metadata stores every field,
+     as the comment of its exemplar says. Status: accepted.
