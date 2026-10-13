@@ -2,9 +2,14 @@
 
 Sample slides cannot be downloaded, so tifffile writes a generic tiled
 pyramidal TIFF and an Aperio-like SVS. Other vendors need real files, so
-only their declarations are checked.
+their declarations are checked, and their sniffing is checked with a
+detection that is forced. The conformance of the classes to the design of
+format records is checked by `tests/test_io_conformance.py`, through the
+generic TIFF vendor.
 """
 
+import gc
+import pickle
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import typing_extensions as tx
+from bagof.magic import replace
 
 openslide = pytest.importorskip("openslide")
 tifffile = pytest.importorskip("tifffile")
@@ -24,11 +30,13 @@ from brainhops.datamodel.transformations import Scaling  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     ParserContentError,
+    WriterError,
 )
 from brainhops.io.base.specs import format_hints  # noqa: E402
 from brainhops.io.images import load  # noqa: E402
 from brainhops.io.images import openslide as bos  # noqa: E402
 from brainhops.io.images.openslide import _base  # noqa: E402
+from brainhops.io.images.openslide import _data as slides  # noqa: E402
 from brainhops.io.images.tiff import (  # noqa: E402
     TiffImage,
     TiffMultiScaleImage,
@@ -146,17 +154,52 @@ def test_vendor_classes(
     single: type, multi: type, vendor: str, hint: str
 ) -> None:
     for cls in (single, multi):
-        assert cls.VENDOR == vendor
         hints = format_hints(cls)
         assert "openslide" in hints
         assert hint in hints
         assert f"openslide.{hint}" in hints
         assert cls.EXTENSIONS
+    assert single.EXTENSIONS == multi.EXTENSIONS
     assert issubclass(single, bos.OpenSlideImage)
     assert issubclass(single, SingleScaleImage)
     assert issubclass(multi, bos.OpenSlideMultiScaleImage)
     assert issubclass(multi, MultiScaleImage)
-    assert _base._LEVEL_CLASSES[vendor] is single
+    # The levels of a pyramid are objects of the class of its vendor.
+    level = np.zeros((4, 2, 3), dtype=np.uint8)
+    pyramid = multi(raw=(level, level[::2, ::2]))
+    assert [type(image) for image in pyramid.images] == [single, single]
+    assert [image.level for image in pyramid.images] == [0, 1]
+
+
+@pytest.mark.parametrize("single, multi, vendor, hint", VENDOR_CLASSES)
+def test_vendor_sniffing(
+    single: type,
+    multi: type,
+    vendor: str,
+    hint: str,
+    svs: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each class sniffs its own vendor, which OpenSlide is made to detect.
+    score = (
+        Confidence.MAYBE if vendor == "generic-tiff" else Confidence.CERTAIN
+    )
+    detected = {"vendor": vendor, "levels": 3}
+    monkeypatch.setattr(
+        _base, "detect", lambda _: (detected["vendor"], detected["levels"])
+    )
+    assert multi.sniff(svs) == score
+    assert multi.sniff(svs, level=1) == Confidence.NO
+    assert single.sniff(svs, level=1) == score
+    assert single.sniff(svs) == pytest.approx(0.8 * score)
+    detected["levels"] = 1
+    assert multi.sniff(svs) == Confidence.NO
+    assert single.sniff(svs) == score
+    detected["vendor"] = "another"
+    for cls in (single, multi):
+        assert cls.sniff(svs) == Confidence.NO
+        with pytest.raises(ParserContentError):
+            cls.sniff(svs, error=ParserContentError)
 
 
 # ----------------------------------------------------------------------
@@ -167,16 +210,21 @@ def test_vendor_classes(
 def test_svs_is_aperio_pyramid(svs: Path) -> None:
     image = load(svs)
     assert isinstance(image, bos.AperioMultiScaleImage)
-    assert image.vendor == "aperio"
-    assert image.n_levels == 3
-    assert image.level_downsamples == (1.0, 2.0, 4.0)
-    assert image.properties["openslide.mpp-x"] == str(MPP)
-    assert image.properties["aperio.AppMag"] == "20"
-    assert set(image.associated_images) == {"thumbnail", "label", "macro"}
+    record = image.metadata.raw
+    assert isinstance(record, bos.OpenSlideRaw)
+    assert record.vendor == "aperio"
+    assert len(record.levels) == 3
+    assert record.level_downsamples == (1.0, 2.0, 4.0)
+    assert record.levels[1].shape == (384, 256, 3)
+    assert record.properties["openslide.mpp-x"] == str(MPP)
+    assert record.properties["aperio.AppMag"] == "20"
+    assert set(record.associated_images) == {"thumbnail", "label", "macro"}
     assert len(image.images) == 3
     for k, level in enumerate(image.images):
         assert isinstance(level, bos.AperioImage)
         assert level.level == k
+        assert level.metadata is image.metadata
+        assert level.raw is image.raw[k]
         f = 2.0**k
         assert level.data.shape == (768 // 2**k, 512 // 2**k, 3)
         assert level.data.dtype == np.uint8
@@ -252,7 +300,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> tx.List[tx.Any]:
 def test_regions_are_read_lazily(svs: Path, calls: tx.List[tx.Any]) -> None:
     image = load(svs, lazy=False)
     data = image.images[1].data
-    assert isinstance(data, _base._SlideArray)
+    assert isinstance(data, slides._SlideArray)
     assert calls == []
     region = data[10:20, 30:35]
     assert region.shape == (10, 5, 3)
@@ -304,7 +352,9 @@ def test_background_composite(
     from PIL import Image
 
     data = load(svs, lazy=False).images[0].data
-    data._background = _base._hex_colour("102030")
+    properties = {**data.record.properties}
+    properties["openslide.background-color"] = "102030"
+    data.record = replace(data.record, properties=properties)
     rgba = np.zeros((2, 3, 4), dtype=np.uint8)
     rgba[..., :3] = 200
     rgba[0, 0, 3] = 255
@@ -320,7 +370,7 @@ def test_background_composite(
     assert out.shape == (3, 2, 3)
     assert tuple(out[0, 0]) == (200, 200, 200)
     assert tuple(out[1, 0]) == (16, 32, 48)
-    assert _base._hex_colour(None).tolist() == [255, 255, 255]
+    assert slides._hex_colour(None).tolist() == [255, 255, 255]
 
 
 # ----------------------------------------------------------------------
@@ -334,7 +384,7 @@ def test_generic_tiff_stays_with_tiff(generic: Path) -> None:
     assert isinstance(load(generic, level=1), TiffImage)
     image = load(generic, hint="openslide")
     assert isinstance(image, bos.GenericTiffMultiScaleImage)
-    assert image.n_levels == 3
+    assert len(image.metadata.raw.levels) == 3
     level = load(generic, hint="openslide", level=2)
     assert isinstance(level, bos.GenericTiffImage)
     np.testing.assert_array_equal(
@@ -383,7 +433,8 @@ def test_open_file(svs: Path) -> None:
     with open(svs, "rb") as f:
         image = load(f)
     assert isinstance(image, bos.AperioMultiScaleImage)
-    assert image.images[0]._slide.filename == str(svs)
+    assert image.raw[0].slide.filename == str(svs)
+    assert image.images[0].raw.slide is image.raw[0].slide
 
 
 def test_bytes_by_hint(svs: Path) -> None:
@@ -398,11 +449,9 @@ def test_bytes_by_hint(svs: Path) -> None:
     assert isinstance(level, bos.AperioImage)
     assert level.level == 1
     # The temporary copy is deleted with the images.
-    tempdir = Path(image._slide._state["tempdir"])
+    tempdir = Path(image.raw[0].slide._state["tempdir"])
     assert tempdir.exists()
     del image
-    import gc
-
     gc.collect()
     assert not tempdir.exists()
 
@@ -437,3 +486,119 @@ def test_missing_openslide() -> None:
         check=True,
     ).stdout
     assert "brainhops[openslide]" in out
+
+
+# ----------------------------------------------------------------------
+#   RECORD, METADATA AND CONSOLIDATION
+# ----------------------------------------------------------------------
+
+
+def test_metadata_reads_the_record_alone(svs: Path) -> None:
+    metadata = bos.OpenSlideMetadata.load(svs)
+    assert isinstance(metadata, bos.OpenSlideMetadata)
+    assert metadata.raw == load(svs).metadata.raw
+    assert bos.OpenSlideMetadata.from_bytes(svs.read_bytes()).raw == (
+        metadata.raw
+    )
+    # The record holds no open slide, so it can be pickled.
+    assert pickle.loads(pickle.dumps(metadata)).raw == metadata.raw
+    record = metadata.raw
+    assert record.background_color is None
+    assert record.bounds is None
+    properties = {**record.properties, "openslide.background-color": "AABBCC"}
+    for key, value in zip("xy", (3, 4)):
+        properties[f"openslide.bounds-{key}"] = str(value)
+    properties["openslide.bounds-width"] = "10"
+    properties["openslide.bounds-height"] = "20"
+    edited = replace(record, properties=properties)
+    assert edited.background_color == "AABBCC"
+    assert edited.bounds == (3, 4, 10, 20)
+    with pytest.raises(TypeError):
+        bos.OpenSlideMetadata.load(svs, level=1)
+
+
+def test_the_bases_read_any_vendor(svs: Path, generic: Path) -> None:
+    for path, single in ((svs, bos.AperioImage), (generic, None)):
+        pyramid = bos.OpenSlideMultiScaleImage.load(path)
+        assert type(pyramid) is bos.OpenSlideMultiScaleImage
+        assert all(type(i) is bos.OpenSlideImage for i in pyramid.images)
+        level = bos.OpenSlideImage.load(path, level=1)
+        assert type(level) is bos.OpenSlideImage
+        if single is not None:
+            assert np.array_equal(
+                np.asarray(level.data),
+                np.asarray(single.load(path, level=1).data),
+            )
+
+
+def test_options_are_assigned_transformations(svs: Path) -> None:
+    image = load(svs, level=1, pixel_size=2.0)
+    assert image._transformations is not None
+    np.testing.assert_allclose(_scale(image), [4, 4, 1])
+    pyramid = load(svs, pixel_size=2.0)
+    assert pyramid._images is not None
+    assert all(level.metadata is pyramid.metadata for level in pyramid.images)
+    # Without options, nothing is assigned.
+    assert load(svs, level=1)._transformations is None
+    assert load(svs)._images is None
+
+
+def test_lazy_is_kept_by_copies(svs: Path) -> None:
+    pytest.importorskip("dask.array")
+    level = load(svs, level=1, lazy=True)
+    for copy in (replace(level), type(level).from_instance(level)):
+        assert type(copy.data).__module__.startswith("dask")
+
+
+def test_a_level_consolidates_its_data_only(svs: Path) -> None:
+    image = load(svs, level=2)
+    value = np.zeros(image.shape, dtype=np.uint8)
+    image.data = value
+    consolidated = image.consolidate()
+    assert consolidated.raw is value
+    assert consolidated._data is None
+    assert consolidated.metadata is image.metadata
+    assert consolidated.level == 2
+    assert isinstance(image.raw, slides._SlideArray)
+    # The associated images are still read from the slide of the record.
+    assert image.associated_image("label").shape == (50, 40, 3)
+    with pytest.raises(KeyError):
+        consolidated.associated_image("label")
+    with pytest.raises(WriterError):
+        from brainhops import io
+
+        io.save(image, svs.with_name("copy.svs"))
+
+
+def test_a_pyramid_consolidates_its_data_only(svs: Path) -> None:
+    pyramid = load(svs)
+    raw, metadata = pyramid.raw, pyramid.metadata
+    value = np.zeros(pyramid.images[1].shape, dtype=np.uint8)
+    pyramid.images[1].data = value
+    consolidated = pyramid.consolidate()
+    assert consolidated.metadata is metadata
+    assert consolidated.raw[1] is value
+    assert consolidated.raw[0] is raw[0]
+    assert consolidated._images is None
+    # The associated images are read through any level of the slide.
+    assert consolidated.associated_image("macro").shape == (60, 30, 3)
+    # A transformation assigned to a level is kept with its level.
+    pyramid = load(svs)
+    pyramid.images[2].transformations = [Scaling([3.0, 3.0, 1.0])]
+    consolidated = pyramid.consolidate()
+    assert consolidated.raw is pyramid.raw
+    assert consolidated._images is not None
+    np.testing.assert_allclose(_scale(consolidated.images[2]), [3, 3, 1])
+    assert consolidated.images[0]._transformations is None
+    twice = consolidated.consolidate()
+    assert twice.raw is consolidated.raw
+    np.testing.assert_allclose(_scale(twice.images[2]), [3, 3, 1])
+    # A level that is not a level of the slide cannot be described.
+    pyramid = load(svs)
+    pyramid.images = list(reversed(pyramid.images))
+    with pytest.raises(WriterError):
+        pyramid.consolidate()
+    pyramid = load(svs)
+    pyramid.images = pyramid.images[:2]
+    with pytest.raises(WriterError):
+        pyramid.consolidate()
