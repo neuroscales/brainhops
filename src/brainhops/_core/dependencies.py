@@ -12,6 +12,7 @@ _ABCZARR = ("abczarr", "abczarr", "HAS_ABCZARR")
 _PILLOW = ("pil", "PIL", "HAS_PILLOW")
 _TIFFFILE = ("tifffile", "tifffile", "HAS_TIFFFILE")
 _OPENSLIDE = ("openslide", "openslide", "HAS_OPENSLIDE")
+_TENSORSTORE = ("ts", "tensorstore", "HAS_TENSORSTORE")
 
 # ---- units -----------------------------------------------------------
 _PINT = ("pint", "pint", "HAS_PINT")
@@ -34,6 +35,7 @@ _LAZY_NAMES = (
     + _PILLOW
     + _TIFFFILE
     + _OPENSLIDE
+    + _TENSORSTORE
     + _PINT
     + _NUMPY
     + _CUPY
@@ -71,6 +73,9 @@ def __getattr__(name: str) -> tx.Any:
 
     if name in _OPENSLIDE:
         return _lazy_import(globals(), name, "openslide", "openslide")
+
+    if name in _TENSORSTORE:
+        return _lazy_import(globals(), name, "tensorstore", "ts")
 
     # ==================================================================
     #

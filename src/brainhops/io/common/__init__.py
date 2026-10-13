@@ -18,6 +18,8 @@ format have in common -- its parser, header, and geometry conventions:
 - [`nifti`][brainhops.io.common.nifti]: NIfTI-1 and NIfTI-2 files (needs
   `nibabel`);
 - [`nrrd`][brainhops.io.common.nrrd]: NRRD `.nrrd`/`.nhdr` files;
+- [`precomputed`][brainhops.io.common.precomputed]: Neuroglancer
+  precomputed volumes (needs `tensorstore` for the voxels);
 - [`zarr`][brainhops.io.common.zarr]: Zarr stores (needs `abczarr` and
   one of its drivers).
 
