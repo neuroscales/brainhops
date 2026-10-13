@@ -1664,6 +1664,42 @@ registrations of its views back into the XML file.
      (item 61). A registration without a record writes a new file with
      a single setup, a single time point and no image loader. Status:
      accepted.
+220. FNIRT coefficient files (#204) placed their knots from the stored
+     voxels of the reference, as fslpy does, and decided the offset of
+     the knots from the knot spacing after it was rescaled to the given
+     reference, so a spacing that rescaled to one lost its offset. FSL
+     holds a reference whose voxel-to-world matrix has a positive
+     determinant in the radiological order, and writes the coefficients
+     in that order, so its knots follow the scaled-mm positions of the
+     reference, and the offset depends on the stored spacing
+     (`src/newimage/generalio.cc`, `src/warpfns/fnirt_file_writer.cpp`
+     and `src/basisfield/fsl_splines.h` of FSL 5.0.9, at commit 513f6a0
+     of https://github.com/neurodebian/fsl). Status: resolved, where the
+     knots are placed from the scaled-mm positions
+     (`io/transformations/fsl/fnirt/_base.py`). The reader now differs
+     from fslpy 3.29.1 for such references, and the sources of FSL 6
+     could not be reached to check that it still behaves as FSL 5.0.9.
+221. FNIRT reads and writes its deformation fields and its coefficient
+     files with one class, which the intent of the record selects. A field
+     built from an array alone has no record and is written as a
+     deformation field, because a record is never made up. The
+     conformance harness therefore has a field `Exemplar.fixture`, which
+     writes the coefficient file that the variant
+     `FnirtWarpField-coefficients` reads, and check 8 of that variant
+     checks a deformation field (`tests/test_io_conformance.py`). Status:
+     open, for the maintainer to accept the field or to ask for a
+     separate class.
+222. No converter turns a coefficient file into a FNIRT deformation
+     field, as `fnirtfileutils` does. Both kinds are the same class, so a
+     converter between classes does not apply, and the deformation field
+     would need a header made up from the reference image. Evaluating the
+     chain on the grid of the reference gives the same field in the data
+     model. Status: open.
+223. FSL checks that the shape of the coefficients is the one that its
+     spline gives for the shape of the reference stored in the qform, and
+     it evaluates a coefficient file only on that reference. The reader
+     checks neither, and places a reference of another shape or resolution
+     by its scaled-mm positions, as fslpy does. Status: open.
 250. An N5 pyramid, a group whose datasets are `s0`, `s1`, ..., is read
      as `N5MultiScaleImage`, whose levels are `N5Image` objects
      (`io/images/n5`). Each level follows this design: it holds the
