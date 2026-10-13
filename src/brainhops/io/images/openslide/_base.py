@@ -450,11 +450,20 @@ class OpenSlideImage(
         OpenSlideImage
             The consolidated copy, or this image with `inplace=True`.
         """
+        # The record cannot be encoded, so a copy is given the list that
+        # the image holds when it is not the list that the record decodes
+        # to, as a list decoded and then changed in place would otherwise
+        # be decoded again and lost.
+        held = held_transformations(self)
+        if held is None or same_transformations(
+            held, record_transformations(self.metadata, self.level)
+        ):
+            held = self._transformations
         if self._data is None:
-            return self if inplace else replace(self)
+            return self if inplace else replace(self, transformations=held)
         raw = _image_to_disk(self._data)
         if not inplace:
-            return replace(self, data=None, raw=raw)
+            return replace(self, data=None, raw=raw, transformations=held)
         self.raw = raw
         self.data = None
         return self
@@ -769,13 +778,23 @@ class OpenSlideMultiScaleImage(
             level that is not a level of its slide, such as an image of
             another class, since no record can describe it.
         """
+        # The record stores no placement, so a copy is given the list that
+        # the pyramid holds when it is not empty, as a list decoded and then
+        # changed in place would otherwise be decoded again and lost.
+        placements = held_transformations(self)
+        if not placements:
+            placements = self._transformations
         images = held_images(self)
         if images is None:
-            return self if inplace else replace(self)
+            if inplace:
+                return self
+            return replace(self, transformations=placements)
         arrays, levels = _consolidated_levels(self, images)
         raw = self.raw if _same(arrays, self.raw) else arrays
         if not inplace:
-            return replace(self, raw=raw, images=levels)
+            return replace(
+                self, raw=raw, images=levels, transformations=placements
+            )
         self.raw = raw
         self.images = levels
         return self

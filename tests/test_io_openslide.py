@@ -602,3 +602,31 @@ def test_a_pyramid_consolidates_its_data_only(svs: Path) -> None:
     pyramid.images = pyramid.images[:2]
     with pytest.raises(WriterError):
         pyramid.consolidate()
+
+
+def test_consolidate_keeps_a_list_changed_in_place(svs: Path) -> None:
+    # A slide cannot be written, so a list decoded and then changed in
+    # place is given to the copy as an assigned list.
+    image = load(svs, level=1)
+    decoded = image.transformations
+    assert image._transformations is None
+    image.transformations[:] = [Scaling([5.0, 5.0, 1.0])]
+    consolidated = image.consolidate()
+    assert consolidated._transformations is not None
+    np.testing.assert_allclose(_scale(consolidated), [5, 5, 1])
+    image.data = np.zeros(image.shape, dtype=np.uint8)
+    np.testing.assert_allclose(_scale(image.consolidate()), [5, 5, 1])
+    # A list that is the decoded one is left to the record.
+    image = load(svs, level=1)
+    assert len(image.transformations) == len(decoded)
+    assert image.consolidate()._transformations is None
+    # The placements of a pyramid, which a slide never stores, likewise.
+    pyramid = load(svs)
+    assert pyramid.consolidate()._transformations is None
+    pyramid.transformations.append(Scaling([2.0, 2.0, 1.0]))
+    assert pyramid._transformations is None
+    consolidated = pyramid.consolidate()
+    assert len(consolidated._transformations) == 1
+    assert consolidated.transformations is consolidated._transformations
+    pyramid.images[1].data = np.zeros(pyramid.images[1].shape, np.uint8)
+    assert len(pyramid.consolidate()._transformations) == 1
