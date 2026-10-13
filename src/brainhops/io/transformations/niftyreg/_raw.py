@@ -43,8 +43,8 @@ class NiftyRegAffineRaw(Magic, TextFileReader, TextFileWriter):
     `reg-io/_reg_ReadWriteMatrix.cpp` of
     <https://github.com/KCL-BMEIS/niftyreg>, commit `79a1762`). The record
     is read as whitespace-separated text whose comments start with `#`, as
-    [`TxtArrayReader`][brainhops.io.common._arrays.TxtArrayReader] reads
-    it, so it accepts every file that NiftyReg writes.
+    the reader of plain text matrices reads it, so it accepts every file
+    that NiftyReg writes.
     """
 
     matrix: _Matrix = ()

@@ -44,9 +44,24 @@ headers, or brainhops images. The conventions are applied in a fixed
 order: transposition, then inversion, then the index shift, and finally
 the placement in image space. The result is always an affine that maps
 column vectors and uses 0-based indices, in which an integer index is the
-centre of a voxel (see #201). The raw matrix and the conventions it was
-read with are kept on the object, as `raw_matrix`, `variable`, `vector`,
-`direction` and `index_base`.
+centre of a voxel (see #201).
+
+A plain matrix file is read in one pass. The matrix as it is stored, and
+the conventions that it was read with, are kept in a
+[`MatrixAffineRaw`][brainhops.io.transformations.matrix.MatrixAffineRaw]
+record, which the metadata of the file holds. Each container has its own
+metadata class, such as
+[`TxtMatrixMetadata`][brainhops.io.transformations.matrix.TxtMatrixMetadata],
+and the record of a text file also keeps the text of the file. The record
+is read from `xform.metadata.raw`, whose fields `matrix`, `variable`,
+`vector`, `direction`, `index_base`, `ndim`, `source_to_world` and
+`target_to_world` replace the former attributes `raw_matrix`, `variable`,
+`vector`, `direction` and `index_base` of the transformation. A matrix
+that is assigned stays pending until `consolidate()` stores it in a new
+record, in the conventions and the layout of the file. The readers
+refuse an option that they do not know with `TypeError`, and a container
+that holds a single array also refuses `variable` and `key`. These
+formats read files and do not write them.
 
 ```python
 from brainhops import io

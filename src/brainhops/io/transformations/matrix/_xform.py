@@ -135,10 +135,10 @@ class MatrixAffine(
     `input` and `output`, so that a copy into another class keeps them. A
     matrix that is assigned, and an `input` or `output` that is not the
     system of the record, are pending: they win over the record until
-    [`consolidate`][TxtMatrixAffine.consolidate] encodes them into a new
-    record, in the conventions and the layout of the record that it
-    replaces. A transformation without a record, such as one built from
-    data alone, holds its matrix as any affine does and has no metadata.
+    `consolidate()` encodes them into a new record, in the conventions
+    and the layout of the record that it replaces. A transformation
+    without a record, such as one built from data alone, holds its matrix
+    as any affine does and has no metadata.
 
     These formats read files but do not write them, so a plain matrix is
     saved through another format, such as NIfTI or LTA.
