@@ -1308,14 +1308,19 @@ its status.
      the cache of `transformations`, and the writers and `consolidate`
      read the assigned list, or else the cached one, through
      `held_transformations` (`io/common/_geometry.py`), which reads the
-     cache with `cached_value` (`_core/properties.py`). Status: resolved.
+     cache with `cached_value` (`_core/properties.py`). The images of
+     the formats merged later (N5, Imaris and precomputed) follow the
+     same rule. Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
      the cache, so it is lost when other metadata is assigned, and a copy
      made with `replace` or `from_instance` decodes the list again instead
      of copying the change. A write of the image itself, including
      `io.save`, still writes the change. Assigning the changed list keeps
-     it everywhere. Status: open, for the maintainer to decide whether
-     copies within a format should carry the cache.
+     it everywhere. The images that cannot be written (N5, Imaris and
+     precomputed) have no record to encode the change into, so their
+     `consolidate` gives the copy the changed list as an assigned one.
+     Status: open, for the maintainer to decide whether copies within a
+     format should carry the cache.
 192. Check 20 cannot tell an old geometry from a new one for some
      exemplars. The transformation of `NiftiRASCoordinatesField` and of
      the FNIRT exemplar, which has no moving image, is its data, which

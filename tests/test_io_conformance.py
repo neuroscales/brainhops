@@ -874,6 +874,15 @@ def _nifti_change_geometry(image: tx.Any) -> None:
     image.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
 
 
+def _scaled_change_geometry(image: tx.Any) -> None:
+    # The voxel sizes of some exemplars are already those that
+    # `_nifti_change_geometry` assigns, and some have more than three axes,
+    # so they are given voxel sizes 5, 6, 7... along all their axes.
+    ndim = len(image.shape)
+    sizes = np.arange(5.0, 5.0 + ndim)
+    image.transformations = [Affine(matrix=np.diag([*sizes, 1.0])[:ndim])]
+
+
 def _header_matrix(xform: tx.Any) -> tx.Optional[np.ndarray]:
     # A NIfTI affine stores its matrix as the best affine of its header.
     if xform.metadata is None:
@@ -1776,7 +1785,7 @@ if n5_needs is not None:
         ),
         record_edited=lambda record: record.attributes.get("note") == "edited",
         geometry=_nifti_geometry,
-        change_geometry=_nifti_change_geometry,
+        change_geometry=_scaled_change_geometry,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
         options=frozenset({"level"}),
         cut=_n5_cut,
@@ -1845,7 +1854,7 @@ if h5py is not None:
             record.info["Image"].get("Name") == "edited"
         ),
         geometry=_nifti_geometry,
-        change_geometry=_nifti_change_geometry,
+        change_geometry=_scaled_change_geometry,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
         options=frozenset({"level"}),
         cut=_hdf5_cut,
