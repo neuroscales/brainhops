@@ -799,14 +799,20 @@ def test_a_level_that_is_not_diagonal_has_no_dataset_transformation() -> None:
         (
             {
                 "type": "sequence",
-                "transformations": [{"type": "scale"}, {"type": "translation"}],
+                "transformations": [
+                    {"type": "scale"},
+                    {"type": "translation"},
+                ],
             },
             True,
         ),
         (
             {
                 "type": "sequence",
-                "transformations": [{"type": "translation"}, {"type": "scale"}],
+                "transformations": [
+                    {"type": "translation"},
+                    {"type": "scale"},
+                ],
             },
             False,
         ),

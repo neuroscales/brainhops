@@ -93,11 +93,16 @@ every placement that reduces to an affine as a `scale`, a
 that a placement read as an inverse is written in the forward direction.
 It refuses the other placements, such as a projection, a bijection or a
 field, with a [`WriterError`][brainhops.io.base.parsers.WriterError].
-The writer also puts the geometry of each level in its dataset as it is.
-Version 0.6 only allows a `scale`, or a `scale` followed by a
-`translation`, there, so a level that is rotated or sheared is written
-as an `affine` that the official schema of version 0.6 rejects (item
-131).
+Version 0.6 only allows a `scale`, an `identity`, or a `scale` followed
+by a `translation` in the dataset of a level. The writer writes the
+geometry of a level that only scales and translates each axis in that
+form, whatever its spelling. The geometry of a single level that also
+rotates or shears becomes the placement of a pyramid that has none, and
+the level then keeps a unit scale. Any other level that rotates or
+shears is refused with a
+[`WriterError`][brainhops.io.base.parsers.WriterError]. Splitting its
+geometry into a diagonal part per level and a placement shared by all
+levels is tracked in issue #447 (item 131).
 """
 
 __all__ = ["ZarrImage", "OmeZarrImage", "OmeImageError"]

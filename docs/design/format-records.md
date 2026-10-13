@@ -1138,17 +1138,18 @@ its status.
      record has to hold the JSON of the group as it was read, because
      abczarr writes the numbers of a parsed model again in its own form,
      such as `1.0` for `1`. Status: open, for the Zarr pass.
-131. OME-NGFF 0.6 only allows a `scale`, or a `scale` followed by a
-     `translation`, in the dataset of a level, and puts any other
-     placement in the transformations of the multiscale. A
-     `MultiScaleImage` lets each level hold any geometry, and the writer
-     puts that geometry in the dataset as it is, so a rotated or sheared
-     level is written as an `affine` that the official schema of version
-     0.6 rejects (`io/images/zarr/_multiscale.py`, `to_node`). The
-     writer could split the geometry into a diagonal part per level and a
-     part shared by every level, or refuse such levels. Either choice
-     changes how a pyramid shares its geometry between its levels and its
-     placements. Status: open, for the maintainer.
+131. OME-NGFF 0.6 only allows a `scale`, an `identity`, or a `scale`
+     followed by a `translation`, in the dataset of a level, and puts any
+     other placement in the transformations of the multiscale. A
+     `MultiScaleImage` lets each level hold any geometry. The writer
+     writes a geometry that only scales and translates each axis in the
+     form of a dataset, whatever its spelling, and moves the geometry of
+     a single level that rotates or shears to the placements of a pyramid
+     that has none, as #434 (66ff758) does. It refuses any other level
+     that rotates or shears, as the maintainer decided on #433
+     (`io/images/zarr/_multiscale.py`, `to_node`). Status: decided.
+     Splitting such a geometry into a diagonal part per level and a part
+     shared by every level is tracked in #447.
 132. OME-NGFF 0.6 identifies a coordinate system by its name and the path
      of its group, while two brainhops systems are equal when they have
      the same class, name and axes. Two images whose intrinsic systems are

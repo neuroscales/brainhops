@@ -388,7 +388,12 @@ class OmeZarrImage(
         ------
         WriterError
             If `node` is an array, if a level is missing or empty, or if the
-            axes or transformations cannot be written.
+            axes or transformations cannot be written. This includes a
+            level that does not only scale and translate each axis in a
+            pyramid of several levels, or in a pyramid that has its own
+            placements, since an OME-NGFF 0.6 dataset only holds a scale and
+            a translation. The geometry of a single level becomes the
+            placement of a pyramid that has none.
         """
         node = _as_node(node)
         if not isinstance(node, ZarrGroup):
@@ -422,7 +427,7 @@ class OmeZarrImage(
                     f"Level {index} of this multiscale image has no data."
                 )
             try:
-                entry = _map.to_ome(
+                entry = _map.to_dataset_ome(
                     image.transformation,
                     storage_perm,
                     len(data.shape),
@@ -432,12 +437,21 @@ class OmeZarrImage(
                     f"Level {index} of this image cannot be written as "
                     f"OME-Zarr metadata. {error}"
                 ) from error
-            if not _map.is_dataset_transform(entry):
+            if entry is None:
+                # A dataset only scales and translates. The geometry of a
+                # single level becomes the placement of the pyramid, which is
+                # exact. Splitting the geometry of several levels into a
+                # diagonal part per level and a shared placement is not done
+                # yet (#447).
                 if len(images) != 1 or placements:
                     raise WriterError(
-                        f"Level {index} has a transformation that OME-Zarr "
-                        "cannot store on a dataset. Put the placement on the "
-                        "multiscale image instead."
+                        f"Level {index} of this image is placed by a "
+                        "transformation that does not only scale and "
+                        "translate each axis, which an OME-NGFF 0.6 dataset "
+                        "cannot hold. Give the levels a scale and a "
+                        "translation, and the multiscale image the rest of "
+                        "the placement. Splitting it when writing is tracked "
+                        "in neuroscales/brainhops#447."
                     )
                 placements.append(image.transformation)
                 entry = _map.to_ome(Identity(), storage_perm, len(data.shape))

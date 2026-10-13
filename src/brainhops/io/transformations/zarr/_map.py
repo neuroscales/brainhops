@@ -56,7 +56,9 @@ express the reordering, such as a scale, is followed by a
 
 On write, an affine that only scales and translates each axis is written
 as a `scale` and a `translation`. Any other affine is written in full as an
-`affine`, so that rotations and shears are kept.
+`affine`, so that rotations and shears are kept. The dataset of a level
+only holds a scale and a translation in version 0.6, which
+[`to_dataset_ome`][] writes.
 
 In both directions, a [`Function`][] selects the converter that is
 registered for the nearest supertype of the transformation. When two
@@ -572,17 +574,71 @@ def to_ome(
         return _affine_to_ome(transform, storage_perm, ndim)
 
 
+def to_dataset_ome(
+    transform: Transformation, storage_perm: tx.Sequence[int], ndim: int
+) -> tx.Optional[tx.Dict[str, tx.Any]]:
+    """Map the geometry of a level to the transformation of its dataset.
+
+    OME-NGFF 0.6 restricts the transformation of a dataset to a single
+    `scale` or `identity`, or a `sequence` of a scale followed by a
+    translation (ngff-spec tag `0.6` at 89da1da, `index.md`, section
+    "coordinateTransformations metadata", "Constraints"). A geometry whose
+    mapping is already of that form is returned as it is. Any other
+    geometry that only scales and translates each axis, such as a
+    translation followed by a scale, is written as a scale followed by a
+    translation.
+
+    Parameters
+    ----------
+    transform : Transformation
+        The geometry of the level, from its voxels to the intrinsic system.
+    storage_perm : sequence of int
+        The permutation from the brainhops axis order to the stored order.
+    ndim : int
+        The number of axes of the level.
+
+    Returns
+    -------
+    dict or None
+        The JSON of the dataset transformation, or `None` when the geometry
+        is not diagonal, such as a rotation or a shear.
+
+    Raises
+    ------
+    OmeMappingError
+        If the geometry cannot be written as OME metadata at all, as for a
+        field.
+    """
+    entry = to_ome(transform, storage_perm, ndim)
+    if is_dataset_transform(entry):
+        return entry
+    affine = transform.to(Affine, error=None)
+    if affine is None:
+        return None
+    matrix = permute_affine(affine.matrix, storage_perm)
+    decomposed = scale_translation_from_affine(matrix, ndim)
+    if decomposed is None:
+        return None
+    scale, translation = decomposed
+    return _scale_translation_entry(scale, translation)
+
+
 def is_dataset_transform(entry: tx.Mapping[str, tx.Any]) -> bool:
-    """Return whether an OME transform is allowed on a 0.6 dataset."""
+    """Return whether an OME transform is allowed on a 0.6 dataset.
+
+    The prose of ngff-spec 0.6 asks for a scale followed by a translation,
+    which ome-zarr-models-py also checks (`v06/multiscales.py`, at
+    c75f227), although the schema of version 0.6 accepts either order. The
+    stricter order is required here, so that what brainhops writes passes
+    every reader.
+    """
     kind = entry.get("type")
     if kind in ("identity", "scale"):
         return True
     if kind != "sequence":
         return False
-    steps = entry.get("transformations", [])
-    return len(steps) == 2 and all(
-        step.get("type") in ("scale", "translation") for step in steps
-    )
+    steps = [step.get("type") for step in entry.get("transformations", [])]
+    return steps == ["scale", "translation"]
 
 
 def scale_translation_from_affine(
