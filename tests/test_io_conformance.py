@@ -1007,6 +1007,14 @@ class Exemplar(tx.NamedTuple):
     not that the edit is kept under the assigned value.
     """
 
+    hints: tx.Tuple[str, ...] = ()
+    """The hints that the dispatchers need to choose the format.
+
+    A Convert3D matrix holds no marker, and a `.mat` file of sixteen
+    numbers is read as a FLIRT matrix without a hint (item 172 of the
+    memo), so check 6 dispatches its metadata with these hints.
+    """
+
 
 def _nifti_edit_record(record: tx.Any) -> tx.Any:
     record.header["descrip"] = b"edited"
@@ -1420,6 +1428,7 @@ EXEMPLARS[C3dAffine] = Exemplar(
     derived=("homogeneous_matrix",),
     binary=False,
     stored=_c3d_stored,
+    hints=("c3d",),
 )
 
 
@@ -3347,7 +3356,7 @@ def test_06_metadata_never_reads_data(
     truncated = _path(tmp_path, exemplar, "header")
     _cut(exemplar, source, metadata, truncated)
     assert _header(exemplar, exemplar.metadata.load(truncated)) == header
-    dispatched = MetadataFormat.load(truncated)
+    dispatched = MetadataFormat.load(truncated, hints=exemplar.hints)
     assert isinstance(dispatched, exemplar.metadata)
     assert _header(exemplar, dispatched) == header
 

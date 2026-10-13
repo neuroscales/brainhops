@@ -1907,5 +1907,9 @@ registrations of its views back into the XML file.
      assigning an image drops the views derived from the old one. An
      untouched ITK MATLAB file read with `position=` is written whole,
      and a chain that is encoded again keeps the byte order of its file.
-     These changes are to be announced with item 13. Status: open, as
+     `MetadataFormat.load` reads a `.mat` file of sixteen numbers as
+     `FlirtMetadata` unless the hint `c3d` is given, as the dispatcher of
+     the transformations reads it as a FLIRT matrix (item 172), so check
+     6 dispatches the metadata of the Convert3D exemplar with the hints
+     of `Exemplar.hints`. These changes are to be announced with item 13. Status: open, as
      for item 13.
