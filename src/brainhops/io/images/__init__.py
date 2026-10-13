@@ -49,13 +49,17 @@ if HAS_H5PY:
 else:
     register_missing_format(["imaris", "ims"], "h5py", "imaris")
 
-# Raster formats (PNG, JPEG, ...) are read and written through Pillow.
+# Raster formats (PNG, JPEG, ...) are read and written through Pillow, and
+# so are JPEG 2000 files, whose resolution levels form a multiscale image.
 if HAS_PILLOW:
-    from . import pillow
+    from . import jpeg2000, pillow
 
-    __all__ += ["pillow"]
+    __all__ += ["jpeg2000", "pillow"]
 else:
     register_missing_format(["pillow"], "Pillow", "pillow")
+    register_missing_format(
+        ["jpeg2000", "jp2", "j2k", "j2c"], "Pillow", "pillow"
+    )
 
 # Without tifffile, Pillow still reads TIFF files as raster images, but
 # with weaker sniffing.

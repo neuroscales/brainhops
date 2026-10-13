@@ -64,11 +64,6 @@ EXTENSIONS: tx.Tuple[str, ...] = (
     ".pbm",
     ".pnm",
     ".pfm",
-    ".jp2",
-    ".j2k",
-    ".jpx",
-    ".jpf",
-    ".j2c",
     ".tga",
     ".pcx",
     ".qoi",
@@ -77,7 +72,7 @@ EXTENSIONS: tx.Tuple[str, ...] = (
 
 The list is curated rather than taken from Pillow, whose registry includes
 identify-only formats (HDF5, GRIB, FITS) and formats that other readers handle
-better. TIFF is left to the dedicated TIFF reader.
+better. TIFF and JPEG 2000 are left to their dedicated readers.
 """
 
 SNIFF_FORMATS: tx.Tuple[str, ...] = (

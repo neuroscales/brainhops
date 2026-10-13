@@ -118,10 +118,11 @@ class PillowImage(
         """Return the confidence that a file holds an image that Pillow reads.
 
         A format that is recognised by its magic number scores `LIKELY`. TIFF
-        scores only `WEAK`, because the dedicated TIFF reader reads it better.
+        and JPEG 2000 score only `WEAK`, because the dedicated TIFF and JPEG
+        2000 readers read them better.
         """
         fmt = sniff_pillow(file)
-        if fmt == "TIFF":
+        if fmt in ("TIFF", "JPEG2000"):
             return Confidence.WEAK
         if fmt is not None:
             return Confidence.LIKELY
@@ -241,80 +242,7 @@ class PillowImage(
         `(rows, columns[, samples])`, together with the pixel size along x and
         y in millimetres, if it is known.
         """
-        data = self.data
-        if data is None:
-            raise WriterError(
-                "This image has no data, so there is nothing to write."
-            )
-        shape = tuple(int(d) for d in data.shape)
-        ndim = len(shape)
-        xform = self.transformation
-        axes = raster.image_axes(ndim, getattr(xform, "input", None))
-        if axes is None:
-            if ndim == 2:
-                axes = raster.default_axes(2)
-            elif ndim == 3 and shape[-1] <= 4:
-                axes = raster.default_axes(3, channel=True)
-            else:
-                raise WriterError(
-                    f"Cannot tell the axes of an array of shape {shape}: a "
-                    f"raster image is (x, y) or (x, y, c) with at most four "
-                    f"channels. Give the image a pixel coordinate system "
-                    f"whose axes say which is which."
-                )
-        sizes = raster.physical_pixel_size(xform, axes, "mm")
-
-        # Keep two spatial axes and at most one channel axis. Any other axis
-        # must be a singleton, and is dropped.
-        space = [
-            i for i, a in enumerate(axes) if raster.axis_group(a) == "space"
-        ]
-        channel = [
-            i for i, a in enumerate(axes) if raster.axis_group(a) == "channel"
-        ]
-        if len(space) > 2:
-            # The image is a slice of a volume. Keep the spatial axes that are
-            # not singletons and, if fewer than two remain, add the first
-            # singleton axes, keeping the original axis order.
-            wide = [i for i in space if shape[i] != 1]
-            narrow = [i for i in space if shape[i] == 1]
-            if len(wide) <= 2:
-                space = sorted(wide + narrow[: 2 - len(wide)])
-        if len(space) != 2:
-            raise WriterError(
-                f"A raster image has two spatial axes, but this one has "
-                f"{len(space)}, not counting singletons (shape {shape}). "
-                f"Extract a 2D slice before writing it."
-            )
-        channel = [i for i in channel if shape[i] != 1] or channel[:1]
-        if len(channel) > 1:
-            raise WriterError(
-                f"A raster image has at most one channel axis, but this one "
-                f"has {len(channel)} (shape {shape})."
-            )
-        keep = space + channel
-        drop = [i for i in range(ndim) if i not in keep]
-        if any(shape[i] != 1 for i in drop):
-            names = [axes[i].name for i in drop if shape[i] != 1]
-            raise WriterError(
-                f"A raster image has two spatial axes and one channel axis, "
-                f"so the axes {names} (shape {shape}) cannot be written. "
-                f"Select one of their elements before writing."
-            )
-        index = tuple(slice(None) if i in keep else 0 for i in range(ndim))
-        data = data[index]
-        # The kept spatial axes are the columns (x) and rows (y) of the raster,
-        # in order, whatever their names. For example, a sagittal (y, z) slice
-        # has y along the columns.
-        position = {axis: k for k, axis in enumerate(sorted(keep))}
-        order = [position[space[1]], position[space[0]]]
-        order += [position[i] for i in channel]
-        storage = data.transpose(order)
-
-        if sizes is not None:
-            x, y = (axes[i].name for i in space)
-            sizes = {"x": sizes[x], "y": sizes[y]}
-        return storage, sizes
+        return raster.planar_storage(self.data, self.transformation)
 
     def to_bytes(
         self,

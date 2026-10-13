@@ -131,6 +131,17 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.images.jpeg2000": Package(
+        names=frozenset(
+            {
+                "Jpeg2000Image",
+                "Jpeg2000Metadata",
+                "Jpeg2000MultiScaleImage",
+                "Jpeg2000Raw",
+            }
+        ),
+        needs=("PIL",),
+    ),
     "brainhops.io.common.mgh": Package(
         names=frozenset({"MghMetadata", "MghRaw"}),
         needs=("nibabel",),
