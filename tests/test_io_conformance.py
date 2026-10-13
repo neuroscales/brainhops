@@ -1350,7 +1350,10 @@ EXEMPLARS[RegisterDatTransformation] = _REGDAT
 # its record holds the matrix. The only field of the record outside the
 # matrix is the layout of its rows, which the edit of check 10 changes to
 # the layout of Greedy. Check 6 is vacuous, because the file holds no
-# data beside its record (item 170 of the design memo).
+# data beside its record (item 170 of the design memo). Nothing marks the
+# file, and the metadata of a NiftyReg affine claims a text file of a
+# homogeneous matrix from its content, so check 6 selects the metadata
+# with its hint (item 306).
 
 
 def _c3d_stored(xform: tx.Any) -> tx.Any:
@@ -1374,6 +1377,7 @@ EXEMPLARS[C3dAffine] = Exemplar(
     derived=("homogeneous_matrix",),
     binary=False,
     stored=_c3d_stored,
+    hint="c3d",
 )
 
 
@@ -2750,9 +2754,10 @@ VARIANTS.append(
     )
 )
 
-# The reader accepts `.1D`, but AFNI claims that suffix for writes.
+# The whitespace-separated reader also reads AFNI `.1D` files, which the
+# AFNI writer claims, so a save converts the matrix to an AFNI affine.
 VARIANTS.append(
-    ("TxtMatrixAffine-dat", TxtMatrixAffine, _MATRIX._replace(suffix=".dat"))
+    ("TxtMatrixAffine-1D", TxtMatrixAffine, _MATRIX._replace(suffix=".1D"))
 )
 
 # A morph whose name ends in `.m3d` is written without compression.
@@ -2980,10 +2985,21 @@ def _saved(
 
 
 def _refuses_writing(obj: tx.Any, target: tx.Any) -> None:
-    """Check that a format that cannot write refuses to write an object."""
+    """Check that a format that cannot write refuses to write an object.
+
+    Another format may claim the name of the target and write the object
+    after converting it, as Convert3D does for a `.mat` file and
+    `register.dat` for a `.dat` file. The object is then not written in
+    its own format, so the file that `io.save` writes must not read back
+    as that format.
+    """
     assert not hasattr(obj, "save")
-    with pytest.raises(WriterError):
+    assert not isinstance(obj, FileWriter)
+    try:
         io.save(obj, target)
+    except WriterError:
+        return
+    assert not isinstance(io.load(target), type(obj))
 
 
 def _refuses_encoding(obj: tx.Any, target: tx.Any) -> None:
