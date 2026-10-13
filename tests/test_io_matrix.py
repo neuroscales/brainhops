@@ -191,7 +191,7 @@ def test_npz_default_and_key(tmp_path) -> None:  # noqa: ANN001
     xform = load(path)
     assert isinstance(xform, NpzMatrixAffine)
     assert np.allclose(_homog(xform), A)
-    assert xform.variable == "affine"
+    assert xform.metadata.raw.variable == "affine"
 
     path = tmp_path / "two.npz"
     np.savez(path, fwd=A, inv=np.linalg.inv(A))
@@ -210,7 +210,7 @@ def test_mat_v4_v5(tmp_path, fmt) -> None:  # noqa: ANN001
     xform = load(path)
     assert isinstance(xform, MatMatrixAffine)
     assert np.allclose(_homog(xform), A)
-    assert xform.variable == "M"
+    assert xform.metadata.raw.variable == "M"
 
 
 def test_mat_variable_selection(tmp_path) -> None:  # noqa: ANN001
@@ -245,7 +245,7 @@ def test_mat_v73(tmp_path) -> None:  # noqa: ANN001
     assert isinstance(xform, Mat73MatrixAffine)
     # The reader undoes the v7.3 transpose.
     assert np.allclose(_homog(xform), A)
-    assert xform.variable == "M"
+    assert xform.metadata.raw.variable == "M"
 
 
 def test_fileobj(tmp_path) -> None:  # noqa: ANN001
@@ -309,14 +309,15 @@ def _text(matrix):  # noqa: ANN001, ANN202
 
 def test_defaults() -> None:
     xform = TxtMatrixAffine.from_text(_text(A))
-    assert (xform.vector, xform.direction, xform.index_base) == (
+    raw = xform.metadata.raw
+    assert (raw.vector, raw.direction, raw.index_base) == (
         "column",
         "forward",
         (0, 0),
     )
     assert type(xform.input) is systems.CoordinateSystem3D
     assert type(xform.output) is systems.CoordinateSystem3D
-    assert np.allclose(np.asarray(xform.raw_matrix), A)
+    assert np.allclose(np.asarray(xform.metadata.raw.matrix), A)
 
 
 def test_row_vector_convention() -> None:
@@ -325,13 +326,13 @@ def test_row_vector_convention() -> None:
     # A (4, 3) row-vector matrix equals the (3, 4) column-vector one.
     xform = TxtMatrixAffine.from_text(_text(A[:3].T), vector="row")
     assert np.allclose(_homog(xform), A)
-    assert np.allclose(np.asarray(xform.raw_matrix), A[:3].T)
+    assert np.allclose(np.asarray(xform.metadata.raw.matrix), A[:3].T)
 
 
 def test_inverse_direction() -> None:
     xform = TxtMatrixAffine.from_text(_text(A), direction="inverse")
     assert np.allclose(_homog(xform), np.linalg.inv(A))
-    assert xform.direction == "inverse"
+    assert xform.metadata.raw.direction == "inverse"
 
 
 def test_spaces() -> None:
@@ -352,7 +353,7 @@ def test_one_based_voxel_to_world() -> None:
     xform = TxtMatrixAffine.from_text(
         _text(A), input="voxel", output="ras", index_base=1
     )
-    assert xform.index_base == (1, 0)
+    assert xform.metadata.raw.index_base == (1, 0)
     zero = _apply(_homog(xform), [0, 0, 0])
     assert np.allclose(zero, _apply(A, [1, 1, 1]))
 

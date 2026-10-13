@@ -97,6 +97,10 @@ from brainhops.io.images.nrrd._views import (
     _image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
+from brainhops.io.transformations.base._records import (
+    matrix_to_disk,
+    matrix_to_model,
+)
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.freesurfer.lta import (
@@ -108,10 +112,6 @@ from brainhops.io.transformations.freesurfer.lta import (
     LtaTransformationRASToRAS,
     LtaTransformationVoxToVox,
     LtaVoxelSystem,
-)
-from brainhops.io.transformations.freesurfer.lta._xforms import (
-    _matrix_to_disk,
-    _matrix_to_model,
 )
 from brainhops.io.transformations.freesurfer.m3z import (
     M3zMetadata,
@@ -990,8 +990,8 @@ _LTA = Exemplar(
     # that record is the one the metadata holds. The metadata, which holds
     # the whole file, never reads data because the file has none beside it.
     proxies=(tuple,),
-    to_model=_matrix_to_model,
-    to_disk=_matrix_to_disk,
+    to_model=matrix_to_model,
+    to_disk=matrix_to_disk,
     sample=lambda: _VOXEL_TO_RAS,
     edit_record=_lta_edit_record,
     record_edited=lambda raw: raw.sigma == 2.5,
