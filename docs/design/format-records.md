@@ -1469,8 +1469,8 @@ its status.
      read the assigned list, or else the cached one, through
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
-     the formats merged later (N5, Imaris, precomputed and JPEG 2000)
-     follow the same rule, and the JPEG 2000 pyramid caches the levels
+     the formats merged later (N5, Imaris, precomputed, JPEG 2000 and
+     image stacks) follow the same rule, and the JPEG 2000 pyramid caches the levels
      and the placements that it decodes in the same way. Status:
      resolved.
 191. A change made in place to a decoded list of transformations lives in
