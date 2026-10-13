@@ -131,11 +131,17 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "ElastixTomlTransform": ("transformations",),
         "ElastixTransform": ("transformations",),
     },
+    "brainhops.io.transformations.bdv._xform": {
+        "BdvViewRegistration": ("transformations",),
+    },
     "brainhops.io.transformations.freesurfer.lta._xforms": {
         "LtaTransformation": ("data",),
         "LtaTransformationPhysToPhys": ("data",),
         "LtaTransformationRASToRAS": ("data",),
         "LtaTransformationVoxToVox": ("data",),
+    },
+    "brainhops.io.transformations.trakem2._xform": {
+        "TrakEM2PatchAffine": ("data",),
     },
     "brainhops.io.transformations.freesurfer.m3z._xform": {
         "M3zMorph": ("transformations",),
@@ -290,6 +296,12 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     },
     "brainhops.io.images.base._base": {
         "ImageFormat": (),
+    },
+    "brainhops.io.images.bdv._image": {
+        "BdvImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.bdv._multiscale": {
+        "BdvMultiScaleImage": ("images", "transformations"),
     },
     "brainhops.io.images.freesurfer.mgh._image": {
         "MghImage": ("data", "transformations"),

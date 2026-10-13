@@ -9,6 +9,7 @@ __all__ = [
     "TransformationFormat",
     "afni",
     "base",
+    "bdv",
     "c3d",
     "elastix",
     "freesurfer",
@@ -19,6 +20,7 @@ __all__ = [
     "mrtrix",
     "niftyreg",
     "sniff",
+    "trakem2",
 ]
 
 from brainhops._core.dependencies import has_abczarr_driver
@@ -26,6 +28,7 @@ from brainhops._core.dependencies import has_abczarr_driver
 from . import (
     afni,
     base,
+    bdv,
     c3d,
     elastix,
     freesurfer,
@@ -33,6 +36,7 @@ from . import (
     matrix,
     mrtrix,
     niftyreg,
+    trakem2,
 )
 from .base import (
     TransformationFormat,

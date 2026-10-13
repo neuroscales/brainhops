@@ -41,6 +41,14 @@ else:
         ["minc", "minc1", "minc2", "minc.1", "minc.2"], "nibabel", "minc"
     )
 
+# BigDataViewer datasets keep their voxels in an HDF5 file.
+if HAS_H5PY:
+    from . import bdv
+
+    __all__ += ["bdv"]
+else:
+    register_missing_format(["bdv", "bigdataviewer"], "h5py", "bdv")
+
 # Imaris files are HDF5 files and need h5py to be read.
 if HAS_H5PY:
     from . import imaris

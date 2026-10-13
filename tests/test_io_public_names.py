@@ -80,6 +80,15 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.common.bdv": Package(
+        names=frozenset({"BdvMetadata", "BdvRaw"}),
+    ),
+    "brainhops.io.images.bdv": Package(
+        names=frozenset(
+            {"BdvImage", "BdvMetadata", "BdvMultiScaleImage", "BdvRaw"}
+        ),
+        needs=("h5py",),
+    ),
     "brainhops.io.images.imaris": Package(
         names=frozenset(
             {
@@ -218,6 +227,11 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.transformations.trakem2": Package(
+        names=frozenset(
+            {"TrakEM2Metadata", "TrakEM2PatchAffine", "TrakEM2Raw"}
+        ),
+    ),
     "brainhops.io.transformations.freesurfer.m3z": Package(
         names=frozenset(
             {
@@ -259,6 +273,9 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
         needs=("h5py",),
+    ),
+    "brainhops.io.transformations.bdv": Package(
+        names=frozenset({"BdvMetadata", "BdvRaw", "BdvViewRegistration"}),
     ),
     "brainhops.io.transformations.afni": Package(
         names=frozenset(
