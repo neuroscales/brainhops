@@ -9,6 +9,7 @@ __all__ = [
     "TransformationFormat",
     "afni",
     "base",
+    "bdv",
     "c3d",
     "elastix",
     "freesurfer",
@@ -26,6 +27,7 @@ from brainhops._core.dependencies import has_abczarr_driver
 from . import (
     afni,
     base,
+    bdv,
     c3d,
     elastix,
     freesurfer,
