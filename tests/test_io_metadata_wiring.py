@@ -115,6 +115,22 @@ def test_a_format_takes_the_metadata_of_the_root_over(
     assert obj.metadata.description == "carried"
 
 
+def test_a_format_built_from_a_data_model_converts_its_metadata() -> None:
+    meta = Metadata(description="T1w", echo_time=0.003)
+    image = SingleScaleImage(np.zeros((2, 3, 4), np.float32), metadata=meta)
+    with metadata_loss_policy("ignore"):
+        nifti = NiftiImage.from_instance(image)
+        mgh = MghImage.from_instance(nifti)
+    assert type(nifti.metadata) is NiftiMetadata
+    assert nifti.metadata.raw is None
+    assert nifti.metadata.description == "T1w"
+    # The values ride along until a consolidation drops what the format
+    # cannot store.
+    assert type(mgh.metadata) is MghMetadata
+    assert mgh.metadata.echo_time == 0.003
+    assert mgh.metadata.description == "T1w"
+
+
 def test_metadata_fields_is_renamed_encoding_fields() -> None:
     assert not hasattr(Transformation, "metadata_fields")
     assert Affine.encoding_fields == ("log",)

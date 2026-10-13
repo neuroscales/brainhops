@@ -587,7 +587,9 @@ class _FileBasedModelMixin:
         which stays lazy if it is a proxy, and decodes the same record.
         From another class, the data and the transformations that `other`
         reports are copied, decoded if need be, because its `raw` and its
-        record mean nothing to this format.
+        record mean nothing to this format. A format that takes `metadata`
+        over receives the metadata of `other`, which its field converts
+        into the metadata of the format, without the record of `other`.
 
         Parameters
         ----------
@@ -620,6 +622,13 @@ class _FileBasedModelMixin:
             data = getattr(other, "data", None)
             if data is not None:
                 kwargs.setdefault("data", data)
+        # The metadata of a data model, generic or of another format, is
+        # given to the field that this format takes it over with, which
+        # converts it into the metadata of this format.
+        if not isinstance(other, cls) and _takes_over(cls, "metadata"):
+            metadata = getattr(other, "metadata", None)
+            if metadata is not None:
+                kwargs.setdefault("metadata", metadata)
         if not isinstance(other, cls) and any(
             field.name == "_transformations"
             and field.public_name == "transformations"
