@@ -784,3 +784,12 @@ def test_a_coarser_level_that_was_assigned_is_ignored(tmp_path: Path) -> None:
         np.testing.assert_array_equal(
             np.asarray(got.data), np.asarray(want.data)
         )
+
+
+def test_a_pixel_size_is_written_from_the_first_level(tmp_path: Path) -> None:
+    # The pixel size given when reading becomes the transformations of every
+    # level, and the file stores that of the first level, from which level 3
+    # is derived.
+    pyramid = load(_write(tmp_path, "a.jp2", RAMP), pixel_size=0.5, unit="mm")
+    back = Jpeg2000MultiScaleImage.from_bytes(pyramid.to_bytes())
+    np.testing.assert_allclose(back.images[3].transformation.scale, [4, 4])
