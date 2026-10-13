@@ -4,14 +4,16 @@ __all__ = ["FlirtTransform"]
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Alias, Forget, KwOnly, NoRepr, NotKwOnly, replace
+from bagof.magic import Alias, ConvertTo, Forget, KwOnly, NoRepr, NotKwOnly, replace
 
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops._core.typing import ArrayLike
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.images import Image
 from brainhops.errors import IncompatibleSystemError
 from brainhops.io.base._base import register_format
+from brainhops.io.common.nifti._header import _NiftiObject
 from brainhops.io.base.parsers import (
     TextFileReader,
     UnrepresentableTransformationError,
@@ -23,6 +25,9 @@ from .._affines import _ImageGeometry
 from .._formats import FslAffineFormat
 from ._metadata import FlirtMetadata
 from ._raw import FlirtRaw
+
+# A nibabel image or header, or a brainhops image.
+_ImageLike = tx.Union[_NiftiObject, Image]
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -110,10 +115,15 @@ class FlirtTransform(
     the matrix of the new record until the transformation is consolidated.
     """
 
-    # The images are not converted, so that any object that exposes a
-    # geometry, such as a nibabel image or header, is kept as it is given.
+    # The images are kept as they are given, without a conversion to their
+    # declared type, so that any object that exposes a geometry is
+    # accepted, as it was by the reader before the record design.
     _moving: KwOnly[
-        tx.Annotated[tx.Optional[tx.Any], Alias(("moving", "mov", "src"))]
+        tx.Annotated[
+            tx.Optional[_ImageLike],
+            Alias(("moving", "mov", "src")),
+            ConvertTo(False),
+        ]
     ] = None
 
     moving = smartproperty("moving", invalidates=_FORGET_VIEWS)
@@ -125,7 +135,11 @@ class FlirtTransform(
     """
 
     _reference: KwOnly[
-        tx.Annotated[tx.Optional[tx.Any], Alias(("reference", "ref"))]
+        tx.Annotated[
+            tx.Optional[_ImageLike],
+            Alias(("reference", "ref")),
+            ConvertTo(False),
+        ]
     ] = None
 
     reference = smartproperty("reference", invalidates=_FORGET_VIEWS)

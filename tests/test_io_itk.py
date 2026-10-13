@@ -27,12 +27,20 @@ TfmTransform = io.transformations.itk.tfm.TfmTransform
 
 @pytest.mark.parametrize("filename", FILES_H5)
 @pytest.mark.parametrize("load", [True, False])
-@pytest.mark.parametrize("keep_open", [True, False])
-def test_read_h5(filename: str, load: bool, keep_open: bool) -> None:
+def test_read_h5(filename: str, load: bool) -> None:
     pytest.importorskip("h5py")
     H5Transform = io.transformations.itk.h5.H5Transform
-    transform = H5Transform.from_file(filename, load=load, keep_open=keep_open)
+    transform = H5Transform.from_file(filename, load=load)
     transforms = transform.transformations  # noqa: F841
+
+
+@pytest.mark.parametrize("filename", FILES_H5[:1])
+def test_h5_refuses_to_keep_its_file_open(filename: str) -> None:
+    """No object keeps an ITK `.h5` file open, so `keep_open=` is refused."""
+    pytest.importorskip("h5py")
+    H5Transform = io.transformations.itk.h5.H5Transform
+    with pytest.raises(TypeError, match="keep_open"):
+        H5Transform.from_file(filename, keep_open=True)
 
 
 @pytest.mark.parametrize("filename", FILES_TFM)
@@ -547,9 +555,7 @@ def test_h5_warp_without_parameters_reads_the_same_lazily(
     Both settings of `load` now give empty parameters.
     """
     h5py = pytest.importorskip("h5py")
-    from brainhops.io.transformations.itk.h5._parser import (
-        H5TransformReader,
-    )
+    from brainhops.io.transformations.itk.h5 import H5Transform
 
     path = tmp_path / "warp_without_parameters.h5"
     _write_h5_warp_without_parameters(path, after_affine=after_affine)
@@ -559,9 +565,10 @@ def test_h5_warp_without_parameters_reads_the_same_lazily(
     for load in (True, False):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            reader = H5TransformReader.from_h5(
-                h5py.File(path, "r"), load=load, position=position
-            )
+            with h5py.File(path, "r") as h5file:
+                reader = H5Transform.from_h5(
+                    h5file, load=load, position=position
+                )
         (block,) = reader.transformations
         assert block.type == "DisplacementFieldTransform"
         blocks[load] = np.asarray(block.parameters)
