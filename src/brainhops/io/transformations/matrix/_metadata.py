@@ -393,9 +393,7 @@ class MatLegacyMatrixMetadata(MatLegacyArrayReader, MatrixMetadata):
     """
 
     @classmethod
-    def from_fileobj(
-        cls, file: tx.IO, **options
-    ) -> "MatLegacyMatrixMetadata":
+    def from_fileobj(cls, file: tx.IO, **options) -> "MatLegacyMatrixMetadata":
         """Read the metadata from a binary file object.
 
         Parameters

@@ -20,7 +20,6 @@ from brainhops._core.properties import (
     InvalidatorInAttribute,
     smartproperty,
 )
-from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -130,14 +129,16 @@ class MatrixAffine(
     conventions that it was read in, are held as a [`MatrixAffineRaw`][]
     record by the metadata of the transformation, such as a
     [`TxtMatrixMetadata`][], and the matrix and the coordinate systems of
-    the transformation are decoded from that record. The record of a text
-    file also keeps the text of the file. A matrix that is assigned, and
-    an `input` or `output` that is set, are pending: they win over the
-    record until [`consolidate`][TxtMatrixAffine.consolidate] encodes them
-    into a new record, in the conventions and the layout of the record
-    that it replaces. A transformation without a record, such as one
-    built from data alone, holds its matrix as any affine does and has no
-    metadata.
+    the transformation is decoded from that record. The record of a text
+    file also keeps the text of the file. The coordinate systems of the
+    record are given to the transformation when it is read, as its own
+    `input` and `output`, so that a copy into another class keeps them. A
+    matrix that is assigned, and an `input` or `output` that is not the
+    system of the record, are pending: they win over the record until
+    [`consolidate`][TxtMatrixAffine.consolidate] encodes them into a new
+    record, in the conventions and the layout of the record that it
+    replaces. A transformation without a record, such as one built from
+    data alone, holds its matrix as any affine does and has no metadata.
 
     These formats read files but do not write them, so a plain matrix is
     saved through another format, such as NIfTI or LTA.
@@ -157,27 +158,6 @@ class MatrixAffine(
     # Plain matrices are tiny, so a large file is not claimed, and a huge
     # image is never read whole only to be rejected.
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 1 << 20
-
-    @smartproperty
-    def input(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The input coordinate system.
-
-        Unless the system was set explicitly, it is the input of the
-        record, which the conventions stated when the file was read
-        decide. Without a record, it is `None`.
-        """
-        record = _record(self)
-        return None if record is None else record.input
-
-    @smartproperty
-    def output(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The output coordinate system.
-
-        Unless the system was set explicitly, it is the output of the
-        record, in the same way as `input`.
-        """
-        record = _record(self)
-        return None if record is None else record.output
 
     @smartproperty(cache=True, invalidates=_FORGET_VIEWS)
     def data(self) -> tx.Optional[np.ndarray]:
@@ -324,7 +304,9 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
 
     A transformation built from data alone has no metadata. Assigning
     other metadata drops the matrix decoded from the old record, and a
-    matrix that was assigned stays pending.
+    matrix that was assigned stays pending. The systems of the
+    transformation are kept, and they are pending unless they are those
+    of the new record.
     """
 
     @classmethod
@@ -346,7 +328,7 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
         Self
             The transformation.
         """
-        return cls(metadata=TxtMatrixMetadata.from_raw(raw), **kwargs)
+        return _with_record(cls, TxtMatrixMetadata.from_raw(raw), kwargs)
 
     @classmethod
     def from_text(cls, text: str, **kwargs) -> tx.Self:
@@ -368,7 +350,8 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=TxtMatrixMetadata.from_text(text, **options), **kwargs)
+        metadata = TxtMatrixMetadata.from_text(text, **options)
+        return _with_record(cls, metadata, kwargs)
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
@@ -390,7 +373,8 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=TxtMatrixMetadata.from_lines(lines, **options), **kwargs)
+        metadata = TxtMatrixMetadata.from_lines(lines, **options)
+        return _with_record(cls, metadata, kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -441,7 +425,9 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
 
     A transformation built from data alone has no metadata. Assigning
     other metadata drops the matrix decoded from the old record, and a
-    matrix that was assigned stays pending.
+    matrix that was assigned stays pending. The systems of the
+    transformation are kept, and they are pending unless they are those
+    of the new record.
     """
 
     @classmethod
@@ -463,7 +449,7 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
         Self
             The transformation.
         """
-        return cls(metadata=CsvMatrixMetadata.from_raw(raw), **kwargs)
+        return _with_record(cls, CsvMatrixMetadata.from_raw(raw), kwargs)
 
     @classmethod
     def from_text(cls, text: str, **kwargs) -> tx.Self:
@@ -485,7 +471,8 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=CsvMatrixMetadata.from_text(text, **options), **kwargs)
+        metadata = CsvMatrixMetadata.from_text(text, **options)
+        return _with_record(cls, metadata, kwargs)
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
@@ -507,7 +494,8 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=CsvMatrixMetadata.from_lines(lines, **options), **kwargs)
+        metadata = CsvMatrixMetadata.from_lines(lines, **options)
+        return _with_record(cls, metadata, kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -558,7 +546,9 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
 
     A transformation built from data alone has no metadata. Assigning
     other metadata drops the matrix decoded from the old record, and a
-    matrix that was assigned stays pending.
+    matrix that was assigned stays pending. The systems of the
+    transformation are kept, and they are pending unless they are those
+    of the new record.
     """
 
     @classmethod
@@ -580,7 +570,7 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
         Self
             The transformation.
         """
-        return cls(metadata=TsvMatrixMetadata.from_raw(raw), **kwargs)
+        return _with_record(cls, TsvMatrixMetadata.from_raw(raw), kwargs)
 
     @classmethod
     def from_text(cls, text: str, **kwargs) -> tx.Self:
@@ -602,7 +592,8 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=TsvMatrixMetadata.from_text(text, **options), **kwargs)
+        metadata = TsvMatrixMetadata.from_text(text, **options)
+        return _with_record(cls, metadata, kwargs)
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
@@ -624,7 +615,8 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=TsvMatrixMetadata.from_lines(lines, **options), **kwargs)
+        metadata = TsvMatrixMetadata.from_lines(lines, **options)
+        return _with_record(cls, metadata, kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -676,7 +668,9 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
 
     A transformation built from data alone has no metadata. Assigning
     other metadata drops the matrix decoded from the old record, and a
-    matrix that was assigned stays pending.
+    matrix that was assigned stays pending. The systems of the
+    transformation are kept, and they are pending unless they are those
+    of the new record.
     """
 
     @classmethod
@@ -698,7 +692,7 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
         Self
             The transformation.
         """
-        return cls(metadata=NpyMatrixMetadata.from_raw(raw), **kwargs)
+        return _with_record(cls, NpyMatrixMetadata.from_raw(raw), kwargs)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
@@ -721,7 +715,8 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=NpyMatrixMetadata.from_fileobj(file, **options), **kwargs)
+        metadata = NpyMatrixMetadata.from_fileobj(file, **options)
+        return _with_record(cls, metadata, kwargs)
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
@@ -744,7 +739,8 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=NpyMatrixMetadata.from_bytes(content, **options), **kwargs)
+        metadata = NpyMatrixMetadata.from_bytes(content, **options)
+        return _with_record(cls, metadata, kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -796,7 +792,9 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
 
     A transformation built from data alone has no metadata. Assigning
     other metadata drops the matrix decoded from the old record, and a
-    matrix that was assigned stays pending.
+    matrix that was assigned stays pending. The systems of the
+    transformation are kept, and they are pending unless they are those
+    of the new record.
     """
 
     @classmethod
@@ -818,7 +816,7 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
         Self
             The transformation.
         """
-        return cls(metadata=NpzMatrixMetadata.from_raw(raw), **kwargs)
+        return _with_record(cls, NpzMatrixMetadata.from_raw(raw), kwargs)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
@@ -841,7 +839,8 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=NpzMatrixMetadata.from_fileobj(file, **options), **kwargs)
+        metadata = NpzMatrixMetadata.from_fileobj(file, **options)
+        return _with_record(cls, metadata, kwargs)
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
@@ -864,7 +863,8 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=NpzMatrixMetadata.from_bytes(content, **options), **kwargs)
+        metadata = NpzMatrixMetadata.from_bytes(content, **options)
+        return _with_record(cls, metadata, kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -921,7 +921,6 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
     The record keeps the name of the variable. See [`MatMatrixAffine`][].
     """
 
-
     _metadata: KwOnly[NoRepr[tx.Optional[MatLegacyMatrixMetadata]]] = None
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
@@ -929,7 +928,9 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
 
     A transformation built from data alone has no metadata. Assigning
     other metadata drops the matrix decoded from the old record, and a
-    matrix that was assigned stays pending.
+    matrix that was assigned stays pending. The systems of the
+    transformation are kept, and they are pending unless they are those
+    of the new record.
     """
 
     @classmethod
@@ -951,7 +952,7 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
         Self
             The transformation.
         """
-        return cls(metadata=MatLegacyMatrixMetadata.from_raw(raw), **kwargs)
+        return _with_record(cls, MatLegacyMatrixMetadata.from_raw(raw), kwargs)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
@@ -974,7 +975,8 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=MatLegacyMatrixMetadata.from_fileobj(file, **options), **kwargs)
+        metadata = MatLegacyMatrixMetadata.from_fileobj(file, **options)
+        return _with_record(cls, metadata, kwargs)
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
@@ -997,7 +999,8 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=MatLegacyMatrixMetadata.from_bytes(content, **options), **kwargs)
+        metadata = MatLegacyMatrixMetadata.from_bytes(content, **options)
+        return _with_record(cls, metadata, kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -1049,7 +1052,9 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
 
     A transformation built from data alone has no metadata. Assigning
     other metadata drops the matrix decoded from the old record, and a
-    matrix that was assigned stays pending.
+    matrix that was assigned stays pending. The systems of the
+    transformation are kept, and they are pending unless they are those
+    of the new record.
     """
 
     @classmethod
@@ -1071,7 +1076,7 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
         Self
             The transformation.
         """
-        return cls(metadata=Mat73MatrixMetadata.from_raw(raw), **kwargs)
+        return _with_record(cls, Mat73MatrixMetadata.from_raw(raw), kwargs)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
@@ -1094,7 +1099,8 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=Mat73MatrixMetadata.from_fileobj(file, **options), **kwargs)
+        metadata = Mat73MatrixMetadata.from_fileobj(file, **options)
+        return _with_record(cls, metadata, kwargs)
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
@@ -1117,7 +1123,8 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
             The transformation.
         """
         options = _reader_options(kwargs)
-        return cls(metadata=Mat73MatrixMetadata.from_bytes(content, **options), **kwargs)
+        metadata = Mat73MatrixMetadata.from_bytes(content, **options)
+        return _with_record(cls, metadata, kwargs)
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -1168,6 +1175,21 @@ def _record(xform: MatrixAffine) -> tx.Optional[MatrixAffineRaw]:
     return None if metadata is None else metadata.raw
 
 
+def _with_record(
+    cls: type, metadata: MatrixMetadata, kwargs: tx.Dict[str, tx.Any]
+) -> MatrixAffine:
+    """Build a transformation from metadata and the systems of its record.
+
+    The coordinate systems of the record are given to the transformation
+    as its own, unless the keyword arguments set them, so that a copy into
+    another class keeps them. They count as assigned only when they are
+    not the very objects that the record holds.
+    """
+    kwargs.setdefault("input", metadata.raw.input)
+    kwargs.setdefault("output", metadata.raw.output)
+    return cls(metadata=metadata, **kwargs)
+
+
 def _reader_options(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Pop the options that the metadata reads from the keyword arguments.
 
@@ -1200,27 +1222,35 @@ def _consolidated(
         systems.
     """
     record = _record(xform)
-    overridden = (
-        xform._data is not None
-        or xform._input is not None
-        or xform._output is not None
-    )
-    if record is not None and not overridden:
+    if record is not None and not _overridden(xform, record):
         return xform if inplace else replace(xform)
     record = _encoded(xform, record)
     if xform.metadata is None:
         metadata = metadata_class.from_raw(record)
     else:
         metadata = replace(xform.metadata, raw=record)
+    systems = {"input": record.input, "output": record.output}
     if not inplace:
-        return replace(
-            xform, metadata=metadata, data=None, input=None, output=None
-        )
+        return replace(xform, metadata=metadata, data=None, **systems)
     xform.metadata = metadata
     xform.data = None
-    xform.input = None
-    xform.output = None
+    xform.input = record.input
+    xform.output = record.output
     return xform
+
+
+def _overridden(xform: MatrixAffine, record: MatrixAffineRaw) -> bool:
+    """Tell whether a transformation holds a matrix or systems of its own.
+
+    A matrix is assigned when the private data is set. A system is
+    assigned when it is not the very object that the record holds, which
+    the readers give to the transformation.
+    """
+    return (
+        xform._data is not None
+        or xform._input is not record.input
+        or xform._output is not record.output
+    )
 
 
 def _encoded(

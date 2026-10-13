@@ -48,17 +48,6 @@ __all__ = [
     "Mat73MatrixMetadata",
 ]
 
-from ._xform import (
-    CsvMatrixAffine,
-    Mat73MatrixAffine,
-    MatLegacyMatrixAffine,
-    MatMatrixAffine,
-    MatrixAffine,
-    NpyMatrixAffine,
-    NpzMatrixAffine,
-    TsvMatrixAffine,
-    TxtMatrixAffine,
-)
 from ._metadata import (
     CsvMatrixMetadata,
     Mat73MatrixMetadata,
@@ -70,6 +59,17 @@ from ._metadata import (
     TxtMatrixMetadata,
 )
 from ._raw import MatrixAffineRaw
+from ._xform import (
+    CsvMatrixAffine,
+    Mat73MatrixAffine,
+    MatLegacyMatrixAffine,
+    MatMatrixAffine,
+    MatrixAffine,
+    NpyMatrixAffine,
+    NpzMatrixAffine,
+    TsvMatrixAffine,
+    TxtMatrixAffine,
+)
 
 # Importing the private converters registers them with the data model,
 # so that a conversion into one of these formats, such as

@@ -117,6 +117,10 @@ from brainhops.io.transformations.freesurfer.m3z import (
     M3zMetadata,
     M3zMorph,
 )
+from brainhops.io.transformations.freesurfer.m3z._xform import (
+    _positions_to_disk,
+    _positions_to_model,
+)
 from brainhops.io.transformations.matrix import (
     CsvMatrixAffine,
     CsvMatrixMetadata,
@@ -136,10 +140,6 @@ from brainhops.io.transformations.matrix import (
 from brainhops.io.transformations.niftyreg import (
     NiftyRegAffine,
     NiftyRegAffineMetadata,
-)
-from brainhops.io.transformations.freesurfer.m3z._xform import (
-    _positions_to_disk,
-    _positions_to_model,
 )
 
 try:
