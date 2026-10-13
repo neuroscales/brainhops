@@ -997,6 +997,16 @@ class Exemplar(tx.NamedTuple):
     of consolidation apply to it without the file.
     """
 
+    bare: bool = False
+    """Whether the record holds nothing but what the data model decodes.
+
+    The record of a FLIRT matrix holds the matrix alone, and that of an
+    ITK text file its blocks alone, so an edit of the record is an edit
+    of the data, which an assigned value replaces. Check 20 then checks
+    that the edit is followed and that the assigned value is kept, but
+    not that the edit is kept under the assigned value.
+    """
+
 
 def _nifti_edit_record(record: tx.Any) -> tx.Any:
     record.header["descrip"] = b"edited"
@@ -2096,6 +2106,7 @@ if nb is not None:
         source=_write_flirt,
         pending=("_flirt_matrix",),
         records=True,
+        bare=True,
     )
 
 
@@ -2211,9 +2222,11 @@ _ITK_TEXT = Exemplar(
     header=_itk_summary,
     source=_write_tfm,
     records=True,
+    bare=True,
 )
 EXEMPLARS[TfmTransform] = _ITK_TEXT
 EXEMPLARS[MatTransform] = _ITK_TEXT._replace(
+    bare=False,
     metadata=MatMetadata,
     suffix=".mat",
     # The byte order is kept by a chain that is encoded again.
@@ -2263,6 +2276,7 @@ if h5py is not None:
             old.visititems(copy)
 
     EXEMPLARS[H5Transform] = _ITK_TEXT._replace(
+        bare=False,
         metadata=H5Metadata,
         suffix=".h5",
         # The parameters of a warp are read when they are used.
@@ -2280,6 +2294,7 @@ if h5py is not None:
         cut=_itk_h5_cut,
         source=_write_itk_h5,
     )
+
 
 def _stack_edit_record(record: tx.Any) -> tx.Any:
     # The names of the files are what a record of a stack holds besides
@@ -3869,7 +3884,7 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
         exemplar.geometry(loaded)
     loaded.metadata = metadata
     assert loaded.metadata is metadata
-    assert all(field is None for field in _pending(loaded))
+    assert all(field is None for field in _pending(exemplar, loaded))
     assert np.allclose(exemplar.geometry(loaded), expected)
     target = _path(tmp_path, exemplar, "followed")
     if exemplar.source is not None:
@@ -3890,13 +3905,13 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
     exemplar.change_geometry(loaded)
     assigned = exemplar.geometry(loaded)
     assert not np.allclose(assigned, old)
-    pending = _pending(loaded)
+    pending = _pending(exemplar, loaded)
     loaded.metadata = metadata
-    assert _same(_pending(loaded), pending)
+    assert _same(_pending(exemplar, loaded), pending)
     assert np.allclose(exemplar.geometry(loaded), assigned)
     consolidated = loaded.consolidate()
     assert np.allclose(exemplar.geometry(consolidated), assigned)
-    assert exemplar.record_edited(consolidated.metadata.raw)
+    assert exemplar.bare or exemplar.record_edited(consolidated.metadata.raw)
     target = _path(tmp_path, exemplar, "kept")
     if exemplar.source is not None:
         _refuses_writing(loaded, target)
