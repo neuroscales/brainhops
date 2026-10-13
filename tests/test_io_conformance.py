@@ -5362,7 +5362,7 @@ def test_p04_assigned_level_data_is_pending(
         assert loaded.metadata is metadata
         assert images[k].raw is raw[k]
         assert images[k].metadata is metadata
-        pending = _pending(images[k])
+        pending = _pending(level, images[k])
         assert pending[0] is not None
         consolidated = loaded.consolidate()
         assert consolidated._images is None
@@ -5392,7 +5392,7 @@ def test_p04_assigned_level_data_is_pending(
         assert loaded.raw is raw
         assert loaded.metadata is metadata
         assert loaded.images is images
-        assert _same(_pending(images[k]), pending)
+        assert _same(_pending(level, images[k]), pending)
         # Nothing is pending in the copy.
         twice = consolidated.consolidate()
         assert twice.raw is consolidated.raw
