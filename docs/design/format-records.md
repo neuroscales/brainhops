@@ -1380,14 +1380,17 @@ its status.
      known. Status: accepted, pending review.
 155. `register.dat` and the plain matrix files both claim `.dat`. Their
      sniffers do not accept each other's content, so reading picks the
-     right one in both directions. Writing has no content to sniff, and
-     `io.save` prefers `RegisterDatTransformation` for a plain `Affine`
-     saved to a `.dat` name, because it is the more specific format. An
-     affine between `RASmm` spaces is then refused, since a
-     `register.dat` file needs the geometries to store it, where the
-     plain matrix format wrote it before `register.dat` was added.
-     Status: open, for the maintainer to decide whether `io.save` should
-     fall back to another candidate when the chosen one refuses.
+     right one in both directions. Writing has no content to sniff.
+     `io.save` tries the formats that claim a name in order of priority
+     until one writes the object (item 470), so the format that refuses
+     an object gives way to the next. An affine between `RASmm` spaces
+     saved to a `.dat` name without geometries is still refused, with
+     the reason of `RegisterDatTransformation`, because no other writable
+     format claims `.dat`: the plain matrix formats of
+     `io/transformations/matrix` are only read, and before `register.dat`
+     was added, `io.save` refused the name, since no writable format
+     was registered for it. Status: resolved by the fallback of
+     `io.save` (item 470). A writer of plain matrices is item 471.
 160. A Neuroglancer precomputed volume holds several scales, so it is read
      as a pyramid, `PrecomputedMultiScaleImage`, whose levels are
      `PrecomputedImage` objects (`io/images/precomputed`). Each level
@@ -1784,3 +1787,38 @@ registrations of its views back into the XML file.
      metadata holds the whole file, as for LTA and M3Z (item 66), and
      check 18 does not apply, because the format has no `raw`. Status:
      accepted.
+470. `io.save` tries the candidates tier by tier, most specific first,
+     those that hold the object as it is before those that a
+     transformation converts to. In a tier, every candidate is built,
+     and the one that builds, if only one does, is written. A candidate
+     refuses the object when building it raises any error but an
+     `OSError`, since building does not touch the file, or when its
+     writer raises a `ConversionError` or a `WriterError`, such as
+     `UnrepresentableTransformationError`. The next tier is then tried,
+     and when every candidate refuses, the `WriterError` lists the
+     reason of each. Any other error of a writer, such as an `OSError`,
+     is raised at once, since the file may be written in part. Two
+     candidates of one tier that both build remain an ambiguity, though
+     one of them may refuse when it writes, and an object of one of the
+     candidates is written only in its own format. The default
+     `FileWriter.to_filename` writes a local file next to its target
+     and then replaces the target, as `write_file` does, so that a
+     writer that refuses while it yields its lines, as `NiftyRegAffine`
+     does for a matrix that is not 3-D, leaves the target as it was.
+     The writers of Zarr, TIFF, Pillow, X5, M3Z, elastix and ITK `.mat`
+     files still write in place. Those that refuse an object check it
+     before they open the file, as Pillow and elastix state, but a
+     refusal raised once the file is open would leave it in part.
+     Status: decided by the maintainer for the fallback, and open for
+     review of the errors that count as a refusal.
+471. The plain matrix formats of `io/transformations/matrix`
+     (`TxtMatrixAffine` for `.txt`, `.dat` and `.1D`, and the CSV, TSV,
+     NumPy and MATLAB variants) have no writer. Such a file holds the
+     matrix only, so an affine between known spaces written to it would
+     be read back between unnamed spaces, which `io.save` does not do
+     to a transformation (the note "Nothing is approximated" of
+     `io.save`). As a file-backed `Affine`, a writer would also be
+     chosen for a plain `Affine` before the formats that claim `.txt`
+     today, NiftyReg, MRtrix and elastix, which convert it. Status:
+     open, for the maintainer to decide whether `io.save` writes plain
+     matrices, and for which objects.
