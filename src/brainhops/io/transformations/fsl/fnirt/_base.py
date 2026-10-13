@@ -129,8 +129,9 @@ class FnirtWarpField(
     moving image is required. A coefficient field carries neither image's
     geometry, so both the reference and the moving image are required. A
     reference of another resolution than the one used at registration is
-    placed by its scaled-mm positions, as fslpy does, while FSL refuses
-    it. A discrete-cosine-transform coefficient field (intent 2008) is
+    placed by its scaled-mm positions, as fslpy does, while FSL's reader
+    evaluates the field on the grid stored in the file. A
+    discrete-cosine-transform coefficient field (intent 2008) is
     recognized but not supported, and FSL cannot write one either.
 
     !!! note "Images remain external"
