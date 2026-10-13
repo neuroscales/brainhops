@@ -264,6 +264,12 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.images.freesurfer.mgh._image": {
         "MghImage": ("data", "transformations"),
     },
+    "brainhops.io.images.imaris._image": {
+        "ImarisImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.imaris._multiscale": {
+        "ImarisMultiScaleImage": ("images", "transformations"),
+    },
     "brainhops.io.images.minc._image": {
         name: ("data", "transformations")
         for name in ("Minc1Image", "Minc2Image", "MincImage")

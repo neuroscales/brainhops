@@ -70,6 +70,21 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.common.imaris": Package(
+        names=frozenset({"ImarisLevel", "ImarisMetadata", "ImarisRaw"}),
+        needs=("h5py",),
+    ),
+    "brainhops.io.images.imaris": Package(
+        names=frozenset(
+            {
+                "ImarisImage",
+                "ImarisMetadata",
+                "ImarisMultiScaleImage",
+                "ImarisRaw",
+            }
+        ),
+        needs=("h5py",),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),

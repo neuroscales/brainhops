@@ -192,6 +192,15 @@ try:
     import h5py
 
     from brainhops.io.common.hdf5 import DelayedH5Array
+    from brainhops.io.common.imaris import ImarisMetadata
+    from brainhops.io.common.imaris._data import _ImarisProxy
+    from brainhops.io.images.imaris import ImarisImage
+    from brainhops.io.images.imaris._views import (
+        _image_to_disk as _imaris_to_disk,
+    )
+    from brainhops.io.images.imaris._views import (
+        _image_to_model as _imaris_to_model,
+    )
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
     )
@@ -1395,6 +1404,72 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+# Brainhops cannot write Imaris files, so the checks write them with
+# h5py as the description of the format lays them out: one dataset per
+# time point and channel, ordered z, y, x and padded to whole chunks, and
+# every parameter as an array of single characters. The data have the
+# five axes of every Imaris image, `(x, y, z, t, c)`. The copy that the
+# metadata check reads keeps every group and parameter of the file, but
+# its voxels are in an external file that does not exist, so the chunk
+# shape, which that copy loses, is not part of the record. The record is
+# compared as it is, since the metadata cannot write bytes. The level is
+# a reader option that the image keeps as a field.
+
+
+def _imaris_text(value: tx.Any) -> np.ndarray:
+    """Encode a parameter as Imaris does, one character per element."""
+    return np.frombuffer(str(value).encode(), dtype="S1")
+
+
+def _write_imaris(path: tx.Any, data: tx.Any) -> None:
+    stored = np.asarray(data, dtype="float32").T
+    with h5py.File(path, "w") as f:
+        f.attrs["ImarisVersion"] = _imaris_text("5.5.0")
+        for channel, times in enumerate(stored):
+            for time, block in enumerate(times):
+                group = f.create_group(
+                    f"DataSet/ResolutionLevel 0/TimePoint {time}/"
+                    f"Channel {channel}"
+                )
+                for axis, size in zip("XYZ", reversed(block.shape)):
+                    group.attrs["ImageSize" + axis] = _imaris_text(size)
+                padded = np.zeros([n + n % 2 for n in block.shape], "float32")
+                padded[tuple(slice(n) for n in block.shape)] = block
+                group.create_dataset("Data", data=padded, chunks=(2, 2, 2))
+        image = f.create_group("DataSetInfo/Image")
+        for i, size in enumerate(reversed(stored.shape[2:])):
+            image.attrs[f"ExtMin{i}"] = _imaris_text(float(i))
+            image.attrs[f"ExtMax{i}"] = _imaris_text(float(i + 2 * size))
+        image.attrs["Unit"] = _imaris_text("um")
+
+
+def _imaris_edit_record(record: tx.Any) -> tx.Any:
+    info = record.copy().info
+    info["Image"]["Name"] = "edited"
+    return replace(record, info=info)
+
+
+if h5py is not None:
+    EXEMPLARS[ImarisImage] = Exemplar(
+        metadata=ImarisMetadata,
+        suffix=".ims",
+        proxies=(_ImarisProxy,),
+        to_model=_imaris_to_model,
+        to_disk=_imaris_to_disk,
+        sample=lambda: np.arange(48, dtype="float32").reshape(4, 3, 2, 2, 1),
+        edit_record=_imaris_edit_record,
+        record_edited=lambda record: (
+            record.info["Image"].get("Name") == "edited"
+        ),
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        options=frozenset({"level"}),
+        cut=_hdf5_cut,
+        header=lambda metadata: metadata.raw,
+        source=_write_imaris,
+    )
+
 NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.AperioImage",
     "brainhops.io.images.openslide.AperioMultiScaleImage",
@@ -1418,6 +1493,10 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.images.openslide.VentanaMultiScaleImage",
     "brainhops.io.images.openslide.ZeissImage",
     "brainhops.io.images.openslide.ZeissMultiScaleImage",
+    # The record of a pyramid is decided in the Zarr pass (item 15 of the
+    # design memo). Each level of an Imaris pyramid is an `ImarisImage`,
+    # which follows the design.
+    "brainhops.io.images.imaris.ImarisMultiScaleImage",
     "brainhops.io.images.pillow.PillowImage",
     "brainhops.io.images.tiff.TiffImage",
     "brainhops.io.images.tiff.TiffMultiScaleImage",
