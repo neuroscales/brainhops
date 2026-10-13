@@ -3997,7 +3997,7 @@ def _check_data_only(exemplar: Exemplar, loaded: tx.Any) -> None:
     """
     data, chain = _pending(exemplar, loaded)
     once = loaded.consolidate()
-    data_once, chain_once = _pending(once)
+    data_once, chain_once = _pending(exemplar, once)
     assert data_once is None
     assert chain_once is chain
     if exemplar.stored is None:
