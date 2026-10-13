@@ -70,17 +70,6 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
-    "brainhops.io.common.precomputed": Package(
-        names=frozenset(
-            {
-                "PrecomputedMetadata",
-                "PrecomputedRaw",
-                "PrecomputedScale",
-                "PrecomputedSharding",
-            }
-        ),
-        needs=("tensorstore",),
-    ),
     "brainhops.io.images.precomputed": Package(
         names=frozenset(
             {
@@ -88,6 +77,8 @@ PACKAGES: tx.Dict[str, Package] = {
                 "PrecomputedMetadata",
                 "PrecomputedMultiScaleImage",
                 "PrecomputedRaw",
+                "PrecomputedScale",
+                "PrecomputedSharding",
             }
         ),
         needs=("tensorstore",),

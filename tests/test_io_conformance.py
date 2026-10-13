@@ -193,11 +193,11 @@ except ImportError:
 try:
     import tensorstore as ts
 
-    from brainhops.io.common.precomputed._data import _PrecomputedProxy
     from brainhops.io.images.precomputed import (
         PrecomputedImage,
         PrecomputedMetadata,
     )
+    from brainhops.io.images.precomputed._data import _PrecomputedProxy
     from brainhops.io.images.precomputed._views import (
         _image_to_disk as _precomputed_to_disk,
     )

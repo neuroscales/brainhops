@@ -88,7 +88,7 @@ class PrecomputedSharding(Magic, frozen=True):
     preshift_bits: int
     """The number of low bits of a chunk code that are not hashed."""
 
-    hash: str
+    hash: tx.Literal["identity", "murmurhash3_x86_128"]
     """The hash function, `"identity"` or `"murmurhash3_x86_128"`."""
 
     minishard_bits: int
@@ -97,10 +97,10 @@ class PrecomputedSharding(Magic, frozen=True):
     shard_bits: int
     """The number of bits of the hashed code that give the shard."""
 
-    minishard_index_encoding: str = "raw"
+    minishard_index_encoding: tx.Literal["raw", "gzip"] = "raw"
     """The compression of the minishard indices, `"raw"` or `"gzip"`."""
 
-    data_encoding: str = "raw"
+    data_encoding: tx.Literal["raw", "gzip"] = "raw"
     """The compression of the chunk data, `"raw"` or `"gzip"`."""
 
 
@@ -137,7 +137,15 @@ class PrecomputedScale(Magic, frozen=True):
     chunk_sizes: tx.Tuple[tx.Tuple[int, int, int], ...] = ()
     """The chunk sizes in voxels. A reader uses the first one."""
 
-    encoding: str = "raw"
+    encoding: tx.Literal[
+        "raw",
+        "jpeg",
+        "compressed_segmentation",
+        "compresso",
+        "png",
+        "jxl",
+        "crackle",
+    ] = "raw"
     """The encoding of each chunk, in lower case."""
 
     compressed_segmentation_block_size: tx.Optional[
@@ -178,7 +186,7 @@ class PrecomputedRaw(Magic, BinaryFileReader, frozen=True):
     fields are.
 
     The record is held by
-    [`PrecomputedMetadata`][brainhops.io.common.precomputed.PrecomputedMetadata].
+    [`PrecomputedMetadata`][brainhops.io.images.precomputed.PrecomputedMetadata].
     """
 
     volume_type: str

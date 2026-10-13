@@ -1157,7 +1157,7 @@ its status.
      corner of a voxel sits at an integer coordinate, and the
      transformation of a scale moves by `(voxel_offset + 0.5) *
      resolution` nanometres (`io/images/precomputed/_image.py`, with the
-     sources in `io/common/precomputed/__init__.py`). Status: decided.
+     sources in `io/images/precomputed/__init__.py`). Status: decided.
 163. The conformance exemplar of `PrecomputedImage` names a volume by its
      `info` file, with the suffix `/info`, because checks 6 and 12 read
      and copy the file that a case names, and a volume is a directory.
@@ -1168,7 +1168,7 @@ its status.
      directory. Status: accepted.
 164. The readable encodings are those that TensorStore 0.1.45 decodes:
      `raw`, `jpeg` and `compressed_segmentation`, sharded or not. The
-     list is fixed in `io/common/precomputed/_data.py`, so a scale in
+     list is fixed in `io/images/precomputed/_data.py`, so a scale in
      `png`, `compresso`, `jxl` or `crackle` is refused when it is
      loaded, even with a later TensorStore that decodes one of them.
      TensorStore reads a missing chunk as zeros. Status: open, until the

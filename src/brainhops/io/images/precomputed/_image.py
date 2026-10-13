@@ -19,17 +19,6 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferTypeError,
 )
-from brainhops.io.common.precomputed import (
-    PrecomputedMetadata,
-    PrecomputedRaw,
-)
-from brainhops.io.common.precomputed._data import (
-    READABLE_ENCODINGS,
-    _PrecomputedProxy,
-    read_precomputed,
-    stream_location,
-)
-from brainhops.io.common.precomputed._raw import _no_options
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base._utils_raster import (
     default_axes,
@@ -38,6 +27,14 @@ from brainhops.io.images.base._utils_raster import (
 )
 
 # this format
+from ._data import (
+    READABLE_ENCODINGS,
+    _PrecomputedProxy,
+    read_precomputed,
+    stream_location,
+)
+from ._metadata import PrecomputedMetadata
+from ._raw import PrecomputedRaw, _no_options
 from ._views import _image_to_disk, _image_to_model
 
 _UNIT = "nm"
@@ -49,7 +46,7 @@ class PrecomputedImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
     A precomputed volume is a directory, local or remote, that holds an
     `info` file and the chunks of each scale (see
-    [`brainhops.io.common.precomputed`][brainhops.io.common.precomputed]).
+    [`brainhops.io.images.precomputed`][brainhops.io.images.precomputed]).
     This class reads one scale, the finest by default or the one that
     `level` selects, from the directory or from its `info` file. A
     volume of several scales is read whole by

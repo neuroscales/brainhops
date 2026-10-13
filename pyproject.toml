@@ -73,9 +73,6 @@ zarr = [
     # range 3.8-3.10.
     "tensorstore >= 0.1.43 ; python_version <= '3.10'",
 ]
-# Neuroglancer precomputed volumes are read with TensorStore, whose
-# neuroglancer_precomputed driver decodes the raw, jpeg and
-# compressed_segmentation encodings, sharded or not.
 precomputed = ["tensorstore >= 0.1.45"]
 zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
 zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]

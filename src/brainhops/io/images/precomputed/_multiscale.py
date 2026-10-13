@@ -15,19 +15,13 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferTypeError,
 )
-from brainhops.io.common.precomputed import (
-    PrecomputedMetadata,
-    PrecomputedRaw,
-)
-from brainhops.io.common.precomputed._data import (
-    read_precomputed,
-    stream_location,
-)
-from brainhops.io.common.precomputed._raw import _no_options, _score
 from brainhops.io.images.base import ImageFormat
 
 # this format
+from ._data import read_precomputed, stream_location
 from ._image import PrecomputedImage, _read_scale
+from ._metadata import PrecomputedMetadata
+from ._raw import PrecomputedRaw, _no_options, _score
 
 
 class PrecomputedMultiScaleImage(
@@ -37,7 +31,7 @@ class PrecomputedMultiScaleImage(
 
     A precomputed volume is a directory, local or remote, that holds an
     `info` file and the chunks of each scale (see
-    [`brainhops.io.common.precomputed`][brainhops.io.common.precomputed]).
+    [`brainhops.io.images.precomputed`][brainhops.io.images.precomputed]).
     Each scale is a [`PrecomputedImage`][], finest first, whose voxels
     are read lazily, and every scale maps its voxels to the same
     `"physical"` space, in nanometres, by its own resolution and

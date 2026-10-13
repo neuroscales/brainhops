@@ -21,7 +21,7 @@ from bagof.magic import replace
 ts = pytest.importorskip("tensorstore")
 
 import brainhops.io as io  # noqa: E402
-import brainhops.io.common.precomputed._data as _data  # noqa: E402
+import brainhops.io.images.precomputed._data as _data  # noqa: E402
 from brainhops.backends import backend  # noqa: E402
 from brainhops.datamodel.transformations import Affine  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
@@ -32,21 +32,19 @@ from brainhops.io.base.parsers import (  # noqa: E402
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.common.precomputed import (  # noqa: E402
+from brainhops.io.images.precomputed import (  # noqa: E402
+    PrecomputedImage,
     PrecomputedMetadata,
+    PrecomputedMultiScaleImage,
     PrecomputedRaw,
     PrecomputedScale,
     PrecomputedSharding,
 )
-from brainhops.io.common.precomputed._data import (  # noqa: E402
+from brainhops.io.images.precomputed._data import (  # noqa: E402
     _kvstore_spec,
     _PrecomputedProxy,
     dataset_location,
     read_info,
-)
-from brainhops.io.images.precomputed import (  # noqa: E402
-    PrecomputedImage,
-    PrecomputedMultiScaleImage,
 )
 from brainhops.io.metadata import MetadataFormat  # noqa: E402
 
