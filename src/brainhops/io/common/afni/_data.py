@@ -485,3 +485,21 @@ def _same_file(first: tx.Any, second: tx.Any) -> bool:
     if first is None or second is None:
         return False
     return os.path.samefile(first, second)
+
+
+def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
+    """Tell whether an array is a lazy array of a BRIK file.
+
+    Parameters
+    ----------
+    raw : array
+        The `raw` array of an object.
+    brik : path-like
+        The BRIK file.
+
+    Returns
+    -------
+    bool
+        Whether `raw` is a lazy array that reads `brik`.
+    """
+    return isinstance(raw, _BrikProxy) and _same_file(raw.brik, brik)

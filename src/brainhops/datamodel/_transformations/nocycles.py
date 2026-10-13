@@ -10,12 +10,12 @@ import typing_extensions as tx
 
 if tx.TYPE_CHECKING:
     from .base import Transformation
-    from .operators import Operation
+    from .derived import DerivedTransformation
     from .sequence import Sequence
 
 # Type variables used by the registration decorators, so that a decorated
 # name keeps its exact class or signature for a static type checker.
-_OpT = tx.TypeVar("_OpT", bound="Operation")
+_DrvT = tx.TypeVar("_DrvT", bound="DerivedTransformation")
 _SeqT = tx.TypeVar("_SeqT", bound="Sequence")
 _TrfT = tx.TypeVar("_TrfT", bound="Transformation")
 _AdaptT = tx.TypeVar("_AdaptT", bound=tx.Callable[..., "Sequence"])
@@ -23,7 +23,7 @@ _AdaptT = tx.TypeVar("_AdaptT", bound=tx.Callable[..., "Sequence"])
 
 # --- operators --------------------------------------------------------
 
-OPERATORS: tx.Dict[str, tx.Type["Operation"]] = {}
+DERIVED: tx.Dict[str, tx.Type["DerivedTransformation"]] = {}
 """Entry-point classes of the lazy operators, indexed by method name.
 
 Each key is the name of the [`Transformation`][] method that applies an
@@ -38,10 +38,10 @@ transformation.
 """
 
 
-def register_operator(
+def register_derived(
     name: str,
-) -> tx.Callable[[tx.Type[_OpT]], tx.Type[_OpT]]:
-    """Return a class decorator that registers a front door in [`OPERATORS`][].
+) -> tx.Callable[[tx.Type[_DrvT]], tx.Type[_DrvT]]:
+    """Return a class decorator that registers a front door in [`DERIVED`][].
 
     Parameters
     ----------
@@ -56,8 +56,8 @@ def register_operator(
         unchanged.
     """
 
-    def decorate(cls: tx.Type[_OpT]) -> tx.Type[_OpT]:
-        OPERATORS[name] = cls
+    def decorate(cls: tx.Type[_DrvT]) -> tx.Type[_DrvT]:
+        DERIVED[name] = cls
         return cls
 
     return decorate

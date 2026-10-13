@@ -8,6 +8,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops.io.base._utils_files import local_path as _local_path
 
 # this format
 from ._constants import _BRIK_SUFFIXES
@@ -57,6 +58,49 @@ def afni_dataset_files(
     if brik is None:
         brik = parent / (stem + brik_ext)
     return head, brik, stem
+
+
+def afni_written_files(
+    filename: path.FilenameLike,
+) -> tx.Tuple[tx.Any, tx.Any, tx.List[tx.Tuple[tx.Any, str]]]:
+    """
+    Find the files that writing a dataset to a path writes or removes.
+
+    The path may name the `.HEAD` file, the `.BRIK` file, whose `.gz` or
+    `.bz2` suffix compresses it, or the bare dataset. As AFNI does, a
+    writer removes a local sibling BRIK with another suffix, so that it
+    cannot shadow the new one.
+
+    Parameters
+    ----------
+    filename : path-like
+        The `.HEAD` file, the `.BRIK` file or the bare dataset name.
+
+    Returns
+    -------
+    head : Path
+        The `.HEAD` file to write.
+    brik : Path
+        The `.BRIK` file to write.
+    stale : list of tuple of Path and str
+        The sibling BRIK files to remove, with their local paths.
+    """
+    if isinstance(filename, str):
+        filename = path.Path(filename)
+    head, _, stem = afni_dataset_files(filename)
+    brik_ext = ".brik" if head.name.endswith(".head") else ".BRIK"
+    suffix = ""
+    if ".BRIK" in filename.name.upper():
+        suffix = _brik_suffix(filename)
+    brik = filename.parent / (stem + brik_ext + suffix)
+    stale = []
+    for other in _BRIK_SUFFIXES:
+        sibling = filename.parent / (stem + brik_ext + other)
+        if other != suffix and path.exists(sibling):
+            local = _local_path(sibling)
+            if local is not None:
+                stale.append((sibling, local))
+    return head, brik, stale
 
 
 def _brik_suffix(brik: tx.Any) -> str:
