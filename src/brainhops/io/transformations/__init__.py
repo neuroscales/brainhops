@@ -7,12 +7,14 @@ parsing the file.
 
 __all__ = [
     "TransformationFormat",
+    "afni",
     "base",
     "elastix",
     "freesurfer",
     "itk",
     "load",
     "matrix",
+    "mrtrix",
     "niftyreg",
     "sniff",
     "trakem2",
@@ -20,7 +22,17 @@ __all__ = [
 
 from brainhops._core.dependencies import has_abczarr_driver
 
-from . import base, elastix, freesurfer, itk, matrix, niftyreg, trakem2
+from . import (
+    afni,
+    base,
+    elastix,
+    freesurfer,
+    itk,
+    matrix,
+    mrtrix,
+    niftyreg,
+    trakem2,
+)
 from .base import (
     TransformationFormat,
     load,
