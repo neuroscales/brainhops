@@ -19,6 +19,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.common._geometry import held_transformations
 
 from .._chains import (
     _block,
@@ -48,13 +49,13 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
     `.mat` files, but as plain text, so the two formats are told apart by their
     content.
 
-    The transformation is the chain of blocks of one top-level transform
-    of the file, in the order in which they apply. The blocks and the
-    bytes of the file are held as a [`MatRaw`][] record by the
-    [`MatMetadata`][] of the transformation, and the chain is decoded from
-    the record when it is first used. The decoded chain is a list that is
-    stored in the transformation, so a change made to it in place, such
-    as a replaced block, is kept.
+    The transformation is the chain of blocks of one top-level transform of
+    the file, in the order in which they apply. The blocks and the bytes of
+    the file are held as a [`MatRaw`][] record by the [`MatMetadata`][] of
+    the transformation, and the chain is decoded from the record when it is
+    first used. The decoded chain is a list that is cached by the
+    transformation, so a change made to it in place, such as a replaced
+    block, is kept.
 
     The record describes the file as it was read, or as the transformation
     was last consolidated. A chain that is assigned or changed, and an
@@ -82,48 +83,40 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
 
     _metadata: NoRepr[tx.Optional[MatMetadata]] = None
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the blocks as a record.
 
     A transformation built from a chain has no metadata. Assigning other
-    metadata drops the chain that the transformation holds, read or
-    assigned, so that it is decoded from the new record.
+    metadata drops the chain decoded from the old record, so that it is
+    decoded from the new one, and keeps a chain that was assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[MatMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     _position: KwOnly[tx.Optional[int]] = None
 
-    position = smartproperty("position", invalidates=("transformations",))
+    position = smartproperty("position", invalidates="transformations")
     """The index of the top-level transform of the file that is read.
 
-    A file whose first block is a `CompositeTransform` header holds a
-    single composite transform, and any other file holds one transform per
-    block. By default, the first transform is read, with a warning if the
-    file holds several. Assigning another index drops the chain that the
-    transformation holds, read or assigned. The index only selects what is
-    read, so it does not change the record.
+    A file whose first block is a `CompositeTransform` header holds a single
+    composite transform, and any other file holds one transform per block. By
+    default, the first transform is read, with a warning if the file holds
+    several. Assigning another index drops the chain decoded for the old index
+    and keeps a chain that was assigned. The index only selects what is read,
+    so it does not change the record.
     """
-
-    @position.setter
-    def position(self, value: tx.Optional[int]) -> None:
-        self._position = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[_xforms.Transformation]:
         """The blocks of the transform, in the order in which they apply.
 
-        The chain is decoded from the record on first access and stored in
-        the transformation, so a change made to the list in place is kept.
+        The chain is decoded from the record on first access and cached, apart
+        from an assigned chain, so a change made to the list in place is kept.
         Its blocks are the blocks of the record, whose parameters are
-        read-only. Assigning a list replaces the stored one. In both cases,
-        the list is compared at [`consolidate`][], and by a write, with the
-        chain that the record decodes to, block by block. A transformation
-        without a record has no chain.
+        read-only. Assigning other metadata or another `position` drops the
+        decoded chain, and a change made to it in place, and keeps an assigned
+        chain. Assigning a list replaces the stored one. In both cases, the
+        list is compared at [`consolidate`][], and by a write, with the chain
+        that the record decodes to, block by block. A transformation without a
+        record has no chain.
 
         Raises
         ------
@@ -131,9 +124,9 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             If the record has no transform at `position`.
         """
         record = _record(self)
-        chain = [] if record is None else _decode(record, self.position)
-        self._transformations = chain
-        return chain
+        if record is None:
+            return []
+        return _decode(record, self.position)
 
     # --- sniff --------------------------------------------------------
 
@@ -381,7 +374,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         decoded = (
             [] if record is None else _decode(record, self.position, True)
         )
-        chain = self._transformations
+        chain = held_transformations(self)
         _check_systems(self, decoded if chain is None else chain)
         untouched = record is not None and (
             chain is None or _same_chain(chain, decoded)
@@ -423,6 +416,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         self.input = None
         self.output = None
         self.position = None
+        self.transformations = None
         return self
 
     def to_bytes(self, **kwargs) -> bytes:

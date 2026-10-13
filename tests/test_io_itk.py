@@ -994,19 +994,28 @@ def test_a_chain_is_encoded_into_a_record(tmp_path, ext: str) -> None:  # noqa: 
 
 
 @pytest.mark.parametrize("ext", sorted(WRITERS))
-def test_assigning_metadata_or_a_position_drops_the_chain(
+def test_assigning_metadata_or_a_position_drops_the_decoded_chain(
     tmp_path,  # noqa: ANN001
     ext: str,
 ) -> None:
     path = WRITERS[ext](tmp_path / f"list.{ext}", COMPOSITE[1:])
+    # A decoded chain, and a change made to it in place, follow the record
+    # and the position.
     transform = _load(ext, path, position=0)
-    transform.transformations = []
+    transform.append(xforms.Scaling([2.0, 3.0, 4.0]))
     transform.position = 1
     (block,) = transform
     assert block.type == itk.ItkTransformClass.ScaleTransform
-    transform.transformations = []
+    transform.append(xforms.Scaling([2.0, 3.0, 4.0]))
     transform.metadata = _load(ext, path, position=0).metadata
     assert len(transform) == 1
+    assert transform._transformations is None
+    # An assigned chain is pending, and survives both.
+    transform.transformations = []
+    transform.position = 0
+    transform.metadata = _load(ext, path, position=0).metadata
+    assert list(transform) == []
+    assert len(transform.consolidate().metadata.raw.blocks) == 0
 
 
 @pytest.mark.parametrize("ext", sorted(WRITERS))

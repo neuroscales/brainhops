@@ -1547,7 +1547,10 @@ its status.
      the formats merged later (N5, Imaris, precomputed, JPEG 2000,
      BigDataViewer and image stacks) follow the same rule, and the JPEG
      2000 pyramid caches the levels and the placements that it decodes in
-     the same way. Status: resolved.
+     the same way. The chains of the ITK text, MATLAB and HDF5 formats
+     (`TfmTransform`, `MatTransform` and `H5Transform`), which are
+     mutable lists as the transformations of an image are, follow it too
+     (item 312). Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
      the cache, so it is lost when other metadata is assigned, and a copy
      made with `replace` or `from_instance` decodes the list again instead
@@ -1856,7 +1859,10 @@ registrations of its views back into the XML file.
      check 6 is vacuous for the files that are read in one pass (FLIRT,
      ITK text and MATLAB), as for LTA (item 66). The records of the text
      formats do not keep the text of their files, because nothing writes
-     it. Status: open, for the maintainer to decide whether these
+     it. The records of FLIRT and ITK text files hold nothing but their
+     data, so an assigned value replaces an edit of the record, and
+     check 20 does not check that the edit is kept under it for the
+     exemplars marked with `Exemplar.bare`. Status: open, for the maintainer to decide whether these
      formats should write, which would make the untouched round trips
      byte for byte (with the exemption of item 48 for HDF5).
 312. The blocks of an ITK record are `ItkStruct` objects
@@ -1867,12 +1873,15 @@ registrations of its views back into the XML file.
      HDF5 file, but a field of a block can still be assigned, which would
      change the record in place. An ITK format is a
      `MutableSequence`, whose chain could be edited in place and was then
-     written, so its chain follows the rule of the images: it is decoded
-     on first access and stored in `_transformations`, and it is compared
-     at consolidation with a fresh decode of the record, block by block
-     and by identity (`io/transformations/itk/_chains.py`). The other
-     chain formats keep their chain pending by assignment (item 114).
-     Status: open.
+     written, so its chain follows the rule of the images (item 190): it
+     is decoded on first access and cached apart from an assigned chain,
+     `consolidate` reads it through `held_transformations`, and it is
+     compared there with a fresh decode of the record, block by block
+     and by identity (`io/transformations/itk/_chains.py`). Assigning
+     other metadata or another `position` drops the decoded chain, with
+     a change made to it in place (item 191), and keeps an assigned
+     chain. The other chain formats keep their chain pending by
+     assignment (item 114). Status: open.
 313. An untouched ITK MATLAB file is written byte for byte because the
      record keeps the bytes of the file (`MatRaw.content`), which are
      written while they still decode to the blocks and the byte order of

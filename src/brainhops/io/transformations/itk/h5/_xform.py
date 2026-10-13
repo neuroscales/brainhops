@@ -9,6 +9,7 @@ from bagof.magic import KwOnly, NoRepr, replace
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
+from brainhops.io.common._geometry import held_transformations
 from brainhops.io.common.hdf5 import Hdf5Reader
 
 from .._chains import (
@@ -33,15 +34,15 @@ def _record(xform: "H5Transform") -> tx.Optional[H5Raw]:
 class H5Transform(Hdf5Reader, ItkTransform):
     """Transformation stored in an ITK HDF5 (`.h5`) file.
 
-    The transformation is the chain of blocks of one top-level transform
-    of the file, in the order in which they apply (see
+    The transformation is the chain of blocks of one top-level transform of
+    the file, in the order in which they apply (see
     [`brainhops.io.transformations.itk.h5`][]). The root and the blocks of
     the file are held as an [`H5Raw`][] record by the [`H5Metadata`][] of
-    the transformation, and the chain is decoded from the record when it
-    is first used. The parameters of the warps are lazy arrays, which read
-    the file again by its name when they are used. The decoded chain is a
-    list that is stored in the transformation, so a change made to it in
-    place, such as an appended block, is kept.
+    the transformation, and the chain is decoded from the record when it is
+    first used. The parameters of the warps are lazy arrays, which read the
+    file again by its name when they are used. The decoded chain is a list
+    that is cached by the transformation, so a change made to it in place,
+    such as an appended block, is kept.
 
     The record describes the file as it was read, or as the transformation
     was last consolidated. A chain that is assigned or changed, and an
@@ -55,48 +56,40 @@ class H5Transform(Hdf5Reader, ItkTransform):
 
     _metadata: NoRepr[tx.Optional[H5Metadata]] = None
 
-    metadata = smartproperty("metadata", invalidates=("transformations",))
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the blocks as a record.
 
     A transformation built from a chain has no metadata. Assigning other
-    metadata drops the chain that the transformation holds, read or
-    assigned, so that it is decoded from the new record.
+    metadata drops the chain decoded from the old record, so that it is
+    decoded from the new one, and keeps a chain that was assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[H5Metadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     _position: KwOnly[tx.Optional[int]] = None
 
-    position = smartproperty("position", invalidates=("transformations",))
+    position = smartproperty("position", invalidates="transformations")
     """The index of the top-level transform of the file that is read.
 
     A file that starts with a `CompositeTransform` header holds a single
-    composite transform, and any other file holds one transform per block.
-    By default, the first transform is read, with a warning if the file
-    holds several. Assigning another index drops the chain that the
-    transformation holds, read or assigned. The index only selects what is
-    read, so it does not change the record.
+    composite transform, and any other file holds one transform per block. By
+    default, the first transform is read, with a warning if the file holds
+    several. Assigning another index drops the chain decoded for the old index
+    and keeps a chain that was assigned. The index only selects what is read,
+    so it does not change the record.
     """
-
-    @position.setter
-    def position(self, value: tx.Optional[int]) -> None:
-        self._position = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[_xforms.Transformation]:
         """The blocks of the transform, in the order in which they apply.
 
-        The chain is decoded from the record on first access and stored in
-        the transformation, so a change made to the list in place is kept.
+        The chain is decoded from the record on first access and cached, apart
+        from an assigned chain, so a change made to the list in place is kept.
         Its blocks are the blocks of the record, whose parameters are
-        read-only. Assigning a list replaces the stored one. In both cases,
-        the list is compared at [`consolidate`][] with the chain that the
-        record decodes to, block by block. A transformation without a
-        record has no chain.
+        read-only. Assigning other metadata or another `position` drops the
+        decoded chain, and a change made to it in place, and keeps an assigned
+        chain. Assigning a list replaces the stored one. In both cases, the
+        list is compared at [`consolidate`][] with the chain that the record
+        decodes to, block by block. A transformation without a record has no
+        chain.
 
         Raises
         ------
@@ -104,9 +97,9 @@ class H5Transform(Hdf5Reader, ItkTransform):
             If the record has no transform at `position`.
         """
         record = _record(self)
-        chain = [] if record is None else _decode(record, self.position)
-        self._transformations = chain
-        return chain
+        if record is None:
+            return []
+        return _decode(record, self.position)
 
     # --- sniff --------------------------------------------------------
 
@@ -277,7 +270,7 @@ class H5Transform(Hdf5Reader, ItkTransform):
         decoded = (
             [] if record is None else _decode(record, self.position, True)
         )
-        chain = self._transformations
+        chain = held_transformations(self)
         _check_systems(self, decoded if chain is None else chain)
         if record is not None and (
             chain is None or _same_chain(chain, decoded)
@@ -309,6 +302,7 @@ class H5Transform(Hdf5Reader, ItkTransform):
         self.input = None
         self.output = None
         self.position = None
+        self.transformations = None
         return self
 
 
