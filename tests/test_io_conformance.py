@@ -933,6 +933,14 @@ class Exemplar(tx.NamedTuple):
     would make with the format itself.
     """
 
+    hint: tx.Optional[str] = None
+    """The hint that the generic loaders need to choose the format.
+
+    It is `None` for a format that they recognize from its files. An
+    image stack is never recognized from its path, so check 6 reads its
+    metadata through `MetadataFormat.load` with the hint `"stack"`.
+    """
+
     template: tx.Optional[tx.Callable[[tx.Any, tx.Any], None]] = None
     """Function that writes a file of a format that writes only over a file.
 
@@ -2002,6 +2010,7 @@ if tifffile is not None:
     # the generic writer with the format itself, since no extension names
     # a folder for `io.save` to choose the format from. The metadata
     # cannot be written on its own, so checks 7 and 10 compare records.
+    # A stack is read only by hint, so check 6 dispatches with `"stack"`.
     # The record holds the names of the files, which the edit of check 10
     # changes, and only a scaling with a unit of length, which the
     # geometry of the checks is. The format has no option that changes
@@ -2024,6 +2033,7 @@ if tifffile is not None:
         cut=_stack_cut,
         header=lambda metadata: metadata.raw,
         folder=True,
+        hint="stack",
     )
 
 
@@ -2998,7 +3008,7 @@ def test_06_metadata_never_reads_data(
     truncated = _path(tmp_path, exemplar, "header")
     _cut(exemplar, source, metadata, truncated)
     assert _header(exemplar, exemplar.metadata.load(truncated)) == header
-    dispatched = MetadataFormat.load(truncated)
+    dispatched = MetadataFormat.load(truncated, hint=exemplar.hint)
     assert isinstance(dispatched, exemplar.metadata)
     assert _header(exemplar, dispatched) == header
 

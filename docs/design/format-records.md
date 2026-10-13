@@ -1244,8 +1244,10 @@ its status.
      checks 7 and 10 compare the records of metadata that cannot write.
      The stack has no writer option that changes its stored data, so
      check 16a is skipped. Check 6 cuts each TIFF file of the folder
-     before its pixels, which tifffile writes after the tags. Status:
-     accepted in the review of #431.
+     before its pixels, which tifffile writes after the tags. A stack is
+     read only by hint (item 125), so the field `Exemplar.hint` gives
+     the hint `"stack"` with which check 6 reads the metadata through
+     `MetadataFormat.load`. Status: accepted in the review of #431.
 124. The size of the pixels, the spacing of the slices and their unit
      are fields of `StackRaw`, decoded from the files where they record
      them, and the reader options `pixel_size`, `spacing` and `unit` set
@@ -1258,11 +1260,23 @@ its status.
      records no size. A translation, a rotation and a flip within a file
      are not recorded. Status: open, until the TIFF and Pillow records
      decide where these sizes live.
-125. `StackImage` and `StackMetadata` claim a local folder that is not a
-     Zarr store and whose image files follow one numbering, with the
-     confidence `LIKELY`, judged by the names alone. They never claim a
-     file, a stream or bytes, so they take nothing from the TIFF and
-     Pillow readers. Status: accepted in the review of #431.
+125. `StackImage` and `StackMetadata` are read only with the hint
+     `"stack"`, or with their own `load`, as the maintainer decided:
+     "The stack reader should only be used if the stack hint is
+     specifically used." Their sniffers score `NO` for every path, a
+     folder or a file, and for streams and bytes, so `io.load`,
+     `io.images.load`, `MetadataFormat.load` and `io.sniff` never choose
+     them without the hint, and they take nothing from the TIFF and
+     Pillow readers. With the hint, dispatch tries the formats that the
+     hint allows, as for any format that does not recognize its input.
+     A sniffer asked to raise tells why the path cannot be a stack, such
+     as a Zarr store or names that follow no single numbering, or else
+     that a stack is read only by hint. No base mechanism restricts a
+     format to its hint, so each class refuses in its own sniffer, as
+     `ItkNiftiCoordinatesField` does. `io.sniff(folder, hint="stack")`
+     returns `None`, since no sniffer and no extension names the stack.
+     Status: decided. The review of #431 had accepted a folder sniffed
+     with the confidence `LIKELY`.
 126. A number that no file carries is a missing slice. The record does
      not store the missing numbers, which follow from the numbers of its
      members (`StackRaw.missing`), so a record cannot contradict itself.
@@ -1271,9 +1285,10 @@ its status.
      how the pixels are read, so it is held by the lazy array and is not
      a field. Assigned data covers every slice, so a stack consolidated
      with assigned data has no missing slice, and the values that filled
-     a missing slice are written as a file. Status: open, for the
-     maintainer to decide whether assigned data should keep the missing
-     slices of the record.
+     a missing slice are written as a file. An untouched stack is written
+     without its missing slices. Status: decided for now. The
+     maintainer asked to "write them anyway (for now)", so assigned data
+     does not keep the missing slices of the record.
 127. The stacking axis is the field `StackRaw.axis`, which the reader
      option `axis` sets and the writer option `axis` changes. Names that
      carry several numbers, one per axis, are refused. Supporting them
@@ -1288,8 +1303,8 @@ its status.
      `StackImage.from_instance(image).save` for another image. Declaring
      the TIFF and Pillow extensions would let `io.save(stack, "out.tif")`
      write numbered files, but would also make the stack a candidate for
-     every TIFF and Pillow file that is loaded. Status: open, for the
-     maintainer to decide.
+     every TIFF and Pillow file that is loaded. Status: decided. The
+     stack declares no extension and is chosen only by hint (item 125).
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,

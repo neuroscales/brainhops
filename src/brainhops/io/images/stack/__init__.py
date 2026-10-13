@@ -8,15 +8,21 @@ as such a folder. The files are TIFF files, read and written with
 tifffile (the `tiff` extra), or images in a format that Pillow reads and
 writes (the `pillow` extra), such as PNG or JPEG.
 
+A folder is read as a stack only when it is asked for, with the format
+hint `"stack"` or with `StackImage.load`. The stack is never recognized
+from its path, so `io.load` and `io.images.load` choose it only with the
+hint, `io.sniff` never names it, and a single TIFF or Pillow file is
+read by its own format.
+
 ```python
 import brainhops.io as io
 from brainhops.io.images.stack import StackImage
 
-image = io.load("slices/")                       # a StackImage
-image = io.load("slices/", hint="stack")         # the same, explicitly
-image = io.load("slices/", pattern="ch1_*.tif")  # a subset of the files
-image = io.load("slices/", spacing=2.0, unit="um")
-image = io.load("slices/", axis="y")             # coronal slices
+image = io.load("slices/", hint="stack")         # a StackImage
+image = StackImage.load("slices/")               # the same
+image = io.load("slices/", hint="stack", pattern="ch1_*.tif")
+image = io.load("slices/", hint="stack", spacing=2.0, unit="um")
+image = io.load("slices/", hint="stack", axis="y")  # coronal slices
 image.data.shape                                 # (x, y, z) or (x, y, z, c)
 image.metadata.raw.names                         # the files, in order
 image.save("copy/")                              # a folder of the same files
@@ -35,7 +41,7 @@ Pillow reader claims, and subfolders are not searched. The option
 an image file. A pattern cannot reach outside the folder. Hidden files,
 whose names start with a dot, are never taken. The format of a file is
 told from its extension, and TIFF files need tifffile while other images
-need Pillow. A folder that holds a Zarr store is never read as a stack.
+need Pillow. A folder that holds a Zarr store is not a stack.
 
 The names of the files must differ in one run of digits only, which is
 the number of the file, as in `z0.tif`, `z1.tif`, ..., `z10.tif`. The
@@ -61,7 +67,10 @@ last. A number that no file carries, such as 4 among `z3.tif` and
 pixels are the value `fill` of the reader, which is NaN for a floating
 type and 0 for any other type by default. Reading a missing slice reads
 no file. Duplicated numbers and names that follow no single numbering
-are still refused.
+are still refused. An untouched stack is written without its missing
+slices, while assigned data covers every slice, so a stack with
+assigned data writes a file for each missing slice, which holds the
+values that filled it.
 
 ## Data
 
@@ -125,9 +134,10 @@ of its file relative to the folder, its number, its axes, shape and type,
 and its header: the `TiffMetadata` that the TIFF reader parses, with the
 tags, the OME-XML and the ImageJ metadata, or the `PillowHeader` of a
 Pillow file, with its mode and the `info` dictionary of Pillow. Reading
-the metadata alone, with `StackMetadata.load(folder)`, reads the header
-of every file but none of their pixels, and takes the same options as the
-image, except `fill`.
+the metadata alone, with `StackMetadata.load(folder)` or
+`MetadataFormat.load(folder, hint="stack")`, reads the header of every
+file but none of their pixels, and takes the same options as the image,
+except `fill`.
 
 ## Writing
 

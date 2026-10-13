@@ -27,6 +27,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
     ParserError,
     ParserExistsError,
+    SnifferContentError,
     WriterError,
 )
 from brainhops.io.images.base import _utils_raster as raster  # noqa: E402
@@ -108,18 +109,18 @@ def _count_reads(monkeypatch: pytest.MonkeyPatch) -> tx.List[str]:
 
 def test_a_folder_of_tiff_files_is_one_volume(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
-    image = io.load(folder)
+    image = io.load(folder, hint="stack")
     assert isinstance(image, StackImage)
     assert isinstance(image.raw, _StackProxy)
     assert isinstance(image.metadata, StackMetadata)
     assert image.shape == (2, 3, 12)
     assert image.raw.shape == (12, 3, 2)
     assert np.array_equal(np.asarray(image.data), VOLUME.transpose(2, 1, 0))
-    # The class, the hint and the image loader read it in the same way.
+    # The class and the loaders, with the hint, read it in the same way.
     for other in (
         StackImage.load(folder),
         io.load(str(folder), hint="stack"),
-        io.images.load(folder),
+        io.images.load(folder, hint="stack"),
     ):
         assert isinstance(other, StackImage)
         assert np.array_equal(np.asarray(other.data), np.asarray(image.data))
@@ -145,7 +146,7 @@ def test_numbering_may_start_anywhere(tmp_path: Path) -> None:
 
 def test_a_folder_of_png_files_with_channels(tmp_path: Path) -> None:
     folder = _pngs(tmp_path / "rgb")
-    image = io.load(folder)
+    image = io.load(folder, hint="stack")
     assert isinstance(image, StackImage)
     assert image.shape == (2, 3, 4, 3)
     assert image.metadata.raw.axes == "ZYXS"
@@ -184,11 +185,11 @@ def test_a_pattern_selects_the_files(tmp_path: Path) -> None:
     # Without a pattern, the two channels are two numbers that vary.
     with pytest.raises(ParserContentError, match="2 numbers"):
         StackImage.load(folder)
-    image = io.load(folder, pattern="ch2_*.tif")
+    image = io.load(folder, hint="stack", pattern="ch2_*.tif")
     assert isinstance(image, StackImage)
     assert image.metadata.raw.pattern == "ch2_*.tif"
     assert np.array_equal(np.asarray(image.raw), VOLUME[5:9])
-    metadata = MetadataFormat.load(folder, pattern="ch1_*.tif")
+    metadata = MetadataFormat.load(folder, hint="stack", pattern="ch1_*.tif")
     assert metadata.raw.names == tuple(f"ch1_z{k}.tif" for k in range(5))
 
 
@@ -337,12 +338,31 @@ def test_unknown_and_invalid_options_are_refused(tmp_path: Path) -> None:
 # ----------------------------------------------------------------------
 
 
-def test_only_folders_are_claimed(tmp_path: Path) -> None:
+def test_a_stack_is_read_only_with_its_hint(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     _pngs(tmp_path / "pngs")
-    assert io.sniff(folder) is StackImage
-    assert MetadataFormat.sniff(folder) is StackMetadata
-    # A single file is left to the TIFF and Pillow readers.
+    for path in (folder, tmp_path / "pngs"):
+        assert io.sniff(path) is None
+        assert io.images.sniff(path) is None
+        assert MetadataFormat.sniff(path) is None
+        assert StackImage.sniff(path) == Confidence.NO
+        assert StackMetadata.sniff(path) == Confidence.NO
+        for load in (io.load, io.images.load, MetadataFormat.load):
+            with pytest.raises(ParserError):
+                load(path)
+        assert isinstance(io.load(path, hint="stack"), StackImage)
+        assert isinstance(
+            MetadataFormat.load(path, hint="stack"), StackMetadata
+        )
+    # The error of the sniffer tells how to read the stack.
+    for cls in (StackImage, StackMetadata):
+        with pytest.raises(SnifferContentError, match='hint="stack"'):
+            cls.sniff(folder, error=True)
+
+
+def test_files_are_left_to_their_readers(tmp_path: Path) -> None:
+    folder = _tiffs(tmp_path / "slices")
+    _pngs(tmp_path / "pngs")
     assert StackImage.sniff(folder / "z0.tif") == Confidence.NO
     assert io.sniff(folder / "z0.tif") is TiffImage
     assert isinstance(io.load(folder / "z0.tif"), TiffImage)
@@ -354,8 +374,9 @@ def test_only_folders_are_claimed(tmp_path: Path) -> None:
 def test_zarr_stores_are_not_claimed(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "store.zarr")
     (folder / "zarr.json").write_text("{}")
-    assert StackImage.sniff(folder) == Confidence.NO
-    assert StackMetadata.sniff(folder) == Confidence.NO
+    for cls in (StackImage, StackMetadata):
+        with pytest.raises(SnifferContentError, match="Zarr store"):
+            cls.sniff(folder, error=True)
 
 
 def test_a_folder_without_numbered_images_is_not_claimed(
@@ -365,10 +386,14 @@ def test_a_folder_without_numbered_images_is_not_claimed(
     folder.mkdir()
     Image.fromarray(COLOUR[0]).save(folder / "cat.png")
     Image.fromarray(COLOUR[1]).save(folder / "dog.png")
-    assert StackImage.sniff(folder) == Confidence.NO
     (tmp_path / "text").mkdir()
     (tmp_path / "text" / "a1.txt").write_text("1")
-    assert StackImage.sniff(tmp_path / "text") == Confidence.NO
+    for path in (folder, tmp_path / "text"):
+        with pytest.raises(SnifferContentError) as info:
+            StackImage.sniff(path, error=True)
+        assert "hint" not in str(info.value)
+        with pytest.raises(ParserError):
+            io.load(path, hint="stack")
 
 
 # ----------------------------------------------------------------------
@@ -577,7 +602,6 @@ def test_a_missing_number_is_a_missing_slice(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     os.remove(folder / "z4.tif")
     os.remove(folder / "z7.tif")
-    assert StackImage.sniff(folder) == Confidence.LIKELY
     image = StackImage.load(folder)
     record = image.metadata.raw
     assert record.missing == (4, 7)
