@@ -46,7 +46,12 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.metadata import Metadata
+from brainhops.datamodel.metadata import (
+    ConversionReport,
+    Metadata,
+    MetadataLossError,
+)
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
     Affine,
@@ -781,6 +786,15 @@ class Exemplar(tx.NamedTuple):
     so the checks give it values that the stored type changes.
     """
 
+    vocabulary: tx.Optional[tx.Dict[str, tx.Any]] = None
+    """Fields of the vocabulary and values that the metadata can hold.
+
+    The values differ from those of a file written from `sample()`, and
+    the metadata of the format writes them in the file that it writes
+    alone. They are `None` for a format whose metadata stores no
+    vocabulary yet, which the checks of the vocabulary skip.
+    """
+
 
 def _nifti_edit_record(record: tx.Any) -> tx.Any:
     record.header["descrip"] = b"edited"
@@ -889,6 +903,7 @@ if nb is not None:
         record_edited=lambda raw: raw.header["descrip"].item() == b"edited",
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
+        vocabulary={"description": "a vocabulary edit"},
     )
     _NIFTI_FIELD = _NIFTI._replace(
         to_model=_field_to_model,
@@ -1123,6 +1138,9 @@ if h5py is not None:
         set_data=_x5_set_data,
         cut=_hdf5_cut,
         header=_x5_header,
+        # The JSON metadata of a transform stores every field, so check
+        # 23, which needs a field without a slot, is vacuous for X5.
+        vocabulary={"description": "a vocabulary edit"},
     )
 
 # The model of a morph is a chain, whose field holds the positions of the
@@ -1213,6 +1231,9 @@ if nb is not None:
         record_edited=_mgh_record_edited,
         foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
         storage={"dtype": "int16"},
+        # The metadata writes the fixed header alone, which holds the
+        # type of the voxels but not the footer.
+        vocabulary={"dtype": np.dtype("int32")},
     )
 
 # An AFNI dataset is a `.HEAD` file and a `.BRIK` file. The exemplar
@@ -2349,6 +2370,92 @@ def test_19_a_copy_of_a_read_image_stays_lazy(
 # ----------------------------------------------------------------------
 #   THE TOY FORMAT THROUGH THE GENERIC ENTRY POINTS
 # ----------------------------------------------------------------------
+
+
+VOCABULARY_CASES = [
+    case for case in CASES if case.values[1].vocabulary is not None
+]
+"""The cases whose metadata stores a vocabulary."""
+
+# A value for each field of the vocabulary, for the field that check 23
+# assigns to a format that has no slot for it.
+_FIELD_SAMPLES = {
+    "extra": {"Key": "value"},
+    "description": "a description",
+    "echo_time": 0.03,
+    "history": ("a command",),
+}
+
+
+@pytest.mark.parametrize("cls, exemplar", VOCABULARY_CASES)
+def test_21_metadata_consolidates_the_fields_that_changed(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    metadata = exemplar.metadata.load(_saved(cls, exemplar, tmp_path))
+    # The vocabulary is decoded at once, so nothing is pending after a
+    # read, and the copy shares the record.
+    assert metadata.consolidate().raw is metadata.raw
+    loaded = cls.load(_saved(cls, exemplar, tmp_path, "object"))
+    assert loaded.metadata.consolidate().raw is loaded.metadata.raw
+    changed = replace(metadata, **exemplar.vocabulary)
+    copy = changed.consolidate()
+    assert copy.raw is not metadata.raw
+    fresh = exemplar.metadata.from_raw(copy.raw)
+    for name, value in exemplar.vocabulary.items():
+        assert getattr(copy, name) == value, name
+        assert getattr(fresh, name) == value, name
+    assert copy.consolidate().raw is copy.raw
+
+
+@pytest.mark.parametrize("cls, exemplar", VOCABULARY_CASES)
+def test_22_a_changed_field_survives_a_save(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    metadata = exemplar.metadata.load(_saved(cls, exemplar, tmp_path))
+    untouched = _path(tmp_path, exemplar, "untouched")
+    edited = _path(tmp_path, exemplar, "edited")
+    metadata.save(untouched)
+    metadata.save(edited, **exemplar.vocabulary)
+    before = exemplar.metadata.load(untouched)
+    after = exemplar.metadata.load(edited)
+    # Only the changed fields differ, and the metadata is left as it was.
+    for name in FIELDS:
+        if name in exemplar.vocabulary:
+            assert getattr(after, name) == exemplar.vocabulary[name], name
+            assert getattr(metadata, name) != exemplar.vocabulary[name]
+        else:
+            assert getattr(after, name) == getattr(before, name), name
+
+
+@pytest.mark.parametrize("cls, exemplar", VOCABULARY_CASES)
+def test_23_a_field_without_a_slot_is_lost(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    metadata = exemplar.metadata.load(_saved(cls, exemplar, tmp_path))
+    unsupported = [
+        name
+        for name in _FIELD_SAMPLES
+        if name not in exemplar.metadata.SUPPORTED_FIELDS
+    ]
+    if not unsupported:
+        # Vacuous: the format has a slot for every field (see the comment
+        # of its exemplar).
+        assert set(exemplar.metadata.SUPPORTED_FIELDS) == set(FIELDS)
+        return
+    name = unsupported[0]
+    value = _FIELD_SAMPLES[name]
+    report = ConversionReport()
+    copy = metadata.consolidate(on_loss=report, **{name: value})
+    assert report.lost == {name: value}
+    assert getattr(copy, name) == ({} if name == "extra" else None)
+    with pytest.raises(MetadataLossError):
+        metadata.consolidate(on_loss="raise", **{name: value})
 
 
 def test_the_generic_loader_reads_a_toy_image(tmp_path) -> None:  # noqa: ANN001
