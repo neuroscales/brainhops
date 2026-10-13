@@ -496,11 +496,10 @@ class TiffMultiScaleImage(
 
         A pyramid that was read and not changed is written by copying the
         bytes of its file, and any other pyramid is encoded by tifffile,
-        as [`TiffImage.to_filename`][brainhops.io.images.tiff.TiffImage.to_filename]
-        describes. When the lazy arrays of the pyramid read the file that
-        is written, the pyramid then holds what the file holds (#426): its
-        `raw` is a new tuple of lazy arrays of the new file, and its record
-        is read from it.
+        as [`TiffImage.to_filename`][] describes. When the lazy arrays of
+        the pyramid read the file that is written, the pyramid then holds
+        what the file holds (#426): its `raw` is a new tuple of lazy arrays
+        of the new file, and its record is read from it.
 
         Parameters
         ----------
@@ -605,15 +604,12 @@ class TiffMultiScaleImage(
             return False
         record = self.metadata.raw
         raws = self.raw
-        return (
-            len(raws) == len(record.levels)
-            and all(
-                isinstance(raw, _TiffProxy)
-                and raw.record is record
-                and raw.level == index
-                and raw.source is raws[0].source
-                for index, raw in enumerate(raws)
-            )
+        return len(raws) == len(record.levels) and all(
+            isinstance(raw, _TiffProxy)
+            and raw.record is record
+            and raw.level == index
+            and raw.source is raws[0].source
+            for index, raw in enumerate(raws)
         )
 
     def _planned(

@@ -33,8 +33,8 @@ from brainhops.io.images.tiff import (  # noqa: E402
     TiffImage,
     TiffMultiScaleImage,
 )
-from brainhops.io.images.tiff import _writer as tiff_writer  # noqa: E402
 from brainhops.io.images.tiff import _utils as backend  # noqa: E402
+from brainhops.io.images.tiff import _writer as tiff_writer  # noqa: E402
 
 RNG = np.random.default_rng(0)
 GREY = RNG.integers(0, 2**16, (7, 12), dtype=np.uint16)  # rows, columns
@@ -647,7 +647,12 @@ def test_write_imagej_round_trip(tmp_path: Path) -> None:
     np.testing.assert_allclose(_scale(back), _scale(image))
     assert back.metadata.raw.imagej["spacing"] == -2.0
     assert back.metadata.raw.imagej["finterval"] == 0.5
-    assert tuple(back.metadata.raw.imagej["Ranges"]) == (0.0, 255.0, 0.0, 100.0)
+    assert tuple(back.metadata.raw.imagej["Ranges"]) == (
+        0.0,
+        255.0,
+        0.0,
+        100.0,
+    )
 
 
 def test_write_imagej_refuses_what_imagej_cannot_store(tmp_path: Path) -> None:

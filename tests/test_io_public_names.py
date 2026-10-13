@@ -51,6 +51,18 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.common.mrtrix": Package(
         names=frozenset({"MrtrixMetadata", "MrtrixRaw"}),
     ),
+    "brainhops.io.images.tiff": Package(
+        names=frozenset(
+            {
+                "TiffImage",
+                "TiffLevelRaw",
+                "TiffMetadata",
+                "TiffMultiScaleImage",
+                "TiffRaw",
+            }
+        ),
+        needs=("tifffile",),
+    ),
     "brainhops.io.images.mrtrix": Package(
         names=frozenset({"MrtrixImage", "MrtrixMetadata", "MrtrixRaw"}),
     ),

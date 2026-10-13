@@ -295,7 +295,9 @@ def plan_file(
             "This image has no data, so there is nothing to write."
         )
     shape = tuple(int(n) for n in arrays[0].shape)
-    axes = raster.image_axes(len(shape), getattr(transformation, "input", None))
+    axes = raster.image_axes(
+        len(shape), getattr(transformation, "input", None)
+    )
     if axes is None:
         axes = raster.default_axes(len(shape))
     dtype = np.dtype(arrays[0].dtype)
@@ -432,9 +434,7 @@ def write_plan(
     _wrap_write(go)
 
 
-def write_target(
-    filename: tx.Any, write: tx.Callable[[tx.Any], None]
-) -> None:
+def write_target(filename: tx.Any, write: tx.Callable[[tx.Any], None]) -> None:
     """Write a file at once with a function that writes a name or a stream.
 
     A local file is written next to its target and then moved over it,

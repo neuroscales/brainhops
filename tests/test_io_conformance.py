@@ -2289,10 +2289,7 @@ def _tiff_cut(source: tx.Any, target: tx.Any) -> None:
             if code in (273, 279, 324, 325, 330) and kind in kinds:
                 element = order + kinds[kind]
                 step = struct.calcsize(element)
-                values = [
-                    (value + k * step, element)
-                    for k in range(count)
-                ]
+                values = [(value + k * step, element) for k in range(count)]
                 if code == 330:
                     pending.extend(
                         struct.unpack_from(element, content, at)[0]
@@ -2504,7 +2501,9 @@ if minc_needs is not None:
     )
 
 if tifffile is not None:
-    VARIANTS.append(("TiffImage-ome", TiffImage, _TIFF._replace(suffix=".ome.tif")))
+    VARIANTS.append(
+        ("TiffImage-ome", TiffImage, _TIFF._replace(suffix=".ome.tif"))
+    )
     VARIANTS.append(
         (
             "TiffImage-imagej",
@@ -2577,6 +2576,15 @@ class PyramidExemplar(tx.NamedTuple):
     file of a precomputed volume, gives the path of that file.
     """
 
+    level_geometry: bool = True
+    """Whether the container stores the transformation of each level.
+
+    A TIFF file stores the geometry of its finest level only, and a reader
+    derives the geometry of the coarser levels from their shapes, so a
+    changed transformation of a coarser level is not written. The checks
+    then change the transformation of the finest level instead.
+    """
+
     source: tx.Optional[tx.Callable[[tx.Any, tx.List[np.ndarray]], None]] = (
         None
     )
@@ -2591,6 +2599,38 @@ class PyramidExemplar(tx.NamedTuple):
 
 PYRAMIDS: tx.Dict[type, PyramidExemplar] = {}
 """The registered pyramid formats that follow the design."""
+
+
+def _tiff_pyramid_sample() -> tx.List[np.ndarray]:
+    base = np.arange(192, dtype="uint16").reshape(16, 12)
+    return [base, base[::2, ::2] + 1000, base[::4, ::4] + 2000]
+
+
+def _tiff_place(pyramid: tx.Any) -> None:
+    # TIFF stores a pixel size in a unit of length, so the placement maps
+    # the unitless physical space of the levels to millimetres.
+    axes = raster.default_axes(2)
+    pyramid.transformations = [
+        Scaling(
+            [2.0, 3.0],
+            input=raster.physical_system(axes),
+            output=raster.physical_system(axes, {"x": "mm", "y": "mm"}),
+        )
+    ]
+
+
+# A TIFF pyramid stores no placement and the geometry of its finest level
+# only, so an assigned placement is composed into that geometry, and a
+# changed transformation of a coarser level is not written.
+if tifffile is not None:
+    PYRAMIDS[TiffMultiScaleImage] = PyramidExemplar(
+        level=TiffImage,
+        levels=_tiff_pyramid_sample,
+        place=_tiff_place,
+        placements=False,
+        options=frozenset({"series"}),
+        level_geometry=False,
+    )
 
 
 def _toyp_sample() -> tx.List[np.ndarray]:
@@ -3861,21 +3901,26 @@ def test_p07_transformations_are_compared_at_consolidation(
     fresh = cls.load(path)
     loaded.images[1].transformations = list(fresh.images[1].transformations)
     assert loaded.consolidate().metadata is metadata
-    # A changed list is written, and the other levels keep their arrays.
-    level.change_geometry(loaded.images[1])
-    expected = level.geometry(loaded.images[1])
+    # A changed list is written, and the other levels keep their arrays. A
+    # container that stores the geometry of its finest level only is
+    # changed on that level.
+    k = 1 if exemplar.level_geometry else 0
+    level.change_geometry(loaded.images[k])
+    expected = level.geometry(loaded.images[k])
     consolidated = loaded.consolidate()
     assert consolidated.metadata is not metadata
     if not exemplar.derive:
-        assert consolidated.raw[0] is raw[0]
-        assert consolidated.raw[2] is raw[2]
+        for index in range(len(raw)):
+            if index != k:
+                assert consolidated.raw[index] is raw[index]
     target = _path(tmp_path, level, "level")
     loaded.save(target)
     back = cls.load(target)
-    assert np.allclose(level.geometry(back.images[1]), expected)
-    assert np.allclose(
-        level.geometry(back.images[0]), level.geometry(fresh.images[0])
-    )
+    assert np.allclose(level.geometry(back.images[k]), expected)
+    if exemplar.level_geometry:
+        assert np.allclose(
+            level.geometry(back.images[0]), level.geometry(fresh.images[0])
+        )
 
     # The placements of the pyramid that were only read keep the record,
     # and so does an equal list that is assigned.
