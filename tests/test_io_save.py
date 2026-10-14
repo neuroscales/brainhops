@@ -27,6 +27,7 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Scaling,
 )
+from brainhops.errors import UnrepresentableTransformationError
 from brainhops.io.base import Format
 from brainhops.io.base._base import (
     is_format_registry,
@@ -349,10 +350,19 @@ def test_a_nifti_coordinate_field_round_trips(tmp_path) -> None:  # noqa: ANN001
 def test_an_image_round_trips_through_zarr(tmp_path) -> None:  # noqa: ANN001
     from brainhops.io.images.zarr import ZarrImage
 
-    io.save(_image(), tmp_path / "image.zarr")
+    io.save(SingleScaleImage(data=DATA), tmp_path / "image.zarr")
     back = io.images.load(tmp_path / "image.zarr")
     assert isinstance(back, ZarrImage)
     assert np.array_equal(np.asarray(back.data), DATA)
+
+
+@needs_zarr
+def test_a_geometry_is_not_dropped_by_plain_zarr(tmp_path) -> None:  # noqa: ANN001
+    # A plain Zarr array stores no geometry, so the writer refuses an image
+    # that has one rather than drop it, and writes nothing.
+    with pytest.raises(UnrepresentableTransformationError):
+        io.save(_image(), tmp_path / "image.zarr")
+    assert not (tmp_path / "image.zarr").exists()
 
 
 @needs_zarr
@@ -363,7 +373,11 @@ def test_a_multiscale_image_round_trips_through_ome_zarr(
 ) -> None:
     from brainhops.io.images.zarr import OmeZarrImage
 
-    io.save(MultiScaleImage(images=[_image()]), tmp_path / name)
+    # OME-Zarr 0.6 only scales and translates a level, so the affine is
+    # given as the placement of the pyramid rather than of its level.
+    level = SingleScaleImage(data=DATA)
+    pyramid = MultiScaleImage(images=[level], transformations=[Affine(MATRIX)])
+    io.save(pyramid, tmp_path / name)
     back = io.images.load(tmp_path / name)
     assert isinstance(back, OmeZarrImage)
     assert np.array_equal(np.asarray(back.images[0].data), DATA)
@@ -403,6 +417,11 @@ def test_an_image_read_from_nifti_is_written_as_zarr(tmp_path) -> None:  # noqa:
 
     io.save(_image(), tmp_path / "image.nii")
     nifti = io.images.load(tmp_path / "image.nii")
+    # The geometry of the NIfTI file cannot be stored, so it is refused
+    # until it is cleared.
+    with pytest.raises(UnrepresentableTransformationError):
+        io.save(nifti, tmp_path / "image.zarr")
+    nifti.transformations = []
     io.save(nifti, tmp_path / "image.zarr")
     back = io.images.load(tmp_path / "image.zarr")
     assert isinstance(back, ZarrImage)

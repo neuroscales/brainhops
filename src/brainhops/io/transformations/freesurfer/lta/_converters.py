@@ -15,6 +15,12 @@ affine. Another variant of the format that reads its matrix from a
 record reads the same record in its own coordinate systems, which is
 exact, and one that holds a matrix of its own is relabelled, as any
 other transformation is.
+
+A `register.dat` transformation converts exactly to an LTA file when
+the geometries of its two volumes are known. That converter, and the one
+in the other direction, are registered by the private module
+`brainhops.io.transformations.freesurfer.regdat._converters`, which
+knows both formats.
 """
 
 import typing_extensions as tx

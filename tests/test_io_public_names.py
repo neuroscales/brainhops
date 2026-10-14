@@ -51,8 +51,54 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.common.mrtrix": Package(
         names=frozenset({"MrtrixMetadata", "MrtrixRaw"}),
     ),
+    "brainhops.io.images.tiff": Package(
+        names=frozenset(
+            {
+                "TiffImage",
+                "TiffLevelRaw",
+                "TiffMetadata",
+                "TiffMultiScaleImage",
+                "TiffRaw",
+            }
+        ),
+        needs=("tifffile",),
+    ),
+    "brainhops.io.images.openslide": Package(
+        names=frozenset(
+            {
+                "OpenSlideFormat",
+                "OpenSlideImage",
+                "OpenSlideLevelRaw",
+                "OpenSlideMetadata",
+                "OpenSlideMultiScaleImage",
+                "OpenSlideRaw",
+                *(
+                    f"{vendor}{kind}"
+                    for vendor in (
+                        "Aperio",
+                        "DicomWsi",
+                        "GenericTiff",
+                        "Hamamatsu",
+                        "Leica",
+                        "Mirax",
+                        "Philips",
+                        "Sakura",
+                        "Trestle",
+                        "Ventana",
+                        "Zeiss",
+                    )
+                    for kind in ("Image", "MultiScaleImage")
+                ),
+            }
+        ),
+        needs=("openslide",),
+    ),
     "brainhops.io.images.mrtrix": Package(
         names=frozenset({"MrtrixImage", "MrtrixMetadata", "MrtrixRaw"}),
+    ),
+    "brainhops.io.images.pillow": Package(
+        names=frozenset({"PillowImage", "PillowMetadata", "PillowRaw"}),
+        needs=("PIL",),
     ),
     "brainhops.io.common.minc": Package(
         names=frozenset({"MincDimension", "MincMetadata", "MincRaw"}),
@@ -70,6 +116,86 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("nibabel",),
     ),
+    "brainhops.io.common.zarr": Package(
+        names=frozenset(
+            {
+                "StoreLike",
+                "ZarrMetadata",
+                "ZarrRaw",
+                "ZarrReader",
+                "ZarrReaderWriter",
+            }
+        ),
+        needs=("abczarr",),
+    ),
+    "brainhops.io.images.zarr": Package(
+        names=frozenset(
+            {
+                "OmeImageError",
+                "OmeZarrImage",
+                "ZarrImage",
+                "ZarrMetadata",
+                "ZarrRaw",
+            }
+        ),
+        needs=("abczarr",),
+    ),
+    "brainhops.io.images.stack": Package(
+        names=frozenset(
+            {
+                "StackImage",
+                "StackMember",
+                "StackMetadata",
+                "StackRaw",
+            }
+        ),
+    ),
+    "brainhops.io.common.bdv": Package(
+        names=frozenset({"BdvMetadata", "BdvRaw"}),
+    ),
+    "brainhops.io.images.bdv": Package(
+        names=frozenset(
+            {"BdvImage", "BdvMetadata", "BdvMultiScaleImage", "BdvRaw"}
+        ),
+        needs=("h5py",),
+    ),
+    "brainhops.io.images.imaris": Package(
+        names=frozenset(
+            {
+                "ImarisImage",
+                "ImarisLevel",
+                "ImarisMetadata",
+                "ImarisMultiScaleImage",
+                "ImarisRaw",
+            }
+        ),
+        needs=("h5py",),
+    ),
+    "brainhops.io.images.precomputed": Package(
+        names=frozenset(
+            {
+                "PrecomputedImage",
+                "PrecomputedMetadata",
+                "PrecomputedMultiScaleImage",
+                "PrecomputedRaw",
+                "PrecomputedScale",
+                "PrecomputedSharding",
+            }
+        ),
+        needs=("tensorstore",),
+    ),
+    "brainhops.io.images.n5": Package(
+        names=frozenset(
+            {
+                "N5AttributeWarning",
+                "N5Image",
+                "N5Metadata",
+                "N5MultiScaleImage",
+                "N5Raw",
+            }
+        ),
+        needs=("tensorstore",),
+    ),
     "brainhops.io.common.nrrd": Package(
         names=frozenset({"NrrdMetadata", "NrrdRaw"}),
     ),
@@ -83,6 +209,20 @@ PACKAGES: tx.Dict[str, Package] = {
                 "NrrdRaw",
             }
         ),
+    ),
+    "brainhops.io.common.freesurfer": Package(
+        names=frozenset({"FreesurferFormat", "FreesurferTkrSystem"}),
+    ),
+    "brainhops.io.images.jpeg2000": Package(
+        names=frozenset(
+            {
+                "Jpeg2000Image",
+                "Jpeg2000Metadata",
+                "Jpeg2000MultiScaleImage",
+                "Jpeg2000Raw",
+            }
+        ),
+        needs=("PIL",),
     ),
     "brainhops.io.common.mgh": Package(
         names=frozenset({"MghMetadata", "MghRaw"}),
@@ -118,6 +258,10 @@ PACKAGES: tx.Dict[str, Package] = {
         names=frozenset({"SpmCoordinatesField"}),
         needs=("nibabel",),
     ),
+    "brainhops.io.transformations.fsl.flirt": Package(
+        names=frozenset({"FlirtMetadata", "FlirtRaw", "FlirtTransform"}),
+        needs=("nibabel",),
+    ),
     "brainhops.io.transformations.fsl.fnirt": Package(
         names=frozenset({"FnirtWarpField"}),
         needs=("nibabel",),
@@ -126,6 +270,8 @@ PACKAGES: tx.Dict[str, Package] = {
         names=frozenset(
             {
                 "NiftyRegAffine",
+                "NiftyRegAffineMetadata",
+                "NiftyRegAffineRaw",
                 "NiftyRegControlPointGrid",
                 "NiftyRegDeformationField",
                 "NiftyRegDisplacementField",
@@ -137,6 +283,20 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
         needs=("nibabel",),
+    ),
+    "brainhops.io.transformations.c3d": Package(
+        names=frozenset({"C3dAffine", "C3dAffineMetadata", "C3dAffineRaw"}),
+    ),
+    "brainhops.io.transformations.elastix": Package(
+        names=frozenset(
+            {
+                "ElastixMetadata",
+                "ElastixParameterTransform",
+                "ElastixRaw",
+                "ElastixTomlTransform",
+                "ElastixTransform",
+            }
+        ),
     ),
     "brainhops.io.transformations.freesurfer.lta": Package(
         names=frozenset(
@@ -166,6 +326,45 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
     ),
+    "brainhops.io.transformations.matrix": Package(
+        names=frozenset(
+            {
+                "CsvMatrixAffine",
+                "CsvMatrixMetadata",
+                "Mat73MatrixAffine",
+                "Mat73MatrixMetadata",
+                "MatLegacyMatrixAffine",
+                "MatLegacyMatrixMetadata",
+                "MatMatrixAffine",
+                "MatrixAffine",
+                "MatrixAffineRaw",
+                "MatrixMetadata",
+                "NpyMatrixAffine",
+                "NpyMatrixMetadata",
+                "NpzMatrixAffine",
+                "NpzMatrixMetadata",
+                "TsvMatrixAffine",
+                "TsvMatrixMetadata",
+                "TxtMatrixAffine",
+                "TxtMatrixMetadata",
+            }
+        ),
+    ),
+    "brainhops.io.transformations.freesurfer.regdat": Package(
+        names=frozenset(
+            {
+                "RegisterDatMetadata",
+                "RegisterDatRaw",
+                "RegisterDatTransformation",
+                "RegisterDatTransformationRASToRAS",
+            }
+        ),
+    ),
+    "brainhops.io.transformations.trakem2": Package(
+        names=frozenset(
+            {"TrakEM2Metadata", "TrakEM2PatchAffine", "TrakEM2Raw"}
+        ),
+    ),
     "brainhops.io.transformations.freesurfer.m3z": Package(
         names=frozenset(
             {
@@ -177,6 +376,18 @@ PACKAGES: tx.Dict[str, Package] = {
                 "M3zMorph",
                 "M3zRaw",
                 "M3zXform",
+            }
+        ),
+    ),
+    "brainhops.io.transformations.minc": Package(
+        names=frozenset(
+            {
+                "XfmAffine",
+                "XfmFormat",
+                "XfmGridTransform",
+                "XfmMetadata",
+                "XfmRaw",
+                "XfmTransform",
             }
         ),
     ),
@@ -195,6 +406,40 @@ PACKAGES: tx.Dict[str, Package] = {
             }
         ),
         needs=("h5py",),
+    ),
+    "brainhops.io.transformations.bdv": Package(
+        names=frozenset({"BdvMetadata", "BdvRaw", "BdvViewRegistration"}),
+    ),
+    "brainhops.io.transformations.afni": Package(
+        names=frozenset(
+            {
+                "AfniAffine",
+                "AfniAffineMetadata",
+                "AfniAffineRaw",
+                "AfniBrikWarp",
+                "AfniMetadata",
+                "AfniNiftiWarp",
+                "AfniRaw",
+                "AfniWarp",
+                "cardinal_to_real",
+            }
+        ),
+        needs=("nibabel",),
+    ),
+    "brainhops.io.transformations.mrtrix": Package(
+        names=frozenset(
+            {
+                "MrtrixCoordinatesField",
+                "MrtrixDisplacementField",
+                "MrtrixLinearMetadata",
+                "MrtrixLinearRaw",
+                "MrtrixLinearTransform",
+                "MrtrixMetadata",
+                "MrtrixRaw",
+                "MrtrixWarp",
+                "MrtrixWarpFull",
+            }
+        ),
     ),
     "brainhops.io.transformations.itk": Package(
         names=frozenset(
@@ -216,12 +461,18 @@ PACKAGES: tx.Dict[str, Package] = {
     ),
     "brainhops.io.transformations.itk.h5": Package(
         names=frozenset(
-            {"DelayedH5Array", "H5Header", "H5Transform", "H5TransformReader"}
+            {
+                "DelayedH5Array",
+                "H5Header",
+                "H5Metadata",
+                "H5Raw",
+                "H5Transform",
+            }
         ),
         needs=("h5py",),
     ),
     "brainhops.io.transformations.itk.mat": Package(
-        names=frozenset({"MatTransform", "MatTransformReaderWriter"}),
+        names=frozenset({"MatMetadata", "MatRaw", "MatTransform"}),
     ),
     "brainhops.io.transformations.itk.nifti": Package(
         names=frozenset(
@@ -234,7 +485,7 @@ PACKAGES: tx.Dict[str, Package] = {
         needs=("nibabel",),
     ),
     "brainhops.io.transformations.itk.tfm": Package(
-        names=frozenset({"TfmTransform", "TfmTransformReader"}),
+        names=frozenset({"TfmMetadata", "TfmRaw", "TfmTransform"}),
     ),
 }
 

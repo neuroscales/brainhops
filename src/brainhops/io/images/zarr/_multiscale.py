@@ -1,10 +1,9 @@
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
-from bagof.magic import Inherit, NoRepr, replace
+from bagof.magic import Inherit, replace
 
 from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import (
     Axis,
@@ -14,11 +13,16 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import AxisList, CoordinateSystem
-from brainhops.datamodel.transformations import Transformation
+from brainhops.datamodel.transformations import Identity, Transformation
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.zarr import StoreLike, ZarrReaderWriter
-from brainhops.io.common.zarr._parsers import _as_node
+from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
+from brainhops.io.common.zarr._data import _ZarrProxy, store_location
+from brainhops.io.common.zarr._parsers import (
+    _as_node,
+    _ZarrNodeReaderWriter,
+    opened_node,
+)
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map
@@ -45,34 +49,23 @@ _Ellipsis = type(Ellipsis)
 class OmeZarrLevel(ZarrImage):
     """One resolution level of an OME-Zarr pyramid.
 
-    The array is transposed into the brainhops axis order only when `data`
-    is read, so opening a pyramid reads no array data.
+    The level holds the lazy array of its dataset in `raw`, which presents
+    the stored axes in the brainhops order, and the record of the array of
+    its dataset. Its transformations are those of its dataset, assigned
+    when the pyramid is read. Opening a pyramid reads no array data, and a
+    copy made with `replace` keeps the lazy array. Step 4b-ii of the
+    fourth pass makes the level hold the record of its pyramid instead.
     """
-
-    _perm: NoRepr[tx.Optional[tx.Tuple[int, ...]]] = None
-    """The permutation from the stored axes to the brainhops order.
-
-    The level keeps it as a field, so that a copy made with `replace`
-    keeps the node and still transposes the array that it reads.
-    """
-
-    @smartproperty(cache=True)
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        raw = super().data
-        backend = get_array_backend(raw)
-        if self._perm is not None:
-            raw = backend.transpose(raw, self._perm)
-        return raw
 
 
 # `kw_only=True` is repeated here because bagof takes each class option
 # from the first base in the method resolution order, whether that base
-# sets the option or keeps the default. That base is `ZarrReaderWriter`,
+# sets the option or keeps the default. That base is `_ZarrNodeReaderWriter`,
 # which keeps the default, so the fields declared by this class would
 # otherwise be positional.
 @register_format
 class OmeZarrImage(
-    ZarrReaderWriter, ImageFormat, MultiScaleImage, kw_only=True
+    _ZarrNodeReaderWriter, ImageFormat, MultiScaleImage, kw_only=True
 ):
     """Multiscale image backed by an OME-Zarr pyramid.
 
@@ -198,7 +191,7 @@ class OmeZarrImage(
         The metadata is parsed immediately, so unreadable metadata is refused
         when the group is opened rather than on first access.
         """
-        image = super().from_node(node, **kwargs)
+        image = cls(node=opened_node(node), **kwargs)
         _ = image._layout
         return image
 
@@ -326,9 +319,7 @@ class OmeZarrImage(
                 input=voxel_system,
                 output=intrinsic_system,
             )
-            level = OmeZarrLevel(
-                transformations=[geometry], node=array, perm=perm
-            )
+            level = _level(array, perm, geometry)
             images.append(level)
 
         commons = common_transformations(
@@ -408,6 +399,8 @@ class OmeZarrImage(
 
         levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
         rich = False
+        placements = list(self.transformations or [])
+        moved_placement = False
         for index, image in enumerate(images):
             data = image.data
             if data is None:
@@ -425,6 +418,16 @@ class OmeZarrImage(
                     f"Level {index} of this image cannot be written as "
                     f"OME-Zarr metadata. {error}"
                 ) from error
+            if not _map.is_dataset_transform(entry):
+                if len(images) != 1 or placements:
+                    raise WriterError(
+                        f"Level {index} has a transformation that OME-Zarr "
+                        "cannot store on a dataset. Put the placement on the "
+                        "multiscale image instead."
+                    )
+                placements.append(image.transformation)
+                entry = _map.to_ome(Identity(), storage_perm, len(data.shape))
+                moved_placement = True
             rich = rich or _map.needs_rich_version(entry)
             backend = get_array_backend(data)
             stored = backend.transpose(data, storage_perm)
@@ -436,7 +439,6 @@ class OmeZarrImage(
 
         # Placements are written once as common transformations instead of
         # being folded into the levels, so a round trip keeps them apart.
-        placements = list(self.transformations or [])
         entries = []  # type: tx.List[tx.Dict[str, tx.Any]]
         for placement in placements:
             try:
@@ -448,6 +450,7 @@ class OmeZarrImage(
                 ) from error
             rich = rich or _map.needs_rich_version(entry)
             entries.append(entry)
+        rich = rich or moved_placement
         # Only 0.6 and later name coordinate systems, which several world
         # spaces require.
         rich = rich or len(entries) > 1
@@ -512,3 +515,14 @@ def _default_canonical_axes(ndim: int) -> tx.List[Axis]:
         for i in range(extra)
     ]
     return spatial + non_spatial
+
+
+def _level(
+    array: tx.Any, perm: tx.Sequence[int], geometry: Transformation
+) -> OmeZarrLevel:
+    """Return the level of a dataset, which reads its array lazily."""
+    return OmeZarrLevel(
+        transformations=[geometry],
+        raw=_ZarrProxy(array, store_location(array), perm),
+        metadata=ZarrMetadata.from_raw(ZarrRaw.from_node(array)),
+    )

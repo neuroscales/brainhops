@@ -34,9 +34,13 @@ from brainhops.io.common._geometry import (
     Arrangement,
     arrange_voxel_to_ras,
     declared_axes,
+    held_transformations,
     same_transformations,
 )
-from brainhops.io.common.freesurfer import FreesurferFormat
+from brainhops.io.common.freesurfer import (
+    FreesurferFormat,
+    FreesurferTkrSystem,
+)
 from brainhops.io.common.freesurfer._geometry import fs_geometry_from_vox2ras
 from brainhops.io.common.mgh import MghMetadata, MghRaw
 from brainhops.io.common.mgh._constants import _MGH_AXES, _MRI_PARAMS
@@ -96,7 +100,13 @@ class MghImage(
     unless other transformations are assigned. They are, in order, a
     [`Scaling`][] to `"physical"` by the voxel size in millimeters and the
     TR in milliseconds, an [`Affine`][] to `"tkr"` (`MghRaw.vox2tkr`), and
-    the preferred [`Affine`][] to `"scanner"` (`MghRaw.vox2ras`).
+    the preferred [`Affine`][] to `"scanner"` (`MghRaw.vox2ras`). The tkr
+    RAS space of a 3-D image is a
+    [`FreesurferTkrSystem`][brainhops.io.common.freesurfer.FreesurferTkrSystem]
+    and not `RASmm`, so that a format that stores scanner RAS refuses to
+    write it as scanner RAS. The tkr space of a 4-D image is a system of
+    four axes named `"tkr"`, as its scanner space is a system of four
+    axes named `"scanner"`.
 
     `raw` and the record describe the file as it was read, or as the image
     was last consolidated. Data that are assigned are pending until
@@ -144,31 +154,27 @@ class MghImage(
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
-    property of the same name reads it. `None`, the default, means that
-    the transformations have been neither read nor assigned, so the
-    record is kept as it is. The property stores here the list that it
-    decodes, and an assigned list, even an empty one, is stored as it is.
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the record and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
     _metadata: NoRepr[tx.Optional[MghMetadata]] = None
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
-    An image built from data has no metadata. Assigning other metadata
-    drops the transformations that the image holds, read or assigned, so
-    that they are decoded from the new record.
+    An image built from data has no metadata. Assigning
+    other metadata drops the transformations decoded from the previous
+    record, so that they are decoded from the new one, and keeps the
+    transformations that were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[MghMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -185,15 +191,19 @@ class MghImage(
             return None
         return _image_to_model(self.raw)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. An image without
-        metadata has no transformations.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place, such as an appended
+        transformation, is kept.
+        Assigning other metadata drops the decoded list, so that it is
+        decoded from the new record, and keeps an assigned list. A change
+        made in place to a decoded list is therefore lost when other
+        metadata is assigned. An image without metadata has no
+        transformations.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -201,8 +211,7 @@ class MghImage(
         image has no geometry, and the image is then written as an image
         built from data alone. Assigning `None` decodes the record again.
         """
-        self._transformations = _record_transformations(self.metadata)
-        return self._transformations
+        return _record_transformations(self.metadata)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -452,8 +461,9 @@ class MghImage(
         """
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
-        kept = self._transformations is None or same_transformations(
-            self._transformations, _record_transformations(self.metadata)
+        held = held_transformations(self)
+        kept = held is None or same_transformations(
+            held, _record_transformations(self.metadata)
         )
         if (
             self._data is None
@@ -652,17 +662,23 @@ def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
         input=voxel_space, output=phys_space, scale=zooms[: len(axes)]
     )
 
-    def _affine(matrix: np.ndarray, name: str) -> Affine:
+    def _affine(matrix: np.ndarray, output: CoordinateSystem) -> Affine:
         return Affine(
             input=voxel_space,
-            output=replace(ras_space, name=name),
+            output=output,
             matrix=np.asarray(matrix, dtype=np.float64)[:3],
         )
 
+    # The shared tkregister system has three axes, so a 4-D image keeps a
+    # system of four axes that is only named after it.
+    if len(ras_axes) == 3:
+        tkr_space = FreesurferTkrSystem(name=_TKR, axes=ras_axes)
+    else:
+        tkr_space = replace(ras_space, name=_TKR)
     return [
         vox2phys,
-        _affine(record.vox2tkr, _TKR),
-        _affine(record.vox2ras, _SCANNER),
+        _affine(record.vox2tkr, tkr_space),
+        _affine(record.vox2ras, replace(ras_space, name=_SCANNER)),
     ]
 
 
@@ -706,7 +722,7 @@ def _encoded(
     dtype = overrides.pop("dtype", None)
     # The list of the image is read without being stored, so that a write
     # leaves the image as it was.
-    transformations = image._transformations
+    transformations = held_transformations(image)
     if transformations is None:
         transformations = _record_transformations(image.metadata)
     vox2ras, layout, tr = _scanner_geometry(transformations, source)
@@ -804,7 +820,8 @@ def _scanner_transformation(
 
     A transformation named `"scanner"` wins. Otherwise the last
     transformation that does not map to tkr RAS is used, or `None` if
-    there is none.
+    there is none. A transformation maps to tkr RAS when its output is a
+    `FreesurferTkrSystem` or is named `"tkr"`.
     """
     transformations = list(transformations or [])
     chosen = None
@@ -813,8 +830,9 @@ def _scanner_transformation(
             chosen = xform
     if chosen is None:
         for xform in reversed(transformations):
-            name = getattr(getattr(xform, "output", None), "name", None)
-            if name != _TKR:
+            output = getattr(xform, "output", None)
+            tkr = isinstance(output, FreesurferTkrSystem)
+            if not tkr and getattr(output, "name", None) != _TKR:
                 chosen = xform
                 break
     return chosen

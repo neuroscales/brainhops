@@ -390,17 +390,18 @@ def test_writer_writes_a_non_axis_aligned_geometry_as_an_affine(
     # OME carries a sheared placement as a full affine.
     matrix = np.eye(3, 4)
     matrix[0, 1] = 0.5
-    image = SingleScaleImage(
-        data=np.zeros((3, 3, 3), "float32"),
+    image = SingleScaleImage(np.zeros((3, 3, 3), "float32"))
+    pyramid = OmeZarrImage(
+        images=[image],
+        axes=_spatial_axes(),
         transformations=[Affine(matrix=matrix)],
     )
-    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
     path = str(tmp_path / "sheared.zarr")
 
     pyramid.save(path)
     back = images.load(path)
 
-    geometry = back.images[0].transformation
+    geometry = back.transformation
     assert isinstance(geometry, Affine)
     np.testing.assert_allclose(_world_matrix(geometry), matrix)
 
@@ -433,20 +434,21 @@ def test_writer_round_trips_a_rotation_placement(tmp_path: Path) -> None:
             [0.0, 0.0, 1.0],
         ]
     )
-    image = SingleScaleImage(
-        data=np.zeros((3, 4, 5), "float32"),
+    image = SingleScaleImage(np.zeros((3, 4, 5), "float32"))
+    pyramid = OmeZarrImage(
+        images=[image],
+        axes=_spatial_axes(),
         transformations=[Rotation(matrix=linear)],
     )
-    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
     path = str(tmp_path / "rot.zarr")
 
     pyramid.save(path)
     back = images.load(path)
 
-    geometry = back.images[0].transformation
+    geometry = back.transformation
     assert isinstance(geometry, Rotation)
     np.testing.assert_allclose(
-        _world_matrix(geometry), _world_matrix(image.transformation)
+        _world_matrix(geometry), _world_matrix(pyramid.transformation)
     )
 
 
@@ -469,21 +471,21 @@ def test_writer_round_trips_a_sequence_placement(tmp_path: Path) -> None:
     placement = Sequence(
         [Rotation(matrix=linear), Translation(translation=[10.0, 20.0, 30.0])]
     )
-    image = SingleScaleImage(
-        data=np.zeros((3, 4, 5), "float32"), transformations=[placement]
+    image = SingleScaleImage(np.zeros((3, 4, 5), "float32"))
+    pyramid = OmeZarrImage(
+        images=[image], axes=_spatial_axes(), transformations=[placement]
     )
-    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
     path = str(tmp_path / "seq.zarr")
 
     pyramid.save(path)
     back = images.load(path)
 
-    geometry = back.images[0].transformation
+    geometry = back.transformation
     assert isinstance(geometry, Sequence)
     kinds = [type(part).__name__ for part in geometry.transformations]
     assert kinds == ["Rotation", "Translation"]
     np.testing.assert_allclose(
-        _world_matrix(geometry), _world_matrix(image.transformation)
+        _world_matrix(geometry), _world_matrix(pyramid.transformation)
     )
 
 
@@ -687,10 +689,11 @@ def test_a_copy_of_a_read_level_stays_lazy(tmp_path: Path) -> None:
     _small_pyramid().save(path)
     level = OmeZarrImage.from_store(path).images[0]
     copy = replace(level)
-    # The copy keeps the node and the permutation, and reads no array.
+    # The copy keeps the lazy array, which permutes the axes, and the
+    # record, and reads no array.
     assert copy._data is None
-    assert copy.node is level.node
-    assert copy._perm == level._perm
+    assert copy.raw is level.raw
+    assert copy.metadata is level.metadata
     assert getattr(level, "_cache_data", None) is None
     assert np.array_equal(np.asarray(copy.data), np.asarray(level.data))
     # An assigned array is copied as it is.
@@ -879,6 +882,7 @@ def _authored_pyramid(
     axes: tx.List[dict],
     shape: tuple,
     arrays: tx.Optional[dict] = None,
+    inner_transform: tx.Optional[dict] = None,
 ) -> str:
     """Write a 0.6 group whose one level carries `transform`.
 
@@ -896,18 +900,36 @@ def _authored_pyramid(
             group.create_array(name, data=data, dimension_names=names)
         else:
             group.create_array(name, data=array)
+    transformations = (
+        {
+            "coordinateTransformations": [
+                dict(
+                    transform,
+                    input={"name": "phys"},
+                    output={"name": "model"},
+                )
+            ]
+        }
+        if transform
+        else {}
+    )
+    inner_transform = inner_transform or {"type": "identity"}
     group.ome = v6.OME.from_json(
         {
             "version": "0.6",
             "multiscales": [
                 {
-                    "coordinateSystems": [{"name": "phys", "axes": axes}],
+                    "coordinateSystems": [
+                        {"name": "phys", "axes": axes},
+                        {"name": "model", "axes": axes},
+                    ],
+                    **transformations,
                     "datasets": [
                         {
                             "path": "0",
                             "coordinateTransformations": [
                                 dict(
-                                    transform,
+                                    inner_transform,
                                     input={"path": "0"},
                                     output={"name": "phys"},
                                 )
@@ -938,7 +960,7 @@ def test_reader_maps_a_rotation_to_a_rotation(tmp_path: Path) -> None:
         _SPACE2,
         (5, 4),
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Rotation)
     # The stored (y, x) rotation is reordered to (x, y).
     np.testing.assert_allclose(
@@ -953,7 +975,7 @@ def test_reader_maps_an_affine_to_an_affine(tmp_path: Path) -> None:
         _SPACE2,
         (5, 4),
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Affine)
     np.testing.assert_allclose(
         np.asarray(geometry.matrix), [[3.0, 0.0, 6.0], [0.0, 2.0, 5.0]]
@@ -969,15 +991,16 @@ def test_reader_maps_a_sequence_to_a_sequence(tmp_path: Path) -> None:
 
     path = _authored_pyramid(
         tmp_path,
-        {
+        {},
+        _SPACE3,
+        (6, 5, 4),
+        inner_transform={
             "type": "sequence",
             "transformations": [
                 {"type": "scale", "scale": [3.0, 2.0, 1.0]},
                 {"type": "translation", "translation": [30.0, 20.0, 10.0]},
             ],
         },
-        _SPACE3,
-        (6, 5, 4),
     )
     geometry = OmeZarrImage.from_store(path).images[0].transformation
     assert isinstance(geometry, Sequence)
@@ -991,12 +1014,12 @@ def test_reader_maps_a_map_axis_to_a_permutation(tmp_path: Path) -> None:
     path = _authored_pyramid(
         tmp_path, {"type": "mapAxis", "mapAxis": [1, 0]}, _SPACE2, (5, 4)
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Permutation)
     np.testing.assert_array_equal(np.asarray(geometry.permutation), [1, 0])
 
 
-def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
+def test_reader_maps_a_project_axis_to_a_projection() -> None:
     # A mapAxis over a subset of the input axes is a Projection; tested on
     # the mapping, since such a level is not wired through the reader.
     from abczarr.ome.v0_6.transformations import CoordinateTransformation
@@ -1005,7 +1028,7 @@ def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
     from brainhops.io.images.zarr import _ome
 
     transform = CoordinateTransformation.from_json(
-        {"type": "mapAxis", "mapAxis": [0, 2]}
+        {"type": "projectAxis", "droppedInputs": [1]}
     )
     projection = _ome._map_transform(transform, perm=[0, 1, 2], ndim=3)
     assert isinstance(projection, Projection)
@@ -1076,14 +1099,24 @@ def _authored_field_pyramid(
             "version": "0.6",
             "multiscales": [
                 {
-                    "coordinateSystems": [{"name": "phys", "axes": _SPACE3}],
+                    "coordinateSystems": [
+                        {"name": "phys", "axes": _SPACE3},
+                        {"name": "model", "axes": _SPACE3},
+                    ],
+                    "coordinateTransformations": [
+                        {
+                            "type": "displacements",
+                            "path": "disp",
+                            "input": {"name": "phys"},
+                            "output": {"name": "model"},
+                        }
+                    ],
                     "datasets": [
                         {
                             "path": "0",
                             "coordinateTransformations": [
                                 {
-                                    "type": "displacements",
-                                    "path": "disp",
+                                    "type": "identity",
                                     "input": {"path": "0"},
                                     "output": {"name": "phys"},
                                 }
@@ -1112,7 +1145,7 @@ def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
             ("d", "displacement"),
         ],
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, DisplacementField)
     result = np.asarray(geometry.field)
     # Read as (x, y, z, component), without reordering the values.
@@ -1131,7 +1164,7 @@ def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, DisplacementField)
     field = np.asarray(geometry.field)
     # The component axis moves to the end.
@@ -1154,7 +1187,7 @@ def test_reader_reads_a_field_by_its_axis_names_not_position(
         (6, 5, 4),
         arrays={"disp": (field, ("z", "y", "x", "d"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, DisplacementField)
     result = np.asarray(geometry.field)
     assert result.shape == (4, 5, 6, 3)
@@ -1186,7 +1219,7 @@ def test_reader_reads_a_coordinate_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"coord": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, CoordinatesField)
     assert np.asarray(geometry.field).shape == (4, 5, 6, 3)
 
@@ -1211,7 +1244,7 @@ def test_reader_reads_an_affine_surrounded_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Sequence)
     assert isinstance(geometry.transformations[0], Scaling)
     assert isinstance(geometry.transformations[1], DisplacementField)
@@ -1240,7 +1273,7 @@ def test_reader_maps_a_multi_field_sequence_without_banning(
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Sequence)
     assert all(
         isinstance(part, DisplacementField)
@@ -1249,30 +1282,6 @@ def test_reader_maps_a_multi_field_sequence_without_banning(
 
 
 # ---- base Zarr writer ------------------------------------------------
-
-
-class _RecordingStorePath:
-    """A store path that records the targets it is copied to."""
-
-    def __init__(self) -> None:
-        self.copies: tx.List[tx.Any] = []
-
-    def copy(self, target: tx.Any) -> None:
-        self.copies.append(target)
-
-
-class _FakeNode(abczarr.ZarrNode):
-    """A minimal Zarr node whose store path records each copy."""
-
-    zarr_version = 3
-    metadata = None
-
-    def __init__(self) -> None:
-        self._store_path = _RecordingStorePath()
-
-    @property
-    def store_path(self) -> _RecordingStorePath:
-        return self._store_path
 
 
 def _base_writer_class() -> tx.Type[tx.Any]:
@@ -1284,24 +1293,29 @@ def _base_writer_class() -> tx.Type[tx.Any]:
     return _Writer
 
 
-def test_base_to_node_returns_the_node_written_into() -> None:
-    source = _FakeNode()
-    target = _FakeNode()
-    writer = _base_writer_class()(node=source)
-    assert writer.to_node(target) is target
-    assert source.store_path.copies == [target.store_path]
+def test_the_base_writer_holds_no_state() -> None:
+    # The adapter adds methods and no field, so it takes no argument.
+    with pytest.raises(TypeError):
+        _base_writer_class()(node=None)
+    assert vars(_base_writer_class()()) == {}
 
 
-def test_base_to_node_refuses_a_parser_without_a_node() -> None:
-    writer = _base_writer_class()()
-    with pytest.raises(WriterError, match="nothing to write"):
-        writer.to_node(_FakeNode())
-
-
-def test_base_to_store_refuses_a_parser_without_a_node(
+def test_the_base_writer_leaves_writing_to_the_format(
     tmp_path: Path,
 ) -> None:
     writer = _base_writer_class()()
-    with pytest.raises(WriterError, match="nothing to write"):
+    with pytest.raises(NotImplementedError):
+        writer.to_node(None)
+    with pytest.raises(NotImplementedError):
         writer.to_store(str(tmp_path / "out.zarr"))
     assert not (tmp_path / "out.zarr").exists()
+
+
+def test_the_base_writer_refuses_streams_and_bytes() -> None:
+    from io import BytesIO
+
+    writer = _base_writer_class()()
+    with pytest.raises(WriterError):
+        writer.to_fileobj(BytesIO())
+    with pytest.raises(WriterError):
+        writer.to_bytes()

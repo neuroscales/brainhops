@@ -45,6 +45,7 @@ from ..concrete import (
     TransformationField,
     Translation,
 )
+from ..derived import Sqrt
 from ..inverse import Inverse
 from ..meta import (
     Bijection,
@@ -52,7 +53,6 @@ from ..meta import (
     Projection,
     SubspaceTransformation,
 )
-from ..operators import Sqrt
 from .check import checker, is_kind, register_kind_alias
 
 
