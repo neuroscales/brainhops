@@ -95,8 +95,8 @@ class AfniNiftiWarp(
 
     The warp holds the header of its file as
     [`NiftiMetadata`][brainhops.io.common.nifti.NiftiMetadata] and the
-    array of the file in `raw`, as every NIfTI transformation does. The
-    data is the array without its singleton axis, and the chain is
+    array of the file in `rawdata`, as every NIfTI transformation does.
+    The data is the array without its singleton axis, and the chain is
     decoded from it and from the header on first access. Values and chains
     that are assigned are pending until [`consolidate`][] encodes them
     into a copy, or until the warp is written.
@@ -143,7 +143,7 @@ class AfniNiftiWarp(
     """The sub-bricks given to the warp, or `None` to decode them.
 
     Sub-bricks stored here are pending until [`consolidate`][] or a write
-    encodes them into `raw`.
+    encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -152,13 +152,13 @@ class AfniNiftiWarp(
 
         Sub-bricks that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw`: AFNI stores the sub-bricks with shape
+        they are decoded from `rawdata`: AFNI stores the sub-bricks with shape
         (X, Y, Z, 1, n), and the singleton axis is dropped. Assigning the
         data drops the chain decoded from the previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _field_to_model(self.raw)
+        return _field_to_model(self.rawdata)
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -379,7 +379,7 @@ class AfniNiftiWarp(
     def consolidate(
         self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> "AfniNiftiWarp":
-        """Encode the pending sub-bricks or chain into `raw` and a header.
+        """Encode the pending sub-bricks or chain into `rawdata` and a header.
 
         A warp whose chain was not assigned keeps its sub-bricks, assigned
         or read, under a copy of the header of its metadata, whose
@@ -437,14 +437,14 @@ class AfniNiftiWarp(
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
                 input=None,
                 output=None,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -507,7 +507,7 @@ def _encoded(
         if xform._data is not None:
             stored = _field_to_disk(xform._data)
         else:
-            stored = xform.raw
+            stored = xform.rawdata
         if stored is None:
             raise WriterError(
                 "This warp has no values, so there is nothing to write."
