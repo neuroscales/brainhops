@@ -1647,14 +1647,18 @@ its status.
      known. Status: accepted, pending review.
 155. `register.dat` and the plain matrix files both claim `.dat`. Their
      sniffers do not accept each other's content, so reading picks the
-     right one in both directions. Writing has no content to sniff, and
-     `io.save` prefers `RegisterDatTransformation` for a plain `Affine`
-     saved to a `.dat` name, because it is the more specific format. An
-     affine between `RASmm` spaces is then refused, since a
-     `register.dat` file needs the geometries to store it, where the
-     plain matrix format wrote it before `register.dat` was added.
-     Status: open, for the maintainer to decide whether `io.save` should
-     fall back to another candidate when the chosen one refuses.
+     right one in both directions. Writing has no content to sniff.
+     `io.save` tries the formats that claim a name in order of priority
+     until one writes the object (item 470), so a format that refuses an
+     object gives way to the next. `register.dat` is still the only
+     writable format that claims `.dat`, because the plain matrix
+     formats do not write (item 301). An affine between `RASmm` spaces
+     saved to a `.dat` name without geometries is therefore refused,
+     with the reason of `RegisterDatTransformation`, and an affine
+     between tkregister spaces, or between unknown spaces (item 306), is
+     written as a `register.dat` file. Before `register.dat` was added,
+     `io.save` refused the name, since no writable format claimed it.
+     Status: resolved by the fallback of `io.save` (item 470).
 160. A Neuroglancer precomputed volume holds several scales, so it is read
      as a pyramid, `PrecomputedMultiScaleImage`, whose levels are
      `PrecomputedImage` objects (`io/images/precomputed`). Each level
@@ -2748,3 +2752,40 @@ pyramid of the conformance test and the checks P1 to P12.
      `associated_image` reads through the lazy arrays of `raw`, so a
      consolidated image whose data was assigned reads none. Status: open,
      as for item 13.
+470. `io.save` tries the candidates tier by tier, most specific first,
+     those that hold the object as it is before those that a
+     transformation converts to. In a tier, every candidate is built,
+     and the one that builds, if only one does, is written. A candidate
+     refuses the object when building it raises any error but an
+     `OSError`, since building does not touch the file, or when its
+     writer raises a `ConversionError` or a `WriterError`, such as
+     `UnrepresentableTransformationError`. The next tier is then tried,
+     and when every candidate refuses, the `WriterError` lists the
+     reason of each, so `io.save` raises that `WriterError` where it
+     raised the error of the one writer it tried, as for a plain Zarr
+     array that refuses an image with a geometry. Any other error of a
+     writer, such as an `OSError`, is raised at once, since the file may
+     be written in part. Two candidates of one tier that both build
+     remain an ambiguity, though one of them may refuse when it writes,
+     and an object of one of the candidates is written only in its own
+     format. The default `FileWriter.to_filename` writes a local file
+     next to its target and then replaces the target, as `write_file`
+     does, so that a writer that refuses while it yields its lines
+     leaves the target as it was. A store written with
+     `replace_directory`, as Zarr images and image stacks are, is left
+     as it was in the same way. The writers of X5, M3Z and OME-Zarr
+     fields still write in place, and a refusal raised once they have
+     opened the file would leave it in part. Status: decided by the
+     maintainer for the fallback, and open for review of the errors
+     that count as a refusal.
+471. With the fallback, the formats that claim a name still decide what
+     an affine between `RASmm` spaces becomes. A `.dat` name refuses it
+     without geometries (item 155), a `.txt` name writes it as a NiftyReg
+     affine, which `io.load` reads back as a plain matrix between unnamed
+     spaces (item 303), and a `.mat` name writes it as a Convert3D
+     matrix, which `io.load` reads back as an FSL matrix, since the file
+     holds no marker (item 306). The fallback changes none of them: the
+     `.dat` name has no other writable format, and the other two are not
+     refused. A plain matrix would be written only by a writer of the
+     plain matrix formats, which item 301 leaves to the maintainer.
+     Status: open, with item 301.

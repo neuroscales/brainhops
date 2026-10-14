@@ -114,6 +114,11 @@ io.save(warp, "warp.nii.gz")  # -> NiftiRASDisplacementField
 io.save(deformation, "y_deformation.nii")  # -> SpmCoordinatesField
 ```
 
+Several formats may claim the same name, as NiftyReg, MRtrix and elastix
+all claim `.txt`. They are tried from the most specific, and a format that
+cannot hold the object gives way to the next. An error that is not such a
+refusal, such as a file that cannot be written, stops the save at once.
+
 Nothing is approximated to fit a format. An affine between two world
 spaces is not a voxel-to-RAS affine, and a field interpolated with cubic
 splines is not the linearly interpolated values a NIfTI file holds, so
