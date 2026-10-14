@@ -5,7 +5,7 @@ __all__ = ["NeuroglancerTransform"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -103,7 +103,9 @@ class NeuroglancerTransform(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".ngtransform.json",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("neuroglancer.affine",)
 
-    _metadata: NoRepr[tx.Optional[NeuroglancerTransformMetadata]] = None
+    _metadata: NoRepr[tx.Optional[NeuroglancerTransformMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the JSON object as a record.
