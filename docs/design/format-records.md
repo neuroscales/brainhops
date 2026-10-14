@@ -1491,8 +1491,10 @@ its status.
      checks 7 and 10 compare the records of metadata that cannot write.
      The stack has no writer option that changes its stored data, so
      check 16a is skipped. Check 6 cuts each TIFF file of the folder
-     before its pixels, which tifffile writes after the tags. Status:
-     accepted in the review of #431.
+     before its pixels, which tifffile writes after the tags. A stack is
+     read only by hint (item 125), so the field `Exemplar.hint` gives
+     the hint `"stack"` with which check 6 reads the metadata through
+     `MetadataFormat.load`. Status: accepted in the review of #431.
 124. The size of the pixels, the spacing of the slices and their unit
      are fields of `StackRaw`, decoded from the files where they record
      them, and the reader options `pixel_size`, `spacing` and `unit` set
@@ -1505,11 +1507,28 @@ its status.
      records no size. A translation, a rotation and a flip within a file
      are not recorded. Status: open, until the TIFF and Pillow records
      decide where these sizes live.
-125. `StackImage` and `StackMetadata` claim a local folder that is not a
-     Zarr store and whose image files follow one numbering, with the
-     confidence `LIKELY`, judged by the names alone. They never claim a
-     file, a stream or bytes, so they take nothing from the TIFF and
-     Pillow readers. Status: accepted in the review of #431.
+125. `StackImage` and `StackMetadata` are read only with the hint
+     `"stack"`, or with their own `load`, as the maintainer decided:
+     "The stack reader should only be used if the stack hint is
+     specifically used." Their sniffers score `NO` for every path, a
+     folder or a file, and for streams and bytes, so `io.load`,
+     `io.images.load`, `MetadataFormat.load` and `io.sniff` never choose
+     them without the hint, and they take nothing from the TIFF and
+     Pillow readers. A sniffer asked to raise tells why the path cannot
+     be a stack, such as a Zarr store or names that follow no single
+     numbering, or else that a stack is read only by hint. No base
+     mechanism restricts a format to its hint, so each class refuses in
+     its own sniffer, as `ItkNiftiCoordinatesField` does. A hint
+     restricts the formats that dispatch considers, and does not only
+     reorder them: `parse` and `sniff` in `io/base/_dispatch.py` keep
+     the formats that answer to a hint, and sniff only those. When none
+     of them recognizes the input, `parse` tries them in the order of
+     what they declare, and `sniff` returns the first of that order, so
+     `io.sniff(folder, hint="stack")` returns `StackImage`, as the
+     maintainer asked, and `sniff` agrees with `parse` for every format
+     read by hint. A missing file is still reported by `sniff`. Status:
+     decided. The review of #431 had accepted a folder sniffed with the
+     confidence `LIKELY`.
 126. A number that no file carries is a missing slice. The record does
      not store the missing numbers, which follow from the numbers of its
      members (`StackRaw.missing`), so a record cannot contradict itself.
@@ -1518,9 +1537,10 @@ its status.
      how the pixels are read, so it is held by the lazy array and is not
      a field. Assigned data covers every slice, so a stack consolidated
      with assigned data has no missing slice, and the values that filled
-     a missing slice are written as a file. Status: open, for the
-     maintainer to decide whether assigned data should keep the missing
-     slices of the record.
+     a missing slice are written as a file. An untouched stack is written
+     without its missing slices. Status: decided for now. The
+     maintainer asked to "write them anyway (for now)", so assigned data
+     does not keep the missing slices of the record.
 127. The stacking axis is the field `StackRaw.axis`, which the reader
      option `axis` sets and the writer option `axis` changes. Names that
      carry several numbers, one per axis, are refused. Supporting them
@@ -1535,8 +1555,8 @@ its status.
      `StackImage.from_instance(image).save` for another image. Declaring
      the TIFF and Pillow extensions would let `io.save(stack, "out.tif")`
      write numbered files, but would also make the stack a candidate for
-     every TIFF and Pillow file that is loaded. Status: open, for the
-     maintainer to decide.
+     every TIFF and Pillow file that is loaded. Status: decided. The
+     stack declares no extension and is chosen only by hint (item 125).
 130. An OME-Zarr pyramid that is saved unchanged does not keep the bytes
      of its metadata, because the writer encodes the metadata again from
      the levels and the placements (`io/images/zarr/_multiscale.py`).
@@ -1706,14 +1726,18 @@ its status.
      known. Status: accepted, pending review.
 155. `register.dat` and the plain matrix files both claim `.dat`. Their
      sniffers do not accept each other's content, so reading picks the
-     right one in both directions. Writing has no content to sniff, and
-     `io.save` prefers `RegisterDatTransformation` for a plain `Affine`
-     saved to a `.dat` name, because it is the more specific format. An
-     affine between `RASmm` spaces is then refused, since a
-     `register.dat` file needs the geometries to store it, where the
-     plain matrix format wrote it before `register.dat` was added.
-     Status: open, for the maintainer to decide whether `io.save` should
-     fall back to another candidate when the chosen one refuses.
+     right one in both directions. Writing has no content to sniff.
+     `io.save` tries the formats that claim a name in order of priority
+     until one writes the object (item 470), so a format that refuses an
+     object gives way to the next. `register.dat` is still the only
+     writable format that claims `.dat`, because the plain matrix
+     formats do not write (item 301). An affine between `RASmm` spaces
+     saved to a `.dat` name without geometries is therefore refused,
+     with the reason of `RegisterDatTransformation`, and an affine
+     between tkregister spaces, or between unknown spaces (item 306), is
+     written as a `register.dat` file. Before `register.dat` was added,
+     `io.save` refused the name, since no writable format claimed it.
+     Status: resolved by the fallback of `io.save` (item 470).
 160. A Neuroglancer precomputed volume holds several scales, so it is read
      as a pyramid, `PrecomputedMultiScaleImage`, whose levels are
      `PrecomputedImage` objects (`io/images/precomputed`). Each level
@@ -2807,3 +2831,40 @@ pyramid of the conformance test and the checks P1 to P12.
      `associated_image` reads through the lazy arrays of `raw`, so a
      consolidated image whose data was assigned reads none. Status: open,
      as for item 13.
+470. `io.save` tries the candidates tier by tier, most specific first,
+     those that hold the object as it is before those that a
+     transformation converts to. In a tier, every candidate is built,
+     and the one that builds, if only one does, is written. A candidate
+     refuses the object when building it raises any error but an
+     `OSError`, since building does not touch the file, or when its
+     writer raises a `ConversionError` or a `WriterError`, such as
+     `UnrepresentableTransformationError`. The next tier is then tried,
+     and when every candidate refuses, the `WriterError` lists the
+     reason of each, so `io.save` raises that `WriterError` where it
+     raised the error of the one writer it tried, as for a plain Zarr
+     array that refuses an image with a geometry. Any other error of a
+     writer, such as an `OSError`, is raised at once, since the file may
+     be written in part. Two candidates of one tier that both build
+     remain an ambiguity, though one of them may refuse when it writes,
+     and an object of one of the candidates is written only in its own
+     format. The default `FileWriter.to_filename` writes a local file
+     next to its target and then replaces the target, as `write_file`
+     does, so that a writer that refuses while it yields its lines
+     leaves the target as it was. A store written with
+     `replace_directory`, as Zarr images and image stacks are, is left
+     as it was in the same way. The writers of X5, M3Z and OME-Zarr
+     fields still write in place, and a refusal raised once they have
+     opened the file would leave it in part. Status: decided by the
+     maintainer for the fallback, and open for review of the errors
+     that count as a refusal.
+471. With the fallback, the formats that claim a name still decide what
+     an affine between `RASmm` spaces becomes. A `.dat` name refuses it
+     without geometries (item 155), a `.txt` name writes it as a NiftyReg
+     affine, which `io.load` reads back as a plain matrix between unnamed
+     spaces (item 303), and a `.mat` name writes it as a Convert3D
+     matrix, which `io.load` reads back as an FSL matrix, since the file
+     holds no marker (item 306). The fallback changes none of them: the
+     `.dat` name has no other writable format, and the other two are not
+     refused. A plain matrix would be written only by a writer of the
+     plain matrix formats, which item 301 leaves to the maintainer.
+     Status: open, with item 301.
