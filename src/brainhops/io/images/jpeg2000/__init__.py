@@ -74,7 +74,7 @@ of the image area on the reference grid of the codestream. This is
 
 ## Data
 
-An image holds the samples of its level in `raw`, a lazy array that
+An image holds the samples of its level in `rawdata`, a lazy array that
 Pillow decodes as `(rows, columns)`, or `(rows, columns, samples)` for
 several samples per pixel. Its `data` is a read-only view of these
 samples, indexed `(x, y)` or `(x, y, c)` in Fortran order, as for every
@@ -127,7 +127,7 @@ These boxes are not interpreted, but they are written back.
 
 ## Writing
 
-`raw` and the record describe the file as it was read. Data that are
+`rawdata` and the record describe the file as it was read. Data that are
 assigned are pending until the image is consolidated or written, as for
 every image format. A full-resolution image or a pyramid that is read and
 written again without changes gives the same bytes. When only the

@@ -23,10 +23,11 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
     A lazy array is read with the array backend. The NumPy array that it
     gives is made read-only, because it is a view that the writer does
-    not read back: the writer writes `raw`, so an edit in place would be
-    lost. The Dask backend gets a Dask array that reads the chunks of the
-    store when it is computed. Any other array is returned as it is, so
-    that an array that was set as data stays the array of `raw`.
+    not read back: the writer writes `rawdata`, so an edit in place
+    would be lost. The Dask backend gets a Dask array that reads the
+    chunks of the store when it is computed. Any other array is returned
+    as it is, so that an array that was set as data stays the array of
+    `rawdata`.
     """
     if not isinstance(raw, _ZarrProxy):
         return raw

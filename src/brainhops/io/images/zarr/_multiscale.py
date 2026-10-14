@@ -57,7 +57,7 @@ _Ellipsis = type(Ellipsis)
 class OmeZarrLevel(ZarrImage):
     """One resolution level of an OME-Zarr pyramid.
 
-    The level holds the lazy array of its dataset in `raw`, which presents
+    The level holds the lazy array of its dataset in `rawdata`, which presents
     the stored axes in the brainhops order, and the record of the array of
     its dataset. Its transformations are those of its dataset, assigned
     when the pyramid is read. Opening a pyramid reads no array data, and a
@@ -638,6 +638,6 @@ def _level(
     """Return the level of a dataset, which reads its array lazily."""
     return OmeZarrLevel(
         transformations=[geometry],
-        raw=_ZarrProxy(array, store_location(array), perm),
+        rawdata=_ZarrProxy(array, store_location(array), perm),
         metadata=ZarrMetadata.from_raw(ZarrRaw.from_node(array)),
     )

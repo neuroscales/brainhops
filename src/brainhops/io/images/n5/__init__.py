@@ -29,13 +29,13 @@ A dataset or a pyramid is named by its directory or by its
 `N5Image`.
 
 Each image holds the attributes as [`N5Metadata`][], whose record is an
-[`N5Raw`][], and the samples of its dataset in `raw`, a lazy array that
-TensorStore reads block by block when the data are needed. The data are
-indexed in the order of the `dimensions` of the dataset,
+[`N5Raw`][], and the samples of its dataset in `rawdata`, a lazy array
+that TensorStore reads block by block when the data are needed. The data
+are indexed in the order of the `dimensions` of the dataset,
 `[x, y, z, ...]`, whose first dimension varies fastest in a block. The datasets
-compressed with `raw`, `gzip`, `bzip2`, `xz` and `blosc` are read, and
-the others, such as `lz4`, `zstd` or the `compressionType` of version 0
-of the specification, are refused when they are loaded.
+compressed with `rawdata`, `gzip`, `bzip2`, `xz` and `blosc` are read,
+and the others, such as `lz4`, `zstd` or the `compressionType` of
+version 0 of the specification, are refused when they are loaded.
 
 The specification of N5 defines no spatial attribute. Each image maps
 its voxels to a `"physical"` space with the `pixelResolution`,
@@ -74,8 +74,8 @@ container.n5/
 The attributes of a dataset give its `dimensions`, its `blockSize`, its
 `dataType` (`uint8` to `uint64`, `int8` to `int64`, `float32`,
 `float64` or `object`) and its `compression`, an object whose `type` is
-`raw`, `gzip`, `bzip2`, `lz4`, `xz` or a scheme of an extension, such
-as `blosc`. Version 0 of the specification named the scheme in a
+`rawdata`, `gzip`, `bzip2`, `lz4`, `xz` or a scheme of an extension,
+such as `blosc`. Version 0 of the specification named the scheme in a
 `compressionType` string instead. The block at grid position
 `(i, j, k)` is the file `i/j/k` below the dataset, and a block that is
 missing reads as zeros, since datasets are sparse. A block starts with a

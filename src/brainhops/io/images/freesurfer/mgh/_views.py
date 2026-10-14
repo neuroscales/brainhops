@@ -24,9 +24,9 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
     A proxy is read with the array backend. The NumPy array that it gives
     is made read-only, because it is a view that the writer does not read
-    back: the writer writes `raw`, so an edit in place would be lost. Any
+    back: the writer writes `rawdata`, so an edit in place would be lost. Any
     other array is returned as it is, so that a Dask array stays lazy and
-    an array that was set as data stays the array of `raw`.
+    an array that was set as data stays the array of `rawdata`.
     """
     if not isinstance(raw, ArrayProxy):
         return raw
