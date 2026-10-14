@@ -85,6 +85,7 @@ nav = [
         {"freesurfer.m3z" = "api/io/transformations/m3z.md"},
         {"freesurfer.regdat" = "api/io/transformations/regdat.md"},
         {"minc" = "api/io/transformations/minc.md"},
+        {"neuroglancer" = "api/io/transformations/neuroglancer.md"},
         {"spm" = "api/io/transformations/spm.md"},
         {"mrtrix" = "api/io/transformations/mrtrix.md"},
         "api/io/transformations/fsl.md",

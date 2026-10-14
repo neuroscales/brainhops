@@ -233,6 +233,50 @@ def test_options_reach_the_writer(formats, tmp_path) -> None:  # noqa: ANN001
 
 
 # ----------------------------------------------------------------------
+#   CHOOSING THE FORMAT FROM A HINT
+# ----------------------------------------------------------------------
+
+
+def test_a_hint_restricts_the_candidates(formats, tmp_path) -> None:  # noqa: ANN001
+    # Without the hint, the two formats would be an ambiguity.
+    formats("One", EXTENSIONS=(".n",), HINTS=("one",))
+    formats("Two", EXTENSIONS=(".n",), HINTS=("two",))
+    io.save(Note(text="hi"), tmp_path / "x.n", hint="two")
+    assert _written(tmp_path / "x.n") == "Two:hi"
+    io.save(Note(text="hi"), tmp_path / "x.n", hint=["one"])
+    assert _written(tmp_path / "x.n") == "One:hi"
+
+
+def test_a_hint_does_not_override_a_longer_extension(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    formats("Short", EXTENSIONS=(".gz",), HINTS=("note",))
+    formats("Long", EXTENSIONS=(".note.gz",), HINTS=("note",))
+    io.save(Note(text="hi"), tmp_path / "x.note.gz", hint="note")
+    assert _written(tmp_path / "x.note.gz") == "Long:hi"
+
+
+def test_a_hinted_format_is_written_whatever_the_name(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # No format claims `.json`, but the hint names the format.
+    formats("Mine", EXTENSIONS=(".mine.json",), HINTS=("mine",))
+    with pytest.raises(WriterError, match="no writable format"):
+        io.save(Note(text="hi"), tmp_path / "x.unclaimed-json")
+    io.save(Note(text="hi"), tmp_path / "x.unclaimed-json", hint="MINE")
+    assert _written(tmp_path / "x.unclaimed-json") == "Mine:hi"
+
+
+def test_a_hint_no_format_answers_to_is_refused(formats, tmp_path) -> None:  # noqa: ANN001
+    formats("A", EXTENSIONS=(".a",), HINTS=("a",))
+    with pytest.raises(WriterError, match="'no-such-hint'"):
+        io.save(Note(text="hi"), tmp_path / "x.a", hint="no-such-hint")
+    assert not (tmp_path / "x.a").exists()
+
+
+# ----------------------------------------------------------------------
 #   WHAT THE OBJECT IS WRITTEN AS
 # ----------------------------------------------------------------------
 
