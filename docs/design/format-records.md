@@ -449,8 +449,10 @@ them. A format that cannot write, such as OpenSlide, consolidates only
 its data, as MINC does (item 101). The pending data of each level then
 moves into the tuple `raw`, the metadata and the transformations are
 kept, and a level of another class is refused with `WriterError`,
-because no record can describe it. The maintainer decided these rules on
-2026-10-13.
+because no record can describe it. A level whose transformations differ
+from those of the record keeps them in the list of levels of the
+consolidated copy, as a single image that cannot be written keeps its
+own (item 364). The maintainer decided these rules on 2026-10-13.
 
 OME-NGFF 0.6 lets a dataset of a multiscale hold only a scale, an
 identity, or a scale followed by a translation. The OME-Zarr writer
@@ -724,7 +726,10 @@ of the conformance test and the toy pyramid. The later steps move
 Pillow, then Zarr and OME-Zarr, TIFF and OpenSlide, and then update the
 open pull requests of pyramid formats. Pass 4c moves TIFF: `TiffRaw`
 records one series of a TIFF file, `TiffMetadata` holds it, and the lazy
-array `_TiffProxy` reads one level. The class variable workaround of
+array `_TiffProxy` reads one level. Pass 4d moves OpenSlide:
+`OpenSlideRaw` records what OpenSlide reports about a slide of any
+vendor, `OpenSlideMetadata` holds it, and the lazy array `_SlideArray`
+reads one level region by region. The class variable workaround of
 FLIRT is removed once it is decided whether `moving` and `reference`
 belong to the format or to the record.
 
@@ -1774,21 +1779,23 @@ its status.
      `held_transformations` (`io/common/_geometry.py`), which reads the
      cache with `cached_value` (`_core/properties.py`). The images of
      the formats merged later (N5, Imaris, precomputed, JPEG 2000,
-     BigDataViewer, image stacks, Pillow, TIFF and plain Zarr arrays)
-     follow the same rule, and the JPEG 2000 and TIFF pyramids cache the
-     levels and the placements that they decode in the same way. The
-     chains of the ITK text, MATLAB and HDF5 formats (`TfmTransform`,
-     `MatTransform` and `H5Transform`), which are mutable lists as the
-     transformations of an image are, follow it too (item 312). Status:
-     resolved.
+     BigDataViewer, image stacks, Pillow, TIFF, plain Zarr arrays and
+     OpenSlide) follow the same rule, and the JPEG 2000, TIFF and OpenSlide
+     pyramids cache the levels and the placements that they decode in the
+     same way. The chains of the ITK text, MATLAB and HDF5 formats
+     (`TfmTransform`, `MatTransform` and `H5Transform`), which are mutable
+     lists as the transformations of an image are, follow it too (item
+     312). Status: resolved.
 191. A change made in place to a decoded list of transformations lives in
      the cache, so it is lost when other metadata is assigned, and a copy
      made with `replace` or `from_instance` decodes the list again instead
      of copying the change. A write of the image itself, including
      `io.save`, still writes the change. Assigning the changed list keeps
      it everywhere. The images that cannot be written (N5, Imaris,
-     precomputed and BigDataViewer) have no record to encode the change into, so their
-     `consolidate` gives the copy the changed list as an assigned one.
+     precomputed, BigDataViewer and OpenSlide) have no record to encode
+     the change into, so their `consolidate` gives the copy the changed
+     list as an assigned one, and so does the OpenSlide pyramid for its
+     placements.
      Status: open, for the maintainer to decide whether copies within a
      format should carry the cache.
 192. Check 20 cannot tell an old geometry from a new one for some
@@ -2094,11 +2101,11 @@ pyramid of the conformance test and the checks P1 to P12.
      `consolidate` leaves as it is, and whose `raw` holds the lazy arrays
      of its record, is written by copying the bytes of its file.
 293. OpenSlide cannot write, so its pyramids and levels consolidate only
-     their data. Its 22 classes are to leave the list of formats that are
-     not migrated through the exemplars of the generic TIFF vendor, which
-     share their bases with the other vendors. The maintainer has not
-     answered this point, so the default stands. Status: open, for pass
-     4d.
+     their data. Its 22 classes leave the list of formats that are not
+     migrated through the exemplars of the generic TIFF vendor, which
+     share their bases with the other vendors (item 361). The maintainer
+     has not answered this point, so the default stands. Status:
+     implemented in pass 4d.
 294. The toy pyramid of the conformance test is a directory that holds a
      JSON document and one toy file per level, and its level class is the
      toy level. They exercise the rules of directory stores without any
@@ -2646,3 +2653,78 @@ pyramid of the conformance test and the checks P1 to P12.
      geometry is that of its record, where it became OME-TIFF when its
      resolution tags gave a pixel size. A pyramid decodes its levels on
      first access. Status: open, as for item 13.
+360. The 11 vendors of OpenSlide share one record, `OpenSlideRaw`, one
+     metadata class, `OpenSlideMetadata`, and two bases, `OpenSlideImage`
+     and `OpenSlideMultiScaleImage`, because OpenSlide describes the
+     slides of every vendor in the same way. A vendor class declares its
+     extensions and its hints, sniffs its own vendor with an explicit
+     `sniff_filename` that names it, and, for a pyramid, decodes its levels
+     with an explicit `images` property that names its single-scale class.
+     The class variables `VENDOR` and `SCORE`, the vendor classes
+     `AperioFormat` to `GenericTiffFormat` and the table of level classes
+     are removed, so no method of a base reads a class variable that a
+     subclass sets. A base reads a slide of any vendor, and its
+     `from_source` checks the vendor by calling the `sniff_filename` of
+     the class, with `ParserContentError` as the error, as the adapters of
+     `io/base/parsers.py` call the methods that a class implements.
+     Status: decided in pass 4d, for the maintainer to review whether a
+     base may call the sniffing of the class in this way.
+361. tifffile can write the slides that OpenSlide reads with its generic
+     TIFF vendor, but not those of most other vendors, so the conformance
+     checks run on `GenericTiffImage` and `GenericTiffMultiScaleImage`. The other 20
+     vendor classes are listed in the new table `SHARED` of
+     `tests/test_io_conformance.py`, which maps each one to the generic
+     class whose checks cover it, and a test makes sure that each pair has
+     the same bases and fields and declares the same names, which are
+     only the extensions, the hints, the sniffing and the levels. The
+     sniffing of every vendor is tested with a detection that is forced
+     (`tests/test_io_openslide.py`). Status: accepted in pass 4d.
+362. OpenSlide reads the raw tiles of the coarsest level of a TIFF-based
+     slide when it opens it, to compute the property
+     `openslide.quickhash-1`, unless they exceed 5 MiB (`hash_tiff_level`
+     in `src/openslide-decode-tifflike.c` of OpenSlide 4.0.0), so reading
+     the metadata of such a slide reads that data. The copy of checks 6
+     and P12 keeps the pixels of the coarsest level readable and points
+     the offsets of the other levels beyond the end of the file, and the
+     file of a level read alone holds a coarser level that OpenSlide
+     hashes. Status: accepted in pass 4d, since the behaviour belongs to
+     OpenSlide.
+363. A generic tiled TIFF is read by OpenSlide and by the TIFF reader,
+     which reads more of its metadata, so `OpenSlideMetadata` scores it
+     `MAYBE`, as the image classes do, and the TIFF metadata is chosen.
+     The new field `Exemplar.hint` makes checks 6 and P12 dispatch the
+     metadata of the generic exemplar with the hint `"openslide"`. The
+     files of that exemplar have the suffix `.slide`, which no writer
+     claims, because `io.save` converts a level to `TiffImage` under a
+     name that ends with `.tif`, which is right but is not the refusal
+     that the checks of a format that cannot write test. Status: accepted
+     in pass 4d.
+364. A pyramid that cannot be written moves the pending data of its
+     levels into `raw`, and its consolidated copy decodes its levels again
+     from `raw` and the record. A level whose transformations, read and
+     changed or assigned, differ from those of the record would lose them,
+     so the copy then holds a list of its levels instead, each with its
+     array of `raw` and its transformations, as MINC keeps those of an
+     image. A list of levels that is not the list of the slide, such as a
+     list in another order, a shorter list, or a level of another class,
+     is refused with `WriterError`. Status: decided in pass 4d, for the
+     maintainer to review.
+365. Pass 4d changes the public API of OpenSlide, to be announced with
+     item 13. The fields `vendor`, `properties`, `n_levels`,
+     `level_downsamples`, `background_color`, `bounds` and
+     `associated_images` leave the constructors of the 22 classes and are
+     read from the record, as `image.metadata.raw.properties`, with
+     `len(levels)` instead of `n_levels`. The field `level` is an integer
+     that defaults to 0, where it was `None` by default. The class
+     variables `VENDOR` and `SCORE` and the classes `AperioFormat` to
+     `GenericTiffFormat` are removed. The options `pixel_size` and `unit`
+     are assigned as transformations, the option `lazy` is kept by the
+     lazy array, so a copy keeps it where `replace` lost it, and a pyramid
+     decodes its levels on first access. The bases read a slide of any
+     vendor, where they read none. A temporary copy takes the extension of
+     the name of its source only, where it took the first extension of the
+     class for bytes, which changes nothing, because only MIRAX is
+     detected by its extension and it cannot be read from a copy.
+     `associated_image` reads through the lazy arrays of `raw`, so a
+     consolidated image whose data was assigned reads none. Status: open,
+     as for item 13.

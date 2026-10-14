@@ -63,6 +63,36 @@ PACKAGES: tx.Dict[str, Package] = {
         ),
         needs=("tifffile",),
     ),
+    "brainhops.io.images.openslide": Package(
+        names=frozenset(
+            {
+                "OpenSlideFormat",
+                "OpenSlideImage",
+                "OpenSlideLevelRaw",
+                "OpenSlideMetadata",
+                "OpenSlideMultiScaleImage",
+                "OpenSlideRaw",
+                *(
+                    f"{vendor}{kind}"
+                    for vendor in (
+                        "Aperio",
+                        "DicomWsi",
+                        "GenericTiff",
+                        "Hamamatsu",
+                        "Leica",
+                        "Mirax",
+                        "Philips",
+                        "Sakura",
+                        "Trestle",
+                        "Ventana",
+                        "Zeiss",
+                    )
+                    for kind in ("Image", "MultiScaleImage")
+                ),
+            }
+        ),
+        needs=("openslide",),
+    ),
     "brainhops.io.images.mrtrix": Package(
         names=frozenset({"MrtrixImage", "MrtrixMetadata", "MrtrixRaw"}),
     ),
