@@ -85,12 +85,15 @@ wrp = io.transformations.load("warp.nii.gz", hint="spm")
 The function `save` writes an object in the format that the file name
 calls for. An object read from a file can be written back in its own
 format, or in any other format that holds the same kind of object. Writing
-Zarr requires the `zarr` extra.
+Zarr requires the `zarr` extra. A plain Zarr array stores no geometry, so
+an image that has one is refused there rather than written without it,
+until its transformations are cleared.
 
 ```python
 img = io.images.load("source.nii.gz")
 io.save(img, "copy.nii.gz")  # -> NIfTI
-io.save(img, "copy.zarr")  # -> Zarr
+img.transformations = []
+io.save(img, "copy.zarr")  # -> Zarr, without the geometry
 ```
 
 An image computed in memory is written the same way, since NIfTI and Zarr
@@ -110,6 +113,11 @@ io.save(affine, "affine.nii.gz")  # -> NiftiVoxelToRAS
 io.save(warp, "warp.nii.gz")  # -> NiftiRASDisplacementField
 io.save(deformation, "y_deformation.nii")  # -> SpmCoordinatesField
 ```
+
+Several formats may claim the same name, as NiftyReg, MRtrix and elastix
+all claim `.txt`. They are tried from the most specific, and a format that
+cannot hold the object gives way to the next. An error that is not such a
+refusal, such as a file that cannot be written, stops the save at once.
 
 Nothing is approximated to fit a format. An affine between two world
 spaces is not a voxel-to-RAS affine, and a field interpolated with cubic

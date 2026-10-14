@@ -27,6 +27,10 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Scaling,
 )
+from brainhops.errors import (
+    ConversionError,
+    UnrepresentableTransformationError,
+)
 from brainhops.io.base import Format
 from brainhops.io.base._base import (
     is_format_registry,
@@ -36,6 +40,7 @@ from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     TextFileWriter,
     WriterError,
+    WriterNotImplementedError,
 )
 
 needs_nibabel = pytest.mark.skipif(not HAS_NIBABEL, reason="needs nibabel")
@@ -307,6 +312,161 @@ def test_an_unnamed_file_cannot_choose_a_format(formats) -> None:  # noqa: ANN00
 
 
 # ----------------------------------------------------------------------
+#   FALLING BACK WHEN A CANDIDATE REFUSES
+# ----------------------------------------------------------------------
+
+REFUSALS = [
+    ConversionError("cannot convert"),
+    UnrepresentableTransformationError("cannot encode"),
+    WriterNotImplementedError("cannot write lines"),
+    WriterError("cannot write"),
+]
+
+
+@pytest.mark.parametrize("error", REFUSALS, ids=lambda e: type(e).__name__)
+def test_a_candidate_that_refuses_to_write_gives_way_to_the_next(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+    error: Exception,
+) -> None:
+    formats("Picky", EXTENSIONS=(".n",), PRIORITY=1, to_lines=_raising(error))
+    formats("Plain", EXTENSIONS=(".n",))
+    io.save(Note(text="hi"), tmp_path / "x.n")
+    assert _written(tmp_path / "x.n") == "Plain:hi"
+
+
+@pytest.mark.parametrize("error", REFUSALS, ids=lambda e: type(e).__name__)
+def test_a_candidate_that_refuses_to_build_gives_way_to_the_next(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+    error: Exception,
+) -> None:
+    formats(
+        "Picky",
+        EXTENSIONS=(".n",),
+        PRIORITY=1,
+        from_instance=_refusing_build(error),
+    )
+    formats("Plain", EXTENSIONS=(".n",))
+    io.save(Note(text="hi"), tmp_path / "x.n")
+    assert _written(tmp_path / "x.n") == "Plain:hi"
+
+
+def test_the_candidates_are_tried_in_order_of_priority(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    refusal = UnrepresentableTransformationError("cannot encode")
+    formats(
+        "First", EXTENSIONS=(".n",), PRIORITY=3, to_lines=_raising(refusal)
+    )
+    formats("Second", EXTENSIONS=(".n",), PRIORITY=2)
+    formats("Third", EXTENSIONS=(".n",), PRIORITY=1)
+    io.save(Note(text="hi"), tmp_path / "x.n")
+    assert _written(tmp_path / "x.n") == "Second:hi"
+
+
+def test_when_every_candidate_refuses_each_reason_is_given(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    formats(
+        "Picky",
+        EXTENSIONS=(".n",),
+        PRIORITY=1,
+        to_lines=_raising(UnrepresentableTransformationError("no geometry")),
+    )
+    formats(
+        "Fussy",
+        EXTENSIONS=(".n",),
+        from_instance=_refusing_build(ConversionError("wrong systems")),
+    )
+    with pytest.raises(WriterError) as raised:
+        io.save(Note(text="hi"), tmp_path / "x.n")
+    lines = str(raised.value).splitlines()
+    assert "Fussy, Picky" in lines[0]
+    assert lines[1:] == [
+        "  - Picky: UnrepresentableTransformationError: no geometry",
+        "  - Fussy: ConversionError: wrong systems",
+    ]
+
+
+def test_a_refused_candidate_leaves_no_file(formats, tmp_path) -> None:  # noqa: ANN001
+    refusal = UnrepresentableTransformationError("cannot encode")
+    formats("Picky", EXTENSIONS=(".n",), to_lines=_raising(refusal))
+    with pytest.raises(WriterError, match="Picky"):
+        io.save(Note(text="hi"), tmp_path / "x.n")
+    assert list(tmp_path.iterdir()) == []
+    # A file that is already there is left as it was.
+    (tmp_path / "x.n").write_text("before\n")
+    with pytest.raises(WriterError, match="Picky"):
+        io.save(Note(text="hi"), tmp_path / "x.n")
+    assert _written(tmp_path / "x.n") == "before"
+    assert list(tmp_path.iterdir()) == [tmp_path / "x.n"]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [PermissionError(13, "Permission denied"), RuntimeError("a bug")],
+    ids=lambda e: type(e).__name__,
+)
+def test_an_error_that_is_not_a_refusal_stops_the_save(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+    error: Exception,
+) -> None:
+    formats("Broken", EXTENSIONS=(".n",), PRIORITY=1, to_lines=_raising(error))
+    formats("Plain", EXTENSIONS=(".n",))
+    with pytest.raises(type(error)):
+        io.save(Note(text="hi"), tmp_path / "x.n")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_an_os_error_while_building_stops_the_save(formats, tmp_path) -> None:  # noqa: ANN001
+    # Building a candidate may read the data of the object, from a file
+    # that can no longer be read.
+    error = FileNotFoundError(2, "No such file or directory", "source.nii")
+    formats(
+        "Broken",
+        EXTENSIONS=(".n",),
+        PRIORITY=1,
+        from_instance=_refusing_build(error),
+    )
+    formats("Plain", EXTENSIONS=(".n",))
+    with pytest.raises(FileNotFoundError, match="source.nii"):
+        io.save(Note(text="hi"), tmp_path / "x.n")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_two_candidates_that_build_are_still_an_ambiguity(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # Only one candidate of a tier is written, so a tier where two
+    # candidates build is not resolved by writing one and then the other.
+    refusal = UnrepresentableTransformationError("cannot encode")
+    formats("One", EXTENSIONS=(".n",), to_lines=_raising(refusal))
+    formats("Two", EXTENSIONS=(".n",))
+    with pytest.raises(AmbiguousFormatError):
+        io.save(Note(text="hi"), tmp_path / "x.n")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_an_object_of_a_format_that_refuses_is_not_converted(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # An object of one of the candidates is written as it is, and only in
+    # its own format.
+    refusal = UnrepresentableTransformationError("cannot encode")
+    picky = formats("Picky", EXTENSIONS=(".n",), to_lines=_raising(refusal))
+    formats("Plain", EXTENSIONS=(".n",))
+    with pytest.raises(UnrepresentableTransformationError):
+        io.save(picky(text="hi"), tmp_path / "x.n")
+    assert list(tmp_path.iterdir()) == []
+
+
+# ----------------------------------------------------------------------
 #   ROUND TRIPS THROUGH EVERY WRITABLE FORMAT
 # ----------------------------------------------------------------------
 
@@ -349,10 +509,29 @@ def test_a_nifti_coordinate_field_round_trips(tmp_path) -> None:  # noqa: ANN001
 def test_an_image_round_trips_through_zarr(tmp_path) -> None:  # noqa: ANN001
     from brainhops.io.images.zarr import ZarrImage
 
-    io.save(_image(), tmp_path / "image.zarr")
+    io.save(SingleScaleImage(data=DATA), tmp_path / "image.zarr")
     back = io.images.load(tmp_path / "image.zarr")
     assert isinstance(back, ZarrImage)
     assert np.array_equal(np.asarray(back.data), DATA)
+
+
+@needs_zarr
+def test_a_geometry_is_not_dropped_by_plain_zarr(tmp_path) -> None:  # noqa: ANN001
+    # A plain Zarr array stores no geometry, so the writer refuses an image
+    # that has one rather than drop it, and writes nothing. No other format
+    # that claims `.zarr` holds a single image, so the save is refused with
+    # the reason of the plain Zarr writer.
+    pattern = "ZarrImage: UnrepresentableTransformationError"
+    with pytest.raises(WriterError, match=pattern):
+        io.save(_image(), tmp_path / "image.zarr")
+    assert not (tmp_path / "image.zarr").exists()
+    # A store that is already there is left as it was.
+    io.save(SingleScaleImage(data=DATA + 1), tmp_path / "image.zarr")
+    with pytest.raises(WriterError, match=pattern):
+        io.save(_image(), tmp_path / "image.zarr")
+    back = io.images.load(tmp_path / "image.zarr")
+    assert np.array_equal(np.asarray(back.data), DATA + 1)
+    assert [path.name for path in tmp_path.iterdir()] == ["image.zarr"]
 
 
 @needs_zarr
@@ -407,6 +586,13 @@ def test_an_image_read_from_nifti_is_written_as_zarr(tmp_path) -> None:  # noqa:
 
     io.save(_image(), tmp_path / "image.nii")
     nifti = io.images.load(tmp_path / "image.nii")
+    # The geometry of the NIfTI file cannot be stored, so it is refused
+    # until it is cleared.
+    with pytest.raises(
+        WriterError, match="UnrepresentableTransformationError"
+    ):
+        io.save(nifti, tmp_path / "image.zarr")
+    nifti.transformations = []
     io.save(nifti, tmp_path / "image.zarr")
     back = io.images.load(tmp_path / "image.zarr")
     assert isinstance(back, ZarrImage)
@@ -465,3 +651,27 @@ def test_an_image_is_written_to_an_open_named_file(tmp_path) -> None:  # noqa: A
         io.save(nifti, f)
     back = NiftiImage.load(tmp_path / "copy.nii")
     assert np.array_equal(np.asarray(back.data), DATA)
+
+
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+
+def _raising(error: Exception) -> tx.Callable[..., tx.Iterator[str]]:
+    """A `to_lines` that raises `error` after the first line is written."""
+
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:  # noqa: ANN001
+        yield "partial"
+        raise error
+
+    return to_lines
+
+
+def _refusing_build(error: Exception) -> classmethod:
+    """A `from_instance` that raises `error` instead of building."""
+
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Any:  # noqa: ANN001
+        raise error
+
+    return classmethod(from_instance)

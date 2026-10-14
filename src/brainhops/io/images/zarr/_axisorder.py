@@ -18,9 +18,11 @@ brainhops order.
 The component axis of a field, which holds the vector components of a
 displacement or coordinate field, is not a separate trailing axis. It takes the
 position of the channel axis, both in brainhops and in the store, as in nibabel
-and OME-Zarr. Permuting the axes does not reorder the component values,
-because the components of a field are expressed in its output coordinate
-system, which this module leaves untouched.
+and OME-Zarr. The permutations of this module move whole axes, so they do
+not reorder the values along the component axis. Those values belong to the
+axes of the output coordinate system of the field, in the order in which OME
+lists them, so the reader of a field transformation reorders them with the
+axes of that system (`brainhops.io.images.zarr._ome`).
 """
 
 import typing_extensions as tx
