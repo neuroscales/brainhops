@@ -4,11 +4,11 @@ Readers and writers for transformations stored in NIfTI files.
 Each transformation holds the header of its file as
 [`NiftiMetadata`][brainhops.io.common.nifti.NiftiMetadata], whose record
 is a [`NiftiRaw`][brainhops.io.common.nifti.NiftiRaw], and the array of
-the file as it is stored, in `raw`. The two classes of the header are
-defined in [`brainhops.io.common.nifti`][] and exported here as well. An
-affine keeps its matrix in the header, and a field decodes its data from
-`raw` when the data is first read. A field that is read and written again
-without changes is written as its file stored it.
+the file as it is stored, in `rawdata`. The two classes of the header
+are defined in [`brainhops.io.common.nifti`][] and exported here as
+well. An affine keeps its matrix in the header, and a field decodes its
+data from `rawdata` when the data is first read. A field that is read
+and written again without changes is written as its file stored it.
 
 ## Fields of RAS displacements and of RAS coordinates
 

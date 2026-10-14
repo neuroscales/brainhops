@@ -499,13 +499,36 @@ def test_a_scanner_affine_is_saved_with_its_geometries(tmp_path) -> None:  # noq
     affine = Affine(
         scanner[:3], input=_systems.RASmm(), output=_systems.RASmm()
     )
-    with pytest.raises(UnrepresentableTransformationError):
+    # No other writable format claims `.dat`, so the reason of
+    # register.dat is given, and nothing is written.
+    with pytest.raises(WriterError) as raised:
         io.save(affine, tmp_path / "bare.dat")
+    assert "RegisterDatTransformation: Unrepresentable" in str(raised.value)
+    assert "geometries" in str(raised.value)
+    assert list(tmp_path.iterdir()) == []
     xform = RegisterDatTransformation.from_instance(
         affine, reference=REFERENCE, moving=MOVING
     )
     xform.save(tmp_path / "placed.dat")
     raw = RegisterDatRaw.load(tmp_path / "placed.dat")
+    assert np.allclose(raw.matrix, MATRIX, atol=1e-12)
+
+
+def test_a_tkregister_affine_is_saved_as_register_dat(tmp_path) -> None:  # noqa: ANN001
+    tkr = FreesurferTkrSystem()
+    affine = Affine(np.asarray(MATRIX)[:3], input=tkr, output=tkr)
+    io.save(affine, tmp_path / "tkr.dat")
+    raw = RegisterDatRaw.load(tmp_path / "tkr.dat")
+    assert np.allclose(raw.matrix, MATRIX, atol=1e-12)
+    # With the geometries, an affine between scanner spaces is saved too.
+    scanner = _expected_scanner(np.asarray(MATRIX))
+    xform = RegisterDatTransformation.from_instance(
+        Affine(scanner[:3], input=_RAS, output=_RAS),
+        reference=REFERENCE,
+        moving=MOVING,
+    )
+    io.save(xform, tmp_path / "scanner.dat")
+    raw = RegisterDatRaw.load(tmp_path / "scanner.dat")
     assert np.allclose(raw.matrix, MATRIX, atol=1e-12)
 
 

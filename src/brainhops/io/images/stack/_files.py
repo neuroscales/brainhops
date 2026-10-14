@@ -173,7 +173,7 @@ def reads_from(raw: tx.Any, target: Target, record: StackRaw) -> bool:
     Parameters
     ----------
     raw : Any
-        The `raw` of the image to write.
+        The `rawdata` of the image to write.
     target : Target
         Where the stack is written.
     record : StackRaw

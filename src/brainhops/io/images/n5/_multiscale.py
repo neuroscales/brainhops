@@ -37,14 +37,14 @@ class N5MultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
     transformation of its own.
 
     The pyramid holds the attributes of the group and of its datasets as
-    [`N5Metadata`][], which its levels share, and it has no `raw` of its
-    own: each level holds the lazy array of its dataset. A pyramid of a
-    single level is read as an [`N5Image`][] by
+    [`N5Metadata`][], which its levels share, and it has no `rawdata` of
+    its own: each level holds the lazy array of its dataset. A pyramid
+    of a single level is read as an [`N5Image`][] by
     [`load`][brainhops.io.images.load], unless this class is asked for.
 
     N5 containers are not written, so the class has no writer.
     [`consolidate`][] only moves the pending data of each level into its
-    `raw`.
+    `rawdata`.
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("n5",)
@@ -56,14 +56,14 @@ class N5MultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
     """
 
     def consolidate(self, *, inplace: bool = False) -> "N5MultiScaleImage":
-        """Move the pending data of each level into its `raw`.
+        """Move the pending data of each level into its `rawdata`.
 
         N5 containers are not written, so no record can be encoded. Each
         level that is an [`N5Image`][] is consolidated, which moves its
-        assigned data into its `raw`, and the other levels are kept as
-        they are. The metadata and the transformations are kept. A level
-        without pending data is consolidated into a copy that shares its
-        `raw` and its metadata.
+        assigned data into its `rawdata`, and the other levels are kept
+        as they are. The metadata and the transformations are kept. A
+        level without pending data is consolidated into a copy that
+        shares its `rawdata` and its metadata.
 
         Parameters
         ----------

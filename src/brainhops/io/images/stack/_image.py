@@ -47,9 +47,8 @@ from ._raw import (
     member_format,
     read_record,
     refuse_options,
+    refuse_path,
     refuse_stream,
-    sniff_folder,
-    sniff_score,
 )
 from ._views import _image_to_disk, _image_to_model, _permutation
 
@@ -65,13 +64,14 @@ class StackImage(
     `z0001.tif` and so on. This class reads such a folder as one image,
     and writes an image as such a folder. The files are TIFF files, read
     and written with tifffile, or images in a format that Pillow reads and
-    writes, such as PNG. The folder is recognized when it is passed to
-    [`load`][brainhops.io.load] (see [`brainhops.io.images.stack`][] for
-    the rules), and the format hint `"stack"` selects this class.
+    writes, such as PNG. A stack is never recognized from its path, so a
+    folder is read as a stack only with the format hint `"stack"`, as in
+    `load(folder, hint="stack")`, or with `StackImage.load(folder)` (see
+    [`brainhops.io.images.stack`][] for the rules).
 
     The image holds the list of its files, their headers and the geometry
     of the stack as [`StackMetadata`][], whose record is a
-    [`StackRaw`][], and its pixels in `raw`, a lazy array that reads each
+    [`StackRaw`][], and its pixels in `rawdata`, a lazy array that reads each
     file only when one of its pixels is needed. A number that no file
     carries is a missing slice, which the lazy array fills without reading
     a file. The files are stacked along the axis that the record names, z
@@ -93,23 +93,24 @@ class StackImage(
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("stack",)
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The slices stacked along a first axis, or `None`.
 
-    After a read, `raw` is a lazy array of shape `(slices, rows,
-    columns[, channels])`. Assigning `data` leaves `raw` as it is, and
+    After a read, `rawdata` is a lazy array of shape `(slices, rows,
+    columns[,
+    channels])`. Assigning `data` leaves `rawdata` as it is, and
     [`consolidate`][] stores the assigned array here, with its spatial
     axes in the order of the stored volume.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
     array stored here is pending until [`consolidate`][] moves it into
-    `raw`.
+    `rawdata`.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -139,19 +140,20 @@ class StackImage(
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The pixels as `(x, y, z[, c])`, assigned or decoded from `raw`.
+        """The pixels as `(x, y, z[, c])`, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
-        pending until [`consolidate`][] moves it into `raw`. Otherwise the
-        data is decoded from `raw` on first access and cached. With NumPy
+        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+        data is decoded from `rawdata` on first access and cached. With NumPy
         as the array backend, every file is read and the data is
         read-only. With Dask, the data is a Dask array with one chunk per
         slice, and each file is read when its chunk is computed. To change
-        the pixels, assign `data`. Assigning `None` decodes `raw` again.
+        the pixels, assign `data`. Assigning `None` decodes `rawdata`
+        again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw, _axis(self.metadata))
+        return _image_to_model(self.rawdata, _axis(self.metadata))
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -174,16 +176,16 @@ class StackImage(
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without reading the files.
 
-        The shape is that of the assigned data, or else the shape of `raw`
+        The shape is that of the assigned data, or else the shape of `rawdata`
         with its axes in the order of the data. The lazy array knows its
         shape from the record. An image without data raises as
         [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        stored = tuple(int(d) for d in self.raw.shape)
+        stored = tuple(int(d) for d in self.rawdata.shape)
         order = _permutation(len(stored), _axis(self.metadata))
         return tuple(stored[i] for i in order)
 
@@ -195,21 +197,21 @@ class StackImage(
         inplace: bool = False,
         axis: tx.Optional[tx.Union[str, int]] = None,
     ) -> "StackImage":
-        """Encode the pending data and geometry into `raw` and the record.
+        """Encode the pending data and geometry into `rawdata` and the record.
 
-        Consolidating makes `raw` and the record describe the files that a
+        Consolidating makes `rawdata` and the record describe the files that a
         write of the image would write. The record is encoded as follows,
         from the record of the metadata when there is one.
 
         1. The stored volume follows the data. When data is pending, or
            the stacking axis changes, the data is cut into slices along
-           the stacking axis and becomes `raw`. The slices keep the
+           the stacking axis and becomes `rawdata`. The slices keep the
            numbers of the record when there are as many of them, and the
            files keep their names. A slice that had no file, or a slice
            of an image without a record, gets a name made of the name of
            the first file with its number, or `slice_<number>.tif`. Every
            slice then has a file, since the data of the model takes
-           precedence over the record. Otherwise, `raw` is kept, with its
+           precedence over the record. Otherwise, `rawdata` is kept, with its
            missing slices.
         2. The geometry comes from the preferred transformation. Only a
            scaling onto axes with a unit of length is recorded, as the
@@ -221,7 +223,7 @@ class StackImage(
 
         An image with a record, no pending data, and the transformations
         of its record or none read, consolidated without options or with
-        its own stacking axis, is left as it is: the copy shares `raw` and
+        its own stacking axis, is left as it is: the copy shares `rawdata` and
         the metadata. The transformations are compared with those that
         the record decodes to, exactly. Otherwise, the new record is held
         by new metadata, and the record held before is never changed. The
@@ -279,10 +281,10 @@ class StackImage(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -330,14 +332,14 @@ class StackImage(
         refuse_options(type(self), kwargs)
         target = stack_target(filename)
         read = []
-        if isinstance(self.raw, _StackProxy):
-            read = self.raw.filenames()
+        if isinstance(self.rawdata, _StackProxy):
+            read = self.rawdata.filenames()
         image = self.consolidate(axis=axis)
-        reading = reads_from(self.raw, target, image.metadata.raw)
+        reading = reads_from(self.rawdata, target, image.metadata.raw)
         if reading:
-            fill = self.raw.fill
+            fill = self.rawdata.fill
             image = self.consolidate(inplace=True, axis=axis)
-        written = write_stack(target, image.metadata.raw, image.raw, read)
+        written = write_stack(target, image.metadata.raw, image.rawdata, read)
         if not reading:
             return
         # The image holds what the files hold, and its lazy array reads the
@@ -357,7 +359,7 @@ class StackImage(
                 spacing=record.spacing,
                 unit=record.unit,
             )
-        self.raw = _StackProxy(written.folder, fresh, fill)
+        self.rawdata = _StackProxy(written.folder, fresh, fill)
         self.metadata = StackMetadata.from_raw(fresh)
         self.data = None
 
@@ -403,21 +405,20 @@ class StackImage(
         pattern: tx.Optional[str] = None,
         **kwargs,
     ) -> float:
-        """Return the confidence that a path is the folder of a stack.
+        """Refuse a path, since a stack is read only with its hint.
 
-        A local folder that is not a Zarr store, and whose image files
-        (or the files that `pattern` selects) follow one numbering, scores
-        `LIKELY`. Only the names of the files are checked, so no file is
-        opened. A file never scores, so this class never takes a file from
-        the TIFF and Pillow readers.
+        A stack is never recognized from its path, neither a folder nor a
+        file, so [`load`][brainhops.io.load] chooses this class only with
+        the hint `"stack"`, and this class never takes a folder or a file
+        from another reader.
 
         Parameters
         ----------
         filename : path-like
             The path of the folder.
         error : bool or type[Exception], default=False
-            Whether to raise an error when the path is not the folder of a
-            stack.
+            Whether to raise an error, which tells why the path is not the
+            folder of a stack, or that a stack is read only by hint.
         pattern : str, optional
             The glob pattern that selects the files of the stack.
         **kwargs : Any
@@ -426,9 +427,9 @@ class StackImage(
         Returns
         -------
         float
-            The confidence, `LIKELY` or `NO`.
+            `NO`.
         """
-        return sniff_score(sniff_folder(filename, pattern), error)
+        return refuse_path(filename, pattern, error)
 
     @classmethod
     def sniff_fileobj(
@@ -564,7 +565,7 @@ class StackImage(
             filename = path.Path(filename)
         folder = os.path.abspath(os.fspath(filename))
         return cls(
-            raw=_StackProxy(folder, record, fill),
+            rawdata=_StackProxy(folder, record, fill),
             metadata=StackMetadata.from_raw(record),
         )
 
@@ -636,17 +637,18 @@ def _encoded(image: StackImage, axis: str) -> tx.Tuple[StackRaw, tx.Any]:
     if (
         image._data is None
         and old is not None
-        and image.raw is not None
+        and image.rawdata is not None
         and axis == old.axis
     ):
-        # Only the geometry changes, so the slices are those of `raw`.
-        raw = image.raw
+        # Only the geometry changes, so the slices are those of
+        # `rawdata`.
+        raw = image.rawdata
         ndim = len(old.axes)
         members = tuple(replace(m, header=None) for m in old.members)
     else:
         data = image._data
-        if data is None and image.raw is not None:
-            data = _image_to_model(image.raw, _axis(image.metadata))
+        if data is None and image.rawdata is not None:
+            data = _image_to_model(image.rawdata, _axis(image.metadata))
         if data is None:
             raise WriterError(
                 "This image has no data, so there is nothing to write."

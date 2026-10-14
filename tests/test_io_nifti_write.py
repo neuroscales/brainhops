@@ -1179,11 +1179,11 @@ def test_a_nibabel_image_becomes_a_proxy_and_a_record(tmp_path) -> None:  # noqa
     source = _write_image(tmp_path, "source.nii", np.ones((3, 4, 5), "f4"))
     nifti = nb.load(str(source))
     image = NiftiImage.from_nibabel(nifti)
-    assert image.raw is nifti.dataobj
+    assert image.rawdata is nifti.dataobj
     assert image.metadata.raw.header is not nifti.header
     assert np.allclose(image.to_nibabel().affine, nifti.affine)
     empty = NiftiImage.from_nibabel(nifti.header)
-    assert empty.raw is None
+    assert empty.rawdata is None
     assert empty.data is None
     with pytest.raises(TypeError):
         NiftiImage.from_nibabel(np.zeros(3))
@@ -1237,12 +1237,12 @@ def test_consolidated_geometry_has_the_precision_of_the_file() -> None:
 def test_an_assigned_array_is_pending(tmp_path) -> None:  # noqa: ANN001
     source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
     image = NiftiImage.load(source)
-    proxy = image.raw
+    proxy = image.rawdata
     image.data = np.ones((3, 4, 5), "f4")
-    assert image.raw is proxy
+    assert image.rawdata is proxy
     assert np.array_equal(np.asarray(image.data), np.ones((3, 4, 5)))
     image.save(tmp_path / "ones.nii")
-    assert image.raw is proxy
+    assert image.rawdata is proxy
     assert np.all(nb.load(str(tmp_path / "ones.nii")).get_fdata() == 1)
     # Assigning `None` decodes the file again.
     image.data = None

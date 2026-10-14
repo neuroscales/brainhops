@@ -155,7 +155,7 @@ def reads_from(raw: tx.Any, filename: tx.Any) -> bool:
     Parameters
     ----------
     raw : array
-        The `raw` array of an image.
+        The `rawdata` array of an image.
     filename : path-like
         The path of a file that a writer writes.
 

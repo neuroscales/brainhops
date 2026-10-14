@@ -114,6 +114,11 @@ io.save(warp, "warp.nii.gz")  # -> NiftiRASDisplacementField
 io.save(deformation, "y_deformation.nii")  # -> SpmCoordinatesField
 ```
 
+Several formats may claim the same name, as NiftyReg, MRtrix and elastix
+all claim `.txt`. They are tried from the most specific, and a format that
+cannot hold the object gives way to the next. An error that is not such a
+refusal, such as a file that cannot be written, stops the save at once.
+
 A `hint` names the format, as it does for `load`, and only the formats
 that answer to it are chosen from. A format named by its hint is written
 whatever the extension of the name, which lets a format be written under

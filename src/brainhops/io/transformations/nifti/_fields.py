@@ -114,10 +114,11 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
         A transformation that is not of this format is converted exactly
         as `other.to(cls)` converts it. An instance of this format is
-        copied with its `raw` array, its metadata and its stored data,
-        which is `None` unless data was assigned, so the data is not read
-        and a proxy stays lazy in the copy. Any other instance is copied
-        as [`Format.from_instance`][brainhops.io.base.Format.from_instance]
+        copied with its `rawdata` array, its metadata and its stored
+        data, which is `None` unless data was assigned, so the data is
+        not read and a proxy stays lazy in the copy. Any other instance
+        is copied as
+        [`Format.from_instance`][brainhops.io.base.Format.from_instance]
         copies it.
 
         Parameters
@@ -159,19 +160,19 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
         An array that is assigned is returned as it is, and stays pending
         until [`consolidate`][] or a write encodes it. Otherwise, the data
-        is decoded from `raw`. NIfTI stores a vector field with shape
-        (X, Y, Z, 1, 3), and the data is decoded without the singleton
-        axis, since the array would otherwise be sampled as a 4-D grid of
-        vectors.
+        is decoded from `rawdata`. NIfTI stores a vector field with
+        shape (X, Y, Z, 1, 3), and the data is decoded without the
+        singleton axis, since the array would otherwise be sampled as a
+        4-D grid of vectors.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _field_to_model(self.raw)
+        return _field_to_model(self.rawdata)
 
     def consolidate(
         self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> tx.Self:
-        """Encode the pending field into `raw` and a new header.
+        """Encode the pending field into `rawdata` and a new header.
 
         The header carries the `VECTOR` intent (1007) with the SPM intent
         name `"Mapping"`, which marks a coordinates field, rather than
@@ -226,12 +227,12 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 store=StoreEnum.values,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.store = StoreEnum.values
@@ -317,10 +318,10 @@ transformations.StationaryVelocityField].
     ] = None
 
     _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    """The vectors given to the field, or `None` to decode them from `raw`.
+    """The vectors given to the field, or `None` to decode them from `rawdata`.
 
     Vectors stored here are pending until [`consolidate`][] or a write
-    encodes them into `raw`.
+    encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -330,14 +331,15 @@ transformations.StationaryVelocityField].
 
         Vectors that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw`: NIfTI stores the field with shape
-        (X, Y, Z, 1, 3), and the singleton axis is dropped. The vectors are
-        the RAS displacements of the file, or its velocity with `log`.
-        Assigning the data drops the chain decoded from the previous data.
+        they are decoded from `rawdata`: NIfTI stores the field with
+        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. The
+        vectors are the RAS displacements of the file, or its velocity
+        with `log`. Assigning the data drops the chain decoded from the
+        previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _field_to_model(self.raw)
+        return _field_to_model(self.rawdata)
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -519,7 +521,8 @@ transformations.StationaryVelocityField].
         **overrides,
     ) -> tx.Self:
         """
-        Encode the pending vectors or chain into `raw` and a new header.
+        Encode the pending vectors or chain into `rawdata` and a new
+        header.
 
         The displacements are encoded in RAS millimetres under the
         `DISPVECT` intent (1006), with shape (X, Y, Z, 1, 3). With `log`,
@@ -573,13 +576,13 @@ transformations.StationaryVelocityField].
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
                 log=log,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -597,8 +600,8 @@ transformations.StationaryVelocityField].
 
         The field is consolidated with the options, as by
         [`consolidate`][], into a copy, and the nibabel image holds the
-        `raw` array and the header of that copy. The field itself is not
-        changed.
+        `rawdata` array and the header of that copy. The field itself is
+        not changed.
 
         Parameters
         ----------
@@ -657,7 +660,7 @@ def _coordinates_encoded(
     elif field._data is not None:
         raw = _field_to_disk(field._data)
     else:
-        raw = field.raw
+        raw = field.rawdata
     if raw is None:
         raise WriterError(
             "This field has no coordinates, so there is nothing to write."
@@ -685,7 +688,7 @@ def _displacement_encoded(
     if field._data is not None:
         stored = _field_to_disk(field._data)
     else:
-        stored = field.raw
+        stored = field.rawdata
     if (
         stored is not None
         and field._transformations is None

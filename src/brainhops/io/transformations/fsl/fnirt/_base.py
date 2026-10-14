@@ -173,10 +173,10 @@ class FnirtWarpField(
     """
 
     _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    """The array given to the field, or `None` to decode it from `raw`.
+    """The array given to the field, or `None` to decode it from `rawdata`.
 
     An array stored here is pending until [`consolidate`][] or a write
-    encodes it into `raw`.
+    encodes it into `rawdata`.
     """
 
     @smartproperty(cache=True)
@@ -186,12 +186,12 @@ class FnirtWarpField(
         A deformation field has shape (X, Y, Z, 3), and a coefficient field
         holds the coefficients on its knot grid. An array that is assigned
         is returned as it is, and stays pending until [`consolidate`][] or
-        a write encodes it. Otherwise the array is decoded from `raw`. The
+        a write encodes it. Otherwise the array is decoded from `rawdata`. The
         chain is built again from a new array.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -269,7 +269,7 @@ class FnirtWarpField(
     def consolidate(
         self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> tx.Self:
-        """Encode the pending array into `raw` and a new header.
+        """Encode the pending array into `rawdata` and a new header.
 
         FNIRT writes the field and the parameters of its spline in the
         header, which no other transformation can be converted to, so the
@@ -319,11 +319,11 @@ class FnirtWarpField(
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         return self
@@ -603,7 +603,7 @@ class FnirtWarpField(
             id(self.moving),
             id(self.reference),
             id(self.metadata),
-            id(self.raw),
+            id(self.rawdata),
             id(self._data),
             self.deformation_type,
         )
@@ -663,7 +663,7 @@ def _fnirt_encoded(
     if field._data is not None:
         stored = _image_to_disk(field._data)
     else:
-        stored = field.raw
+        stored = field.rawdata
     if stored is None:
         raise WriterError("A FNIRT file needs its field data to be written.")
     image = _record_image(stored, field._record(), overrides=overrides)

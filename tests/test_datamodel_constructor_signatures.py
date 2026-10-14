@@ -516,7 +516,7 @@ def test_a_positional_endpoint_is_refused() -> None:
 
 
 def test_a_field_declared_again_inherits_kw_only() -> None:
-    # The formats rely on this: they declare `raw` and `_metadata` without
+    # The formats rely on this: they declare `rawdata` and `_metadata` without
     # `KwOnly[...]`, and some redeclare an endpoint with a new default.
     from bagof.magic import Magic
 
@@ -587,3 +587,14 @@ def test_a_positional_metadata_field_is_refused() -> None:
     tiff = pytest.importorskip("brainhops.io.images.tiff")
     with pytest.raises(TypeError):
         tiff.TiffImage(np.zeros((2, 2)), [], "ome")
+
+
+@pytest.mark.parametrize("cls", ALL + ALL_IMAGES, ids=_id)
+def test_the_stored_arrays_are_taken_as_rawdata(cls: type) -> None:
+    # A format takes the arrays that it stores as `rawdata`, which is
+    # keyword-only. No image or transformation takes `raw`, which names
+    # only the record that a metadata object holds.
+    kinds = {p.name: p.kind for p in _parameters(cls)}
+    assert "raw" not in kinds
+    if "rawdata" in kinds:
+        assert kinds["rawdata"] is inspect.Parameter.KEYWORD_ONLY

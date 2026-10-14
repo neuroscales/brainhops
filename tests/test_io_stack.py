@@ -27,6 +27,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
     ParserError,
     ParserExistsError,
+    SnifferContentError,
     WriterError,
 )
 from brainhops.io.images.base import _utils_raster as raster  # noqa: E402
@@ -108,18 +109,18 @@ def _count_reads(monkeypatch: pytest.MonkeyPatch) -> tx.List[str]:
 
 def test_a_folder_of_tiff_files_is_one_volume(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
-    image = io.load(folder)
+    image = io.load(folder, hint="stack")
     assert isinstance(image, StackImage)
-    assert isinstance(image.raw, _StackProxy)
+    assert isinstance(image.rawdata, _StackProxy)
     assert isinstance(image.metadata, StackMetadata)
     assert image.shape == (2, 3, 12)
-    assert image.raw.shape == (12, 3, 2)
+    assert image.rawdata.shape == (12, 3, 2)
     assert np.array_equal(np.asarray(image.data), VOLUME.transpose(2, 1, 0))
-    # The class, the hint and the image loader read it in the same way.
+    # The class and the loaders, with the hint, read it in the same way.
     for other in (
         StackImage.load(folder),
         io.load(str(folder), hint="stack"),
-        io.images.load(folder),
+        io.images.load(folder, hint="stack"),
     ):
         assert isinstance(other, StackImage)
         assert np.array_equal(np.asarray(other.data), np.asarray(image.data))
@@ -133,19 +134,19 @@ def test_numbers_are_sorted_as_integers(tmp_path: Path) -> None:
     assert names[:3] == ("z0.tif", "z1.tif", "z2.tif")
     assert names[-2:] == ("z10.tif", "z11.tif")
     assert [m.number for m in image.metadata.raw.members] == list(range(12))
-    assert np.array_equal(np.asarray(image.raw), VOLUME)
+    assert np.array_equal(np.asarray(image.rawdata), VOLUME)
 
 
 def test_numbering_may_start_anywhere(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices", name="img{:04d}.tif", start=7)
     image = StackImage.load(folder)
     assert image.metadata.raw.members[0].number == 7
-    assert np.array_equal(np.asarray(image.raw), VOLUME)
+    assert np.array_equal(np.asarray(image.rawdata), VOLUME)
 
 
 def test_a_folder_of_png_files_with_channels(tmp_path: Path) -> None:
     folder = _pngs(tmp_path / "rgb")
-    image = io.load(folder)
+    image = io.load(folder, hint="stack")
     assert isinstance(image, StackImage)
     assert image.shape == (2, 3, 4, 3)
     assert image.metadata.raw.axes == "ZYXS"
@@ -171,7 +172,7 @@ def test_planar_tiff_channels_come_last(tmp_path: Path) -> None:
         )
     image = StackImage.load(folder)
     assert image.metadata.raw.members[0].axes == "SYX"
-    assert np.array_equal(np.asarray(image.raw), COLOUR)
+    assert np.array_equal(np.asarray(image.rawdata), COLOUR)
     assert np.array_equal(np.asarray(image.data), COLOUR.transpose(2, 1, 0, 3))
 
 
@@ -184,11 +185,11 @@ def test_a_pattern_selects_the_files(tmp_path: Path) -> None:
     # Without a pattern, the two channels are two numbers that vary.
     with pytest.raises(ParserContentError, match="2 numbers"):
         StackImage.load(folder)
-    image = io.load(folder, pattern="ch2_*.tif")
+    image = io.load(folder, hint="stack", pattern="ch2_*.tif")
     assert isinstance(image, StackImage)
     assert image.metadata.raw.pattern == "ch2_*.tif"
-    assert np.array_equal(np.asarray(image.raw), VOLUME[5:9])
-    metadata = MetadataFormat.load(folder, pattern="ch1_*.tif")
+    assert np.array_equal(np.asarray(image.rawdata), VOLUME[5:9])
+    metadata = MetadataFormat.load(folder, hint="stack", pattern="ch1_*.tif")
     assert metadata.raw.names == tuple(f"ch1_z{k}.tif" for k in range(5))
 
 
@@ -196,7 +197,7 @@ def test_a_pattern_may_name_a_subfolder(tmp_path: Path) -> None:
     _pngs(tmp_path / "data" / "rgb")
     image = StackImage.load(tmp_path / "data", pattern="rgb/*.png")
     assert image.metadata.raw.names[0] == "rgb/s_000.png"
-    assert np.array_equal(np.asarray(image.raw), COLOUR)
+    assert np.array_equal(np.asarray(image.rawdata), COLOUR)
 
 
 def test_a_pattern_selects_image_files_only(tmp_path: Path) -> None:
@@ -337,12 +338,35 @@ def test_unknown_and_invalid_options_are_refused(tmp_path: Path) -> None:
 # ----------------------------------------------------------------------
 
 
-def test_only_folders_are_claimed(tmp_path: Path) -> None:
+def test_a_stack_is_read_only_with_its_hint(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     _pngs(tmp_path / "pngs")
-    assert io.sniff(folder) is StackImage
-    assert MetadataFormat.sniff(folder) is StackMetadata
-    # A single file is left to the TIFF and Pillow readers.
+    for path in (folder, tmp_path / "pngs"):
+        assert io.sniff(path) is None
+        assert io.images.sniff(path) is None
+        assert MetadataFormat.sniff(path) is None
+        assert StackImage.sniff(path) == Confidence.NO
+        assert StackMetadata.sniff(path) == Confidence.NO
+        for load in (io.load, io.images.load, MetadataFormat.load):
+            with pytest.raises(ParserError):
+                load(path)
+        assert isinstance(io.load(path, hint="stack"), StackImage)
+        assert isinstance(
+            MetadataFormat.load(path, hint="stack"), StackMetadata
+        )
+        # Sniffing with the hint names the format that the hint loads.
+        assert io.sniff(path, hint="stack") is StackImage
+        assert io.images.sniff(path, hint="stack") is StackImage
+        assert MetadataFormat.sniff(path, hint="stack") is StackMetadata
+    # The error of the sniffer tells how to read the stack.
+    for cls in (StackImage, StackMetadata):
+        with pytest.raises(SnifferContentError, match='hint="stack"'):
+            cls.sniff(folder, error=True)
+
+
+def test_files_are_left_to_their_readers(tmp_path: Path) -> None:
+    folder = _tiffs(tmp_path / "slices")
+    _pngs(tmp_path / "pngs")
     assert StackImage.sniff(folder / "z0.tif") == Confidence.NO
     assert io.sniff(folder / "z0.tif") is TiffImage
     assert isinstance(io.load(folder / "z0.tif"), TiffImage)
@@ -354,8 +378,9 @@ def test_only_folders_are_claimed(tmp_path: Path) -> None:
 def test_zarr_stores_are_not_claimed(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "store.zarr")
     (folder / "zarr.json").write_text("{}")
-    assert StackImage.sniff(folder) == Confidence.NO
-    assert StackMetadata.sniff(folder) == Confidence.NO
+    for cls in (StackImage, StackMetadata):
+        with pytest.raises(SnifferContentError, match="Zarr store"):
+            cls.sniff(folder, error=True)
 
 
 def test_a_folder_without_numbered_images_is_not_claimed(
@@ -365,10 +390,14 @@ def test_a_folder_without_numbered_images_is_not_claimed(
     folder.mkdir()
     Image.fromarray(COLOUR[0]).save(folder / "cat.png")
     Image.fromarray(COLOUR[1]).save(folder / "dog.png")
-    assert StackImage.sniff(folder) == Confidence.NO
     (tmp_path / "text").mkdir()
     (tmp_path / "text" / "a1.txt").write_text("1")
-    assert StackImage.sniff(tmp_path / "text") == Confidence.NO
+    for path in (folder, tmp_path / "text"):
+        with pytest.raises(SnifferContentError) as info:
+            StackImage.sniff(path, error=True)
+        assert "hint" not in str(info.value)
+        with pytest.raises(ParserError):
+            io.load(path, hint="stack")
 
 
 # ----------------------------------------------------------------------
@@ -577,7 +606,6 @@ def test_a_missing_number_is_a_missing_slice(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     os.remove(folder / "z4.tif")
     os.remove(folder / "z7.tif")
-    assert StackImage.sniff(folder) == Confidence.LIKELY
     image = StackImage.load(folder)
     record = image.metadata.raw
     assert record.missing == (4, 7)
@@ -586,14 +614,14 @@ def test_a_missing_number_is_a_missing_slice(tmp_path: Path) -> None:
     assert record.shape == (12, 3, 2)
     expected = VOLUME.copy()
     expected[[4, 7]] = 0
-    assert np.array_equal(np.asarray(image.raw), expected)
+    assert np.array_equal(np.asarray(image.rawdata), expected)
     # A floating type is filled with NaN, and `fill` sets another value.
     floats = _tiffs(tmp_path / "floats", VOLUME[:3].astype("float32"))
     os.remove(floats / "z1.tif")
-    assert np.isnan(np.asarray(StackImage.load(floats).raw)[1]).all()
+    assert np.isnan(np.asarray(StackImage.load(floats).rawdata)[1]).all()
     filled = StackImage.load(floats, fill=-1.5)
-    assert (np.asarray(filled.raw)[1] == -1.5).all()
-    assert (np.asarray(StackImage.load(folder, fill=9).raw)[4] == 9).all()
+    assert (np.asarray(filled.rawdata)[1] == -1.5).all()
+    assert (np.asarray(StackImage.load(folder, fill=9).rawdata)[4] == 9).all()
 
 
 def test_a_missing_slice_reads_no_file(
@@ -603,7 +631,7 @@ def test_a_missing_slice_reads_no_file(
     os.remove(folder / "z4.tif")
     reads = _count_reads(monkeypatch)
     image = StackImage.load(folder)
-    assert (image.raw[4] == 0).all()
+    assert (image.rawdata[4] == 0).all()
     assert reads == []
     with backend("dask"):
         data = StackImage.load(folder).data
@@ -626,7 +654,7 @@ def test_loading_reads_no_pixel(
     image.shape, image.transformations, repr(image)
     assert reads == []
     # An empty selection, which Dask reads to learn the type, reads nothing.
-    assert image.raw[0:0].shape == (0, 3, 2)
+    assert image.rawdata[0:0].shape == (0, 3, 2)
     assert reads == []
 
 
@@ -636,9 +664,9 @@ def test_a_selection_reads_only_its_files(
     folder = _tiffs(tmp_path / "slices")
     reads = _count_reads(monkeypatch)
     image = StackImage.load(folder)
-    assert np.array_equal(image.raw[5], VOLUME[5])
-    assert np.array_equal(image.raw[2:8:3, 1], VOLUME[2:8:3, 1])
-    assert np.array_equal(image.raw[-1, :, 0], VOLUME[-1, :, 0])
+    assert np.array_equal(image.rawdata[5], VOLUME[5])
+    assert np.array_equal(image.rawdata[2:8:3, 1], VOLUME[2:8:3, 1])
+    assert np.array_equal(image.rawdata[-1, :, 0], VOLUME[-1, :, 0])
     assert reads == ["z5.tif", "z2.tif", "z5.tif", "z11.tif"]
 
 
@@ -670,10 +698,10 @@ def test_a_file_changed_after_loading_is_refused(tmp_path: Path) -> None:
     image = StackImage.load(folder)
     tifffile.imwrite(folder / "z3.tif", VOLUME[3, :2])
     with pytest.raises(ParserContentError, match="'z3.tif'"):
-        np.asarray(image.raw)
+        np.asarray(image.rawdata)
     os.remove(folder / "z3.tif")
     with pytest.raises(ParserContentError, match="no longer exists"):
-        image.raw[3]
+        image.rawdata[3]
 
 
 # ----------------------------------------------------------------------
@@ -740,9 +768,9 @@ def test_numbered_names_come_from_the_path(tmp_path: Path) -> None:
     ]
     back = StackImage.load(tmp_path / "pngs")
     assert back.metadata.raw.format == "pillow"
-    assert np.array_equal(np.asarray(back.raw), VOLUME[:3])
+    assert np.array_equal(np.asarray(back.rawdata), VOLUME[:3])
     back = StackImage.load(tmp_path, pattern="out_*.tif")
-    assert np.array_equal(np.asarray(back.raw), VOLUME[:3])
+    assert np.array_equal(np.asarray(back.rawdata), VOLUME[:3])
 
 
 def test_a_new_stack_is_a_folder_of_tiff_files(tmp_path: Path) -> None:
@@ -790,7 +818,7 @@ def test_the_geometry_is_written_to_the_files(tmp_path: Path) -> None:
     colour.save(tmp_path / "rgb")
     back = StackImage.load(tmp_path / "rgb")
     assert back.metadata.raw.members[0].axes == "YXS"
-    assert np.array_equal(np.asarray(back.raw), COLOUR)
+    assert np.array_equal(np.asarray(back.rawdata), COLOUR)
     assert np.allclose(_scale(back)[:3], [0.5, 0.25, 1.0])
     colour.save(tmp_path / "png" / "c.png")
     record = StackMetadata.load(tmp_path / "png").raw
@@ -813,17 +841,17 @@ def test_assigned_data_fills_every_slice(tmp_path: Path) -> None:
     back = StackImage.load(tmp_path / "copy")
     expected = VOLUME + 1
     expected[4] = 1
-    assert np.array_equal(np.asarray(back.raw), expected)
+    assert np.array_equal(np.asarray(back.rawdata), expected)
 
 
 def test_saving_leaves_the_image_unchanged(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     image = StackImage.load(folder, spacing=2.0)
-    raw, metadata = image.raw, image.metadata
+    raw, metadata = image.rawdata, image.metadata
     image.data = np.asarray(image.data) * 2
     pending = image._data
     image.save(tmp_path / "copy")
-    assert image.raw is raw
+    assert image.rawdata is raw
     assert image.metadata is metadata
     assert image._data is pending
 
@@ -835,10 +863,10 @@ def test_saving_over_its_own_folder_reads_the_new_files(
     image = StackImage.load(folder)
     image.data = np.asarray(image.data) + 1
     image.save(folder)
-    assert isinstance(image.raw, _StackProxy)
+    assert isinstance(image.rawdata, _StackProxy)
     assert image._data is None
     assert image.metadata.raw == StackMetadata.load(folder).raw
-    assert np.array_equal(np.asarray(image.raw), VOLUME + 1)
+    assert np.array_equal(np.asarray(image.rawdata), VOLUME + 1)
     # Numbered names that the lazy array reads are replaced in the same
     # way, and an untouched image keeps the fields of its record.
     named = _tiffs(tmp_path / "named", name="z_{:02d}.tif")
@@ -846,7 +874,7 @@ def test_saving_over_its_own_folder_reads_the_new_files(
     image.save(named / "z.tif")
     assert image.metadata.raw.spacing == 5.0
     assert image.metadata.raw.pattern == "z_*.tif"
-    assert np.array_equal(np.asarray(image.raw), VOLUME)
+    assert np.array_equal(np.asarray(image.rawdata), VOLUME)
     assert sorted(os.listdir(named)) == [f"z_{n:02d}.tif" for n in range(12)]
 
 
@@ -956,4 +984,4 @@ def test_no_file_is_left_open(tmp_path: Path) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error", ResourceWarning)
         image = StackImage.load(folder)
-        np.asarray(image.raw)
+        np.asarray(image.rawdata)

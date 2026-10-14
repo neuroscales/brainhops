@@ -25,10 +25,10 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
     A lazy array is read as a view in the order of brainhops. A NumPy
     array that it gives, such as a memory map, is made read-only, because
-    the writer writes `raw` and not the data, so an edit in place would
-    be lost. Any other array is returned as it is, so that a dask array
-    stays lazy and an array that was set as data stays the array of
-    `raw`.
+    the writer writes `rawdata` and not the data, so an edit in place
+    would be lost. Any other array is returned as it is, so that a dask
+    array stays lazy and an array that was set as data stays the array
+    of `rawdata`.
     """
     if not isinstance(raw, _TiffProxy):
         return raw

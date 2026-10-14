@@ -58,11 +58,11 @@ class PrecomputedImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     unless `level` is given.
 
     The image holds the `info` file as [`PrecomputedMetadata`][], whose
-    record is a [`PrecomputedRaw`][], and the voxels in `raw`, a lazy
-    array that TensorStore reads chunk by chunk when the data are needed.
-    The data are indexed `[x, y, z]`, with a channel axis `c` last when
-    the volume has several channels. The first voxel of the data is the
-    first voxel of the scale, whatever its `voxel_offset`.
+    record is a [`PrecomputedRaw`][], and the voxels in `rawdata`, a
+    lazy array that TensorStore reads chunk by chunk when the data are
+    needed. The data are indexed `[x, y, z]`, with a channel axis `c`
+    last when the volume has several channels. The first voxel of the
+    data is the first voxel of the scale, whatever its `voxel_offset`.
 
     The transformation is an [`Affine`][] from the voxels to the
     `"physical"` space of Neuroglancer, in nanometres. It scales each
@@ -75,29 +75,29 @@ class PrecomputedImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     Precomputed volumes are not written, so the class has no writer, and
     [`save`][brainhops.io.save] refuses to write the image as a
     precomputed volume. Assigned data are pending until
-    [`consolidate`][] moves them into `raw`, and the transformations
+    [`consolidate`][] moves them into `rawdata`, and the transformations
     that the image holds, read or assigned, are kept, since no record can
     be encoded.
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("precomputed", "neuroglancer")
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the volume stores them, or `None` without data.
 
-    After a read, `raw` is a lazy array of the scale. Assigning `data`
-    leaves `raw` as it is, and [`consolidate`][] stores the assigned array
-    here.
+    After a read, `rawdata` is a lazy array of the scale. Assigning
+    `data` leaves `rawdata` as it is, and [`consolidate`][] stores the
+    assigned array here.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
     array stored here is pending until [`consolidate`][] moves it into
-    `raw`.
+    `rawdata`.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -135,17 +135,17 @@ class PrecomputedImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The voxels, assigned or decoded from `raw`.
+        """The voxels, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
-        pending until [`consolidate`][] moves it into `raw`. Otherwise the
-        data is decoded from `raw` on first access and cached. Data
+        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+        data is decoded from `rawdata` on first access and cached. Data
         decoded from a volume is read-only. To change the voxels, assign
-        `data`. Assigning `None` decodes `raw` again.
+        `data`. Assigning `None` decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -168,24 +168,24 @@ class PrecomputedImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         """The shape of the data, read without reading the voxels.
 
         The shape is that of the assigned data, or else the shape of
-        `raw`, which the lazy array knows from the record. An image
+        `rawdata`, which the lazy array knows from the record. An image
         without data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in self.raw.shape)
+        return tuple(int(d) for d in self.rawdata.shape)
 
     def consolidate(self, *, inplace: bool = False) -> "PrecomputedImage":
-        """Move the pending data into `raw`.
+        """Move the pending data into `rawdata`.
 
         Precomputed volumes are not written, so no record can be encoded,
         and consolidating an image is limited to its data: an assigned
-        array becomes `raw` and is no longer pending. The metadata is
-        kept, and so are the transformations that the image holds, read or
-        assigned. An image without pending data is left as it is: the copy
-        shares `raw` and the metadata.
+        array becomes `rawdata` and is no longer pending. The metadata
+        is kept, and so are the transformations that the image holds,
+        read or assigned. An image without pending data is left as it
+        is: the copy shares `rawdata` and the metadata.
 
         Parameters
         ----------
@@ -210,8 +210,8 @@ class PrecomputedImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             return self if inplace else replace(self, transformations=held)
         raw = _image_to_disk(self._data)
         if not inplace:
-            return replace(self, data=None, raw=raw, transformations=held)
-        self.raw = raw
+            return replace(self, data=None, rawdata=raw, transformations=held)
+        self.rawdata = raw
         self.data = None
         return self
 
@@ -463,7 +463,7 @@ def _read_scale(
             f"{', '.join(READABLE_ENCODINGS)}."
         )
     proxy = _PrecomputedProxy(location, record, scale)
-    return cls(raw=proxy, metadata=metadata, level=index)
+    return cls(rawdata=proxy, metadata=metadata, level=index)
 
 
 def _level_index(record: PrecomputedRaw, level: tx.Optional[int]) -> int:

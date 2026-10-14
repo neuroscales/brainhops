@@ -54,10 +54,10 @@ class Jpeg2000MultiScaleImage(
     the full one, and reductions by 2, 4, up to `2**N`. A multiscale image
     holds everything that its file says beside the coded image as
     [`Jpeg2000Metadata`][], and the samples of the full resolution in
-    `raw`, a lazy array that also gives the reduced levels. Its levels
-    are [`Jpeg2000Image`][] objects that read the same file, decoded from
-    `raw` and the record on first access, and each level is decoded by
-    Pillow only when its data is first needed.
+    `rawdata`, a lazy array that also gives the reduced levels. Its
+    levels are [`Jpeg2000Image`][] objects that read the same file,
+    decoded from `rawdata` and the record on first access, and each
+    level is decoded by Pillow only when its data is first needed.
 
     Level `r` is reduced by `2**r`, and its pixel `i` is centred on the
     full-resolution pixel `2**r * i`, because the wavelet keeps the even
@@ -75,11 +75,11 @@ class Jpeg2000MultiScaleImage(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = _EXTENSIONS
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = _HINTS
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The full-resolution samples as Pillow decodes them, or `None`.
 
-    After a read, `raw` is a lazy array of level 0 of the file, from which
-    the levels are decoded. `raw` describes the file as it was read, or as
+    After a read, `rawdata` is a lazy array of level 0 of the file, from which
+    the levels are decoded. `rawdata` describes the file as it was read, or as
     the pyramid was last consolidated.
     """
 
@@ -93,7 +93,7 @@ class Jpeg2000MultiScaleImage(
     `images` in the same place, and the property of the same name reads
     it. Only an assigned list, even an empty one, is stored here. `None`,
     the default, means that no list was assigned, so the property decodes
-    the levels from `raw` and the record and caches them apart, and
+    the levels from `rawdata` and the record and caches them apart, and
     assigning other metadata drops that cache.
     """
 
@@ -123,17 +123,17 @@ class Jpeg2000MultiScaleImage(
 
     @smartproperty(cache=True)
     def images(self) -> tx.List[SingleScaleImage]:
-        """The levels of the pyramid, decoded from `raw` on first access.
+        """The levels of the pyramid, decoded from `rawdata` on first access.
 
-        The levels are [`Jpeg2000Image`][] objects whose `raw` reads one
-        level of the file and whose metadata is that of the pyramid, so
-        decoding them reads nothing. The list is cached, apart from an
-        assigned list, so a level changed in place is kept. Assigning
+        The levels are [`Jpeg2000Image`][] objects whose `rawdata` reads
+        one level of the file and whose metadata is that of the pyramid,
+        so decoding them reads nothing. The list is cached, apart from
+        an assigned list, so a level changed in place is kept. Assigning
         other metadata drops the decoded list and keeps an assigned one.
         Assigning a list replaces it, and assigning `None` decodes the
         levels again.
         """
-        return _record_levels(self.raw, self.metadata)
+        return _record_levels(self.rawdata, self.metadata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -163,7 +163,7 @@ class Jpeg2000MultiScaleImage(
         if images is None:
             images = cached_value(self, "images")
         if images is None:
-            images = _record_levels(self.raw, self.metadata)
+            images = _record_levels(self.rawdata, self.metadata)
         return tuple(int(n) for n in images[0].shape)
 
     # --- reading ------------------------------------------------------
@@ -330,13 +330,14 @@ class Jpeg2000MultiScaleImage(
         """Copy an instance of this class or of another multiscale image.
 
         The pyramid stores its levels in the private field `_images`,
-        where `None` means that they are decoded from `raw`. Within this
-        class, the stored value is copied, so a copy of a pyramid whose
-        levels were not assigned decodes them from the same file. From
-        another class, the levels that `other` reports are copied, read if
-        need be, because the private field of `other` means nothing to
-        this class. The placements in `_transformations` are copied in the
-        same way by the `from_instance` of [`ImageFormat`][].
+        where `None` means that they are decoded from `rawdata`. Within
+        this class, the stored value is copied, so a copy of a pyramid
+        whose levels were not assigned decodes them from the same file.
+        From another class, the levels that `other` reports are copied,
+        read if need be, because the private field of `other` means
+        nothing to this class. The placements in `_transformations` are
+        copied in the same way by the `from_instance` of
+        [`ImageFormat`][].
 
         Parameters
         ----------
@@ -386,10 +387,10 @@ class Jpeg2000MultiScaleImage(
 
         A pyramid whose full-resolution level is left as it is by its own
         consolidation, and whose levels and placements are those of its
-        file, is left as it is: the copy shares `raw` and the metadata.
-        Otherwise the new file is held in memory, and `raw` decodes it.
-        Nothing is pending afterwards, so the levels are decoded from the
-        new record.
+        file, is left as it is: the copy shares `rawdata` and the
+        metadata. Otherwise the new file is held in memory, and
+        `rawdata` decodes it. Nothing is pending afterwards, so the
+        levels are decoded from the new record.
 
         Parameters
         ----------
@@ -424,7 +425,7 @@ class Jpeg2000MultiScaleImage(
         if images is None:
             images = cached_value(self, "images")
         if images is None:
-            images = _record_levels(self.raw, self.metadata)
+            images = _record_levels(self.rawdata, self.metadata)
         base = _base_level(self, images)
         if num_resolutions is None and len(images) != _file_levels(base):
             num_resolutions = len(images)
@@ -434,7 +435,7 @@ class Jpeg2000MultiScaleImage(
             comment=comment,
             **options,
         )
-        if level.raw is self.raw and level.metadata is self.metadata:
+        if level.rawdata is self.rawdata and level.metadata is self.metadata:
             if not inplace:
                 return replace(self, images=None, transformations=None)
             self.images = None
@@ -445,10 +446,10 @@ class Jpeg2000MultiScaleImage(
                 self,
                 images=None,
                 transformations=None,
-                raw=level.raw,
+                rawdata=level.rawdata,
                 metadata=level.metadata,
             )
-        self.raw = level.raw
+        self.rawdata = level.rawdata
         self.metadata = level.metadata
         self.images = None
         self.transformations = None
@@ -516,12 +517,12 @@ class Jpeg2000MultiScaleImage(
         """
         if kwargs.get("container") is None:
             kwargs["container"] = _container_for_name(filename)
-        if not _reads_file(self.raw, filename):
+        if not _reads_file(self.rawdata, filename):
             write_file(filename, self.to_bytes(**kwargs))
             return
         self.consolidate(inplace=True, **kwargs)
         write_file(filename, _written(self))
-        self.raw = _Jpeg2000Proxy(
+        self.rawdata = _Jpeg2000Proxy(
             _Jpeg2000Source(filename=os.fspath(filename)),
             self.metadata.raw,
             0,
@@ -550,10 +551,12 @@ def _read_pyramid(
     raw = _Jpeg2000Proxy(source, record, 0)
     metadata = Jpeg2000Metadata.from_raw(record)
     if pixel_size is None and unit is None:
-        return cls(raw=raw, metadata=metadata)
+        return cls(rawdata=raw, metadata=metadata)
     images = [
         Jpeg2000Image(
-            raw=raw if level == 0 else _Jpeg2000Proxy(source, record, level),
+            rawdata=raw
+            if level == 0
+            else _Jpeg2000Proxy(source, record, level),
             metadata=metadata,
             transformations=[
                 level_transformation(record, level, pixel_size, unit)
@@ -561,7 +564,7 @@ def _read_pyramid(
         )
         for level in range(record.n_levels)
     ]
-    return cls(raw=raw, metadata=metadata, images=images)
+    return cls(rawdata=raw, metadata=metadata, images=images)
 
 
 def _record_levels(
@@ -573,11 +576,12 @@ def _record_levels(
     """
     if not isinstance(raw, _Jpeg2000Proxy):
         return []
-    # The full-resolution level reads `raw` itself, so that consolidating
-    # an untouched pyramid through that level shares `raw`.
+    # The full-resolution level reads the lazy array of the pyramid itself,
+    # so that consolidating an untouched pyramid through that level shares
+    # `rawdata`.
     return [
         Jpeg2000Image(
-            raw=raw
+            rawdata=raw
             if level == 0
             else _Jpeg2000Proxy(raw.source, raw.record, level),
             metadata=metadata,
@@ -645,6 +649,6 @@ def _file_levels(level: Jpeg2000Image) -> tx.Optional[int]:
 
     A level that reads no file gives `None`.
     """
-    if not isinstance(level.raw, _Jpeg2000Proxy):
+    if not isinstance(level.rawdata, _Jpeg2000Proxy):
         return None
-    return level.raw.record.n_levels - level.raw.level
+    return level.rawdata.record.n_levels - level.rawdata.level

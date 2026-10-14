@@ -918,21 +918,46 @@ NOT_A_STREAM = (
 )
 
 
-def sniff_score(reason: tx.Optional[str], error: tx.Any) -> float:
-    """Turn the reason why a path is not a stack into a confidence.
+ONLY_BY_HINT = (
+    "An image stack is never recognized from its path, so it is read "
+    'only with its hint, as in `load(folder, hint="stack")`, or with '
+    "`StackImage.load(folder)`."
+)
+
+
+def refuse_path(
+    folder: tx.Any, pattern: tx.Optional[str], error: tx.Any
+) -> float:
+    """Refuse a path, which is read as a stack only by hint.
+
+    The folder is checked only when `error` is set, so that the error
+    tells why the path cannot be a stack, or that a stack is read only
+    with the hint `"stack"`.
+
+    Parameters
+    ----------
+    folder : Any
+        The path to score.
+    pattern : str or None
+        The glob pattern that selects the files of the stack, or `None`
+        for every image file of the folder.
+    error : bool or type[Exception]
+        Whether to raise an error instead of returning `NO`.
+
+    Returns
+    -------
+    float
+        `NO`.
 
     Raises
     ------
     SnifferContentError
-        If there is a reason and `error` is `True`, or the class given as
-        `error`.
+        If `error` is `True`, or the class given as `error`.
     """
-    if reason is None:
-        return Confidence.LIKELY
     if error:
         if error is True:
             error = SnifferContentError
-        raise error(reason)
+        raise error(sniff_folder(folder, pattern) or ONLY_BY_HINT)
     return Confidence.NO
 
 

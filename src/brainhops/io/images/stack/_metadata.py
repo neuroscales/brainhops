@@ -15,9 +15,8 @@ from ._raw import (
     NOT_A_STREAM,
     StackRaw,
     refuse_options,
+    refuse_path,
     refuse_stream,
-    sniff_folder,
-    sniff_score,
 )
 
 
@@ -34,11 +33,10 @@ class StackMetadata(MetadataFormat, BinaryFileReader):
     own: it is written with the image, by
     [`StackImage`][brainhops.io.images.stack.StackImage].
 
-    A folder is recognized when it is not a Zarr store and the names of
-    its image files follow one numbering (see
-    [`brainhops.io.images.stack`][]). A file, a stream or bytes are
-    never recognized, so this class never takes a file from the TIFF and
-    Pillow readers. The format hint `"stack"` selects this class.
+    A stack is never recognized from its path, so this class never takes
+    a folder or a file from another reader. The format hint `"stack"`
+    selects it, as in `MetadataFormat.load(folder, hint="stack")` (see
+    [`brainhops.io.images.stack`][] for the rules).
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("stack",)
@@ -55,17 +53,15 @@ class StackMetadata(MetadataFormat, BinaryFileReader):
         pattern: tx.Optional[str] = None,
         **kwargs,
     ) -> float:
-        """Return the confidence that a path is the folder of a stack.
-
-        Only the names of the files are checked, so no file is opened.
+        """Refuse a path, since a stack is read only with its hint.
 
         Parameters
         ----------
         filename : path-like
             The path of the folder.
         error : bool or type[Exception], default=False
-            Whether to raise an error when the path is not the folder of a
-            stack.
+            Whether to raise an error, which tells why the path is not the
+            folder of a stack, or that a stack is read only by hint.
         pattern : str, optional
             The glob pattern that selects the files of the stack.
         **kwargs : Any
@@ -74,10 +70,9 @@ class StackMetadata(MetadataFormat, BinaryFileReader):
         Returns
         -------
         float
-            `LIKELY` for a folder that can hold a stack, and `NO`
-            otherwise.
+            `NO`.
         """
-        return sniff_score(sniff_folder(filename, pattern), error)
+        return refuse_path(filename, pattern, error)
 
     @classmethod
     def sniff_fileobj(

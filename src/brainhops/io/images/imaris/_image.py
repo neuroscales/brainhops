@@ -55,8 +55,8 @@ class ImarisImage(ImageFormat, SingleScaleImage, Hdf5Reader):
     reads them all. A file with a single level is read by this class. An
     Imaris image holds the groups and parameters of its file as
     [`ImarisMetadata`][], whose record is an [`ImarisRaw`][], and the
-    voxels of its level in `raw`, a lazy array that reads them only when
-    `data` is first needed.
+    voxels of its level in `rawdata`, a lazy array that reads them only
+    when `data` is first needed.
 
     The data of an image always have five axes, `(x, y, z, t, c)`: the
     three spatial axes, then the time points and the channels of the
@@ -84,30 +84,31 @@ class ImarisImage(ImageFormat, SingleScaleImage, Hdf5Reader):
     Imaris files cannot be written by brainhops, so the class has no
     writer: an image is saved to another format, such as NIfTI or
     OME-Zarr. Assigned data is pending until [`consolidate`][] moves it
-    into `raw`, and the transformations that the image holds, read or
-    assigned, are kept, since no record can be encoded.
+    into `rawdata`, and the transformations that the image holds, read
+    or assigned, are kept, since no record can be encoded.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".ims",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("imaris", "ims")
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels of the level, slowest axis first, or `None` without data.
 
-    After a read, `raw` is a lazy array of shape
+    After a read, `rawdata` is a lazy array of shape
     `(channels, time points, z, y, x)`, which reads the voxels when it is
-    read. Assigning `data` leaves `raw` as it is, and [`consolidate`][]
-    stores the assigned array here, with its axes reversed.
+    read. Assigning `data` leaves `rawdata` as it is, and
+    [`consolidate`][] stores the assigned array here, with its axes
+    reversed.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
     array stored here is pending until [`consolidate`][] moves it into
-    `raw`.
+    `rawdata`.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -145,17 +146,17 @@ class ImarisImage(ImageFormat, SingleScaleImage, Hdf5Reader):
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The voxels, indexed `(x, y, z, t, c)`, assigned or decoded from
-        `raw`.
+        `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
-        pending until [`consolidate`][] moves it into `raw`. Otherwise the
-        data is decoded from `raw` on first access and cached. Data
+        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+        data is decoded from `rawdata` on first access and cached. Data
         decoded from a file is read-only. To change the voxels, assign
-        `data`. Assigning `None` decodes `raw` again.
+        `data`. Assigning `None` decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -179,26 +180,26 @@ class ImarisImage(ImageFormat, SingleScaleImage, Hdf5Reader):
         """The shape of the data, read without reading the voxels.
 
         The shape is that of the assigned data, or else the reverse of the
-        shape of `raw`: the data reverse the axes of `raw`, and the lazy
-        array knows its shape from the record. An image without data
-        raises as [`SingleScaleImage`][] does.
+        shape of `rawdata`: the data reverse the axes of `rawdata`, and
+        the lazy array knows its shape from the record. An image without
+        data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in reversed(self.raw.shape))
+        return tuple(int(d) for d in reversed(self.rawdata.shape))
 
     def consolidate(self, *, inplace: bool = False) -> "ImarisImage":
-        """Move the pending data into `raw`.
+        """Move the pending data into `rawdata`.
 
         Imaris files cannot be written by brainhops, so no record can be
         encoded, and consolidating an Imaris image is limited to its data:
-        an assigned array becomes `raw`, with its axes reversed, and is no
+        an assigned array becomes `rawdata`, with its axes reversed, and is no
         longer pending. The metadata is kept, and so are the
         transformations that the image holds, read or assigned. An image
-        without pending data is left as it is: the copy shares `raw` and
-        the metadata.
+        without pending data is left as it is: the copy shares `rawdata`
+        and the metadata.
 
         Parameters
         ----------
@@ -223,8 +224,8 @@ class ImarisImage(ImageFormat, SingleScaleImage, Hdf5Reader):
             return self if inplace else replace(self, transformations=held)
         raw = _image_to_disk(self._data)
         if not inplace:
-            return replace(self, data=None, raw=raw, transformations=held)
-        self.raw = raw
+            return replace(self, data=None, rawdata=raw, transformations=held)
+        self.rawdata = raw
         self.data = None
         return self
 
@@ -458,7 +459,7 @@ def _read_level(
     """Read the record of an open file and build the image of one level."""
     record = ImarisRaw.from_h5(h5file)
     return cls(
-        raw=read_imaris_level(source, record, int(level)),
+        rawdata=read_imaris_level(source, record, int(level)),
         metadata=ImarisMetadata.from_raw(record),
         level=int(level),
     )

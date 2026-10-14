@@ -82,14 +82,14 @@ class AfniBrikWarp(
 
     The warp holds the header of its dataset as [`AfniMetadata`][], whose
     record is an [`AfniRaw`][], and the sub-bricks as the BRIK stores
-    them in `raw`, as an AFNI image does. When the warp is read from a
-    file, `raw` is a lazy array that reads the BRIK only when the values
-    are needed, and the chain is decoded from `raw` and from the cardinal
-    grid of the record on first access. Sub-bricks and chains that are
-    assigned are pending until [`consolidate`][] encodes them into a copy,
-    or until the warp is written, which writes such a copy and leaves the
-    warp as it was. The record of the metadata is the base of the header
-    that is written, as for an
+    them in `rawdata`, as an AFNI image does. When the warp is read from
+    a file, `rawdata` is a lazy array that reads the BRIK only when the
+    values are needed, and the chain is decoded from `rawdata` and from
+    the cardinal grid of the record on first access. Sub-bricks and
+    chains that are assigned are pending until [`consolidate`][] encodes
+    them into a copy, or until the warp is written, which writes such a
+    copy and leaves the warp as it was. The record of the metadata is
+    the base of the header that is written, as for an
     [`AfniImage`][brainhops.io.images.afni.AfniImage], so its attributes,
     such as `HISTORY_NOTE`, are kept.
 
@@ -110,12 +110,12 @@ class AfniBrikWarp(
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition outside the field of view."""
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The sub-bricks as the BRIK stores them, or `None` without data.
 
-    After a read, `raw` is a lazy array of the BRIK, which applies the
-    scale factors of the header when it is read. `raw` describes the
-    dataset as it was read, or as the warp was last consolidated, so
+    After a read, `rawdata` is a lazy array of the BRIK, which applies
+    the scale factors of the header when it is read. `rawdata` describes
+    the dataset as it was read, or as the warp was last consolidated, so
     assigning `data` leaves it as it is.
     """
 
@@ -125,7 +125,7 @@ class AfniBrikWarp(
     """The sub-bricks given to the warp, or `None` to decode them.
 
     Sub-bricks stored here are pending until [`consolidate`][] or a write
-    encodes them into `raw`.
+    encodes them into `rawdata`.
     """
 
     metadata = smartproperty("metadata", invalidates="transformations")
@@ -141,13 +141,13 @@ class AfniBrikWarp(
 
         Sub-bricks that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw`, scaled, and are read-only. The first
+        they are decoded from `rawdata`, scaled, and are read-only. The first
         three are the `x`, `y` and `z` displacements. Assigning the data
         drops the chain decoded from the previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _warp_to_model(self.raw)
+        return _warp_to_model(self.rawdata)
 
     # --- reading ------------------------------------------------------
 
@@ -285,7 +285,7 @@ class AfniBrikWarp(
         """
         _no_options(kwargs)
         raw, proxy = read_afni(filename, mmap=mmap)
-        return cls(raw=proxy, metadata=AfniMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=AfniMetadata.from_raw(raw))
 
     @classmethod
     def from_fileobj(
@@ -320,7 +320,7 @@ class AfniBrikWarp(
             If the stream has no file name.
         """
         image = AfniImage.from_fileobj(file, mmap=mmap, **kwargs)
-        return cls(raw=image.raw, metadata=image.metadata)
+        return cls(rawdata=image.rawdata, metadata=image.metadata)
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> "AfniBrikWarp":
@@ -416,7 +416,7 @@ class AfniBrikWarp(
             cardinal grid.
         """
         xform = self.consolidate()
-        return AfniImage(raw=xform.raw, metadata=xform.metadata)
+        return AfniImage(rawdata=xform.rawdata, metadata=xform.metadata)
 
     # --- writing ------------------------------------------------------
 
@@ -428,7 +428,7 @@ class AfniBrikWarp(
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
     ) -> "AfniBrikWarp":
-        """Encode the pending sub-bricks or chain into `raw` and a record.
+        """Encode the pending sub-bricks or chain into `rawdata` and a record.
 
         The warp is encoded as an
         [`AfniImage`][brainhops.io.images.afni.AfniImage] is, by
@@ -443,7 +443,7 @@ class AfniBrikWarp(
         another number of sub-bricks. When this encoding gives the record
         of the metadata, the metadata is kept. A warp that has a record
         and nothing pending, consolidated without options, is left as it
-        is: the copy shares `raw` and the metadata.
+        is: the copy shares `rawdata` and the metadata.
 
         Parameters
         ----------
@@ -497,14 +497,14 @@ class AfniBrikWarp(
         if not inplace:
             return replace(
                 self,
-                raw=image.raw,
+                rawdata=image.rawdata,
                 metadata=metadata,
                 data=None,
                 transformations=None,
                 input=None,
                 output=None,
             )
-        self.raw = image.raw
+        self.rawdata = image.rawdata
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -526,12 +526,13 @@ class AfniBrikWarp(
         or `.bz2` suffix compresses it, or the bare dataset. The warp is
         consolidated into a copy with the options, as by
         [`consolidate`][], whose view defaults to the view in the file
-        name, and the header and `raw` of the copy are written. The warp
-        itself is not changed. As AFNI does, a sibling BRIK with another
-        suffix is removed. Each local file is replaced at once. When the
-        lazy array of the warp reads a BRIK that is written or removed,
-        the warp is consolidated in place instead, so that it holds what
-        the dataset holds (#426), and its lazy array reads the new BRIK.
+        name, and the header and `rawdata` of the copy are written. The
+        warp itself is not changed. As AFNI does, a sibling BRIK with
+        another suffix is removed. Each local file is replaced at once.
+        When the lazy array of the warp reads a BRIK that is written or
+        removed, the warp is consolidated in place instead, so that it
+        holds what the dataset holds (#426), and its lazy array reads
+        the new BRIK.
 
         Parameters
         ----------
@@ -560,20 +561,20 @@ class AfniBrikWarp(
         head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
-        reading = reads_brik(self.raw, brik) or any(
-            reads_brik(self.raw, sibling) for sibling, _ in stale
+        reading = reads_brik(self.rawdata, brik) or any(
+            reads_brik(self.rawdata, sibling) for sibling, _ in stale
         )
         if reading:
-            mmap = self.raw.mmap
+            mmap = self.rawdata.mmap
             xform = self.consolidate(inplace=True, **options)
         else:
             xform = self.consolidate(**options)
-        if xform.raw is None:
+        if xform.rawdata is None:
             raise WriterError(
                 "This warp has no values, so there is nothing to write."
             )
         record = xform.metadata.raw
-        write_brik(record, xform.raw, brik)
+        write_brik(record, xform.rawdata, brik)
         write_file(head, record.to_bytes())
         for _, local in stale:
             os.remove(local)
@@ -581,7 +582,7 @@ class AfniBrikWarp(
             # The warp holds what the dataset holds, and its lazy array reads
             # the new BRIK, since the lazy array of the old BRIK describes how
             # that BRIK stored the values.
-            self.raw = brik_proxy(record, brik, mmap)
+            self.rawdata = brik_proxy(record, brik, mmap)
             self.data = None
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
@@ -821,12 +822,14 @@ def _warp_image(xform: AfniBrikWarp, what: str) -> AfniImage:
         If the chain does not map RAS to RAS, or its grid is oblique.
     """
     if xform._transformations is None:
-        if xform._data is None and xform.raw is None:
+        if xform._data is None and xform.rawdata is None:
             raise WriterError(
                 "This warp has no values, so there is nothing to write."
             )
         data = None if xform._data is None else _warp_to_disk(xform._data)
-        return AfniImage(data=data, raw=xform.raw, metadata=xform.metadata)
+        return AfniImage(
+            data=data, rawdata=xform.rawdata, metadata=xform.metadata
+        )
     vox2dicom, vectors = _dicom_field(xform.transformations, what)
     record = _record(xform)
     world = afni_world(record.view if record is not None else "orig")

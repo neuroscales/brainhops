@@ -130,14 +130,14 @@ class MrtrixWarp(
     A warp holds the header of its file as
     [`MrtrixMetadata`][brainhops.io.common.mrtrix.MrtrixMetadata], whose
     record is an [`MrtrixRaw`][brainhops.io.common.mrtrix.MrtrixRaw], and
-    the values of the file in `raw`. When the warp is read from a file,
-    `raw` is a lazy array that reads the values only when they are
-    needed, as for an MRtrix image: an uncompressed local file is
+    the values of the file in `rawdata`. When the warp is read from a
+    file, `rawdata` is a lazy array that reads the values only when they
+    are needed, as for an MRtrix image: an uncompressed local file is
     memory-mapped. Each concrete format decodes its `data`, and the chain
-    of the data model, from `raw` and from the record, and caches what it
+    of the data model, from `rawdata` and from the record, and caches what it
     decodes.
 
-    `raw` and the record describe the file as it was read, or as the warp
+    `rawdata` and the record describe the file as it was read, or as the warp
     was last consolidated. Values and chains that are assigned are pending
     until [`consolidate`][] encodes them into a copy, or until the warp is
     written, which writes such a copy and leaves the warp as it was. The
@@ -158,12 +158,12 @@ class MrtrixWarp(
     HINTS = ("field",)
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The values of the file as it stores them, or `None` without values.
 
-    After a read, `raw` is a lazy array, which presents the values in the
+    After a read, `rawdata` is a lazy array, which presents the values in the
     axis order of the header and applies its intensity scaling when it is
-    read. `raw` describes the file as it was read, or as the warp was last
+    read. `rawdata` describes the file as it was read, or as the warp was last
     consolidated, so assigning `data` leaves it as it is.
     """
 
@@ -279,7 +279,7 @@ class MrtrixWarp(
         """
         _no_options(kwargs)
         raw, proxy = read_mrtrix(filename, mmap=mmap)
-        return cls(raw=proxy, metadata=MrtrixMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
     @classmethod
     def from_fileobj(
@@ -317,12 +317,12 @@ class MrtrixWarp(
         """
         _no_options(kwargs)
         raw, proxy = read_mrtrix(file, mmap=False)
-        return cls(raw=proxy, metadata=MrtrixMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
     # --- writing ------------------------------------------------------
 
     def consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
-        """Encode the pending state into `raw` and the record.
+        """Encode the pending state into `rawdata` and the record.
 
         Each concrete format implements this method, on which the writers
         rely.
@@ -354,7 +354,7 @@ class MrtrixWarp(
 
         The warp is consolidated into a copy with the keyword arguments, as
         by [`consolidate`][], and the header of the copy, padded up to the
-        first value, is written with its `raw`. A lazy array that reaches
+        first value, is written with its `rawdata`. A lazy array that reaches
         the writer unchanged is written as the file stores it. The warp
         itself is not changed.
 
@@ -374,7 +374,7 @@ class MrtrixWarp(
             If an unknown option is given.
         """
         xform = self.consolidate(**writer_options(kwargs))
-        return mrtrix_bytes(xform.metadata.raw, xform.raw)
+        return mrtrix_bytes(xform.metadata.raw, xform.rawdata)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write a single-file, uncompressed `.mif` file to a stream.
@@ -420,18 +420,18 @@ class MrtrixWarp(
             If an unknown option is given.
         """
         options = writer_options(kwargs)
-        reading = reads_from(self.raw, written_files(filename))
+        reading = reads_from(self.rawdata, written_files(filename))
         if reading:
-            mmap = self.raw.mmap
+            mmap = self.rawdata.mmap
             xform = self.consolidate(inplace=True, **options)
         else:
             xform = self.consolidate(**options)
-        write_mrtrix(filename, xform.metadata.raw, xform.raw)
+        write_mrtrix(filename, xform.metadata.raw, xform.rawdata)
         if reading:
             # The warp holds what the files hold, and its lazy array reads
             # the new files, since the lazy array of the old files describes
             # how they stored the values.
-            self.raw = read_mrtrix(filename, mmap=mmap)[1]
+            self.rawdata = read_mrtrix(filename, mmap=mmap)[1]
             self.data = None
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
@@ -495,7 +495,7 @@ class MrtrixCoordinatesField(
     """The coordinates given to the field, or `None` to decode them.
 
     Coordinates stored here are pending until [`consolidate`][] or a write
-    encodes them into `raw`.
+    encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -504,12 +504,12 @@ class MrtrixCoordinatesField(
 
         Coordinates that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw`, and are read-only. Assigning the data
+        they are decoded from `rawdata`, and are read-only. Assigning the data
         drops the chain decoded from the previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _warp_to_model(self.raw)
+        return _warp_to_model(self.rawdata)
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -591,7 +591,7 @@ class MrtrixCoordinatesField(
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
     ) -> tx.Self:
-        """Encode the pending coordinates or chain into `raw` and a record.
+        """Encode the pending coordinates or chain into `rawdata` and a record.
 
         A field whose chain was not assigned keeps its stored coordinates,
         assigned or read, under the geometry of its record. A field whose
@@ -613,7 +613,7 @@ class MrtrixCoordinatesField(
         RAS, which is what the file stores. A field that has a record
         storing its values as they are stored, and nothing pending,
         consolidated without options, is left as it is: the copy shares
-        `raw` and the metadata.
+        `rawdata` and the metadata.
 
         Parameters
         ----------
@@ -661,7 +661,7 @@ class MrtrixCoordinatesField(
             and all(value is None for value in options.values())
             and self.metadata is not None
             and self.metadata.raw is not None
-            and stores_as_recorded(self.raw, self.metadata.raw)
+            and stores_as_recorded(self.rawdata, self.metadata.raw)
         ):
             return self if inplace else replace(self)
         if self._transformations is None:
@@ -675,14 +675,14 @@ class MrtrixCoordinatesField(
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
                 input=None,
                 output=None,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -735,7 +735,7 @@ class MrtrixDisplacementField(
     """The displacements given to the field, or `None` to decode them.
 
     Displacements stored here are pending until [`consolidate`][] or a
-    write encodes them into `raw`.
+    write encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -744,12 +744,12 @@ class MrtrixDisplacementField(
 
         Displacements that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw`, and are read-only. Assigning the data
+        they are decoded from `rawdata`, and are read-only. Assigning the data
         drops the chain decoded from the previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _warp_to_model(self.raw)
+        return _warp_to_model(self.rawdata)
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -837,7 +837,7 @@ class MrtrixDisplacementField(
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
     ) -> tx.Self:
-        """Encode the pending displacements or chain into `raw` and a record.
+        """Encode pending displacements or a chain into `rawdata` and a record.
 
         The encoding is that of [`MrtrixCoordinatesField.consolidate`][],
         with RAS displacements in place of RAS coordinates, and with
@@ -891,7 +891,7 @@ class MrtrixDisplacementField(
             and all(value is None for value in options.values())
             and self.metadata is not None
             and self.metadata.raw is not None
-            and stores_as_recorded(self.raw, self.metadata.raw)
+            and stores_as_recorded(self.rawdata, self.metadata.raw)
         ):
             return self if inplace else replace(self)
         if self._transformations is None:
@@ -910,14 +910,14 @@ class MrtrixDisplacementField(
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
                 input=None,
                 output=None,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -1004,7 +1004,7 @@ class MrtrixWarpFull(
     """The warps given to the object, or `None` to decode them.
 
     Warps stored here are pending until [`consolidate`][] or a write
-    encodes them into `raw`.
+    encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -1013,12 +1013,12 @@ class MrtrixWarpFull(
 
         Warps that are assigned are returned as they are, and stay pending
         until [`consolidate`][] or a write encodes them. Otherwise they are
-        decoded from `raw`, and are read-only. Assigning the data drops the
+        decoded from `rawdata`, and are read-only. Assigning the data drops the
         chain decoded from the previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _warp_to_model(self.raw)
+        return _warp_to_model(self.rawdata)
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -1074,7 +1074,9 @@ class MrtrixWarpFull(
         """
         options = _warpfull_options(kwargs)
         raw, proxy = read_mrtrix(filename, mmap=mmap)
-        return cls(raw=proxy, metadata=MrtrixMetadata.from_raw(raw), **options)
+        return cls(
+            rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw), **options
+        )
 
     @classmethod
     def from_fileobj(
@@ -1105,7 +1107,9 @@ class MrtrixWarpFull(
         """
         options = _warpfull_options(kwargs)
         raw, proxy = read_mrtrix(file, mmap=False)
-        return cls(raw=proxy, metadata=MrtrixMetadata.from_raw(raw), **options)
+        return cls(
+            rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw), **options
+        )
 
     @classmethod
     def from_warps(
@@ -1170,7 +1174,7 @@ class MrtrixWarpFull(
         grid = np.asarray(vox2ras, dtype=np.float64)
         record, raw = _encoded(None, warps, grid, options)
         return cls(
-            raw=raw,
+            rawdata=raw,
             metadata=MrtrixMetadata.from_raw(record),
             from_image=from_image,
             midway=midway,
@@ -1254,7 +1258,7 @@ class MrtrixWarpFull(
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
     ) -> "MrtrixWarpFull":
-        """Encode the pending warps into `raw` and a record.
+        """Encode the pending warps into `rawdata` and a record.
 
         The warps, assigned or read, are stored under the geometry of the
         record, whose linear transforms and other keys are kept, and
@@ -1316,7 +1320,7 @@ class MrtrixWarpFull(
             and all(value is None for value in options.values())
             and self.metadata is not None
             and self.metadata.raw is not None
-            and stores_as_recorded(self.raw, self.metadata.raw)
+            and stores_as_recorded(self.rawdata, self.metadata.raw)
         ):
             return self if inplace else replace(self)
         source = _stored(self)
@@ -1329,8 +1333,8 @@ class MrtrixWarpFull(
         record, raw = _encoded(_record(self), source, _vox2ras(self), options)
         metadata = _consolidated_metadata(self, record)
         if not inplace:
-            return replace(self, raw=raw, metadata=metadata, data=None)
-        self.raw = raw
+            return replace(self, rawdata=raw, metadata=metadata, data=None)
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         return self
@@ -1663,7 +1667,7 @@ def _linear(xform: MrtrixWarpFull, key: str) -> _xforms.Affine:
 def _read_only(array: tx.Any) -> tx.Any:
     """Make a NumPy array that a view decodes read-only, and return it.
 
-    The writer writes `raw` and the record, so an edit in place of a
+    The writer writes `rawdata` and the record, so an edit in place of a
     decoded array would be lost. Any other array is returned as it is.
     """
     if isinstance(array, np.ndarray):
@@ -1710,11 +1714,11 @@ def _stored(xform: MrtrixWarp) -> ArrayProtocol:
     """
     if xform._data is not None:
         return _warp_to_disk(xform._data)
-    if xform.raw is None:
+    if xform.rawdata is None:
         raise WriterError(
             "This warp has no values, so there is nothing to write."
         )
-    return xform.raw
+    return xform.rawdata
 
 
 def _coordinates_parts(

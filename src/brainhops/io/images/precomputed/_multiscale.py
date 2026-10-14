@@ -39,14 +39,14 @@ class PrecomputedMultiScaleImage(
     own, as a TIFF pyramid. A scale that Neuroglancer hides is read too.
 
     The pyramid holds the `info` file as [`PrecomputedMetadata`][], which
-    its levels share, and it has no `raw` of its own: each level holds the
+    its levels share, and it has no `rawdata` of its own: each level holds the
     lazy array of its scale. A volume of a single scale is read as a
     [`PrecomputedImage`][] by [`load`][brainhops.io.images.load], unless
     this class is asked for.
 
     Precomputed volumes are not written, so the class has no writer.
     [`consolidate`][] only moves the pending data of each level into its
-    `raw`.
+    `rawdata`.
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("precomputed", "neuroglancer")
@@ -60,14 +60,14 @@ class PrecomputedMultiScaleImage(
     def consolidate(
         self, *, inplace: bool = False
     ) -> "PrecomputedMultiScaleImage":
-        """Move the pending data of each level into its `raw`.
+        """Move the pending data of each level into its `rawdata`.
 
         Precomputed volumes are not written, so no record can be encoded.
         Each level that is a [`PrecomputedImage`][] is consolidated, which
-        moves its assigned data into its `raw`, and the other levels are
-        kept as they are. The metadata and the transformations are kept.
-        A level without pending data is consolidated into a copy that
-        shares its `raw` and its metadata.
+        moves its assigned data into its `rawdata`, and the other levels
+        are kept as they are. The metadata and the transformations are
+        kept. A level without pending data is consolidated into a copy
+        that shares its `rawdata` and its metadata.
 
         Parameters
         ----------

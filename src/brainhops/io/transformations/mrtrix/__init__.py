@@ -31,16 +31,17 @@ MRtrix image, which are described in [`brainhops.io.common.mrtrix`][],
 and they need no dependency beyond NumPy.
 
 Each warp holds the header of its file as [`MrtrixMetadata`][], whose
-record is an [`MrtrixRaw`][], and the values of the file in `raw`, which
-is read lazily. A linear transform is short and is read in one pass, so
-its whole file, matrix included, is held as an [`MrtrixLinearRaw`][]
-record by its [`MrtrixLinearMetadata`][]. The record and `raw` describe
-the file as it was read. Values, chains and matrices that are assigned
-are pending until `consolidate()` encodes them into a copy, or until the
-object is written, which writes such a copy and leaves the object as it
-was. An object that is read and written again without changes keeps the
-bytes of its file, and the free-form keys of its header, such as
-`command_history`, are kept when it is changed.
+record is an [`MrtrixRaw`][], and the values of the file in `rawdata`,
+which is read lazily. A linear transform is short and is read in one
+pass, so its whole file, matrix included, is held as an
+[`MrtrixLinearRaw`][] record by its [`MrtrixLinearMetadata`][]. The
+record and `rawdata` describe the file as it was read. Values, chains
+and matrices that are assigned are pending until `consolidate()` encodes
+them into a copy, or until the object is written, which writes such a
+copy and leaves the object as it was. An object that is read and written
+again without changes keeps the bytes of its file, and the free-form
+keys of its header, such as `command_history`, are kept when it is
+changed.
 
 ```python
 import brainhops.io as io

@@ -60,7 +60,7 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
     The image holds the XML file as [`BdvMetadata`][], whose record, a
     [`BdvRaw`][], also holds the resolution levels that the HDF5 file
-    describes. The voxels are in `raw`, a lazy array that reads them only
+    describes. The voxels are in `rawdata`, a lazy array that reads them only
     when `data` is first needed, in the order z, y, x of the file. The
     data reverse it into the order x, y, z of ImgLib2.
 
@@ -83,7 +83,7 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     [`save`][brainhops.io.save] refuses to write it as a BigDataViewer
     dataset. The registration of a view is written by
     [`BdvViewRegistration`][brainhops.io.transformations.bdv.BdvViewRegistration].
-    Assigned data is pending until [`consolidate`][] moves it into `raw`,
+    Assigned data is pending until [`consolidate`][] moves it into `rawdata`,
     and the transformations that the image holds, read or assigned, are
     kept, since no record is encoded.
     """
@@ -91,22 +91,23 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("bdv", "bigdataviewer")
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xml",)
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels in the order of the file, or `None` without data.
 
-    After a read, `raw` is a lazy array, which reads the voxels when it is
-    read. Assigning `data` leaves `raw` as it is, and [`consolidate`][]
-    stores the assigned array here, with its axes reversed.
+    After a read, `rawdata` is a lazy array, which reads the voxels when it is
+    read. Assigning `data` leaves `rawdata` as it is, and
+    [`consolidate`][] stores the assigned array here, with its axes
+    reversed.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
     array stored here is pending until [`consolidate`][] moves it into
-    `raw`.
+    `rawdata`.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -156,17 +157,17 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The voxels in the order x, y, z, assigned or decoded from `raw`.
+        """The voxels in the order x, y, z, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
-        pending until [`consolidate`][] moves it into `raw`. Otherwise the
-        data is decoded from `raw` on first access and cached. Data
+        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+        data is decoded from `rawdata` on first access and cached. Data
         decoded from a file is read-only. To change the voxels, assign
-        `data`. Assigning `None` decodes `raw` again.
+        `data`. Assigning `None` decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -189,24 +190,25 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         """The shape of the data, read without reading the voxels.
 
         The shape is that of the assigned data, or else the reverse of the
-        shape of `raw`, which the lazy array knows from the HDF5 file. An
+        shape of `rawdata`, which the lazy array knows from the HDF5 file. An
         image without data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in reversed(self.raw.shape))
+        return tuple(int(d) for d in reversed(self.rawdata.shape))
 
     def consolidate(self, *, inplace: bool = False) -> "BdvImage":
-        """Move the pending data into `raw`.
+        """Move the pending data into `rawdata`.
 
         A BigDataViewer image cannot be written, so no record can be
         encoded, and consolidating it is limited to its data: an assigned
-        array becomes `raw`, with its axes reversed, and is no longer
-        pending. The metadata is kept, and so are the transformations that
-        the image holds, read or assigned. An image without pending data
-        is left as it is: the copy shares `raw` and the metadata.
+        array becomes `rawdata`, with its axes reversed, and is no
+        longer pending. The metadata is kept, and so are the
+        transformations that the image holds, read or assigned. An image
+        without pending data is left as it is: the copy shares `rawdata`
+        and the metadata.
 
         Parameters
         ----------
@@ -231,8 +233,8 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             return self if inplace else replace(self, transformations=held)
         raw = _image_to_disk(self._data)
         if not inplace:
-            return replace(self, data=None, raw=raw, transformations=held)
-        self.raw = raw
+            return replace(self, data=None, rawdata=raw, transformations=held)
+        self.rawdata = raw
         self.data = None
         return self
 
@@ -400,7 +402,7 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
                 f"{len(levels)} level(s), so it has no level {level}."
             )
         return cls(
-            raw=levels[level],
+            rawdata=levels[level],
             metadata=BdvMetadata.from_raw(raw),
             setup=setup,
             timepoint=timepoint,

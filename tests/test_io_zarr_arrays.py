@@ -208,7 +208,7 @@ def test_a_save_over_its_own_store_reads_the_new_store(tmp_path: Path) -> None:
     image = ZarrImage.load(path)
     image.data = DATA * 2
     image.save(path, chunks=(4, 4, 4))
-    assert isinstance(image.raw, _ZarrProxy)
+    assert isinstance(image.rawdata, _ZarrProxy)
     assert image._data is None
     assert image.metadata.raw.chunks == (4, 4, 4)
     assert image.metadata.raw == ZarrImage.load(path).metadata.raw
