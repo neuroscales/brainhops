@@ -17,7 +17,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     Scaling,
@@ -270,7 +270,7 @@ def _nrrd_to_transformations(header: NrrdRaw) -> tx.List[Transformation]:
     cell-centred axis, the default, spans `size` samples edge to edge.
     """
     perm, axes = _layout(header)
-    voxel = CoordinateSystem(name="voxel", axes=axes, order="F")
+    voxel = ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
     roles = [_role(a) for a in axes]
     nspace = roles.count("space")
     dirs = header.space_directions
@@ -489,7 +489,7 @@ class NrrdImage(
         if self.metadata is None or self.metadata.raw is None:
             return None
         _, axes = _layout(self.metadata.raw)
-        return CoordinateSystem(name="voxel", axes=axes, order="F")
+        return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
     # --- reading ------------------------------------------------------
 

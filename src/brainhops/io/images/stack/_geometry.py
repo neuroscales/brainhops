@@ -9,6 +9,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.images.base import _utils_raster as raster
@@ -91,7 +92,7 @@ def encoded_geometry(
         return None, None, None
     try:
         matrix = np.asarray(xform.to(Affine).matrix, dtype=float)
-        output = list(xform.output.axes)
+        output = list(get_axes(xform.output))
     except Exception:  # noqa: BLE001
         return None, None, None
     if matrix.shape != (ndim, ndim + 1) or len(output) != ndim:

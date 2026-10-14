@@ -12,7 +12,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops.datamodel.axes import Axis
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.units import SpaceUnit, Unit, is_physicalunit
 
 # this format
@@ -34,7 +34,7 @@ GLOBAL = "global"
 def voxel_system() -> CoordinateSystem:
     """Return the voxel system of a view, with axes x, y and z."""
     axes = [Axis(name, "space", unit="index") for name in _AXES]
-    return CoordinateSystem(name=VOXEL, axes=axes, order="F")
+    return ArrayCoordinateSystem(name=VOXEL, axes=axes, order="F")
 
 
 def global_system() -> CoordinateSystem:

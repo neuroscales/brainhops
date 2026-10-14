@@ -4,7 +4,6 @@ from bagof.magic import Factory, Inherit
 
 from ..axes import AxisTuple
 from .base import AXIS, CoordinateSystem
-from .decorators import Axes
 from .dispatch import _is2d, _is3d
 
 _2Axes: tx.TypeAlias = AxisTuple[AXIS, AXIS]
@@ -22,7 +21,7 @@ class CoordinateSystem2D(CoordinateSystem, on={"axes": _is2d}):
         The name of the system, if any.
     """
 
-    axes: Inherit[Axes[_2Axes]] = Factory()
+    axes: Inherit[_2Axes] = Factory()
 
 
 class CoordinateSystem3D(CoordinateSystem, on={"axes": _is3d}):
@@ -36,4 +35,4 @@ class CoordinateSystem3D(CoordinateSystem, on={"axes": _is3d}):
         The name of the system, if any.
     """
 
-    axes: Inherit[Axes[_3Axes]] = Factory()
+    axes: Inherit[_3Axes] = Factory()

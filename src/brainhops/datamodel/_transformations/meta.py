@@ -332,7 +332,7 @@ def _subsystem(
         return full
     if index is None or system is None:
         return system
-    if list(system.axes) == [...]:
+    if list(get_axes(system)) == [...]:
         return system
     embedded = system.embed([int(i) for i in index])
     name = f"subspace({system.name})" if system.name else None

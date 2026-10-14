@@ -35,9 +35,13 @@ axes. The field holds `"C"`, `"F"`, or `None` when the order is unspecified:
 | `"C"`, oriented S, A, R (a C-ordered    | `CRASCoordinateSystem`         |
 | grid lists its axes z, y, x)            |                                |
 
-Every class accepts `order` and passes it on, so `CoordinateSystem(axes=<RAS
-axes>, order="F")` builds an `FRASCoordinateSystem`. Only array systems have an
-order, so `RASmm(order="F")` raises a ValueError.
+The `order` field belongs to array systems. Calling
+`ArrayCoordinateSystem(axes=<RAS axes>, order="F")` builds an
+`FRASCoordinateSystem`. Generic and physical systems have no memory
+order, so `CoordinateSystem(order="F")` and `RASmm(order="F")` raise
+a TypeError. If the axes already select an array subclass, dispatch can
+still forward `order` to that subclass. Memory order alone does not select
+an array from a generic system.
 
 Every row of these tables states something about all the axes of a system, so
 only closed systems are dispatched. An open system is a system whose

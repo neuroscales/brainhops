@@ -9,9 +9,9 @@ __all__ = [
 import typing_extensions as tx
 from bagof.magic import HideIfDefault, NotKwOnly, replace
 
+from .._sugar import get_axes
 from ..axes import Axis, AxisList, AxisSequence, AxisTuple
 from ..base import DataModelBase
-from .decorators import Axes, bind_axes_default
 
 if tx.TYPE_CHECKING:
     from types import EllipsisType as _Ellipsis
@@ -27,9 +27,11 @@ _EllipsisOr: tx.TypeAlias = tx.Union[AXIS, _Ellipsis]
 _VariadicAxes: tx.TypeAlias = AxisList[_EllipsisOr[AXIS]]
 
 
-@bind_axes_default
 class CoordinateSystem(
-    DataModelBase, polymorphic=True, eq=True, repr=HideIfDefault
+    DataModelBase,
+    polymorphic=True,
+    eq=True,
+    repr=HideIfDefault,
 ):
     """
     A coordinate system, which gives coordinates in a space their meaning.
@@ -47,9 +49,9 @@ class CoordinateSystem(
         * `[..., TimeAxis()]` says that the last axis is time, and
           nothing is known about the others.
         * `[Axis(name="x"), ...]` says that the first axis is x.
-        * `[...]`, the default, says nothing about the axes. `axes=None`
-          is read as if the axes were not given, so
-          `CoordinateSystem(axes=None) == CoordinateSystem()`.
+        * `axes=None`, the default, leaves the axes unspecified. The
+          stored value stays `None`; operations read it as `[...]`
+          through [`get_axes`][brainhops.datamodel._sugar.get_axes].
 
         Fixed-arity classes such as [`CoordinateSystem3D`][] are always
         finite. They store their axes as an immutable [`AxisTuple`][],
@@ -78,43 +80,23 @@ class CoordinateSystem(
         The name of the system, if any.
     """
 
-    axes: NotKwOnly[Axes[_VariadicAxes]] = [...]
+    axes: NotKwOnly[tx.Optional[_VariadicAxes]] = None
     """
     The axes, in order.
-    `None` is automatically converted to `[...]`, which says nothing
-    about the axes.
+    `None` is kept as given. Operations use [`get_axes`][] to read it
+    as `[...]`, which says nothing about the axes.
     """
 
     name: tx.Optional[str] = None
     """The name of the system, if any."""
 
-    order: tx.Optional[tx.Literal["C", "F"]] = None
-    """The memory order, which is only valid for an array system."""
-
-    # --- construction -------------------------------------------------
-
-    def __init_subclass__(cls, **kwargs) -> None:
-        super().__init_subclass__(**kwargs)
-        bind_axes_default(cls)
-
     # --- validation ---------------------------------------------------
 
     def __post_init__(self) -> None:
-        if self.axes is None:
-            self.axes = [...]
-        if sum(a is ... for a in self.axes) > 1:
+        if sum(a is ... for a in get_axes(self)) > 1:
             raise ValueError(
                 "The axes of a coordinate system hold at most one `...`, "
                 "which stands for all the axes about which nothing is known."
-            )
-        from .array import ArrayCoordinateSystem
-
-        if self.order is not None and not isinstance(
-            self, ArrayCoordinateSystem
-        ):
-            raise ValueError(
-                f"A {type(self).__name__} indexes no array, so it has no "
-                f"memory order: order={self.order!r}."
             )
 
     # --- properties ---------------------------------------------------
@@ -133,7 +115,7 @@ class CoordinateSystem(
             True
             ```
         """
-        return self.axes.ndim
+        return get_axes(self).ndim
 
     # --- operations ---------------------------------------------------
 
@@ -173,10 +155,11 @@ class CoordinateSystem(
         TypeError
             If `ndim` is not an integer.
         """
-        expanded = self.axes.expand(ndim)
-        if not self.axes.is_variadic:
+        axes = get_axes(self)
+        expanded = axes.expand(ndim)
+        if not axes.is_variadic:
             return self
-        return replace(self, axes=expanded)
+        return replace(self, axes=list(expanded))
 
     def restrict(
         self, refs: tx.Iterable[tx.Union[int, str]]
@@ -214,7 +197,7 @@ class CoordinateSystem(
         ValueError, IndexError, TypeError
             As raised by [`AxisSequence.restrict`][].
         """
-        return CoordinateSystem(axes=self.axes.restrict(refs))
+        return CoordinateSystem(axes=get_axes(self).restrict(refs))
 
     def embed(
         self,
@@ -256,7 +239,9 @@ class CoordinateSystem(
         ValueError, TypeError
             As raised by [`AxisSequence.embed`][].
         """
-        return CoordinateSystem(axes=self.axes.embed(positions, ndim=ndim))
+        return CoordinateSystem(
+            axes=get_axes(self).embed(positions, ndim=ndim)
+        )
 
     def compatible_with(self, other: tx.Optional["CoordinateSystem"]) -> bool:
         """Return whether two systems could describe the same space.
@@ -290,5 +275,4 @@ class CoordinateSystem(
                 f"A coordinate system is compatible only with another "
                 f"CoordinateSystem or None, not with {type(other).__name__}."
             )
-        other_axes = getattr(other, "axes", AxisList([...]))
-        return self.axes.compatible_with(other_axes)
+        return get_axes(self).compatible_with(get_axes(other))

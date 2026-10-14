@@ -12,6 +12,7 @@ from bagof.magic import Factory, KwOnly
 
 from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import systems as _systems
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.geometry import Geometry
 from brainhops.io.base.parsers import UnrepresentableTransformationError
 from brainhops.io.common._geometry import (
@@ -220,7 +221,7 @@ def _anatomical_mm(world: tx.Optional[_systems.CoordinateSystem]) -> bool:
     # millimetres, which `ras_conversion` turns into RAS.
     if not isinstance(world, _systems.MillimetricCoordinateSystem):
         return False
-    axes = list(world.axes)
+    axes = list(get_axes(world))
     if len(axes) != 3:
         return False
     for axis in axes:

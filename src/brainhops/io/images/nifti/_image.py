@@ -15,7 +15,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     Identity,
@@ -217,7 +217,7 @@ class NiftiImage(
             if axis.name is not None
         ]
         # In F order, the first axis changes fastest.
-        return CoordinateSystem(axes=axes, name="voxel", order="F")
+        return ArrayCoordinateSystem(axes=axes, name="voxel", order="F")
 
     # --- reading ------------------------------------------------------
 
@@ -707,7 +707,9 @@ def _nifti_to_transformations(
     zooms = [1.0 if j in untimed else z for j, z in enumerate(zooms)]
 
     # The axes count samples, in Fortran order as nibabel reads them.
-    voxel_space = CoordinateSystem(name="voxel", axes=named_axes, order="F")
+    voxel_space = ArrayCoordinateSystem(
+        name="voxel", axes=named_axes, order="F"
+    )
 
     # Axes that are neither space nor time, such as channels, have no unit
     # rather than inheriting the index unit.
