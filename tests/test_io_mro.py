@@ -137,7 +137,7 @@ def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noq
     nb.save(img, str(target))
 
     loaded = NiftiImage.from_file(target)
-    assert isinstance(loaded.raw, ArrayProxy), "the voxels were read"
+    assert isinstance(loaded.rawdata, ArrayProxy), "the voxels were read"
     assert loaded.shape == (3, 4, 5)
 
 
@@ -151,7 +151,7 @@ def test_loading_a_nifti_field_keeps_the_array_lazy(tmp_path) -> None:  # noqa: 
     field.save(target)
 
     loaded = NiftiRASCoordinatesField.from_file(target)
-    assert isinstance(loaded.raw, ArrayProxy), "the array was read"
+    assert isinstance(loaded.rawdata, ArrayProxy), "the array was read"
     assert loaded.data.shape == (3, 4, 5, 3)
 
 

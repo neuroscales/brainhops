@@ -167,7 +167,7 @@ def test_load_leaves_no_file_open(tmp_path, name) -> None:  # noqa: ANN001
         warnings.simplefilter("always", ResourceWarning)
         image = io.load(source)
         assert isinstance(image, MghImage)
-        assert nb.is_proxy(image.raw)
+        assert nb.is_proxy(image.rawdata)
         assert np.array_equal(np.asarray(image.data), data)
         del image
         gc.collect()
@@ -669,11 +669,11 @@ def test_conversion_does_not_carry_nibabel_objects(tmp_path) -> None:  # noqa: A
     assert np.array_equal(np.asarray(nii.data), _data())
     back = MghImage.from_instance(nii)
     assert back.metadata is None
-    assert not nb.is_proxy(back.raw)
+    assert not nb.is_proxy(back.rawdata)
     # Within one format, the record and the proxy are still shared.
     copy = MghImage.from_instance(mgh)
     assert copy.metadata is mgh.metadata
-    assert copy.raw is mgh.raw
+    assert copy.rawdata is mgh.rawdata
 
 
 class _Unseekable(_io.RawIOBase):
@@ -845,7 +845,8 @@ def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_decoded_data_is_read_only(tmp_path) -> None:  # noqa: ANN001
-    # An edit in place would not reach `raw`, which is what is written.
+    # An edit in place would not reach `rawdata`, which is what is
+    # written.
     image = MghImage.load(_write(tmp_path, "vol.mgh", _data()))
     with backend("numpy"):
         data = image.data
@@ -879,12 +880,12 @@ def test_metadata_reads_and_writes_the_record(tmp_path) -> None:  # noqa: ANN001
 def test_from_nibabel_keeps_the_header() -> None:
     nibabel_image = NibabelMgh(_data(), AFFINE)
     image = MghImage.from_nibabel(nibabel_image)
-    assert image.raw is nibabel_image.dataobj
+    assert image.rawdata is nibabel_image.dataobj
     assert image.metadata.raw.header == nibabel_image.header
     assert image.metadata.raw.header is not nibabel_image.header
     back = image.to_nibabel()
     assert np.allclose(back.affine, AFFINE, atol=1e-5)
-    assert MghImage.from_nibabel(nibabel_image.header).raw is None
+    assert MghImage.from_nibabel(nibabel_image.header).rawdata is None
 
 
 class _CountedReads:

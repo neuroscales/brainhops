@@ -456,7 +456,7 @@ def test_a_view_is_read_as_a_lazy_pyramid(dataset) -> None:  # noqa: ANN001
     assert pyramid.transformations == []
     assert [level.level for level in pyramid.images] == [0, 1]
     level = pyramid.images[1]
-    assert isinstance(level.raw, _BdvProxy)
+    assert isinstance(level.rawdata, _BdvProxy)
     assert level.shape == (4, 3, 4)
     assert "_cache_data" not in vars(level)
     voxels = _voxels()
@@ -558,7 +558,7 @@ def test_a_partition_is_read_through_its_external_link(tmp_path) -> None:  # noq
 def test_an_empty_selection_reads_nothing(dataset) -> None:  # noqa: ANN001
     image = BdvImage.load(dataset)
     os.remove(dataset.parent / "dataset.h5")
-    assert image.raw[0:0].shape == (0, 6, 8)
+    assert image.rawdata[0:0].shape == (0, 6, 8)
 
 
 def test_what_cannot_be_read_as_an_image_is_refused(tmp_path) -> None:  # noqa: ANN001

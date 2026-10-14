@@ -151,8 +151,8 @@ def test_a_compressed_file_is_actually_decompressed(tmp_path) -> None:  # noqa: 
     target = tmp_path / "field.nii.gz"
     nb.save(img, str(target))
     obj = NiftiRASCoordinatesField.from_file(target)
-    assert obj.raw is not None
-    assert np.asarray(obj.raw).sum() == pytest.approx(data.sum())
+    assert obj.rawdata is not None
+    assert np.asarray(obj.rawdata).sum() == pytest.approx(data.sum())
 
 
 # ----------------------------------------------------------------------

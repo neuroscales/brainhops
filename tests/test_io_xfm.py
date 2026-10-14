@@ -429,7 +429,7 @@ def test_a_grid_transform_displaces_the_nodes(
     chain = io.load(path)
     assert type(chain) is XfmTransform
     # The volume is read lazily.
-    assert "_cache_data" not in vars(chain.raw[0])
+    assert "_cache_data" not in vars(chain.rawdata[0])
     grid = chain[0]
     assert isinstance(grid, XfmGridTransform)
     # libminc's grid_transform_point maps x to x + d(x), with d in world
@@ -502,7 +502,7 @@ def test_a_new_displacement_field_is_refused(tmp_path: Path) -> None:
 def test_a_grid_read_from_bytes_has_no_volume(tmp_path: Path) -> None:
     path = _grid_file(tmp_path)
     chain = XfmTransform.from_bytes(path.read_bytes())
-    assert chain.raw == (None,)
+    assert chain.rawdata == (None,)
     with pytest.raises(ParserContentError, match="without its path"):
         _ = chain.transformations
     assert chain.to_bytes() == path.read_bytes()

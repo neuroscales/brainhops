@@ -198,7 +198,7 @@ def test_full_resolution_is_exact_f_ordered_and_read_only(
     # place, since the writer would not see the edit.
     assert data.flags.f_contiguous and not data.flags.c_contiguous
     assert not data.flags.writeable
-    assert isinstance(image.raw, _Jpeg2000Proxy)
+    assert isinstance(image.rawdata, _Jpeg2000Proxy)
 
 
 def test_data_stays_lazy_with_dask(tmp_path: Path) -> None:
@@ -207,7 +207,9 @@ def test_data_stays_lazy_with_dask(tmp_path: Path) -> None:
         image = load(_write(tmp_path, "a.jp2", RAMP), level=1)
         data = image.data
     assert isinstance(data, da.Array)
-    np.testing.assert_array_equal(np.asarray(data), np.asarray(image.raw).T)
+    np.testing.assert_array_equal(
+        np.asarray(data), np.asarray(image.rawdata).T
+    )
 
 
 @pytest.mark.parametrize("level", [1, 2, 3])
@@ -280,7 +282,7 @@ def test_an_empty_selection_reads_nothing(
         raise AssertionError("The file was decoded.")
 
     monkeypatch.setattr(_data, "_decode_level", fail)
-    empty = image.raw[0:0]
+    empty = image.rawdata[0:0]
     assert empty.shape == (0, COLUMNS // 2 + 1)
     assert empty.dtype == np.uint16
     assert image.shape == (23, 19)
@@ -329,7 +331,7 @@ def test_offset_reads_full_resolution_only() -> None:
     pyramid = Jpeg2000MultiScaleImage.from_bytes(content)
     assert isinstance(pyramid.images[1].transformation, Scaling)
     with pytest.raises(ParserContentError, match="offset"):
-        np.asarray(pyramid.images[1].raw)
+        np.asarray(pyramid.images[1].rawdata)
 
 
 def test_odd_offset_geometry() -> None:
@@ -368,7 +370,7 @@ def test_twelve_bit_and_signed() -> None:
     content = imagecodecs.jpeg2k_encode(signed, level=0, codecformat="j2k")
     image = Jpeg2000Image.from_bytes(content)
     assert image.metadata.raw.signed == (True,)
-    assert image.raw.dtype == np.int16
+    assert image.rawdata.dtype == np.int16
     np.testing.assert_array_equal(np.asarray(image.data), signed.T)
 
     colour = RNG.integers(0, 4096, (20, 30, 3)).astype(np.uint16)
@@ -376,7 +378,7 @@ def test_twelve_bit_and_signed() -> None:
         colour, level=0, codecformat="jp2", bitspersample=12
     )
     with pytest.raises(ParserContentError, match="precision"):
-        np.asarray(Jpeg2000Image.from_bytes(content).raw)
+        np.asarray(Jpeg2000Image.from_bytes(content).rawdata)
 
 
 # ----------------------------------------------------------------------
@@ -457,7 +459,7 @@ def test_an_untouched_file_is_written_byte_for_byte(tmp_path: Path) -> None:
         # Consolidating an untouched image shares its lazy array and its
         # metadata, and decodes nothing.
         consolidated = image.consolidate()
-        assert consolidated.raw is image.raw
+        assert consolidated.rawdata is image.rawdata
         assert consolidated.metadata is image.metadata
 
 
@@ -513,14 +515,14 @@ def test_a_geometry_without_pixel_size_drops_the_resolutions(
 def test_assigned_data_are_pending(tmp_path: Path) -> None:
     path = _write(tmp_path, "a.jp2", RAMP)
     image = load(path, level=0)
-    raw, metadata = image.raw, image.metadata
+    raw, metadata = image.rawdata, image.metadata
     image.data = RAMP.T // 2
-    assert image.raw is raw
+    assert image.rawdata is raw
     assert image.metadata is metadata
     consolidated = image.consolidate()
     assert consolidated._data is None
     assert consolidated.metadata is not metadata
-    np.testing.assert_array_equal(np.asarray(consolidated.raw), RAMP // 2)
+    np.testing.assert_array_equal(np.asarray(consolidated.rawdata), RAMP // 2)
     # The record of the file is the base of the new file.
     assert consolidated.metadata.raw.n_levels == 4
     image.save(path)
@@ -654,7 +656,7 @@ def test_copies_of_a_pyramid_stay_lazy(tmp_path: Path) -> None:
         replace(pyramid),
         Jpeg2000MultiScaleImage.from_instance(pyramid),
     ):
-        assert copy.raw is pyramid.raw
+        assert copy.rawdata is pyramid.rawdata
         assert copy.metadata is pyramid.metadata
         assert copy._images is None
     copy = MultiScaleImage.from_instance(pyramid)
@@ -668,7 +670,7 @@ def test_a_pyramid_saved_over_its_own_file(tmp_path: Path) -> None:
     pyramid = load(path, pixel_size=0.5, unit="mm")
     pyramid.save(path)
     assert pyramid._images is None
-    assert pyramid.raw.source.is_file(path)
+    assert pyramid.rawdata.source.is_file(path)
     np.testing.assert_allclose(
         pyramid.images[1].transformation.scale, [1.0, 1.0]
     )

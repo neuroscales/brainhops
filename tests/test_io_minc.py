@@ -387,7 +387,7 @@ def test_header_only_until_data(anyminc) -> None:  # noqa: ANN001
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         image = io.images.load(filename)
-        assert isinstance(image.raw, _MincProxy)
+        assert isinstance(image.rawdata, _MincProxy)
         assert "_cache_data" not in vars(image)
         assert image.shape == (6, 5, 4)
         image.data  # noqa: B018
@@ -622,7 +622,7 @@ def test_nothing_but_the_data_reads_the_voxels(
     image = io.load(filename)
     assert image.shape == (6, 5, 4)
     assert image.ndim == 3
-    assert image.raw.dtype == np.float64
+    assert image.rawdata.dtype == np.float64
     repr(image)
     assert image.transformations
     assert image.system is not None
@@ -640,9 +640,9 @@ def test_nothing_but_the_data_reads_the_voxels(
     image.data = np.zeros((2, 3))
     assert image.shape == (2, 3)
     # The assigned data is pending until the image is consolidated, which
-    # stores it in `raw` in the order of the file.
-    assert image.raw.shape == (4, 5, 6)
-    assert image.consolidate().raw.shape == (3, 2)
+    # stores it in `rawdata` in the order of the file.
+    assert image.rawdata.shape == (4, 5, 6)
+    assert image.consolidate().rawdata.shape == (3, 2)
     with pytest.raises(AttributeError):
         _ = MincImage().shape
     with pytest.raises(AttributeError):
@@ -678,7 +678,7 @@ def test_a_file_written_again_with_another_shape_is_refused(
     image = io.load(filename)
     write_minc2(filename, dims=("time", "zspace", "yspace", "xspace"))
     with pytest.raises(ParserContentError, match="shape"):
-        np.asarray(image.raw)
+        np.asarray(image.rawdata)
 
 
 def test_an_integer_image_needs_a_signtype(tmp_path) -> None:  # noqa: ANN001
