@@ -493,7 +493,7 @@ def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
     Parameters
     ----------
     raw : array
-        The `raw` array of an object.
+        The `rawdata` array of an object.
     brik : path-like
         The BRIK file.
 
