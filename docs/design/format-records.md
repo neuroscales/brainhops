@@ -2927,11 +2927,15 @@ and transformations (#287).
      `Transformation` would allow it, but it would make the abstract
      `NiftyRegField` a data model, which `relabel` then no longer
      refuses as a family of formats. Status: decided in pass 5a. Each
-     of the eight concrete classes (`NiftiRASToVoxel`,
+     of the nine concrete classes (`NiftiRASToVoxel`,
      `NiftiVoxelToRAS`, `NiftiRASCoordinatesField`,
      `NiftiRASDisplacementField`, `NiftyRegSequence`,
-     `SpmCoordinatesField`, `ItkNiftiField` and `FnirtWarpField`) takes
-     `metadata` over itself.
+     `SpmCoordinatesField`, `ItkNiftiField`, `FnirtWarpField` and
+     `AfniNiftiWarp`) takes `metadata` over itself. The MRtrix warps
+     share the abstract base `MrtrixWarp`, which does not derive from
+     `Transformation` either, so `MrtrixCoordinatesField`,
+     `MrtrixDisplacementField` and `MrtrixWarpFull` take `metadata` over
+     in the same way.
 401. The metadata of a format decodes its vocabulary at once, in
      `from_raw`, instead of in lazy properties: a field may be `None`,
      so a lazy field would need a sentinel or a flag, which is the state
@@ -2988,18 +2992,43 @@ and transformations (#287).
      `dtype` is given or changed in the metadata, because their arrays
      are computed from the chain. Status: open, for the maintainer to
      decide whether the transformations follow the rule of the images.
-413. The records of AFNI, MRtrix, NRRD, MINC, LTA and M3Z hold no field
-     of the vocabulary yet (pass 5b), so their consolidation reports
-     every field that is set as lost. Their writers keep their option
-     `datatype=`, which is not renamed `dtype`, and the option `space=`
-     of NRRD names the space of the NRRD header, so the field `space`
-     cannot be given by keyword to a NRRD writer. Status: open, for
-     pass 5b.
-414. A format that does not take `metadata` over, such as Zarr, TIFF or
-     FLIRT, holds the generic metadata of its data model and writes
-     none of it. `io.save` reports the fields that are set as lost when
-     it converts into such a format, but a save of the object itself
-     reports nothing. Status: open, for pass 5c.
+413. Only the records of NIfTI, MGH and X5 hold fields of the
+     vocabulary in pass 5a. Every other format that holds the metadata
+     of its own class, which is every migrated format, consolidates its
+     metadata first all the same, so its consolidation and its writers
+     take `on_loss=` and the fields of the metadata by keyword, and
+     report every field that is set as lost. This holds for the formats
+     of pass 5b (AFNI, MRtrix, NRRD, MINC, LTA and M3Z) and of pass 5c
+     (Zarr, FLIRT and ITK), and for the formats that pass 5 does not
+     plan, such as TIFF, Pillow, JPEG 2000, image stacks, the read-only
+     images, register.dat, Convert3D, elastix, TrakEM2, BigDataViewer
+     and the plain matrix formats. A format that cannot write, such as
+     MINC or OpenSlide, gives its consolidated copy the consolidated
+     metadata. The writers of AFNI, MRtrix and NRRD keep their option
+     `datatype=` and that of Zarr its option `dtype=`, which store the
+     values with the type given and are not the field `dtype`, whose
+     value these formats report as lost. The option `space=` of NRRD
+     names the space of the NRRD header, so the field `space` cannot be
+     given by keyword to a NRRD writer. Status: open, for passes 5b and
+     5c.
+414. A format that does not take `metadata` over, which is a format not
+     yet migrated, such as the OME-Zarr images and fields or the
+     pyramids of N5, Imaris, precomputed volumes and BigDataViewer,
+     holds its metadata in the `metadata` field of its data model, and
+     writes none of the vocabulary. `io.save` reports the fields that are set as lost when it
+     converts into such a format, but a save of the object itself
+     reports nothing. Status: open, until these formats move to the
+     record design.
+415. A format built from a transformation of the data model by
+     `from_instance`, such as LTA or a MINC affine, receives its
+     metadata, and so do the NIfTI transformations and the SPM field
+     through their converters. Other converters build the format
+     without the metadata of the source, such as those into a Convert3D
+     matrix or a NiftyReg affine. `io.save` reports the fields of the
+     source as lost when the object that it converted holds no metadata,
+     but `obj.to(cls)` drops them without a report. Status: open, for
+     the maintainer to decide whether every converter passes the
+     metadata of its source.
 
 470. `io.save` tries the candidates tier by tier, most specific first,
      those that hold the object as it is before those that a

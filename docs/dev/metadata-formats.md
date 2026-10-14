@@ -36,7 +36,7 @@ it.
 | `brainhops.datamodel.metadata._vocabulary` | the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `FIELDS`, `GROUPS`, `BIDS_KEYS`, `SCOPES` and `ALONG` |
 | `brainhops.datamodel.metadata._derive` | `Indexed` and `Resampled`, which an image operation builds for `derive` |
 | `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `OnLoss` and `LossPolicy` |
-| `brainhops.io.metadata._base` | `consolidated`, `lost_fields` and `unsupported_values` |
+| `brainhops.io.metadata._base` | `consolidated`, `lost_fields` and `unsupported_values`, and, for the format objects, `metadata_to_write`, `requested_fields`, `overruled_fields` and `metadata_options` |
 | `brainhops.io.metadata._json` | the codec of the JSON stores, which BIDS and X5 share |
 | `brainhops.io.metadata._storage` | `preferred_storage` and `stored_values` |
 
@@ -98,6 +98,20 @@ consolidate first and write the record of the copy, and they take the
 same overrides and `on_loss=` as `consolidate`. The metadata itself is
 never changed by a write.
 
+An image or a transformation of the format consolidates its metadata
+first, as step 2 of the precedence on write, whether or not the format
+stores a vocabulary. Its `consolidate` takes `on_loss=` and the fields
+of the metadata by keyword. It asks `requested_fields` which fields the
+write is asked to store, consolidates the metadata with
+`metadata_to_write` and the report of the write, encodes its geometry
+and its data over the record of the result, and acts on the report once
+with `apply_loss_policy`. A format whose model owns a slot, such as the
+time step of a NIfTI image, reports a field that it encoded over with
+`overruled_fields`. A writer that writes the record of a consolidated
+copy splits its options with `metadata_options`, so that `on_loss` and
+the fields go to `consolidate` and the other options to the writer of
+the record.
+
 ## The codec
 
 `_decode(raw)` returns a dictionary of field values for a record, or
@@ -143,7 +157,7 @@ move.
   that `_encode` takes. `tests/test_io_metadata_matrix.py` checks that
   the losses of a fully populated metadata are exactly the other fields.
 - The exemplar of the format in `tests/test_io_conformance.py` gives a
-  field and a value in `vocabulary`, for checks 21 to 23.
+  field and a value in `vocabulary`, for checks 21 to 25.
 - The tests of the format decode each slot, encode each field into a
   copy, and probe each value that a slot holds approximately or not at
   all.

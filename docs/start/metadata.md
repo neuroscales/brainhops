@@ -502,9 +502,11 @@ transformation that they convert, which the format converts into
 
 ### Other formats
 
-The records of LTA, M3Z, AFNI, MRtrix, NRRD and MINC hold no field of
-the vocabulary yet, so a field that is set is reported as lost when they
-are written. Zarr, OME-Zarr, TIFF, FLIRT and the ITK formats do not take
-the metadata of their data model over yet: they hold generic metadata
+The records of the other formats, such as LTA, AFNI, MRtrix, NRRD,
+MINC, Zarr, TIFF, FLIRT and the ITK formats, hold no field of the
+vocabulary yet. Their metadata still holds the fields of the vocabulary,
+and a field that is set is reported as lost when the object is
+consolidated or written. The formats that are not migrated to records
+yet, such as the OME-Zarr images, hold the metadata of their data model
 and write none of it, and `io.save` reports its fields as lost when it
 converts an object into one of them.
