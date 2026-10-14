@@ -1,24 +1,36 @@
 # Design: format metadata and cross-format metadata conversion
 
-Status: decided, and implemented in the fifth pass of the format-record
-work (#415). This memo answers #233. It records how brainhops represents
-the descriptive metadata of files, which every format keeps under its
-own names and types, so that it can be carried from one format to
-another. It builds on the record design of `format-records.md`, where
-each format class holds a record of the header of its file, and on
-`DataModelBase` (#97, `bagof.magic`). Decisions are tagged `M1` to `M13`
-and collected at the end, followed by the open questions.
+Status: decided, not implemented yet. The fifth pass of the
+format-record work (#415) implements it. This memo answers #233. It
+records how brainhops represents the descriptive metadata of files,
+which every format keeps under its own names and types, so that it can
+be carried from one format to another. It builds on the record design
+of `format-records.md`, where each format class holds a record of the
+header of its file, and on `DataModelBase` (#97, `bagof.magic`).
+Decisions are tagged `M1` to `M13` and collected at the end, followed
+by the open questions.
 
-The fifth pass is split in three parts. Pass 5a (#310) adds the
-vocabulary to `Metadata`, the consolidation of the metadata of a format,
-the BIDS sidecar, and the vocabulary of NIfTI, MGH and X5; the wiring of
-the vocabulary into images, transformations and their writers (#287)
-completes it. Pass 5b brings the vocabulary of the key/value and
-FreeSurfer formats (LTA, AFNI, MRtrix, NRRD, MINC), and pass 5c that of
-Zarr, OME-Zarr, FLIRT and ITK-H5, once pass 4 gives them records. The
-section "Addendum: the record design" at the end records the decisions
-taken when the design was adapted to the records, and it holds where an
-older paragraph disagrees.
+On `main` today, `Metadata` has no field, and the metadata of a format
+holds only its record: `MetadataFormat.consolidate` takes no option and
+returns a copy that holds the same record. The code that this memo
+describes is in two open pull requests, #310 and #287, which form pass
+5a.
+
+The fifth pass is split in three parts (decision Q4 of the maintainer).
+Pass 5a (#310) adds the vocabulary to `Metadata`, the consolidation of
+the metadata of a format, the BIDS sidecar, and the vocabulary of
+NIfTI, MGH and X5; the wiring of the vocabulary into images,
+transformations and their writers (#287) completes it. Pass 5b brings
+the vocabulary of the key/value and FreeSurfer formats (LTA, AFNI,
+MRtrix, NRRD, MINC), and pass 5c that of Zarr, OME-Zarr, FLIRT and
+ITK-H5, over the records that the fourth pass gives them. The fourth
+pass has given records to Zarr (#460), FLIRT and ITK-H5 (#452), and
+OME-Zarr still waits for its record. Many formats have moved to records
+or been added since the split was decided, and the part of the fifth
+pass that takes each of them is open (section 11 and open question 13).
+The section "Addendum: the record design" at the end records the
+decisions taken when the design was adapted to the records, and it
+holds where an older paragraph disagrees.
 
 The problem, in one sentence: every file format keeps its non-spatial
 metadata under a different name and type (`header`, `keyval`, `tags`,
@@ -53,7 +65,10 @@ Facts, from the inventory of the branch that opened #233:
 
 The record design of #415 has since replaced the parser mixins with a
 record per format (`<X>Raw`), held by the metadata of the format
-(`<X>Metadata`), which every format object holds.
+(`<X>Metadata`), which every format object holds. In this memo, `raw`
+always names that record, the field `metadata.raw`. The arrays that a
+format object stores, as they are laid out in the file, are held in its
+field `rawdata` (#467), which the metadata never holds.
 
 ## 2. Goals, non-goals, and what stays out
 
@@ -128,7 +143,7 @@ The classes follow the layers of the record memo.
 |---|---|---|
 | `Metadata` | `brainhops.datamodel.metadata` | The vocabulary, `extra`, `to` and `derive`. It holds no record, does no input or output, supports every field, and compares by value. |
 | `MetadataFormat` | `brainhops.io.metadata` | The dispatcher of the metadata formats, and their base: `raw`, `SUPPORTED_FIELDS`, `from_raw`, `consolidate`. It compares by identity. |
-| `<X>Metadata` | next to `<X>Raw` | The metadata of one format: its constant `SUPPORTED_FIELDS`, and a `from_raw` and a `consolidate` that call the module-level functions `_decode` and `_encode` of the format. |
+| `<X>Metadata` | next to `<X>Raw` | The metadata of one format: its constant `SUPPORTED_FIELDS`, and a `from_raw` and a `consolidate` that call the module-level functions `_decode` and `_encode` of the format (for NIfTI, `decode` and `encode` in `_vocabulary.py`). |
 | `BidsSidecar` | `brainhops.io.metadata` | The metadata of a BIDS JSON sidecar, a file of metadata only, whose record is the JSON object. |
 
 ```python
@@ -182,8 +197,8 @@ order. The package `brainhops.datamodel.metadata` exports 17 names:
 `MetadataLossWarning`, `MetadataLossError` and `metadata_loss_policy`.
 The names that a format author needs are imported from its private
 modules (`_vocabulary`, `_terms`, `_report`, `_derive`), which the
-format author's guide (`docs/dev/metadata-formats.md`) lists. No module
-of the data model imports `brainhops.io`.
+format author's guide (`docs/dev/metadata-formats.md`, added by #310)
+lists. No module of the data model imports `brainhops.io`.
 
 ## 4. Vocabulary (M3)
 
@@ -355,12 +370,17 @@ describe the intensity scaling of the file: a value is
 
 ### 4.5 Microscopy (`acquisition`)
 
-Deliberately small until CZI/LIF/ND2/Imaris/BDV readers exist:
+The group is deliberately small:
 `objective_magnification` (float; OpenSlide `objective-power`, OME
 `Objective.NominalMagnification`), `objective_numerical_aperture`,
 `illumination_type` and `contrast_method` (`IlluminationType` and
 `ContrastMethod`, the OME enumerations, or any other string).
-Everything else goes to `extra` until two formats agree on it.
+Everything else goes to `extra` until two formats agree on it. The
+Imaris (#437) and BigDataViewer (#441) readers now exist, and the
+parameters of their records (the `DataSetInfo` groups of an Imaris
+file, the setups of a BigDataViewer dataset) have not been compared
+with this group yet. Whether they add fields to it is open, and so is
+the same question for CZI, LIF and ND2, which brainhops does not read.
 
 ### 4.6 Transformation-specific (`file`)
 
@@ -530,7 +550,13 @@ memo), decides them when it is written.
 
 The forwarding of the save options and the use of `metadata.dtype` by
 the writers are part of the wiring of pass 5a (#287). The metadata half,
-`MetadataFormat.consolidate(**fields)`, is implemented in #310.
+`MetadataFormat.consolidate(**fields)`, is implemented in #310. On
+`main` today, the stored type is a writer option of each image format,
+which `consolidate` and `save` take: NIfTI and MGH take it as the header
+override `dtype`, and AFNI, MRtrix and NRRD as `datatype=`. The option
+`dtype` of NIfTI and MGH becomes the metadata field. Whether the option
+`datatype=` of AFNI, MRtrix and NRRD is renamed `dtype` in pass 5b, so
+that it also becomes the metadata field, is open (open question 14).
 
 ## 7. Conversion and loss reporting (M7)
 
@@ -713,11 +739,17 @@ Where it is called (the wiring of #287):
   the rule.
 - Multiscale. The metadata of a pyramid is one object on the
   `MultiScaleImage` (OME-Zarr `omero` is per multiscale, TIFF tags are
-  per file). Each level holds derived metadata, never the object of the
-  pyramid: the first level gets `derive()`, and level `i` gets
-  `derive(Resampled(...))` with `level_0.transformation.inverse() @
-  level_i.transformation`, so a direction in voxel axes survives the
-  coarser sampling. The levels wait for the Zarr pass (pass 5c).
+  per file). The record design has since decided how a pyramid format
+  holds it (section "Pyramids" of the record memo, tension 15): one
+  record describes the whole container, and the pyramid and each of
+  its levels hold the same metadata object, by identity, with the index
+  `level` of the level in the record. A first version of this memo gave
+  each level derived metadata instead: the first level got `derive()`,
+  and level `i` got `derive(Resampled(...))` with
+  `level_0.transformation.inverse() @ level_i.transformation`, so that a
+  direction in voxel axes would survive the coarser sampling. How the
+  vocabulary of a pyramid reaches its levels, under the shared metadata
+  object of the record design, is open (open question 12).
 - Transformations: composition does not merge. A `Sequence` built in
   memory has no metadata, and each block keeps its own. A writer of a
   single-block format (LTA, FLIRT, an x5 node) takes the metadata of the
@@ -747,7 +779,10 @@ carry provenance. A format takes the field over under the private name
 property, as it takes `data` and `transformations` over (the record
 memo). A conversion of an image into another format converts its
 metadata through `MetadataFormat.from_any`, and reports what the target
-cannot store.
+cannot store. On `main` today, the roots have no `metadata` field: each
+format declares a private `_metadata` field of its own type and a
+public `metadata` property, and the wiring of #287 adds the field to the
+roots and the takeover to the formats.
 
 Shared, not copied (decision Q3 of the maintainer). Copies of an image
 or a transformation within a format share the metadata object
@@ -762,14 +797,17 @@ record design removed the converter, since a record is never changed in
 place and sharing is therefore safe. A conversion and a derivation
 build new metadata anyway.
 
+Assigned values win over the metadata (#440, implemented on `main`).
 The transformations of an image are not tied to its metadata. The
 property `transformations` returns the list that the user assigned if
 there is one, and otherwise the list decoded from the record, which it
-caches. Assigning metadata clears that cache and never a list that the
-user assigned, and the same holds for the `data` of the affines whose
-file is parsed in one pass. The fix lands on main in a separate pull
-request (`claude/fix/metadata-keeps-transformations`), and the wiring
-follows the same rule.
+caches. Assigning metadata clears only that cache of decoded values,
+and never a list that the user assigned, which a later consolidation
+encodes over the new record. The same holds for the transformations of
+chains, for the matrix of the NIfTI and LTA affines, held as `data`, for
+the ITK endpoints, for the X5 nodes, and for the levels and placements
+of a pyramid (rules of the record memo, conformance checks 20 and P11).
+The wiring of #287 follows the same rule.
 
 Name clash. `Transformation.metadata_fields` means the meta-attributes
 that define the encoding (`order`, `bound`, `coeff`). It is renamed
@@ -778,9 +816,13 @@ that define the encoding (`order`, `bound`, `coeff`). It is renamed
 ## 11. Format sketches
 
 Pass 5a implements NIfTI, MGH, X5 and BIDS; the table below records the
-plan for the other formats. Each format writes `SUPPORTED_FIELDS`, the
-module-level `_decode` and `_encode`, a `from_raw` and a `consolidate`
-that call them, and an override of `derive` only to scrub its record.
+plan for the other formats, and the part of the fifth pass that takes
+each of them. Each format writes `SUPPORTED_FIELDS`, the module-level
+`_decode` and `_encode`, a `from_raw` and a `consolidate` that call
+them, and an override of `derive` only to scrub its record. The NIfTI
+transformations (the NIfTI affines and fields, and the SPM, FNIRT,
+NiftyReg and AFNI fields stored as NIfTI) hold `NiftiMetadata`, so they
+get its vocabulary in pass 5a.
 
 NIfTI (`io/common/nifti/_metadata.py`, with the slot helpers in
 `_vocabulary.py`) stores `description` (`descrip`, 80 bytes), `sources`
@@ -819,27 +861,45 @@ world frame, and NRRD uses the `DWMRI_*` convention and the
 the `src`/`dst` filenames and `description`/`history` from comments,
 which its parser must then keep.
 
-| Format | Record | `SUPPORTED_FIELDS` (highlights) | `extra` store / notes |
-|---|---|---|---|
-| MGH | `MghRaw(header, tags)` | TR/TE/TI/flip (ms→s, rad→deg; one scalar TR, else `approximated`), `history` (cmdline tag), `dtype` (`type`) | none |
-| AFNI | `AfniRaw` | `history`, `channels` (`BRICK_LABS`), `repetition_time` (unit code), `slice_timing`, `space`, `creation_time` | remaining attributes; `_GENERATED`/`_PER_BRICK`/`_PER_GRID` rules move into `_encode` (count mismatch → `lost`) and `derive` |
-| TIFF/OME/ImageJ | `TiffStruct` (renamed) + `ome_xml`/ImageJ dict | `name`, `description`, `generated_by`, `creation_time`, `manufacturer*`, `channels` (by dialect) | ImageJ extras or plain tags; OME-XML round-trips whole, `_encode` patches `Name`/`Channel` only |
-| Pillow | `dict(info)` | `description`, `creation_time` | text chunks, `exif`, `icc_profile` |
-| OpenSlide (read-only) | — | `description`, `manufacturer`, `objective_magnification` | `properties` |
-| JP2 (open PR) | `Jpeg2000Header` | `description` (`comments`) | boxes |
-| OME-Zarr | `OmeZarrRaw` (abczarr `Multiscale`, `omero`, attributes) | `name`, `channels`, `display_range`, `dtype` (derived from the arrays) | the other group attributes |
-| plain Zarr | — | generic `Metadata` serialised into `.zattrs["brainhops"]` | same |
-| MINC (read-only) | `MincRaw` | `history`, acquisition/patient/study variable attributes | the rest of them |
-| ITK tfm/mat | — | none | none |
-| ITK h5 | small h5 header | `generated_by` (`ITKVersion`) | none |
-| Elastix | `parameter_map` | `sources` (`InitialTransformParameterFileName`) | the non-transform keys (today's "base map" rule) |
-| FLIRT | — | `moving`/`fixed` (the reader needs them, kept in memory, never stored, always `lost` on write) | none |
-| matrix text | — | none | none |
-| M3Z | `M3zRaw` | `moving`/`fixed` (`image`/`atlas` fnames) | byte-exact otherwise |
+| Format | Record | `SUPPORTED_FIELDS` (highlights) | `extra` store / notes | Pass |
+|---|---|---|---|---|
+| MGH | `MghRaw(header, tags)` | TR/TE/TI/flip (ms→s, rad→deg; one scalar TR, else `approximated`), `history` (cmdline tag), `dtype` (`type`) | none | 5a |
+| AFNI | `AfniRaw` | `history`, `channels` (`BRICK_LABS`), `repetition_time` (unit code), `slice_timing`, `space`, `creation_time` | remaining attributes; `_GENERATED`/`_PER_BRICK`/`_PER_GRID` rules move into `_encode` (count mismatch → `lost`) and `derive` | 5b |
+| MINC (read-only) | `MincRaw` | `history`, acquisition/patient/study variable attributes | the rest of them | 5b |
+| OME-Zarr images | none yet (step 4b-ii of pass 4); the prototype had `OmeZarrRaw` (abczarr `Multiscale`, `omero`, attributes) | `name`, `channels`, `display_range`, `dtype` (derived from the arrays) | the other group attributes | 5c |
+| plain Zarr | `ZarrRaw` (the abczarr document of the array, with its attributes) | generic `Metadata` serialised into the attributes under `"brainhops"` (prototype) | same | 5c |
+| ITK h5 (read-only) | `H5Raw` (the root strings in `H5Header`, the blocks) | `generated_by` (`ITKVersion`) | none | 5c |
+| FLIRT (read-only) | `FlirtRaw` (the matrix) | none: the images `moving` and `reference` are options of the transformation, never stored, so `moving`/`fixed` are `lost` on write | none | 5c |
+| TIFF/OME/ImageJ | `TiffRaw` (one series: `tags`, `ome_xml`, `imagej`) | `name`, `description`, `generated_by`, `creation_time`, `manufacturer*`, `channels` (by dialect) | ImageJ extras or plain tags; OME-XML round-trips whole, `_encode` patches `Name`/`Channel` only | open |
+| Pillow | `PillowRaw` (one frame, with its `info`) | `description`, `creation_time` | text chunks, `exif`, `icc_profile` | open |
+| OpenSlide (read-only) | `OpenSlideRaw` (`properties`, levels) | `description`, `manufacturer`, `objective_magnification` | `properties` | open |
+| JPEG 2000 | `Jpeg2000Raw` | `description` (`comments`) | XML and UUID boxes | open |
+| ITK tfm, ITK mat | `TfmRaw`, `MatRaw` (the blocks) | none | none | open |
+| elastix | `ElastixRaw` (the parameter map, and the records of the initial transforms) | `sources` (`InitialTransformParameterFileName`) | the non-transform keys (the "base map" rule) | open |
+| plain matrices | `MatrixAffineRaw` | none | none | open |
+| M3Z | `M3zRaw` | `moving`/`fixed` (`image`/`atlas` fnames) | byte-exact otherwise | open |
+| image stacks | `StackRaw` (the members, with the header of each) | not designed | not designed | open |
+| N5 | `N5Raw` (`attributes.json`) | not designed | not designed | open |
+| Imaris | `ImarisRaw` (the `DataSetInfo` parameters) | not designed (section 4.5) | not designed | open |
+| Neuroglancer precomputed | `PrecomputedRaw` (the `info` file) | not designed | not designed | open |
+| BigDataViewer | `BdvRaw` (the XML file) | not designed (section 4.5) | not designed | open |
+| FreeSurfer `register.dat` | `RegisterDatRaw` (the subject, the matrix) | not designed | not designed | open |
+| Convert3D affine | `C3dAffineRaw` | not designed | not designed | open |
+| TrakEM2 | `TrakEM2Raw` (the XML file) | not designed | not designed | open |
+| AFNI, MRtrix, NiftyReg and MINC affines | `AfniAffineRaw`, `MrtrixLinearRaw`, `NiftyRegAffineRaw`, `XfmRaw` | not designed | not designed | open |
+| OME-Zarr fields, OME-NGFF 0.6 transformations (#433) | none yet | not designed | not designed | open |
 
 The Zarr, OME-Zarr, FLIRT and ITK-H5 classes of the prototype are kept
-out of pass 5a and wait for pass 5c, over the records that pass 4 gives
-them; their code is in the history of #310 (2390b07).
+out of pass 5a and wait for pass 5c; their code is in the history of
+#310 (2390b07). The fourth pass has given records to Zarr (#460), FLIRT
+and ITK-H5 (#452), so the classes of the prototype must be rebuilt over
+those records, and the OME-Zarr images wait for their record. The
+pyramids of TIFF, OpenSlide, JPEG 2000, N5, Imaris, precomputed volumes
+and BigDataViewer, and the formats added since the fifth pass was split,
+are not named by the split, so the part of the fifth pass that takes
+them is open (open question 13). The rows marked "not designed" record
+only what the record of the format holds; which of it is vocabulary is
+decided with that part.
 
 Future formats (GIFTI/CIFTI, TRK/TCK/TRX, CZI/LIF/ND2, Bruker, MRC,
 FITS, MetaImage, BrainVoyager, Interfile, EEG coordsystem, NetCDF) each
@@ -856,36 +916,41 @@ announced with item 13 of the tensions of the record memo.
 
 Constructor and writer keywords (M13). The format-specific metadata
 inputs become fields of the metadata, which `save` and `consolidate`
-take as overrides (section 6.2), without deprecation aliases:
+take as overrides (section 6.2), without deprecation aliases. Since
+the record design, these inputs are options of `consolidate` and of the
+writers, and a few have moved into the record:
 
 | Before | Where | Becomes |
 |---|---|---|
-| `like=` | `NiftiImage.to_nibabel`/`save` | stays a writer option of NIfTI, under the fields that changed |
-| `descrip=`, `intent=`, other header names | `NiftiImage.to_nibabel(**overrides)` | `description=`, `intent=`; header names that the vocabulary does not cover stay overrides of the record |
-| `tr=`, `te=`, `ti=`, `flip_angle=`, `fov=` | `MghImage` writer | `repetition_time=` (s) and the other fields; `fov` stays in the record |
-| `tags=` | `MghImage` | `history=` / `raw.tags` |
-| `keyval=` | `MrtrixImage`, warps PR | `extra=` (BIDS keys land in vocabulary fields) |
-| `keyvalue=` | `NrrdImage` writer | `extra=` |
-| `attributes=`, `view=` | `AfniImage`, AFNI xforms PR | `extra=` / `raw.attributes`; `view` stays a writer option (encoding) |
-| `info=` | `PillowImage` | `extra=` |
-| `name=` | `build_ome(...)` | `name=` |
+| `like=` | `NiftiImage` and `MghImage`, `consolidate`, `to_nibabel` and `save` | stays a writer option, under the fields that changed |
+| `descrip=`, `intent=`, other header names | `NiftiImage`, `**overrides` of `consolidate` and `to_nibabel` | `description=`, `intent=`; header names that the vocabulary does not cover stay overrides of the record |
+| `tr=`, `te=`, `ti=`, `flip_angle=`, `fov=` | `MghImage`, `**overrides` of `consolidate` and `to_nibabel` | `repetition_time=` (s) and the other fields; `fov` stays in the record |
+| the MGH tags | `MghRaw.tags`, in the record | `history=` / `raw.tags` |
+| `keyval=` | `MrtrixImage` and the MRtrix warps, `consolidate` | `extra=` (BIDS keys land in vocabulary fields) |
+| `keyvalue=` | `NrrdImage`, `consolidate` | `extra=` |
+| `attributes=`, `view=` | `AfniImage` and the AFNI warps, `consolidate` | `extra=` / `raw.attributes`; `view` stays a writer option (encoding) |
+| `datatype=` | `AfniImage`, `MrtrixImage`, `NrrdImage` and the AFNI warps, `consolidate` | open (open question 14) |
+| the `info` dictionary | `PillowRaw.info`, in the record | `extra=` |
+| `name` | `build_ome(...)`, a private helper of OME-Zarr | `name=` |
 
 Passes. Pass 5a is #310 (the vocabulary, the consolidation of the
 metadata of a format, the BIDS sidecar, NIfTI, MGH and X5) and #287
 (the wiring into images, transformations, their copies, their
 operations and their writers). Pass 5b brings the key/value and
-FreeSurfer formats, and pass 5c Zarr, OME-Zarr, FLIRT and ITK-H5.
+FreeSurfer formats, and pass 5c Zarr, OME-Zarr, FLIRT and ITK-H5. The
+part that takes each other format is open (section 11).
 
-Tests. `tests/test_datamodel_metadata.py` covers the vocabulary, the
-terms, the loss policy and `derive`; `tests/test_io_metadata_base.py`
+Tests. The test files below are added by #310 and #287.
+`tests/test_datamodel_metadata.py` covers the vocabulary, the terms,
+the loss policy and `derive`; `tests/test_io_metadata_base.py`
 covers the contract of consolidation on a synthetic format, the
 conversions and the BIDS sidecar; each format has a file
 (`test_io_metadata_nifti.py`, `_mgh.py`, `_x5.py`) that decodes each
 slot, encodes each field into a copy, and probes each value that a slot
 holds approximately or not at all; `tests/test_io_metadata_matrix.py`
 is the capability oracle of section 5. The conformance test of the
-record memo gains five checks, numbered after check 20 of the fix of
-the transformations:
+record memo gains five checks, numbered after check 20, which tests
+that assigned values survive new metadata (#440):
 
 21. `from_raw(raw).consolidate()` shares `raw`, so nothing is pending
     after a read, and `replace(md, **vocabulary).consolidate()` holds
@@ -950,14 +1015,17 @@ the transformations:
 - M9. Propagation is driven by scope and owned by the image operations,
   which describe what they did with `Indexed` or `Resampled`; `derive`
   applies the rules in one explicit loop, keeps the class and the
-  record, and a format scrubs its record in an explicit override. A
-  multiscale level holds derived metadata, composition does not merge,
-  and a single-block file puts its metadata on the block too.
+  record, and a format scrubs its record in an explicit override.
+  Composition does not merge, and a single-block file puts its metadata
+  on the block too. A pyramid format and its levels share one metadata
+  object (the record memo); how its vocabulary reaches the levels is
+  open.
 - M10. `metadata: Optional[Metadata]` on `Image` and `Transformation`,
   taken over by each format with `Inherit("metadata")`. Copies within a
   format share the metadata object, which stays mutable; assigning
   `replace(md, ...)` changes one copy only. Assigning metadata clears the
-  cache of the decoded transformations, never a list that was assigned.
+  cache of the decoded transformations, never a list that was assigned
+  (#440).
 - M11. `Transformation.metadata_fields` becomes `encoding_fields`,
   without an alias.
 - M12. Three parts of the fifth pass (5a, 5b, 5c), no deprecated
@@ -991,7 +1059,9 @@ records which decisions of the prototype they replace.
   `from_raw` (Q1) and the comparison with a fresh decode in
   `consolidate`, with module-level `_decode` and `_encode` in each
   format. `data_type` is renamed `dtype` (Q5), and `consolidate` takes
-  any field as an override.
+  any field as an override. `save` forwards its keyword arguments to
+  `consolidate`, so the writer option `dtype=` is the metadata field
+  and not a separate option.
 - M7. `collect_loss_reports` and `ConversionReport.merged` are removed;
   a caller passes a report as `on_loss=` and merges.
 - M9. The registry of propagation handlers (`propagates`, `propagate`,
@@ -1035,5 +1105,28 @@ records which decisions of the prototype they replace.
    an alias.
 10. Open PRs. Closed: moot after the record design.
 11. Deprecation window (M12). Closed: no aliases.
-12. Levels and the pyramid (M9). Closed for pass 5a: derived metadata
-    per level, decided in the Zarr pass (5c).
+12. Levels and the pyramid (M9). Open. The record design gives a
+    pyramid format one metadata object, which the pyramid and each of
+    its levels share by identity. This memo first gave each level
+    metadata derived through a `Resampled` record, so that a direction
+    in voxel axes follows the coarser sampling. Which of the two holds
+    for the vocabulary, or whether a level derives its fields on access
+    from the shared object, is not decided. It concerns every pyramid
+    format (TIFF, OpenSlide, OME-Zarr, JPEG 2000, N5, Imaris,
+    precomputed volumes, BigDataViewer), and only `SPATIAL` and `AXIS`
+    fields depend on the answer.
+13. The part of the fifth pass that takes each format that the split
+    does not name. Open. The split names NIfTI, MGH, X5 and BIDS (5a),
+    LTA, AFNI, MRtrix, NRRD and MINC (5b), and Zarr, OME-Zarr, FLIRT and
+    ITK-H5 (5c). It does not name M3Z, the ITK text and MATLAB formats,
+    elastix, the plain matrices, the AFNI, MRtrix, NiftyReg and MINC
+    affines, `register.dat`, Convert3D, TrakEM2, TIFF, Pillow,
+    OpenSlide, JPEG 2000, N5, Imaris, precomputed volumes,
+    BigDataViewer, image stacks, the OME-Zarr fields or the OME-NGFF
+    transformations (section 11).
+14. The option `datatype=` of AFNI, MRtrix and NRRD (M13). Open. The
+    field `dtype` of the metadata replaces the option `dtype` of NIfTI
+    and MGH (decision Q5), but these three formats name the same option
+    `datatype=`. It is not decided whether pass 5b renames it `dtype`,
+    so that it becomes the metadata field, or keeps it as a writer
+    option.
