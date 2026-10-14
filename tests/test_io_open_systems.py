@@ -183,7 +183,7 @@ def test_the_pyramid_axes_are_an_axis_list() -> None:
 
     for given in ([SpaceAxis(name="x"), ...], (SpaceAxis(name="x"), ...)):
         axes = _pyramid(given).axes
-        assert type(axes) is AxisList and axes.is_open
+        assert type(axes) is AxisList and axes.is_variadic
         assert axes["x"] == SpaceAxis(name="x")
     # None is not [...]: the axes stay unset and are read from the store.
     assert _pyramid(None).axes is None

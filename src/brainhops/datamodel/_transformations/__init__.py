@@ -32,7 +32,6 @@ __all__ = [
     "InverseScalingExponential",
     "InverseStationaryVelocityField",
     "Sqrt",
-    "UNARY_OPERATORS",
     "Bijection",
     "SubspaceTransformation",
     "Projection",
@@ -85,7 +84,7 @@ from .concrete import (
     is_scaling,
     is_translation,
 )
-from .derived import UNARY_OPERATORS, Sqrt
+from .derived import Sqrt
 from .inverse import (
     Inverse,
     InverseAffine,

@@ -14,7 +14,8 @@ import scipy.linalg
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops.datamodel import kinds
 from brainhops.datamodel._transformations import tangents as _tangents
-from brainhops.datamodel.systems import CoordinateSystem, SpaceAxis
+from brainhops.datamodel.axes import SpaceAxis
+from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     AffineExponential,

@@ -2,7 +2,8 @@ import typing_extensions as tx
 
 from brainhops.errors import AxisError
 
-from .systems import AxisList, CoordinateSystem
+from .axes import AxisList
+from .systems import CoordinateSystem
 
 
 def get_axes(system: tx.Optional[CoordinateSystem]) -> AxisList:

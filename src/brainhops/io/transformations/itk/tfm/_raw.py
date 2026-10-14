@@ -7,9 +7,9 @@ from warnings import warn
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Magic
 
 from brainhops._core.peek import peekable_lines
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
@@ -30,7 +30,7 @@ _PARAMETERS_RE = re.compile(r"^Parameters:\s*(?P<values>.*)$")
 _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 
-class TfmRaw(Magic, TextFileReader, convert=True, repr=HIDE_IF_NONE):
+class TfmRaw(Raw, TextFileReader):
     """Record of an ITK text `.tfm` file, which holds its blocks as read.
 
     A `.tfm` file is short and is read in one pass, so the record holds

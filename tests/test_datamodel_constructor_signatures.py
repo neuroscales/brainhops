@@ -7,10 +7,8 @@ Fields are therefore keyword-only by default, and only the defining
 fields, such as `data` or the parsed file of a reader, are positional.
 An image is defined by its `data` (or its `images`, for a pyramid) and
 its `transformations`, which are positional in that order. The opened
-Zarr `node` of the OME-Zarr formats, which a temporary parser of
-`brainhops.io.common.zarr` contributes until they follow the design of
-format records, stays positional, as it does on the transformations. An
-intended change of signature must update `POSITIONAL` or `IMAGES`.
+Zarr `node` and the raw OME metadata are keyword-only. An intended change
+of signature must update `POSITIONAL` or `IMAGES`.
 """
 
 import importlib
@@ -102,7 +100,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "Sequence": ("transformations",),
     },
     "brainhops.datamodel.geometry": {
-        "Geometry": ("transformations", "shape", "grid", "transformation"),
+        "Geometry": ("transformations",),
     },
     "brainhops.io.transformations.afni._affine": {
         "AfniAffine": ("data",),
@@ -276,14 +274,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "X5Transform": ("transformations",),
     },
     "brainhops.io.transformations.zarr._xforms": {
-        "OmeZarrField": (
-            "node",
-            "raw_levels",
-            "voxel2world",
-            "level_transforms",
-            "axes",
-            "ome",
-        ),
+        "OmeZarrField": (),
     },
 }
 
@@ -406,7 +397,7 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "ZarrImage": ("data", "transformations"),
     },
     "brainhops.io.images.zarr._multiscale": {
-        "OmeZarrImage": ("images", "transformations", "node"),
+        "OmeZarrImage": ("images", "transformations"),
         "OmeZarrLevel": ("data", "transformations"),
     },
 }

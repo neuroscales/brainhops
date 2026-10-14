@@ -4,8 +4,9 @@ __all__ = ["NiftyRegAffineRaw"]
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic, NoRepr
+from bagof.magic import NoRepr
 
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     ParserContentError,
     TextFileReader,
@@ -23,7 +24,7 @@ _SHAPE = (4, 4)
 """Shape of the matrix that NiftyReg reads and writes."""
 
 
-class NiftyRegAffineRaw(Magic, TextFileReader, TextFileWriter):
+class NiftyRegAffineRaw(Raw, TextFileReader, TextFileWriter):
     """Record of a NiftyReg affine file, which holds the file as parsed.
 
     `reg_aladin -aff` saves an affine as a text file that holds the four

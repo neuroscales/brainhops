@@ -3,7 +3,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Alias, KwOnly, NoRepr, replace
+from bagof.magic import Alias, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -50,11 +50,10 @@ class AfniAffine(
     TextFileReader,
     TextFileWriter,
     _xforms.Affine,
-    repr=HIDE_IF_NONE,
 ):
     """
-    An affine transformation stored in an AFNI matrix file (`.aff12.1D`,
-    `.1D`).
+    An affine transformation stored in an AFNI matrix file
+    (`.aff12.1D`, `.1D`).
 
     The file holds the 12 numbers of the `(3, 4)` matrix `M` that maps
     the DICOM (LPS) coordinates of the base dataset to those of the
@@ -113,41 +112,23 @@ class AfniAffine(
     affine is consolidated.
     """
 
-    volume: tx.Annotated[
-        int,
-        tx.Doc(
-            """
-            The matrix of the file that this affine is, counted from zero.
-            Negative values count from the end.
-            """
-        ),
-        KwOnly(),
-    ] = 0
+    volume: int = 0
+    """
+    The matrix of the file that this affine is, counted from zero.
+    Negative values count from the end.
+    """
 
-    base: tx.Annotated[
-        tx.Optional[tx.Any],
-        Alias(_BASE),
-        tx.Doc(
-            """
-            The base, or reference, image: an AFNI image or record, a
-            NIfTI image or header, or a brainhops image. It is used for
-            its obliquity only.
-            """
-        ),
-        KwOnly(),
-    ] = None
+    base: tx.Annotated[tx.Optional[tx.Any], Alias(_BASE)] = None
+    """
+    The base, or reference, image: an AFNI image or record, a NIfTI
+    image or header, or a brainhops image. It is used for its obliquity
+    only.
+    """
 
-    source: tx.Annotated[
-        tx.Optional[tx.Any],
-        Alias(_SOURCE),
-        tx.Doc(
-            """
-            The source, or moving, image, which is used for its obliquity
-            only.
-            """
-        ),
-        KwOnly(),
-    ] = None
+    source: tx.Annotated[tx.Optional[tx.Any], Alias(_SOURCE)] = None
+    """
+    The source, or moving, image, which is used for its obliquity only.
+    """
 
     @smartproperty
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:

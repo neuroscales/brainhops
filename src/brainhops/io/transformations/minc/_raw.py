@@ -12,6 +12,7 @@ from bagof.magic import Magic, field
 
 # internals
 from brainhops._core import path
+from brainhops.io.base._raw import Raw
 from brainhops.io.base._utils_files import open_path, write_file
 from brainhops.io.base.parsers import (
     Confidence,
@@ -30,7 +31,7 @@ _Row = tx.Tuple[float, ...]
 _Rows = tx.Tuple[_Row, ...]
 
 
-class XfmRaw(Magic, TextFileReader, TextFileWriter, frozen=True):
+class XfmRaw(Raw, TextFileReader, TextFileWriter):
     """Record of an MNI transform file, which holds the file as it is parsed.
 
     An MNI transform file (`.xfm`) is a short text file that is read in

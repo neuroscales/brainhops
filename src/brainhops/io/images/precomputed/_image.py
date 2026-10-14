@@ -125,13 +125,11 @@ class PrecomputedImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     were assigned.
     """
 
-    level: tx.Annotated[
-        tx.Optional[int],
-        tx.Doc(
-            "The index of the scale in the `info` file, where 0 is the "
-            "finest. `None`, the default, reads the finest scale."
-        ),
-    ] = None
+    level: tx.Optional[int] = None
+    """
+    The index of the scale in the `info` file, where 0 is the finest.
+    `None`, the default, reads the finest scale.
+    """
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:

@@ -2,7 +2,6 @@ import math
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic
 
 from brainhops._core import affines as _affines
 from brainhops._core.enum import StrEnum
@@ -12,6 +11,7 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
+from brainhops.io.base._raw import Raw
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 from ._systems import _make_system
@@ -89,7 +89,7 @@ class ItkPrecision(StrEnum):
     Double = "double"
 
 
-class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
+class ItkStruct(Raw, kw_only=True, convert=True, polymorphic=True, eq=False):
     """One ITK transform block, holding only what the file stores.
 
     An ITK file stores, for each block, its transform class, its precision,
@@ -158,7 +158,7 @@ class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
 # ----------------------------------------------------------------------
 
 
-class ItkBlockBase(ItkStruct, _xforms.ImmutableSequence):
+class ItkBlockBase(ItkStruct, _xforms.ImmutableSequence, frozen=False):
     """Common base of ITK blocks, which map between LPS world coordinates.
 
     Whatever a block encodes, it maps LPS world coordinates to LPS world

@@ -1,12 +1,17 @@
+__all__ = [
+    "AxisSequence",
+    "AxisTuple",
+    "AxisList",
+]
+
 import abc
 import sys
 from numbers import Integral
 
 import typing_extensions as tx
-from bagof.converters import Converter
-from bagof.magic import ConvertTo, fields
+from bagof.magic import fields
 
-from .axes import Axis
+from .base import Axis
 
 if tx.TYPE_CHECKING:
     from types import EllipsisType as _Ellipsis
@@ -26,20 +31,20 @@ AXES = tx.TypeVarTuple("AXES")
 class AxisSequence(tx.Sequence[AXIS]):
     """Axes of a coordinate system, some of which may be unknown.
 
-    An axis sequence holds [`Axis`][] objects and at most one `...`, which
-    stands for zero or more unknown axes. A sequence that holds `...` is
-    open, because its number of axes is unknown; otherwise it is closed and
-    lists every axis. The `...` is an entry but never counts as an axis. A
-    sequence with more than one `...` describes no axes: the methods that
-    read axes raise `ValueError`, and coordinate systems refuse it. For
-    example, `[..., TimeAxis()]` says that the last axis is a time axis,
-    and `[...]` says nothing.
+    An axis sequence holds [`Axis`][] objects and at most one `...`,
+    which stands for zero or more unknown axes. A sequence that holds
+    `...` is variadic, because its number of axes is unknown; otherwise
+    it is finite and lists every axis. The `...` is an entry but never
+    counts as an axis. A sequence with more than one `...` describes no
+    axes: the methods that read axes raise `ValueError`, and coordinate
+    systems refuse it. For example, `[..., TimeAxis()]` says that the
+    last axis is a time axis, and `[...]` says nothing.
 
     This class is the read-only base of [`AxisList`][], which is mutable,
     and [`AxisTuple`][], which is immutable. Slicing and the methods that
     build new sequences return the type of the original sequence. The type
     parameter is the type of the items, so an `AxisSequence[Axis]`, whose
-    items are all axes, is closed.
+    items are all axes, is finite.
 
     !!! note "Entries and axes"
         Length, iteration, equality, `axes[i]` and [`index`][] work on
@@ -47,7 +52,7 @@ class AxisSequence(tx.Sequence[AXIS]):
         [`expand`][], [`restrict`][], [`embed`][] and [`compatible_with`][]
         work on positions in the space, where `...` stands for as many axes
         as needed. Non-negative positions count from the first axis and
-        negative positions from the last. In a closed sequence, entries and
+        negative positions from the last. In a finite sequence, entries and
         axes coincide. In `[x, ..., t]`, however, `axes[2]` is `t` while
         `axes.at(2)` is one of the axes that `...` stands for.
 
@@ -71,7 +76,7 @@ class AxisSequence(tx.Sequence[AXIS]):
         ```pycon
         >>> x, t = Axis(name="x"), TimeAxis(name="t")
         >>> axes = AxisList([x, ..., t])
-        >>> axes.ndim is None, axes.is_open
+        >>> axes.ndim is None, axes.is_variadic
         (True, True)
         >>> axes.index("t"), axes.index(TimeAxis()), axes["t"] is t
         (2, 2, True)
@@ -173,8 +178,8 @@ class AxisSequence(tx.Sequence[AXIS]):
         Returns
         -------
         int
-            Index of the entry, which is a position in the space only when the
-            sequence is closed.
+            Index of the entry, which is a position in the space only
+            when the sequence is finite.
 
         Raises
         ------
@@ -212,7 +217,7 @@ class AxisSequence(tx.Sequence[AXIS]):
 
     @property
     def ndim(self) -> tx.Optional[int]:
-        """Number of axes, or `None` when the sequence is open.
+        """Number of axes, or `None` when the sequence is variadic.
 
         !!! example
             ```pycon
@@ -226,18 +231,19 @@ class AxisSequence(tx.Sequence[AXIS]):
         return len(prefix) if suffix is None else None
 
     @property
-    def is_open(self) -> bool:
-        """Whether the sequence holds `...`, so its number of axes is unknown.
+    def is_variadic(self) -> bool:
+        """
+        Whether the sequence holds `...`, so its number of axes is unknown.
 
-        `AxisList([...])` is open, and an empty list is closed.
+        `AxisList([...])` is variadic, and an empty list is finite.
         """
         return self._split()[1] is not None
 
     def expand(self, ndim: int) -> tx.Self:
-        """Return a closed sequence of `ndim` axes.
+        """Return a finite sequence of `ndim` axes.
 
-        In an open sequence, `...` is replaced by as many unknown axes as
-        needed. A closed sequence is returned as a copy.
+        In a variadic sequence, `...` is replaced by as many unknown
+        axes as needed. A finite sequence is returned as a copy.
 
         !!! example
             ```pycon
@@ -250,8 +256,9 @@ class AxisSequence(tx.Sequence[AXIS]):
         Raises
         ------
         ValueError
-            If `ndim` is smaller than the number of explicit axes of an open
-            sequence, or differs from the length of a closed sequence.
+            If `ndim` is smaller than the number of explicit axes of a
+            variadic sequence, or differs from the length of a finite
+            sequence.
         TypeError
             If `ndim` is not an integer.
         """
@@ -260,27 +267,28 @@ class AxisSequence(tx.Sequence[AXIS]):
         if suffix is None:
             if ndim != len(prefix):
                 raise ValueError(
-                    f"Cannot expand a closed list of {len(prefix)} axes to "
-                    f"{ndim} axes."
+                    f"Cannot expand a finite list of {len(prefix)} axes "
+                    f"to {ndim} axes."
                 )
             return type(self)(prefix)
         explicit = len(prefix) + len(suffix)
         if ndim < explicit:
             raise ValueError(
-                f"Cannot expand an open list with {explicit} explicit axes "
-                f"to {ndim} axes."
+                f"Cannot expand a variadic list with {explicit} explicit "
+                f"axes to {ndim} axes."
             )
         fill = [Axis() for _ in range(ndim - explicit)]
         return type(self)(prefix + fill + suffix)
 
     def restrict(self, refs: tx.Iterable[tx.Union[int, str]]) -> tx.Self:
-        """Return the axes at some positions or with some names, in that order.
+        """
+        Return the axes at some positions or with some names, in that order.
 
         A position is an integer in the space, and a name refers to an
-        explicit axis as in `axes[name]`. In a closed sequence of `n` axes,
-        positions lie in `[-n, n)`. In an open sequence, every position is
-        valid, and the positions that fall among the axes of `...` give
-        unknown axes.
+        explicit axis as in `axes[name]`. In a finite sequence of `n` axes,
+        positions lie in `[-n, n)`. In a variadic sequence, every position
+        is valid, and the positions that fall among the axes of `...`
+        give unknown axes.
 
         !!! example
             ```pycon
@@ -294,12 +302,12 @@ class AxisSequence(tx.Sequence[AXIS]):
         Returns
         -------
         AxisSequence
-            A new closed sequence with one axis per reference.
+            A new finite sequence with one axis per reference.
 
         Raises
         ------
         IndexError
-            If a position lies outside a closed sequence.
+            If a position lies outside a finite sequence.
         KeyError
             If no explicit axis has a name.
         ValueError
@@ -327,9 +335,9 @@ class AxisSequence(tx.Sequence[AXIS]):
 
         This method is the inverse of [`restrict`][]. Axis `j` of this
         sequence sits at `positions[j]` in the larger space, and the other
-        axes of the larger space are unknown. An open sequence is first
-        closed to `len(positions)` axes, as by [`expand`][]. Positions refer
-        to a space that does not exist yet, so names are not accepted.
+        axes of the larger space are unknown. A variadic sequence is first
+        broadcast to `len(positions)` axes, as by [`expand`][]. Positions
+        refer to a space that does not exist yet, so names are not accepted.
 
         !!! example
             ```pycon
@@ -345,15 +353,15 @@ class AxisSequence(tx.Sequence[AXIS]):
         positions : iterable of int
             Non-negative position of each axis.
         ndim : int, optional
-            Number of axes of the larger space. When it is omitted, the result
-            is open and ends with `...`.
+            Number of axes of the larger space. When it is omitted, the
+            result is open-ended and ends with `...`.
 
         Raises
         ------
         ValueError
-            If a position is negative or repeated, if `ndim` does not exceed
-            every position, or if the sequence cannot be closed to
-            `len(positions)` axes.
+            If a position is negative or repeated, if `ndim` does not
+            exceed every position, or if the sequence cannot be
+            restricted to `len(positions)` axes.
         TypeError
             If a position or `ndim` is not an integer.
         """
@@ -426,21 +434,21 @@ class AxisSequence(tx.Sequence[AXIS]):
         if s1 is None and s2 is None:
             return len(p1) == len(p2) and _pairwise(p1, p2)
         if s1 is None:
-            # Make the first sequence the open one.
+            # Make the first sequence the variadic one.
             (p1, s1), (p2, s2) = (p2, s2), (p1, s1)
         assert s1 is not None
         if s2 is None:
-            # The explicit axes of the open sequence must fit at the start and
-            # at the end of the closed one.
+            # The explicit axes of the opvariadicen sequence must fit at
+            # the start and at the end of the finite one.
             n = len(p2)
             if len(p1) + len(s1) > n:
                 return False
             return _pairwise(p1, p2[: len(p1)]) and _pairwise(
                 s1, p2[n - len(s1) :]
             )
-        # When both sequences are open, each `...` can stand for enough axes
-        # that only the axes that both sequences state at the start, or both
-        # state at the end, are compared.
+        # When both sequences are variadic, each `...` can stand for
+        # enough axes that only the axes that both sequences state at
+        # the start, or both state at the end, are compared.
         k = min(len(p1), len(p2))
         m = min(len(s1), len(s2))
         return _pairwise(p1[:k], p2[:k]) and _pairwise(
@@ -455,8 +463,9 @@ class AxisSequence(tx.Sequence[AXIS]):
         return _split(self)
 
     def _position(self, position: int) -> int:
-        # In a closed sequence, a negative position is made non-negative. In an
-        # open sequence, every position is valid and returned unchanged.
+        # In a finite sequence, a negative position is made non-negative.
+        # In a variadic sequence, every position is valid and returned
+        # unchanged.
         if isinstance(position, bool) or not isinstance(position, Integral):
             raise TypeError(
                 f"An axis is referred to by its position (int) or its name "
@@ -487,11 +496,11 @@ class AxisSequence(tx.Sequence[AXIS]):
     def at(self, position: int) -> Axis:
         """Return the axis at a position in the space.
 
-        Non-negative positions count from the first axis and negative positions
-        from the last. In a closed sequence, `axes.at(i)` equals `axes[i]` and
-        the position lies in `[-ndim, ndim)`. In an open sequence, every
-        position is valid, and a position that falls among the axes of `...`
-        gives a new unknown axis.
+        Non-negative positions count from the first axis and negative
+        positions from the last. In a finite sequence, `axes.at(i)`
+        equals `axes[i]` and the position lies in `[-ndim, ndim)`.
+        In a variadic sequence, every position is valid, and a position
+        that falls among the axes of `...` gives a new unknown axis.
 
         !!! example
             ```pycon
@@ -506,7 +515,7 @@ class AxisSequence(tx.Sequence[AXIS]):
         Raises
         ------
         IndexError
-            If the position lies outside a closed sequence.
+            If the position lies outside a finite sequence.
         TypeError
             If the position is not an integer.
         """
@@ -566,12 +575,12 @@ class AxisList(AxisSequence[AXIS], list):
     A list or tuple given to such a system is converted item by item to the
     axis type of the system. The default, `[...]`, says nothing about the
     axes, and `axes=None` stands for that default. An `AxisList[Axis]` is
-    closed.
+    finite.
 
     !!! example
         ```pycon
         >>> axes = CoordinateSystem(axes=[Axis(name="x"), ...]).axes
-        >>> type(axes).__name__, axes.is_open, axes["x"]
+        >>> type(axes).__name__, axes.is_variadic, axes["x"]
         ('AxisList', True, Axis(name='x'))
         >>> axes.append(TimeAxis(name="t"))
         >>> axes.at(-1)
@@ -579,64 +588,14 @@ class AxisList(AxisSequence[AXIS], list):
         ```
     """
 
-    # `collections.abc.Sequence` sits between the bases in the MRO and would
-    # otherwise supply its generic mixin methods and an abstract `__len__`,
-    # so the methods of `list` are bound explicitly.
+    # `collections.abc.Sequence` sits between the bases in the MRO and
+    # would otherwise supply its generic mixin methods and an abstract
+    # `__len__`, so the methods of `list` are bound explicitly.
     __len__ = list.__len__
     __iter__ = list.__iter__
     __reversed__ = list.__reversed__
     count = list.count
     _entry = list.__getitem__
-
-
-# ---- converter -------------------------------------------------------
-
-
-class _NoneReadsAsDefault:
-    """Field converter that reads `None` as the default of the field.
-
-    Other values are passed to the converter that the type hint would have
-    had without this one. For example, `axes=None` means the default of the
-    `axes` field, which is `[...]` for an open system and the axes of the
-    system for a fixed system. Only the field knows its default, so each
-    field gets its own converter, and `bind_axes_default` links that
-    converter to its field. The converter is not registered for
-    `AxisSequence`, because the registry would then return this converter
-    when it is asked for the converter of the hint.
-    """
-
-    def __init__(self, hint: tx.Any) -> None:
-        self.hint = hint
-        self.field: tx.Any = None
-        self._convert: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
-
-    def __call__(self, value: tx.Any) -> tx.Any:
-        if value is None and self.field is not None:
-            factory = self.field.factory
-            value = factory() if callable(factory) else self.field.default
-        if self._convert is None:
-            self._convert = Converter.get(self.hint)
-        return self._convert(value)
-
-
-class Axes:
-    """Annotation for an `axes` field in which `None` stands for the default.
-
-    `Axes[hint]` is the type `hint` with a converter that replaces `None`
-    by the default of the field.
-    """
-
-    def __class_getitem__(cls, hint: tx.Any) -> tx.Any:
-        return tx.Annotated[hint, ConvertTo(_NoneReadsAsDefault(hint))]
-
-
-def bind_axes_default(cls: type) -> None:
-    """Link the converter of the `axes` field of `cls` to that field."""
-    for field in fields(cls):
-        if field.name == "axes" and isinstance(
-            field.converter, _NoneReadsAsDefault
-        ):
-            field.converter.field = field
 
 
 # ---- private helpers -------------------------------------------------
@@ -645,8 +604,10 @@ def bind_axes_default(cls: type) -> None:
 def _split(
     entries: tx.Iterable[tx.Any],
 ) -> tx.Tuple[tx.List[Axis], tx.Optional[tx.List[Axis]]]:
-    # Return the explicit axes before and after `...`. The second list is
-    # `None` for a closed sequence.
+    """
+    Return the explicit axes before and after `...`.
+    The second list is `None` for a finite sequence.
+    """
     entries = list(entries)
     ellipses = [i for i, axis in enumerate(entries) if axis is ...]
     if not ellipses:

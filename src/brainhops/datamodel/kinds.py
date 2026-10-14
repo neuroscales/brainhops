@@ -175,10 +175,13 @@ from abc import ABC
 from collections.abc import Sequence as AbcSequence
 from functools import lru_cache
 
+# dependencies
 import typing_extensions as tx
-from bagof.magic import Magic, replace
+from bagof.magic import replace
 
+# core
 from brainhops._core.compat import PLACEHOLDER, partial
+from brainhops._core.magic import SharedOptions
 
 # --- API helpers ------------------------------------------------------
 
@@ -543,7 +546,13 @@ MISSING = object()
 
 @public
 class TransformationFamily(
-    AbcSequence, Magic, eq=True, hash=True, frozen=True
+    AbcSequence,
+    SharedOptions,
+    eq=True,
+    hash=True,
+    frozen=True,
+    kw_only=False,
+    convert=False,
 ):
     """
     A parametric family of transformations.

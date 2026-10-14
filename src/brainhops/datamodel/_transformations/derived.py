@@ -21,11 +21,7 @@ any other member of that family. The square needs no wrapper, because
 `[T, T]`, which is already lazy.
 """
 
-__all__ = [
-    "DerivedTransformation",
-    "Sqrt",
-    "UNARY_OPERATORS",
-]
+__all__ = ["DerivedTransformation", "Sqrt"]
 
 from operator import methodcaller
 from types import MappingProxyType
@@ -74,6 +70,22 @@ class DerivedTransformation(Transformation):
     [`Inverse`][brainhops.datamodel.transformations.Inverse] and [`Sqrt`][]. A
     subclass declares the name of the operator, the family of its result, and
     whether the operator reverses the direction of the map.
+
+    Parameters
+    ----------
+    forward : Transformation, optional
+        The transformation from which the parameters of this transformation
+        are derived. Or, in other words, the transforamtion that this
+        operator acts on.
+
+    Other Parameters
+    ----------------
+    input : CoordinateSystem, optional
+        Input coordinate system of the operator.
+        If not given, it is inferred from the `forward` transformation.
+    output : CoordinateSystem, optional
+        Output coordinate system of the operator.
+        If not given, it is inferred from the `forward` transformation.
     """
 
     # --- class attributes ---------------------------------------------

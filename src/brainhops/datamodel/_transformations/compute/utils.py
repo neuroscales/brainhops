@@ -42,7 +42,7 @@ def systems_disagree(
         get_axes(source),
         get_axes(target),
     )
-    if source_axes.is_open or target_axes.is_open:
+    if source_axes.is_variadic or target_axes.is_variadic:
         return not source_axes.compatible_with(target_axes)
     return source != target
 

@@ -12,6 +12,7 @@ from bagof.magic import Magic, replace
 
 # internals
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -172,7 +173,7 @@ class PrecomputedScale(Magic, frozen=True):
         )
 
 
-class PrecomputedRaw(Magic, BinaryFileReader, frozen=True):
+class PrecomputedRaw(Raw, BinaryFileReader):
     """The `info` file of a Neuroglancer precomputed volume.
 
     A precomputed volume is a directory, local or served over HTTP, that

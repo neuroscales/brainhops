@@ -50,8 +50,11 @@ from ._ome import (
     write_multiscale,
 )
 
-_Ellipsis = type(Ellipsis)
-# `types.EllipsisType` only exists from Python 3.10 onwards.
+if tx.TYPE_CHECKING:
+    from types import EllipsisType
+else:
+    # `types.EllipsisType` only exists from Python 3.10 onwards.
+    EllipsisType = type(Ellipsis)
 
 
 class OmeZarrLevel(ZarrImage):
@@ -73,7 +76,9 @@ class OmeZarrLevel(ZarrImage):
 # otherwise be positional.
 @register_format
 class OmeZarrImage(
-    _ZarrNodeReaderWriter, ImageFormat, MultiScaleImage, kw_only=True
+    _ZarrNodeReaderWriter,
+    ImageFormat,
+    MultiScaleImage,
 ):
     """Multiscale image backed by an OME-Zarr pyramid.
 
@@ -88,42 +93,39 @@ class OmeZarrImage(
 
     # ---- attributes --------------------------------------------------
 
-    _axes: tx.Annotated[
-        tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]],
-        tx.Doc(
-            "The axes to store a pyramid under, in the brainhops order, "
-            "when it is built from scratch, as an `AxisList`. As in a "
-            "coordinate system, a single `...` may stand for the axes "
-            "about which nothing is known; it is closed to the number of "
-            "axes of the data when the pyramid is written. `None` is not "
-            "`[...]`: it leaves the axes unset, so a pyramid read from a "
-            "store takes its axes from `ome`."
-        ),
-    ] = None
+    _axes: tx.Optional[AxisList[tx.Union[Axis, EllipsisType]]] = None
+    """
+    The axes to store a pyramid under, in the brainhops order, when it
+    is built from scratch, as an `AxisList`. As in a coordinate system,
+    a single `...` may stand for the axes about which nothing is known;
+    it is closed to the number of axes of the data when the pyramid is
+    written. `None` is not `[...]`: it leaves the axes unset, so a
+    pyramid read from a store takes its axes from `ome`.
+    """
 
-    _ome: tx.Annotated[
-        tx.Optional[Multiscale],
-        tx.Doc("The OME multiscale metadata, normalized to 0.6."),
-    ] = None
+    _ome: tx.Optional[Multiscale] = None
+    """The OME multiscale metadata, normalized to 0.6."""
 
-    _group: tx.Annotated[
-        str,
-        tx.Doc(
-            "The path of the group of the pyramid from the root of its Zarr "
-            "hierarchy, such as `labels/cells`. The coordinate systems of a "
-            "pyramid in another group than the root are named after that "
-            "path, as in `labels/cells//physical`, so that the systems of "
-            "two groups stay distinct. A Zarr group does not know its path, "
-            "so the reader that opened the root of the hierarchy gives it. "
-            "The empty string, the default, is the root group, whose "
-            "systems keep their OME names."
-        ),
-    ] = ""
+    _group: str = ""
+    """
+    The path of the group of the pyramid from the root of its Zarr
+    hierarchy, such as `labels/cells`.
+
+    The coordinate systems of a pyramid in another group than the root
+    are named after that path, as in `labels/cells//physical`, so that
+    the systems of two groups stay distinct. A Zarr group does not know
+    its path, so the reader that opened the root of the hierarchy gives
+    it.
+
+    The empty string, the default, is the root group, whose systems keep
+    their OME names.
+    """
 
     _images: tx.Optional[tx.List[SingleScaleImage]] = Inherit(
         "images", default=None
     )
-    """The levels given to the pyramid, or `None` to read them.
+    """
+    The levels given to the pyramid, or `None` to read them.
 
     The pyramid takes over the `images` field of [`MultiScaleImage`][]
     to store it under this private name. The constructor still takes
@@ -135,7 +137,8 @@ class OmeZarrImage(
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The placements given to the pyramid, or `None` to read them.
+    """
+    The placements given to the pyramid, or `None` to read them.
 
     The pyramid takes over the `transformations` field of
     [`MultiScaleImage`][] in the same way as `images`. `None`, the
@@ -169,7 +172,7 @@ class OmeZarrImage(
         return getattr(self, "_group", "")
 
     @property
-    def axes(self) -> tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]]:
+    def axes(self) -> tx.Optional[AxisList[tx.Union[Axis, EllipsisType]]]:
         """Axes under which a pyramid built from scratch is stored."""
         return getattr(self, "_axes", None)
 
@@ -576,7 +579,7 @@ class OmeZarrImage(
 
     def _write_axes(self, ndim: int) -> tx.List[Axis]:
         axes = self.axes
-        if axes and (axes.is_open or axes.ndim == ndim):
+        if axes and (axes.is_variadic or axes.ndim == ndim):
             # OME-Zarr cannot store `...`, so an open axis list is closed to
             # the dimensionality of the data.
             try:

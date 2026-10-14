@@ -2274,8 +2274,7 @@ def _regdat_stored(xform: tx.Any) -> tx.Any:
 
 
 def _regdat_edit_record(record: tx.Any) -> tx.Any:
-    record.subject = "edited"
-    return record
+    return replace(record, subject="edited")
 
 
 # A register.dat file is parsed in one pass, as an LTA file is, so the
@@ -2900,8 +2899,7 @@ EXEMPLARS[XfmTransform] = _XFM._replace(
 
 def _mgh_edit_record(record: tx.Any) -> tx.Any:
     record.header["te"] = 7.5
-    record.tags = b"edited"
-    return record
+    return replace(record, tags=b"edited")
 
 
 def _mgh_record_edited(record: tx.Any) -> bool:
@@ -4888,12 +4886,27 @@ PYRAMID_CASES = [
 _PARSER_STATE = {"image", "header", "_header", "struct", "dataobj", "node"}
 
 
-def _resolve(name: str) -> tx.Optional[type]:
+def _resolve(name: str, *, require_backend: bool = True) -> tx.Optional[type]:
     """Import a class by its dotted name.
 
-    `None` is returned when the module needs an optional dependency that
-    is not installed, since the format is then not registered either.
+    `None` is returned when the reader needs an optional dependency that
+    is not installed. Static checks can set `require_backend=False` to
+    inspect classes that remain importable without their reader backend.
     """
+    if (
+        require_backend
+        and openslide is None
+        and name.startswith("brainhops.io.images.openslide.")
+    ):
+        return None
+    if (
+        require_backend
+        and ts is None
+        and name.startswith(
+            ("brainhops.io.images.n5.", "brainhops.io.images.precomputed.")
+        )
+    ):
+        return None
     module, _, attr = name.rpartition(".")
     try:
         return getattr(importlib.import_module(module), attr)
@@ -5157,6 +5170,7 @@ def test_every_registered_format_is_in_one_table() -> None:
         cls
         for cls in Format._REGISTRY | MetadataFormat._REGISTRY
         if cls.__module__.startswith("brainhops.")
+        and _resolve(f"{cls.__module__}.{cls.__name__}") is not None
     }
     assert not set(PYRAMIDS) & not_migrated
     # The level class of a pyramid is an exemplar, and the metadata class of
@@ -5198,7 +5212,9 @@ def test_the_metadata_registry_is_isolated() -> None:
 def test_no_format_holds_its_arrays_in_raw() -> None:
     # The arrays of a format are in `rawdata`, and `raw` is the record of
     # a metadata object (item 472 of the memo). There is no alias.
-    holders = {_resolve(name) for name in RAWDATA} - {None}
+    holders = {_resolve(name, require_backend=False) for name in RAWDATA} - {
+        None
+    }
     for cls in Format._REGISTRY:
         if not cls.__module__.startswith("brainhops."):
             continue
