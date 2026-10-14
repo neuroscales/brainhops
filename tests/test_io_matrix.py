@@ -18,6 +18,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     TextFileReader,
+    UnrepresentableTransformationError,
 )
 from brainhops.io.common import _arrays as arrays
 from brainhops.io.transformations import TransformationFormat, load, sniff
@@ -27,10 +28,14 @@ from brainhops.io.transformations.matrix import (
     MatLegacyMatrixAffine,
     MatMatrixAffine,
     MatrixAffine,
+    MatrixAffineRaw,
     NpyMatrixAffine,
+    NpyMatrixMetadata,
     NpzMatrixAffine,
+    NpzMatrixMetadata,
     TsvMatrixAffine,
     TxtMatrixAffine,
+    TxtMatrixMetadata,
 )
 
 data_dir = Path(__file__).parent / "data"
@@ -191,7 +196,7 @@ def test_npz_default_and_key(tmp_path) -> None:  # noqa: ANN001
     xform = load(path)
     assert isinstance(xform, NpzMatrixAffine)
     assert np.allclose(_homog(xform), A)
-    assert xform.variable == "affine"
+    assert xform.metadata.raw.variable == "affine"
 
     path = tmp_path / "two.npz"
     np.savez(path, fwd=A, inv=np.linalg.inv(A))
@@ -210,7 +215,7 @@ def test_mat_v4_v5(tmp_path, fmt) -> None:  # noqa: ANN001
     xform = load(path)
     assert isinstance(xform, MatMatrixAffine)
     assert np.allclose(_homog(xform), A)
-    assert xform.variable == "M"
+    assert xform.metadata.raw.variable == "M"
 
 
 def test_mat_variable_selection(tmp_path) -> None:  # noqa: ANN001
@@ -245,7 +250,7 @@ def test_mat_v73(tmp_path) -> None:  # noqa: ANN001
     assert isinstance(xform, Mat73MatrixAffine)
     # The reader undoes the v7.3 transpose.
     assert np.allclose(_homog(xform), A)
-    assert xform.variable == "M"
+    assert xform.metadata.raw.variable == "M"
 
 
 def test_fileobj(tmp_path) -> None:  # noqa: ANN001
@@ -309,14 +314,15 @@ def _text(matrix):  # noqa: ANN001, ANN202
 
 def test_defaults() -> None:
     xform = TxtMatrixAffine.from_text(_text(A))
-    assert (xform.vector, xform.direction, xform.index_base) == (
+    raw = xform.metadata.raw
+    assert (raw.vector, raw.direction, raw.index_base) == (
         "column",
         "forward",
         (0, 0),
     )
     assert type(xform.input) is systems.CoordinateSystem3D
     assert type(xform.output) is systems.CoordinateSystem3D
-    assert np.allclose(np.asarray(xform.raw_matrix), A)
+    assert np.allclose(np.asarray(xform.metadata.raw.matrix), A)
 
 
 def test_row_vector_convention() -> None:
@@ -325,13 +331,13 @@ def test_row_vector_convention() -> None:
     # A (4, 3) row-vector matrix equals the (3, 4) column-vector one.
     xform = TxtMatrixAffine.from_text(_text(A[:3].T), vector="row")
     assert np.allclose(_homog(xform), A)
-    assert np.allclose(np.asarray(xform.raw_matrix), A[:3].T)
+    assert np.allclose(np.asarray(xform.metadata.raw.matrix), A[:3].T)
 
 
 def test_inverse_direction() -> None:
     xform = TxtMatrixAffine.from_text(_text(A), direction="inverse")
     assert np.allclose(_homog(xform), np.linalg.inv(A))
-    assert xform.direction == "inverse"
+    assert xform.metadata.raw.direction == "inverse"
 
 
 def test_spaces() -> None:
@@ -352,7 +358,7 @@ def test_one_based_voxel_to_world() -> None:
     xform = TxtMatrixAffine.from_text(
         _text(A), input="voxel", output="ras", index_base=1
     )
-    assert xform.index_base == (1, 0)
+    assert xform.metadata.raw.index_base == (1, 0)
     zero = _apply(_homog(xform), [0, 0, 0])
     assert np.allclose(zero, _apply(A, [1, 1, 1]))
 
@@ -726,3 +732,171 @@ def test_mat_dispatcher_is_not_registered() -> None:
     with pytest.raises(ParserContentError):
         MatMatrixAffine.from_text(_text(A))
     assert MatMatrixAffine.sniff_text(_text(A)) == Confidence.NO
+
+
+# ----------------------------------------------------------------------
+#   RECORDS
+# ----------------------------------------------------------------------
+
+
+def test_the_record_keeps_the_file_and_its_conventions() -> None:
+    text = "# rows\n" + _text(A.T) + "\n"
+    xform = TxtMatrixAffine.from_text(
+        text, vector="row", input="voxel", output="ras", index_base=1
+    )
+    raw = xform.metadata.raw
+    assert isinstance(xform.metadata, TxtMatrixMetadata)
+    assert isinstance(raw, MatrixAffineRaw)
+    assert raw.text == text
+    assert np.array_equal(np.asarray(raw.matrix), A.T)
+    assert (raw.ndim, raw.vector, raw.direction) == (3, "row", "forward")
+    assert raw.index_base == (1, 0)
+    assert isinstance(raw.input, systems.VoxelCoordinateSystem)
+    assert isinstance(raw.output, systems.RASCoordinateSystem)
+    # The transformation decodes its matrix and its systems from the record.
+    assert np.allclose(_homog(xform), raw.affine())
+    assert xform.input is raw.input
+
+
+def test_the_metadata_reads_the_file_alone(tmp_path) -> None:  # noqa: ANN001
+    path = tmp_path / "affine.npz"
+    np.savez(path, M=A, N=np.eye(4))
+    metadata = NpzMatrixMetadata.load(path, variable="M", direction="inverse")
+    assert metadata.raw.variable == "M"
+    xform = NpzMatrixAffine.from_raw(metadata.raw)
+    assert np.allclose(_homog(xform), np.linalg.inv(A))
+    assert NpzMatrixAffine.from_any(metadata.raw).metadata.raw is metadata.raw
+
+
+def test_the_decoded_matrix_is_read_only() -> None:
+    xform = TxtMatrixAffine.from_text(_text(A))
+    with pytest.raises(ValueError):
+        xform.data[0, 0] = 2.0
+
+
+@pytest.mark.parametrize(
+    "conventions",
+    [
+        {},
+        {"vector": "row"},
+        {"direction": "inverse"},
+        {"input": "voxel", "output": "voxel", "index_base": 1},
+        {"input": "voxel", "output": "ras", "index_base": (1, 0)},
+    ],
+    ids=["default", "row", "inverse", "one-based", "one-based-input"],
+)
+def test_an_assigned_matrix_is_stored_in_the_conventions_of_the_file(
+    conventions,  # noqa: ANN001
+) -> None:
+    stored = A.T if conventions.get("vector") == "row" else A
+    xform = TxtMatrixAffine.from_text(_text(stored), **conventions)
+    metadata = xform.metadata
+    new = np.diag([2.0, 3.0, 4.0, 1.0])
+    new[:3, 3] = [1.0, 2.0, 3.0]
+    xform.data = new[:3]
+    # The matrix is pending, and the record still describes the file.
+    assert xform.metadata is metadata
+    consolidated = xform.consolidate()
+    raw = consolidated.metadata.raw
+    assert raw.text is None
+    assert raw.vector == metadata.raw.vector
+    assert raw.direction == metadata.raw.direction
+    assert raw.index_base == metadata.raw.index_base
+    assert np.allclose(raw.affine(), new)
+    assert np.allclose(_homog(consolidated), new)
+    # Reading the stored matrix in the same conventions gives the affine.
+    again = TxtMatrixAffine.from_text(
+        _text(np.asarray(raw.matrix)), **conventions
+    )
+    assert np.allclose(_homog(again), new)
+
+
+def test_images_are_kept_as_matrices_in_the_record() -> None:
+    nb = pytest.importorskip("nibabel")
+    src_aff = np.diag([2.0, 2.0, 2.0, 1.0])
+    tgt_aff = np.diag([-1.0, 1.0, 3.0, 1.0])
+    src = nb.Nifti1Image(np.zeros((4, 4, 4), np.float32), src_aff)
+    tgt = nb.Nifti1Image(np.zeros((4, 4, 4), np.float32), tgt_aff)
+    xform = TxtMatrixAffine.from_text(_text(A), source=src, target=tgt)
+    raw = xform.metadata.raw
+    assert np.array_equal(np.asarray(raw.source_to_world), src_aff)
+    assert np.array_equal(np.asarray(raw.target_to_world), tgt_aff)
+    xform.data = np.eye(4)[:3]
+    stored = np.asarray(xform.consolidate().metadata.raw.matrix)
+    assert np.allclose(stored, np.linalg.inv(tgt_aff) @ src_aff)
+
+
+def test_assigned_systems_are_encoded_or_refused() -> None:
+    xform = TxtMatrixAffine.from_text(_text(A), input="ras", output="ras")
+    xform.output = systems.LPSmm()
+    consolidated = xform.consolidate()
+    assert consolidated.metadata.raw.output == systems.LPSmm()
+    # The systems of the copy are those of its record, so nothing is
+    # pending in it.
+    assert consolidated._output is consolidated.metadata.raw.output
+    assert consolidated.consolidate().metadata is consolidated.metadata
+    # A 1-based voxel input that is no longer a voxel space is refused.
+    xform = TxtMatrixAffine.from_text(
+        _text(A), input="voxel", output="ras", index_base=1
+    )
+    xform.input = systems.RASmm()
+    with pytest.raises(UnrepresentableTransformationError, match="1-based"):
+        xform.consolidate()
+
+
+def test_a_linear_file_refuses_a_translation() -> None:
+    xform = TxtMatrixAffine.from_text(_text(A[:3, :3]))
+    xform.data = A[:3]
+    with pytest.raises(UnrepresentableTransformationError, match="linear"):
+        xform.consolidate()
+
+
+def test_a_matrix_built_from_data_gets_a_homogeneous_record() -> None:
+    xform = NpyMatrixAffine(matrix=A[:3])
+    assert xform.metadata is None
+    consolidated = xform.consolidate()
+    assert isinstance(consolidated.metadata, NpyMatrixMetadata)
+    assert np.array_equal(np.asarray(consolidated.metadata.raw.matrix), A)
+
+
+@pytest.mark.parametrize(
+    "cls, options",
+    [
+        (TxtMatrixAffine, {"variable": "M"}),
+        (TxtMatrixAffine, {"key": "M"}),
+        (TxtMatrixAffine, {"delimiter": ","}),
+        (CsvMatrixAffine, {"comments": "%"}),
+    ],
+)
+def test_unknown_options_are_refused(cls, options) -> None:  # noqa: ANN001
+    with pytest.raises(TypeError):
+        cls.from_text(_rows(","), **options)
+
+
+def test_binary_containers_refuse_unknown_options() -> None:
+    buffer = io.BytesIO()
+    np.save(buffer, A)
+    with pytest.raises(TypeError):
+        NpyMatrixAffine.from_bytes(buffer.getvalue(), variable="M")
+    buffer = io.BytesIO()
+    np.savez(buffer, M=A, N=np.eye(4))
+    content = buffer.getvalue()
+    with pytest.raises(TypeError):
+        NpzMatrixAffine.from_bytes(content, variable="M", key="N")
+    with pytest.raises(TypeError):
+        NpzMatrixAffine.from_bytes(content, variable="M", encoding="utf-8")
+    assert (
+        NpzMatrixAffine.from_bytes(content, key="N").metadata.raw.variable
+        == "N"
+    )
+
+
+def test_copies_between_containers_reset_the_record() -> None:
+    xform = TxtMatrixAffine.from_text(_text(A), input="ras", output="ras")
+    copy = xform.to(NpyMatrixAffine)
+    assert type(copy) is NpyMatrixAffine
+    assert copy.metadata is None
+    assert np.allclose(_homog(copy), A)
+    assert copy.input == xform.input
+    same = TxtMatrixAffine.from_instance(xform)
+    assert same.metadata is xform.metadata

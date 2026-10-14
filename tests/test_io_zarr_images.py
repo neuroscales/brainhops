@@ -1007,10 +1007,11 @@ def test_a_copy_of_a_read_level_stays_lazy(tmp_path: Path) -> None:
     _small_pyramid().save(path)
     level = OmeZarrImage.from_store(path).images[0]
     copy = replace(level)
-    # The copy keeps the node and the permutation, and reads no array.
+    # The copy keeps the lazy array, which permutes the axes, and the
+    # record, and reads no array.
     assert copy._data is None
-    assert copy.node is level.node
-    assert copy._perm == level._perm
+    assert copy.raw is level.raw
+    assert copy.metadata is level.metadata
     assert getattr(level, "_cache_data", None) is None
     assert np.array_equal(np.asarray(copy.data), np.asarray(level.data))
     # An assigned array is copied as it is.
@@ -1892,30 +1893,6 @@ def test_reader_reads_a_displacement_field_group_of_version_0_6(
 # ---- base Zarr writer ------------------------------------------------
 
 
-class _RecordingStorePath:
-    """A store path that records the targets it is copied to."""
-
-    def __init__(self) -> None:
-        self.copies: tx.List[tx.Any] = []
-
-    def copy(self, target: tx.Any) -> None:
-        self.copies.append(target)
-
-
-class _FakeNode(abczarr.ZarrNode):
-    """A minimal Zarr node whose store path records each copy."""
-
-    zarr_version = 3
-    metadata = None
-
-    def __init__(self) -> None:
-        self._store_path = _RecordingStorePath()
-
-    @property
-    def store_path(self) -> _RecordingStorePath:
-        return self._store_path
-
-
 def _base_writer_class() -> tx.Type[tx.Any]:
     from brainhops.io.common.zarr._parsers import ZarrReaderWriter
 
@@ -1925,25 +1902,20 @@ def _base_writer_class() -> tx.Type[tx.Any]:
     return _Writer
 
 
-def test_base_to_node_returns_the_node_written_into() -> None:
-    source = _FakeNode()
-    target = _FakeNode()
-    writer = _base_writer_class()(node=source)
-    assert writer.to_node(target) is target
-    assert source.store_path.copies == [target.store_path]
+def test_the_base_writer_holds_no_state() -> None:
+    # The adapter adds methods and no field, so it takes no argument.
+    with pytest.raises(TypeError):
+        _base_writer_class()(node=None)
+    assert vars(_base_writer_class()()) == {}
 
 
-def test_base_to_node_refuses_a_parser_without_a_node() -> None:
-    writer = _base_writer_class()()
-    with pytest.raises(WriterError, match="nothing to write"):
-        writer.to_node(_FakeNode())
-
-
-def test_base_to_store_refuses_a_parser_without_a_node(
+def test_the_base_writer_leaves_writing_to_the_format(
     tmp_path: Path,
 ) -> None:
     writer = _base_writer_class()()
-    with pytest.raises(WriterError, match="nothing to write"):
+    with pytest.raises(NotImplementedError):
+        writer.to_node(None)
+    with pytest.raises(NotImplementedError):
         writer.to_store(str(tmp_path / "out.zarr"))
     assert not (tmp_path / "out.zarr").exists()
 
@@ -2008,3 +1980,13 @@ def test_reader_refuses_coordinates_of_another_length(
     path = _field_pyramid(tmp_path, "coordinate", [1.0, 2.0])
     with pytest.raises(OmeImageError, match="components"):
         OmeZarrImage.from_store(path)
+
+
+def test_the_base_writer_refuses_streams_and_bytes() -> None:
+    from io import BytesIO
+
+    writer = _base_writer_class()()
+    with pytest.raises(WriterError):
+        writer.to_fileobj(BytesIO())
+    with pytest.raises(WriterError):
+        writer.to_bytes()

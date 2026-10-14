@@ -38,8 +38,11 @@ from brainhops.io.base.parsers import (
     ParserTypeError,
     WriterError,
 )
-from brainhops.io.common.zarr import StoreLike, ZarrReaderWriter
-from brainhops.io.common.zarr._parsers import _as_node
+from brainhops.io.common.zarr import StoreLike
+from brainhops.io.common.zarr._parsers import (
+    _as_node,
+    _ZarrNodeReaderWriter,
+)
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.zarr import _map, _node
 
@@ -56,7 +59,9 @@ class OmeFieldError(ValueError):
 
 
 @register_format
-class OmeZarrField(ZarrReaderWriter, TransformationFormat, MultiscaleField):
+class OmeZarrField(
+    _ZarrNodeReaderWriter, TransformationFormat, MultiscaleField
+):
     """A coordinate or displacement field stored as OME-Zarr.
 
     The Zarr store is the file format. It is read with `from_store` and written

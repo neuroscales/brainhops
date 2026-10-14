@@ -22,6 +22,7 @@ from brainhops.io.base._dispatch import format_hints  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     ParserContentError,
+    UnrepresentableTransformationError,
     WriterError,
 )
 from brainhops.io.transformations.base.affines import RASToRAS  # noqa: E402
@@ -34,6 +35,8 @@ from brainhops.io.transformations.nifti import (  # noqa: E402
 )
 from brainhops.io.transformations.niftyreg import (  # noqa: E402
     NiftyRegAffine,
+    NiftyRegAffineMetadata,
+    NiftyRegAffineRaw,
     NiftyRegControlPointGrid,
     NiftyRegDeformationField,
     NiftyRegDisplacementField,
@@ -300,6 +303,50 @@ def test_a_voxel_affine_is_not_saved_as_niftyreg(tmp_path: Path) -> None:
     affine = xforms.Affine(matrix=AFFINE[:3], input=voxel, output=voxel)
     with pytest.raises(WriterError, match="NiftyRegAffine"):
         bio.save(affine, tmp_path / "a.txt")
+
+
+def test_an_untouched_aladin_affine_keeps_its_bytes(tmp_path: Path) -> None:
+    """The record keeps the text, so the %.7g numbers are written back."""
+    path = _write_aladin(tmp_path / "aff.txt", AFFINE)
+    xform = NiftyRegAffine.from_file(path)
+    assert isinstance(xform.metadata, NiftyRegAffineMetadata)
+    assert isinstance(xform.metadata.raw, NiftyRegAffineRaw)
+    assert xform.metadata.raw.text == path.read_text()
+    xform.save(tmp_path / "out.txt")
+    assert (tmp_path / "out.txt").read_bytes() == path.read_bytes()
+    assert xform.consolidate().metadata is xform.metadata
+
+
+def test_an_assigned_aladin_matrix_is_pending(tmp_path: Path) -> None:
+    path = _write_aladin(tmp_path / "aff.txt", AFFINE)
+    xform = NiftyRegAffine.from_file(path)
+    metadata = xform.metadata
+    with pytest.raises(ValueError):
+        xform.data[0, 0] = 2.0
+    xform.data = 2 * AFFINE[:3]
+    assert xform.metadata is metadata
+    consolidated = xform.consolidate()
+    assert consolidated.metadata.raw.text is None
+    np.testing.assert_array_equal(consolidated.matrix, 2 * AFFINE[:3])
+    xform.save(tmp_path / "out.txt")
+    back = NiftyRegAffine.from_file(tmp_path / "out.txt")
+    np.testing.assert_array_equal(back.matrix, 2 * AFFINE[:3])
+    assert xform.metadata is metadata
+
+
+def test_an_aladin_affine_refuses_options_and_other_systems() -> None:
+    text = "".join(
+        " ".join(f"{value:.7g}" for value in row) + "\n" for row in AFFINE
+    )
+    for options in ({"variable": "M"}, {"vector": "row"}):
+        with pytest.raises(TypeError):
+            NiftyRegAffine.from_text(text, **options)
+    with pytest.raises(TypeError):
+        NiftyRegAffineRaw.from_text(text, encoding="utf-8")
+    xform = NiftyRegAffine.from_text(text)
+    xform.input = systems.LPSmm()
+    with pytest.raises(UnrepresentableTransformationError):
+        xform.consolidate()
 
 
 # ----------------------------------------------------------------------
