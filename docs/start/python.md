@@ -114,6 +114,15 @@ io.save(warp, "warp.nii.gz")  # -> NiftiRASDisplacementField
 io.save(deformation, "y_deformation.nii")  # -> SpmCoordinatesField
 ```
 
+A `hint` names the format, as it does for `load`, and only the formats
+that answer to it are chosen from. A format named by its hint is written
+whatever the extension of the name, which lets a format be written under
+a name that no format claims, such as a plain `.json` name:
+
+```python
+io.save(affine, "transform.json", hint="neuroglancer.affine")
+```
+
 Nothing is approximated to fit a format. An affine between two world
 spaces is not a voxel-to-RAS affine, and a field interpolated with cubic
 splines is not the linearly interpolated values a NIfTI file holds, so
