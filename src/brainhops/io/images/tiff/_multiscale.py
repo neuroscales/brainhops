@@ -13,6 +13,9 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
@@ -29,6 +32,7 @@ from brainhops.io.common._geometry import (
 )
 from brainhops.io.common._pyramids import held_images, own_level, own_levels
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 # this format
 from . import _utils as backend
@@ -131,7 +135,9 @@ class TiffMultiScaleImage(
     the empty list apart.
     """
 
-    _metadata: NoRepr[tx.Optional[TiffMetadata]] = None
+    _metadata: NoRepr[tx.Optional[TiffMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("images", "transformations")
@@ -366,6 +372,8 @@ class TiffMultiScaleImage(
         dialect: tx.Optional[str] = None,
         name: tx.Optional[str] = None,
         bigtiff: tx.Optional[bool] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "TiffMultiScaleImage":
         """Encode pending levels and placements into `rawdata` and the record.
 
@@ -385,6 +393,11 @@ class TiffMultiScaleImage(
         derived again from their shapes. Nothing is pending in the copy,
         whose levels are decoded from the new record.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a TIFF
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -396,6 +409,11 @@ class TiffMultiScaleImage(
         bigtiff : bool, optional
             Whether to write BigTIFF. By default, BigTIFF is written only
             when the levels are too large for a classic TIFF (about 4 GiB).
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -404,23 +422,40 @@ class TiffMultiScaleImage(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the pyramid has no level, a level has no data or another
             number of axes, or the dialect is unknown or cannot store the
             pyramid.
         """
+        report = ConversionReport(
+            source="TiffMultiScaleImage", target="TiffMultiScaleImage"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, TiffMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         if self._untouched(dialect, name, bigtiff):
             if not inplace:
-                return replace(self, images=None, transformations=None)
+                return replace(
+                    self, images=None, transformations=None, metadata=metadata
+                )
             self.images = None
             self.transformations = None
+            self.metadata = metadata
             return self
         plan = self._planned(dialect, name, bigtiff)
         record = planned_record(plan)
-        if self.metadata is None:
+        if metadata is None:
             metadata = TiffMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         raw = tuple(plan.arrays)
         if not inplace:
             return replace(
@@ -452,9 +487,11 @@ class TiffMultiScaleImage(
         ----------
         **kwargs : Any
             The options of [`consolidate`][] (`dialect`, `name` and
-            `bigtiff`), and the options of `TiffWriter.write` of tifffile
-            that encode the pixels: `compression`, `compressionargs`,
-            `predictor`, `tile` and `rowsperstrip`.
+            `bigtiff`), and the options of `TiffWriter.write` of
+            tifffile that encode the pixels: `compression`,
+            `compressionargs`, `predictor`, `tile` and `rowsperstrip`.
+            `on_loss` and the fields of the metadata are taken as by
+            [`consolidate`][].
 
         Returns
         -------
@@ -468,6 +505,13 @@ class TiffMultiScaleImage(
         WriterError
             If the pyramid cannot be written.
         """
+        on_loss = kwargs.pop("on_loss", None)
+        fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
+        report = ConversionReport(
+            source="TiffMultiScaleImage", target="TiffMultiScaleImage"
+        )
+        metadata_to_write(self.metadata, TiffMetadata, fields, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         options, encoding = split_options(kwargs)
         if not encoding and self._copies_source(**options):
             return self.rawdata[0].read_bytes()
@@ -506,7 +550,8 @@ class TiffMultiScaleImage(
         filename : str or PathLike
             The path of the file.
         **kwargs : Any
-            The options of [`to_bytes`][].
+            The options of [`to_bytes`][]. `on_loss` and the fields of
+            the metadata are taken as by [`consolidate`][].
 
         Raises
         ------
@@ -515,6 +560,13 @@ class TiffMultiScaleImage(
         WriterError
             If the pyramid cannot be written.
         """
+        on_loss = kwargs.pop("on_loss", None)
+        fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
+        report = ConversionReport(
+            source="TiffMultiScaleImage", target="TiffMultiScaleImage"
+        )
+        metadata_to_write(self.metadata, TiffMetadata, fields, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if isinstance(filename, str):
             filename = path.Path(filename)
         kwargs.setdefault("name", _to_filename(filename))

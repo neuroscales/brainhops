@@ -214,7 +214,7 @@ class ConcreteTransformation(Transformation):
         """
         view = cls.map_field
         if view is not None and _same_family(cls, other):
-            shared = set(cls.metadata_fields) & set(other.metadata_fields)
+            shared = set(cls.encoding_fields) & set(other.encoding_fields)
             for name in shared - {"log"}:
                 kwargs.setdefault(name, getattr(other, name))
             _copy_map(other, cls, view, kwargs)
@@ -277,7 +277,7 @@ class TransformationField(ConcreteTransformation):
     map_field: tx.ClassVar[str] = "field"
 
     data_fields: _FieldNames = ("data",)
-    metadata_fields: _FieldNames = "degree", "bound", "store"
+    encoding_fields: _FieldNames = "degree", "bound", "store"
     derived_fields: _FieldNames = "field", "values", "coefficients", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -502,9 +502,9 @@ class DisplacementField(TransformationField, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
-    _base_metadata_fields: _FieldNames = TransformationField.metadata_fields
-    metadata_fields: _FieldNames = (
-        *_base_metadata_fields,
+    _base_encoding_fields: _FieldNames = TransformationField.encoding_fields
+    encoding_fields: _FieldNames = (
+        *_base_encoding_fields,
         "log",
     )
 
@@ -756,7 +756,7 @@ class Affine(ConcreteTransformation, polymorphic=True):
     map_field: tx.ClassVar[str] = "matrix"
 
     data_fields: _FieldNames = ("data",)
-    metadata_fields: _FieldNames = ("log",)
+    encoding_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = (
         "matrix",
         "homogeneous_matrix",
@@ -856,7 +856,7 @@ class Linear(ConcreteTransformation, polymorphic=True):
     map_field: tx.ClassVar[str] = "matrix"
 
     data_fields: _FieldNames = ("data",)
-    metadata_fields: _FieldNames = ("log",)
+    encoding_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = "matrix", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1062,7 +1062,7 @@ class Scaling(ConcreteTransformation, polymorphic=True):
     map_field: tx.ClassVar[str] = "scale"
 
     data_fields: _FieldNames = ("data",)
-    metadata_fields: _FieldNames = ("log",)
+    encoding_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = "scale", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1273,7 +1273,7 @@ def _copy_map(
         # The output class holds the map, which the view of a tangent
         # already gives.
         kwargs["data"] = getattr(other, view)
-    if "log" in cls.metadata_fields:
+    if "log" in cls.encoding_fields:
         kwargs.setdefault("log", out_tangent)
 
 

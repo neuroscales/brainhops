@@ -895,7 +895,10 @@ def test_copies_between_containers_reset_the_record() -> None:
     xform = TxtMatrixAffine.from_text(_text(A), input="ras", output="ras")
     copy = xform.to(NpyMatrixAffine)
     assert type(copy) is NpyMatrixAffine
-    assert copy.metadata is None
+    # The metadata is converted into the metadata of the other container,
+    # without the record of this one.
+    assert type(copy.metadata) is NpyMatrixMetadata
+    assert copy.metadata.raw is None
     assert np.allclose(_homog(copy), A)
     assert copy.input == xform.input
     same = TxtMatrixAffine.from_instance(xform)

@@ -8,13 +8,15 @@ import os
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import (
     open_path,
@@ -30,6 +32,11 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
     WriterError,
+)
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
 
@@ -193,7 +200,9 @@ class XfmTransform(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xfm",)
 
-    _metadata: NoRepr[tx.Optional[XfmMetadata]] = None
+    _metadata: NoRepr[tx.Optional[XfmMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("transformations", "decoded_blocks")
@@ -619,7 +628,13 @@ class XfmTransform(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
 
         Systems that were assigned to `input` or `output` must be `RASmm`,
@@ -634,10 +649,20 @@ class XfmTransform(
         encoded element by element. Afterwards the chain is decoded from
         the new record, with the precision of the file.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a MINC
+        transform file holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transform rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -646,12 +671,24 @@ class XfmTransform(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If an element cannot be encoded, or if a system that was
             assigned to `input` or `output` is not `RASmm`.
         WriterError
             If the transform has neither a record nor a chain.
         """
+        report = ConversionReport(source="XfmTransform", target="XfmTransform")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, XfmMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         record = _record(self)
         assigned = self._transformations is not None
         declared = self._input is not None or self._output is not None
@@ -661,17 +698,21 @@ class XfmTransform(
             if record is None:
                 raise WriterError("This transform has no content to write.")
             if not declared:
-                return self if inplace else replace(self)
-            metadata, volumes = self.metadata, self.rawdata
+                if not inplace:
+                    return replace(self, metadata=metadata)
+                if requested:
+                    self.metadata = metadata
+                return self
+            volumes = self.rawdata
         else:
             decoded = self.__dict__.get("_cache_decoded_blocks", {})
             record, volumes = _encode(
                 self.transformations, record, self.rawdata, decoded
             )
-            if self.metadata is None:
+            if metadata is None:
                 metadata = XfmMetadata.from_raw(record)
             else:
-                metadata = replace(self.metadata, raw=record)
+                metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,
@@ -728,7 +769,8 @@ class XfmTransform(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][].
+            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
+            of the metadata are given to [`consolidate`][].
 
         Raises
         ------
@@ -739,9 +781,10 @@ class XfmTransform(
             because it was not read from a file or because its voxels were
             changed.
         """
+        fields, kwargs = metadata_options(kwargs)
         if isinstance(filename, str):
             filename = path.Path(filename)
-        copy = self.consolidate()
+        copy = self.consolidate(**fields)
         record = _record(copy)
         content = record.to_bytes(**kwargs)
         _place_volumes(record, copy.rawdata, filename)
@@ -755,14 +798,16 @@ class XfmTransform(
         file : IO
             The open file, in text or binary mode.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][].
+            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
+            of the metadata are given to [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If the transform cannot be encoded.
         """
-        _record(self.consolidate()).to_fileobj(file, **kwargs)
+        fields, kwargs = metadata_options(kwargs)
+        _record(self.consolidate(**fields)).to_fileobj(file, **kwargs)
 
     def to_text(self, **kwargs) -> str:
         """Return the text of the MNI transform file that encodes the chain.
@@ -771,6 +816,8 @@ class XfmTransform(
         ----------
         **kwargs : Any
             Options of the writer of the record, which refuses them.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Returns
         -------
@@ -782,7 +829,8 @@ class XfmTransform(
         UnrepresentableTransformationError
             If the transform cannot be encoded.
         """
-        return _record(self.consolidate()).to_text(**kwargs)
+        fields, kwargs = metadata_options(kwargs)
+        return _record(self.consolidate(**fields)).to_text(**kwargs)
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the MNI transform file that encodes the chain.
@@ -791,6 +839,8 @@ class XfmTransform(
         ----------
         **kwargs : Any
             Options of the writer of the record, which refuses them.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Yields
         ------
@@ -802,7 +852,8 @@ class XfmTransform(
         UnrepresentableTransformationError
             If the transform cannot be encoded.
         """
-        return _record(self.consolidate()).to_lines(**kwargs)
+        fields, kwargs = metadata_options(kwargs)
+        return _record(self.consolidate(**fields)).to_lines(**kwargs)
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the MNI transform file that encodes the chain.
@@ -810,7 +861,8 @@ class XfmTransform(
         Parameters
         ----------
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][].
+            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
+            of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -822,7 +874,8 @@ class XfmTransform(
         UnrepresentableTransformationError
             If the transform cannot be encoded.
         """
-        return _record(self.consolidate()).to_bytes(**kwargs)
+        fields, kwargs = metadata_options(kwargs)
+        return _record(self.consolidate(**fields)).to_bytes(**kwargs)
 
 
 # ----------------------------------------------------------------------

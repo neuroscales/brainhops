@@ -18,7 +18,7 @@ from io import BytesIO
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import affines as _affines
@@ -28,6 +28,8 @@ from brainhops._core.streams import preserve_position
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -60,6 +62,11 @@ from brainhops.io.common.mrtrix._raw import (
     _declined,
     _no_options,
     _sniffed_raw,
+)
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
@@ -166,8 +173,6 @@ class MrtrixWarp(
     read. `rawdata` describes the file as it was read, or as the warp was last
     consolidated, so assigning `data` leaves it as it is.
     """
-
-    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = None
 
     # --- reading ------------------------------------------------------
 
@@ -361,7 +366,8 @@ class MrtrixWarp(
         Parameters
         ----------
         **kwargs : Any
-            The options of [`consolidate`][].
+            The options of [`consolidate`][]. `on_loss` and the fields
+            of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -373,7 +379,8 @@ class MrtrixWarp(
         TypeError
             If an unknown option is given.
         """
-        xform = self.consolidate(**writer_options(kwargs))
+        fields, kwargs = metadata_options(kwargs)
+        xform = self.consolidate(**writer_options(kwargs), **fields)
         return mrtrix_bytes(xform.metadata.raw, xform.rawdata)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
@@ -412,14 +419,16 @@ class MrtrixWarp(
         filename : path-like
             The path of the `.mif`, `.mif.gz` or `.mih` file.
         **kwargs : Any
-            The options of [`consolidate`][].
+            The options of [`consolidate`][]. `on_loss` and the fields
+            of the metadata are given to [`consolidate`][].
 
         Raises
         ------
         TypeError
             If an unknown option is given.
         """
-        options = writer_options(kwargs)
+        fields, kwargs = metadata_options(kwargs)
+        options = {**writer_options(kwargs), **fields}
         reading = reads_from(self.rawdata, written_files(filename))
         if reading:
             mmap = self.rawdata.mmap
@@ -511,6 +520,10 @@ class MrtrixCoordinatesField(
             return None
         return _warp_to_model(self.rawdata)
 
+    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
+
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
@@ -590,6 +603,8 @@ class MrtrixCoordinatesField(
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending coordinates or chain into `rawdata` and a record.
 
@@ -615,6 +630,11 @@ class MrtrixCoordinatesField(
         consolidated without options, is left as it is: the copy shares
         `rawdata` and the metadata.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an
+        MRtrix image holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -631,6 +651,11 @@ class MrtrixCoordinatesField(
             that record the kind of warp. A value of `None` removes a
             key. The keys that the other options, the data and the
             geometry decide are refused.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -639,6 +664,10 @@ class MrtrixCoordinatesField(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the field has no coordinates, if its chain is not a grid
             and a field of coordinates, or if `keyval` sets a key that
@@ -647,6 +676,16 @@ class MrtrixCoordinatesField(
             If the chain, or an assigned `input` or `output`, does not map
             scanner RAS to scanner RAS.
         """
+        report = ConversionReport(
+            source="MrtrixCoordinatesField", target="MrtrixCoordinatesField"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MrtrixMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         what = "An MRtrix deformation"
         options = dict(
             layout=layout, datatype=datatype, scaling=scaling, keyval=keyval
@@ -663,7 +702,11 @@ class MrtrixCoordinatesField(
             and self.metadata.raw is not None
             and stores_as_recorded(self.rawdata, self.metadata.raw)
         ):
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         if self._transformations is None:
             source = _stored(self)
             vox2ras = _vox2ras(self)
@@ -671,7 +714,7 @@ class MrtrixCoordinatesField(
             vox2ras, source = _coordinates_parts(self.transformations, what)
         options["keyval"] = _typed_keyval(_record(self), keyval, _DEFORMATION)
         record, raw = _encoded(_record(self), source, vox2ras, options)
-        metadata = _consolidated_metadata(self, record)
+        metadata = _consolidated_metadata(metadata, record)
         if not inplace:
             return replace(
                 self,
@@ -750,6 +793,10 @@ class MrtrixDisplacementField(
         if self.rawdata is None:
             return None
         return _warp_to_model(self.rawdata)
+
+    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -836,6 +883,8 @@ class MrtrixDisplacementField(
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> tx.Self:
         """Encode pending displacements or a chain into `rawdata` and a record.
 
@@ -844,6 +893,11 @@ class MrtrixDisplacementField(
         `brainhops_field_type: displacement` in the header. A chain that
         was assigned is split into its grid and its displacements, rotated
         back into RAS millimetres.
+
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an
+        MRtrix image holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, by `on_loss`.
 
         Parameters
         ----------
@@ -861,6 +915,11 @@ class MrtrixDisplacementField(
             that record the kind of warp. A value of `None` removes a
             key. The keys that the other options, the data and the
             geometry decide are refused.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -869,6 +928,10 @@ class MrtrixDisplacementField(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the field has no displacements, if its chain is not a grid
             around a displacement field, or if `keyval` sets a key that
@@ -877,6 +940,16 @@ class MrtrixDisplacementField(
             If the chain, or an assigned `input` or `output`, does not map
             scanner RAS to scanner RAS.
         """
+        report = ConversionReport(
+            source="MrtrixDisplacementField", target="MrtrixDisplacementField"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MrtrixMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         what = "An MRtrix displacement"
         options = dict(
             layout=layout, datatype=datatype, scaling=scaling, keyval=keyval
@@ -893,7 +966,11 @@ class MrtrixDisplacementField(
             and self.metadata.raw is not None
             and stores_as_recorded(self.rawdata, self.metadata.raw)
         ):
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         if self._transformations is None:
             source = _stored(self)
             vox2ras = _vox2ras(self)
@@ -906,7 +983,7 @@ class MrtrixDisplacementField(
             )
         options["keyval"] = _typed_keyval(_record(self), keyval, _DISPLACEMENT)
         record, raw = _encoded(_record(self), source, vox2ras, options)
-        metadata = _consolidated_metadata(self, record)
+        metadata = _consolidated_metadata(metadata, record)
         if not inplace:
             return replace(
                 self,
@@ -1019,6 +1096,10 @@ class MrtrixWarpFull(
         if self.rawdata is None:
             return None
         return _warp_to_model(self.rawdata)
+
+    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -1257,6 +1338,8 @@ class MrtrixWarpFull(
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "MrtrixWarpFull":
         """Encode the pending warps into `rawdata` and a record.
 
@@ -1268,6 +1351,11 @@ class MrtrixWarpFull(
         pending, consolidated without options, is left as it is.
         `from_image` and `midway` select what is decoded, and are not
         written.
+
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an
+        MRtrix image holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, by `on_loss`.
 
         Parameters
         ----------
@@ -1285,6 +1373,11 @@ class MrtrixWarpFull(
             and `linear2`. A value of `None` removes a key. The keys that
             the other options, the data and the geometry decide are
             refused.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -1293,6 +1386,10 @@ class MrtrixWarpFull(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If there are no warps, if they do not have the shape
             `(X, Y, Z, 3, 4)`, or if `keyval` sets a key that the data or
@@ -1301,6 +1398,16 @@ class MrtrixWarpFull(
             If a chain, an `input` or an `output` was assigned, since the
             file holds the pieces of the chain and not the chain.
         """
+        report = ConversionReport(
+            source="MrtrixWarpFull", target="MrtrixWarpFull"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MrtrixMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         options = dict(
             layout=layout, datatype=datatype, scaling=scaling, keyval=keyval
         )
@@ -1322,7 +1429,11 @@ class MrtrixWarpFull(
             and self.metadata.raw is not None
             and stores_as_recorded(self.rawdata, self.metadata.raw)
         ):
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         source = _stored(self)
         shape = tuple(int(d) for d in source.shape)
         if len(shape) != 5 or shape[3:] != (_NDIM, _NWARPS):
@@ -1331,7 +1442,7 @@ class MrtrixWarpFull(
                 f"not {shape}."
             )
         record, raw = _encoded(_record(self), source, _vox2ras(self), options)
-        metadata = _consolidated_metadata(self, record)
+        metadata = _consolidated_metadata(metadata, record)
         if not inplace:
             return replace(self, rawdata=raw, metadata=metadata, data=None)
         self.rawdata = raw
@@ -1863,20 +1974,20 @@ def _typed_keyval(
 
 
 def _consolidated_metadata(
-    xform: MrtrixWarp, record: MrtrixRaw
+    metadata: tx.Optional[MrtrixMetadata], record: MrtrixRaw
 ) -> MrtrixMetadata:
     """Return the metadata that holds the record of a consolidation.
 
-    The metadata of the warp is kept when the record is its own. Otherwise
-    the metadata is copied to hold the new record, so the metadata held
-    before is never changed, and a warp without metadata gets new
-    metadata.
+    `metadata` is the consolidated metadata of the warp, which is kept
+    when the record is its own. Otherwise the metadata is copied to hold
+    the new record, so the metadata held before is never changed, and a
+    warp without metadata gets new metadata.
     """
-    if xform.metadata is None:
+    if metadata is None:
         return MrtrixMetadata.from_raw(record)
-    if record is xform.metadata.raw:
-        return xform.metadata
-    return replace(xform.metadata, raw=record)
+    if record is metadata.raw:
+        return metadata
+    return replace(metadata, raw=record)
 
 
 def _linear_matrix(linear: tx.Any) -> np.ndarray:

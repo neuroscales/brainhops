@@ -258,9 +258,8 @@ copy is decoded afresh from the new record, so a second consolidation
 changes nothing, and a truncated description reads back truncated. The
 constant `SUPPORTED_FIELDS` of each metadata class lists the fields
 that its record can store, and a conversion into the format reports
-from it a lower bound of what a write loses. The format objects do not
-consolidate their metadata yet; the wiring of pass 5a (#287) makes it
-step 2 of the precedence below.
+from it a lower bound of what a write loses. Every format object
+consolidates its metadata as step 2 of the precedence below.
 
 The methods `to_raw()` and `to_metadata()` are removed from every class,
 including `MetadataFormat`. The encoding code of each format stays
@@ -293,7 +292,11 @@ Consolidation, and therefore every write, follows four steps.
    metadata can be overridden on save, and a writer option with the
    name of a field, such as `dtype=`, is that field. The stored type is
    the override, then `metadata.dtype`, then the type of the data.
-   This step is wired in pass 5a (#287).
+   A header field that holds a field of the vocabulary, such as the
+   `descrip` of NIfTI or the `tr` of MGH, is refused as an override,
+   with the name of the field to give instead. One report collects what
+   the consolidation of the metadata and the encoding of the geometry
+   lose, and the loss policy acts on it once.
 3. The geometry is encoded from the model over that record. The image
    or the transformation owns its geometry and its data, the metadata
    owns its vocabulary, and the record supplies everything else.
@@ -691,6 +694,14 @@ format.
 23. A field that the format has no slot for is reported as lost by
     `consolidate` and is absent from the copy, and `on_loss="raise"`
     raises `MetadataLossError`.
+24. The metadata of an object of another class, generic or of another
+    format, is converted by `from_instance` into the metadata of the
+    format without the record of the other format, and a save writes
+    each field of `Exemplar.vocabulary` or reports it as lost.
+25. An index that moves no voxel keeps the class and the record of the
+    metadata of an image and every field, and a flip or a resampling
+    keeps the class, keeps a field in the `FILE` scope and clears a
+    field in the `SPATIAL` scope.
 The checks above run on the level class of each pyramid format, which
 reads one level with the option `level`. A level class whose container is
 a directory has no bytes, so its metadata is compared through a summary,
@@ -873,10 +884,11 @@ its status.
 7. In the first pass, `metadata` is a field of the format classes,
    while #287 puts it on the roots of the data model. The name also
    clashes with `Transformation.metadata_fields`, which may be renamed.
-   Status: decided in the fifth pass. `metadata` goes on the roots, each
-   format takes it over with `Inherit("metadata")`, and
-   `metadata_fields` becomes `encoding_fields` without an alias. The
-   wiring of pass 5a (#287) implements it.
+   Status: resolved in the fifth pass. `metadata` is a field of the
+   roots, each format takes it over with `Inherit("metadata")` (the
+   NIfTI transformations in each concrete class, see item 400), and
+   `metadata_fields` became `encoding_fields` without an alias, in the
+   wiring of pass 5a (#287).
 8. Views that are decoded from `metadata` and cached, such as
    `transformations`, would become stale when `metadata` is assigned
    again. Each format holds a private `_metadata` field behind a public
@@ -2904,12 +2916,26 @@ The items from 400 on were found in pass 5a, which adds the vocabulary
 of #233 to the metadata of the formats (#310) and wires it into images
 and transformations (#287).
 
-400. `bagof` takes an inherited field from the first base that has it,
-     so a NIfTI transformation whose first base is a generic model
-     (`NiftiRASToVoxel(VoxelToRAS, _NiftiAffine)`) gets the generic
-     `metadata` of the root before the takeover of
-     `NiftiBasedTransformation`. The wiring probes it, and falls back on
-     the takeover in each concrete class. Status: open, for #287.
+400. `NiftiBasedTransformation`, `_NiftiAffine` and `NiftyRegField` are
+     format classes that do not derive from `Transformation`: the root
+     of the data model comes in with the first base of each concrete
+     class, as in `NiftiRASToVoxel(RASToVoxel, _NiftiAffine)`. `bagof`
+     refuses a takeover of a field that no base declares, and refuses a
+     class that holds both the `metadata` of the root and a `_metadata`
+     of the format, so the takeover cannot be written once on
+     `NiftiBasedTransformation`. Deriving that class from
+     `Transformation` would allow it, but it would make the abstract
+     `NiftyRegField` a data model, which `relabel` then no longer
+     refuses as a family of formats. Status: decided in pass 5a. Each
+     of the nine concrete classes (`NiftiRASToVoxel`,
+     `NiftiVoxelToRAS`, `NiftiRASCoordinatesField`,
+     `NiftiRASDisplacementField`, `NiftyRegSequence`,
+     `SpmCoordinatesField`, `ItkNiftiField`, `FnirtWarpField` and
+     `AfniNiftiWarp`) takes `metadata` over itself. The MRtrix warps
+     share the abstract base `MrtrixWarp`, which does not derive from
+     `Transformation` either, so `MrtrixCoordinatesField`,
+     `MrtrixDisplacementField` and `MrtrixWarpFull` take `metadata` over
+     in the same way.
 401. The metadata of a format decodes its vocabulary at once, in
      `from_raw`, instead of in lazy properties: a field may be `None`,
      so a lazy field would need a sentinel or a flag, which is the state
@@ -2919,8 +2945,10 @@ and transformations (#287).
 402. Loss is reported at consolidation, so once per write, and a
      conversion reports only a lower bound from `SUPPORTED_FIELDS`. A
      save that converts and then writes would warn twice, so the writer
-     passes one report as `on_loss=` to both. Status: decided in pass
-     5a, and the single report of a save is wired in #287.
+     passes one report as `on_loss=` to both. Status: resolved in pass
+     5a. `io.save` converts under `metadata_loss_policy(report)`, which
+     takes a report as well as a policy, passes the same report as
+     `on_loss=` to the write, and acts on it once.
 403. The format objects of the first three passes built the metadata of
      their consolidated copy with `replace(self.metadata, raw=record)`,
      which kept the decoded fields of the old record. With eager
@@ -2928,8 +2956,10 @@ and transformations (#287).
      record instead (`type(self.metadata).from_raw(record)`). The fields
      that were assigned and not consolidated are dropped there until the
      wiring makes the consolidation of the metadata step 2 of every
-     write. Status: resolved in pass 5a for the formats that have a
-     vocabulary, and open for #287.
+     write. Status: resolved in pass 5a. Every format object
+     consolidates its metadata first, with the helper
+     `metadata_to_write` (`io/metadata/_base.py`), and encodes over the
+     record of the result, so an assigned field is written.
 404. `Metadata.derive` adds to `history` and `generated_by`, which NIfTI
      and MGH cannot store, so every consolidation of derived metadata
      would report them as lost. `MetadataFormat.derive` keeps the two
@@ -2940,6 +2970,65 @@ and transformations (#287).
      Check 22 changes `dtype` for MGH, which the fixed header holds.
      Check 23 is vacuous for X5, whose JSON metadata stores every field,
      as the comment of its exemplar says. Status: accepted.
+410. A writer copies the description and the intent of the template
+     `like` over the record of the consolidated metadata, so a field
+     given by keyword would lose to the template, while a header
+     override won over it before. The NIfTI writers write the
+     description and the intent given by keyword again after the
+     template (`_keep_given_fields`, `io/common/nifti/_header.py`), and
+     the MGH writer does the same for the MRI parameters. A field that
+     was only changed in the metadata still loses to the template, as
+     the record did. Status: decided in pass 5a.
+411. An X5 file stores the vocabulary in the JSON metadata of the
+     transform that holds it, and a chain that is assigned gives new
+     transforms. `X5Transform.consolidate` therefore encodes the chain
+     first and then the fields of the metadata that changed, and those
+     given by keyword, over the new record, so that a reused transform
+     keeps its own JSON metadata. Status: decided in pass 5a.
+412. The images store their data with `metadata.dtype` when no `dtype=`
+     is given, as nibabel does with the type of its header, so data
+     computed in another type are converted, and scaled into an integer
+     type. The NIfTI transformations change the stored type only when
+     `dtype` is given or changed in the metadata, because their arrays
+     are computed from the chain. Status: open, for the maintainer to
+     decide whether the transformations follow the rule of the images.
+413. Only the records of NIfTI, MGH and X5 hold fields of the
+     vocabulary in pass 5a. Every other format that holds the metadata
+     of its own class, which is every migrated format, consolidates its
+     metadata first all the same, so its consolidation and its writers
+     take `on_loss=` and the fields of the metadata by keyword, and
+     report every field that is set as lost. This holds for the formats
+     of pass 5b (AFNI, MRtrix, NRRD, MINC, LTA and M3Z) and of pass 5c
+     (Zarr, FLIRT and ITK), and for the formats that pass 5 does not
+     plan, such as TIFF, Pillow, JPEG 2000, image stacks, the read-only
+     images, register.dat, Convert3D, elastix, TrakEM2, BigDataViewer
+     and the plain matrix formats. A format that cannot write, such as
+     MINC or OpenSlide, gives its consolidated copy the consolidated
+     metadata. The writers of AFNI, MRtrix and NRRD keep their option
+     `datatype=` and that of Zarr its option `dtype=`, which store the
+     values with the type given and are not the field `dtype`, whose
+     value these formats report as lost. The option `space=` of NRRD
+     names the space of the NRRD header, so the field `space` cannot be
+     given by keyword to a NRRD writer. Status: open, for passes 5b and
+     5c.
+414. A format that does not take `metadata` over, which is a format not
+     yet migrated, such as the OME-Zarr images and fields or the
+     pyramids of N5, Imaris, precomputed volumes and BigDataViewer,
+     holds its metadata in the `metadata` field of its data model, and
+     writes none of the vocabulary. `io.save` reports the fields that are set as lost when it
+     converts into such a format, but a save of the object itself
+     reports nothing. Status: open, until these formats move to the
+     record design.
+415. A format built from a transformation of the data model by
+     `from_instance`, such as LTA or a MINC affine, receives its
+     metadata, and so do the NIfTI transformations and the SPM field
+     through their converters. Other converters build the format
+     without the metadata of the source, such as those into a Convert3D
+     matrix or a NiftyReg affine. `io.save` reports the fields of the
+     source as lost when the object that it converted holds no metadata,
+     but `obj.to(cls)` drops them without a report. Status: open, for
+     the maintainer to decide whether every converter passes the
+     metadata of its source.
 
 470. `io.save` tries the candidates tier by tier, most specific first,
      those that hold the object as it is before those that a

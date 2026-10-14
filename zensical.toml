@@ -5,6 +5,7 @@ nav = [
     "index.md",
      {"Command-line interface" = "start/cli.md"},
      {"Python interface" = "start/python.md"},
+     {"Metadata" = "start/metadata.md"},
   ]},
   {"Command-line API" = [
     "cli/index.md",

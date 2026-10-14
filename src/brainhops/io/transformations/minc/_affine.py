@@ -5,7 +5,7 @@ __all__ = ["XfmAffine"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -13,6 +13,8 @@ from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -21,6 +23,11 @@ from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
     UnrepresentableTransformationError,
+)
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
 )
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
@@ -160,7 +167,9 @@ class XfmAffine(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xfm",)
 
-    _metadata: NoRepr[tx.Optional[XfmMetadata]] = None
+    _metadata: NoRepr[tx.Optional[XfmMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -529,7 +538,13 @@ class XfmAffine(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         An affine that holds a record, and whose matrix, `input` and
@@ -540,10 +555,20 @@ class XfmAffine(
         way. The new record is held by new metadata, and the matrix is
         then decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a MINC
+        transform file holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this affine rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -552,10 +577,22 @@ class XfmAffine(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the systems are not `RASmm`, or if the matrix is not that
             of a 3-D affine.
         """
+        report = ConversionReport(source="XfmAffine", target="XfmAffine")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, XfmMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         record = _record(self)
         overridden = (
             self._data is not None
@@ -563,12 +600,16 @@ class XfmAffine(
             or self._output is not None
         )
         if record is not None and not overridden:
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         record = _encode(self, record)
-        if self.metadata is None:
+        if metadata is None:
             metadata = XfmMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self, metadata=metadata, data=None, input=None, output=None
@@ -591,14 +632,16 @@ class XfmAffine(
         file : path or file object
             The path or the open file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][].
+            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
+            of the metadata are given to [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If the affine cannot be encoded.
         """
-        _written(self).to_file(file, **kwargs)
+        record, options = _written(self, kwargs)
+        record.to_file(file, **options)
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the affine to a file, replacing a local file at once.
@@ -608,14 +651,16 @@ class XfmAffine(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][].
+            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
+            of the metadata are given to [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If the affine cannot be encoded.
         """
-        _written(self).to_filename(filename, **kwargs)
+        record, options = _written(self, kwargs)
+        record.to_filename(filename, **options)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the affine to an open file, in text or binary mode.
@@ -625,14 +670,16 @@ class XfmAffine(
         file : IO
             The open file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][].
+            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
+            of the metadata are given to [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If the affine cannot be encoded.
         """
-        _written(self).to_fileobj(file, **kwargs)
+        record, options = _written(self, kwargs)
+        record.to_fileobj(file, **options)
 
     def to_text(self, **kwargs) -> str:
         """Return the text of the MNI transform file that encodes the affine.
@@ -641,6 +688,8 @@ class XfmAffine(
         ----------
         **kwargs : Any
             Options of the writer of the record, which refuses them.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Returns
         -------
@@ -652,7 +701,8 @@ class XfmAffine(
         UnrepresentableTransformationError
             If the affine cannot be encoded.
         """
-        return _written(self).to_text(**kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_text(**options)
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the MNI transform file that encodes the affine.
@@ -661,6 +711,8 @@ class XfmAffine(
         ----------
         **kwargs : Any
             Options of the writer of the record, which refuses them.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Yields
         ------
@@ -672,7 +724,8 @@ class XfmAffine(
         UnrepresentableTransformationError
             If the affine cannot be encoded.
         """
-        return _written(self).to_lines(**kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_lines(**options)
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the MNI transform file that encodes the affine.
@@ -680,7 +733,8 @@ class XfmAffine(
         Parameters
         ----------
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][].
+            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
+            of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -692,7 +746,8 @@ class XfmAffine(
         UnrepresentableTransformationError
             If the affine cannot be encoded.
         """
-        return _written(self).to_bytes(**kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_bytes(**options)
 
 
 # ----------------------------------------------------------------------
@@ -742,12 +797,19 @@ def _encode(xform: XfmAffine, old: tx.Optional[XfmRaw]) -> XfmRaw:
     return XfmRaw(comments=comments, transforms=(linear,))
 
 
-def _written(xform: XfmAffine) -> XfmRaw:
+def _written(
+    xform: XfmAffine, kwargs: tx.Mapping[str, tx.Any]
+) -> tx.Tuple[XfmRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from an affine holds.
+
+    The record is that of the copy consolidated with `on_loss` and the
+    fields of the metadata among `kwargs`, and the other options, for
+    the writer of the record, are returned with it.
 
     Raises
     ------
     UnrepresentableTransformationError
         If the affine cannot be encoded.
     """
-    return _record(xform.consolidate())
+    metadata, options = metadata_options(kwargs)
+    return _record(xform.consolidate(**metadata)), options

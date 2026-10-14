@@ -63,7 +63,9 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     Metadata,
     MetadataLossError,
+    metadata_loss_policy,
 )
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.datamodel.transformations import (
@@ -74,7 +76,7 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base._base import Format, register_format
+from brainhops.io.base._base import Format, _takes_over, register_format
 from brainhops.io.base._save import _model
 from brainhops.io.base._utils_files import replace_directory
 from brainhops.io.base.parsers import (
@@ -129,6 +131,7 @@ from brainhops.io.images.nrrd._views import (
     _image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 from brainhops.io.transformations.afni import (
     AfniAffine,
     AfniAffineMetadata,
@@ -665,7 +668,9 @@ class ToyImage(
     EXTENSIONS = (".toy",)
 
     rawdata: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    _metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[ToyMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     # Other metadata drops the transformations decoded from the old record,
     # and keeps those that were assigned.
@@ -695,7 +700,24 @@ class ToyImage(
         # `_transformations`.
         return _toy_to_transformations(self.metadata)
 
-    def consolidate(self, *, inplace: bool = False, **options) -> "ToyImage":
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Any = None,
+        note: tx.Optional[str] = None,
+        **fields: tx.Any,
+    ) -> "ToyImage":
+        # The metadata is consolidated first, and the toy record holds no
+        # field of the vocabulary, so a field that is set is reported as
+        # lost.
+        report = ConversionReport(source="ToyImage", target="ToyImage")
+        requested = requested_fields(self.metadata, fields)
+        consolidated = metadata_to_write(
+            self.metadata, ToyMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss)
+        options = {} if note is None else {"note": note}
         # Nothing is encoded for an image that has a record, no pending
         # data, and transformations that are never read or the same as a
         # fresh decode of the record, so its copy shares `rawdata` and
@@ -710,6 +732,7 @@ class ToyImage(
                 )
             )
             and not options
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
@@ -718,10 +741,10 @@ class ToyImage(
             self.transformations = None
             return self
         raw, record = _toy_encoded(self, **options)
-        if self.metadata is None:
+        if consolidated is None:
             metadata = ToyMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(consolidated, raw=record)
         if not inplace:
             return replace(
                 self,
@@ -856,18 +879,21 @@ def _toy_reads(raw: tx.Any, filename: str) -> bool:
     return isinstance(raw, _ToyProxy) and raw.source == filename
 
 
+class _ForeignMetadata(MetadataFormat):
+    """Metadata of another format, which is never registered."""
+
+
 class _ForeignImage(ImageFormat, SingleScaleImage):
     """Image of another format, which is never registered.
 
-    Its `rawdata` and `metadata` fields mean nothing to the toy format.
+    Its `rawdata` and the record of its metadata mean nothing to the toy
+    format.
     """
 
     rawdata: KwOnly[NoRepr[tx.Any]] = None
-    metadata: KwOnly[NoRepr[tx.Any]] = None
-
-
-class _ForeignMetadata(MetadataFormat):
-    """Metadata of another format, which is never registered."""
+    _metadata: NoRepr[tx.Optional[_ForeignMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
 
 def _toy_edit_record(record: ToyRaw) -> ToyRaw:
@@ -989,7 +1015,9 @@ class ToyLevel(
     EXTENSIONS = (".toyp",)
 
     rawdata: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    _metadata: KwOnly[NoRepr[tx.Optional[ToyPyramidMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[ToyPyramidMetadata]] = Inherit(
+        "metadata", default=None
+    )
     level: KwOnly[int] = 0
 
     # Other metadata drops the transformations decoded from the old record,
@@ -1022,11 +1050,23 @@ class ToyLevel(
             return tuple(reversed(self.rawdata.shape))
         return ()
 
-    def consolidate(self, *, inplace: bool = False, **options) -> "ToyLevel":
+    def consolidate(
+        self, *, inplace: bool = False, on_loss: tx.Any = None, **options
+    ) -> "ToyLevel":
+        # The metadata is consolidated first, and the toy record holds no
+        # field of the vocabulary, so a field that is set is reported as
+        # lost.
+        fields = {n: options.pop(n) for n in list(options) if n in FIELDS}
+        report = ConversionReport(source="ToyLevel", target="ToyLevel")
+        requested = requested_fields(self.metadata, fields)
+        consolidated = metadata_to_write(
+            self.metadata, ToyPyramidMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss)
         # A level whose record describes it alone, at index 0, with nothing
         # pending, keeps its `rawdata` and its metadata. Any other level
         # is encoded into a record of its level alone.
-        metadata = self.metadata
+        metadata = consolidated if requested else self.metadata
         held = held_transformations(self)
         if (
             self._data is None
@@ -1043,8 +1083,9 @@ class ToyLevel(
             )
         ):
             if not inplace:
-                return replace(self, transformations=None)
+                return replace(self, transformations=None, metadata=metadata)
             self.transformations = None
+            self.metadata = metadata
             return self
         raw, record = _toyp_level_narrowed(self, **options)
         if metadata is None:
@@ -1162,7 +1203,9 @@ class ToyPyramid(
     EXTENSIONS = (".toyp",)
 
     rawdata: KwOnly[NoRepr[tx.Optional[tx.Tuple[ArrayProtocol, ...]]]] = None
-    _metadata: KwOnly[NoRepr[tx.Optional[ToyPyramidMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[ToyPyramidMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     # Other metadata drops the levels and the placements decoded from the
     # old record, and keeps those that were assigned.
@@ -1198,12 +1241,24 @@ class ToyPyramid(
             return tuple(reversed(self.rawdata[0].shape))
         return ()
 
-    def consolidate(self, *, inplace: bool = False, **options) -> "ToyPyramid":
+    def consolidate(
+        self, *, inplace: bool = False, on_loss: tx.Any = None, **options
+    ) -> "ToyPyramid":
+        # The metadata is consolidated first, and the toy record holds no
+        # field of the vocabulary, so a field that is set is reported as
+        # lost.
+        fields = {n: options.pop(n) for n in list(options) if n in FIELDS}
+        report = ConversionReport(source="ToyPyramid", target="ToyPyramid")
+        requested = requested_fields(self.metadata, fields)
+        consolidated = metadata_to_write(
+            self.metadata, ToyPyramidMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss)
         # Nothing is encoded for a pyramid that has a record, whose levels
         # are those of its file, and whose placements are never read or the
         # same as a fresh decode of the record, so its copy shares
         # `rawdata` and the metadata.
-        metadata = self.metadata
+        metadata = consolidated if requested else self.metadata
         held = held_transformations(self)
         if (
             not options
@@ -1217,9 +1272,12 @@ class ToyPyramid(
             )
         ):
             if not inplace:
-                return replace(self, images=None, transformations=None)
+                return replace(
+                    self, images=None, transformations=None, metadata=metadata
+                )
             self.images = None
             self.transformations = None
+            self.metadata = metadata
             return self
         raw, record = _toyp_encoded(self, **options)
         if metadata is None:
@@ -2089,7 +2147,7 @@ if nb is not None:
 
     EXEMPLARS[NiftiImage] = _NIFTI._replace(
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         storage={"dtype": "int16"},
     )
@@ -2886,7 +2944,7 @@ if nb is not None:
         edit_record=_mgh_edit_record,
         record_edited=_mgh_record_edited,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         storage={"dtype": "int16"},
         # The metadata writes the fixed header alone, which holds the
@@ -2923,7 +2981,7 @@ _AFNI = Exemplar(
     geometry=_afni_geometry,
     change_geometry=_nifti_change_geometry,
     foreign=lambda data: _ForeignImage(
-        data, rawdata="rawdata", metadata="meta"
+        data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
     ),
     header_file=_afni_header_file,
     storage={"datatype": "int16"},
@@ -3027,7 +3085,7 @@ _MRTRIX = Exemplar(
     geometry=_nifti_geometry,
     change_geometry=_nifti_change_geometry,
     foreign=lambda data: _ForeignImage(
-        data, rawdata="rawdata", metadata="meta"
+        data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
     ),
     storage={"datatype": "int16"},
 )
@@ -3142,7 +3200,7 @@ _NRRD = Exemplar(
     geometry=_nifti_geometry,
     change_geometry=_nifti_change_geometry,
     foreign=lambda data: _ForeignImage(
-        data, rawdata="rawdata", metadata="meta"
+        data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
     ),
     storage={"datatype": "int16"},
 )
@@ -3226,7 +3284,7 @@ if minc_needs is not None:
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         cut=_minc1_cut,
         header=lambda metadata: metadata.raw,
@@ -3273,7 +3331,7 @@ if ZarrImage is not None:
         geometry=_data_geometry,
         change_geometry=_data_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         cut=_zarr_cut,
         header=lambda metadata: metadata.raw,
@@ -3407,7 +3465,7 @@ if tifffile is not None:
         geometry=_tiff_geometry,
         change_geometry=_tiff_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         options=frozenset({"series", "level"}),
         cut=_tiff_cut,
@@ -3516,7 +3574,7 @@ if openslide is not None:
         geometry=_tiff_geometry,
         change_geometry=_slide_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         options=frozenset({"level"}),
         cut=_slide_cut,
@@ -3595,7 +3653,7 @@ if PILImage is not None:
         geometry=_nifti_geometry,
         change_geometry=_pillow_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         options=frozenset({"frame", "palette", "dpi"}),
         cut=_png_cut,
@@ -3930,7 +3988,7 @@ if tifffile is not None:
         geometry=_nifti_geometry,
         change_geometry=_stack_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         cut=_stack_cut,
         header=lambda metadata: metadata.raw,
@@ -4077,7 +4135,7 @@ if h5py is not None:
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         options=frozenset({"setup", "timepoint", "level"}),
         header_file=lambda path: path,
@@ -4117,7 +4175,7 @@ if Jpeg2000Image is not None:
         geometry=_nifti_geometry,
         change_geometry=_jpeg2000_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
     )
 
@@ -4202,7 +4260,7 @@ if n5_needs is not None:
         geometry=_nifti_geometry,
         change_geometry=_scaled_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         options=frozenset({"level"}),
         cut=_n5_cut,
@@ -4273,7 +4331,7 @@ if h5py is not None:
         geometry=_nifti_geometry,
         change_geometry=_scaled_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         options=frozenset({"level"}),
         cut=_hdf5_cut,
@@ -4359,7 +4417,7 @@ if ts is not None:
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         options=frozenset({"level"}),
         cut=_precomputed_cut,
@@ -4494,7 +4552,7 @@ TEST_EXEMPLARS: tx.Dict[type, Exemplar] = {
         geometry=lambda image: _toy_spacing(image.transformation, image.ndim),
         change_geometry=_toy_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
     ),
     # A level of a toy pyramid is checked as a pyramid of one level, which
@@ -4511,7 +4569,7 @@ TEST_EXEMPLARS: tx.Dict[type, Exemplar] = {
         geometry=lambda image: _toy_spacing(image.transformation, image.ndim),
         change_geometry=_toy_change_geometry,
         foreign=lambda data: _ForeignImage(
-            data, rawdata="rawdata", metadata="meta"
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
         ),
         options=frozenset({"level"}),
         cut=_toyp_cut,
@@ -5401,8 +5459,16 @@ def test_09_copies_keep_rawdata_and_metadata(
     if exemplar.foreign is None:
         return
     value = exemplar.sample()
-    converted = cls.from_instance(exemplar.foreign(value))
-    assert converted.metadata is None
+    foreign = exemplar.foreign(value)
+    with metadata_loss_policy("ignore"):
+        converted = cls.from_instance(foreign)
+    # The metadata of a data model is converted into the metadata of the
+    # format, without the record of another format.
+    if _takes_over(cls, "metadata") and foreign.metadata is not None:
+        assert isinstance(converted.metadata, Metadata)
+        assert converted.metadata.raw is None
+    elif foreign.metadata is None:
+        assert converted.metadata is None
     if exemplar.template is not None:
         assert np.array_equal(np.asarray(converted.data), value)
         _refuses_encoding(converted, _path(tmp_path, exemplar, "converted"))
@@ -6617,6 +6683,78 @@ def test_23_a_field_without_a_slot_is_lost(
     assert getattr(copy, name) == ({} if name == "extra" else None)
     with pytest.raises(MetadataLossError):
         metadata.consolidate(on_loss="raise", **{name: value})
+
+
+@pytest.mark.parametrize("cls, exemplar", VOCABULARY_CASES)
+def test_24_a_conversion_carries_the_vocabulary(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The metadata of an object of another class, generic or of another
+    # format, is converted into the metadata of the format, without the
+    # record of the other format, and a save writes the vocabulary into
+    # a new record, or reports what the record cannot hold.
+    if exemplar.foreign is None:
+        return
+    foreign = exemplar.foreign(exemplar.sample())
+    if isinstance(foreign, _ForeignImage):
+        foreign.metadata = _ForeignMetadata(
+            raw="record", **exemplar.vocabulary
+        )
+    else:
+        foreign.metadata = Metadata(**exemplar.vocabulary)
+    with metadata_loss_policy("ignore"):
+        converted = cls.from_instance(foreign)
+    assert type(converted.metadata) is exemplar.metadata
+    assert converted.metadata.raw is None
+    for name, value in exemplar.vocabulary.items():
+        assert getattr(converted.metadata, name) == value, name
+    path = _path(tmp_path, exemplar, "converted")
+    report = ConversionReport()
+    if exemplar.source is not None:
+        return
+    converted.save(path, on_loss=report)
+    written = cls.load(path).metadata
+    for name, value in exemplar.vocabulary.items():
+        assert getattr(written, name) == value or name in report.lost, name
+
+
+IMAGE_VOCABULARY_CASES = [
+    case
+    for case in VOCABULARY_CASES
+    if issubclass(case.values[0], SingleScaleImage)
+]
+"""The image cases whose metadata stores a vocabulary."""
+
+
+@pytest.mark.parametrize("cls, exemplar", IMAGE_VOCABULARY_CASES)
+def test_25_image_operations_derive_the_metadata(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    loaded = cls.load(_saved(cls, exemplar, tmp_path, "object"))
+    loaded.metadata = replace(
+        loaded.metadata,
+        description="derived",
+        slice_timing=(0.0, 0.5),
+    )
+    # An index that moves no voxel keeps the class and the record of the
+    # metadata, and every field.
+    same = loaded[...]
+    assert type(same.metadata) is type(loaded.metadata)
+    assert same.metadata.raw is loaded.metadata.raw
+    assert same.metadata.description == "derived"
+    assert same.metadata.slice_timing == (0.0, 0.5)
+    # A flip moves the spatial axes: a field in the `FILE` scope is kept,
+    # and a field in the `SPATIAL` scope is mapped or cleared, so the
+    # next consolidation clears its slot.
+    for derived in (loaded[::-1], loaded.reslice()):
+        assert type(derived.metadata) is type(loaded.metadata)
+        assert derived.metadata.description == "derived"
+        assert derived.metadata.slice_timing is None
+        assert derived.metadata.raw is not None
 
 
 def test_the_generic_loader_reads_a_toy_image(tmp_path) -> None:  # noqa: ANN001

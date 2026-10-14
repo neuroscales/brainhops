@@ -36,14 +36,16 @@ def _(
     # coordinates on that grid, sampled as NIfTI stores it, followed by an
     # affine into RAS. A field of displacements is refused there, with the
     # reason.
-    format_options(t, cls, kwargs)
+    options = format_options(t, cls, kwargs, ("metadata",))
+    # The metadata of `t` rides along, converted by the field.
+    options.setdefault("metadata", t.metadata)
     ras2voxel, field, voxel2ras = _spm_coordinates(t, cls)
     coordinates = ras_coordinate_values(t, field, voxel2ras, cls)
     chain = (
         RASToVoxel(matrix=ras2voxel[:-1]),
         RASCoordinatesField(field=coordinates),
     )
-    return cls(transformations=chain)
+    return cls(transformations=chain, **options)
 
 
 @converter

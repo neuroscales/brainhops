@@ -6,11 +6,13 @@ import sys
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -20,6 +22,7 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common._geometry import held_transformations
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 from .._chains import (
     _block,
@@ -81,7 +84,9 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS = ("mat",)
 
-    _metadata: NoRepr[tx.Optional[MatMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MatMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the blocks as a record.
@@ -315,6 +320,8 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         inplace: bool = False,
         byteorder: tx.Optional[str] = None,
         precision: tx.Optional[tx.Union[ItkPrecision, str]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain, systems and options into a new record.
 
@@ -337,6 +344,11 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         metadata, and the option `position`, which indexed the old record,
         is reset.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an ITK
+        MATLAB file holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -350,6 +362,11 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             which also appears in the name of each block. By default, each
             block keeps its precision. The fixed parameters of a block
             that is encoded again are written in double precision.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -359,6 +376,10 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the chain does not hold a single ITK block or affine
             between ITK spaces, or if a system that was set differs from
@@ -368,6 +389,14 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         ValueError
             If `precision` is invalid.
         """
+        report = ConversionReport(source="MatTransform", target="MatTransform")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MatMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         byteorder = _byteorder(byteorder)
         precision = None if precision is None else ItkPrecision(precision)
         record = _record(self)
@@ -386,11 +415,16 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             ):
                 if not inplace:
                     return replace(
-                        self, transformations=None, input=None, output=None
+                        self,
+                        transformations=None,
+                        input=None,
+                        output=None,
+                        metadata=metadata,
                     )
                 self.transformations = None
                 self.input = None
                 self.output = None
+                self.metadata = metadata
                 return self
         else:
             blocks = (_single_block(chain or []),)
@@ -399,10 +433,10 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         if byteorder is None:
             byteorder = "<" if record is None else record.byteorder
         record = MatRaw(blocks=blocks, byteorder=byteorder)
-        if self.metadata is None:
+        if metadata is None:
             metadata = MatMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,

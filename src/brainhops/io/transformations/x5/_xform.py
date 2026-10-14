@@ -6,14 +6,17 @@ from warnings import warn
 
 import h5py
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport, Metadata
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
+from brainhops.io.metadata._base import overruled_fields, requested_fields
 from brainhops.io.transformations.base import TransformationFormat
 
 from ._blocks import (
@@ -21,7 +24,7 @@ from ._blocks import (
     node_to_transformation,
     transformation_to_nodes,
 )
-from ._metadata import X5Metadata
+from ._metadata import X5Metadata, _vocabulary_node
 from ._raw import X5_VERSION, X5Header, X5Node, X5Raw
 
 # ----------------------------------------------------------------------
@@ -124,7 +127,9 @@ class X5Transform(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
     HINTS = ("x5", "bids")
 
-    _metadata: NoRepr[tx.Optional[X5Metadata]] = None
+    _metadata: NoRepr[tx.Optional[X5Metadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("transformations", "decoded_nodes")
@@ -213,6 +218,13 @@ class X5Transform(
         so that the writer can recognise it by identity. Assigning other
         metadata forgets the decoded nodes.
 
+        The node that holds the vocabulary of the file (see
+        [`X5Metadata`][]) gives its transformation a copy of the
+        vocabulary, as generic metadata without the record, so that
+        converting that transformation into another format carries it.
+        The copy is made when the node is decoded, so a later change of
+        the metadata in place is not seen by it.
+
         Parameters
         ----------
         index : int
@@ -233,7 +245,10 @@ class X5Transform(
             raise ParserContentError("This X5 transformation has no record.")
         decoded = self.__dict__.setdefault("_cache_decoded_nodes", {})
         if index not in decoded:
-            decoded[index] = node_to_transformation(record.nodes[index])
+            block = node_to_transformation(record.nodes[index])
+            if index == _vocabulary_node(record):
+                block.metadata = Metadata.from_instance(self.metadata)
+            decoded[index] = block
         return decoded[index]
 
     @smartproperty(cache=True)
@@ -378,14 +393,24 @@ class X5Transform(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
-        """Encode the pending chain and systems into a new record.
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
+        """Encode the pending chain, systems and metadata into a new record.
 
         If neither `transformations` nor the `input` and `output` systems
-        were assigned, and the metadata holds a record, the transformation
-        is left as it is, so that the file is written back as it was read,
-        with every node and chain. The options `chain` and `position` only
-        select what is decoded, so they do not change the record.
+        were assigned, the metadata did not change, and the metadata holds
+        a record, the transformation is left as it is, so that the file is
+        written back as it was read, with every node and chain. The
+        options `chain` and `position` only select what is decoded, so
+        they do not change the record. When only the metadata changed, its
+        fields are encoded into the JSON metadata of a copy of the record,
+        and the chain, `chain` and `position` are kept.
+
         Otherwise, a new record is built from the chain, whose header keeps
         the root attributes of the current record. An element that this
         transformation decoded from its own record is encoded as that node.
@@ -397,10 +422,25 @@ class X5Transform(
         options `chain` and `position`, which indexed the old record, are
         reset.
 
+        The fields of the metadata that changed, and those given by
+        keyword, are encoded over the record that the chain gives, since an
+        X5 file stores the vocabulary in the JSON metadata of the transform
+        that holds it (see [`X5Metadata`][]). A transform that is reused
+        keeps its own JSON metadata otherwise, and a transformation built
+        from one transformation and given metadata writes the metadata into
+        its single transform. What the write loses is acted on once, by
+        `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect (see
+            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -410,26 +450,46 @@ class X5Transform(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
         UnrepresentableTransformationError
             If an element cannot be encoded in X5, or if the systems that
             were assigned are not `RASmm`.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        report = ConversionReport(source="X5Transform", target="X5Transform")
+        requested = requested_fields(self.metadata, fields)
         record = _record(self)
         assigned = self._transformations is not None
         declared = self._input is not None or self._output is not None
         if not assigned and not declared:
-            if record is not None:
+            if record is not None and not requested:
+                apply_loss_policy(report, on_loss, stacklevel=2)
                 return self if inplace else replace(self)
-            record = X5Raw()
+            base = X5Raw() if record is None else record
         else:
             if declared:
                 _check_ras(self, "chain")
             decoded = self.__dict__.get("_cache_decoded_nodes", {})
-            record = _encode(self.transformations, record, decoded)
-        if self.metadata is None:
-            metadata = X5Metadata.from_raw(record)
+            base = _encode(self.transformations, record, decoded)
+        if self.metadata is not None and base is record:
+            metadata = self.metadata.consolidate(on_loss=report, **fields)
         else:
-            metadata = type(self.metadata).from_raw(record)
+            # The fields that changed are encoded over the record that the
+            # chain gives, whose transforms keep their own JSON metadata.
+            cls = X5Metadata if self.metadata is None else type(self.metadata)
+            fresh = cls.from_raw(base)
+            metadata = fresh.consolidate(on_loss=report, **requested)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not assigned and not declared and record is not None:
+            # Only the metadata changed: the nodes and the chains are
+            # those of the record, so the selection still holds.
+            if not inplace:
+                return replace(self, metadata=metadata)
+            self.metadata = metadata
+            return self
         if not inplace:
             return replace(
                 self,
@@ -460,7 +520,8 @@ class X5Transform(
         h5file : h5py.File
             The empty file, open for writing.
         **kwargs : Any
-            Options of [`X5Raw.to_h5`][].
+            `on_loss` and the fields of the metadata to override, as in
+            [`consolidate`][].
 
         Raises
         ------
@@ -468,7 +529,7 @@ class X5Transform(
             If an element cannot be encoded in X5, or if the systems
             that were assigned are not `RASmm`.
         """
-        _record(self.consolidate()).to_h5(h5file, **kwargs)
+        _record(self.consolidate(**kwargs)).to_h5(h5file)
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to the file at a path, replacing it.
@@ -482,7 +543,8 @@ class X5Transform(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of the writer of the record.
+            `on_loss` and the fields of the metadata to override, as in
+            [`consolidate`][].
 
         Raises
         ------
@@ -490,7 +552,7 @@ class X5Transform(
             If an element cannot be encoded in X5, or if the systems
             that were assigned are not `RASmm`.
         """
-        _record(self.consolidate()).to_filename(filename, **kwargs)
+        _record(self.consolidate(**kwargs)).to_filename(filename)
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the X5 file that encodes the transformation.
@@ -501,7 +563,8 @@ class X5Transform(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record.
+            `on_loss` and the fields of the metadata to override, as in
+            [`consolidate`][].
 
         Returns
         -------
@@ -514,7 +577,7 @@ class X5Transform(
             If an element cannot be encoded in X5, or if the systems
             that were assigned are not `RASmm`.
         """
-        return _record(self.consolidate()).to_bytes(**kwargs)
+        return _record(self.consolidate(**kwargs)).to_bytes()
 
 
 # ----------------------------------------------------------------------

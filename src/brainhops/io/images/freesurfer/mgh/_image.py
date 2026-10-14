@@ -17,6 +17,9 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
@@ -44,6 +47,7 @@ from brainhops.io.common.freesurfer import (
 from brainhops.io.common.freesurfer._geometry import fs_geometry_from_vox2ras
 from brainhops.io.common.mgh import MghMetadata, MghRaw
 from brainhops.io.common.mgh._constants import _MGH_AXES, _MRI_PARAMS
+from brainhops.io.common.mgh._metadata import _encode as _encode_vocabulary
 from brainhops.io.common.mgh._raw import (
     _compressed_name,
     encode_mgh,
@@ -51,6 +55,11 @@ from brainhops.io.common.mgh._raw import (
 )
 from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -165,7 +174,9 @@ class MghImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[MghMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MghMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
@@ -402,7 +413,12 @@ class MghImage(
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> "MghImage":
         """Encode the pending data and geometry into `rawdata` and the record.
 
@@ -430,19 +446,38 @@ class MghImage(
         transformations of its record or none read, consolidated without
         options, is left as it is: the copy shares `rawdata` and the metadata.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new record. The MRI parameters given by keyword,
+        such as `flip_angle=` in degrees, take precedence over `like`. The
+        image owns its geometry, so a repetition time that disagrees with
+        the TR stated by the transformations is reported as approximated.
+        The voxels are stored with the type given as `dtype=`, or else
+        with the nearest type to `metadata.dtype` that MGH stores, or else
+        with the nearest type to that of the data. What the write loses
+        or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
         like : path, nibabel MGH image or header, or MGH object, optional
-            Template whose MRI parameters override those of this image. A
-            TR stated by the transformations overrides both.
-        **overrides : Any
-            Header fields set last. `dtype` sets the stored voxel type,
-            which by default is the type of the data if MGH can store it
-            (uint8, int16, int32, float32), or else the nearest one. The
-            fields `dims` and `type` are refused, because the dimensions
-            follow the data and the voxel type is set by `dtype`.
+            Template whose MRI parameters override those of the metadata.
+            The fields given by keyword, and a TR stated by the
+            transformations, override them.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect (see
+            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        **options : Any
+            Fields of the metadata to override, such as `dtype`,
+            `repetition_time` or `flip_angle`, and other header fields,
+            which are set last. `dtype` must be a type that MGH stores
+            (uint8, int16, int32, float32). The header fields `dims` and
+            `type` are refused, because the dimensions follow the data
+            and the voxel type is `dtype`, and so are `tr`, `te` and `ti`,
+            which hold `repetition_time`, `echo_time` and
+            `inversion_time`.
 
         Returns
         -------
@@ -451,6 +486,11 @@ class MghImage(
 
         Raises
         ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If there is no data, the data have more than four dimensions,
             the voxel type cannot be stored, or `dims` or `type` is
@@ -460,6 +500,12 @@ class MghImage(
             non-spatial axis, or shifts or scales frames in a way that MGH
             cannot store.
         """
+        fields, overrides = _split_options(options)
+        report = ConversionReport(source="MghImage", target="MghImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MghMetadata, fields, report
+        )
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
         held = held_transformations(self)
@@ -471,20 +517,22 @@ class MghImage(
             and kept
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
             return self
-        record, raw = _encoded(self, like, overrides)
+        record, raw = _encoded(self, like, overrides, metadata, fields)
         if self.metadata is not None and record is self.metadata.raw:
             metadata = self.metadata
-        elif self.metadata is None:
-            metadata = MghMetadata.from_raw(record)
         else:
-            metadata = type(self.metadata).from_raw(record)
+            metadata = type(metadata or MghMetadata()).from_raw(record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -525,7 +573,8 @@ class MghImage(
             Template whose MRI parameters override those of this image. A
             TR stated by the transformation overrides both.
         **overrides : Any
-            Header fields set last, as for [`consolidate`][].
+            `on_loss`, and the fields of the metadata and of the header,
+            as for [`consolidate`][].
 
         Returns
         -------
@@ -559,7 +608,7 @@ class MghImage(
         compress : bool, default=False
             Whether to gzip the result into MGZ.
         **kwargs : Any
-            The template `like` and the header overrides of
+            The template `like`, `on_loss` and the options of
             [`consolidate`][].
 
         Returns
@@ -691,14 +740,81 @@ def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
 _LAYOUT_FIELDS = frozenset({"dims", "type"})
 """Header fields that describe the stored voxels, which the data sets."""
 
+_VOCABULARY_SLOTS = {
+    "tr": "repetition_time",
+    "te": "echo_time",
+    "ti": "inversion_time",
+}
+"""Header fields that hold a field of the metadata, with that field."""
+
+_FOOTER_FIELDS = (
+    "repetition_time",
+    "echo_time",
+    "inversion_time",
+    "flip_angle",
+)
+"""The fields of the metadata that the MRI parameters of the footer hold."""
+
+
+def _split_options(
+    options: tx.Mapping[str, tx.Any],
+) -> tx.Tuple[tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
+    """Split the options of the MGH writer into fields and header overrides.
+
+    An option named after a field of the metadata, such as `dtype` or
+    `flip_angle`, is that field. Any other option names a field of the
+    header, except the header fields that hold a field of the metadata,
+    which are refused.
+
+    Raises
+    ------
+    TypeError
+        If an option is `tr`, `te` or `ti`.
+    """
+    refused = sorted(set(options) & set(_VOCABULARY_SLOTS))
+    if refused:
+        hints = ", ".join(
+            f"{name}= (give {_VOCABULARY_SLOTS[name]}= instead)"
+            for name in refused
+        )
+        raise TypeError(
+            f"These header fields hold metadata, and cannot be overridden "
+            f"by name: {hints}."
+        )
+    fields = {name: v for name, v in options.items() if name in FIELDS}
+    overrides = {name: v for name, v in options.items() if name not in FIELDS}
+    return fields, overrides
+
+
+def _stored_dtype(
+    fields: tx.Mapping[str, tx.Any], metadata: tx.Optional[MghMetadata]
+) -> tx.Optional[np.dtype]:
+    """Return the voxel type that a write is asked to store, if any.
+
+    The `dtype` given by keyword is returned as it is, and refused later
+    if MGH cannot store it. Otherwise the `dtype` of the metadata, which
+    may come from another format, gives the nearest type that MGH stores.
+    `None` leaves the type to the data.
+    """
+    if "dtype" in fields:
+        return fields["dtype"]
+    if metadata is None or metadata.dtype is None:
+        return None
+    return _mgh_dtype(np.empty(0, metadata.dtype))
+
 
 def _encoded(
-    image: MghImage, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+    image: MghImage,
+    like: tx.Any,
+    overrides: tx.Mapping[str, tx.Any],
+    metadata: tx.Optional[MghMetadata],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Tuple[MghRaw, ArrayProtocol]:
     """Return the record and the voxels that consolidating an image stores.
 
-    The record is encoded as [`MghImage.consolidate`][] describes, and the
-    voxels are the assigned data, or else `rawdata`, arranged in the axis order
+    The record is encoded as [`MghImage.consolidate`][] describes, over a
+    copy of the record of the consolidated `metadata`, and the voxels are
+    the assigned data, or else `rawdata`, arranged in the axis order
     of the file when the transformations declare another order. The held
     record is returned when the encoding changes nothing. Voxels of
     another type than the stored one are converted as the writer converts
@@ -720,7 +836,7 @@ def _encoded(
             f"dimensions come from the data, and the voxel type is set "
             f"with dtype=."
         )
-    dtype = overrides.pop("dtype", None)
+    dtype = _stored_dtype(fields, image.metadata)
     # The list of the image is read without being stored, so that a write
     # leaves the image as it was.
     transformations = held_transformations(image)
@@ -730,8 +846,8 @@ def _encoded(
     data = source if layout is None else layout.apply(image.data)
     shape = _mgh_shape(data)
 
-    # The base is a copy of the record, or a new record.
-    held = None if image.metadata is None else image.metadata.raw
+    # The base is a copy of the record of the metadata, or a new record.
+    held = None if metadata is None else metadata.raw
     record = MghRaw() if held is None else held.copy()
     header = record.header
 
@@ -747,6 +863,12 @@ def _encoded(
     if template is not None:
         for name in _MRI_PARAMS:
             header[name] = template[name]
+        # The parameters given by keyword take precedence over the
+        # template, so they are encoded again.
+        given = {
+            name: fields[name] for name in _FOOTER_FIELDS if name in fields
+        }
+        _encode_vocabulary(record, given, ConversionReport())
     if tr is not None:
         header["tr"] = tr
     for name, value in overrides.items():

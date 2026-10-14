@@ -15,9 +15,14 @@ from bagof.magic import fields
 
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.metadata import (
+    ConversionReport,
+    metadata_loss_policy,
+)
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import ConversionError
-from brainhops.io.base._base import Format
+from brainhops.io.base._base import Format, _takes_over
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
@@ -101,7 +106,16 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         such as a buffer, gives no name to choose from, so `obj` must already
         be a writable format.
     **kwargs : Any
-        Options passed to the `save` method of the chosen format.
+        Options passed to the `save` method of the chosen format. An
+        option named after a field of the metadata, such as `dtype`,
+        overrides that field (see the `consolidate` method of the
+        format). `on_loss` is the loss policy of the metadata, as
+        `"ignore"`, `"warn"` or `"raise"`, or a
+        [`ConversionReport`][brainhops.datamodel.metadata.ConversionReport]
+        to fill. An object that is converted, then written, is acted on
+        once, with one report of what the conversion and the write lose.
+        The metadata of a format that does not hold metadata is not
+        written, and its fields are reported as lost.
 
     Raises
     ------
@@ -114,6 +128,8 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     OSError
         If the file cannot be written, or the data of `obj` cannot be
         read.
+    MetadataLossError
+        If metadata is lost under the `"raise"` policy.
     """
     name = _to_filename(file)
     if name is None:
@@ -214,7 +230,10 @@ def _write_first(
     succeeds for several formats is an ambiguity. In a tier where it
     succeeds for one, that object is written with `options`, and a
     `ConversionError` or a `WriterError` from its writer moves on to the
-    next tier. Why each format fails is added to `reasons`.
+    next tier. Why each format fails is added to `reasons`. Each build
+    fills a report of its own with what the conversion of the metadata
+    loses, and the write of the object adds to the report of its build
+    (see `_write_once`).
 
     Building does not touch the file, and any error but an `OSError`
     means that the format cannot hold `obj`. Writing does, so only the
@@ -236,26 +255,70 @@ def _write_first(
     for tier in _tiers(candidates):
         writers = []
         for fmt in tier:
+            report = ConversionReport(
+                source=type(obj).__name__, target=fmt.__name__
+            )
             try:
-                writers.append((fmt, build(obj, fmt)))
+                with metadata_loss_policy(report):
+                    writers.append((fmt, build(obj, fmt), report))
             except OSError:
                 raise
             except Exception as e:  # noqa: BLE001
                 reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
         if len(writers) > 1:
             raise AmbiguousFormatError(
-                _ambiguity_message(name, obj, [fmt for fmt, _ in writers])
+                _ambiguity_message(name, obj, [fmt for fmt, _, _ in writers])
             )
         if not writers:
             continue
-        fmt, writer = writers[0]
+        fmt, writer, report = writers[0]
         try:
-            writer.save(file, **options)
+            _write_once(obj, writer, file, report, options)
         except (ConversionError, WriterError) as e:
             reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
             continue
         return True
     return False
+
+
+def _write_once(
+    obj: tx.Any,
+    writer: tx.Any,
+    file: path.FileLike,
+    report: ConversionReport,
+    options: tx.Mapping[str, tx.Any],
+) -> None:
+    """Write a converted object, and act once on what the save loses.
+
+    The report of the conversion is given to the write as its `on_loss`,
+    so that the consolidation of the metadata adds to it, and the loss
+    policy of the save acts on the one report once the file is written.
+    A format that does not take the metadata of its data model over does
+    not write it, so its fields that are set are reported as lost, and so
+    are those of `obj` when the conversion gave the writer no metadata,
+    as some converters between transformations do.
+    """
+    # The metadata formats import this package, so their helpers are
+    # imported when they are used.
+    from brainhops.io.metadata._base import (
+        MetadataFormat,
+        lost_fields,
+        unsupported_values,
+    )
+
+    options = dict(options)
+    on_loss = options.pop("on_loss", None)
+    source = getattr(obj, "metadata", None)
+    if source is not None and getattr(writer, "metadata", None) is None:
+        lost_fields(unsupported_values(MetadataFormat, source), report)
+    if _takes_over(type(writer), "metadata"):
+        writer.save(file, on_loss=report, **options)
+    else:
+        metadata = getattr(writer, "metadata", None)
+        if metadata is not None:
+            lost_fields(unsupported_values(MetadataFormat, metadata), report)
+        writer.save(file, **options)
+    apply_loss_policy(report, on_loss, stacklevel=4)
 
 
 def _model(cls: type) -> tx.Optional[type]:

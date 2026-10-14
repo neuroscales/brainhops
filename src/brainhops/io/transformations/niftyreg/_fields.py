@@ -8,7 +8,7 @@ in [`brainhops.io.transformations.niftyreg`][].
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
@@ -20,11 +20,14 @@ from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
 )
+from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
@@ -33,12 +36,19 @@ from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _header,
+    _keep_given_fields,
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
     _NiftiObject,
     _record_image,
+    _split_options,
     _stored_parts,
+)
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
 )
 from brainhops.io.transformations.base._converters import (
     relabel,
@@ -308,6 +318,10 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             return None
         return _field_to_model(self.rawdata)
 
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
+
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
@@ -407,7 +421,12 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     _WHAT: tx.ClassVar[str] = "A NiftyReg field"
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending vectors or chain into `rawdata` and a header.
 
@@ -419,6 +438,13 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         field that has a header and nothing pending, consolidated without
         options, is left as it is.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`, and a `dtype` that is given, or changed
+        in the metadata, is the type of the stored array. What the write
+        loses or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -426,26 +452,60 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description` or
+            `dtype`, and header fields, which take precedence over the
+            derived values and `like`. A header field that holds a field
+            of the metadata, such as `descrip`, is refused.
 
         Returns
         -------
         Self
             The consolidated copy, or this field with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         if (
             self._data is None
             and self._transformations is None
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
-        raw, record = _stored_parts(self._encoded(like, **overrides))
+        if "dtype" in requested:
+            overrides["dtype"] = requested["dtype"]
+        # The encoders read the record of the metadata, so they encode
+        # over a copy that holds the consolidated metadata.
+        source = (
+            self
+            if metadata is self.metadata
+            else replace(self, metadata=metadata)
+        )
+        image = _keep_given_fields(source._encoded(like, **overrides), fields)
+        raw, record = _stored_parts(image)
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,

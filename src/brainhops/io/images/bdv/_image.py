@@ -15,6 +15,8 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -37,6 +39,7 @@ from brainhops.io.common.bdv._geometry import (
 )
 from brainhops.io.common.bdv._hdf5 import level_count, read_dataset
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -124,7 +127,9 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[BdvMetadata]] = None
+    _metadata: NoRepr[tx.Optional[BdvMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the dataset, which holds its record, or `None`.
@@ -199,7 +204,13 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             return self.data.shape
         return tuple(int(d) for d in reversed(self.rawdata.shape))
 
-    def consolidate(self, *, inplace: bool = False) -> "BdvImage":
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> "BdvImage":
         """Move the pending data into `rawdata`.
 
         A BigDataViewer image cannot be written, so no record can be
@@ -210,16 +221,41 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         without pending data is left as it is: the copy shares `rawdata`
         and the metadata.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a
+        BigDataViewer dataset holds no field of the vocabulary yet, so a
+        field that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
         BdvImage
             The consolidated copy, or this image with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        report = ConversionReport(source="BdvImage", target="BdvImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, BdvMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         # The record cannot be encoded, so a copy is given the list that
         # the image holds when it is not the list that the record decodes
         # to, as a list decoded and then changed in place would otherwise
@@ -230,12 +266,26 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         ):
             held = self._transformations
         if self._data is None:
-            return self if inplace else replace(self, transformations=held)
+            if not inplace:
+                return replace(self, transformations=held, metadata=metadata)
+            if requested:
+                self.transformations = held
+                self.metadata = metadata
+            return self
         raw = _image_to_disk(self._data)
         if not inplace:
-            return replace(self, data=None, rawdata=raw, transformations=held)
+            return replace(
+                self,
+                data=None,
+                rawdata=raw,
+                transformations=held,
+                metadata=metadata,
+            )
         self.rawdata = raw
         self.data = None
+        if requested:
+            self.transformations = held
+            self.metadata = metadata
         return self
 
     # --- reading ------------------------------------------------------

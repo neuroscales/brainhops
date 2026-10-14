@@ -8,7 +8,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -18,6 +18,8 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.datamodel.metadata._report import OnLoss
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -46,6 +48,7 @@ from brainhops.io.common.afni._raw import (
     _sniffed_raw_at,
 )
 from brainhops.io.images.afni import AfniImage
+from brainhops.io.metadata._base import requested_fields
 from brainhops.io.transformations.base.fields import (
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -119,7 +122,9 @@ class AfniBrikWarp(
     assigning `data` leaves it as it is.
     """
 
-    _metadata: NoRepr[tx.Optional[AfniMetadata]] = None
+    _metadata: NoRepr[tx.Optional[AfniMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
     """The sub-bricks given to the warp, or `None` to decode them.
@@ -427,6 +432,8 @@ class AfniBrikWarp(
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "AfniBrikWarp":
         """Encode the pending sub-bricks or chain into `rawdata` and a record.
 
@@ -445,6 +452,11 @@ class AfniBrikWarp(
         and nothing pending, consolidated without options, is left as it
         is: the copy shares `rawdata` and the metadata.
 
+        The metadata is consolidated first, as by the AFNI image, with the
+        fields given by keyword. The record of an AFNI dataset holds no
+        field of the vocabulary yet, so a field that is set is reported as
+        lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -455,6 +467,11 @@ class AfniBrikWarp(
             AFNI type name or NumPy type of the stored values.
         attributes : mapping, optional
             Attributes set last, as for an AFNI image.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -463,6 +480,10 @@ class AfniBrikWarp(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the warp has no values, if its chain is not a displacement
             field between two affines, or if the options are refused as
@@ -481,6 +502,7 @@ class AfniBrikWarp(
             and self._transformations is None
             and not declared
             and all(value is None for value in options.values())
+            and not requested_fields(self.metadata, fields)
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
@@ -489,6 +511,8 @@ class AfniBrikWarp(
             view=view,
             datatype=datatype,
             attributes=_labelled(self, attributes),
+            on_loss=on_loss,
+            **fields,
         )
         if self.metadata is not None and image.metadata is self.metadata:
             metadata = self.metadata
@@ -518,7 +542,8 @@ class AfniBrikWarp(
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-        **kwargs,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> None:
         """Write the `.HEAD` and `.BRIK` files of the dataset of the warp.
 
@@ -544,23 +569,29 @@ class AfniBrikWarp(
             The type of the stored values, as for [`consolidate`][].
         attributes : mapping, optional
             Attributes set last, as for [`consolidate`][].
-        **kwargs : Any
-            Unknown options, which are refused.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold, as
+            for [`consolidate`][].
+        **fields : Any
+            Fields of the metadata to override, as for [`consolidate`][].
+            Any other option is refused.
 
         Raises
         ------
         TypeError
             If an unknown option is given.
         """
-        if kwargs:
+        unknown = [name for name in fields if name not in FIELDS]
+        if unknown:
             raise TypeError(
-                f"Unknown AFNI writer option(s): {', '.join(kwargs)}"
+                f"Unknown AFNI writer option(s): {', '.join(unknown)}"
             )
         if isinstance(filename, str):
             filename = path.Path(filename)
         head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
+        options.update(fields, on_loss=on_loss)
         reading = reads_brik(self.rawdata, brik) or any(
             reads_brik(self.rawdata, sibling) for sibling, _ in stale
         )

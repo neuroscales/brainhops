@@ -16,6 +16,9 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -66,6 +69,10 @@ from brainhops.io.common.nrrd._raw import (
     _sniffed_raw,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -413,7 +420,9 @@ class NrrdImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[NrrdMetadata]] = None
+    _metadata: NoRepr[tx.Optional[NrrdMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
@@ -572,6 +581,11 @@ class NrrdImage(
         The record is read from the header, and the lazy array reads the
         samples when they are needed.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a NRRD
+        image holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         filename : path
@@ -642,6 +656,8 @@ class NrrdImage(
         datatype: tx.Optional[tx.Any] = None,
         space: tx.Optional[str] = None,
         keyvalue: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "NrrdImage":
         """Encode the pending data and geometry into `rawdata` and the record.
 
@@ -705,10 +721,17 @@ class NrrdImage(
             NRRD or NumPy type of the stored samples, to which the data
             are converted.
         space : str, optional
-            The anatomical space of the geometry, such as `"LPS"`.
+            The anatomical space of the geometry, such as `"LPS"`. This
+            option is the space of the NRRD header, and not the field
+            `space` of the metadata, which cannot be given by keyword here.
         keyvalue : mapping, optional
             Key/value pairs merged into those of the base. A value of
             `None` removes a key.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -717,6 +740,10 @@ class NrrdImage(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If there is no data, the data are zero-dimensional, the type,
             the encoding, the byte order or the space is unknown, or the
@@ -731,6 +758,12 @@ class NrrdImage(
             space=space,
             keyvalue=keyvalue,
         )
+        report = ConversionReport(source="NrrdImage", target="NrrdImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NrrdMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
         held = held_transformations(self)
@@ -741,6 +774,7 @@ class NrrdImage(
             self._data is None
             and kept
             and all(value is None for value in options.values())
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
@@ -749,12 +783,16 @@ class NrrdImage(
             self.transformations = None
             return self
         record, raw = _encoded(self, options, None)
-        if self.metadata is not None and record is self.metadata.raw:
+        if (
+            self.metadata is not None
+            and record is self.metadata.raw
+            and not requested
+        ):
             metadata = self.metadata
-        elif self.metadata is None:
+        elif metadata is None:
             metadata = NrrdMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,
@@ -895,15 +933,27 @@ _OPTIONS = ("encoding", "endian", "datatype", "space", "keyvalue")
 def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Return the writer options, refusing unknown ones.
 
+    The options of the writer, `on_loss` and the fields of the metadata,
+    which go to the consolidation of the metadata, are known. `space` is
+    the option of the writer.
+
     Raises
     ------
     TypeError
         If an unknown option is given.
     """
-    unknown = [name for name in kwargs if name not in _OPTIONS]
+    unknown = [
+        name
+        for name in kwargs
+        if name not in _OPTIONS and name not in FIELDS and name != "on_loss"
+    ]
     if unknown:
         raise TypeError(f"Unknown NRRD writer option(s): {', '.join(unknown)}")
-    return {name: kwargs.get(name) for name in _OPTIONS}
+    options = {name: kwargs.get(name) for name in _OPTIONS}
+    options.update(
+        {name: v for name, v in kwargs.items() if name not in _OPTIONS}
+    )
+    return options
 
 
 def _target_encoding(

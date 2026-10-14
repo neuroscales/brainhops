@@ -10,7 +10,6 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -62,6 +61,12 @@ class NiftiBasedTransformation(
     model was changed encodes the model over the header. This class is
     abstract and is not registered as a format. Its subclasses implement
     [`consolidate`][], on which the writers rely.
+
+    The metadata is the `metadata` field of the transformation of the
+    data model. This class does not derive from that transformation, so
+    it cannot take the field over: each concrete subclass does, with
+    `_metadata: ... = Inherit("metadata", default=None)`, so that the
+    field holds [`NiftiMetadata`][] and converts other metadata into it.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
@@ -75,16 +80,6 @@ class NiftiBasedTransformation(
     its data in the header, such as an affine, has no array. `rawdata`
     describes the file as it was read, or as the transformation was last
     consolidated, so assigning `data` leaves it as it is.
-    """
-
-    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = None
-
-    metadata = smartproperty("metadata")
-    """The metadata of the file, which holds its header, or `None`.
-
-    A transformation built from data has no metadata. A concrete format
-    that caches what it decodes from the header drops those values when
-    other metadata is assigned.
     """
 
     # --- reading ------------------------------------------------------

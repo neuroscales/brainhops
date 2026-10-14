@@ -13,6 +13,8 @@ from brainhops._core.typing import ArrayProtocol
 
 # internals
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import UnrepresentableTransformationError
 from brainhops.io.base._base import register_format
@@ -45,6 +47,7 @@ from brainhops.io.common.zarr._parsers import (
     opened_node,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -123,7 +126,9 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
     the list of the record, which is empty.
     """
 
-    _metadata: NoRepr[tx.Optional[ZarrMetadata]] = None
+    _metadata: NoRepr[tx.Optional[ZarrMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the store, which holds its record, or `None`.
@@ -293,6 +298,8 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
         fill_value: tx.Optional[tx.Any] = None,
         dimension_separator: tx.Optional[str] = None,
         zarr_version: tx.Optional[int] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "ZarrImage":
         """Encode the pending data into `rawdata` and the record.
 
@@ -319,6 +326,11 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
         The names and the values of the options are those of abczarr's
         `ArrayConfig` (abczarr 0.2.2, `abczarr/api/config.py`).
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a Zarr
+        array holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -342,6 +354,11 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
             `"."`.
         zarr_version : int, optional
             The version of the Zarr format to write, 2 or 3.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -350,11 +367,23 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the image has no data.
         UnrepresentableTransformationError
             If a transformation of the image is not the identity.
         """
+        report = ConversionReport(source="ZarrImage", target="ZarrImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, ZarrMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         options = {
             "dtype": dtype,
             "chunks": chunks,
@@ -380,14 +409,15 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
             and self.metadata.raw is not None
         ):
             if not inplace:
-                return replace(self, transformations=None)
+                return replace(self, transformations=None, metadata=metadata)
             self.transformations = None
+            self.metadata = metadata
             return self
         raw, record = _encoded(self, options)
-        if self.metadata is None:
+        if metadata is None:
             metadata = ZarrMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,

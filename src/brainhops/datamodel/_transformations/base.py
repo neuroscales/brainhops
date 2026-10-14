@@ -1,9 +1,11 @@
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel.base import DataModelBase, IdentityComparison
+from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import ConversionError, LossyConversionError
 
@@ -61,7 +63,7 @@ class Transformation(
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Names of the attributes that parameterize the transformation."""
 
-    metadata_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    encoding_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Names of the attributes that define the encoding."""
 
     derived_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
@@ -132,6 +134,19 @@ class Transformation(
 
     input = smartproperty("input")
     output = smartproperty("output")
+
+    metadata: NoRepr[tx.Optional[Metadata]] = None
+    """What describes the transformation beyond its parameters, or `None`.
+
+    The metadata holds the common vocabulary of
+    [`Metadata`][brainhops.datamodel.metadata.Metadata], such as a
+    description or the images of a registration. A transformation built
+    from parameters has none unless it is given some. A file format takes
+    the field over to hold the metadata of its own class, which also
+    holds the header of the file, and converts the metadata it is given
+    into that class. The field is keyword-only and is left out of the
+    representation of the transformation.
+    """
 
     # --- methods ------------------------------------------------------
 

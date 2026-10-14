@@ -22,6 +22,9 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -75,6 +78,10 @@ from brainhops.io.common.afni._raw import (
     _sniffed_raw_at,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -265,7 +272,9 @@ class AfniImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[AfniMetadata]] = None
+    _metadata: NoRepr[tx.Optional[AfniMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the dataset, which holds its record, or `None`.
@@ -576,6 +585,8 @@ class AfniImage(
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "AfniImage":
         """Encode the pending data and geometry into `rawdata` and the record.
 
@@ -622,6 +633,11 @@ class AfniImage(
         transformations of its record or none read, consolidated without
         options, is left as it is: the copy shares `rawdata` and the metadata.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an AFNI
+        dataset holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -639,6 +655,11 @@ class AfniImage(
             the grid and the view (`SCENE_DATA`) are refused, because the
             data, `datatype`, the transformations and `view` decide them.
             A string must be Latin-1 text.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -647,6 +668,10 @@ class AfniImage(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If there is no data, the data have no dimension or more than
             four, the type cannot be stored, the geometry is degenerate,
@@ -656,6 +681,12 @@ class AfniImage(
         UnrepresentableTransformationError
             If the preferred transformation is not affine.
         """
+        report = ConversionReport(source="AfniImage", target="AfniImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, AfniMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
         held = held_transformations(self)
@@ -668,6 +699,7 @@ class AfniImage(
             and view is None
             and datatype is None
             and attributes is None
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
@@ -676,12 +708,16 @@ class AfniImage(
             self.transformations = None
             return self
         record, raw = _encoded(self, view, datatype, attributes)
-        if self.metadata is not None and record is self.metadata.raw:
+        if (
+            self.metadata is not None
+            and record is self.metadata.raw
+            and not requested
+        ):
             metadata = self.metadata
-        elif self.metadata is None:
+        elif metadata is None:
             metadata = AfniMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,
@@ -702,7 +738,8 @@ class AfniImage(
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-        **kwargs,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> None:
         """Write the `.HEAD` and `.BRIK` files of a dataset.
 
@@ -734,8 +771,12 @@ class AfniImage(
             The type of the stored values, as for [`consolidate`][].
         attributes : mapping, optional
             Attributes set last, as for [`consolidate`][].
-        **kwargs : Any
-            Unknown options, which are refused.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold, as
+            for [`consolidate`][].
+        **fields : Any
+            Fields of the metadata to override, as for [`consolidate`][].
+            Any other option is refused.
 
         Raises
         ------
@@ -744,15 +785,17 @@ class AfniImage(
         WriterError
             If the image cannot be encoded, as in [`consolidate`][].
         """
-        if kwargs:
+        unknown = [name for name in fields if name not in FIELDS]
+        if unknown:
             raise TypeError(
-                f"Unknown AFNI writer option(s): {', '.join(kwargs)}"
+                f"Unknown AFNI writer option(s): {', '.join(unknown)}"
             )
         if isinstance(filename, str):
             filename = path.Path(filename)
         head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
+        options.update(fields, on_loss=on_loss)
         reading = reads_brik(self.rawdata, brik) or any(
             reads_brik(self.rawdata, sibling) for sibling, _ in stale
         )
