@@ -131,10 +131,10 @@ def test_blocks_are_read_as_the_specification_writes_them(
     write_dataset(tmp_path / "d", data, (2, 2, 3), compression)
     image = io.images.load(tmp_path / "d")
     assert isinstance(image, N5Image)
-    assert isinstance(image.raw, _N5Proxy)
+    assert isinstance(image.rawdata, _N5Proxy)
     assert image.shape == (5, 3, 4)
-    assert image.raw.dtype == np.dtype("uint16")
-    assert np.array_equal(np.asarray(image.raw), data)
+    assert image.rawdata.dtype == np.dtype("uint16")
+    assert np.array_equal(np.asarray(image.rawdata), data)
 
 
 @pytest.mark.parametrize(
@@ -145,8 +145,8 @@ def test_every_numeric_type_is_read(tmp_path: tx.Any, dtype: str) -> None:
     data = sample((3, 4), dtype) - (1 if dtype.startswith("int") else 0)
     write_dataset(tmp_path / "d", data, (2, 2), "raw")
     image = N5Image.load(tmp_path / "d")
-    assert np.asarray(image.raw).dtype == np.dtype(dtype)
-    assert np.array_equal(np.asarray(image.raw), data)
+    assert np.asarray(image.rawdata).dtype == np.dtype(dtype)
+    assert np.array_equal(np.asarray(image.rawdata), data)
 
 
 def test_a_missing_block_reads_as_zeros(tmp_path: tx.Any) -> None:
@@ -155,7 +155,7 @@ def test_a_missing_block_reads_as_zeros(tmp_path: tx.Any) -> None:
     expected = data.copy()
     expected[2:4, 2:3, 0:3] = 0
     assert np.array_equal(
-        np.asarray(N5Image.load(tmp_path / "d").raw), expected
+        np.asarray(N5Image.load(tmp_path / "d").rawdata), expected
     )
 
 
@@ -164,10 +164,10 @@ def test_a_dataset_is_named_by_its_attributes_file(tmp_path: tx.Any) -> None:
     write_dataset(tmp_path / "d", data, (2, 2, 3))
     image = io.images.load(tmp_path / "d" / "attributes.json")
     assert isinstance(image, N5Image)
-    assert np.array_equal(np.asarray(image.raw), data)
+    assert np.array_equal(np.asarray(image.rawdata), data)
     with open(tmp_path / "d" / "attributes.json", "rb") as file:
         image = N5Image.from_fileobj(file)
-    assert np.array_equal(np.asarray(image.raw), data)
+    assert np.array_equal(np.asarray(image.rawdata), data)
 
 
 def test_the_first_dimension_is_x(tmp_path: tx.Any) -> None:
@@ -184,7 +184,7 @@ def test_the_first_dimension_is_x(tmp_path: tx.Any) -> None:
         "x",
         "y",
     ]
-    assert np.array_equal(np.asarray(image.raw)[:, 0], [0, 2, 4, 6])
+    assert np.array_equal(np.asarray(image.rawdata)[:, 0], [0, 2, 4, 6])
 
 
 def test_a_block_of_variable_length_is_refused_when_read(
@@ -195,7 +195,7 @@ def test_a_block_of_variable_length_is_refused_when_read(
         file.write(struct.pack(">H", 1))
     image = N5Image.load(tmp_path / "d")
     with pytest.raises(ParserContentError):
-        np.asarray(image.raw)
+        np.asarray(image.rawdata)
 
 
 @pytest.mark.parametrize(
@@ -245,13 +245,13 @@ def test_the_lazy_array_reads_numpy_indices(
 ) -> None:
     data = sample()
     write_dataset(tmp_path / "d", data, (2, 2, 3))
-    proxy = N5Image.load(tmp_path / "d").raw
+    proxy = N5Image.load(tmp_path / "d").rawdata
     assert np.array_equal(proxy[index], data[index])
 
 
 def test_an_empty_selection_reads_nothing(tmp_path: tx.Any) -> None:
     write_dataset(tmp_path / "d", sample(), (2, 2, 3))
-    proxy = N5Image.load(tmp_path / "d").raw
+    proxy = N5Image.load(tmp_path / "d").rawdata
     assert proxy[0:0].shape == (0, 3, 4)
     assert proxy._store is None
     proxy[0, 0, 0]
@@ -351,7 +351,7 @@ def test_the_metadata_never_reads_a_block(tmp_path: tx.Any) -> None:
     image = N5Image.load(tmp_path / "d")
     assert image.shape == (5, 3, 4)
     with pytest.raises(ParserContentError):
-        np.asarray(image.raw)
+        np.asarray(image.rawdata)
 
 
 def test_options_are_refused(tmp_path: tx.Any) -> None:
@@ -528,11 +528,11 @@ def test_a_pyramid_is_read_whole_and_lazily(tmp_path: tx.Any) -> None:
         assert isinstance(level, N5Image)
         assert level.level == index
         assert level.metadata is pyramid.metadata
-        assert isinstance(level.raw, _N5Proxy)
-        assert level.raw._store is None
+        assert isinstance(level.rawdata, _N5Proxy)
+        assert level.rawdata._store is None
     step = 4
     expected = data[::step, ::step]
-    assert np.array_equal(np.asarray(pyramid.images[2].raw), expected)
+    assert np.array_equal(np.asarray(pyramid.images[2].rawdata), expected)
     assert np.array_equal(np.asarray(pyramid.data), data)
 
 
@@ -541,7 +541,7 @@ def test_one_level_of_a_pyramid_is_read_with_level(tmp_path: tx.Any) -> None:
     image = io.images.load(tmp_path / "p", level=-1)
     assert isinstance(image, N5Image)
     assert image.level == 1
-    assert np.array_equal(np.asarray(image.raw), data[::2, ::2])
+    assert np.array_equal(np.asarray(image.rawdata), data[::2, ::2])
     assert len(image.metadata.raw.levels) == 2
     with pytest.raises(ParserContentError):
         N5Image.load(tmp_path / "p", level=2)
@@ -625,12 +625,12 @@ def test_a_dataset_read_on_its_own_ignores_its_group(
 def test_a_pyramid_consolidates_its_levels(tmp_path: tx.Any) -> None:
     write_pyramid(tmp_path / "p", {}, [{}, {}])
     pyramid = N5MultiScaleImage.load(tmp_path / "p")
-    raws = [level.raw for level in pyramid.images]
+    raws = [level.rawdata for level in pyramid.images]
     pyramid.images[1].data = np.zeros((4, 2, 2))
     once = pyramid.consolidate()
-    assert once.images[0].raw is raws[0]
-    assert isinstance(once.images[1].raw, np.ndarray)
-    assert pyramid.images[1].raw is raws[1]
+    assert once.images[0].rawdata is raws[0]
+    assert isinstance(once.images[1].rawdata, np.ndarray)
+    assert pyramid.images[1].rawdata is raws[1]
     assert pyramid.consolidate(inplace=True) is pyramid
     assert pyramid.images[1]._data is None
 

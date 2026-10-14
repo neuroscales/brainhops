@@ -211,7 +211,7 @@ class BdvMultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
         metadata = BdvMetadata.from_raw(raw)
         images = [
             BdvImage(
-                raw=proxy,
+                rawdata=proxy,
                 metadata=metadata,
                 setup=setup,
                 timepoint=timepoint,

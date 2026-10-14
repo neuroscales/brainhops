@@ -427,7 +427,7 @@ def test_a_velocity_consolidated_without_log_holds_its_displacement(
     velocity_warp,  # noqa: ANN001
 ) -> None:
     velocity = io.transformations.load(velocity_warp, log=True)
-    stored = velocity.raw
+    stored = velocity.rawdata
     # The option `log` fixes the encoding of the consolidated copy.
     integrated = velocity.consolidate(log=False)
     assert integrated.log is False
@@ -438,22 +438,22 @@ def test_a_velocity_consolidated_without_log_holds_its_displacement(
         atol=1e-4,
     )
     assert velocity.log is True
-    assert velocity.raw is stored
+    assert velocity.rawdata is stored
     # Without options, nothing is encoded and the proxy is shared.
-    assert velocity.consolidate().raw is stored
+    assert velocity.consolidate().rawdata is stored
 
 
 def test_assigned_vectors_are_pending(standard_warp, tmp_path) -> None:  # noqa: ANN001
     field = io.transformations.load(standard_warp)
-    proxy = field.raw
+    proxy = field.rawdata
     vectors = np.zeros((*SHAPE, 3), dtype="float32")
     field.data = vectors
-    assert field.raw is proxy
+    assert field.rawdata is proxy
     assert field._data is vectors
     np.testing.assert_allclose(np.asarray(field.displacement.field), 0)
     target = tmp_path / "zeros.nii.gz"
     field.save(target)
-    assert field.raw is proxy
+    assert field.rawdata is proxy
     written = np.asarray(nb.load(str(target)).dataobj)
     np.testing.assert_array_equal(written, 0)
 

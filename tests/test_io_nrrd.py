@@ -153,8 +153,8 @@ def test_read_attached_lps(lps_file) -> None:  # noqa: ANN001
     name, values = lps_file
     image = io.load(name)
     assert type(image) is AttachedNrrdImage
-    assert isinstance(image.raw, _NrrdProxy) and image.raw.mmap
-    assert isinstance(image.raw.read_samples().base, np.memmap)
+    assert isinstance(image.rawdata, _NrrdProxy) and image.rawdata.mmap
+    assert isinstance(image.rawdata.read_samples().base, np.memmap)
     np.testing.assert_array_equal(image.data, values)
     assert [a.name for a in image.system.axes] == ["x", "y", "z"]
     physical, world = image.transformations
@@ -177,7 +177,7 @@ def test_read_attached_lps(lps_file) -> None:  # noqa: ANN001
 def test_read_no_mmap(lps_file) -> None:  # noqa: ANN001
     name, values = lps_file
     image = AttachedNrrdImage.load(name, mmap=False)
-    assert not image.raw.mmap
+    assert not image.rawdata.mmap
     np.testing.assert_array_equal(image.data, values)
 
 
@@ -522,7 +522,7 @@ def test_write_options(lps_file, tmp_path) -> None:  # noqa: ANN001
         keyvalue={"DWMRI_b-value": None, "new": "1"},
     )
     back = io.load(tmp_path / "o.nrrd")
-    assert back.raw.dtype == np.dtype(">f4")
+    assert back.rawdata.dtype == np.dtype(">f4")
     np.testing.assert_array_equal(back.data, values)
     assert "DWMRI_b-value" not in back.metadata.raw.keyvalue
     assert back.metadata.raw.keyvalue["new"] == "1"
@@ -893,7 +893,7 @@ def test_samples_in_several_files_are_written_in_one(tmp_path) -> None:  # noqa:
         )
     )
     loaded = DetachedNrrdImage.load(tmp_path / "p.nhdr")
-    assert not loaded.raw.copyable
+    assert not loaded.rawdata.copyable
     loaded.save(tmp_path / "q.nhdr")
     back = DetachedNrrdImage.load(tmp_path / "q.nhdr")
     assert back.metadata.raw.data_files == ("q.raw",)
@@ -914,7 +914,7 @@ def test_an_image_saved_over_itself_keeps_its_samples(tmp_path) -> None:  # noqa
     loaded.save(source)
     assert source.read_bytes() != before
     np.testing.assert_array_equal(data, values)
-    np.testing.assert_array_equal(np.asarray(loaded.raw), values)
+    np.testing.assert_array_equal(np.asarray(loaded.rawdata), values)
     np.testing.assert_allclose(
         io.load(source).transformation.matrix,
         np.diag([5.0, 6.0, 7.0]) @ np.eye(3, 4),
@@ -930,9 +930,9 @@ def test_a_detached_image_saved_over_itself_keeps_its_samples(
     # The old data file is kept, the header names the new one, and the
     # lazy array reads the new files.
     assert (tmp_path / "source.raw.gz").exists()
-    assert loaded.raw.record.data_files == ("source.raw",)
-    np.testing.assert_array_equal(np.asarray(loaded.raw), values)
-    assert np.asarray(loaded.raw).dtype == np.int32
+    assert loaded.rawdata.record.data_files == ("source.raw",)
+    np.testing.assert_array_equal(np.asarray(loaded.rawdata), values)
+    assert np.asarray(loaded.rawdata).dtype == np.int32
     np.testing.assert_array_equal(io.load(source).data, values)
 
 
@@ -941,7 +941,7 @@ def test_a_file_written_again_elsewhere_is_refused(tmp_path) -> None:  # noqa: A
     loaded = AttachedNrrdImage.load(source)
     AttachedNrrdImage(values.astype("float32")).save(source)
     with pytest.raises(ParserContentError, match="no longer describes"):
-        np.asarray(loaded.raw)
+        np.asarray(loaded.rawdata)
 
 
 def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
@@ -1052,7 +1052,7 @@ def test_nothing_but_the_data_reads_the_samples(
     image = io.load(source)
     assert image.shape == values.shape
     assert image.ndim == 3
-    assert image.raw.dtype == np.dtype("<i2")
+    assert image.rawdata.dtype == np.dtype("<i2")
     repr(image)
     assert image.transformations
     assert image.system is not None

@@ -506,19 +506,19 @@ def test_loading_reads_no_chunk(pyramid) -> None:  # noqa: ANN001
     directory, fine, _ = pyramid
     image = io.images.load(directory)
     level = image.images[0]
-    assert isinstance(level.raw, _PrecomputedProxy)
-    assert level.raw._store is None
+    assert isinstance(level.rawdata, _PrecomputedProxy)
+    assert level.rawdata._store is None
     assert "_cache_data" not in vars(level)
     # An empty selection, which Dask reads to learn the type of an array,
     # opens nothing either.
-    assert level.raw[:0].shape == (0, 4, 3, 2)
-    assert level.raw._store is None
+    assert level.rawdata[:0].shape == (0, 4, 3, 2)
+    assert level.rawdata._store is None
     # A broken chunk is found only when the voxels are read.
     (directory / "coarse" / "0-2_1-3_1-3").write_bytes(b"short")
     broken = io.images.load(directory).images[1]
     with pytest.raises(ValueError, match="0-2_1-3_1-3"):
-        np.asarray(broken.raw)
-    assert np.array_equal(np.asarray(level.raw), fine)
+        np.asarray(broken.rawdata)
+    assert np.array_equal(np.asarray(level.rawdata), fine)
 
 
 @pytest.mark.parametrize(
@@ -536,13 +536,13 @@ def test_loading_reads_no_chunk(pyramid) -> None:  # noqa: ANN001
 )
 def test_the_lazy_array_reads_selections_like_numpy(pyramid, index) -> None:  # noqa: ANN001
     directory, fine, _ = pyramid
-    proxy = io.images.load(directory).images[0].raw
+    proxy = io.images.load(directory).images[0].rawdata
     assert np.array_equal(proxy[index], fine[index])
 
 
 def test_the_lazy_array_pickles_without_its_store(pyramid) -> None:  # noqa: ANN001
     directory, fine, _ = pyramid
-    proxy = io.images.load(directory).images[0].raw
+    proxy = io.images.load(directory).images[0].rawdata
     np.asarray(proxy)
     assert proxy._store is not None
     clone = pickle.loads(pickle.dumps(proxy))
@@ -557,7 +557,7 @@ def test_dask_reads_the_volume_lazily(pyramid) -> None:  # noqa: ANN001
     with backend("dask"):
         data = level.data
     assert type(data).__module__.startswith("dask")
-    assert level.raw._store is None
+    assert level.rawdata._store is None
     assert np.array_equal(np.asarray(data), fine)
 
 
@@ -568,7 +568,7 @@ def test_a_changed_volume_is_refused_when_it_is_read(pyramid) -> None:  # noqa: 
     info["scales"][0]["size"] = [6, 4, 3]
     (directory / "info").write_text(json.dumps(info))
     with pytest.raises(ParserContentError, match="shape"):
-        np.asarray(image.raw)
+        np.asarray(image.rawdata)
 
 
 def test_a_stream_needs_a_name(pyramid) -> None:  # noqa: ANN001
@@ -576,7 +576,7 @@ def test_a_stream_needs_a_name(pyramid) -> None:  # noqa: ANN001
     with open(directory / "info", "rb") as file:
         image = PrecomputedImage.load(file)
         pyramid_image = PrecomputedMultiScaleImage.load(file)
-    assert np.array_equal(np.asarray(image.raw), fine)
+    assert np.array_equal(np.asarray(image.rawdata), fine)
     assert len(pyramid_image.images) == 2
     content = _io.BytesIO((directory / "info").read_bytes())
     with pytest.raises(ParserTypeError, match="file name"):
@@ -625,7 +625,7 @@ def test_a_sharded_volume_is_read(tmp_path) -> None:  # noqa: ANN001
     # The shards are named by their number in hexadecimal.
     key = image.metadata.raw.scales[0].key
     assert all(name.endswith(".shard") for name in os.listdir(directory / key))
-    assert np.array_equal(np.asarray(image.raw), values[..., 0])
+    assert np.array_equal(np.asarray(image.rawdata), values[..., 0])
 
 
 def test_compressed_segmentation_is_read(tmp_path) -> None:  # noqa: ANN001
@@ -650,7 +650,7 @@ def test_compressed_segmentation_is_read(tmp_path) -> None:  # noqa: ANN001
         4,
         2,
     )
-    assert np.array_equal(np.asarray(image.raw), values[..., 0])
+    assert np.array_equal(np.asarray(image.rawdata), values[..., 0])
 
 
 def test_jpeg_is_read(tmp_path) -> None:  # noqa: ANN001
@@ -674,7 +674,7 @@ def test_jpeg_is_read(tmp_path) -> None:  # noqa: ANN001
         num_channels=3,
     )
     image = io.images.load(directory)
-    data = np.asarray(image.raw)
+    data = np.asarray(image.rawdata)
     assert data.shape == (8, 8, 4, 3)
     assert np.abs(data.astype(int) - values.astype(int)).max() <= 8
 
@@ -727,18 +727,18 @@ def test_a_pyramid_consolidates_the_data_of_its_levels(pyramid) -> None:  # noqa
     untouched = image.consolidate()
     assert untouched is not image
     assert untouched.metadata is image.metadata
-    assert [level.raw for level in untouched.images] == [
-        level.raw for level in image.images
+    assert [level.rawdata for level in untouched.images] == [
+        level.rawdata for level in image.images
     ]
     first = image.images[0]
     first.data = np.zeros_like(fine)
     consolidated = image.consolidate()
-    assert np.array_equal(consolidated.images[0].raw, np.zeros_like(fine))
+    assert np.array_equal(consolidated.images[0].rawdata, np.zeros_like(fine))
     assert consolidated.images[0]._data is None
     assert first._data is not None
     assert image.consolidate(inplace=True) is image
     assert image.images[0]._data is None
-    assert image.images[1].raw is consolidated.images[1].raw
+    assert image.images[1].rawdata is consolidated.images[1].rawdata
 
 
 def test_assigned_transformations_are_kept(single) -> None:  # noqa: ANN001

@@ -30,14 +30,15 @@ and TensorStore 0.1.45 reads `gs`, `http` and `https` URLs. A volume of
 a single scale is read as a `PrecomputedImage`.
 
 Each image holds the `info` file as [`PrecomputedMetadata`][], whose
-record is a [`PrecomputedRaw`][], and the voxels of its scale in `raw`,
-a lazy array that TensorStore reads chunk by chunk when the data are
-needed. The data are indexed
+record is a [`PrecomputedRaw`][], and the voxels of its scale in
+`rawdata`, a lazy array that TensorStore reads chunk by chunk when the
+data are needed. The data are indexed
 `[x, y, z]`, with a channel axis `c` last when the volume has several
 channels, and the first voxel of the data is the first voxel of the
-scale. The scales encoded as `raw`, `jpeg` and `compressed_segmentation`
-are read, sharded or not, and a scale encoded otherwise (`png`,
-`compresso`, `jxl` or `crackle`) is refused when it is loaded.
+scale. The scales encoded as `rawdata`, `jpeg` and
+`compressed_segmentation` are read, sharded or not, and a scale encoded
+otherwise (`png`, `compresso`, `jxl` or `crackle`) is refused when it is
+loaded.
 
 Each scale maps its voxels to the `"physical"` space of Neuroglancer, in
 nanometres, by an [`Affine`][brainhops.datamodel.transformations.Affine]
@@ -112,7 +113,7 @@ member, the chunks are gathered into `<shard>.shard` files, where each
 chunk is found by the compressed Morton code of `g`, through a shard
 index and a minishard index (see [`PrecomputedSharding`][]). In both
 layouts, the data of a chunk is a `[x, y, z, channel]` array in Fortran
-order, so `x` varies fastest. The `raw` encoding stores it as
+order, so `x` varies fastest. The `rawdata` encoding stores it as
 little-endian values without a header, and the `jpeg`,
 `compressed_segmentation`, `compresso`, `png`, `jxl` and `crackle`
 encodings compress it.

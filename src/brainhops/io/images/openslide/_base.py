@@ -212,10 +212,11 @@ class OpenSlideImage(
     whose record is an
     [`OpenSlideRaw`][brainhops.io.images.openslide.OpenSlideRaw], the index
     `level` of its level in that record, and the pixels of the level as a
-    lazy array in `raw`. What OpenSlide reports about the slide, such as
-    its vendor, its properties, the downsampling factors of its levels, its
-    background colour, its bounds and the names of its associated images,
-    is read from the record, as `image.metadata.raw.properties`.
+    lazy array in `rawdata`. What OpenSlide reports about the slide,
+    such as its vendor, its properties, the downsampling factors of its
+    levels, its background colour, its bounds and the names of its
+    associated images, is read from the record, as
+    `image.metadata.raw.properties`.
 
     The data is an F-ordered `(x, y, c)` RGB `uint8` array that reads only
     the region it is indexed with, or a dask array of whole tiles. The
@@ -227,25 +228,25 @@ class OpenSlideImage(
 
     OpenSlide cannot write slides, so the class has no writer: an image is
     saved to another format, such as TIFF. Assigned data is pending until
-    [`consolidate`][] moves it into `raw`, and the transformations that the
+    [`consolidate`][] moves it into `rawdata`, and the transformations that the
     image holds, read or assigned, are kept, since no record can be
     encoded.
     """
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The pixels of the level, or `None` without data.
 
-    After a read, `raw` is a lazy array of the level, which reads the
-    region that it is indexed with. Assigning `data` leaves it as it is,
-    and [`consolidate`][] stores the assigned array here.
+    After a read, `rawdata` is a lazy array of the level, which reads
+    the region that it is indexed with. Assigning `data` leaves it as it
+    is, and [`consolidate`][] stores the assigned array here.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. An array stored here is pending until
-    [`consolidate`][] moves it into `raw`.
+    [`consolidate`][] moves it into `rawdata`.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -279,19 +280,19 @@ class OpenSlideImage(
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The pixels of the level, assigned or decoded from `raw`.
+        """The pixels of the level, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
-        pending until [`consolidate`][] moves it into `raw`. Otherwise the
-        data is decoded from `raw` on first access and cached: the lazy
-        array itself, which reads only the region that it is indexed with
-        and cannot be written to, or a dask array of whole tiles with the
-        reader option `lazy`. To change the pixels, assign `data`. Assigning
-        `None` decodes `raw` again.
+        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+        data is decoded from `rawdata` on first access and cached: the
+        lazy array itself, which reads only the region that it is
+        indexed with and cannot be written to, or a dask array of whole
+        tiles with the reader option `lazy`. To change the pixels,
+        assign `data`. Assigning `None` decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -309,15 +310,15 @@ class OpenSlideImage(
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without reading the pixels.
 
-        The shape is that of the assigned data, or else of `raw`, whose
-        lazy array knows its shape from the record. An image without data
-        raises as [`SingleScaleImage`][] does.
+        The shape is that of the assigned data, or else of `rawdata`,
+        whose lazy array knows its shape from the record. An image
+        without data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in self.raw.shape)
+        return tuple(int(d) for d in self.rawdata.shape)
 
     # --- reading ------------------------------------------------------
 
@@ -417,7 +418,7 @@ class OpenSlideImage(
             )
         index %= count
         image = cls(
-            raw=_SlideArray(slide, record, index, lazy=lazy),
+            rawdata=_SlideArray(slide, record, index, lazy=lazy),
             metadata=OpenSlideMetadata.from_raw(record),
             level=index,
         )
@@ -431,14 +432,14 @@ class OpenSlideImage(
     # --- consolidating ------------------------------------------------
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
-        """Move the pending data into `raw`.
+        """Move the pending data into `rawdata`.
 
         OpenSlide cannot write slides, so no record can be encoded, and
         consolidating an image is limited to its data: an assigned array
-        becomes `raw`, and is no longer pending. The metadata and the level
+        becomes `rawdata`, and is no longer pending. The metadata and the level
         are kept, and so are the transformations that the image holds, read
         or assigned. An image without pending data is left as it is: the
-        copy shares `raw` and the metadata.
+        copy shares `rawdata` and the metadata.
 
         Parameters
         ----------
@@ -463,8 +464,8 @@ class OpenSlideImage(
             return self if inplace else replace(self, transformations=held)
         raw = _image_to_disk(self._data)
         if not inplace:
-            return replace(self, data=None, raw=raw, transformations=held)
-        self.raw = raw
+            return replace(self, data=None, rawdata=raw, transformations=held)
+        self.rawdata = raw
         self.data = None
         return self
 
@@ -473,8 +474,8 @@ class OpenSlideImage(
 
         Associated images are the label, the macro, the thumbnail and the
         other images that `metadata.raw.associated_images` lists. They are
-        read from the slide that `raw` reads, and returned as F-ordered
-        `(x, y, c)` RGB `uint8` arrays, composited onto white.
+        read from the slide that `rawdata` reads, and returned as
+        F-ordered `(x, y, c)` RGB `uint8` arrays, composited onto white.
 
         Parameters
         ----------
@@ -492,7 +493,7 @@ class OpenSlideImage(
             If the slide has no associated image of that name, or if the
             image reads no slide.
         """
-        return _associated(self.metadata, (self.raw,), name)
+        return _associated(self.metadata, (self.rawdata,), name)
 
 
 # ----------------------------------------------------------------------
@@ -509,26 +510,27 @@ class OpenSlideMultiScaleImage(
     reads a slide of any vendor. The pyramid holds the record of the slide
     as
     [`OpenSlideMetadata`][brainhops.io.images.openslide.OpenSlideMetadata],
-    and the lazy array of each level, finest first, as a tuple in `raw`.
-    Its levels are single-scale images decoded from `raw` and the record on
-    first access, which hold the same metadata, by identity, and the index
-    `level` of their level in the record. The levels of the base class are
-    [`OpenSlideImage`][] objects, and those of a vendor class are objects
-    of the single-scale class of the vendor.
+    and the lazy array of each level, finest first, as a tuple in
+    `rawdata`. Its levels are single-scale images decoded from `rawdata`
+    and the record on first access, which hold the same metadata, by
+    identity, and the index `level` of their level in the record. The
+    levels of the base class are [`OpenSlideImage`][] objects, and those
+    of a vendor class are objects of the single-scale class of the
+    vendor.
 
     Every level covers the whole slide and maps to the same `"physical"`
     system, as in TIFF and OME-Zarr pyramids, so the pyramid has no
     transformation of its own, and OpenSlide stores none.
 
     OpenSlide cannot write slides, so the class has no writer, and
-    [`consolidate`][] moves only the pending data of the levels into `raw`.
+    [`consolidate`][] moves only the pending data of the levels into `rawdata`.
     """
 
-    raw: NoRepr[tx.Optional[tx.Tuple[ArrayProtocol, ...]]] = None
+    rawdata: NoRepr[tx.Optional[tx.Tuple[ArrayProtocol, ...]]] = None
     """The array of each level, finest first.
 
-    After a read, each array is a lazy array of its level. `raw` is a
-    tuple, so that it cannot be changed in place, and it describes the
+    After a read, each array is a lazy array of its level. `rawdata` is
+    a tuple, so that it cannot be changed in place, and it describes the
     slide as it was read, or as the pyramid was last consolidated.
     """
 
@@ -539,8 +541,8 @@ class OpenSlideMultiScaleImage(
 
     The pyramid takes over the `images` field of [`MultiScaleImage`][] to
     store an assigned list under this private name. `None` means that no
-    list was assigned, so the property decodes the levels from `raw` and
-    the record and caches them apart.
+    list was assigned, so the property decodes the levels from `rawdata`
+    and the record and caches them apart.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -577,15 +579,16 @@ class OpenSlideMultiScaleImage(
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are decoded from `raw` and the record on first access and
-        cached, apart from an assigned list, so `images[0] is images[0]` and
-        a level changed in place, such as one whose data is assigned, is
-        seen by [`consolidate`][]. Each level is an [`OpenSlideImage`][]
-        that holds its array of `raw`, the metadata of the pyramid and its
-        index in `level`. Assigning a list replaces the stored one, and
-        assigning `None` decodes the levels again.
+        The levels are decoded from `rawdata` and the record on first
+        access and cached, apart from an assigned list, so
+        `images[0] is images[0]` and a level changed in place, such as
+        one whose data is assigned, is seen by [`consolidate`][]. Each
+        level is an [`OpenSlideImage`][] that holds its array of
+        `rawdata`, the metadata of the pyramid and its index in `level`.
+        Assigning a list replaces the stored one, and assigning `None`
+        decodes the levels again.
         """
-        return decode_levels(OpenSlideImage, self.raw, self.metadata)
+        return decode_levels(OpenSlideImage, self.rawdata, self.metadata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -601,13 +604,13 @@ class OpenSlideMultiScaleImage(
         """The shape of the finest level, read without reading the pixels.
 
         The shape is read from the levels that the pyramid holds, or else
-        from the first array of `raw`.
+        from the first array of `rawdata`.
         """
         images = held_images(self)
         if images is not None:
             return tuple(images[0].shape) if images else ()
-        if self.raw:
-            return tuple(int(n) for n in self.raw[0].shape)
+        if self.rawdata:
+            return tuple(int(n) for n in self.rawdata[0].shape)
         return ()
 
     # --- reading ------------------------------------------------------
@@ -700,7 +703,7 @@ class OpenSlideMultiScaleImage(
             _SlideArray(slide, record, index, lazy=lazy)
             for index in range(len(record.levels))
         )
-        pyramid = cls(raw=raw, metadata=OpenSlideMetadata.from_raw(record))
+        pyramid = cls(rawdata=raw, metadata=OpenSlideMetadata.from_raw(record))
         if pixel_size is not None or unit is not None:
             # The options describe the geometry, so the levels are assigned
             # with the transformations that they give.
@@ -717,9 +720,9 @@ class OpenSlideMultiScaleImage(
         """Copy a pyramid into this format.
 
         Within the format, the stored fields are copied, so a copy of an
-        untouched pyramid shares `raw` and the metadata and decodes nothing.
-        From another class, the levels that `other` reports are copied,
-        because its private fields mean nothing to this format.
+        untouched pyramid shares `rawdata` and the metadata and decodes
+        nothing. From another class, the levels that `other` reports are
+        copied, because its private fields mean nothing to this format.
 
         Parameters
         ----------
@@ -744,22 +747,23 @@ class OpenSlideMultiScaleImage(
     # --- consolidating ------------------------------------------------
 
     def consolidate(self, *, inplace: bool = False) -> tx.Self:
-        """Move the pending data of the levels into `raw`.
+        """Move the pending data of the levels into `rawdata`.
 
         OpenSlide cannot write slides, so no record can be encoded, and
         consolidating a pyramid is limited to the data of its levels. A
         pyramid whose levels were neither read nor assigned is left as it
-        is: the copy shares `raw` and the metadata. Otherwise each level
-        that the pyramid holds must be a level of its slide: an
+        is: the copy shares `rawdata` and the metadata. Otherwise each
+        level that the pyramid holds must be a level of its slide: an
         [`OpenSlideImage`][] that holds the metadata of the pyramid, by
         identity, at its own index. Its pending data becomes its array in
-        `raw`, and the array of a level without pending data is kept, so a
-        pyramid whose levels were only read keeps `raw`. The metadata is
-        kept, and so are the placements that the pyramid holds. The levels
-        of the copy are decoded from `raw` and the record, unless a level
-        holds transformations that differ from those of the record: the
-        copy then holds a list of its levels, each with its array of `raw`
-        and its transformations, since no record can be encoded.
+        `rawdata`, and the array of a level without pending data is kept, so a
+        pyramid whose levels were only read keeps `rawdata`. The
+        metadata is kept, and so are the placements that the pyramid
+        holds. The levels of the copy are decoded from `rawdata` and the
+        record, unless a level holds transformations that differ from
+        those of the record: the copy then holds a list of its levels,
+        each with its array of `rawdata` and its transformations, since
+        no record can be encoded.
 
         Parameters
         ----------
@@ -774,7 +778,7 @@ class OpenSlideMultiScaleImage(
         Raises
         ------
         WriterError
-            If the pyramid holds another number of levels than `raw`, or a
+            If the pyramid holds another number of levels than `rawdata`, or a
             level that is not a level of its slide, such as an image of
             another class, since no record can describe it.
         """
@@ -790,12 +794,12 @@ class OpenSlideMultiScaleImage(
                 return self
             return replace(self, transformations=placements)
         arrays, levels = _consolidated_levels(self, images)
-        raw = self.raw if _same(arrays, self.raw) else arrays
+        raw = self.rawdata if _same(arrays, self.rawdata) else arrays
         if not inplace:
             return replace(
-                self, raw=raw, images=levels, transformations=placements
+                self, rawdata=raw, images=levels, transformations=placements
             )
-        self.raw = raw
+        self.rawdata = raw
         self.images = levels
         return self
 
@@ -804,7 +808,7 @@ class OpenSlideMultiScaleImage(
 
         Associated images are the label, the macro, the thumbnail and the
         other images that `metadata.raw.associated_images` lists. They are
-        read from the slide that the arrays of `raw` read, and returned as
+        read from the slide that the arrays of `rawdata` read, and returned as
         F-ordered `(x, y, c)` RGB `uint8` arrays, composited onto white.
 
         Parameters
@@ -823,7 +827,7 @@ class OpenSlideMultiScaleImage(
             If the slide has no associated image of that name, or if no
             array of the pyramid reads a slide.
         """
-        return _associated(self.metadata, self.raw or (), name)
+        return _associated(self.metadata, self.rawdata or (), name)
 
 
 # ----------------------------------------------------------------------
@@ -937,7 +941,7 @@ def decode_levels(
     if raw is None:
         return []
     return [
-        level_type(raw=array, metadata=metadata, level=index)
+        level_type(rawdata=array, metadata=metadata, level=index)
         for index, array in enumerate(raw)
     ]
 
@@ -1022,7 +1026,7 @@ def _consolidated_levels(
     """Return the arrays of the levels of a pyramid, and the levels to keep.
 
     Each level must be a level of the slide of the pyramid. Its array is
-    its pending data, or else its own `raw`. The levels are kept, each with
+    its pending data, or else its own `rawdata`. The levels are kept, each with
     its array and the transformations that it holds, only when a level
     holds transformations that differ from those of the record.
 
@@ -1032,7 +1036,7 @@ def _consolidated_levels(
         If a level is not a level of the slide of the pyramid, or has no
         data.
     """
-    raw = pyramid.raw or ()
+    raw = pyramid.rawdata or ()
     metadata = pyramid.metadata
     if len(images) != len(raw):
         raise WriterError(
@@ -1058,7 +1062,7 @@ def _consolidated_levels(
         if image._data is not None:
             array = _image_to_disk(image._data)
         else:
-            array = image.raw
+            array = image.rawdata
         if array is None:
             raise WriterError(f"Level {index} of this pyramid has no data.")
         arrays.append(array)
@@ -1074,7 +1078,7 @@ def _consolidated_levels(
         replace(
             image,
             data=None,
-            raw=array,
+            rawdata=array,
             transformations=None if kept is None else list(kept),
         )
         for image, array, kept in zip(images, arrays, held)

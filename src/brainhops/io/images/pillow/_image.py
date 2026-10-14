@@ -179,8 +179,8 @@ class PillowImage(
     """A two-dimensional raster image, read and written with Pillow.
 
     A raster image holds the header of its file as [`PillowMetadata`][],
-    whose record is a [`PillowRaw`][], and the pixels of a frame in `raw`.
-    When the image is read from a file, `raw` is a lazy array that decodes
+    whose record is a [`PillowRaw`][], and the pixels of a frame in `rawdata`.
+    When the image is read from a file, `rawdata` is a lazy array that decodes
     the frame only when it is needed, and `data` is decoded from it on
     first access. The data are `(x, y)` for an image of one sample per
     pixel and `(x, y, c)` otherwise, in Fortran order. The format of the
@@ -195,7 +195,7 @@ class PillowImage(
     decodes the pixel size from the resolution of its record, and a pixel
     size given when the image is read is assigned.
 
-    `raw` and the record describe the file as it was read, or as the image
+    `rawdata` and the record describe the file as it was read, or as the image
     was last consolidated. Data that are assigned are pending until
     [`consolidate`][] encodes them into a copy, or until the image is
     written, which writes such a copy and leaves the image as it was. The
@@ -208,23 +208,23 @@ class PillowImage(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = EXTENSIONS
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("pillow",)
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The pixels of the frame as Pillow decodes them, `(rows, columns[,
     samples])`, or `None` without data.
 
-    After a read, `raw` is a lazy array, which decodes the frame when it
-    is read and gives the bytes of the file. `raw` describes the file as
-    it was read, or as the image was last consolidated, so assigning
-    `data` leaves it as it is.
+    After a read, `rawdata` is a lazy array, which decodes the frame
+    when it is read and gives the bytes of the file. `rawdata` describes
+    the file as it was read, or as the image was last consolidated, so
+    assigning `data` leaves it as it is.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
-    array stored here is pending: it is encoded into `raw` only by
+    array stored here is pending: it is encoded into `rawdata` only by
     [`consolidate`][] or by a write.
     """
 
@@ -254,7 +254,7 @@ class PillowImage(
     """
 
     frame: int = 0
-    """The index of the frame that `raw` decodes, a reader option.
+    """The index of the frame that `rawdata` decodes, a reader option.
 
     The record describes the same frame. A file of several frames is
     written back whole while the image is unchanged, and a changed image
@@ -262,7 +262,7 @@ class PillowImage(
     """
 
     palette: bool = True
-    """Whether `raw` looks up the colours of a palette image, a reader
+    """Whether `rawdata` looks up the colours of a palette image, a reader
     option.
 
     Without the lookup, the data of a palette image are its indices.
@@ -279,18 +279,19 @@ class PillowImage(
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, assigned or decoded from `raw`.
+        """The image data, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
         pending until [`consolidate`][] or a write encodes it. Otherwise
-        the frame is decoded from `raw` on first access and cached. Data
-        decoded from a file is read-only, because changing it in place
-        would not change `raw`, which is what the image writes. To change
-        the pixels, assign `data`. Assigning `None` decodes `raw` again.
+        the frame is decoded from `rawdata` on first access and cached.
+        Data decoded from a file is read-only, because changing it in
+        place would not change `rawdata`, which is what the image
+        writes. To change the pixels, assign `data`. Assigning `None`
+        decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -317,16 +318,16 @@ class PillowImage(
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without decoding the pixels.
 
-        The shape is that of the assigned data, or else that of `raw` with
+        The shape is that of the assigned data, or else that of `rawdata` with
         its rows and columns swapped, since the lazy array knows its shape
         from the record. An image without data raises as
         [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        shape = tuple(int(d) for d in self.raw.shape)
+        shape = tuple(int(d) for d in self.rawdata.shape)
         return shape[1::-1] + shape[2:]
 
     # --- reading ------------------------------------------------------
@@ -540,26 +541,26 @@ class PillowImage(
         dpi: _DpiLike = None,
         **options,
     ) -> "PillowImage":
-        """Encode the pending data and geometry into `raw` and the record.
+        """Encode the pending data and geometry into `rawdata` and the record.
 
-        Consolidating makes `raw` and the record describe the image, as a
+        Consolidating makes `rawdata` and the record describe the image, as a
         file written from it would. An image with a record, whose lazy
         array still reads its file with that record, with no pending data
         and the transformations of its record or none read, consolidated
         in the format of its file without other options, is left as it is:
-        the copy shares `raw` and the metadata, and it is written as the
-        bytes of its file. The transformations that the image holds, read or
-        assigned, are compared with those that the record decodes to,
-        exactly.
+        the copy shares `rawdata` and the metadata, and it is written as
+        the bytes of its file. The transformations that the image holds,
+        read or assigned, are compared with those that the record
+        decodes to, exactly.
 
         Otherwise the image is encoded with Pillow, in a fixed order.
 
-        1. The pixels are the assigned data, or else the frame of `raw`.
-           The data must have two spatial axes, where any other spatial
-           axis is a singleton, and at most one channel axis, as the axes
-           of the input of the preferred transformation say. The type of
-           the data is stored as it is (see
-           [`brainhops.io.images.pillow`][]).
+        1. The pixels are the assigned data, or else the frame of
+           `rawdata`. The data must have two spatial axes, where any
+           other spatial axis is a singleton, and at most one channel
+           axis, as the axes of the input of the preferred
+           transformation say. The type of the data is stored as it is
+           (see [`brainhops.io.images.pillow`][]).
         2. The resolution is `dpi` when it is given. Otherwise it is
            computed from the preferred transformation, when that
            transformation scales onto axes with a unit of length, or else
@@ -571,8 +572,8 @@ class PillowImage(
 
         The bytes that Pillow writes are then read again, so the copy
         holds what the file holds: its record is the header of the new
-        file and its `raw` is a lazy array of the new bytes, which reads
-        its frame 0. Nothing is pending afterwards, so the
+        file and its `rawdata` is a lazy array of the new bytes, which
+        reads its frame 0. Nothing is pending afterwards, so the
         transformations are decoded from the new record. The record held
         before is never changed.
 
@@ -605,7 +606,7 @@ class PillowImage(
             If there is no data, if the data has more than two spatial
             axes, or a type that Pillow or the format does not store (such
             as `float64`, or `uint16` in JPEG), or if `frame` or `palette`
-            differ from those with which `raw` reads its file.
+            differ from those with which `rawdata` reads its file.
         """
         held = None if self.metadata is None else self.metadata.raw
         target = _target_format(format, held)
@@ -624,8 +625,8 @@ class PillowImage(
             and not options
             and (dpi is None or dpi is True)
             and held is not None
-            and isinstance(self.raw, _PillowProxy)
-            and self.raw.record is held
+            and isinstance(self.rawdata, _PillowProxy)
+            and self.rawdata.record is held
             and _same_format(format, held)
         ):
             if not inplace:
@@ -643,11 +644,11 @@ class PillowImage(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 frame=0,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.frame = 0
         self.data = None
@@ -695,7 +696,7 @@ class PillowImage(
         if "inplace" in options:
             raise TypeError("A writer does not take the option inplace.")
         image = self.consolidate(format=format, dpi=dpi, **options)
-        return image.raw.read_stored()
+        return image.rawdata.read_stored()
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the image to an open binary file, in the `format` given or the
@@ -750,13 +751,15 @@ class PillowImage(
                     f"format='PNG'."
                 )
             kwargs["format"] = fmt
-        reading = reads_from(self.raw, filename)
+        reading = reads_from(self.rawdata, filename)
         image = self.consolidate(inplace=reading, **kwargs)
-        write_file(filename, image.raw.read_stored())
+        write_file(filename, image.rawdata.read_stored())
         if reading:
             # The image holds what the file holds, and its lazy array reads
             # the new file, since the old lazy array may read other bytes.
-            self.raw = _PillowProxy(filename, self.metadata.raw, self.palette)
+            self.rawdata = _PillowProxy(
+                filename, self.metadata.raw, self.palette
+            )
             self.data = None
 
 
@@ -797,7 +800,7 @@ def _read_image(
             record, proxy.palette, dpi, pixel_size, unit
         )
     return cls(
-        raw=proxy,
+        rawdata=proxy,
         metadata=PillowMetadata.from_raw(record),
         transformations=transformations,
         frame=record.frame,
@@ -916,10 +919,10 @@ def _check_reading(image: PillowImage) -> None:
     Raises
     ------
     WriterError
-        If `frame` or `palette` differ from those with which `raw` reads
-        its file.
+        If `frame` or `palette` differ from those with which `rawdata`
+        reads its file.
     """
-    raw = image.raw
+    raw = image.rawdata
     if not isinstance(raw, _PillowProxy):
         return
     if image.frame != raw.record.frame or image.palette != raw.palette:
@@ -948,8 +951,8 @@ def _encoded(
     """
     if image._data is not None:
         data = image._data
-    elif image.raw is not None:
-        data = _image_to_model(image.raw)
+    elif image.rawdata is not None:
+        data = _image_to_model(image.rawdata)
     else:
         raise WriterError(
             "This image has no data, so there is nothing to write."

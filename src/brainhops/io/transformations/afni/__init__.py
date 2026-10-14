@@ -17,9 +17,9 @@ A matrix file is short and is read in one pass, so its whole content is
 held as an [`AfniAffineRaw`][] record by its [`AfniAffineMetadata`][], as
 an LTA file is. A BRIK warp holds the header of its dataset as
 [`AfniMetadata`][], whose record is an [`AfniRaw`][], and its sub-bricks,
-read lazily, in `raw`, as an AFNI image does. A NIfTI warp holds the
+read lazily, in `rawdata`, as an AFNI image does. A NIfTI warp holds the
 header and the array of its file as every NIfTI transformation does. The
-records and `raw` describe the files as they were read. Matrices,
+records and `rawdata` describe the files as they were read. Matrices,
 sub-bricks and chains that are assigned are pending until
 `consolidate()` encodes them into a copy, or until the object is
 written, which writes such a copy and leaves the object as it was. An

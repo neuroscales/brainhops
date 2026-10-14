@@ -183,12 +183,12 @@ class TiffImage(
     image holds the record of the series that it was read from as
     [`TiffMetadata`][brainhops.io.images.tiff.TiffMetadata], whose record
     is a [`TiffRaw`][brainhops.io.images.tiff.TiffRaw], and the pixels as
-    a lazy array in `raw`. The reader options `series` and `level` say
-    which series and which level of its pyramid the image is, and the
-    level of a pyramid holds the record of the whole series, in which
-    `level` finds it. What the file records, such as its dialect, its
-    OME-XML, its ImageJ metadata and its tags, is read from the record,
-    as `image.metadata.raw.dialect`.
+    a lazy array in `rawdata`. The reader options `series` and `level`
+    say which series and which level of its pyramid the image is, and
+    the level of a pyramid holds the record of the whole series, in
+    which `level` finds it. What the file records, such as its dialect,
+    its OME-XML, its ImageJ metadata and its tags, is read from the
+    record, as `image.metadata.raw.dialect`.
 
     The data is F-ordered as x, y and z, then time, channels and other
     axes, and is read on first access. The image has a single
@@ -199,7 +199,7 @@ class TiffImage(
     on first access, unless the reader options `pixel_size`, `unit` or
     `origin` override it, in which case it is assigned.
 
-    `raw` and the record describe the file as it was read, or as the image
+    `rawdata` and the record describe the file as it was read, or as the image
     was last consolidated. Assigned data is pending until
     [`consolidate`][] encodes it into a copy, or until the image is
     written, which leaves the image as it was. The transformations, read
@@ -217,21 +217,21 @@ class TiffImage(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = backend.EXTENSIONS
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("tiff", "tifffile")
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The pixels as the file stores them, or `None` without data.
 
-    After a read, `raw` is a lazy array of the level, which presents the
-    pixels in the order of brainhops and reads them when they are needed.
-    `raw` describes the file as it was read, or as the image was last
-    consolidated, so assigning `data` leaves it as it is.
+    After a read, `rawdata` is a lazy array of the level, which presents
+    the pixels in the order of brainhops and reads them when they are
+    needed. `rawdata` describes the file as it was read, or as the image
+    was last consolidated, so assigning `data` leaves it as it is.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. An array stored here is pending: it
-    is encoded into `raw` only by [`consolidate`][] or by a write.
+    is encoded into `rawdata` only by [`consolidate`][] or by a write.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -268,19 +268,19 @@ class TiffImage(
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, assigned or decoded from `raw`.
+        """The image data, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
         pending until [`consolidate`][] or a write encodes it. Otherwise
-        the data is decoded from `raw` on first access and cached. A local,
+        the data is decoded from `rawdata` on first access and cached. A local,
         uncompressed and contiguous level is a read-only view of a memory
         map of the file, a level read lazily is a dask array, and any
         other level is read in full, read-only. To change the pixels,
-        assign `data`. Assigning `None` decodes `raw` again.
+        assign `data`. Assigning `None` decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -299,15 +299,15 @@ class TiffImage(
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without reading the pixels.
 
-        The shape is that of the assigned data, or else of `raw`, whose
-        lazy array knows its shape from the record. An image without data
-        raises as [`SingleScaleImage`][] does.
+        The shape is that of the assigned data, or else of `rawdata`,
+        whose lazy array knows its shape from the record. An image
+        without data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in self.raw.shape)
+        return tuple(int(d) for d in self.rawdata.shape)
 
     # --- reading ------------------------------------------------------
 
@@ -414,7 +414,7 @@ class TiffImage(
             record = read_record(tif, series)
         index %= len(record.levels)
         image = cls(
-            raw=_TiffProxy(source, record, index, mmap=mmap, lazy=lazy),
+            rawdata=_TiffProxy(source, record, index, mmap=mmap, lazy=lazy),
             metadata=TiffMetadata.from_raw(record),
             series=record.series,
             level=index,
@@ -445,21 +445,22 @@ class TiffImage(
         name: tx.Optional[str] = None,
         bigtiff: tx.Optional[bool] = None,
     ) -> "TiffImage":
-        """Encode the pending data and geometry into `raw` and the record.
+        """Encode the pending data and geometry into `rawdata` and the record.
 
-        Consolidating makes `raw` and the record describe the image, as a
+        Consolidating makes `rawdata` and the record describe the image, as a
         file written from it would. An image that has a record of one
         level, at index 0, no pending data, and the transformations of its
         record or none read, consolidated without options or with options
         that name what the record holds, is left as it is: the copy shares
-        `raw` and the metadata. Any other image is planned as the writer
-        plans its file, and the record of the copy is read from a file of
-        that plan that tifffile writes without pixels, so that it holds
-        what the written file holds. Its `raw` is the assigned data, or
-        else the lazy array, which is not read. A level of a pyramid is
-        therefore narrowed to a record of its level alone, at index 0, and
-        the record held before is never changed. Nothing is pending in the
-        copy, whose transformations are decoded from the new record.
+        `rawdata` and the metadata. Any other image is planned as the
+        writer plans its file, and the record of the copy is read from a
+        file of that plan that tifffile writes without pixels, so that
+        it holds what the written file holds. Its `rawdata` is the
+        assigned data, or else the lazy array, which is not read. A
+        level of a pyramid is therefore narrowed to a record of its
+        level alone, at index 0, and the record held before is never
+        changed. Nothing is pending in the copy, whose transformations
+        are decoded from the new record.
 
         The dialect is chosen as the writer chooses it: `dialect`, else
         OME-TIFF for a `name` with an OME suffix, else ImageJ for a record
@@ -509,12 +510,12 @@ class TiffImage(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 series=record.series,
                 level=0,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.series = record.series
         self.level = 0
@@ -525,11 +526,11 @@ class TiffImage(
     def to_bytes(self, **kwargs) -> bytes:
         """Encode the image as TIFF.
 
-        An image that [`consolidate`][] leaves as it is, and whose `raw`
-        is the lazy array of its record, gives the bytes of its file, as
-        they are. Any other image is encoded by tifffile, as the image
-        consolidated with the options holds it. The image itself is not
-        changed.
+        An image that [`consolidate`][] leaves as it is, and whose
+        `rawdata` is the lazy array of its record, gives the bytes of
+        its file, as they are. Any other image is encoded by tifffile,
+        as the image consolidated with the options holds it. The image
+        itself is not changed.
 
         Parameters
         ----------
@@ -553,7 +554,7 @@ class TiffImage(
         """
         options, encoding = split_options(kwargs)
         if not encoding and self._copies_source(**options):
-            return self.raw.read_bytes()
+            return self.rawdata.read_bytes()
         buffer = BytesIO()
         write_plan(self._planned(**options), buffer, encoding)
         return buffer.getvalue()
@@ -586,7 +587,7 @@ class TiffImage(
         target and then moved over it, and a remote file is first encoded
         in memory. When the lazy array of the image reads the file that is
         written, the image then holds what the file holds (#426): its
-        `raw` reads the new file, and its record is read from it.
+        `rawdata` reads the new file, and its record is read from it.
 
         Parameters
         ----------
@@ -606,7 +607,7 @@ class TiffImage(
             filename = path.Path(filename)
         kwargs.setdefault("name", _to_filename(filename))
         options, encoding = split_options(kwargs)
-        raw = self.raw
+        raw = self.rawdata
         reading = isinstance(raw, _TiffProxy) and same_file(
             raw.source.filename, filename
         )
@@ -623,7 +624,7 @@ class TiffImage(
             source = backend.TiffSource.from_file(filename)
             with source.open() as tif:
                 record = read_record(tif, 0)
-            self.raw = _TiffProxy(source, record, 0, raw.mmap, raw.lazy)
+            self.rawdata = _TiffProxy(source, record, 0, raw.mmap, raw.lazy)
             self.metadata = TiffMetadata.from_raw(record)
             self.series = record.series
             self.level = 0
@@ -681,11 +682,11 @@ class TiffImage(
     ) -> bool:
         """Tell whether a write copies the bytes of the file of the image.
 
-        The image is left as it is by [`consolidate`][], and its `raw` is
+        The image is left as it is by [`consolidate`][], and its `rawdata` is
         the lazy array of the record that it holds, so the file holds
         exactly what the image holds.
         """
-        raw = self.raw
+        raw = self.rawdata
         return (
             self._untouched(dialect, name, bigtiff)
             and isinstance(raw, _TiffProxy)
@@ -712,7 +713,7 @@ class TiffImage(
         if self._data is not None:
             raw = _image_to_disk(self._data)
         else:
-            raw = self.raw
+            raw = self.rawdata
         if raw is None:
             raise WriterError(
                 "This image has no data, so there is nothing to write."

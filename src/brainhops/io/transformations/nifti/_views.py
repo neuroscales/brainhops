@@ -1,9 +1,9 @@
 """How the data of a NIfTI transformation is decoded from the array that
 the file stores, and encoded back.
 
-Each pair of functions below converts between `raw`, the array as the
-file stores it, and `data`, the array that the data model exposes. The
-two functions of a pair are pure and invert each other, so that
+Each pair of functions below converts between `rawdata`, the array as
+the file stores it, and `data`, the array that the data model exposes.
+The two functions of a pair are pure and invert each other, so that
 `to_model(to_disk(data))` gives `data` back. The pairs are used by the
 NIfTI transformations of this package and by the other formats that
 store a field as a NIfTI vector image, such as the NiftyReg, SPM and FSL

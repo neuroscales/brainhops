@@ -4,10 +4,10 @@ Private helpers of the affine formats whose matrix lives in their record.
 Some affine formats store a file so short that it is read in one pass,
 such as an LTA file or a NiftyReg affine. The whole file is then held as
 a record by the metadata of the transformation, and the matrix of the
-affine lives in that record rather than in a `raw` array. These formats
-read their record, decode their matrix and encode a new matrix in the
-same way, so the helpers that do it are written once here and called
-explicitly by each format.
+affine lives in that record rather than in a `rawdata` array. These
+formats read their record, decode their matrix and encode a new matrix
+in the same way, so the helpers that do it are written once here and
+called explicitly by each format.
 
 The record of such a format stores the homogeneous matrix of a 3-D
 affine as a tuple of rows of floats, and the data model of an affine

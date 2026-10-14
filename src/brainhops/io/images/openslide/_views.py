@@ -1,5 +1,4 @@
-"""How the data of a slide level is decoded from the array that `raw` holds,
-and encoded back.
+"""How the data of a slide level is decoded from `rawdata`, and encoded back.
 
 The lazy array of a level already presents the pixels as brainhops orders
 them, an F-ordered `(x, y, c)` RGB array, so the pair of functions below is
@@ -21,7 +20,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of a level from the array that `raw` holds.
 
     A lazy array of a slide gives the view that its option `lazy` asks for,
-    and any other array, such as data that was consolidated into `raw`, is
+    and any other array, such as data that was consolidated into `rawdata`, is
     returned as it is. The lazy array cannot be written to, so the data
     decoded from a slide is read-only.
     """
@@ -31,7 +30,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
 
 def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
-    """Return the array that `raw` holds from the data of a level.
+    """Return the array that `rawdata` holds from the data of a level.
 
     A level stores its data as it is, so the array is returned unchanged.
     """

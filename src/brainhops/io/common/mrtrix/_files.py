@@ -365,7 +365,7 @@ def reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     Parameters
     ----------
     raw : array
-        The `raw` array of an object.
+        The `rawdata` array of an object.
     written : sequence of path
         The files that a writer writes.
 

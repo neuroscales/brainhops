@@ -61,12 +61,12 @@ class Jpeg2000Image(
 
     A JPEG 2000 image holds everything that its file says beside the coded
     image as [`Jpeg2000Metadata`][], whose record is a [`Jpeg2000Raw`][],
-    and the samples of one resolution level in `raw`. When the image is
-    read from a file, `raw` is a lazy array, which Pillow decodes only when
-    the samples are needed, and `data` is decoded from it on first access.
-    The data is indexed `(x, y)`, or `(x, y, c)` for several samples per
-    pixel, in Fortran order. Level 0 is the full resolution, and level `r`
-    is reduced by `2**r`.
+    and the samples of one resolution level in `rawdata`. When the image
+    is read from a file, `rawdata` is a lazy array, which Pillow decodes
+    only when the samples are needed, and `data` is decoded from it on
+    first access. The data is indexed `(x, y)`, or `(x, y, c)` for
+    several samples per pixel, in Fortran order. Level 0 is the full
+    resolution, and level `r` is reduced by `2**r`.
 
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. The only transformation is
@@ -75,7 +75,7 @@ class Jpeg2000Image(
     a translation for a reduced level whose first pixel is not centred on
     the first pixel of the full resolution.
 
-    `raw` and the record describe the file as it was read, or as the image
+    `rawdata` and the record describe the file as it was read, or as the image
     was last consolidated. Data that are assigned are pending until
     [`consolidate`][] encodes them into a copy, or until the image is
     written, which writes such a copy and leaves the image as it was. The
@@ -90,22 +90,22 @@ class Jpeg2000Image(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = _EXTENSIONS
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = _HINTS
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The samples as Pillow decodes them, or `None` without data.
 
-    After a read, `raw` is a lazy array of one resolution level, indexed
-    `(rows, columns)` or `(rows, columns, samples)`. `raw` describes the
-    file as it was read, or as the image was last consolidated, so
-    assigning `data` leaves it as it is.
+    After a read, `rawdata` is a lazy array of one resolution level,
+    indexed `(rows, columns)` or `(rows, columns, samples)`. `rawdata`
+    describes the file as it was read, or as the image was last
+    consolidated, so assigning `data` leaves it as it is.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
-    array stored here is pending: it is encoded into `raw` only by
+    array stored here is pending: it is encoded into `rawdata` only by
     [`consolidate`][] or by a write.
     """
 
@@ -136,18 +136,19 @@ class Jpeg2000Image(
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, assigned or decoded from `raw`.
+        """The image data, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
         pending until [`consolidate`][] or a write encodes it. Otherwise
-        the level is decoded from `raw` on first access and cached. Data
-        decoded from a file is read-only, because changing it in place
-        would not change `raw`, which is what the image writes. To change
-        the pixels, assign `data`. Assigning `None` decodes `raw` again.
+        the level is decoded from `rawdata` on first access and cached.
+        Data decoded from a file is read-only, because changing it in
+        place would not change `rawdata`, which is what the image
+        writes. To change the pixels, assign `data`. Assigning `None`
+        decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -173,29 +174,29 @@ class Jpeg2000Image(
 
     @property
     def level(self) -> int:
-        """The resolution level that `raw` reads, where 0 is the full one.
+        """The resolution level that `rawdata` reads, where 0 is the full one.
 
-        An image whose `raw` is not a lazy array of a file holds the full
+        An image whose `rawdata` is not a lazy array of a file holds the full
         resolution of the file that it would write.
         """
-        if isinstance(self.raw, _Jpeg2000Proxy):
-            return self.raw.level
+        if isinstance(self.rawdata, _Jpeg2000Proxy):
+            return self.rawdata.level
         return 0
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without decoding the samples.
 
-        The shape is that of the assigned data, or else of `raw` with its
+        The shape is that of the assigned data, or else of `rawdata` with its
         first two axes swapped: a lazy array knows its shape from the
         record. An image without data raises as [`SingleScaleImage`][]
         does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        shape = tuple(int(d) for d in self.raw.shape)
+        shape = tuple(int(d) for d in self.rawdata.shape)
         return (shape[1], shape[0]) + shape[2:]
 
     # --- reading ------------------------------------------------------
@@ -368,9 +369,9 @@ class Jpeg2000Image(
         comment: tx.Optional[str] = None,
         **options,
     ) -> "Jpeg2000Image":
-        """Encode the pending data and geometry into `raw` and the record.
+        """Encode the pending data and geometry into `rawdata` and the record.
 
-        Consolidating makes `raw` and the record describe the image, as a
+        Consolidating makes `rawdata` and the record describe the image, as a
         file written from it would. The record of the metadata is the base
         of the new file, which is built in one of two ways.
 
@@ -397,9 +398,9 @@ class Jpeg2000Image(
         When the image holds the full resolution of the file that it read,
         nothing is pending, the transformations are those of the record or
         none were read, and no option is given, the image is left as it
-        is: the copy shares `raw` and the metadata. Otherwise the new file
-        is held in memory, `raw` decodes it, and new metadata holds its
-        record. The record held before is never changed. Nothing is
+        is: the copy shares `rawdata` and the metadata. Otherwise the new file
+        is held in memory, `rawdata` decodes it, and new metadata holds
+        its record. The record held before is never changed. Nothing is
         pending afterwards, so the transformations are decoded from the
         new record, with the precision of the file.
 
@@ -460,17 +461,17 @@ class Jpeg2000Image(
         )
         copied = (
             self._data is None
-            and isinstance(self.raw, _Jpeg2000Proxy)
-            and self.raw.level == 0
+            and isinstance(self.rawdata, _Jpeg2000Proxy)
+            and self.rawdata.level == 0
             and num_resolutions is None
             and not options
-            and not (container == "j2k" and self.raw.record.palette)
+            and not (container == "j2k" and self.rawdata.record.palette)
         )
         if (
             copied
             and geometry
             and held is not None
-            and self.raw.record is held
+            and self.rawdata.record is held
             and container == held.container
             and comment is None
         ):
@@ -501,10 +502,10 @@ class Jpeg2000Image(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -573,7 +574,7 @@ class Jpeg2000Image(
         """
         if kwargs.get("container") is None:
             kwargs["container"] = _container_for_name(filename)
-        if not _reads_file(self.raw, filename):
+        if not _reads_file(self.rawdata, filename):
             write_file(filename, self.to_bytes(**kwargs))
             return
         self.consolidate(inplace=True, **kwargs)
@@ -581,7 +582,7 @@ class Jpeg2000Image(
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file may be another
         # level, or decode another coded image.
-        self.raw = _Jpeg2000Proxy(
+        self.rawdata = _Jpeg2000Proxy(
             _Jpeg2000Source(filename=os.fspath(filename)),
             self.metadata.raw,
             0,
@@ -635,9 +636,9 @@ def _read_image(
     raw = _Jpeg2000Proxy(source, record, index)
     metadata = Jpeg2000Metadata.from_raw(record)
     if pixel_size is None and unit is None:
-        return cls(raw=raw, metadata=metadata)
+        return cls(rawdata=raw, metadata=metadata)
     xform = level_transformation(record, index, pixel_size, unit)
-    return cls(raw=raw, metadata=metadata, transformations=[xform])
+    return cls(rawdata=raw, metadata=metadata, transformations=[xform])
 
 
 def _record_transformations(
@@ -796,23 +797,23 @@ def _rewritten(
     """Return the file of an image whose coded image is copied.
 
     The comments, the resolutions, the boxes and the container of the
-    record are written over the file that `raw` reads.
+    record are written over the file that `rawdata` reads.
 
     Raises
     ------
     WriterError
         If the record changes a field that the coded image decides.
     """
-    record = image.raw.record if held is None else held
+    record = image.rawdata.record if held is None else held
     changes: tx.Dict[str, tx.Any] = {}
     if comment is not None:
         changes["comments"] = (comment,)
     if not geometry:
         changes.update(
-            _resolutions(record, _pixel_size(image, image.raw.ndim))
+            _resolutions(record, _pixel_size(image, image.rawdata.ndim))
         )
     target = with_container(replace(record, **changes), container)
-    content = rewrite(image.raw.source.read(), target)
+    content = rewrite(image.rawdata.source.read(), target)
     check_layout(target, read_record(content))
     return content
 
@@ -828,7 +829,7 @@ def _encoded(
 ) -> bytes:
     """Return the file of an image whose pixels are encoded again.
 
-    The pixels are the assigned data, or else the level that `raw`
+    The pixels are the assigned data, or else the level that `rawdata`
     reads. The transformations are read without being stored, so that a
     write leaves the image as it was.
 
@@ -877,11 +878,11 @@ def _written(image: Jpeg2000Image) -> bytes:
     WriterError
         If the image has no data.
     """
-    if not isinstance(image.raw, _Jpeg2000Proxy):
+    if not isinstance(image.rawdata, _Jpeg2000Proxy):
         raise WriterError(
             "This image has no data, so there is nothing to write."
         )
-    return image.raw.source.read()
+    return image.rawdata.source.read()
 
 
 def _reads_file(raw: tx.Any, file: tx.Any) -> bool:

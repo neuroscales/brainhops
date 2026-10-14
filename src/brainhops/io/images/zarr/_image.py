@@ -57,8 +57,8 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
     A plain Zarr array is a store, a directory or a remote prefix of
     keys, that holds the document of one array and its chunks. The image
     holds the document as [`ZarrMetadata`][], whose record is a
-    [`ZarrRaw`][], and the array as the store keeps it in `raw`. When the
-    image is read from a store, `raw` is a lazy array that reads the
+    [`ZarrRaw`][], and the array as the store keeps it in `rawdata`. When the
+    image is read from a store, `rawdata` is a lazy array that reads the
     chunks only when they are needed, and `data` is decoded from it on
     first access. An OME-Zarr pyramid, a group with a multiscale
     geometry, is read by
@@ -73,10 +73,10 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
     rather than drop them: such an image is written as OME-Zarr, or its
     transformations are cleared first with `image.transformations = []`.
 
-    `raw` and the record describe the store as it was read, or as the
-    image was last consolidated. Data that are assigned are pending until
-    [`consolidate`][] encodes them into a copy, or until the image is
-    written, which writes such a copy and leaves the image as it was.
+    `rawdata` and the record describe the store as it was read, or as
+    the image was last consolidated. Data that are assigned are pending
+    until [`consolidate`][] encodes them into a copy, or until the image
+    is written, which writes such a copy and leaves the image as it was.
 
     An image that is read and written again to a local directory without
     changes gives the same files, byte for byte: the chunk files are
@@ -92,22 +92,22 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The array as the store keeps it, or `None` without data.
 
-    After a read, `raw` is a lazy array of the store, which reads its
-    chunks only when it is indexed. `raw` describes the store as it was
-    read, or as the image was last consolidated, so assigning `data`
-    leaves it as it is.
+    After a read, `rawdata` is a lazy array of the store, which reads
+    its chunks only when it is indexed. `rawdata` describes the store as
+    it was read, or as the image was last consolidated, so assigning
+    `data` leaves it as it is.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
-    array stored here is pending: it is encoded into `raw` only by
+    array stored here is pending: it is encoded into `rawdata` only by
     [`consolidate`][] or by a write.
     """
 
@@ -135,20 +135,20 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, assigned or decoded from `raw`.
+        """The image data, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
         pending until [`consolidate`][] or a write encodes it. Otherwise
-        the data is decoded from `raw` on first access and cached: the
-        NumPy backend reads the array, and the Dask backend keeps it lazy.
-        Data decoded from a store is read-only, because changing it in
-        place would not change `raw`, which is what the image writes. To
-        change the voxels, assign `data`. Assigning `None` decodes `raw`
-        again.
+        the data is decoded from `rawdata` on first access and cached:
+        the NumPy backend reads the array, and the Dask backend keeps it
+        lazy. Data decoded from a store is read-only, because changing
+        it in place would not change `rawdata`, which is what the image
+        writes. To change the voxels, assign `data`. Assigning `None`
+        decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -167,14 +167,14 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without reading the chunks.
 
-        The shape is that of the assigned data, or else of `raw`, which
-        the lazy array knows from the record. An image without data has
-        the empty shape.
+        The shape is that of the assigned data, or else of `rawdata`,
+        which the lazy array knows from the record. An image without
+        data has the empty shape.
         """
         if self._data is not None:
             return tuple(int(n) for n in self._data.shape)
-        if self.raw is not None:
-            return tuple(int(n) for n in self.raw.shape)
+        if self.rawdata is not None:
+            return tuple(int(n) for n in self.rawdata.shape)
         return ()
 
     # --- sniff --------------------------------------------------------
@@ -198,7 +198,7 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
     ) -> "ZarrImage":
         """Read an image from an opened Zarr array.
 
-        The record is read from the document of the array, and `raw` is a
+        The record is read from the document of the array, and `rawdata` is a
         lazy array of the node, which reads no chunk until it is indexed.
         Without a `transformation`, which places voxels in the world, the
         image has no geometry.
@@ -238,7 +238,7 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
             )
         record = ZarrRaw.from_node(node)
         image = cls(
-            raw=_ZarrProxy(node, store_location(node)),
+            rawdata=_ZarrProxy(node, store_location(node)),
             metadata=ZarrMetadata.from_raw(record),
         )
         if transformation is not None:
@@ -275,7 +275,7 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
         """
         location = absolute_location(location)
         image = super().from_store(location, **kwargs)
-        image.raw = _ZarrProxy(image.raw.node, location)
+        image.rawdata = _ZarrProxy(image.rawdata.node, location)
         return image
 
     # --- consolidate --------------------------------------------------
@@ -294,13 +294,13 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
         dimension_separator: tx.Optional[str] = None,
         zarr_version: tx.Optional[int] = None,
     ) -> "ZarrImage":
-        """Encode the pending data into `raw` and the record.
+        """Encode the pending data into `rawdata` and the record.
 
-        Consolidating makes `raw` and the record describe the image, as a
+        Consolidating makes `rawdata` and the record describe the image, as a
         store written from it would. The array to store is the assigned
-        data, converted to `dtype` when it is given, or else `raw`. The
-        document of the record is kept as it is when the array has its
-        shape and its type and no option is given, so that only the
+        data, converted to `dtype` when it is given, or else `rawdata`.
+        The document of the record is kept as it is when the array has
+        its shape and its type and no option is given, so that only the
         chunks change. Otherwise the document is described again by
         abczarr's `ArrayConfig` from the options, in the version of the
         record, or in Zarr version 3 for an image without a record, with
@@ -314,7 +314,7 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
         of the record, and a list of identities is written as no
         geometry. An image with a record, no pending data, and no
         transformation or only identities, consolidated without options,
-        is left as it is: the copy shares `raw` and the metadata.
+        is left as it is: the copy shares `rawdata` and the metadata.
 
         The names and the values of the options are those of abczarr's
         `ArrayConfig` (abczarr 0.2.2, `abczarr/api/config.py`).
@@ -393,10 +393,10 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -441,7 +441,7 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
                 "group. Pass a store path to to_store instead."
             )
         copy = self.consolidate()
-        write_into(wrapped, copy.raw)
+        write_into(wrapped, copy.rawdata)
         return wrapped
 
     def to_store(
@@ -495,9 +495,9 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
             return
         location = absolute_location(location)
         local = is_local(location)
-        if not reads_store(self.raw, location):
+        if not reads_store(self.rawdata, location):
             copy = self.consolidate(**kwargs)
-            record, raw = copy.metadata.raw, copy.raw
+            record, raw = copy.metadata.raw, copy.rawdata
             if local:
                 replace_directory(
                     location,
@@ -519,13 +519,13 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
         # old directory while it is still in place, and then the lazy array
         # and the record are read again from the new directory.
         self.consolidate(inplace=True, **kwargs)
-        record, raw = self.metadata.raw, self.raw
+        record, raw = self.metadata.raw, self.rawdata
         replace_directory(
             location, lambda name: write_array(name, record, raw, driver)
         )
         options = {} if driver is None else {"driver": driver}
         fresh = type(self).from_store(location, **options)
-        self.raw = fresh.raw
+        self.rawdata = fresh.rawdata
         self.metadata = fresh.metadata
         self.data = None
 
@@ -584,7 +584,7 @@ def _check_geometry(
 def _encoded(
     image: ZarrImage, options: tx.Mapping[str, tx.Any]
 ) -> tx.Tuple[ArrayProtocol, ZarrRaw]:
-    """Encode the pending data of an image into `raw` and a new record.
+    """Encode the pending data of an image into `rawdata` and a new record.
 
     The new record holds the document of the held record when it still
     describes the array to store, and the bytes that a writer writes for
@@ -598,7 +598,7 @@ def _encoded(
     if image._data is not None:
         raw = _image_to_disk(image._data)
     else:
-        raw = image.raw
+        raw = image.rawdata
     if raw is None:
         raise WriterError("A Zarr image without data cannot be written.")
     options = dict(options)

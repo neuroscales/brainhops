@@ -4,18 +4,18 @@ A file format that follows the design has three layers. Its record class
 (`<X>Raw`) holds the header of a file as the format stores it. Its
 metadata class (`<X>Metadata`, a subclass of `MetadataFormat`) holds a
 record and reads and writes the header alone. Its format object, such as
-an image, holds a metadata object and a `raw` array, which is the data as
+an image, holds a metadata object and a `rawdata` array, which is the data as
 stored in the file and usually a lazy proxy. The `data` of a format object
-is a cached view of `raw`, decoded by a pair of pure functions of the
-format. A small format may keep its data in the record instead, as an LTA
-file keeps its matrix, and so may a format that is parsed in one pass, as
-a FreeSurfer morph keeps its nodes. Such a format has no `raw` field.
-`raw` and the record describe the file as it was read, or as the object
-was last consolidated: assigned data are pending until `consolidate`
-encodes them into a copy of the object, which is also what a writer
-writes. Transformations that were read or assigned are compared at
-`consolidate` with those that the record decodes to, and encoded only
-when they differ.
+is a cached view of `rawdata`, decoded by a pair of pure functions of
+the format. A small format may keep its data in the record instead, as
+an LTA file keeps its matrix, and so may a format that is parsed in one
+pass, as a FreeSurfer morph keeps its nodes. Such a format has no
+`rawdata` field. `rawdata` and the record describe the file as it was
+read, or as the object was last consolidated: assigned data are pending
+until `consolidate` encodes them into a copy of the object, which is
+also what a writer writes. Transformations that were read or assigned
+are compared at `consolidate` with those that the record decodes to, and
+encoded only when they differ.
 
 Each format that follows the design is listed in `EXEMPLARS`, with what
 the checks need to know about it, and every other registered format is
@@ -27,7 +27,7 @@ as little code as possible.
 
 A pyramid, which is a multiscale image, holds one record for its whole
 container, which each of its levels holds too, and the arrays of its
-levels in `raw`. Each pyramid format that follows the design is listed in
+levels in `rawdata`. Each pyramid format that follows the design is listed in
 `PYRAMIDS`, and the level class of each one is listed in `EXEMPLARS`, so
 that the checks of single-scale images also run on the levels. The checks
 P1 to P12 run on the pyramids and on the toy pyramid, a directory that
@@ -642,10 +642,10 @@ class ToyImage(
     """Image stored in a toy file.
 
     The image is the reference that the formats of the package follow.
-    `raw` and the record of the metadata describe the file as it was
+    `rawdata` and the record of the metadata describe the file as it was
     read, or as it was last consolidated. Assigned data are pending: they
     are stored in the private field `_data` until `consolidate` encodes
-    them into a new `raw` and a new record, or until the image is written.
+    them into a new `rawdata` and a new record, or until the image is written.
     An assigned list of transformations is stored in the private field
     `_transformations`, and the list that the record decodes to is cached
     apart on first access. Assigning other metadata drops the cached list
@@ -657,7 +657,7 @@ class ToyImage(
 
     EXTENSIONS = (".toy",)
 
-    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    rawdata: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
     _metadata: KwOnly[NoRepr[tx.Optional[ToyMetadata]]] = None
 
     # Other metadata drops the transformations decoded from the old record,
@@ -665,8 +665,8 @@ class ToyImage(
     metadata = smartproperty("metadata", invalidates="transformations")
 
     # The image takes the `data` and `transformations` fields over under
-    # private names, where `None` means that they are decoded from `raw`
-    # and from the record.
+    # private names, where `None` means that they are decoded from
+    # `rawdata` and from the record.
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
@@ -675,10 +675,10 @@ class ToyImage(
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[np.ndarray]:
         # An assigned array is returned as it is, and the array decoded
-        # from `raw` is cached.
-        if self.raw is None:
+        # from `rawdata` is cached.
+        if self.rawdata is None:
             return None
-        return _toy_to_model(self.raw)
+        return _toy_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -691,8 +691,8 @@ class ToyImage(
     def consolidate(self, *, inplace: bool = False, **options) -> "ToyImage":
         # Nothing is encoded for an image that has a record, no pending
         # data, and transformations that are never read or the same as a
-        # fresh decode of the record, so its copy shares `raw` and the
-        # metadata.
+        # fresh decode of the record, so its copy shares `rawdata` and
+        # the metadata.
         held = held_transformations(self)
         if (
             self._data is None
@@ -720,10 +720,10 @@ class ToyImage(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -746,21 +746,21 @@ class ToyImage(
         with open(filename, "rb") as file:
             metadata = ToyMetadata.from_fileobj(file, **kwargs)
         proxy = _toy_proxy(filename, 0, metadata.raw)
-        return cls(raw=proxy, metadata=metadata)
+        return cls(rawdata=proxy, metadata=metadata)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyImage":
         start = file.tell()
         metadata = ToyMetadata.from_fileobj(file, **kwargs)
         proxy = _toy_proxy(file, start, metadata.raw)
-        return cls(raw=proxy, metadata=metadata)
+        return cls(rawdata=proxy, metadata=metadata)
 
     def to_bytes(self, **options) -> bytes:
         return _toy_written(self.consolidate(**options))
 
     def to_filename(self, filename: tx.Any, **options) -> None:
         filename = os.fspath(filename)
-        if not _toy_reads(self.raw, filename):
+        if not _toy_reads(self.rawdata, filename):
             with open(filename, "wb") as file:
                 file.write(self.to_bytes(**options))
             return
@@ -773,7 +773,7 @@ class ToyImage(
         content = _toy_written(self)
         with open(filename, "wb") as file:
             file.write(content)
-        self.raw = _toy_proxy(filename, 0, self.metadata.raw)
+        self.rawdata = _toy_proxy(filename, 0, self.metadata.raw)
         self.data = None
 
 
@@ -789,7 +789,7 @@ def _toy_to_transformations(
 def _toy_encoded(
     image: ToyImage, note: tx.Optional[str] = None
 ) -> tx.Tuple[ArrayProtocol, ToyRaw]:
-    """Encode the pending state of a toy image into `raw` and a record.
+    """Encode the pending state of a toy image into `rawdata` and a record.
 
     The held record is the base of the new one, which is a new object.
 
@@ -801,7 +801,7 @@ def _toy_encoded(
     if image._data is not None:
         raw = _toy_to_disk(image._data)
     else:
-        raw = image.raw
+        raw = image.rawdata
     if raw is None:
         raise WriterError("A toy image without data cannot be encoded.")
     if image.metadata is None or image.metadata.raw is None:
@@ -833,14 +833,14 @@ def _toy_written(image: ToyImage) -> bytes:
     WriterError
         If the image has no data.
     """
-    if image.raw is None:
+    if image.rawdata is None:
         raise WriterError("A toy image without data cannot be written.")
     # A proxy is copied out without decoding, so that an untouched image
     # is written byte for byte.
-    if isinstance(image.raw, _ToyProxy):
-        data = image.raw.read_bytes()
+    if isinstance(image.rawdata, _ToyProxy):
+        data = image.rawdata.read_bytes()
     else:
-        data = np.ascontiguousarray(image.raw).tobytes()
+        data = np.ascontiguousarray(image.rawdata).tobytes()
     return image.metadata.raw.to_bytes() + data
 
 
@@ -852,10 +852,10 @@ def _toy_reads(raw: tx.Any, filename: str) -> bool:
 class _ForeignImage(ImageFormat, SingleScaleImage):
     """Image of another format, which is never registered.
 
-    Its `raw` and `metadata` fields mean nothing to the toy format.
+    Its `rawdata` and `metadata` fields mean nothing to the toy format.
     """
 
-    raw: KwOnly[NoRepr[tx.Any]] = None
+    rawdata: KwOnly[NoRepr[tx.Any]] = None
     metadata: KwOnly[NoRepr[tx.Any]] = None
 
 
@@ -969,18 +969,19 @@ class ToyLevel(
 
     The level is the single-scale format of the toy pyramid, as a level of
     an OME-Zarr store or a page of a TIFF file is. It holds the lazy array
-    of its level in `raw`, the metadata of its pyramid, which describes
-    every level, and the index `level` of its level in that record, which
-    is a reader option. Its data and its transformations are pending and
-    compared at `consolidate` as for [`ToyImage`][]. A level is a
-    single-scale image, so a level that is consolidated or written alone
-    narrows the record to its own level, at index 0, and keeps the rest
-    of the record, such as the note and the placement of the pyramid.
+    of its level in `rawdata`, the metadata of its pyramid, which
+    describes every level, and the index `level` of its level in that
+    record, which is a reader option. Its data and its transformations
+    are pending and compared at `consolidate` as for [`ToyImage`][]. A
+    level is a single-scale image, so a level that is consolidated or
+    written alone narrows the record to its own level, at index 0, and
+    keeps the rest of the record, such as the note and the placement of
+    the pyramid.
     """
 
     EXTENSIONS = (".toyp",)
 
-    raw: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    rawdata: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
     _metadata: KwOnly[NoRepr[tx.Optional[ToyPyramidMetadata]]] = None
     level: KwOnly[int] = 0
 
@@ -995,9 +996,9 @@ class ToyLevel(
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[np.ndarray]:
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _toy_to_model(self.raw)
+        return _toy_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -1005,18 +1006,19 @@ class ToyLevel(
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
-        # The shape is read from the pending data, or else from `raw`,
-        # whose axes are in reverse order, without reading the voxels.
+        # The shape is read from the pending data, or else from
+        # `rawdata`, whose axes are in reverse order, without reading
+        # the voxels.
         if self._data is not None:
             return tuple(np.shape(self._data))
-        if self.raw is not None:
-            return tuple(reversed(self.raw.shape))
+        if self.rawdata is not None:
+            return tuple(reversed(self.rawdata.shape))
         return ()
 
     def consolidate(self, *, inplace: bool = False, **options) -> "ToyLevel":
         # A level whose record describes it alone, at index 0, with nothing
-        # pending, keeps its `raw` and its metadata. Any other level is
-        # encoded into a record of its level alone.
+        # pending, keeps its `rawdata` and its metadata. Any other level
+        # is encoded into a record of its level alone.
         metadata = self.metadata
         held = held_transformations(self)
         if (
@@ -1047,11 +1049,11 @@ class ToyLevel(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 level=0,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.level = 0
         self.data = None
@@ -1097,7 +1099,7 @@ class ToyLevel(
             )
         name = os.path.join(directory, _toyp_level_name(level))
         proxy = _toy_proxy(name, 0, records[level])
-        return cls(raw=proxy, metadata=metadata, level=level)
+        return cls(rawdata=proxy, metadata=metadata, level=level)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyLevel":
@@ -1105,11 +1107,13 @@ class ToyLevel(
 
     def to_filename(self, filename: tx.Any, **options) -> None:
         directory = os.fspath(filename)
-        if not _toyp_reads((self.raw,), directory):
+        if not _toyp_reads((self.rawdata,), directory):
             copy = self.consolidate(**options)
             replace_directory(
                 directory,
-                lambda name: _toyp_write(name, copy.metadata.raw, (copy.raw,)),
+                lambda name: _toyp_write(
+                    name, copy.metadata.raw, (copy.rawdata,)
+                ),
             )
             return
         # The level is written over the directory that its proxy reads, so
@@ -1120,10 +1124,10 @@ class ToyLevel(
         self.consolidate(inplace=True, **options)
         replace_directory(
             directory,
-            lambda name: _toyp_write(name, self.metadata.raw, (self.raw,)),
+            lambda name: _toyp_write(name, self.metadata.raw, (self.rawdata,)),
         )
         metadata = ToyPyramidMetadata.from_filename(directory)
-        self.raw = _toyp_proxies(directory, metadata.raw)[0]
+        self.rawdata = _toyp_proxies(directory, metadata.raw)[0]
         self.metadata = metadata
         self.data = None
 
@@ -1136,20 +1140,21 @@ class ToyPyramid(
     The pyramid is the reference that the pyramid formats of the package
     follow. It holds one record for its whole directory, which every one
     of its levels holds too, by identity, and the tuple of the lazy arrays
-    of its levels in `raw`. Its levels are [`ToyLevel`][] objects decoded
-    from `raw` and the record on first access and cached apart from an
-    assigned list, which is stored in the private field `_images`. Its
-    placements are decoded and cached in the same way, and an assigned
-    list is stored in `_transformations`. Assigning other metadata drops
-    the cached levels and placements and keeps the assigned ones.
-    `consolidate` keeps the array and the header of each level that is
-    still a level of the file, encodes the others, and encodes the
-    placements only when they differ from a fresh decode of the record.
+    of its levels in `rawdata`. Its levels are [`ToyLevel`][] objects decoded
+    from `rawdata` and the record on first access and cached apart from
+    an assigned list, which is stored in the private field `_images`.
+    Its placements are decoded and cached in the same way, and an
+    assigned list is stored in `_transformations`. Assigning other
+    metadata drops the cached levels and placements and keeps the
+    assigned ones. `consolidate` keeps the array and the header of each
+    level that is still a level of the file, encodes the others, and
+    encodes the placements only when they differ from a fresh decode of
+    the record.
     """
 
     EXTENSIONS = (".toyp",)
 
-    raw: KwOnly[NoRepr[tx.Optional[tx.Tuple[ArrayProtocol, ...]]]] = None
+    rawdata: KwOnly[NoRepr[tx.Optional[tx.Tuple[ArrayProtocol, ...]]]] = None
     _metadata: KwOnly[NoRepr[tx.Optional[ToyPyramidMetadata]]] = None
 
     # Other metadata drops the levels and the placements decoded from the
@@ -1167,8 +1172,8 @@ class ToyPyramid(
 
     @smartproperty(cache=True)
     def images(self) -> tx.List[SingleScaleImage]:
-        # One level object per array of `raw`, sharing the metadata.
-        return _toyp_levels(self.raw, self.metadata)
+        # One level object per array of `rawdata`, sharing the metadata.
+        return _toyp_levels(self.rawdata, self.metadata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -1177,26 +1182,27 @@ class ToyPyramid(
     @property
     def shape(self) -> tx.Tuple[int, ...]:
         # The shape of the finest level, read from the levels that the
-        # pyramid holds, or else from `raw`, without reading the voxels.
+        # pyramid holds, or else from `rawdata`, without reading the
+        # voxels.
         images = held_images(self)
         if images is not None:
             return tuple(images[0].shape) if images else ()
-        if self.raw:
-            return tuple(reversed(self.raw[0].shape))
+        if self.rawdata:
+            return tuple(reversed(self.rawdata[0].shape))
         return ()
 
     def consolidate(self, *, inplace: bool = False, **options) -> "ToyPyramid":
         # Nothing is encoded for a pyramid that has a record, whose levels
         # are those of its file, and whose placements are never read or the
-        # same as a fresh decode of the record, so its copy shares `raw` and
-        # the metadata.
+        # same as a fresh decode of the record, so its copy shares
+        # `rawdata` and the metadata.
         metadata = self.metadata
         held = held_transformations(self)
         if (
             not options
             and metadata is not None
             and metadata.raw is not None
-            and self.raw is not None
+            and self.rawdata is not None
             and own_levels(self, ToyLevel, _toyp_level_transformations)
             and (
                 held is None
@@ -1218,10 +1224,10 @@ class ToyPyramid(
                 self,
                 images=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.images = None
         self.transformations = None
@@ -1230,9 +1236,10 @@ class ToyPyramid(
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> "ToyPyramid":
         # Within the class, the stored fields are copied, so a copy of an
-        # untouched pyramid shares `raw` and the metadata and decodes
-        # nothing. From another class, the levels that `other` reports are
-        # copied, because its private fields mean nothing to this class.
+        # untouched pyramid shares `rawdata` and the metadata and
+        # decodes nothing. From another class, the levels that `other`
+        # reports are copied, because its private fields mean nothing to
+        # this class.
         if not isinstance(other, cls):
             images = getattr(other, "images", None)
             if images is not None:
@@ -1271,7 +1278,7 @@ class ToyPyramid(
         directory = os.fspath(filename)
         metadata = ToyPyramidMetadata.from_filename(directory)
         raw = _toyp_proxies(directory, metadata.raw)
-        return cls(raw=raw, metadata=metadata)
+        return cls(rawdata=raw, metadata=metadata)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyPyramid":
@@ -1279,11 +1286,13 @@ class ToyPyramid(
 
     def to_filename(self, filename: tx.Any, **options) -> None:
         directory = os.fspath(filename)
-        if not _toyp_reads(self.raw, directory):
+        if not _toyp_reads(self.rawdata, directory):
             copy = self.consolidate(**options)
             replace_directory(
                 directory,
-                lambda name: _toyp_write(name, copy.metadata.raw, copy.raw),
+                lambda name: _toyp_write(
+                    name, copy.metadata.raw, copy.rawdata
+                ),
             )
             return
         # The pyramid is written over the directory that its proxies read,
@@ -1295,10 +1304,10 @@ class ToyPyramid(
         self.consolidate(inplace=True, **options)
         replace_directory(
             directory,
-            lambda name: _toyp_write(name, self.metadata.raw, self.raw),
+            lambda name: _toyp_write(name, self.metadata.raw, self.rawdata),
         )
         metadata = ToyPyramidMetadata.from_filename(directory)
-        self.raw = _toyp_proxies(directory, metadata.raw)
+        self.rawdata = _toyp_proxies(directory, metadata.raw)
         self.metadata = metadata
 
 
@@ -1413,8 +1422,8 @@ def _toyp_write(
 ) -> None:
     """Fill a directory with the files of a consolidated toy pyramid.
 
-    A level whose `raw` is a proxy is copied from its file without being
-    decoded, so that an untouched level is written byte for byte.
+    A level whose `rawdata` is a proxy is copied from its file without
+    being decoded, so that an untouched level is written byte for byte.
     """
     with open(os.path.join(directory, _TOYP_INDEX), "wb") as file:
         file.write(_toyp_stored(record))
@@ -1480,9 +1489,9 @@ def _toyp_scale(
 def _toyp_level_encoded(image: tx.Any) -> tx.Tuple[ArrayProtocol, ToyRaw]:
     """Encode a level into its stored array and the header of its file.
 
-    A level of the toy format gives its pending data, or else its `raw`,
-    and the header of its level in its record is the base of the new one.
-    An image of another class gives its decoded data.
+    A level of the toy format gives its pending data, or else its
+    `rawdata`, and the header of its level in its record is the base of
+    the new one. An image of another class gives its decoded data.
 
     Raises
     ------
@@ -1494,7 +1503,7 @@ def _toyp_level_encoded(image: tx.Any) -> tx.Tuple[ArrayProtocol, ToyRaw]:
         if image._data is not None:
             raw = _toy_to_disk(image._data)
         else:
-            raw = image.raw
+            raw = image.rawdata
         metadata = image.metadata
         if metadata is None or metadata.raw is None or not metadata.raw.levels:
             base = ToyRaw()
@@ -1533,7 +1542,7 @@ def _toyp_levels(
     if raw is None:
         return []
     return [
-        ToyLevel(raw=array, metadata=metadata, level=index)
+        ToyLevel(rawdata=array, metadata=metadata, level=index)
         for index, array in enumerate(raw)
     ]
 
@@ -1541,7 +1550,7 @@ def _toyp_levels(
 def _toyp_encoded(
     pyramid: "ToyPyramid", note: tx.Optional[str] = None
 ) -> tx.Tuple[tx.Tuple[ArrayProtocol, ...], ToyPyramidRaw]:
-    """Encode the pending state of a toy pyramid into `raw` and a record.
+    """Encode the pending state of a toy pyramid into `rawdata` and a record.
 
     A level that is still a level of the file keeps its array and its
     header as they are stored. Any other level is encoded from its data
@@ -1564,7 +1573,7 @@ def _toyp_encoded(
     # that a write leaves the pyramid as it was.
     images = held_images(pyramid)
     if images is None:
-        images = _toyp_levels(pyramid.raw, metadata)
+        images = _toyp_levels(pyramid.rawdata, metadata)
     if not images:
         raise WriterError("A toy pyramid without levels cannot be encoded.")
     raws, levels = [], []
@@ -1572,7 +1581,7 @@ def _toyp_encoded(
         if own_level(
             pyramid, image, index, ToyLevel, _toyp_level_transformations
         ):
-            raws.append(pyramid.raw[index])
+            raws.append(pyramid.rawdata[index])
             levels.append(base.levels[index])
         else:
             raw, level = _toyp_level_encoded(image)
@@ -1597,7 +1606,7 @@ def _toyp_encoded(
 def _toyp_level_narrowed(
     image: ToyLevel, note: tx.Optional[str] = None
 ) -> tx.Tuple[ArrayProtocol, ToyPyramidRaw]:
-    """Encode a level written alone into `raw` and a record of one level.
+    """Encode a level written alone into `rawdata` and a record of one level.
 
     The record of its pyramid is the base of the new one, which keeps its
     note and its placement and describes the level alone.
@@ -1661,13 +1670,13 @@ class Exemplar(tx.NamedTuple):
     """Suffix of the files that the checks write, such as `".nii.gz"`."""
 
     proxies: tx.Tuple[type, ...]
-    """Types that `raw` may have just after a file is read."""
+    """Types that `rawdata` may have just after a file is read."""
 
     to_model: tx.Callable[[tx.Any], tx.Any]
-    """Function that decodes `data` from `raw`."""
+    """Function that decodes `data` from `rawdata`."""
 
     to_disk: tx.Callable[[tx.Any], tx.Any]
-    """Function that encodes `raw` from `data`."""
+    """Function that encodes `rawdata` from `data`."""
 
     sample: tx.Callable[[], np.ndarray]
     """Function that returns data that the format can store."""
@@ -1722,11 +1731,11 @@ class Exemplar(tx.NamedTuple):
     stored: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
     """Function that returns the data of an object as its file stores it.
 
-    It is `None` for a format whose `raw` holds the stored data. The data
+    It is `None` for a format whose `rawdata` holds the stored data. The data
     of a small format may live in the record of its metadata, as the
-    matrix of an LTA file does, and such a format has no `raw` field. The
+    matrix of an LTA file does, and such a format has no `rawdata` field. The
     matrix of a NIfTI affine lives in the header of its file too, so a
-    consolidated affine has no `raw` array. The checks then read the
+    consolidated affine has no `rawdata` array. The checks then read the
     stored data with this function, which returns the data as the writer
     would store it, and `proxies` are the types that it returns just after
     a file is read. An object built from data has no metadata, because it
@@ -2062,7 +2071,9 @@ if nb is not None:
     )
 
     EXEMPLARS[NiftiImage] = _NIFTI._replace(
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         storage={"dtype": "int16"},
     )
     EXEMPLARS[NiftiVoxelToRAS] = _NIFTI._replace(
@@ -2085,12 +2096,14 @@ if nb is not None:
         derived=("values",),
     )
     EXEMPLARS[NiftiRASDisplacementField] = _NIFTI_FIELD._replace(
-        build=lambda data: NiftiRASDisplacementField(raw=_field_to_disk(data)),
+        build=lambda data: NiftiRASDisplacementField(
+            rawdata=_field_to_disk(data)
+        ),
         foreign=_ras_displacements,
         options=frozenset({"log", "steps"}),
     )
     EXEMPLARS[SpmCoordinatesField] = _NIFTI_FIELD._replace(
-        build=lambda data: SpmCoordinatesField(raw=_field_to_disk(data)),
+        build=lambda data: SpmCoordinatesField(rawdata=_field_to_disk(data)),
         foreign=_spm_coordinates,
         prefix="y_",
     )
@@ -2102,18 +2115,18 @@ if nb is not None:
         NiftyRegVelocityGrid,
     ):
         EXEMPLARS[_cls] = _NIFTYREG._replace(
-            build=lambda data, cls=_cls: cls(raw=_field_to_disk(data))
+            build=lambda data, cls=_cls: cls(rawdata=_field_to_disk(data))
         )
     for _cls in (ItkNiftiCoordinatesField, ItkNiftiDisplacementField):
         EXEMPLARS[_cls] = _ITK._replace(
-            build=lambda data, cls=_cls: cls(raw=_itk_field_to_disk(data))
+            build=lambda data, cls=_cls: cls(rawdata=_itk_field_to_disk(data))
         )
     _FNIRT = _NIFTI._replace(
         sample=_vectors,
         # FNIRT holds no grid that the model encodes, so its data stands in.
         geometry=_data_geometry,
         change_geometry=_data_change_geometry,
-        build=lambda data: FnirtWarpField(raw=data),
+        build=lambda data: FnirtWarpField(rawdata=data),
         options=frozenset({"moving", "reference", "deformation_type"}),
         storage={"dtype": "int16"},
     )
@@ -2175,7 +2188,7 @@ EXEMPLARS[LtaTransformation] = _LTA
 # bytes. The checks that build an object from data alone, or convert one
 # from another format, check that it refuses to be consolidated. Check 6
 # is vacuous, as for LTA, since the metadata holds the whole file, and
-# check 18 does not apply, since the format has no `raw`.
+# check 18 does not apply, since the format has no `rawdata`.
 
 _TRAKEM2_XML = """<?xml version="1.0" encoding="ISO-8859-1"?>
 <!DOCTYPE trakem2_anything [
@@ -2852,7 +2865,9 @@ if nb is not None:
         to_disk=_mgh_to_disk,
         edit_record=_mgh_edit_record,
         record_edited=_mgh_record_edited,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         storage={"dtype": "int16"},
     )
 
@@ -2884,7 +2899,9 @@ _AFNI = Exemplar(
     record_edited=lambda record: record.get("HISTORY_NOTE") == "edited",
     geometry=_afni_geometry,
     change_geometry=_nifti_change_geometry,
-    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    foreign=lambda data: _ForeignImage(
+        data, rawdata="rawdata", metadata="meta"
+    ),
     header_file=_afni_header_file,
     storage={"datatype": "int16"},
 )
@@ -2986,7 +3003,9 @@ _MRTRIX = Exemplar(
     record_edited=lambda record: record.keyval.get("comments") == "edited",
     geometry=_nifti_geometry,
     change_geometry=_nifti_change_geometry,
-    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    foreign=lambda data: _ForeignImage(
+        data, rawdata="rawdata", metadata="meta"
+    ),
     storage={"datatype": "int16"},
 )
 EXEMPLARS[MrtrixImage] = _MRTRIX
@@ -3099,7 +3118,9 @@ _NRRD = Exemplar(
     record_edited=lambda record: record.keyvalue.get("comment") == "edited",
     geometry=_nifti_geometry,
     change_geometry=_nifti_change_geometry,
-    foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+    foreign=lambda data: _ForeignImage(
+        data, rawdata="rawdata", metadata="meta"
+    ),
     storage={"datatype": "int16"},
 )
 EXEMPLARS[AttachedNrrdImage] = _NRRD
@@ -3181,7 +3202,9 @@ if minc_needs is not None:
         record_edited=lambda record: record.datatype == "<f8",
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         cut=_minc1_cut,
         header=lambda metadata: metadata.raw,
         source=_write_minc1,
@@ -3226,7 +3249,9 @@ if ZarrImage is not None:
         record_edited=lambda record: record.attributes.get("note") == "edited",
         geometry=_data_geometry,
         change_geometry=_data_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         cut=_zarr_cut,
         header=lambda metadata: metadata.raw,
         storage={"dtype": "int16"},
@@ -3358,7 +3383,9 @@ if tifffile is not None:
         record_edited=lambda record: record.tags.get("Artist") == "edited",
         geometry=_tiff_geometry,
         change_geometry=_tiff_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         options=frozenset({"series", "level"}),
         cut=_tiff_cut,
         header=lambda metadata: metadata.raw,
@@ -3465,7 +3492,9 @@ if openslide is not None:
         ),
         geometry=_tiff_geometry,
         change_geometry=_slide_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         options=frozenset({"level"}),
         cut=_slide_cut,
         header=lambda metadata: metadata.raw,
@@ -3542,7 +3571,9 @@ if PILImage is not None:
         ),
         geometry=_nifti_geometry,
         change_geometry=_pillow_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         options=frozenset({"frame", "palette", "dpi"}),
         cut=_png_cut,
         header=lambda metadata: deepcopy(metadata.raw),
@@ -3875,7 +3906,9 @@ if tifffile is not None:
         ),
         geometry=_nifti_geometry,
         change_geometry=_stack_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         cut=_stack_cut,
         header=lambda metadata: metadata.raw,
         folder=True,
@@ -4020,7 +4053,9 @@ if h5py is not None:
         record_edited=_bdv_record_edited,
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         options=frozenset({"setup", "timepoint", "level"}),
         header_file=lambda path: path,
         source=_write_bdv,
@@ -4058,7 +4093,9 @@ if Jpeg2000Image is not None:
         record_edited=lambda record: record.comments == ("edited",),
         geometry=_nifti_geometry,
         change_geometry=_jpeg2000_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
     )
 
 
@@ -4141,7 +4178,9 @@ if n5_needs is not None:
         record_edited=lambda record: record.attributes.get("note") == "edited",
         geometry=_nifti_geometry,
         change_geometry=_scaled_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         options=frozenset({"level"}),
         cut=_n5_cut,
         header=lambda metadata: metadata.raw,
@@ -4210,7 +4249,9 @@ if h5py is not None:
         ),
         geometry=_nifti_geometry,
         change_geometry=_scaled_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         options=frozenset({"level"}),
         cut=_hdf5_cut,
         header=lambda metadata: metadata.raw,
@@ -4294,7 +4335,9 @@ if ts is not None:
         record_edited=lambda record: record.mesh == "edited",
         geometry=_nifti_geometry,
         change_geometry=_nifti_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         options=frozenset({"level"}),
         cut=_precomputed_cut,
         header=lambda metadata: metadata.raw,
@@ -4340,16 +4383,17 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     # OME-Zarr. Its full-resolution level is the exemplar above.
     "brainhops.io.images.jpeg2000.Jpeg2000MultiScaleImage",
     # The levels of an N5 pyramid are `N5Image` exemplars, and the pyramid
-    # holds their shared metadata but no `raw`. The rules for the levels
-    # and the record of a pyramid are decided in the Zarr pass (item 15 of
-    # the memo), so the pyramid waits with the other pyramids (item 250).
+    # holds their shared metadata but no `rawdata`. The rules for the
+    # levels and the record of a pyramid are decided in the Zarr pass
+    # (item 15 of the memo), so the pyramid waits with the other
+    # pyramids (item 250).
     "brainhops.io.images.n5.N5MultiScaleImage",
     # The record of a pyramid is decided in the Zarr pass (item 15 of the
     # design memo). Each level of an Imaris pyramid is an `ImarisImage`,
     # which follows the design.
     "brainhops.io.images.imaris.ImarisMultiScaleImage",
     # The levels of a precomputed pyramid are `PrecomputedImage` exemplars,
-    # and the pyramid holds their shared metadata but no `raw`. The rules
+    # and the pyramid holds their shared metadata but no `rawdata`. The rules
     # for the levels and the record of a pyramid are decided in the Zarr
     # pass (item 15 of the memo), so the pyramid waits with the other
     # pyramids (item 160).
@@ -4358,6 +4402,58 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
     "brainhops.io.transformations.zarr.OmeZarrField",
 )
 """The registered formats that do not follow the design yet."""
+
+RAWDATA: tx.FrozenSet[str] = frozenset(
+    (
+        "brainhops.io.images.afni.AfniImage",
+        "brainhops.io.images.bdv.BdvImage",
+        "brainhops.io.images.freesurfer.mgh.MghImage",
+        "brainhops.io.images.imaris.ImarisImage",
+        "brainhops.io.images.jpeg2000.Jpeg2000Image",
+        "brainhops.io.images.jpeg2000.Jpeg2000MultiScaleImage",
+        "brainhops.io.images.minc.Minc1Image",
+        "brainhops.io.images.minc.Minc2Image",
+        "brainhops.io.images.mrtrix.MrtrixImage",
+        "brainhops.io.images.n5.N5Image",
+        "brainhops.io.images.nifti.NiftiImage",
+        "brainhops.io.images.nrrd.AttachedNrrdImage",
+        "brainhops.io.images.nrrd.DetachedNrrdImage",
+        "brainhops.io.images.openslide.GenericTiffImage",
+        "brainhops.io.images.openslide.GenericTiffMultiScaleImage",
+        "brainhops.io.images.pillow.PillowImage",
+        "brainhops.io.images.precomputed.PrecomputedImage",
+        "brainhops.io.images.stack.StackImage",
+        "brainhops.io.images.tiff.TiffImage",
+        "brainhops.io.images.tiff.TiffMultiScaleImage",
+        "brainhops.io.images.zarr.ZarrImage",
+        "brainhops.io.transformations.afni.AfniBrikWarp",
+        "brainhops.io.transformations.afni.AfniNiftiWarp",
+        "brainhops.io.transformations.fsl.fnirt.FnirtWarpField",
+        "brainhops.io.transformations.itk.nifti.ItkNiftiCoordinatesField",
+        "brainhops.io.transformations.itk.nifti.ItkNiftiDisplacementField",
+        "brainhops.io.transformations.minc.XfmTransform",
+        "brainhops.io.transformations.mrtrix.MrtrixCoordinatesField",
+        "brainhops.io.transformations.mrtrix.MrtrixDisplacementField",
+        "brainhops.io.transformations.mrtrix.MrtrixWarpFull",
+        "brainhops.io.transformations.nifti.NiftiRASCoordinatesField",
+        "brainhops.io.transformations.nifti.NiftiRASDisplacementField",
+        "brainhops.io.transformations.nifti.NiftiVoxelToRAS",
+        "brainhops.io.transformations.niftyreg.NiftyRegControlPointGrid",
+        "brainhops.io.transformations.niftyreg.NiftyRegDeformationField",
+        "brainhops.io.transformations.niftyreg.NiftyRegDisplacementField",
+        "brainhops.io.transformations.niftyreg.NiftyRegVelocityField",
+        "brainhops.io.transformations.niftyreg.NiftyRegVelocityGrid",
+        "brainhops.io.transformations.spm.SpmCoordinatesField",
+    )
+) | frozenset(SHARED)
+"""The registered formats that hold their stored arrays in `rawdata`.
+
+The vendor classes of OpenSlide are listed through `SHARED`. Every other
+registered format keeps its data in the record of its metadata, or reads
+its levels from its container, and has no `rawdata`. No registered
+format has a `raw` field, which names only the record that a metadata
+object holds.
+"""
 
 TEST_EXEMPLARS: tx.Dict[type, Exemplar] = {
     ToyImage: Exemplar(
@@ -4371,7 +4467,9 @@ TEST_EXEMPLARS: tx.Dict[type, Exemplar] = {
         record_edited=lambda record: record.note == "edited",
         geometry=lambda image: _toy_spacing(image.transformation, image.ndim),
         change_geometry=_toy_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
     ),
     # A level of a toy pyramid is checked as a pyramid of one level, which
     # is what a level written alone is.
@@ -4386,7 +4484,9 @@ TEST_EXEMPLARS: tx.Dict[type, Exemplar] = {
         record_edited=lambda record: record.note == "edited",
         geometry=lambda image: _toy_spacing(image.transformation, image.ndim),
         change_geometry=_toy_change_geometry,
-        foreign=lambda data: _ForeignImage(data, raw="raw", metadata="meta"),
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata="meta"
+        ),
         options=frozenset({"level"}),
         cut=_toyp_cut,
         header=lambda metadata: metadata.raw,
@@ -4813,7 +4913,7 @@ def _load(cls: type, exemplar: Exemplar, file: tx.Any) -> tx.Any:
 def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
     """Return the data of an object as its file stores it."""
     if exemplar.stored is None:
-        return obj.raw
+        return obj.rawdata
     return exemplar.stored(obj)
 
 
@@ -4898,10 +4998,10 @@ def _cut(
         _write_header(target, metadata.to_bytes())
 
 
-def _raw(obj: tx.Any) -> tx.Any:
-    """Return the `raw` array of an object, or `None` for a format without
+def _rawdata(obj: tx.Any) -> tx.Any:
+    """Return the `rawdata` array of an object, or `None` for a format without
     one."""
-    return getattr(obj, "raw", None)
+    return getattr(obj, "rawdata", None)
 
 
 def _pending(exemplar: Exemplar, obj: tx.Any) -> tx.Tuple[tx.Any, ...]:
@@ -5044,6 +5144,24 @@ def test_the_metadata_registry_is_isolated() -> None:
     assert MetadataFormat not in Format._REGISTRY
 
 
+def test_no_format_holds_its_arrays_in_raw() -> None:
+    # The arrays of a format are in `rawdata`, and `raw` is the record of
+    # a metadata object (item 472 of the memo). There is no alias.
+    holders = {_resolve(name) for name in RAWDATA} - {None}
+    for cls in Format._REGISTRY:
+        if not cls.__module__.startswith("brainhops."):
+            continue
+        names = {field.name for field in fields(cls)}
+        names |= {field.public_name for field in fields(cls)}
+        assert not hasattr(cls, "raw"), cls
+        assert not names & {"raw", "_raw"}, cls
+        assert ("rawdata" in names) == (cls in holders), cls
+    for cls in MetadataFormat._REGISTRY:
+        names = {field.public_name for field in fields(cls)}
+        assert "raw" in names, cls
+        assert not hasattr(cls, "rawdata"), cls
+
+
 # ----------------------------------------------------------------------
 #   CHECKS
 # ----------------------------------------------------------------------
@@ -5059,7 +5177,7 @@ def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
     names = _init_names
     # A format whose data model is a chain may still take its stored data
     # as `data`, which is pending until the object is consolidated.
-    allowed = names(_model(cls)) | {"raw", "metadata", "data"}
+    allowed = names(_model(cls)) | {"rawdata", "metadata", "data"}
     allowed |= exemplar.options
     assert names(cls) <= allowed
     assert not names(cls) & _PARSER_STATE
@@ -5224,23 +5342,23 @@ def test_08_an_object_built_from_data_saves(
 
 
 @pytest.mark.parametrize("cls, exemplar", CASES)
-def test_09_copies_keep_raw_and_metadata(
+def test_09_copies_keep_rawdata_and_metadata(
     cls: type,
     exemplar: Exemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
     loaded = _load(cls, exemplar, _saved(cls, exemplar, tmp_path))
-    # Within the format, `from_instance` copies the lazy `raw` and does not
+    # Within the format, `from_instance` copies the lazy `rawdata` and does not
     # read the data.
     copy = cls.from_instance(loaded)
-    assert _raw(copy) is _raw(loaded)
+    assert _rawdata(copy) is _rawdata(loaded)
     assert copy.metadata is loaded.metadata
     assert "_cache_" + exemplar.view not in vars(loaded)
     # `replace` copies the stored fields too, so the copy keeps the lazy
-    # `raw` and decodes nothing.
+    # `rawdata` and decodes nothing.
     copy = replace(loaded)
     assert copy.metadata is loaded.metadata
-    assert _raw(copy) is _raw(loaded)
+    assert _rawdata(copy) is _rawdata(loaded)
     assert all(field is None for field in _pending(exemplar, copy))
     assert "_cache_" + exemplar.view not in vars(loaded)
     assert "_cache_" + exemplar.view not in vars(copy)
@@ -5263,7 +5381,7 @@ def test_09_copies_keep_raw_and_metadata(
         _refuses_encoding(converted, _path(tmp_path, exemplar, "converted"))
         return
     if "data" in _init_names(_model(cls)):
-        assert getattr(converted, "raw", None) is None
+        assert getattr(converted, "rawdata", None) is None
         assert np.array_equal(np.asarray(converted.data), value)
         consolidated = converted.consolidate()
         stored = np.asarray(_stored(exemplar, consolidated))
@@ -5447,16 +5565,17 @@ def test_15_consolidating_an_untouched_object_changes_nothing(
     tmp_path,  # noqa: ANN001
 ) -> None:
     loaded = _load(cls, exemplar, _saved(cls, exemplar, tmp_path))
-    raw, metadata = _raw(loaded), loaded.metadata
-    # The copy shares `raw` and the metadata, and nothing is decoded.
+    raw, metadata = _rawdata(loaded), loaded.metadata
+    # The copy shares `rawdata` and the metadata, and nothing is
+    # decoded.
     consolidated = loaded.consolidate()
     assert consolidated is not loaded
-    assert _raw(consolidated) is raw
+    assert _rawdata(consolidated) is raw
     assert consolidated.metadata is metadata
     assert "_cache_data" not in vars(loaded)
     assert "_cache_data" not in vars(consolidated)
     assert loaded.consolidate(inplace=True) is loaded
-    assert _raw(loaded) is raw
+    assert _rawdata(loaded) is raw
     assert loaded.metadata is metadata
 
 
@@ -5475,7 +5594,7 @@ def test_16_consolidate_is_idempotent(
     tmp_path,  # noqa: ANN001
 ) -> None:
     loaded = _changed(cls, exemplar, tmp_path)
-    raw, metadata = _raw(loaded), loaded.metadata
+    raw, metadata = _rawdata(loaded), loaded.metadata
     pending = _pending(exemplar, loaded)
     if exemplar.source is not None and not exemplar.records:
         _check_data_only(exemplar, loaded)
@@ -5498,29 +5617,29 @@ def test_16_consolidate_is_idempotent(
     assert np.allclose(exemplar.geometry(once), exemplar.geometry(loaded))
     # A second consolidation changes nothing.
     twice = once.consolidate()
-    assert _raw(twice) is _raw(once)
+    assert _rawdata(twice) is _rawdata(once)
     assert twice.metadata is once.metadata
     # The object itself keeps its pending state.
-    assert _raw(loaded) is raw
+    assert _rawdata(loaded) is raw
     assert loaded.metadata is metadata
     assert _same(_pending(exemplar, loaded), pending)
     # In place, the object holds the consolidated state.
     assert loaded.consolidate(inplace=True) is loaded
     assert all(field is None for field in _pending(exemplar, loaded))
-    raw, metadata = _raw(loaded), loaded.metadata
+    raw, metadata = _rawdata(loaded), loaded.metadata
     loaded.consolidate(inplace=True)
-    assert _raw(loaded) is raw
+    assert _rawdata(loaded) is raw
     assert loaded.metadata is metadata
 
 
 def _check_data_only(exemplar: Exemplar, loaded: tx.Any) -> None:
     """Check the consolidation of a format that cannot write.
 
-    A format whose data lives in `raw` cannot encode a record, so only the
-    pending data is moved into `raw`, and the metadata and the assigned
-    transformations are kept. A format whose data lives in its record, as
-    a plain matrix does, encodes the pending data into a new record,
-    which is held by new metadata.
+    A format whose data lives in `rawdata` cannot encode a record, so only the
+    pending data is moved into `rawdata`, and the metadata and the
+    assigned transformations are kept. A format whose data lives in its
+    record, as a plain matrix does, encodes the pending data into a new
+    record, which is held by new metadata.
     """
     data, chain = _pending(exemplar, loaded)
     once = loaded.consolidate()
@@ -5535,7 +5654,7 @@ def _check_data_only(exemplar: Exemplar, loaded: tx.Any) -> None:
         np.asarray(_stored(exemplar, once)), exemplar.to_disk(data)
     )
     twice = once.consolidate()
-    assert _raw(twice) is _raw(once)
+    assert _rawdata(twice) is _rawdata(once)
     assert twice.metadata is once.metadata
     assert loaded._data is data
 
@@ -5565,7 +5684,7 @@ def test_16_a_storage_override_holds_what_the_file_holds(
     assert _header(exemplar, once.metadata) == _header(exemplar, back.metadata)
     # Nothing is pending in the copy.
     twice = once.consolidate()
-    assert twice.raw is once.raw
+    assert twice.rawdata is once.rawdata
     assert twice.metadata is once.metadata
 
 
@@ -5578,7 +5697,7 @@ def test_17_save_writes_the_consolidated_copy(
     if exemplar.source is not None:
         pytest.skip("The format cannot write.")
     loaded = _changed(cls, exemplar, tmp_path)
-    raw, metadata = _raw(loaded), loaded.metadata
+    raw, metadata = _rawdata(loaded), loaded.metadata
     pending = _pending(exemplar, loaded)
     saved = _path(tmp_path, exemplar, "saved")
     consolidated = _path(tmp_path, exemplar, "consolidated")
@@ -5599,7 +5718,7 @@ def test_17_save_writes_the_consolidated_copy(
     )
     assert np.allclose(exemplar.geometry(saved), exemplar.geometry(loaded))
     # Saving leaves the object as it was.
-    assert _raw(loaded) is raw
+    assert _rawdata(loaded) is raw
     assert loaded.metadata is metadata
     assert _same(_pending(exemplar, loaded), pending)
 
@@ -5612,8 +5731,10 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
 ) -> None:
     path = _saved(cls, exemplar, tmp_path)
     loaded = _load(cls, exemplar, path)
-    if exemplar.source is not None or _raw(loaded) is None:
-        pytest.skip("Only an object whose `raw` reads its file is affected.")
+    if exemplar.source is not None or _rawdata(loaded) is None:
+        pytest.skip(
+            "Only an object whose `rawdata` reads its file is affected."
+        )
     # An untouched object is written over the file that it reads.
     loaded.save(path)
     back = _load(cls, exemplar, path)
@@ -5623,13 +5744,13 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
         exemplar, back.metadata
     )
     # A changed object is consolidated in place, and then holds what the
-    # file holds (#426): its `raw` reads the new file.
+    # file holds (#426): its `rawdata` reads the new file.
     loaded = _changed(cls, exemplar, tmp_path)
     path = _path(tmp_path, exemplar, "src")
     expected = np.asarray(_data(exemplar, loaded.consolidate()))
     loaded.save(path)
     assert all(field is None for field in _pending(exemplar, loaded))
-    assert isinstance(_raw(loaded), exemplar.proxies)
+    assert isinstance(_rawdata(loaded), exemplar.proxies)
     back = _load(cls, exemplar, path)
     assert np.array_equal(np.asarray(loaded.data), np.asarray(back.data))
     assert np.allclose(np.asarray(back.data), expected)
@@ -5663,13 +5784,13 @@ def test_19_read_transformations_keep_the_record(
 ) -> None:
     path = _compared(cls, exemplar, tmp_path)
     loaded = _load(cls, exemplar, path)
-    raw, metadata = loaded.raw, loaded.metadata
+    raw, metadata = loaded.rawdata, loaded.metadata
     # Reading the transformations caches them, and they are the same as
     # those of the record, so nothing is encoded.
     assert loaded.transformations is loaded.transformations
     assert held_transformations(loaded) is loaded.transformations
     consolidated = loaded.consolidate()
-    assert consolidated.raw is raw
+    assert consolidated.rawdata is raw
     assert consolidated.metadata is metadata
     assert consolidated._transformations is None
     (tmp_path / "copy").mkdir()
@@ -5678,7 +5799,7 @@ def test_19_read_transformations_keep_the_record(
     # An equal list that is assigned keeps the record too.
     loaded.transformations = _load(cls, exemplar, path).transformations
     consolidated = loaded.consolidate()
-    assert consolidated.raw is raw
+    assert consolidated.rawdata is raw
     assert consolidated.metadata is metadata
 
 
@@ -5717,7 +5838,7 @@ def test_19_a_copy_of_a_read_image_stays_lazy(
     copied = replace(loaded)
     assert "_cache_data" not in vars(loaded)
     assert "_cache_data" not in vars(copied)
-    assert copied.raw is loaded.raw
+    assert copied.rawdata is loaded.rawdata
     assert copied.metadata is loaded.metadata
     assert copied.consolidate().metadata is loaded.metadata
 
@@ -5798,10 +5919,10 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
 # ----------------------------------------------------------------------
 # A pyramid holds one record for its container, which each of its levels
 # holds too, by identity, and the tuple of the arrays of its levels in
-# `raw`. Its levels and its placements are decoded on first access and
-# cached apart from assigned lists, which are pending. The checks P1 to
-# P12 test this design on every pyramid format, and the checks 1 to 20
-# test the level class of each format as a plain exemplar.
+# `rawdata`. Its levels and its placements are decoded on first access
+# and cached apart from assigned lists, which are pending. The checks P1
+# to P12 test this design on every pyramid format, and the checks 1 to
+# 20 test the level class of each format as a plain exemplar.
 
 
 def _level_exemplar(exemplar: PyramidExemplar) -> Exemplar:
@@ -5879,7 +6000,7 @@ def test_p01_pyramid_shape(cls: type, exemplar: PyramidExemplar) -> None:
     level = _level_exemplar(exemplar)
     assert issubclass(cls, MultiScaleImage)
     assert "level" in level.options
-    allowed = {"images", "transformations", "raw", "metadata"}
+    allowed = {"images", "transformations", "rawdata", "metadata"}
     assert _init_names(cls) <= allowed | exemplar.options
     names = {field.name for field in fields(cls)} | _init_names(cls)
     assert not names & (_PARSER_STATE | {"_node", "_slide", "_source"})
@@ -5903,27 +6024,27 @@ def test_p02_load_is_lazy(
     level = _level_exemplar(exemplar)
     loaded = cls.load(_pyramid_saved(cls, exemplar, tmp_path))
     samples = exemplar.levels()
-    assert isinstance(loaded.raw, tuple)
-    assert len(loaded.raw) == len(samples)
-    assert all(isinstance(raw, level.proxies) for raw in loaded.raw)
+    assert isinstance(loaded.rawdata, tuple)
+    assert len(loaded.rawdata) == len(samples)
+    assert all(isinstance(raw, level.proxies) for raw in loaded.rawdata)
     assert isinstance(loaded.metadata, level.metadata)
     repr(loaded)
     assert tuple(loaded.shape) == samples[0].shape
     assert _decodes_nothing(loaded)
-    # The levels are decoded once, share `raw` and the metadata of the
-    # pyramid, and read no data until their data is read.
+    # The levels are decoded once, share `rawdata` and the metadata of
+    # the pyramid, and read no data until their data is read.
     images = loaded.images
     assert loaded.images is images
     assert held_images(loaded) is images
     for index, image in enumerate(images):
         assert type(image) is exemplar.level
         assert image.level == index
-        assert image.raw is loaded.raw[index]
+        assert image.rawdata is loaded.rawdata[index]
         assert image.metadata is loaded.metadata
         assert "_cache_data" not in vars(image)
     assert "_cache_data" not in vars(loaded)
     assert _all_equal(_levels_data(exemplar, loaded), samples)
-    assert all(isinstance(raw, level.proxies) for raw in loaded.raw)
+    assert all(isinstance(raw, level.proxies) for raw in loaded.rawdata)
 
 
 @pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
@@ -5956,15 +6077,15 @@ def test_p04_assigned_level_data_is_pending(
     samples = exemplar.levels()
     for k in range(len(samples)):
         loaded = cls.load(path)
-        raw, metadata = loaded.raw, loaded.metadata
+        raw, metadata = loaded.rawdata, loaded.metadata
         images = loaded.images
         value = samples[k] + 1
         _set_data(level, images[k], value)
         # The arrays and the record still describe the container, and the
         # data is pending in the level.
-        assert loaded.raw is raw
+        assert loaded.rawdata is raw
         assert loaded.metadata is metadata
-        assert images[k].raw is raw[k]
+        assert images[k].rawdata is raw[k]
         assert images[k].metadata is metadata
         pending = _pending(level, images[k])
         assert pending[0] is not None
@@ -5972,7 +6093,8 @@ def test_p04_assigned_level_data_is_pending(
         assert consolidated._images is None
         assert "_cache_images" not in vars(consolidated)
         if exemplar.source is not None:
-            # A format that cannot write moves the data into `raw` only.
+            # A format that cannot write moves the data into `rawdata`
+            # only.
             assert consolidated.metadata is metadata
         elif exemplar.derive and k > 0:
             # The writer writes from the finest level only, and assumes
@@ -5983,7 +6105,7 @@ def test_p04_assigned_level_data_is_pending(
             continue
         else:
             assert consolidated.metadata is not metadata
-        stored = np.asarray(consolidated.raw[k])
+        stored = np.asarray(consolidated.rawdata[k])
         assert np.array_equal(stored, level.to_disk(value))
         assert np.array_equal(
             _levels_data(exemplar, consolidated)[k], np.asarray(value)
@@ -5991,15 +6113,15 @@ def test_p04_assigned_level_data_is_pending(
         if not exemplar.derive:
             for index, array in enumerate(raw):
                 if index != k:
-                    assert consolidated.raw[index] is array
+                    assert consolidated.rawdata[index] is array
         # The pyramid itself keeps its pending state.
-        assert loaded.raw is raw
+        assert loaded.rawdata is raw
         assert loaded.metadata is metadata
         assert loaded.images is images
         assert _same(_pending(level, images[k]), pending)
         # Nothing is pending in the copy.
         twice = consolidated.consolidate()
-        assert twice.raw is consolidated.raw
+        assert twice.rawdata is consolidated.rawdata
         assert twice.metadata is consolidated.metadata
 
 
@@ -6012,7 +6134,7 @@ def test_p05_assigned_levels_are_pending_and_written(
     path = _pyramid_saved(cls, exemplar, tmp_path)
     samples = exemplar.levels()
     loaded = cls.load(path)
-    raw, metadata = loaded.raw, loaded.metadata
+    raw, metadata = loaded.rawdata, loaded.metadata
     # A level is replaced by an image of another class, with other data.
     value = samples[1] * 2 + 1
     images = list(loaded.images)
@@ -6020,7 +6142,7 @@ def test_p05_assigned_levels_are_pending_and_written(
     loaded.images = images
     assert loaded._images is images
     assert held_images(loaded) is images
-    assert loaded.raw is raw
+    assert loaded.rawdata is raw
     assert loaded.metadata is metadata
     target = _path(tmp_path, _level_exemplar(exemplar), "assigned")
     if exemplar.source is not None:
@@ -6037,7 +6159,7 @@ def test_p05_assigned_levels_are_pending_and_written(
         assert _all_equal(back, [samples[0], value, samples[2]])
     # Saving leaves the pyramid as it was.
     assert loaded._images is images
-    assert loaded.raw is raw
+    assert loaded.rawdata is raw
     assert loaded.metadata is metadata
 
 
@@ -6050,11 +6172,12 @@ def test_p06_consolidating_an_untouched_pyramid_changes_nothing(
     level = _level_exemplar(exemplar)
     path = _pyramid_saved(cls, exemplar, tmp_path)
     loaded = cls.load(path)
-    raw, metadata = loaded.raw, loaded.metadata
-    # The copy shares `raw` and the metadata, and nothing is decoded.
+    raw, metadata = loaded.rawdata, loaded.metadata
+    # The copy shares `rawdata` and the metadata, and nothing is
+    # decoded.
     consolidated = loaded.consolidate()
     assert consolidated is not loaded
-    assert consolidated.raw is raw
+    assert consolidated.rawdata is raw
     assert consolidated.metadata is metadata
     assert _decodes_nothing(loaded)
     assert _decodes_nothing(consolidated)
@@ -6063,11 +6186,11 @@ def test_p06_consolidating_an_untouched_pyramid_changes_nothing(
         assert image.transformations is not None
     assert loaded.transformations is not None
     consolidated = loaded.consolidate()
-    assert consolidated.raw is raw
+    assert consolidated.rawdata is raw
     assert consolidated.metadata is metadata
     assert all("_cache_data" not in vars(image) for image in loaded.images)
     assert loaded.consolidate(inplace=True) is loaded
-    assert loaded.raw is raw
+    assert loaded.rawdata is raw
     assert loaded.metadata is metadata
     if exemplar.source is not None:
         return
@@ -6086,14 +6209,14 @@ def test_p06_consolidating_an_untouched_pyramid_changes_nothing(
     )
     assert np.allclose(_world(once), _world(back))
     twice = once.consolidate()
-    assert twice.raw is once.raw
+    assert twice.rawdata is once.rawdata
     assert twice.metadata is once.metadata
     # In place, the pyramid holds the consolidated state.
     assert loaded.consolidate(inplace=True) is loaded
     assert loaded._images is None
-    raw, metadata = loaded.raw, loaded.metadata
+    raw, metadata = loaded.rawdata, loaded.metadata
     loaded.consolidate(inplace=True)
-    assert loaded.raw is raw
+    assert loaded.rawdata is raw
     assert loaded.metadata is metadata
 
 
@@ -6108,7 +6231,7 @@ def test_p07_transformations_are_compared_at_consolidation(
     level = _level_exemplar(exemplar)
     path = _pyramid_saved(cls, exemplar, tmp_path)
     loaded = cls.load(path)
-    raw, metadata = loaded.raw, loaded.metadata
+    raw, metadata = loaded.rawdata, loaded.metadata
     # The transformations of a level that were only read keep the record,
     # and so does an equal list that is assigned.
     for image in loaded.images:
@@ -6128,7 +6251,7 @@ def test_p07_transformations_are_compared_at_consolidation(
     if not exemplar.derive:
         for index in range(len(raw)):
             if index != k:
-                assert consolidated.raw[index] is raw[index]
+                assert consolidated.rawdata[index] is raw[index]
     target = _path(tmp_path, level, "level")
     loaded.save(target)
     back = cls.load(target)
@@ -6214,22 +6337,22 @@ def test_p09_saving_over_its_own_container_consolidates_the_pyramid(
     loaded = cls.load(path)
     loaded.save(path)
     back = cls.load(path)
-    assert all(isinstance(raw, level.proxies) for raw in loaded.raw)
+    assert all(isinstance(raw, level.proxies) for raw in loaded.rawdata)
     assert _all_equal(_levels_data(exemplar, loaded), exemplar.levels())
     assert _all_equal(_levels_data(exemplar, back), exemplar.levels())
     assert _header(level, loaded.metadata) == _header(level, back.metadata)
     # A changed pyramid is consolidated in place, and then holds what the
-    # container holds (#426): its `raw` is a new tuple of proxies of the
-    # new container, and its record is read again from it.
+    # container holds (#426): its `rawdata` is a new tuple of proxies of
+    # the new container, and its record is read again from it.
     loaded = cls.load(path)
-    old = loaded.raw
+    old = loaded.rawdata
     _set_data(level, loaded.images[1], exemplar.levels()[1] + 1)
     expected = _levels_data(exemplar, loaded.consolidate())
     loaded.save(path)
     assert loaded._images is None
     assert loaded._transformations is None
-    assert loaded.raw is not old
-    assert all(isinstance(raw, level.proxies) for raw in loaded.raw)
+    assert loaded.rawdata is not old
+    assert all(isinstance(raw, level.proxies) for raw in loaded.rawdata)
     back = cls.load(path)
     assert _all_equal(_levels_data(exemplar, loaded), expected)
     assert _all_equal(_levels_data(exemplar, back), expected)
@@ -6238,17 +6361,17 @@ def test_p09_saving_over_its_own_container_consolidates_the_pyramid(
 
 
 @pytest.mark.parametrize("cls, exemplar", PYRAMID_CASES)
-def test_p10_copies_keep_raw_and_metadata(
+def test_p10_copies_keep_rawdata_and_metadata(
     cls: type,
     exemplar: PyramidExemplar,
     tmp_path,  # noqa: ANN001
 ) -> None:
     level = _level_exemplar(exemplar)
     loaded = cls.load(_pyramid_saved(cls, exemplar, tmp_path))
-    # Within the format, the copies share `raw` and the metadata, and
-    # decode nothing.
+    # Within the format, the copies share `rawdata` and the metadata,
+    # and decode nothing.
     for copy in (replace(loaded), cls.from_instance(loaded)):
-        assert copy.raw is loaded.raw
+        assert copy.rawdata is loaded.rawdata
         assert copy.metadata is loaded.metadata
         assert copy._images is None
         assert _decodes_nothing(copy)
@@ -6258,7 +6381,7 @@ def test_p10_copies_keep_raw_and_metadata(
     loaded.images = images
     for copy in (replace(loaded), cls.from_instance(loaded)):
         assert _same(copy.images, images)
-        assert copy.raw is loaded.raw
+        assert copy.rawdata is loaded.rawdata
     # From another class, the levels that it reports are copied, and the
     # record and the arrays of the format are reset.
     samples = exemplar.levels()
@@ -6267,7 +6390,7 @@ def test_p10_copies_keep_raw_and_metadata(
     )
     converted = cls.from_instance(foreign)
     assert converted.metadata is None
-    assert converted.raw is None
+    assert converted.rawdata is None
     assert _all_equal(_levels_data(exemplar, converted), samples)
     target = _path(tmp_path, level, "converted")
     if exemplar.source is not None:
@@ -6389,23 +6512,23 @@ def test_the_generic_loader_reads_a_toy_image(tmp_path) -> None:  # noqa: ANN001
     io.save(SingleScaleImage(data, [Scaling([2.0, 3.0])]), path)
     image = io.load(path)
     assert isinstance(image, ToyImage)
-    assert isinstance(image.raw, _ToyProxy)
+    assert isinstance(image.rawdata, _ToyProxy)
     assert np.array_equal(image.data, data)
     assert np.allclose(image.transformation.data, [2.0, 3.0])
     assert MetadataFormat.sniff(path) is ToyMetadata
 
 
-def test_data_takes_precedence_over_raw() -> None:
+def test_data_takes_precedence_over_rawdata() -> None:
     data = np.arange(6.0).reshape(2, 3)
     stored = np.zeros((5, 5))
-    image = ToyImage(data, raw=stored)
-    # Assigned data is read first, and `raw` is kept until the image is
-    # consolidated.
+    image = ToyImage(data, rawdata=stored)
+    # Assigned data is read first, and `rawdata` is kept until the image
+    # is consolidated.
     assert image.data is data
-    assert image.raw is stored
-    assert np.array_equal(image.consolidate().raw, data.T)
-    assert np.array_equal(ToyImage(raw=data.T).data, data)
-    # Assigning `None` decodes `raw` again.
+    assert image.rawdata is stored
+    assert np.array_equal(image.consolidate().rawdata, data.T)
+    assert np.array_equal(ToyImage(rawdata=data.T).data, data)
+    # Assigning `None` decodes `rawdata` again.
     image.data = None
     assert np.array_equal(image.data, stored.T)
 
@@ -6534,7 +6657,7 @@ def test_a_toy_level_written_alone_narrows_the_record(
     assert len(level.metadata.raw.levels) == 3
     narrowed = level.consolidate()
     assert narrowed.level == 0
-    assert narrowed.raw is level.raw
+    assert narrowed.rawdata is level.rawdata
     assert narrowed.metadata.raw.levels == (record.levels[1],)
     assert narrowed.metadata.raw.note == "kept"
     assert narrowed.metadata.raw.scale == record.scale
@@ -6603,7 +6726,7 @@ def test_an_untouched_nifti_keeps_its_extensions_and_description(
 def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: ANN001
     source = _saved(NiftiImage, EXEMPLARS[NiftiImage], tmp_path)
     loaded = NiftiImage.load(source)
-    assert isinstance(loaded.raw, ArrayProxy)
+    assert isinstance(loaded.rawdata, ArrayProxy)
     assert isinstance(loaded.metadata.raw.header, nb.Nifti1Header)
     assert MetadataFormat.load(source).raw.header == loaded.metadata.raw.header
     # Other metadata gives other transformations.
@@ -6627,7 +6750,7 @@ def test_an_untouched_ras_to_voxel_affine_is_saved_byte_for_byte(
     source = tmp_path / "source.nii"
     NiftiRASToVoxel(_VOXEL_TO_RAS).save(source)
     loaded = NiftiRASToVoxel.load(source)
-    assert loaded.raw is None
+    assert loaded.rawdata is None
     np.testing.assert_array_equal(loaded.data, _VOXEL_TO_RAS)
     target = tmp_path / "copy.nii"
     NiftiRASToVoxel.from_instance(loaded).save(target)
