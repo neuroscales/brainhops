@@ -64,17 +64,20 @@ def _number(token: str) -> tx.Union[int, float, str]:
 def _values(name: str, values: tx.List[tx.Any]) -> tx.Any:
     """Return the values of a parameter in the form in which they are kept.
 
-    Transform parameters become a float64 array, and the values of any other
-    parameter become a tuple.
+    Transform parameters become a read-only float64 array, and the values of
+    any other parameter become a tuple.
     """
     if name in _ARRAYS:
         try:
-            return np.asarray(values, dtype=np.float64)
+            array = np.asarray(values, dtype=np.float64)
         except (TypeError, ValueError) as e:
             raise ParserContentError(
                 f"The elastix parameter {name} holds a value that is not "
                 f"a number."
             ) from e
+        # The array belongs to a record, which is never changed in place.
+        array.flags.writeable = False
+        return array
     return tuple(values)
 
 

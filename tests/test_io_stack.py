@@ -697,7 +697,7 @@ def test_the_record_holds_the_headers_of_the_files(tmp_path: Path) -> None:
     assert record.format == "tiff"
     member = record.members[1]
     assert (member.name, member.number, member.axes) == ("z1.tif", 1, "YX")
-    assert isinstance(member.header, tiff_backend.TiffMetadata)
+    assert isinstance(member.header, tiff_backend.SeriesMetadata)
     assert member.header.scales["x"] == (0.5, "cm")
     assert record.copy() == record
     clone = pickle.loads(pickle.dumps(metadata))

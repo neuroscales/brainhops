@@ -27,7 +27,10 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Scaling,
 )
-from brainhops.errors import ConversionError
+from brainhops.errors import (
+    ConversionError,
+    UnrepresentableTransformationError,
+)
 from brainhops.io.base import Format
 from brainhops.io.base._base import (
     is_format_registry,
@@ -36,7 +39,6 @@ from brainhops.io.base._base import (
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     TextFileWriter,
-    UnrepresentableTransformationError,
     WriterError,
     WriterNotImplementedError,
 )
@@ -507,10 +509,29 @@ def test_a_nifti_coordinate_field_round_trips(tmp_path) -> None:  # noqa: ANN001
 def test_an_image_round_trips_through_zarr(tmp_path) -> None:  # noqa: ANN001
     from brainhops.io.images.zarr import ZarrImage
 
-    io.save(_image(), tmp_path / "image.zarr")
+    io.save(SingleScaleImage(data=DATA), tmp_path / "image.zarr")
     back = io.images.load(tmp_path / "image.zarr")
     assert isinstance(back, ZarrImage)
     assert np.array_equal(np.asarray(back.data), DATA)
+
+
+@needs_zarr
+def test_a_geometry_is_not_dropped_by_plain_zarr(tmp_path) -> None:  # noqa: ANN001
+    # A plain Zarr array stores no geometry, so the writer refuses an image
+    # that has one rather than drop it, and writes nothing. No other format
+    # that claims `.zarr` holds a single image, so the save is refused with
+    # the reason of the plain Zarr writer.
+    pattern = "ZarrImage: UnrepresentableTransformationError"
+    with pytest.raises(WriterError, match=pattern):
+        io.save(_image(), tmp_path / "image.zarr")
+    assert not (tmp_path / "image.zarr").exists()
+    # A store that is already there is left as it was.
+    io.save(SingleScaleImage(data=DATA + 1), tmp_path / "image.zarr")
+    with pytest.raises(WriterError, match=pattern):
+        io.save(_image(), tmp_path / "image.zarr")
+    back = io.images.load(tmp_path / "image.zarr")
+    assert np.array_equal(np.asarray(back.data), DATA + 1)
+    assert [path.name for path in tmp_path.iterdir()] == ["image.zarr"]
 
 
 @needs_zarr
@@ -565,6 +586,13 @@ def test_an_image_read_from_nifti_is_written_as_zarr(tmp_path) -> None:  # noqa:
 
     io.save(_image(), tmp_path / "image.nii")
     nifti = io.images.load(tmp_path / "image.nii")
+    # The geometry of the NIfTI file cannot be stored, so it is refused
+    # until it is cleared.
+    with pytest.raises(
+        WriterError, match="UnrepresentableTransformationError"
+    ):
+        io.save(nifti, tmp_path / "image.zarr")
+    nifti.transformations = []
     io.save(nifti, tmp_path / "image.zarr")
     back = io.images.load(tmp_path / "image.zarr")
     assert isinstance(back, ZarrImage)
