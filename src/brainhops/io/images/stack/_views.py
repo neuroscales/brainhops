@@ -38,7 +38,7 @@ def _image_to_model(raw: ArrayProtocol, axis: str = "z") -> ArrayProtocol:
     Dask, the array is a Dask array with one chunk per slice, and a file
     is read only when a chunk that it fills is computed. Any other array
     is permuted as it is, so that the data of an image whose data were set
-    are a view of `raw`.
+    are a view of `rawdata`.
     """
     if isinstance(raw, _StackProxy):
         backend = get_array_backend()

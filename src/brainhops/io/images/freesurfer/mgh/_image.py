@@ -90,11 +90,11 @@ class MghImage(
 
     An MGH image holds everything that its file stores beside the voxels
     as [`MghMetadata`][], whose record is an [`MghRaw`][], and the voxels
-    as stored in `raw`. When the image is read from a file, `raw` is a
-    nibabel proxy, which reads the voxels only when they are needed, and
-    `data` is decoded from it on first access. The voxels are in Fortran
-    order, and the data are indexed `(x, y, z)` or `(x, y, z, frames)`,
-    where the frames form a time axis.
+    as stored in `rawdata`. When the image is read from a file,
+    `rawdata` is a nibabel proxy, which reads the voxels only when they
+    are needed, and `data` is decoded from it on first access. The
+    voxels are in Fortran order, and the data are indexed `(x, y, z)` or
+    `(x, y, z, frames)`, where the frames form a time axis.
 
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. They are, in order, a
@@ -108,7 +108,7 @@ class MghImage(
     four axes named `"tkr"`, as its scanner space is a system of four
     axes named `"scanner"`.
 
-    `raw` and the record describe the file as it was read, or as the image
+    `rawdata` and the record describe the file as it was read, or as the image
     was last consolidated. Data that are assigned are pending until
     [`consolidate`][] encodes them into a copy, or until the image is
     written, which writes such a copy and leaves the image as it was. The
@@ -133,21 +133,21 @@ class MghImage(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mgh", "mgz")
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the file stores them, or `None` without data.
 
-    After a read, `raw` is a nibabel proxy. `raw` describes the file as it
-    was read, or as the image was last consolidated, so assigning `data`
-    leaves it as it is.
+    After a read, `rawdata` is a nibabel proxy. `rawdata` describes the
+    file as it was read, or as the image was last consolidated, so
+    assigning `data` leaves it as it is.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
-    array stored here is pending: it is encoded into `raw` only by
+    array stored here is pending: it is encoded into `rawdata` only by
     [`consolidate`][] or by a write.
     """
 
@@ -178,18 +178,19 @@ class MghImage(
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, assigned or decoded from `raw`.
+        """The image data, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
         pending until [`consolidate`][] or a write encodes it. Otherwise
-        the data is decoded from `raw` on first access and cached. Data
-        decoded from a file is read-only, because changing it in place
-        would not change `raw`, which is what the image writes. To change
-        the voxels, assign `data`. Assigning `None` decodes `raw` again.
+        the data is decoded from `rawdata` on first access and cached.
+        Data decoded from a file is read-only, because changing it in
+        place would not change `rawdata`, which is what the image
+        writes. To change the voxels, assign `data`. Assigning `None`
+        decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -217,16 +218,16 @@ class MghImage(
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without reading the voxels.
 
-        The shape is that of the assigned data, or else of `raw`: the data
-        is `raw` as the file stores it, so the two have the same shape,
-        and a proxy knows its shape from the header. An image without data
-        raises as [`SingleScaleImage`][] does.
+        The shape is that of the assigned data, or else of `rawdata`: the data
+        is `rawdata` as the file stores it, so the two have the same
+        shape, and a proxy knows its shape from the header. An image
+        without data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in self.raw.shape)
+        return tuple(int(d) for d in self.rawdata.shape)
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
@@ -328,7 +329,7 @@ class MghImage(
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         raw, proxy = read_mgh(filename, **kwargs)
-        return cls(raw=proxy, metadata=MghMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=MghMetadata.from_raw(raw))
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MghImage":
@@ -358,7 +359,7 @@ class MghImage(
             If another option is given.
         """
         raw, proxy = read_mgh(file, **kwargs)
-        return cls(raw=proxy, metadata=MghMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=MghMetadata.from_raw(raw))
 
     @classmethod
     def from_nibabel(
@@ -366,7 +367,7 @@ class MghImage(
     ) -> "MghImage":
         """Build an image from a nibabel MGH image or header.
 
-        The voxels of an image become `raw` as they are, and a copy of its
+        The voxels of an image become `rawdata` as they are, and a copy of its
         header becomes the record of the metadata, without tags. A header
         alone gives an image without data.
 
@@ -396,14 +397,14 @@ class MghImage(
                 f"Expected an MGH image or header, got {type(mgh)}"
             )
         metadata = MghMetadata.from_raw(MghRaw(header=header).copy())
-        return cls(raw=raw, metadata=metadata, **kwargs)
+        return cls(rawdata=raw, metadata=metadata, **kwargs)
 
     # --- writing ------------------------------------------------------
 
     def consolidate(
         self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> "MghImage":
-        """Encode the pending data and geometry into `raw` and the record.
+        """Encode the pending data and geometry into `rawdata` and the record.
 
         The record is encoded in a fixed order. The base is a copy of the
         record of the metadata, or a new record for an image without
@@ -416,8 +417,8 @@ class MghImage(
         next, then a TR stated by the transformations, and the `overrides`
         are applied last. The tags and the other fields of the base are
         kept. The new record is held by new metadata, the record held
-        before is never changed, and the data becomes `raw`, in the axis
-        order of the file. Nothing is pending afterwards, so the
+        before is never changed, and the data becomes `rawdata`, in the
+        axis order of the file. Nothing is pending afterwards, so the
         transformations are decoded from the new record, with the
         precision of the file.
 
@@ -427,7 +428,7 @@ class MghImage(
         assigned, are compared with those that the record decodes to,
         exactly, and an image with a record, no pending data, and the
         transformations of its record or none read, consolidated without
-        options, is left as it is: the copy shares `raw` and the metadata.
+        options, is left as it is: the copy shares `rawdata` and the metadata.
 
         Parameters
         ----------
@@ -489,10 +490,10 @@ class MghImage(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -548,7 +549,7 @@ class MghImage(
         """Return the MGH encoding: header, voxels, footer and tags.
 
         The image is consolidated into a copy with the keyword arguments,
-        as by [`consolidate`][], and the record and `raw` of the copy are
+        as by [`consolidate`][], and the record and `rawdata` of the copy are
         written. A proxy that reaches the writer unchanged is written as
         the file stores it, so that an untouched image gives the bytes of
         its file. The image itself is not changed.
@@ -594,7 +595,7 @@ class MghImage(
             options of [`consolidate`][].
         """
         compress = kwargs.pop("compress", _compressed_name(filename))
-        if not _reads_file(self.raw, filename):
+        if not _reads_file(self.rawdata, filename):
             write_file(filename, self.to_bytes(compress=compress, **kwargs))
             return
         self.consolidate(inplace=True, **kwargs)
@@ -603,7 +604,7 @@ class MghImage(
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file describes how that
         # file stored the voxels.
-        self.raw = read_mgh(filename)[1]
+        self.rawdata = read_mgh(filename)[1]
         self.data = None
 
 
@@ -697,7 +698,7 @@ def _encoded(
     """Return the record and the voxels that consolidating an image stores.
 
     The record is encoded as [`MghImage.consolidate`][] describes, and the
-    voxels are the assigned data, or else `raw`, arranged in the axis order
+    voxels are the assigned data, or else `rawdata`, arranged in the axis order
     of the file when the transformations declare another order. The held
     record is returned when the encoding changes nothing. Voxels of
     another type than the stored one are converted as the writer converts
@@ -706,7 +707,7 @@ def _encoded(
     if image._data is not None:
         source = _image_to_disk(image._data)
     else:
-        source = image.raw
+        source = image.rawdata
     if source is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
@@ -751,7 +752,7 @@ def _encoded(
     for name, value in overrides.items():
         header[name] = value
 
-    # The voxels are converted as the writer converts them, so that `raw`
+    # The voxels are converted as the writer converts them, so that `rawdata`
     # holds what the file holds.
     data = _stored_voxels(data, header.get_data_dtype())
     if record == held:
@@ -973,11 +974,11 @@ def _mgh_written(image: MghImage) -> tx.Tuple[MghRaw, ArrayProtocol]:
     WriterError
         If the image has no data.
     """
-    if image.raw is None:
+    if image.rawdata is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
         )
-    return image.metadata.raw, image.raw
+    return image.metadata.raw, image.rawdata
 
 
 def _reads_file(raw: tx.Any, file: tx.Any) -> bool:

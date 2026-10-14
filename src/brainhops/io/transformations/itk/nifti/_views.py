@@ -1,7 +1,7 @@
 """How the data of an ITK vector field is decoded from the array that the
 NIfTI file stores, and encoded back.
 
-The two functions convert between `raw`, the array as the file stores it,
+The two functions convert between `rawdata`, the array as the file stores it,
 and `data`, the array that the data model exposes. They are pure and
 invert each other, so that `_itk_field_to_model(_itk_field_to_disk(data))`
 gives `data` back.

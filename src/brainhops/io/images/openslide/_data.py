@@ -4,7 +4,8 @@ OpenSlide opens a slide by the name of a local file, and it reads the pixels
 of a level region by region. This module finds the local file of a path or
 of a stream, copies content into a temporary file when there is none, and
 detects the vendor of a file. It also defines the lazy array that a level of
-a slide holds in `raw`, which reads only the region that it is indexed with.
+a slide holds in `rawdata`, which reads only the region that it is
+indexed with.
 """
 
 # stdlib

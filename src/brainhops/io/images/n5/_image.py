@@ -57,7 +57,7 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
     unless `level` is given.
 
     The image holds the attributes as [`N5Metadata`][], whose record is
-    an [`N5Raw`][], and the samples in `raw`, a lazy array that
+    an [`N5Raw`][], and the samples in `rawdata`, a lazy array that
     TensorStore reads block by block when the data are needed. The data
     are indexed in the order of the `dimensions` of the dataset, whose
     first dimension varies fastest in a block, so the axes are named
@@ -74,28 +74,28 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
     N5 containers are not written, so the class has no writer, and
     [`save`][brainhops.io.save] refuses to write the image as an N5
     dataset. Assigned data are pending until [`consolidate`][] moves them
-    into `raw`, and the transformations that the image holds, read or
-    assigned, are kept, since no record can be encoded.
+    into `rawdata`, and the transformations that the image holds, read
+    or assigned, are kept, since no record can be encoded.
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("n5",)
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The samples as the dataset stores them, or `None` without data.
 
-    After a read, `raw` is a lazy array of the dataset. Assigning `data`
-    leaves `raw` as it is, and [`consolidate`][] stores the assigned array
-    here.
+    After a read, `rawdata` is a lazy array of the dataset. Assigning
+    `data` leaves `rawdata` as it is, and [`consolidate`][] stores the
+    assigned array here.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
     array stored here is pending until [`consolidate`][] moves it into
-    `raw`.
+    `rawdata`.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
@@ -134,17 +134,17 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The samples, assigned or decoded from `raw`.
+        """The samples, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
-        pending until [`consolidate`][] moves it into `raw`. Otherwise the
-        data is decoded from `raw` on first access and cached. Data
+        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+        data is decoded from `rawdata` on first access and cached. Data
         decoded from a dataset is read-only. To change the samples, assign
-        `data`. Assigning `None` decodes `raw` again.
+        `data`. Assigning `None` decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -167,24 +167,24 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
         """The shape of the data, read without reading the samples.
 
         The shape is that of the assigned data, or else the shape of
-        `raw`, which the lazy array knows from the record. An image
+        `rawdata`, which the lazy array knows from the record. An image
         without data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in self.raw.shape)
+        return tuple(int(d) for d in self.rawdata.shape)
 
     def consolidate(self, *, inplace: bool = False) -> "N5Image":
-        """Move the pending data into `raw`.
+        """Move the pending data into `rawdata`.
 
         N5 containers are not written, so no record can be encoded, and
         consolidating an image is limited to its data: an assigned array
-        becomes `raw` and is no longer pending. The metadata is kept, and
+        becomes `rawdata` and is no longer pending. The metadata is kept, and
         so are the transformations that the image holds, read or assigned.
         An image without pending data is left as it is: the copy shares
-        `raw` and the metadata.
+        `rawdata` and the metadata.
 
         Parameters
         ----------
@@ -209,8 +209,8 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
             return self if inplace else replace(self, transformations=held)
         raw = _image_to_disk(self._data)
         if not inplace:
-            return replace(self, data=None, raw=raw, transformations=held)
-        self.raw = raw
+            return replace(self, data=None, rawdata=raw, transformations=held)
+        self.rawdata = raw
         self.data = None
         return self
 
@@ -471,7 +471,7 @@ def _read_dataset(
         )
     proxy = _N5Proxy(where, dataset)
     return cls(
-        raw=proxy,
+        rawdata=proxy,
         metadata=metadata,
         level=index if record.levels else None,
     )

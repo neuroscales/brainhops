@@ -136,11 +136,11 @@ def lazyproperty(
     ```python
     @lazyproperty(invalidates="transformations")
     def data(self):
-        return decode(self.raw)
+        return decode(self.rawdata)
 
     @data.setter
     def data(self, value):
-        self.raw = encode(value)
+        self.rawdata = encode(value)
     ```
 
     Parameters
@@ -574,8 +574,8 @@ def drop_cache(obj: object, *names: str) -> None:
     A cached [`smartproperty`][] or [`lazyproperty`][] deletes its cached
     value when it is assigned. This function is for code that changes the
     state from which a property is computed without assigning the
-    property, for example a writer that points `raw` at the file it has
-    just written. A property that has not cached a value is skipped.
+    property, for example a writer that points `rawdata` at the file it
+    has just written. A property that has not cached a value is skipped.
 
     Parameters
     ----------

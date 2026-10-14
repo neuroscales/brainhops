@@ -49,11 +49,11 @@ _Volumes = tx.Optional[tx.Tuple[tx.Any, ...]]
 # A transform file is parsed in one pass, so the matrices of its linear
 # transforms live in the record of its metadata. The displacements of a
 # grid transform live in a MINC volume, which the format reads into
-# `raw`, one lazy image per grid transform. The chain is decoded from
-# both when it is first used. A chain that is assigned is held by the
-# data model, and it is encoded into a new record when the transform is
-# consolidated or written. The design memo `docs/design/format-records.md`
-# records this layout as item 140.
+# `rawdata`, one lazy image per grid transform. The chain is decoded
+# from both when it is first used. A chain that is assigned is held by
+# the data model, and it is encoded into a new record when the transform
+# is consolidated or written. The design memo
+# `docs/design/format-records.md` records this layout as item 140.
 
 
 def _record(xform: "XfmTransform") -> tx.Optional[XfmRaw]:
@@ -164,9 +164,9 @@ class XfmTransform(
 
     The file is read in one pass, so the whole file is held as an
     [`XfmRaw`][] record by the [`XfmMetadata`][] of the transform. The
-    displacement volumes of its grid transforms are read into `raw`, as
-    MINC images whose voxels are read only when the chain is decoded. The
-    chain is decoded when it is first used, and it is then cached.
+    displacement volumes of its grid transforms are read into `rawdata`,
+    as MINC images whose voxels are read only when the chain is decoded.
+    The chain is decoded when it is first used, and it is then cached.
 
     The record describes the file as it was read, or as the transform was
     last consolidated. A chain that is assigned, and an `input` or
@@ -205,10 +205,10 @@ class XfmTransform(
     was assigned is kept.
     """
 
-    _raw: NoRepr[tx.Optional[tx.Tuple[tx.Any, ...]]] = None
+    _rawdata: NoRepr[tx.Optional[tx.Tuple[tx.Any, ...]]] = None
 
-    raw = smartproperty(
-        "raw", invalidates=("transformations", "decoded_blocks")
+    rawdata = smartproperty(
+        "rawdata", invalidates=("transformations", "decoded_blocks")
     )
     """The displacement volumes of the grid transforms, or `None`.
 
@@ -282,7 +282,7 @@ class XfmTransform(
             raise ParserContentError("This transformation has no record.")
         decoded = self.__dict__.setdefault("_cache_decoded_blocks", {})
         if index not in decoded:
-            decoded[index] = _decode_block(record, index, self.raw)
+            decoded[index] = _decode_block(record, index, self.rawdata)
         return decoded[index]
 
     # --- sniff --------------------------------------------------------
@@ -454,7 +454,9 @@ class XfmTransform(
             reads.
         """
         volumes = _read_volumes(raw, location)
-        return cls(metadata=XfmMetadata.from_raw(raw), raw=volumes, **kwargs)
+        return cls(
+            metadata=XfmMetadata.from_raw(raw), rawdata=volumes, **kwargs
+        )
 
     @classmethod
     def from_text(cls, text: str, **kwargs) -> tx.Self:
@@ -660,11 +662,11 @@ class XfmTransform(
                 raise WriterError("This transform has no content to write.")
             if not declared:
                 return self if inplace else replace(self)
-            metadata, volumes = self.metadata, self.raw
+            metadata, volumes = self.metadata, self.rawdata
         else:
             decoded = self.__dict__.get("_cache_decoded_blocks", {})
             record, volumes = _encode(
-                self.transformations, record, self.raw, decoded
+                self.transformations, record, self.rawdata, decoded
             )
             if self.metadata is None:
                 metadata = XfmMetadata.from_raw(record)
@@ -674,13 +676,13 @@ class XfmTransform(
             return replace(
                 self,
                 metadata=metadata,
-                raw=volumes,
+                rawdata=volumes,
                 transformations=None,
                 input=None,
                 output=None,
             )
         self.metadata = metadata
-        self.raw = volumes
+        self.rawdata = volumes
         self.transformations = None
         self.input = None
         self.output = None
@@ -742,7 +744,7 @@ class XfmTransform(
         copy = self.consolidate()
         record = _record(copy)
         content = record.to_bytes(**kwargs)
-        _place_volumes(record, copy.raw, filename)
+        _place_volumes(record, copy.rawdata, filename)
         write_file(filename, content)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
@@ -956,7 +958,7 @@ def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
 
     if volume is None or volume._data is not None:
         return None
-    proxy = volume.raw
+    proxy = volume.rawdata
     if isinstance(proxy, _MincProxy) and isinstance(
         proxy.source, (str, os.PathLike)
     ):

@@ -26,7 +26,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
     A proxy is read with the array backend. The data is a view of the
     samples with the columns first, and a NumPy view is made read-only,
-    because the writer writes the file that `raw` reads and not the data,
+    because the writer writes the file that `rawdata` reads and not the data,
     so an edit made in place would be lost. A Dask array stays lazy.
     """
     if isinstance(raw, _Jpeg2000Proxy):

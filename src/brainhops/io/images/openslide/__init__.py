@@ -120,10 +120,10 @@ OpenSlide cannot write slides, so these classes have no writer. An image or a
 pyramid is saved to another format, for example with
 `TiffImage.from_any(level).save(path)`, or with `io.save` under a name whose
 format can hold it. Data assigned to an image, or to a level of a pyramid, is
-pending until `consolidate()` moves it into `raw`. The metadata and the
-transformations are kept, since no record can be encoded, and a pyramid
-refuses to consolidate a level that is not a level of its slide, such as an
-image of another class, with `WriterError`.
+pending until `consolidate()` moves it into `rawdata`. The metadata and
+the transformations are kept, since no record can be encoded, and a
+pyramid refuses to consolidate a level that is not a level of its slide,
+such as an image of another class, with `WriterError`.
 
 ## Without OpenSlide
 

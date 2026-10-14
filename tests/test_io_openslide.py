@@ -166,7 +166,7 @@ def test_vendor_classes(
     assert issubclass(multi, MultiScaleImage)
     # The levels of a pyramid are objects of the class of its vendor.
     level = np.zeros((4, 2, 3), dtype=np.uint8)
-    pyramid = multi(raw=(level, level[::2, ::2]))
+    pyramid = multi(rawdata=(level, level[::2, ::2]))
     assert [type(image) for image in pyramid.images] == [single, single]
     assert [image.level for image in pyramid.images] == [0, 1]
 
@@ -224,7 +224,7 @@ def test_svs_is_aperio_pyramid(svs: Path) -> None:
         assert isinstance(level, bos.AperioImage)
         assert level.level == k
         assert level.metadata is image.metadata
-        assert level.raw is image.raw[k]
+        assert level.rawdata is image.rawdata[k]
         f = 2.0**k
         assert level.data.shape == (768 // 2**k, 512 // 2**k, 3)
         assert level.data.dtype == np.uint8
@@ -433,8 +433,8 @@ def test_open_file(svs: Path) -> None:
     with open(svs, "rb") as f:
         image = load(f)
     assert isinstance(image, bos.AperioMultiScaleImage)
-    assert image.raw[0].slide.filename == str(svs)
-    assert image.images[0].raw.slide is image.raw[0].slide
+    assert image.rawdata[0].slide.filename == str(svs)
+    assert image.images[0].rawdata.slide is image.rawdata[0].slide
 
 
 def test_bytes_by_hint(svs: Path) -> None:
@@ -449,7 +449,7 @@ def test_bytes_by_hint(svs: Path) -> None:
     assert isinstance(level, bos.AperioImage)
     assert level.level == 1
     # The temporary copy is deleted with the images.
-    tempdir = Path(image.raw[0].slide._state["tempdir"])
+    tempdir = Path(image.rawdata[0].slide._state["tempdir"])
     assert tempdir.exists()
     del image
     gc.collect()
@@ -555,11 +555,11 @@ def test_a_level_consolidates_its_data_only(svs: Path) -> None:
     value = np.zeros(image.shape, dtype=np.uint8)
     image.data = value
     consolidated = image.consolidate()
-    assert consolidated.raw is value
+    assert consolidated.rawdata is value
     assert consolidated._data is None
     assert consolidated.metadata is image.metadata
     assert consolidated.level == 2
-    assert isinstance(image.raw, slides._SlideArray)
+    assert isinstance(image.rawdata, slides._SlideArray)
     # The associated images are still read from the slide of the record.
     assert image.associated_image("label").shape == (50, 40, 3)
     with pytest.raises(KeyError):
@@ -572,13 +572,13 @@ def test_a_level_consolidates_its_data_only(svs: Path) -> None:
 
 def test_a_pyramid_consolidates_its_data_only(svs: Path) -> None:
     pyramid = load(svs)
-    raw, metadata = pyramid.raw, pyramid.metadata
+    raw, metadata = pyramid.rawdata, pyramid.metadata
     value = np.zeros(pyramid.images[1].shape, dtype=np.uint8)
     pyramid.images[1].data = value
     consolidated = pyramid.consolidate()
     assert consolidated.metadata is metadata
-    assert consolidated.raw[1] is value
-    assert consolidated.raw[0] is raw[0]
+    assert consolidated.rawdata[1] is value
+    assert consolidated.rawdata[0] is raw[0]
     assert consolidated._images is None
     # The associated images are read through any level of the slide.
     assert consolidated.associated_image("macro").shape == (60, 30, 3)
@@ -586,12 +586,12 @@ def test_a_pyramid_consolidates_its_data_only(svs: Path) -> None:
     pyramid = load(svs)
     pyramid.images[2].transformations = [Scaling([3.0, 3.0, 1.0])]
     consolidated = pyramid.consolidate()
-    assert consolidated.raw is pyramid.raw
+    assert consolidated.rawdata is pyramid.rawdata
     assert consolidated._images is not None
     np.testing.assert_allclose(_scale(consolidated.images[2]), [3, 3, 1])
     assert consolidated.images[0]._transformations is None
     twice = consolidated.consolidate()
-    assert twice.raw is consolidated.raw
+    assert twice.rawdata is consolidated.rawdata
     np.testing.assert_allclose(_scale(twice.images[2]), [3, 3, 1])
     # A level that is not a level of the slide cannot be described.
     pyramid = load(svs)
