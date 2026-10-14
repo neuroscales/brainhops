@@ -131,7 +131,7 @@ a [`StackRaw`][brainhops.io.images.stack.StackRaw], lists the files as
 [`StackMember`][brainhops.io.images.stack.StackMember] objects, in order,
 and holds the stacking axis and the geometry. Each member gives the name
 of its file relative to the folder, its number, its axes, shape and type,
-and its header: the `TiffMetadata` that the TIFF reader parses, with the
+and its header: the `SeriesMetadata` that the TIFF reader parses, with the
 tags, the OME-XML and the ImageJ metadata, or the `PillowHeader` of a
 Pillow file, with its mode and the `info` dictionary of Pillow. Reading
 the metadata alone, with `StackMetadata.load(folder)` or
