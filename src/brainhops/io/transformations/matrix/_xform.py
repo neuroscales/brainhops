@@ -14,7 +14,7 @@ __all__ = [
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, KwOnly, NoRepr, replace
+from bagof.magic import HIDE_IF_NONE, Inherit, NoRepr, replace
 
 from brainhops._core.properties import (
     InvalidatorInAttribute,
@@ -270,7 +270,9 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
 
     HINTS = TxtArrayReader.HINTS
 
-    _metadata: KwOnly[NoRepr[tx.Optional[TxtMatrixMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[TxtMatrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -418,7 +420,9 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
 
     HINTS = CsvArrayReader.HINTS
 
-    _metadata: KwOnly[NoRepr[tx.Optional[CsvMatrixMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[CsvMatrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -566,7 +570,9 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
 
     HINTS = TsvArrayReader.HINTS
 
-    _metadata: KwOnly[NoRepr[tx.Optional[TsvMatrixMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[TsvMatrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -715,7 +721,9 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
 
     HINTS = NpyArrayReader.HINTS
 
-    _metadata: KwOnly[NoRepr[tx.Optional[NpyMatrixMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[NpyMatrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -866,7 +874,9 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
 
     HINTS = NpzArrayReader.HINTS
 
-    _metadata: KwOnly[NoRepr[tx.Optional[NpzMatrixMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[NpzMatrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -1029,7 +1039,9 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
     The record keeps the name of the variable. See [`MatMatrixAffine`][].
     """
 
-    _metadata: KwOnly[NoRepr[tx.Optional[MatLegacyMatrixMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[MatLegacyMatrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -1180,7 +1192,9 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
 
     HINTS = Mat73ArrayReader.HINTS
 
-    _metadata: KwOnly[NoRepr[tx.Optional[Mat73MatrixMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[Mat73MatrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.

@@ -8,6 +8,7 @@ from bagof.magic import (
     Alias,
     ConvertTo,
     Forget,
+    Inherit,
     KwOnly,
     NoRepr,
     NotKwOnly,
@@ -110,7 +111,9 @@ class FlirtTransform(
         record = _record(self)
         return None if record is None else _read_only(record.matrix)
 
-    _metadata: NoRepr[tx.Optional[FlirtMetadata]] = None
+    _metadata: NoRepr[tx.Optional[FlirtMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("flirt_matrix", _FORGET_VIEWS)

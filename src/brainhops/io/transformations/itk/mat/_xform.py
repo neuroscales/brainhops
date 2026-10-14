@@ -6,7 +6,7 @@ import sys
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
@@ -81,7 +81,9 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS = ("mat",)
 
-    _metadata: NoRepr[tx.Optional[MatMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MatMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the blocks as a record.

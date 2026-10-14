@@ -18,7 +18,7 @@ from io import BytesIO
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import affines as _affines
@@ -166,8 +166,6 @@ class MrtrixWarp(
     read. `rawdata` describes the file as it was read, or as the warp was last
     consolidated, so assigning `data` leaves it as it is.
     """
-
-    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = None
 
     # --- reading ------------------------------------------------------
 
@@ -511,6 +509,10 @@ class MrtrixCoordinatesField(
             return None
         return _warp_to_model(self.rawdata)
 
+    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
+
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
@@ -750,6 +752,10 @@ class MrtrixDisplacementField(
         if self.rawdata is None:
             return None
         return _warp_to_model(self.rawdata)
+
+    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -1019,6 +1025,10 @@ class MrtrixWarpFull(
         if self.rawdata is None:
             return None
         return _warp_to_model(self.rawdata)
+
+    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.

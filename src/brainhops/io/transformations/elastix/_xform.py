@@ -10,7 +10,7 @@ import os
 from warnings import warn
 
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
 from brainhops._core.properties import lazyproperty, smartproperty
@@ -121,7 +121,9 @@ class ElastixTransform(
 
     HINTS = ("elastix", "transformix")
 
-    _metadata: NoRepr[tx.Optional[ElastixMetadata]] = None
+    _metadata: NoRepr[tx.Optional[ElastixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("transformations", "block", "initial")

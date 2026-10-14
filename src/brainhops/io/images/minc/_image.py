@@ -266,7 +266,9 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             metadata = self.metadata
         if self._data is None and not requested:
             return self if inplace else replace(self)
-        raw = self.rawdata if self._data is None else _image_to_disk(self._data)
+        raw = (
+            self.rawdata if self._data is None else _image_to_disk(self._data)
+        )
         if not inplace:
             return replace(self, data=None, rawdata=raw, metadata=metadata)
         self.rawdata = raw

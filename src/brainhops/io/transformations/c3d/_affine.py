@@ -4,7 +4,7 @@ __all__ = ["C3dAffine"]
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
 from brainhops._core.properties import (
@@ -106,7 +106,9 @@ class C3dAffine(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("c3d", "greedy", "itksnap")
 
-    _metadata: NoRepr[tx.Optional[C3dAffineMetadata]] = None
+    _metadata: NoRepr[tx.Optional[C3dAffineMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.

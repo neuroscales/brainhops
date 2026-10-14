@@ -5,7 +5,7 @@ __all__ = ["BdvViewRegistration"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -161,7 +161,9 @@ class BdvViewRegistration(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xml",)
     HINTS = ("bdv", "bigdataviewer", "bigstitcher")
 
-    _metadata: NoRepr[tx.Optional[BdvMetadata]] = None
+    _metadata: NoRepr[tx.Optional[BdvMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("transformations", "decoded")

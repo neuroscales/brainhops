@@ -8,7 +8,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -119,7 +119,9 @@ class AfniBrikWarp(
     assigning `data` leaves it as it is.
     """
 
-    _metadata: NoRepr[tx.Optional[AfniMetadata]] = None
+    _metadata: NoRepr[tx.Optional[AfniMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
     """The sub-bricks given to the warp, or `None` to decode them.

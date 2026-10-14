@@ -112,7 +112,9 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[N5Metadata]] = None
+    _metadata: NoRepr[tx.Optional[N5Metadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the dataset or pyramid, or `None`.

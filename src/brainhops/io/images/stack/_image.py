@@ -127,7 +127,9 @@ class StackImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[StackMetadata]] = None
+    _metadata: NoRepr[tx.Optional[StackMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the stack, which holds its record, or `None`.

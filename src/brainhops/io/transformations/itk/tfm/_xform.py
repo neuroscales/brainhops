@@ -3,7 +3,7 @@
 __all__ = ["TfmTransform"]
 
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
@@ -52,7 +52,9 @@ class TfmTransform(TextFileReader, ItkTransform):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".tfm",)
     HINTS = ("tfm",)
 
-    _metadata: NoRepr[tx.Optional[TfmMetadata]] = None
+    _metadata: NoRepr[tx.Optional[TfmMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the blocks as a record.

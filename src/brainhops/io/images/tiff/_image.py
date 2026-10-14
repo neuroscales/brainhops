@@ -245,7 +245,9 @@ class TiffImage(
     the list of the record and caches it apart.
     """
 
-    _metadata: NoRepr[tx.Optional[TiffMetadata]] = None
+    _metadata: NoRepr[tx.Optional[TiffMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the series, which holds its record, or `None`.

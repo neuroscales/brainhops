@@ -7,7 +7,7 @@ import re
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core.properties import smartproperty
@@ -27,7 +27,7 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common.afni._constants import DICOM_TO_RAS
-from brainhops.io.common.nifti import NiftiRaw
+from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -159,6 +159,10 @@ class AfniNiftiWarp(
         if self.rawdata is None:
             return None
         return _field_to_model(self.rawdata)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.

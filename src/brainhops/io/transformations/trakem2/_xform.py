@@ -5,7 +5,7 @@ __all__ = ["TrakEM2PatchAffine"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -148,7 +148,9 @@ class TrakEM2PatchAffine(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xml",)
     HINTS = ("trakem2",)
 
-    _metadata: NoRepr[tx.Optional[TrakEM2Metadata]] = None
+    _metadata: NoRepr[tx.Optional[TrakEM2Metadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the project, which holds its XML file as a record.

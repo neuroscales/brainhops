@@ -114,7 +114,9 @@ class PrecomputedImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[PrecomputedMetadata]] = None
+    _metadata: NoRepr[tx.Optional[PrecomputedMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the volume, which holds its record, or `None`.

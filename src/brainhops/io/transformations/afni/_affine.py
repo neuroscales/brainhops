@@ -3,7 +3,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Alias, KwOnly, NoRepr, replace
+from bagof.magic import HIDE_IF_NONE, Alias, Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -101,7 +101,9 @@ class AfniAffine(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".aff12.1D", ".1D")
     HINTS = ("aff12",)
 
-    _metadata: NoRepr[tx.Optional[AfniAffineMetadata]] = None
+    _metadata: NoRepr[tx.Optional[AfniAffineMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.

@@ -108,7 +108,9 @@ class Jpeg2000MultiScaleImage(
     decoded list, which is cached apart, is empty.
     """
 
-    _metadata: NoRepr[tx.Optional[Jpeg2000Metadata]] = None
+    _metadata: NoRepr[tx.Optional[Jpeg2000Metadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("images", "transformations")

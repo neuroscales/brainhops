@@ -123,7 +123,9 @@ class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
     the list of the record, which is empty.
     """
 
-    _metadata: NoRepr[tx.Optional[ZarrMetadata]] = None
+    _metadata: NoRepr[tx.Optional[ZarrMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the store, which holds its record, or `None`.

@@ -9,7 +9,7 @@ __all__ = [
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import ConvertTo, KwOnly, NoRepr, replace
+from bagof.magic import ConvertTo, Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -167,7 +167,9 @@ class RegisterDatTransformation(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".dat", ".reg")
 
-    _metadata: NoRepr[tx.Optional[RegisterDatMetadata]] = None
+    _metadata: NoRepr[tx.Optional[RegisterDatMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     # A geometry that is given, or assigned, is converted to a `Geometry`
     # and checked by `_as_reference_geometry` or `_as_moving_geometry`.

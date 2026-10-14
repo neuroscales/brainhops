@@ -4,7 +4,7 @@ __all__ = ["H5Transform"]
 
 import h5py
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
@@ -54,7 +54,9 @@ class H5Transform(Hdf5Reader, ItkTransform):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".h5", ".hdf5")
     HINTS = ("h5",)
 
-    _metadata: NoRepr[tx.Optional[H5Metadata]] = None
+    _metadata: NoRepr[tx.Optional[H5Metadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the blocks as a record.

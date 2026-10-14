@@ -260,7 +260,9 @@ class OpenSlideImage(
     the list of the record and caches it apart.
     """
 
-    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = None
+    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the slide, which holds its record, or `None`.
@@ -555,7 +557,9 @@ class OpenSlideMultiScaleImage(
     empty list apart.
     """
 
-    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = None
+    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("images", "transformations")

@@ -242,7 +242,9 @@ class PillowImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[PillowMetadata]] = None
+    _metadata: NoRepr[tx.Optional[PillowMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.

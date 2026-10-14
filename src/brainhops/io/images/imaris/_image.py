@@ -125,7 +125,9 @@ class ImarisImage(ImageFormat, SingleScaleImage, Hdf5Reader):
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[ImarisMetadata]] = None
+    _metadata: NoRepr[tx.Optional[ImarisMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     level: int = 0
     """The resolution level that the image holds, from 0 for the finest.

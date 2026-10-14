@@ -5,7 +5,7 @@ __all__ = ["XfmAffine"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -160,7 +160,9 @@ class XfmAffine(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xfm",)
 
-    _metadata: NoRepr[tx.Optional[XfmMetadata]] = None
+    _metadata: NoRepr[tx.Optional[XfmMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.

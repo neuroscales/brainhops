@@ -13,7 +13,7 @@ from collections import OrderedDict
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -103,7 +103,9 @@ class MrtrixLinearTransform(
     decides before the priority.
     """
 
-    _metadata: NoRepr[tx.Optional[MrtrixLinearMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MrtrixLinearMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.

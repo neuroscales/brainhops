@@ -123,7 +123,9 @@ class Jpeg2000Image(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[Jpeg2000Metadata]] = None
+    _metadata: NoRepr[tx.Optional[Jpeg2000Metadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.

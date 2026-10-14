@@ -1015,7 +1015,9 @@ class ToyLevel(
     EXTENSIONS = (".toyp",)
 
     rawdata: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    _metadata: KwOnly[NoRepr[tx.Optional[ToyPyramidMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[ToyPyramidMetadata]] = Inherit(
+        "metadata", default=None
+    )
     level: KwOnly[int] = 0
 
     # Other metadata drops the transformations decoded from the old record,
@@ -1188,7 +1190,9 @@ class ToyPyramid(
     EXTENSIONS = (".toyp",)
 
     rawdata: KwOnly[NoRepr[tx.Optional[tx.Tuple[ArrayProtocol, ...]]]] = None
-    _metadata: KwOnly[NoRepr[tx.Optional[ToyPyramidMetadata]]] = None
+    _metadata: NoRepr[tx.Optional[ToyPyramidMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     # Other metadata drops the levels and the placements decoded from the
     # old record, and keeps those that were assigned.
