@@ -196,6 +196,11 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
         MetadataLossError
             If a field is reported under the `"raise"` policy.
         """
+        if not isinstance(other, cls):
+            # Two formats whose metadata shares a base, such as the
+            # containers of a plain matrix, declare `raw` once, so the
+            # copy by name would keep a record of the other format.
+            kwargs.setdefault("raw", None)
         obj = super().from_instance(other, *args, **kwargs)
         report = ConversionReport(
             source=type(other).__name__, target=cls.__name__
