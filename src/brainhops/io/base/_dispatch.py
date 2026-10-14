@@ -666,7 +666,10 @@ def sniff(
     """Identify the registered format that would read `source`.
 
     The function returns a format class rather than a confidence score, and it
-    ranks formats in the same way as [`parse`][].
+    ranks formats in the same way as [`parse`][]. Hints restrict the formats
+    in the same way: only the formats that answer to a hint are sniffed. If
+    none of them recognizes the input, they are ranked by what they declare,
+    and the format that [`parse`][] would try first is returned.
 
     !!! note "`None` is not the same as a failed load"
         [`parse`][] can resolve a tie by trying each candidate. This function
@@ -674,11 +677,24 @@ def sniff(
 
     Parameters
     ----------
+    source : Source
+        The input.
+    registry : set of type
+        The formats to choose between.
+    fn_sniff : str
+        The name of the sniffing method, such as `"sniff_file"`.
     error : bool or type of Exception, default=False
         Whether to raise instead of returning `None`. An exception class
         replaces the default error type.
     what : str, default="input content"
         A description of the input for error messages.
+    hints : str or iterable of str, default=()
+        Only formats that answer to one of these hints are allowed, and these
+        formats are ranked even if none of them recognizes the input.
+    hint : str or iterable of str, optional
+        Further hints, merged with `hints` and applied in the same way.
+    **kwargs : Any
+        Options passed to each sniffer.
 
     Returns
     -------
@@ -702,6 +718,11 @@ def sniff(
         if not requested_hints or format_hints(subclass) & requested_hints
     }
     tiers = _candidates(source, registry, fn_sniff, allowed=allowed, **kwargs)
+    # As in parse, hints are an explicit allowlist: if nothing in it sniffs
+    # positively, the allowed formats are ranked without scores, which gives
+    # the format that parse tries first. A missing file is still reported.
+    if requested_hints and not tiers and source.missing is None:
+        tiers = _tiers([(subclass, None) for subclass in allowed])
 
     if tiers and len(tiers[0]) == 1:
         return tiers[0][0]

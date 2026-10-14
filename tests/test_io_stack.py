@@ -354,6 +354,10 @@ def test_a_stack_is_read_only_with_its_hint(tmp_path: Path) -> None:
         assert isinstance(
             MetadataFormat.load(path, hint="stack"), StackMetadata
         )
+        # Sniffing with the hint names the format that the hint loads.
+        assert io.sniff(path, hint="stack") is StackImage
+        assert io.images.sniff(path, hint="stack") is StackImage
+        assert MetadataFormat.sniff(path, hint="stack") is StackMetadata
     # The error of the sniffer tells how to read the stack.
     for cls in (StackImage, StackMetadata):
         with pytest.raises(SnifferContentError, match='hint="stack"'):

@@ -1514,16 +1514,21 @@ its status.
      folder or a file, and for streams and bytes, so `io.load`,
      `io.images.load`, `MetadataFormat.load` and `io.sniff` never choose
      them without the hint, and they take nothing from the TIFF and
-     Pillow readers. With the hint, dispatch tries the formats that the
-     hint allows, as for any format that does not recognize its input.
-     A sniffer asked to raise tells why the path cannot be a stack, such
-     as a Zarr store or names that follow no single numbering, or else
-     that a stack is read only by hint. No base mechanism restricts a
-     format to its hint, so each class refuses in its own sniffer, as
-     `ItkNiftiCoordinatesField` does. `io.sniff(folder, hint="stack")`
-     returns `None`, since no sniffer and no extension names the stack.
-     Status: decided. The review of #431 had accepted a folder sniffed
-     with the confidence `LIKELY`.
+     Pillow readers. A sniffer asked to raise tells why the path cannot
+     be a stack, such as a Zarr store or names that follow no single
+     numbering, or else that a stack is read only by hint. No base
+     mechanism restricts a format to its hint, so each class refuses in
+     its own sniffer, as `ItkNiftiCoordinatesField` does. A hint
+     restricts the formats that dispatch considers, and does not only
+     reorder them: `parse` and `sniff` in `io/base/_dispatch.py` keep
+     the formats that answer to a hint, and sniff only those. When none
+     of them recognizes the input, `parse` tries them in the order of
+     what they declare, and `sniff` returns the first of that order, so
+     `io.sniff(folder, hint="stack")` returns `StackImage`, as the
+     maintainer asked, and `sniff` agrees with `parse` for every format
+     read by hint. A missing file is still reported by `sniff`. Status:
+     decided. The review of #431 had accepted a folder sniffed with the
+     confidence `LIKELY`.
 126. A number that no file carries is a missing slice. The record does
      not store the missing numbers, which follow from the numbers of its
      members (`StackRaw.missing`), so a record cannot contradict itself.

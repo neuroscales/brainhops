@@ -10,9 +10,9 @@ writes (the `pillow` extra), such as PNG or JPEG.
 
 A folder is read as a stack only when it is asked for, with the format
 hint `"stack"` or with `StackImage.load`. The stack is never recognized
-from its path, so `io.load` and `io.images.load` choose it only with the
-hint, `io.sniff` never names it, and a single TIFF or Pillow file is
-read by its own format.
+from its path, so `io.load`, `io.images.load` and `io.sniff` choose it
+only with the hint, and a single TIFF or Pillow file is read by its own
+format.
 
 ```python
 import brainhops.io as io
