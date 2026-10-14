@@ -18,16 +18,27 @@ from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import ConversionError
 from brainhops.io.base._base import Format
-from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
+from brainhops.io.base._dispatch import (
+    _match_name,
+    _normalize_hints,
+    _tiers,
+    _to_filename,
+)
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     FileReader,
     FileWriter,
     WriterError,
 )
+from brainhops.io.base.specs import format_hints
 
 
-def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
+def save(
+    obj: tx.Any,
+    file: path.FileLike,
+    hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
+    **kwargs,
+) -> None:
     """Write an object to a file in the format that the file name calls for.
 
     The format is chosen from the registered writable formats, in four
@@ -37,7 +48,10 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
        extensions the name ends with are the candidates, so `a.ome.zarr`
        asks for OME-Zarr and `a.zarr` for any Zarr format. A format that
        requires a prefix is a candidate only when the name has one of
-       its prefixes.
+       its prefixes. With a `hint`, only the formats that answer to it
+       are candidates, as for reading, and when none of them claims the
+       name, they are all candidates, so that `a.json` can be written
+       with `hint="neuroglancer.affine"`.
     2. **The object's own format.** If `obj` already is of one of the
        candidates, it is written as it is.
     3. **A format that can hold the object as it is.** Otherwise, a
@@ -100,6 +114,10 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         A path, or a file object opened for writing. An object without a name,
         such as a buffer, gives no name to choose from, so `obj` must already
         be a writable format.
+    hint : str or iterable of str, optional
+        Hints that name the formats to choose from, such as
+        `"neuroglancer.affine"`, as for `load`. A file without a name is
+        written by `obj` itself, and the hint is not used.
     **kwargs : Any
         Options passed to the `save` method of the chosen format.
 
@@ -110,7 +128,9 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     WriterError
         If no format claims the file name, or if every one that does
         refuses `obj`, with the reason of each. If `obj` already is of one
-        of these formats, the error of its own writer is raised.
+        of these formats, the error of its own writer is raised. If a hint
+        is given, no writable format answers to it, or none of those that do
+        can hold `obj`, or the chosen format cannot write it.
     OSError
         If the file cannot be written, or the data of `obj` cannot be
         read.
@@ -126,9 +146,23 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             f"file, or build the format you want and save that."
         )
 
-    registry = (fmt for fmt in Format._REGISTRY if issubclass(fmt, FileWriter))
-    matches = ((fmt, _match_name(name, fmt)) for fmt in registry)
+    hints = _normalize_hints((), hint)
+    registry = (
+        fmt
+        for fmt in Format._REGISTRY
+        if issubclass(fmt, FileWriter)
+        and (not hints or format_hints(fmt) & hints)
+    )
+    matches = [(fmt, _match_name(name, fmt)) for fmt in registry]
     claimed = [(fmt, match) for fmt, match in matches if match is not None]
+    if not claimed and hints:
+        # A hint names the formats, which are written whatever the name.
+        claimed = [(fmt, (0, 0)) for fmt, _ in matches]
+    if not claimed and hints:
+        raise WriterError(
+            f"Cannot write {name!r}: no writable format answers to the "
+            f"hint(s) {', '.join(sorted(repr(h) for h in hints))}."
+        )
     if not claimed:
         raise WriterError(
             f"Cannot write {name!r}: no writable format is registered for "
@@ -304,8 +338,9 @@ def _holds(fmt: type, obj: tx.Any, reasons: tx.List[str]) -> bool:
 
 
 # _describe and _ambiguity_message mirror the messages of parse and sniff
-# so that the three could share a helper. save has no hint=, so a format is
-# chosen by converting the object.
+# so that the three could share a helper. The formats that save chooses
+# from are told apart by converting the object, so the message names the
+# conversion.
 
 
 def _describe(cls: type) -> str:

@@ -18,6 +18,7 @@ __all__ = [
     "matrix",
     "minc",
     "mrtrix",
+    "neuroglancer",
     "niftyreg",
     "sniff",
     "trakem2",
@@ -35,6 +36,7 @@ from . import (
     itk,
     matrix,
     mrtrix,
+    neuroglancer,
     niftyreg,
     trakem2,
 )
