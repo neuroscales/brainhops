@@ -124,6 +124,61 @@ def read_multiscale(
     return multiscales[0], source_version
 
 
+# The drafts 0.6.dev1 and 0.6.dev2 let a scale or a translation store its
+# values in an array named by `path`. Versions 0.4 and 0.5, and every draft
+# from 0.6.dev3 on, require the values inline in their schemas, as version
+# 0.6 does (ngff-spec tag `0.6` at 89da1da,
+# `schemas/coordinate_transformations.schema`, and its invalid conformance
+# cases `bad_scale_path_not_allowed.json` and
+# `bad_translate_path_not_allowed.json`).
+_PARAMETER_PATH_DRAFTS = ("0.6.dev1", "0.6.dev2")
+
+
+def check_parameter_paths(
+    multiscale: Multiscale, version: tx.Optional[str]
+) -> None:
+    """Refuse a scale or a translation whose values are named by `path`.
+
+    OME-NGFF 0.6 only lets an `affine` or a `rotation` store its parameters
+    in an array named by `path`. A `scale` or a `translation` must give its
+    values inline, whereas the drafts 0.6.dev1 and 0.6.dev2 allowed a
+    `path` there too, and such a draft is still read.
+
+    Parameters
+    ----------
+    multiscale : Multiscale
+        The multiscale, normalized to version 0.6.
+    version : str or None
+        The OME version of the group, before normalization.
+
+    Raises
+    ------
+    OmeImageError
+        If a transformation of the multiscale or of one of its levels,
+        including one nested in another transformation, is a `scale` or a
+        `translation` whose values are named by `path`, and the version is
+        not one of those drafts.
+    """
+    if version in _PARAMETER_PATH_DRAFTS:
+        return
+    transforms = list(
+        getattr(multiscale, "coordinateTransformations", None) or []
+    )
+    for dataset in multiscale.datasets:
+        transforms.extend(dataset.coordinateTransformations or [])
+    for transform in transforms:
+        found = _parameter_path(transform.to_json())
+        if found is not None:
+            kind, path = found
+            raise OmeImageError(
+                f"This OME-Zarr image has a {kind} transformation whose "
+                f"values are stored in the array {path!r}. OME-NGFF "
+                f"{version or NORMALIZED_VERSION} requires the values of a "
+                f"{kind} inline, and only an affine or a rotation may name "
+                "an array of parameters."
+            )
+
+
 def _output_system(multiscale: Multiscale) -> tx.Any:
     # Return the system named by the output of the first dataset
     # transformation that names one, or the first declared system when no
@@ -898,3 +953,26 @@ def _drops_axes(xform: Transformation) -> bool:
     if isinstance(xform, Sequence):
         return any(_drops_axes(part) for part in xform.transformations)
     return False
+
+
+def _parameter_path(entry: tx.Any) -> tx.Optional[tx.Tuple[str, str]]:
+    # Return the type and the path of the first scale or translation of the
+    # JSON of a transformation that names its values by `path`, looking into
+    # every nested transformation.
+    if isinstance(entry, list):
+        for item in entry:
+            found = _parameter_path(item)
+            if found is not None:
+                return found
+        return None
+    if not isinstance(entry, dict):
+        return None
+    kind = entry.get("type")
+    path = entry.get("path")
+    if kind in ("scale", "translation") and isinstance(path, str):
+        return kind, path
+    for value in entry.values():
+        found = _parameter_path(value)
+        if found is not None:
+            return found
+    return None

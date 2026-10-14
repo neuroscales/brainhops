@@ -99,9 +99,11 @@ multiscale that refers to a system of another group, such as a labels
 image, is skipped, since labels and scenes are not read yet (items 132
 and 133 of the tensions in `docs/design/format-records.md`), and only the
 first multiscale of a group is read. A `scale` or a `translation` whose
-values are stored in an array named by `path` is read, as the table of
-transformation types of version 0.6 allows, although the schema of that
-version refuses it (item 134).
+values are stored in an array named by `path` is refused, since the
+schema of version 0.6 requires them inline, as those of versions 0.4 and
+0.5 do. Only the drafts 0.6.dev1 and 0.6.dev2 allowed it, and they are
+still read. An `affine` or a `rotation` may name an array of parameters
+(item 134).
 
 The writer encodes the geometry from the levels and the placements, and
 does not keep the metadata as it was read, so a pyramid that is saved

@@ -34,6 +34,7 @@ from brainhops.io.transformations.zarr import _map
 from ._image import ZarrImage
 from ._ome import (
     OmeImageError,
+    check_parameter_paths,
     common_transformations,
     group_path,
     intrinsic_name,
@@ -288,6 +289,7 @@ class OmeZarrImage(
                 "cannot be read as a multiscale image."
             )
 
+        check_parameter_paths(multiscale, source_version)
         datasets = list(multiscale.datasets)
         if not datasets:
             raise OmeImageError(

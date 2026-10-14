@@ -1590,10 +1590,15 @@ its status.
      cases `bad_scale_path_not_allowed.json` and
      `bad_translate_path_not_allowed.json` are invalid. An `affine` or a
      `rotation` may use `path` in both. abczarr 0.2.2 and 0.2.3 accept
-     the `path` of a scale, and convert it to version 0.5 as a scale of
-     ones with a warning. brainhops reads it (`io/transformations/zarr/
-     _map.py`, `_parameter`) and never writes it. Status: open, for the
-     specification and abczarr.
+     the `path` of a scale. The maintainer decided on #433 that such
+     metadata is not valid 0.6, so the reader refuses a scale or a
+     translation named by `path`, wherever it is nested
+     (`io/images/zarr/_ome.py`, `check_parameter_paths`). The schemas of
+     versions 0.4 and 0.5, and of the drafts from 0.6.dev3 on, require the
+     values inline too, while the drafts 0.6.dev1 and 0.6.dev2 allowed a
+     `path`, so only these two drafts are still read with one. The writer
+     never names the values of a scale or a translation by `path`.
+     Status: decided.
 135. The schema of version 0.6 requires every entry of a `scale` to be
      positive (`exclusiveMinimum` 0), while the prose of the
      specification only says that they SHOULD be non-zero. abczarr 0.2.3
@@ -1607,7 +1612,10 @@ its status.
      positive scale (`io/images/zarr/_multiscale.py`, `to_node`). Levels
      that flip different axes are refused, as in item 131 (#447), and
      versions 0.4 and 0.5, which have no slot for an affine, refuse a
-     flip. Status: decided.
+     flip. The transformation of a dataset, from the array of a level to
+     the intrinsic system, is therefore never an affine or a flip
+     (`to_dataset_ome` only returns a positive scale, followed by a
+     translation). Status: decided.
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,
