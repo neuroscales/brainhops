@@ -139,6 +139,20 @@ class OtherMetadata(MetadataFormat):
         return cls(raw=raw, **{"description": description, **kwargs})
 
 
+class _SharedRecordMetadata(MetadataFormat):
+    """A base whose formats share their type of record and its field."""
+
+    raw: NoRepr[tx.Optional[DictRaw]] = None
+
+
+class FirstContainerMetadata(_SharedRecordMetadata):
+    """A format whose record is that of its base."""
+
+
+class SecondContainerMetadata(_SharedRecordMetadata):
+    """Another format whose record is that of the same base."""
+
+
 def _read() -> DictMetadata:
     return DictMetadata.from_raw(
         DictRaw(desc="short", cal=(0.0, 1.0), Key="v")
@@ -363,6 +377,11 @@ def test_the_record_stays_within_its_format() -> None:
     assert meta.to().raw is meta.raw
     # Converted metadata does not share `extra` with its source.
     assert generic.extra == meta.extra and generic.extra is not meta.extra
+    # Two formats that declare `raw` on a common base keep their records
+    # apart too.
+    first = FirstContainerMetadata(raw=DictRaw(desc="d"))
+    assert SecondContainerMetadata.from_instance(first).raw is None
+    assert FirstContainerMetadata.from_instance(first).raw is first.raw
 
 
 def test_from_any_converts_metadata() -> None:
