@@ -1905,7 +1905,8 @@ class Exemplar(tx.NamedTuple):
     TIFF is read by OpenSlide and by the TIFF reader, which reads more of
     its metadata and is therefore preferred, so the checks load the
     metadata of the generic TIFF vendor of OpenSlide with the hint
-    `"openslide"`.
+    `"openslide"`. An image stack is never recognized from its path, so
+    the checks load its metadata with the hint `"stack"`.
     """
 
 
@@ -3855,6 +3856,7 @@ if tifffile is not None:
     # the generic writer with the format itself, since no extension names
     # a folder for `io.save` to choose the format from. The metadata
     # cannot be written on its own, so checks 7 and 10 compare records.
+    # A stack is read only by hint, so check 6 dispatches with `"stack"`.
     # The record holds the names of the files, which the edit of check 10
     # changes, and only a scaling with a unit of length, which the
     # geometry of the checks is. The format has no option that changes
@@ -3877,6 +3879,7 @@ if tifffile is not None:
         cut=_stack_cut,
         header=lambda metadata: metadata.raw,
         folder=True,
+        hint="stack",
     )
 
 

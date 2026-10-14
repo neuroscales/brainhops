@@ -47,9 +47,8 @@ from ._raw import (
     member_format,
     read_record,
     refuse_options,
+    refuse_path,
     refuse_stream,
-    sniff_folder,
-    sniff_score,
 )
 from ._views import _image_to_disk, _image_to_model, _permutation
 
@@ -65,9 +64,10 @@ class StackImage(
     `z0001.tif` and so on. This class reads such a folder as one image,
     and writes an image as such a folder. The files are TIFF files, read
     and written with tifffile, or images in a format that Pillow reads and
-    writes, such as PNG. The folder is recognized when it is passed to
-    [`load`][brainhops.io.load] (see [`brainhops.io.images.stack`][] for
-    the rules), and the format hint `"stack"` selects this class.
+    writes, such as PNG. A stack is never recognized from its path, so a
+    folder is read as a stack only with the format hint `"stack"`, as in
+    `load(folder, hint="stack")`, or with `StackImage.load(folder)` (see
+    [`brainhops.io.images.stack`][] for the rules).
 
     The image holds the list of its files, their headers and the geometry
     of the stack as [`StackMetadata`][], whose record is a
@@ -403,21 +403,20 @@ class StackImage(
         pattern: tx.Optional[str] = None,
         **kwargs,
     ) -> float:
-        """Return the confidence that a path is the folder of a stack.
+        """Refuse a path, since a stack is read only with its hint.
 
-        A local folder that is not a Zarr store, and whose image files
-        (or the files that `pattern` selects) follow one numbering, scores
-        `LIKELY`. Only the names of the files are checked, so no file is
-        opened. A file never scores, so this class never takes a file from
-        the TIFF and Pillow readers.
+        A stack is never recognized from its path, neither a folder nor a
+        file, so [`load`][brainhops.io.load] chooses this class only with
+        the hint `"stack"`, and this class never takes a folder or a file
+        from another reader.
 
         Parameters
         ----------
         filename : path-like
             The path of the folder.
         error : bool or type[Exception], default=False
-            Whether to raise an error when the path is not the folder of a
-            stack.
+            Whether to raise an error, which tells why the path is not the
+            folder of a stack, or that a stack is read only by hint.
         pattern : str, optional
             The glob pattern that selects the files of the stack.
         **kwargs : Any
@@ -426,9 +425,9 @@ class StackImage(
         Returns
         -------
         float
-            The confidence, `LIKELY` or `NO`.
+            `NO`.
         """
-        return sniff_score(sniff_folder(filename, pattern), error)
+        return refuse_path(filename, pattern, error)
 
     @classmethod
     def sniff_fileobj(
