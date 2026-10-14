@@ -1673,6 +1673,53 @@ def _named_pyramid(
     return path
 
 
+@pytest.mark.parametrize("kind", ["scale", "translation"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_reader_refuses_a_scale_or_translation_named_by_path(
+    tmp_path: Path, kind: str, nested: bool
+) -> None:
+    # OME-NGFF 0.6 requires the values of a scale or a translation inline
+    # (memo item 134), wherever the transformation sits.
+    by_path = {"type": kind, "path": "params"}
+    if nested:
+        by_path = {
+            "type": "sequence",
+            "transformations": [{"type": "identity"}, by_path],
+        }
+    common = dict(
+        by_path, input={"name": "intrinsic"}, output={"name": "moved"}
+    )
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "moved", "axes": _space("zyx")}],
+        [common],
+        arrays={"params": np.asarray([1.0, 2.0, 3.0])},
+    )
+    with pytest.raises(OmeImageError, match="inline"):
+        OmeZarrImage.from_store(path)
+
+
+def test_reader_reads_an_affine_named_by_path(tmp_path: Path) -> None:
+    # An affine or a rotation may still name an array of parameters.
+    matrix = np.eye(3, 4)
+    matrix[:, 3] = [1.0, 2.0, 3.0]
+    common = {
+        "type": "affine",
+        "path": "params",
+        "input": {"name": "intrinsic"},
+        "output": {"name": "moved"},
+    }
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "moved", "axes": _space("zyx")}],
+        [common],
+        arrays={"params": matrix},
+    )
+    placement = OmeZarrImage.from_store(path).transformation
+    # The stored (z, y, x) translation is reordered to (x, y, z).
+    np.testing.assert_allclose(_world_matrix(placement)[:, 3], [3.0, 2.0, 1.0])
+
+
 def test_reader_names_each_system_with_its_own_axes_and_units(
     tmp_path: Path,
 ) -> None:

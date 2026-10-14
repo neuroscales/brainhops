@@ -484,6 +484,9 @@ def test_by_dimension_refuses_an_output_axis_written_twice() -> None:
 
 
 def test_parameters_may_be_read_from_an_array_of_the_group() -> None:
+    # The mapping reads a scale named by `path`, which the drafts 0.6.dev1
+    # and 0.6.dev2 allowed. The reader refuses it in any other version
+    # (`_ome.check_parameter_paths`).
     zyx = _system(_ZYX)
     # A mapping stands in for the group: the path is followed through it.
     group = {"params": {"scale": np.asarray([3.0, 2.0, 1.0])}}
@@ -997,3 +1000,34 @@ def test_a_flip_factors_out_of_a_diagonal_geometry() -> None:
     linear = np.asarray(_map.flip(signs).matrix)
     composed = linear[:, :3] @ np.asarray(rest.matrix)
     np.testing.assert_allclose(composed, matrix)
+
+
+# ---- parameters named by path, by version ----------------------------
+
+
+def _scale_by_path_multiscale() -> tx.Any:
+    return _multiscale(
+        [
+            {
+                "type": "scale",
+                "path": "params/scale",
+                "input": {"name": "intrinsic"},
+                "output": {"name": "world"},
+            }
+        ]
+    )
+
+
+@pytest.mark.parametrize("version", ["0.6", "0.6rc0", "0.6.dev3", None])
+def test_a_scale_named_by_path_is_refused_after_the_early_drafts(
+    version: tx.Optional[str],
+) -> None:
+    with pytest.raises(OmeImageError, match="inline"):
+        _ome.check_parameter_paths(_scale_by_path_multiscale(), version)
+
+
+@pytest.mark.parametrize("version", ["0.6.dev1", "0.6.dev2"])
+def test_a_scale_named_by_path_is_read_from_the_early_drafts(
+    version: str,
+) -> None:
+    _ome.check_parameter_paths(_scale_by_path_multiscale(), version)
