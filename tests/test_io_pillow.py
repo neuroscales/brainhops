@@ -6,8 +6,10 @@ pixels, mode and resolution.
 
 import io
 import os
+import pickle
 import subprocess
 import sys
+import threading
 import warnings
 import zlib
 from pathlib import Path
@@ -21,6 +23,7 @@ PIL = pytest.importorskip("PIL")
 from PIL import Image  # noqa: E402
 
 import brainhops.io as bio  # noqa: E402
+from brainhops.backends import backend  # noqa: E402
 from brainhops.datamodel.axes import Axis  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.transformations import Scaling  # noqa: E402
@@ -33,11 +36,18 @@ from brainhops.io.base.parsers import (  # noqa: E402
 )
 from brainhops.io.images import load  # noqa: E402
 from brainhops.io.images.base import _utils_raster as raster  # noqa: E402
-from brainhops.io.images.pillow import PillowImage  # noqa: E402
+from brainhops.io.images.pillow import (  # noqa: E402
+    PillowImage,
+    PillowMetadata,
+    PillowRaw,
+)
+from brainhops.io.images.pillow import _data as pillow_data  # noqa: E402
+from brainhops.io.images.pillow._data import _PillowProxy  # noqa: E402
 from brainhops.io.images.pillow._utils import (  # noqa: E402
     array_to_pillow,
     format_for_name,
     pillow_dpi,
+    pillow_to_array,
     read_pillow,
     sniff_pillow,
 )
@@ -95,7 +105,7 @@ def test_read_lossless_is_transposed_view(
         path = _write(tmp_path, name, array)
     image = load(path)
     assert isinstance(image, PillowImage)
-    assert image.mode == mode
+    assert image.metadata.raw.mode == mode
     if array.ndim == 2:
         expected = array.T
     else:
@@ -104,7 +114,8 @@ def test_read_lossless_is_transposed_view(
     assert image.data.dtype == array.dtype
     np.testing.assert_array_equal(image.data, expected)
     # x is the column and y the row.
-    assert image.data[3, 2, ...].tolist() == array[2, 3, ...].tolist()
+    data = np.asarray(image.data)
+    assert data[3, 2, ...].tolist() == array[2, 3, ...].tolist()
 
 
 def test_read_axes_and_systems(tmp_path: Path) -> None:
@@ -133,11 +144,15 @@ def test_read_grey_has_no_channel_axis(tmp_path: Path) -> None:
 
 
 def test_read_data_is_a_view_of_the_decoded_array(tmp_path: Path) -> None:
-    image = load(_write(tmp_path, "a.png", GREY))
-    # F-ordered grey data is the transpose of the C-ordered array.
-    assert image.data.flags.f_contiguous
-    assert image.data.base is not None
-    assert image.data.flags.writeable
+    # With NumPy, the data is a view of the decoded frame, and with Dask it
+    # is a lazy array of the frame.
+    with backend("numpy"):
+        image = load(_write(tmp_path, "a.png", GREY))
+        # F-ordered grey data is the transpose of the C-ordered array.
+        assert image.data.flags.f_contiguous
+        assert image.data.base is not None
+        # The decoded data is read-only, since the writer writes `raw`.
+        assert not image.data.flags.writeable
 
 
 def test_read_bilevel(tmp_path: Path) -> None:
@@ -145,7 +160,7 @@ def test_read_bilevel(tmp_path: Path) -> None:
     path = tmp_path / "a.png"
     Image.fromarray(bits).save(path)
     image = load(path)
-    assert image.mode == "1"
+    assert image.metadata.raw.mode == "1"
     assert image.data.dtype == bool
     np.testing.assert_array_equal(image.data, bits.T)
 
@@ -153,7 +168,7 @@ def test_read_bilevel(tmp_path: Path) -> None:
 def test_read_grey_alpha(tmp_path: Path) -> None:
     la = RGBA[..., :2]
     image = load(_write(tmp_path, "a.png", np.ascontiguousarray(la)))
-    assert image.mode == "LA"
+    assert image.metadata.raw.mode == "LA"
     np.testing.assert_array_equal(image.data, la.transpose(1, 0, 2))
 
 
@@ -173,7 +188,7 @@ def test_read_jpeg_is_close(tmp_path: Path) -> None:
     smooth = np.tile(np.arange(12, dtype=np.uint8) * 20, (7, 1))
     smooth = np.stack([smooth] * 3, -1)
     image = load(_write(tmp_path, "a.jpg", smooth, quality=100))
-    assert image.image_format == "JPEG"
+    assert image.metadata.raw.format == "JPEG"
     assert image.data.shape == (12, 7, 3)
     assert np.abs(image.data.astype(int) - smooth.transpose(1, 0, 2)).max() < 8
 
@@ -184,7 +199,7 @@ def test_read_palette_is_converted(tmp_path: Path) -> None:
     rgb.save(path)
     expected = np.asarray(rgb.convert("RGB"))
     image = load(path)
-    assert image.mode == "P"
+    assert image.metadata.raw.mode == "P"
     assert image.data.shape == (12, 7, 3)
     np.testing.assert_array_equal(image.data, expected.transpose(1, 0, 2))
     # palette=False keeps the indices.
@@ -218,8 +233,8 @@ def _gif(tmp_path):  # noqa: ANN001, ANN202
 
 def test_read_first_frame_by_default(tmp_path: Path) -> None:
     image = load(_gif(tmp_path))
-    assert image.image_format == "GIF"
-    assert image.n_frames == 3
+    assert image.metadata.raw.format == "GIF"
+    assert image.metadata.raw.n_frames == 3
     assert image.frame == 0
     assert image.data.shape == (6, 5, 3)
     assert (image.data == 0).all()
@@ -247,7 +262,9 @@ def test_dpi_is_ignored_by_default(tmp_path: Path) -> None:
     np.testing.assert_array_equal(image.transformation.scale, [1, 1])
     assert all(a.unit is None for a in image.transformation.output.axes)
     # The dpi is not applied by default but is kept as metadata.
-    assert image.info["dpi"] == pytest.approx((300, 150), rel=1e-4)
+    assert image.metadata.raw.info["dpi"] == pytest.approx(
+        (300, 150), rel=1e-4
+    )
 
 
 @pytest.mark.parametrize("name", ["a.png", "a.jpg", "a.bmp"])
@@ -352,7 +369,7 @@ def test_load_by_content_with_wrong_extension(tmp_path: Path) -> None:
     path = tmp_path / "a.jpg"
     path.write_bytes(_bytes(RGB, "PNG"))
     image = load(path)
-    assert image.image_format == "PNG"
+    assert image.metadata.raw.format == "PNG"
 
 
 def test_tiff_falls_back_on_pillow() -> None:
@@ -491,7 +508,7 @@ def test_write_reads_back_identically(tmp_path: Path) -> None:
     image.save(tmp_path / "b.png")
     back = load(tmp_path / "b.png")
     np.testing.assert_array_equal(back.data, image.data)
-    assert back.mode == image.mode
+    assert back.metadata.raw.mode == image.metadata.raw.mode
 
 
 def test_write_float_tiff(tmp_path: Path) -> None:
@@ -655,7 +672,7 @@ def test_write_round_trips_icc_profile(tmp_path: Path) -> None:
     path = tmp_path / "a.png"
     Image.fromarray(RGB).save(path, icc_profile=profile)
     image = load(path)
-    assert image.info["icc_profile"] == profile
+    assert image.metadata.raw.info["icc_profile"] == profile
     image.save(tmp_path / "b.png")
     assert _read(tmp_path / "b.png")[1]["icc_profile"] == profile
 
@@ -695,7 +712,8 @@ def test_write_channel_first_axes(tmp_path: Path) -> None:
 
 
 def test_write_falls_back_on_png_for_read_only_formats() -> None:
-    image = PillowImage(data=GREY.T, image_format="FITS")
+    record = PillowRaw(format="FITS", mode="L", size=(7, 12))
+    image = PillowImage(data=GREY.T, metadata=PillowMetadata.from_raw(record))
     assert Image.open(io.BytesIO(image.to_bytes())).format == "PNG"
 
 
@@ -710,7 +728,271 @@ def test_png_scal_is_kept_but_not_applied(tmp_path: Path) -> None:
     path.write_bytes(png[:end] + chunk + png[end:])
     for source in (path, io.BytesIO(path.read_bytes())):
         image = load(source)
-        assert image.info["sCAL"] == (1, 0.5, 0.25)
+        assert image.metadata.raw.info["sCAL"] == (1, 0.5, 0.25)
         np.testing.assert_array_equal(image.transformation.scale, [1, 1])
-    image = load(path, pixel_size=image.info["sCAL"][1:], unit="mm")
+    scal = image.metadata.raw.info["sCAL"]
+    image = load(path, pixel_size=scal[1:], unit="mm")
     np.testing.assert_allclose(image.transformation.scale, [0.5, 0.25])
+
+
+# ----------------------------------------------------------------------
+#   RECORD, LAZY ARRAY AND CONSOLIDATION
+# ----------------------------------------------------------------------
+
+
+def _frames(tmp_path, name, **options):  # noqa: ANN001, ANN202
+    frames = [Image.fromarray(np.roll(RGB, i, axis=1)) for i in range(3)]
+    path = tmp_path / name
+    frames[0].save(path, save_all=True, append_images=frames[1:], **options)
+    return path
+
+
+_FILES = {
+    "png": lambda p: _write(p, "a.png", RGB),
+    "png-16": lambda p: _write(p, "a.png", GREY16),
+    "apng": lambda p: _frames(p, "a.apng"),
+    "jpeg": lambda p: _write(p, "a.jpg", RGB, quality=90),
+    "bmp": lambda p: _write(p, "a.bmp", RGB),
+    "dib": lambda p: _write(p, "a.dib", RGB),
+    "gif": lambda p: _write(p, "a.gif", GREY),
+    "gif-frames": lambda p: _frames(p, "a.gif"),
+    "webp": lambda p: _write(p, "a.webp", RGB),
+    "webp-lossless": lambda p: _write(p, "a.webp", RGB, lossless=True),
+    "webp-frames": lambda p: _frames(p, "a.webp"),
+    "ppm": lambda p: _write(p, "a.ppm", RGB),
+    "pgm": lambda p: _write(p, "a.pgm", GREY),
+    "pbm": lambda p: _write(p, "a.pbm", GREY > 100),
+    "tga": lambda p: _write(p, "a.tga", RGB),
+    "tga-rle": lambda p: _write(p, "a.tga", RGB, compression="tga_rle"),
+    "pcx": lambda p: _write(p, "a.pcx", RGB),
+    "jp2": lambda p: _write(p, "a.jp2", RGB),
+    "j2k": lambda p: _write(p, "a.j2k", RGB),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_FILES))
+def test_an_untouched_image_is_written_as_its_file(
+    tmp_path: Path, kind: str
+) -> None:
+    # Pillow encodes again whatever it writes, so an image that is read and
+    # not changed is written as the bytes of its file, in every format.
+    source = _FILES[kind](tmp_path)
+    content = source.read_bytes()
+    image = PillowImage.load(source)
+    assert isinstance(image.raw, _PillowProxy)
+    assert image.to_bytes() == content
+    (tmp_path / "copy").mkdir()
+    target = tmp_path / "copy" / source.name
+    PillowImage.load(source).save(target)
+    assert target.read_bytes() == content
+    if source.suffix in PillowImage.EXTENSIONS:
+        # The generic writer chooses the Pillow writer for this name.
+        bio.save(PillowImage.load(source), target)
+        assert target.read_bytes() == content
+    assert "_cache_data" not in vars(image)
+    # A changed image is encoded again, as one frame. It reads back as it
+    # was given, except in JPEG and WebP, which Pillow writes lossily by
+    # default.
+    image.data = np.asarray(image.data)
+    changed = image.consolidate()
+    assert changed.metadata is not image.metadata
+    assert changed.metadata.raw.n_frames == 1
+    if not kind.startswith(("jpeg", "webp")):
+        np.testing.assert_array_equal(changed.data, image.data)
+
+
+def test_a_stream_is_written_back_from_its_start() -> None:
+    content = _bytes(RGB, "PNG")
+    stream = io.BytesIO(b"")
+    stream.write(content)
+    stream.seek(5)
+    image = PillowImage.from_fileobj(stream)
+    assert stream.tell() == 5
+    assert image.to_bytes() == content
+    np.testing.assert_array_equal(image.data, RGB.transpose(1, 0, 2))
+    assert stream.tell() == 5
+
+
+def test_the_record_is_the_header(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.png", RGB, dpi=(300, 150))
+    record = PillowMetadata.load(path).raw
+    assert record == PillowImage.load(path).metadata.raw
+    assert record.format == "PNG"
+    assert record.mode == "RGB"
+    assert record.size == (12, 7)
+    assert record.frame == 0
+    assert record.n_frames == 1
+    assert record.dpi == pytest.approx((300, 150), rel=1e-4)
+    assert record.layout() == ((7, 12, 3), np.dtype("uint8"))
+    clone = pickle.loads(pickle.dumps(record))
+    assert clone == record
+    with pytest.raises(TypeError):
+        PillowMetadata.load(path, palette=False)
+
+
+def test_the_record_describes_the_frame_that_is_read(tmp_path: Path) -> None:
+    path = _gif(tmp_path)
+    first = PillowMetadata.load(path).raw
+    last = PillowMetadata.load(path, frame=-1).raw
+    assert (first.frame, first.n_frames, first.mode) == (0, 3, "P")
+    # Pillow composites the frames of a GIF after the first in RGB.
+    assert (last.frame, last.n_frames, last.mode) == (2, 3, "RGB")
+    image = PillowImage.load(path, frame=-1)
+    assert image.frame == 2
+    assert image.metadata.raw == last
+
+
+def test_unpicklable_info_is_left_out() -> None:
+    from brainhops.io.images.pillow._raw import _picklable
+
+    info = {"dpi": (72.0, 72.0), "lock": threading.Lock()}
+    assert _picklable(info) == {"dpi": (72.0, 72.0)}
+
+
+@pytest.mark.parametrize(
+    "mode, info, palette",
+    [
+        ("1", {}, True),
+        ("L", {}, True),
+        ("LA", {}, True),
+        ("P", {}, True),
+        ("P", {}, False),
+        ("P", {"transparency": 0}, True),
+        ("PA", {}, True),
+        ("PA", {}, False),
+        ("RGB", {}, True),
+        ("RGBA", {}, True),
+        ("CMYK", {}, True),
+        ("YCbCr", {}, True),
+        ("I;16", {}, True),
+        ("I;16B", {}, True),
+        ("I", {}, True),
+        ("F", {}, True),
+    ],
+)
+def test_the_layout_is_that_of_the_decoded_frame(
+    mode: str, info: tx.Dict[str, tx.Any], palette: bool
+) -> None:
+    im = Image.new(mode, (5, 3))
+    im.info.update(info)
+    array, _ = pillow_to_array(im, palette=palette)
+    record = PillowRaw(format="PNG", mode=mode, size=(5, 3), info=info)
+    assert record.layout(palette) == (array.shape, array.dtype)
+
+
+def test_the_shape_is_read_without_decoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write(tmp_path, "a.png", RGB)
+    image = load(path)
+
+    def refuse(*args: tx.Any, **kwargs: tx.Any) -> None:
+        raise AssertionError("The frame was decoded.")
+
+    monkeypatch.setattr(pillow_data, "read_pillow", refuse)
+    assert image.shape == (12, 7, 3)
+    assert image.raw.shape == (7, 12, 3)
+    assert image.raw[:0].shape == (0, 12, 3)
+    assert [axis.name for axis in image.transformation.input.axes] == [
+        "x",
+        "y",
+        "c",
+    ]
+
+
+def test_dpi_true_keeps_the_bytes(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.png", GREY, dpi=(254, 127))
+    image = load(path, dpi=True)
+    # The pixel size is decoded from the record, and is not assigned.
+    assert image.dpi
+    assert image._transformations is None
+    np.testing.assert_allclose(image.transformation.scale, [0.1, 0.2], 1e-4)
+    assert image.to_bytes() == path.read_bytes()
+
+
+def test_a_pixel_size_given_to_the_reader_is_assigned(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.png", GREY)
+    image = load(path, pixel_size=0.5, unit="mm")
+    assert image._transformations is not None
+    content = image.to_bytes()
+    assert content != path.read_bytes()
+    back = PillowImage.from_bytes(content, dpi=True)
+    np.testing.assert_allclose(back.transformation.scale, [0.5, 0.5], 1e-4)
+    # A unit alone makes up no size, so the record is kept.
+    assert load(path, unit="mm").to_bytes() == path.read_bytes()
+
+
+def test_a_changed_image_is_written_as_one_frame(tmp_path: Path) -> None:
+    path = _gif(tmp_path)
+    image = load(path, frame=1)
+    assert image.to_bytes() == path.read_bytes()
+    image.data = np.asarray(image.data)
+    consolidated = image.consolidate()
+    assert consolidated.frame == 0
+    assert consolidated.metadata.raw.n_frames == 1
+    np.testing.assert_array_equal(consolidated.data, image.data)
+
+
+def test_the_reader_options_cannot_change_after_a_read(tmp_path: Path) -> None:
+    image = load(_gif(tmp_path))
+    image.frame = 1
+    with pytest.raises(WriterError):
+        image.consolidate()
+    image = load(_gif(tmp_path))
+    image.palette = False
+    with pytest.raises(WriterError):
+        image.to_bytes()
+
+
+@pytest.mark.parametrize(
+    "name, options",
+    [
+        ("b.png", {"quality": 90}),
+        ("b.png", {"save_all": True}),
+        ("b.jpg", {"compress_level": 9}),
+        ("b.bmp", {"optimize": True}),
+    ],
+)
+def test_an_option_that_pillow_ignores_is_refused(
+    tmp_path: Path, name: str, options: tx.Dict[str, tx.Any]
+) -> None:
+    image = load(_write(tmp_path, "a.png", RGB))
+    with pytest.raises(TypeError):
+        image.save(tmp_path / name, **options)
+    assert not (tmp_path / name).exists()
+
+
+def test_another_format_encodes_the_image_again(tmp_path: Path) -> None:
+    image = load(_write(tmp_path, "a.png", RGB))
+    image.save(tmp_path / "b.bmp")
+    assert _read(tmp_path / "b.bmp")[2] == "BMP"
+    content = image.to_bytes(format="BMP")
+    assert Image.open(io.BytesIO(content)).format == "BMP"
+    # The image itself is not changed by a write.
+    assert image.metadata.raw.format == "PNG"
+
+
+def test_a_changed_image_keeps_its_icc_profile(tmp_path: Path) -> None:
+    profile = b"\x00" * 128
+    path = tmp_path / "a.png"
+    Image.fromarray(RGB).save(path, icc_profile=profile)
+    image = load(path)
+    image.data = np.asarray(image.data)[::-1]
+    image.save(tmp_path / "b.png")
+    assert _read(tmp_path / "b.png")[1]["icc_profile"] == profile
+
+
+def test_saving_over_its_own_file_reads_the_new_file(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.png", RGB)
+    image = load(path)
+    flipped = np.asarray(image.data)[::-1]
+    image.data = flipped
+    image.save(path)
+    # The image holds what the file holds, and its lazy array reads it.
+    assert image._data is None
+    assert isinstance(image.raw, _PillowProxy)
+    assert image.raw.source == path or str(image.raw.source) == str(path)
+    back = load(path)
+    assert image.metadata.raw == back.metadata.raw
+    np.testing.assert_array_equal(image.data, flipped)
+    np.testing.assert_array_equal(back.data, flipped)

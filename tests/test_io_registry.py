@@ -13,21 +13,29 @@ from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     Confidence,
     ParserContentError,
+    SnifferExistsError,
     TextFileReader,
 )
 
 
 @pytest.fixture
-def root() -> type:
+def root() -> tx.Iterator[type]:
     """An isolated dispatcher, so that test formats do not leak into the
     global registry.
+
+    A format registered under the dispatcher is also registered in
+    `Format._REGISTRY`, so the formats of a test are removed from it when
+    the test ends. A format left there would claim the files that later
+    tests load, such as the MNI transform files of `test_io_xfm.py`.
     """
 
     @format_registry
     class Root(Format, TextFileReader):
         pass
 
-    return Root
+    yield Root
+    for fmt in list(Root._REGISTRY):
+        Format._REGISTRY.discard(fmt)
 
 
 def _format(root: type, name: str, **attrs: tx.Any) -> type:
@@ -459,6 +467,65 @@ def test_sniff_reports_an_ambiguity_with_the_same_hints(root: type) -> None:
     message = str(info.value)
     assert 'hint="raw"' in message
     assert 'hint="cooked"' in message
+
+
+# ----------------------------------------------------------------------
+#   HINTS
+# ----------------------------------------------------------------------
+
+
+def _maybe(root: type, name: str, hint: str) -> type:
+    """Register a format that recognizes every line, with a low score."""
+
+    @classmethod
+    def sniff_line(cls, line, error=False, **kwargs) -> float:  # noqa: ANN001
+        return Confidence.MAYBE
+
+    return _format(root, name, marker="", HINTS=(hint,), sniff_line=sniff_line)
+
+
+def _never(root: type, name: str, hint: str) -> type:
+    """Register a format that recognizes no line, and is read by hint."""
+
+    @classmethod
+    def sniff_line(cls, line, error=False, **kwargs) -> float:  # noqa: ANN001
+        return Confidence.NO
+
+    return _format(root, name, marker="", HINTS=(hint,), sniff_line=sniff_line)
+
+
+def test_a_hint_restricts_the_formats_that_are_sniffed(root: type) -> None:
+    """A hint removes the other formats, rather than ranking them lower."""
+    strong = _format(root, "Strong", marker="T", HINTS=("strong",))
+    weak = _maybe(root, "Weak", "weak")
+    assert root.sniff_line("T hello") is strong
+    assert root.from_line("T hello")["format"] == "Strong"
+    assert root.sniff_line("T hello", hint="weak") is weak
+    assert root.from_line("T hello", hint="weak")["format"] == "Weak"
+    assert root.sniff_line("T hello", hint="strong") is strong
+    # A hint that no format answers to leaves nothing to choose.
+    assert root.sniff_line("T hello", hint="unknown") is None
+
+
+def test_sniff_names_a_format_that_only_a_hint_selects(root: type) -> None:
+    """Sniff and load agree on a format that never recognizes its input."""
+    _format(root, "Other", marker="O", HINTS=("other",))
+    only = _never(root, "Only", "only")
+    assert root.sniff_line("X hello") is None
+    assert root.sniff_line("X hello", hint="only") is only
+    assert root.from_line("X hello", hint="only")["format"] == "Only"
+    assert root.sniff_line("O hello", hint="only") is only
+
+
+def test_sniff_reports_a_missing_file_despite_a_hint(
+    root: type,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    _never(root, "Only", "only")
+    missing = tmp_path / "missing.txt"
+    assert root.sniff_file(missing, hint="only") is None
+    with pytest.raises(SnifferExistsError):
+        root.sniff_file(missing, hint="only", error=True)
 
 
 def test_a_format_without_a_docstring_is_not_described() -> None:

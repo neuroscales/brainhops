@@ -41,6 +41,7 @@ from brainhops.errors import (
     WriterError,  # noqa: F401
     WriterNotImplementedError,
 )
+from brainhops.io.base._utils_files import is_local, replace_file
 from brainhops.io.base.specs import SourceSpec
 
 # ----------------------------------------------------------------------
@@ -580,12 +581,25 @@ class FileWriter:
         raise ParserTypeError(f"Cannot write file of type {type(file)}")
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the object to a path, opened in the class write mode."""
+        """Write the object to a path, opened in the class write mode.
+
+        A local file is written next to its target, which it then
+        replaces at once, so that an error while the content is written
+        leaves the target as it was. Other paths are written in place.
+        """
         if isinstance(filename, str):
             filename = path.Path(filename)
+        if not is_local(filename):
+            with filename.open(self._WRITE_MODE) as f:
+                return self.to_fileobj(f, **kwargs)
 
-        with filename.open(self._WRITE_MODE) as f:
-            return self.to_fileobj(f, **kwargs)
+        mode = self._WRITE_MODE.replace("w", "x")
+
+        def write(name: str) -> None:
+            with open(name, mode) as f:
+                self.to_fileobj(f, **kwargs)
+
+        replace_file(filename, write)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the object to a file object open for writing.

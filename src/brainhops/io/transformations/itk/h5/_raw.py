@@ -1,0 +1,243 @@
+"""The record of an ITK HDF5 (`.h5`) file, which holds its root and blocks."""
+
+__all__ = ["H5Header", "H5Raw"]
+
+import os.path as op
+
+import h5py
+import numpy as np
+import typing_extensions as tx
+from bagof.magic import HIDE_IF_NONE, Factory, Magic
+
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserContentError,
+    SnifferContentError,
+)
+
+# io
+from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5Reader
+from brainhops.io.common.hdf5._parsers import read_string
+
+from .._chains import _check_composite, _read_only
+from .._common import ItkStruct, ItkTransformClass
+
+TRANSFORM_GROUP = "TransformGroup"
+
+# The warps hold one value per voxel or per control point, so their
+# parameters are read when they are used.
+_LARGE_TYPES = (
+    ItkTransformClass.DisplacementFieldTransform,
+    ItkTransformClass.BSplineTransform,
+)
+
+
+class H5Header(
+    Magic,
+    convert=True,
+    repr=HIDE_IF_NONE,
+):
+    """Provenance strings stored at the root of an ITK HDF5 file."""
+
+    HDFVersion: tx.Optional[str] = None
+    """The HDF5 library version, such as `"HDF5 library version: 1.10.4"`."""
+
+    ITKVersion: tx.Optional[str] = None
+    """The ITK library version, such as `"5.1.0"`."""
+
+    OSName: tx.Optional[str] = None
+    """The operating system name, such as `"Linux"`."""
+
+    OSVersion: tx.Optional[str] = None
+    """The operating system version, such as `"6.1.0-1007-oem"`."""
+
+
+class H5Raw(Magic, Hdf5Reader, repr=HIDE_IF_NONE):
+    """Record of an ITK HDF5 (`.h5`) file, which holds its root and blocks.
+
+    An ITK `.h5` file records the versions of the libraries that wrote it
+    at its root, which the record holds as an [`H5Header`][], and it
+    stores its blocks as the numbered groups of `/TransformGroup`, which
+    the record holds in `blocks`, in the order of the file, as
+    [`ItkStruct`][brainhops.io.transformations.itk.ItkStruct] blocks. A
+    file that holds a composite transformation starts with a
+    `CompositeTransform` header, which the record keeps as its first
+    block.
+
+    The parameters of a warp, which are large, are held as a
+    [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array], which
+    opens the file again by its name when the values are needed, so the
+    record never keeps an open file. The other parameters are read at
+    once and are read-only, because the blocks of a record are also the
+    elements of the chain that a transformation decodes, and a record is
+    never changed in place.
+
+    The metadata of an `.h5` file,
+    [`H5Metadata`][brainhops.io.transformations.itk.h5.H5Metadata], holds a
+    record, and an
+    [`H5Transform`][brainhops.io.transformations.itk.h5.H5Transform]
+    decodes its chain from the record of its metadata. brainhops does not
+    write ITK `.h5` files, so the record has no writer.
+    """
+
+    header: H5Header = Factory(H5Header)
+    """The provenance strings at the root of the file."""
+
+    blocks: tx.Tuple[ItkStruct, ...] = ()
+    """Every block of `/TransformGroup`, in the order of the file.
+
+    A `CompositeTransform` header can only be the first block.
+    """
+
+    # --- sniff --------------------------------------------------------
+
+    @classmethod
+    def sniff_h5(
+        cls,
+        h5file: h5py.File,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+    ) -> float:
+        """Score an open HDF5 file as an ITK transform file.
+
+        ITK records its version at the root of the file.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the file is not an ITK
+            transform file.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        if "ITKVersion" in h5file.keys():
+            return Confidence.CERTAIN
+        if error:
+            if error is True:
+                error = SnifferContentError
+            raise error("HDF5 file is not an ITK transform file")
+        return Confidence.NO
+
+    # --- from ---------------------------------------------------------
+
+    @classmethod
+    def from_h5(cls, h5file: h5py.File, load: bool = False) -> "H5Raw":
+        """Read the record of an open ITK HDF5 file.
+
+        The groups of `/TransformGroup` are read in the order of their
+        numbers, as ITK reads them. The parameters of a warp are read when
+        they are used, from the file at the name by which it was opened,
+        unless `load` is true or the file was opened from a stream, which
+        has no name.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        load : bool, default=False
+            Whether to read the parameters of the warps into memory at
+            once, rather than when they are used.
+
+        Returns
+        -------
+        H5Raw
+            The record of the file.
+
+        Raises
+        ------
+        ParserContentError
+            If a composite header is not the first block.
+        """
+        header = H5Header()
+        for name in ("HDFVersion", "ITKVersion", "OSName", "OSVersion"):
+            if f"/{name}" in h5file:
+                setattr(header, name, read_string(h5file[f"/{name}"]))
+        source = None if load else _source(h5file)
+        groups = h5file.get(f"/{TRANSFORM_GROUP}", {})
+        # ITK reads the groups by number, but h5py lists them by name,
+        # which puts `10` before `2`.
+        blocks = [
+            _read_block(groups[name], source)
+            for name in sorted(groups, key=_group_number)
+        ]
+        _check_composite(blocks)
+        return cls(header=header, blocks=tuple(blocks))
+
+
+# ---------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------
+
+
+def _read_block(group: h5py.Group, source: tx.Optional[str]) -> ItkStruct:
+    """Read the block of one group of `/TransformGroup`.
+
+    A group without a parameters dataset gives empty parameters. Older ITK
+    versions misspelled the datasets `TranformParameters` and
+    `TranformFixedParameters`, and both spellings are read.
+    """
+    kind = read_string(group["TransformType"])
+    try:
+        kind, precision, ndim_input, ndim_output = kind.split("_")
+    except ValueError:
+        raise ParserContentError(
+            f"An ITK transform type is written as "
+            f"`{{Class}}_{{Precision}}_{{InputDim}}_{{OutputDim}}`, not "
+            f"{kind!r}."
+        ) from None
+    kind = ItkTransformClass(kind)
+    parameters = _dataset(group, "TransformParameters", "TranformParameters")
+    fixed_parameters = _dataset(
+        group, "TransformFixedParameters", "TranformFixedParameters"
+    )
+    if parameters is None:
+        parameters = np.array([])
+    elif source is None or kind not in _LARGE_TYPES:
+        parameters = parameters[()]
+    else:
+        parameters = DelayedH5Array(source, parameters.name)
+    if fixed_parameters is None:
+        fixed_parameters = np.array([])
+    else:
+        fixed_parameters = fixed_parameters[()]
+    return ItkStruct(
+        type=kind,
+        precision=precision,
+        ndim_input=int(ndim_input),
+        ndim_output=int(ndim_output),
+        parameters=_read_only(parameters),
+        fixed_parameters=_read_only(fixed_parameters),
+    )
+
+
+def _dataset(
+    group: h5py.Group, name: str, misspelled: str
+) -> tx.Optional[h5py.Dataset]:
+    """Return a dataset of a group under its name or its old misspelling."""
+    for key in (name, misspelled):
+        if key in group:
+            return group[key]
+    return None
+
+
+def _source(h5file: h5py.File) -> tx.Optional[str]:
+    """Return the path by which the datasets of a file can be read again.
+
+    A file opened from a stream has no path, and `None` is returned, so
+    that its datasets are read at once. No open file is ever kept.
+    """
+    if h5file.driver == "fileobj":
+        return None
+    return op.abspath(h5file.filename)
+
+
+def _group_number(name: str) -> tx.Tuple[int, tx.Union[int, str]]:
+    """Sort key that puts numeric group names first, by value."""
+    try:
+        return (0, int(name))
+    except ValueError:
+        return (1, name)

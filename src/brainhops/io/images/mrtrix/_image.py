@@ -1,10 +1,8 @@
 """The MRtrix image format."""
 
 # stdlib
-import gzip
 import math
 import os
-from collections import OrderedDict
 from io import BytesIO
 
 # dependencies
@@ -28,9 +26,6 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import same_file as _same_file
-from brainhops.io.base._utils_files import sibling as _sibling
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -41,22 +36,25 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common._geometry import (
     Arrangement,
     declared_axes,
+    held_transformations,
     same_transformations,
 )
 from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
-from brainhops.io.common.mrtrix._codecs import (
-    default_layout,
-    dtype_to_mrtrix,
-    format_layout,
-    parse_layout,
-)
-from brainhops.io.common.mrtrix._constants import _FILE, _RESERVED
-from brainhops.io.common.mrtrix._data import (
-    _is_scaled,
-    _MrtrixProxy,
-    _scaled_dtype,
-    encode_data,
-    read_mrtrix,
+from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix
+from brainhops.io.common.mrtrix._data import _MrtrixProxy, read_mrtrix
+from brainhops.io.common.mrtrix._files import (
+    file_entry,
+    keeps_storage,
+    merged_keyval,
+    mrtrix_bytes,
+    placed_record,
+    reads_from,
+    stored_voxels,
+    stores_as_recorded,
+    write_mrtrix,
+    writer_options,
+    writer_strides,
+    written_files,
 )
 from brainhops.io.common.mrtrix._geometry import (
     split_voxel_to_scanner,
@@ -161,31 +159,27 @@ class MrtrixImage(
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
-    property of the same name reads it. `None`, the default, means that
-    the transformations have been neither read nor assigned, so the
-    record is kept as it is. The property stores here the list that it
-    decodes, and an assigned list, even an empty one, is stored as it is.
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the record and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = None
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
-    An image built from data has no metadata. Assigning other metadata
-    drops the transformations that the image holds, read or assigned, so
-    that they are decoded from the new record.
+    An image built from data has no metadata. Assigning
+    other metadata drops the transformations decoded from the previous
+    record, so that they are decoded from the new one, and keeps the
+    transformations that were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[MrtrixMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -202,15 +196,19 @@ class MrtrixImage(
             return None
         return _image_to_model(self.raw)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. An image without
-        metadata has no transformations.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place, such as an appended
+        transformation, is kept.
+        Assigning other metadata drops the decoded list, so that it is
+        decoded from the new record, and keeps an assigned list. A change
+        made in place to a decoded list is therefore lost when other
+        metadata is assigned. An image without metadata has no
+        transformations.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -218,8 +216,7 @@ class MrtrixImage(
         image has no geometry, and the image is then written as an image
         built from data alone. Assigning `None` decodes the record again.
         """
-        self._transformations = _record_transformations(self.metadata)
-        return self._transformations
+        return _record_transformations(self.metadata)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -255,9 +252,13 @@ class MrtrixImage(
         """Score a header as a plain image.
 
         A 4D image with three volumes may be a warp, as may a NIfTI file
-        of that shape, so it is only a weak match.
+        of that shape, so it is only a weak match. So is a 5D image of
+        shape `(X, Y, Z, 3, 4)`, the warps that `mrregister -nl_warp_full`
+        writes.
         """
         if header.ndim == 4 and header.dim[3] == 3:
+            return Confidence.WEAK
+        if header.ndim == 5 and header.dim[3:] == (3, 4):
             return Confidence.WEAK
         return Confidence.LIKELY
 
@@ -443,10 +444,11 @@ class MrtrixImage(
         pending afterwards, so the transformations are decoded from the
         new record, with the precision of the file. The transformations
         that the image holds, read or assigned, are compared with those
-        that the record decodes to, exactly, and an image with a record,
-        no pending data, and the transformations of its record or none
-        read, consolidated without options, is left as it is: the copy
-        shares `raw` and the metadata.
+        that the record decodes to, exactly, and an image with a record
+        that stores its voxels as they are stored, no pending data, and
+        the transformations of its record or none read, consolidated
+        without options, is left as it is: the copy shares `raw` and the
+        metadata.
 
         Parameters
         ----------
@@ -485,8 +487,9 @@ class MrtrixImage(
         )
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
-        kept = self._transformations is None or same_transformations(
-            self._transformations, _record_transformations(self.metadata)
+        held = held_transformations(self)
+        kept = held is None or same_transformations(
+            held, _record_transformations(self.metadata)
         )
         if (
             self._data is None
@@ -494,6 +497,7 @@ class MrtrixImage(
             and all(value is None for value in options.values())
             and self.metadata is not None
             and self.metadata.raw is not None
+            and stores_as_recorded(self.raw, self.metadata.raw)
         ):
             if not inplace:
                 return replace(self, transformations=None)
@@ -544,9 +548,8 @@ class MrtrixImage(
         TypeError
             If an unknown option is given.
         """
-        image = self.consolidate(**_options(kwargs))
-        record, source = _mrtrix_written(image, ".")
-        return record.to_bytes() + _payload(record, source)
+        image = self.consolidate(**writer_options(kwargs))
+        return mrtrix_bytes(image.metadata.raw, image.raw)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write a single-file, uncompressed `.mif` image to a stream.
@@ -591,33 +594,14 @@ class MrtrixImage(
         TypeError
             If an unknown option is given.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        options = _options(kwargs)
-        detached = str(filename).lower().endswith(".mih")
-        if detached:
-            base = filename.name[: -len(".mih")]
-            target = _sibling(filename, base + ".dat")
-            written = [filename, target]
-        else:
-            written = [filename]
-        reading = _reads_from(self.raw, written)
+        options = writer_options(kwargs)
+        reading = reads_from(self.raw, written_files(filename))
         if reading:
             mmap = self.raw.mmap
             image = self.consolidate(inplace=True, **options)
         else:
             image = self.consolidate(**options)
-        if detached:
-            record, source = _mrtrix_written(image, base + ".dat")
-            header, data = record.to_bytes(), _payload(record, source)
-            write_file(target, data)
-            write_file(filename, header)
-        else:
-            record, source = _mrtrix_written(image, ".")
-            content = record.to_bytes() + _payload(record, source)
-            if str(filename).lower().endswith(".gz"):
-                content = gzip.compress(content)
-            write_file(filename, content)
+        write_mrtrix(filename, image.metadata.raw, image.raw)
         if reading:
             # The image holds what the files hold, and its lazy array reads
             # the new files, since the lazy array of the old files describes
@@ -647,26 +631,6 @@ class MrtrixImage(
 # ----------------------------------------------------------------------
 
 
-_OPTIONS = ("layout", "datatype", "scaling", "keyval")
-"""The options of the MRtrix writer."""
-
-
-def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
-    """Return the writer options, refusing unknown ones.
-
-    Raises
-    ------
-    TypeError
-        If an unknown option is given.
-    """
-    unknown = [name for name in kwargs if name not in _OPTIONS]
-    if unknown:
-        raise TypeError(
-            f"Unknown MRtrix writer option(s): {', '.join(unknown)}"
-        )
-    return {name: kwargs.get(name) for name in _OPTIONS}
-
-
 def _encoded(
     image: MrtrixImage,
     file: tx.Optional[str],
@@ -679,7 +643,7 @@ def _encoded(
     voxels are `raw` when it is a lazy array that is copied as the file
     stores it, and otherwise the array of the assigned data or of the
     data, in the axis order of the header, read back as the file stores
-    them with `_stored_voxels`. The `file` argument names the
+    them with `stored_voxels`. The `file` argument names the
     data file of the header: `"."` for a single-file image, a file name
     for a `.mih` header, or `None` to keep the entry of the base.
     """
@@ -688,26 +652,16 @@ def _encoded(
             "This image has no data, so there is nothing to write."
         )
     layout, datatype = options["layout"], options["datatype"]
-    scaling, keyval = options["scaling"], dict(options["keyval"] or {})
-    refused = sorted(
-        key
-        for key in keyval
-        if key.lower() in _RESERVED or key.lower() == _FILE
-    )
-    if refused:
-        raise WriterError(
-            f"The MRtrix header keys {refused} cannot be set with keyval=: "
-            f"they follow the data and the geometry, or the layout=, "
-            f"datatype= and scaling= options."
-        )
+    scaling = options["scaling"]
     held = None if image.metadata is None else image.metadata.raw
+    merged = merged_keyval(held, options["keyval"])
     if image._data is not None:
         raw = _image_to_disk(image._data)
     else:
         raw = image.raw
     # The list of the image is read without being stored, so that a write
     # leaves the image as it was.
-    transformations = image._transformations
+    transformations = held_transformations(image)
     if transformations is None:
         transformations = _record_transformations(image.metadata)
     xform = transformations[-1] if transformations else Identity()
@@ -721,7 +675,7 @@ def _encoded(
     if (
         isinstance(raw, _MrtrixProxy)
         and not moved
-        and _keeps_storage(raw.record, layout, datatype, scaling)
+        and keeps_storage(raw.record, layout, datatype, scaling)
     ):
         source = raw
         shape, strides = raw.record.dim, raw.record.layout
@@ -734,7 +688,7 @@ def _encoded(
             source = arranged.layout.apply(source)
         shape = tuple(int(d) for d in np.shape(source))
         ndim = len(shape)
-        strides = _strides(layout, held, ndim)
+        strides = writer_strides(layout, held, ndim)
         if datatype is None:
             datatype = getattr(source, "dtype", np.float32)
         stored_type = dtype_to_mrtrix(datatype)
@@ -755,13 +709,6 @@ def _encoded(
             extra = _extra_vox(transformations, held, ndim)
         vox += extra[len(vox) :]
 
-    merged = OrderedDict(held.keyval) if held is not None else OrderedDict()
-    for key, value in keyval.items():
-        if value is None:
-            merged.pop(key, None)
-        else:
-            merged[key] = value
-
     record = MrtrixRaw(
         dim=shape,
         vox=vox,
@@ -769,119 +716,11 @@ def _encoded(
         datatype=stored_type,
         transform=transform,
         scaling=stored_scaling,
-        file=_file_entry(held, file),
+        file=file_entry(held, file),
         keyval=merged,
     )
-    if held is not None and record == held:
-        return held, _stored_voxels(held, source)
-    if record.file[0] == ".":
-        record.file = (".", len(record.embedded()))
-    return record, _stored_voxels(record, source)
-
-
-def _stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
-    """Return voxels as the file of a record stores them.
-
-    The writer maps the voxels through the intensity scaling of the
-    record, rounds floating-point values that are stored as integers, and
-    converts them to the stored type. Voxels that this changes are
-    encoded into memory in the same way, and a lazy array of those bytes
-    is returned, which reads them as a file of the record is read. A lazy
-    array of a file, and voxels of the stored type without scaling, are
-    returned as they are, so that they are not read.
-    """
-    if isinstance(source, _MrtrixProxy):
-        return source
-    stored = _scaled_dtype(record).newbyteorder("=")
-    if not _is_scaled(record) and stored == np.dtype(
-        source.dtype
-    ).newbyteorder("="):
-        return source
-    content = BytesIO(_payload(record, source))
-    return _MrtrixProxy(content, 0, 0, record, mmap=False)
-
-
-def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
-    """Tell whether a lazy array reads one of the files just written."""
-    if not isinstance(raw, _MrtrixProxy):
-        return False
-    return any(_same_file(raw.source, file) for file in written)
-
-
-def _keeps_storage(
-    record: MrtrixRaw,
-    layout: tx.Optional[tx.Union[str, tx.Sequence[int]]],
-    datatype: tx.Optional[tx.Any],
-    scaling: tx.Optional[tx.Sequence[float]],
-) -> bool:
-    """Tell whether the options leave the voxels as a record stores them.
-
-    An option that is not given, or that names what the record stores,
-    leaves the voxels as they are.
-    """
-    if layout is not None and _strides(layout, None, record.ndim) != tuple(
-        record.layout
-    ):
-        return False
-    if datatype is not None and dtype_to_mrtrix(datatype) != dtype_to_mrtrix(
-        record.datatype
-    ):
-        return False
-    if scaling is not None:
-        stored = None if record.scaling is None else tuple(record.scaling)
-        if tuple(float(s) for s in scaling) != stored:
-            return False
-    return True
-
-
-def _strides(
-    layout: tx.Optional[tx.Union[str, tx.Sequence[int]]],
-    held: tx.Optional[MrtrixRaw],
-    ndim: int,
-) -> tx.Tuple[int, ...]:
-    """Return the strides to store, from the option or else from the base.
-
-    The layout of the base is used when it has as many axes, and the
-    Fortran order `+0,+1,+2,...` otherwise.
-    """
-    if layout is None:
-        if held is not None and len(held.layout) == ndim:
-            return tuple(held.layout)
-        return default_layout(ndim)
-    if isinstance(layout, str):
-        return parse_layout(layout, ndim)
-    return parse_layout(format_layout(layout), ndim)
-
-
-def _file_entry(
-    held: tx.Optional[MrtrixRaw], file: tx.Optional[str]
-) -> tx.Tuple[str, int]:
-    """Return the `file` entry of the header to write.
-
-    The entry of the base is kept when it names the same kind of file, so
-    that an untouched header is the same. A new single-file header gets
-    its offset once its text is known.
-    """
-    stored = None if held is None else held.file
-    if file is None:
-        return stored if stored is not None else (".", 0)
-    if file == ".":
-        return stored if stored is not None and stored[0] == "." else (".", 0)
-    return (file, 0)
-
-
-def _payload(record: MrtrixRaw, source: ArrayProtocol) -> bytes:
-    """Return the bytes of the voxels that a header describes.
-
-    A lazy array is copied as the file stores it. Any other array is
-    mapped through the intensity scaling of the header and encoded.
-    """
-    if isinstance(source, _MrtrixProxy):
-        return source.read_stored()
-    if record.scaling and tuple(record.scaling) != (0.0, 1.0):
-        offset, scale = record.scaling
-        source = (np.asarray(source) - offset) / scale
-    return encode_data(record, source)
+    record = placed_record(record, held)
+    return record, stored_voxels(record, source)
 
 
 def _mapped_vox(
@@ -1010,33 +849,3 @@ def _mrtrix_to_transformations(
     matrix = vox2ras[:3][:, columns]
     vox2scanner = Affine(input=voxel_space, output=world, matrix=matrix)
     return [vox2phys, vox2scanner]
-
-
-def _mrtrix_written(
-    image: MrtrixImage, file: str
-) -> tx.Tuple[MrtrixRaw, ArrayProtocol]:
-    """Return the header and the voxels that a writer writes for a file.
-
-    The header is the record of a consolidated image, whose `file` entry
-    names the data file that the writer writes: `"."` for a single-file
-    image, or a file name for a `.mih` header. The entry of the record is
-    kept when it names the same kind of file, and a copy of the record
-    holds another entry.
-
-    Raises
-    ------
-    WriterError
-        If the image has no data.
-    """
-    if image.raw is None:
-        raise WriterError(
-            "This image has no data, so there is nothing to write."
-        )
-    record = image.metadata.raw
-    entry = _file_entry(record, file)
-    if tuple(entry) != tuple(record.file or ()):
-        record = record.copy()
-        record.file = entry
-        if record.file[0] == ".":
-            record.file = (".", len(record.embedded()))
-    return record, image.raw

@@ -36,7 +36,7 @@ __all__ = [
     "MAGICS",
     "RESOLUTION_UNITS",
     "TAGS_OF_INTEREST",
-    "TiffMetadata",
+    "SeriesMetadata",
     "TiffSource",
     "is_tiff",
     "is_whole_slide",
@@ -265,7 +265,7 @@ def _rational(value: tx.Any) -> tx.Optional[float]:
 _Scales = tx.Dict[str, raster.AxisScale]
 
 
-class TiffMetadata(Magic, frozen=True):
+class SeriesMetadata(Magic, frozen=True):
     """The geometry and metadata that a TIFF file records for one series."""
 
     dialect: tx.Optional[str]
@@ -375,8 +375,9 @@ def imagej_scales(
     ----------
     metadata : Mapping[str, Any]
         The `imagej_metadata` of tifffile.
-    page : TiffPage
-        The first page, whose resolution tags hold the pixel size.
+    page : TiffPage or None
+        The first page, whose resolution tags hold the pixel size. Without
+        a page, only the slice step and the frame interval are returned.
     names : Collection[str]
         The names of the axes of the series. Only these axes are given a size.
 
@@ -398,8 +399,10 @@ def imagej_scales(
         "z": length_unit(metadata.get("zunit")) or unit,
     }
     for name, code in (("x", 282), ("y", 283)):
+        if page is None or name not in names:
+            continue
         resolution = _positive(_rational(page.tags.valueof(code)))
-        if name in names and units[name] and resolution is not None:
+        if units[name] and resolution is not None:
             scales[name] = (1.0 / resolution, units[name])
     if "z" in names and units["z"]:
         try:
@@ -551,7 +554,7 @@ def ome_scales(
     return scales, origin
 
 
-def series_metadata(tif: tx.Any, index: int = 0) -> TiffMetadata:
+def series_metadata(tif: tx.Any, index: int = 0) -> SeriesMetadata:
     """Return the geometry and metadata that a TIFF file records for series
     `index`.
 
@@ -596,7 +599,7 @@ def series_metadata(tif: tx.Any, index: int = 0) -> TiffMetadata:
                 sources[name] = "ome"
                 signs.pop(name, None)
 
-    return TiffMetadata(
+    return SeriesMetadata(
         dialect=dialect,
         scales=scales,
         signs=signs,
