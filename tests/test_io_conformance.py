@@ -5732,7 +5732,9 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     path = _saved(cls, exemplar, tmp_path)
     loaded = _load(cls, exemplar, path)
     if exemplar.source is not None or _rawdata(loaded) is None:
-        pytest.skip("Only an object whose `raw` reads its file is affected.")
+        pytest.skip(
+            "Only an object whose `rawdata` reads its file is affected."
+        )
     # An untouched object is written over the file that it reads.
     loaded.save(path)
     back = _load(cls, exemplar, path)
