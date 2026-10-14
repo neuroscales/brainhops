@@ -376,6 +376,22 @@ def test_a_format_without_a_vocabulary_reports_its_fields_as_lost(
         xform.consolidate(on_loss="raise", history=("a step",))
 
 
+def test_a_save_reports_the_metadata_that_a_conversion_drops(
+    tmp_path: Path,
+) -> None:
+    # The converter into a Convert3D matrix builds the format without the
+    # metadata of the source, which a save then reports as lost.
+    affine = Affine(
+        np.eye(4)[:-1],
+        input=RASmm(),
+        output=RASmm(),
+        metadata=Metadata(description="reg"),
+    )
+    report = ConversionReport()
+    io.save(affine, tmp_path / "affine.mat", on_loss=report)
+    assert set(report.lost) == {"description"}
+
+
 def test_an_x5_transform_of_one_node_writes_its_metadata(
     tmp_path: Path,
 ) -> None:

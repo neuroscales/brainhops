@@ -273,7 +273,7 @@ def _write_first(
             continue
         fmt, writer, report = writers[0]
         try:
-            _write_once(writer, file, report, options)
+            _write_once(obj, writer, file, report, options)
         except (ConversionError, WriterError) as e:
             reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
             continue
@@ -282,6 +282,7 @@ def _write_first(
 
 
 def _write_once(
+    obj: tx.Any,
     writer: tx.Any,
     file: path.FileLike,
     report: ConversionReport,
@@ -293,7 +294,9 @@ def _write_once(
     so that the consolidation of the metadata adds to it, and the loss
     policy of the save acts on the one report once the file is written.
     A format that does not take the metadata of its data model over does
-    not write it, so its fields that are set are reported as lost.
+    not write it, so its fields that are set are reported as lost, and so
+    are those of `obj` when the conversion gave the writer no metadata,
+    as some converters between transformations do.
     """
     # The metadata formats import this package, so their helpers are
     # imported when they are used.
@@ -305,6 +308,9 @@ def _write_once(
 
     options = dict(options)
     on_loss = options.pop("on_loss", None)
+    source = getattr(obj, "metadata", None)
+    if source is not None and getattr(writer, "metadata", None) is None:
+        lost_fields(unsupported_values(MetadataFormat, source), report)
     if _takes_over(type(writer), "metadata"):
         writer.save(file, on_loss=report, **options)
     else:
