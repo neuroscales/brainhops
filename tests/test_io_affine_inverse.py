@@ -101,7 +101,7 @@ def test_an_spm_field_inverts(tmp_path) -> None:  # noqa: ANN001
 @pytest.mark.parametrize("cls", [NiftiRASToVoxel, NiftiVoxelToRAS])
 def test_the_matrix_comes_from_the_header_unless_it_is_set(cls) -> None:  # noqa: ANN001
     t = cls(metadata=_metadata())
-    assert t.raw is None
+    assert t.rawdata is None
     assert t.matrix.shape == (3, 4)
     expected = VOX2RAS if cls is NiftiVoxelToRAS else np.linalg.inv(VOX2RAS)
     np.testing.assert_allclose(t.matrix, expected[:3])
@@ -111,7 +111,7 @@ def test_the_matrix_comes_from_the_header_unless_it_is_set(cls) -> None:  # noqa
     # affine is consolidated, which encodes it in the header.
     explicit = cls(np.eye(4)[:3], metadata=_metadata())
     np.testing.assert_array_equal(explicit.matrix, np.eye(4)[:3])
-    assert explicit.raw is None
+    assert explicit.rawdata is None
     consolidated = explicit.consolidate()
     assert consolidated._data is None
     np.testing.assert_array_equal(consolidated.matrix, np.eye(4)[:3])

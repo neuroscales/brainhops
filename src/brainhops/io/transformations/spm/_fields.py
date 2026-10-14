@@ -98,7 +98,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     """The coordinates given to the field, or `None` to decode them.
 
     Coordinates stored here are pending until [`consolidate`][] or a
-    write encodes them into `raw`.
+    write encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -108,13 +108,14 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
         Coordinates that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw`: NIfTI stores the field with shape
-        (X, Y, Z, 1, 3), and the singleton axis is dropped. Assigning the
-        data drops the chain decoded from the previous data.
+        they are decoded from `rawdata`: NIfTI stores the field with
+        shape (X, Y, Z, 1, 3), and the singleton axis is dropped.
+        Assigning the data drops the chain decoded from the previous
+        data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _field_to_model(self.raw)
+        return _field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -140,13 +141,13 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
         The decoded chain is made of the RAS-to-voxel affine of the header
         and the field of RAS coordinates of the file. Both hold the metadata
-        of this field, and the field holds its `raw` array and its pending
+        of this field, and the field holds its `rawdata` array and its pending
         coordinates too.
         """
         return (
             NiftiRASToVoxel(metadata=self.metadata),
             NiftiRASCoordinatesField(
-                data=self._data, raw=self.raw, metadata=self.metadata
+                data=self._data, rawdata=self.rawdata, metadata=self.metadata
             ),
         )
 
@@ -177,7 +178,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         xform = self.transformations[1]
         if xform is None:
             xform = NiftiRASCoordinatesField(
-                data=self._data, raw=self.raw, metadata=self.metadata
+                data=self._data, rawdata=self.rawdata, metadata=self.metadata
             )
         return xform
 
@@ -200,7 +201,8 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         **options: tx.Any,
     ) -> tx.Self:
         """
-        Encode the pending coordinates or chain into `raw` and a header.
+        Encode the pending coordinates or chain into `rawdata` and a
+        header.
 
         The coordinates of `rasfield`, as values, become the array, with
         the `VECTOR` (1007) intent code and the intent name `"Mapping"`
@@ -283,12 +285,12 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -317,7 +319,7 @@ def _spm_encoded(
     if field._data is not None:
         stored = _field_to_disk(field._data)
     else:
-        stored = field.raw
+        stored = field.rawdata
     if stored is not None and field._transformations is None:
         record = None if base is None else base.copy()
         image = _record_image(stored, record, overrides=overrides)

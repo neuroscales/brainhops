@@ -164,8 +164,12 @@ class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     def consolidate(self, *, inplace=False, on_loss=None, **fields):
         return consolidated(
-            self, encode, NiftiRaw,
-            inplace=inplace, on_loss=on_loss, fields=fields,
+            self,
+            encode,
+            NiftiRaw,
+            inplace=inplace,
+            on_loss=on_loss,
+            fields=fields,
         )
 ```
 
@@ -643,6 +647,7 @@ class Indexed(DataModelBase, frozen=True):  # image[index]
     system: tx.Optional[CoordinateSystem] = None
 
     def positions(self, axis: AxisType) -> tx.Optional[np.ndarray]: ...
+
     moves_space: bool  # a property
     voxel_map: tx.Optional[np.ndarray]  # a property
 

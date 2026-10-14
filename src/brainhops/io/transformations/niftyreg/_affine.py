@@ -2,19 +2,25 @@
 
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoRepr, replace
 
+from brainhops._core import path
+from brainhops._core.properties import (
+    InvalidatorInAttribute,
+    smartproperty,
+)
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     _convert_withlog,
 )
+from brainhops.errors import IncompatibleSystemError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
-    ParserContentError,
     TextFileReader,
     TextFileWriter,
-    WriterError,
+    UnrepresentableTransformationError,
 )
 from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
 from brainhops.io.transformations.base import TransformationFormat
@@ -22,20 +28,24 @@ from brainhops.io.transformations.base._conversions import (
     affine_between,
     format_options,
 )
-from brainhops.io.transformations.base.affines import _RAS, RASToRAS
+from brainhops.io.transformations.base._records import (
+    matrix_to_disk,
+    matrix_to_model,
+    read_only,
+    record_of,
+)
+from brainhops.io.transformations.base.affines import (
+    _RAS,
+    RASToRAS,
+    _check_endpoint,
+)
 
 from ._formats import NiftyRegAffineFormat
+from ._metadata import NiftyRegAffineMetadata
+from ._raw import NiftyRegAffineRaw, is_homogeneous
 
-_SHAPE = (4, 4)
-"""Shape of the matrix that NiftyReg reads and writes."""
-
-
-def _is_homogeneous(array: np.ndarray) -> bool:
-    """Return whether an array is (4, 4) with a last row of `[0, 0, 0, 1]`."""
-    if not is_numeric_array(array) or tuple(array.shape) != _SHAPE:
-        return False
-    last = np.asarray(array[-1], dtype=np.float64)
-    return bool(np.allclose(last, [0.0, 0.0, 0.0, 1.0], atol=1e-6))
+_FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
+"""Invalidator that clears the views that the data model derives."""
 
 
 @register_format
@@ -62,9 +72,19 @@ class NiftyRegAffine(
     `Confidence.WEAK`, below the generic matrix reader
     ([`TxtMatrixAffine`][brainhops.io.transformations.matrix.TxtMatrixAffine])
     and FLIRT. It is selected with `hint="niftyreg"`, `"niftyreg.aladin"` or
-    `"aladin"`. The matrix is written in the same layout, with enough digits
-    for each number to be read back exactly, whereas NiftyReg itself prints
-    `%.7g`.
+    `"aladin"`.
+
+    ## Record
+
+    The file is read in one pass, and its content is held as a
+    [`NiftyRegAffineRaw`][] record by the [`NiftyRegAffineMetadata`][] of
+    the transformation. The matrix lives in that record. A matrix that is
+    assigned is pending: it wins over the record until [`consolidate`][]
+    encodes it into a new record. A transformation that was read and not
+    changed is written as its file stored it, byte for byte. A matrix
+    that is encoded is written in the same layout as NiftyReg's, with
+    enough digits for each number to be read back exactly, whereas
+    NiftyReg itself prints `%.7g`.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
@@ -75,6 +95,32 @@ class NiftyRegAffine(
     # rejected.
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 1 << 16
 
+    _metadata: NoRepr[tx.Optional[NiftyRegAffineMetadata]] = None
+
+    metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
+    """The metadata of the file, which holds the file as a record.
+
+    A transformation built from data alone has no metadata, and setting
+    its data does not create any. Assigning other metadata drops the
+    matrix decoded from the old record. A matrix that was assigned is
+    pending and is kept, and it wins over the matrix of the new record
+    until the transformation is consolidated.
+    """
+
+    @smartproperty(cache=True, invalidates=_FORGET_VIEWS)
+    def data(self) -> tx.Optional[np.ndarray]:
+        """The `(3, 4)` affine matrix, which the `matrix` view reads.
+
+        A matrix that is assigned is returned as it is, and stays pending
+        until [`consolidate`][] encodes it in a new record. Otherwise the
+        matrix is the matrix of the record, without its last row, and is
+        read-only, or `None` without a record.
+        """
+        record = record_of(self)
+        if record is None:
+            return None
+        return read_only(matrix_to_model(record.matrix))
+
     # --- ArrayReader hooks --------------------------------------------
 
     @classmethod
@@ -84,43 +130,246 @@ class NiftyRegAffine(
     @classmethod
     def _array_confidence(cls, array: np.ndarray, **kwargs) -> float:
         """Score `Confidence.WEAK` for a homogeneous (4, 4) matrix."""
-        return cls.SNIFF_CONFIDENCE if _is_homogeneous(array) else 0.0
+        return cls.SNIFF_CONFIDENCE if is_homogeneous(array) else 0.0
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_array(
-        cls, array: np.ndarray, key: tx.Optional[str] = None, **kwargs
-    ) -> tx.Self:
-        """
-        Build an affine from the (4, 4) homogeneous matrix read from the file.
-        """
-        array = np.asarray(array, dtype=np.float64)
-        if tuple(array.shape) != _SHAPE:
-            raise ParserContentError(
-                f"A NiftyReg affine is a (4, 4) matrix, not a matrix of "
-                f"shape {tuple(array.shape)}."
-            )
-        if not _is_homogeneous(array):
-            raise ParserContentError(
-                f"The last row of a NiftyReg affine is [0, 0, 0, 1], not "
-                f"{array[-1].tolist()}."
-            )
-        return cls(matrix=array[:-1], **kwargs)
+    def from_raw(cls, raw: NiftyRegAffineRaw, **kwargs) -> tx.Self:
+        """Build a transformation from an already parsed record.
 
-    # --- writing ------------------------------------------------------
+        The record is held by new metadata, without a copy.
+
+        Parameters
+        ----------
+        raw : NiftyRegAffineRaw
+            The record of the file.
+        **kwargs : Any
+            Field values, such as `matrix`, which go to the constructor
+            and override the record.
+
+        Returns
+        -------
+        Self
+            The transformation.
+        """
+        return cls(metadata=NiftyRegAffineMetadata.from_raw(raw), **kwargs)
+
+    @classmethod
+    def from_text(cls, text: str, **kwargs) -> tx.Self:
+        """Build a transformation from the text of a NiftyReg affine file.
+
+        The text is read by [`NiftyRegAffineMetadata.from_text`][].
+
+        Parameters
+        ----------
+        text : str
+            The content of the file.
+        **kwargs : Any
+            Field values, such as `matrix`, which go to the constructor
+            and override the file. Any other option raises `TypeError`.
+
+        Returns
+        -------
+        Self
+            The transformation.
+        """
+        return cls(metadata=NiftyRegAffineMetadata.from_text(text), **kwargs)
+
+    @classmethod
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
+        """Build a transformation from the lines of a NiftyReg affine file.
+
+        The lines are read by [`NiftyRegAffineMetadata.from_lines`][].
+
+        Parameters
+        ----------
+        lines : iterable of str
+            The lines of the file.
+        **kwargs : Any
+            Field values, such as `matrix`, which go to the constructor
+            and override the file. Any other option raises `TypeError`.
+
+        Returns
+        -------
+        Self
+            The transformation.
+        """
+        metadata = NiftyRegAffineMetadata.from_lines(lines)
+        return cls(metadata=metadata, **kwargs)
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build a transformation from a record, a file or a data model.
+
+        A [`NiftyRegAffineRaw`][] is read with [`from_raw`][], and any
+        other value as the bases read it.
+
+        Parameters
+        ----------
+        other : object
+            A record, a file, its content, a transformation, a mapping, or
+            an instance of a similar class.
+        *args : Any
+            Constructor arguments. A record and a file take keyword
+            arguments only.
+        **kwargs : Any
+            Options of the reader, and field values otherwise.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+        """
+        if isinstance(other, NiftyRegAffineRaw) and not args:
+            return cls.from_raw(other, **kwargs)
+        return super().from_any(other, *args, **kwargs)
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy a transformation, sharing the record of a NiftyReg affine.
+
+        Within the format, the record of the metadata carries the matrix,
+        so the matrix is not decoded and passed on, and the copy holds the
+        same metadata as `other`. A transformation of the format that
+        holds a pending matrix is copied with that matrix. Any other
+        transformation is converted as `other.to(cls)` converts it.
+
+        Parameters
+        ----------
+        other : object
+            The instance to copy or convert.
+        *args : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`. A transformation that is converted takes keyword
+            options only.
+        **kwargs : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`, or options of the conversion.
+
+        Returns
+        -------
+        Self
+            The copy.
+
+        Raises
+        ------
+        ConversionError
+            If the format cannot hold a transformation that is converted.
+        """
+        if isinstance(other, cls) and other._data is None:
+            kwargs.setdefault("data", None)
+        return super().from_instance(other, *args, **kwargs)
+
+    # --- to -----------------------------------------------------------
+
+    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+        """Encode the pending matrix into a new record.
+
+        A transformation that holds a record, and whose matrix was not
+        assigned, is left as it is, since its record also holds its
+        matrix. Otherwise, a new record is built from `matrix` and is held
+        by new metadata. In every case, the input and the output must
+        still be RAS, since the file can hold nothing else.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this transformation rather than a copy.
+
+        Returns
+        -------
+        Self
+            The consolidated copy, or this transformation with
+            `inplace=True`.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the input or the output is not RAS, or if the matrix is not
+            the matrix of a 3-D affine.
+        """
+        _check_systems(self)
+        record = record_of(self)
+        if record is not None and self._data is None:
+            return self if inplace else replace(self)
+        record = _build_raw(self)
+        if self.metadata is None:
+            metadata = NiftyRegAffineMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        if not inplace:
+            return replace(self, metadata=metadata, data=None)
+        self.metadata = metadata
+        self.data = None
+        return self
+
+    def to_file(self, file: path.FileLike, **kwargs) -> None:
+        """Write the transformation to a path or a file object.
+
+        The transformation is consolidated into a copy, whose record is
+        written, so a transformation that cannot be encoded leaves the file
+        untouched, and the transformation itself is not changed.
+
+        Parameters
+        ----------
+        file : path or file object
+            The path or the open text file.
+        **kwargs : Any
+            Options of the writer of the record, which takes none.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the transformation cannot be encoded.
+        """
+        return _written(self).to_file(file, **kwargs)
+
+    def to_text(self, **kwargs) -> str:
+        """Return the content of the file that encodes the transformation.
+
+        The transformation is consolidated into a copy, whose record is
+        written.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer of the record, which takes none.
+
+        Returns
+        -------
+        str
+            The content of the file.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the transformation cannot be encoded.
+        """
+        return _written(self).to_text(**kwargs)
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
-        """Yield the four lines of the file, one matrix row each."""
-        matrix = self.homogeneous_matrix
-        if matrix is None:
-            matrix = np.eye(4)
-        matrix = np.asarray(matrix, dtype=np.float64)
-        if matrix.shape != _SHAPE:
-            raise WriterError(
-                f"A NiftyReg affine maps 3-D to 3-D, and this one has a "
-                f"matrix of shape {matrix.shape}."
-            )
-        for row in matrix:
-            yield " ".join(repr(float(value)) for value in row)
+        """Yield the lines of the file that encodes the transformation.
+
+        The transformation is consolidated into a copy, whose record is
+        written.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer of the record, which takes none.
+
+        Yields
+        ------
+        str
+            The lines of the file, without line breaks.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the transformation cannot be encoded.
+        """
+        return _written(self).to_lines(**kwargs)
 
 
 @converter(_xforms.Identity, NiftyRegAffine)
@@ -154,3 +403,58 @@ def _(
     # rules of any affine, for example when it is given a new `matrix=`,
     # and these rules keep its type.
     return _convert_withlog(t, cls, "matrix", **kwargs)
+
+
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+
+def _check_systems(xform: NiftyRegAffine) -> None:
+    """Refuse a transformation whose input or output is not RAS.
+
+    `RASToRAS` checks the systems when the transformation is built, and
+    this check catches a system that was assigned afterwards.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the input or the output is not compatible with `RASmm`.
+    """
+    for name in ("input", "output"):
+        try:
+            _check_endpoint(xform, name, _RAS)
+        except IncompatibleSystemError as e:
+            raise UnrepresentableTransformationError(
+                f"A NiftyReg affine maps RAS to RAS, but the {name} of the "
+                f"transformation is not RAS: {e}"
+            ) from e
+
+
+def _build_raw(xform: NiftyRegAffine) -> NiftyRegAffineRaw:
+    """Encode the matrix of `xform` as a record.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the matrix is not of shape (3, 4).
+    """
+    data = xform.data
+    shape = None if data is None else tuple(np.shape(data))
+    if shape is not None and shape != (3, 4):
+        raise UnrepresentableTransformationError(
+            f"A NiftyReg affine maps 3-D to 3-D, and this one has a "
+            f"matrix of shape {shape}."
+        )
+    return NiftyRegAffineRaw(matrix=matrix_to_disk(data))
+
+
+def _written(xform: NiftyRegAffine) -> NiftyRegAffineRaw:
+    """Return the record that a file written from a transformation holds.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the transformation cannot be encoded.
+    """
+    return record_of(xform.consolidate())

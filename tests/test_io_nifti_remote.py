@@ -191,7 +191,7 @@ def test_reader_options_reach_only_the_calls_that_take_them(
     target = tmp_path / "image.nii"
     target.write_bytes(raw)
     image = NiftiImage.load(target, **options)
-    assert not isinstance(image.raw.get_unscaled(), np.memmap)
+    assert not isinstance(image.rawdata.get_unscaled(), np.memmap)
 
 
 def test_only_accepted_keywords_are_passed_on() -> None:
@@ -256,7 +256,7 @@ def test_a_local_uncompressed_image_is_memory_mapped(tmp_path) -> None:  # noqa:
     target = tmp_path / "image.nii"
     target.write_bytes(_encode(".nii"))
     image = NiftiImage.load(target)
-    assert isinstance(image.raw.get_unscaled(), np.memmap)
+    assert isinstance(image.rawdata.get_unscaled(), np.memmap)
 
 
 # ----------------------------------------------------------------------

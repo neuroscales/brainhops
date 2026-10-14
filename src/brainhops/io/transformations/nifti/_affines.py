@@ -58,11 +58,11 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
     """Shared reading, scoring and writing of the affines of a header.
 
     An affine read from a file keeps its matrix in the header of its
-    metadata and has no `raw` array, because the array of the file is only
+    metadata and has no `rawdata` array, because the array of the file is only
     a placeholder. A matrix that is assigned is pending: the data model
     stores it, and the affine reads it first, until [`consolidate`][]
     encodes it into a new header. An affine built with a homogeneous
-    matrix in `raw` reads that matrix before the header.
+    matrix in `rawdata` reads that matrix before the header.
     """
 
     # --- reading ------------------------------------------------------
@@ -156,7 +156,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
 
         Afterwards the matrix is decoded from the new header, with the
         precision of the file, which stores it in single precision, and
-        the affine has no `raw` array. An affine that has a header and no
+        the affine has no `rawdata` array. An affine that has a header and no
         pending matrix, consolidated without options, is left as it is.
 
         The metadata is consolidated first (step 2 of the precedence on
@@ -220,11 +220,11 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         if not inplace:
             return replace(
                 self,
-                raw=None,
+                rawdata=None,
                 metadata=metadata,
                 data=None,
             )
-        self.raw = None
+        self.rawdata = None
         self.metadata = metadata
         self.data = None
         return self
@@ -305,12 +305,12 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
 
         A matrix that is assigned is returned as it is, and stays pending
         until [`consolidate`][] or a write encodes it. Otherwise, the
-        matrix is decoded from a homogeneous matrix in `raw`, or else it is
+        matrix is decoded from a homogeneous matrix in `rawdata`, or else it is
         the inverse of the voxel-to-RAS affine of the header, which is
         read-only, or `None` without metadata.
         """
-        if self.raw is not None:
-            return _affine_to_model(self.raw)
+        if self.rawdata is not None:
+            return _affine_to_model(self.rawdata)
         header = _header(self)
         if header is None:
             return None
@@ -399,7 +399,7 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
         VoxelToRAS
             The inverse transformation.
         """
-        if self._data is None and self.raw is None:
+        if self._data is None and self.rawdata is None:
             return NiftiVoxelToRAS(metadata=self.metadata)
         return super().inverse(compute=compute, **kwargs).to(VoxelToRAS)
 
@@ -414,8 +414,8 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
     The matrix of an affine read from a file is the best affine of the
     header, which is the sform when its code is set and the qform
-    otherwise. Setting the matrix stores it in `raw`, which then takes
-    precedence over the header.
+    otherwise. Setting the matrix stores it in `rawdata`, which then
+    takes precedence over the header.
     """
 
     HINTS = ("nifti",)
@@ -427,12 +427,12 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
         A matrix that is assigned is returned as it is, and stays pending
         until [`consolidate`][] or a write encodes it. Otherwise, the
-        matrix is decoded from a homogeneous matrix in `raw`, or else it is
+        matrix is decoded from a homogeneous matrix in `rawdata`, or else it is
         the voxel-to-RAS affine of the header, which is read-only, or
         `None` without metadata.
         """
-        if self.raw is not None:
-            return _affine_to_model(self.raw)
+        if self.rawdata is not None:
+            return _affine_to_model(self.rawdata)
         header = _header(self)
         if header is None:
             return None
@@ -521,7 +521,7 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
         RASToVoxel
             The inverse transformation.
         """
-        if self._data is None and self.raw is None:
+        if self._data is None and self.rawdata is None:
             return NiftiRASToVoxel(metadata=self.metadata)
         return super().inverse(compute=compute, **kwargs).to(RASToVoxel)
 

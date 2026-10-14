@@ -46,6 +46,12 @@ from brainhops.io.base.parsers import (
 from ._base import MetadataFormat, consolidated
 from ._json import decode_object, encode_changes, encode_extra
 
+# The fields that a sidecar stores under their keys: the vocabulary but
+# the diffusion fields, which BIDS keeps in `.bval` and `.bvec` files.
+_KEYED_FIELDS = tuple(
+    name for name in VOCABULARY if name not in GROUPS[DiffusionVocabulary]
+)
+
 
 @register_format
 class BidsSidecar(MetadataFormat, TextFileReader, TextFileWriter):
@@ -70,8 +76,9 @@ class BidsSidecar(MetadataFormat, TextFileReader, TextFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".json",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("bids", "json")
-    SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = ("extra",) + tuple(
-        name for name in VOCABULARY if name not in GROUPS[DiffusionVocabulary]
+    SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = (
+        "extra",
+        *_KEYED_FIELDS,
     )
 
     raw: NoRepr[tx.Optional[tx.Dict[str, tx.Any]]] = None
@@ -312,7 +319,7 @@ def _decode(raw: tx.Optional[tx.Mapping[str, tx.Any]]) -> tx.Dict[str, tx.Any]:
     """Return the fields of the vocabulary that a JSON object holds."""
     if raw is None:
         return {}
-    values, extra = decode_object(raw, BidsSidecar.SUPPORTED_FIELDS[1:])
+    values, extra = decode_object(raw, _KEYED_FIELDS)
     values["extra"] = extra
     return values
 
@@ -328,11 +335,10 @@ def _encode(
     `changed`. An encoding direction along no voxel axis has no BIDS
     string, so it is left in `changed`, and the key is removed.
     """
-    names = BidsSidecar.SUPPORTED_FIELDS[1:]
     if "extra" in changed:
-        encode_extra(raw, changed.pop("extra"), names, report=report)
+        encode_extra(raw, changed.pop("extra"), _KEYED_FIELDS, report=report)
     writable = {}
-    for name in names:
+    for name in _KEYED_FIELDS:
         if name not in changed:
             continue
         value = changed[name]

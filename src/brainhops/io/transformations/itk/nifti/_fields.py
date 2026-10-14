@@ -176,10 +176,10 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     # --- data ---------------------------------------------------------
 
     _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    """The vectors given to the field, or `None` to decode them from `raw`.
+    """The vectors given to the field, or `None` to decode them from `rawdata`.
 
     Vectors stored here are pending until [`consolidate`][] or a write
-    encodes them into `raw`.
+    encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -189,14 +189,14 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
         Vectors that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw` without the singleton axes of the ITK
+        they are decoded from `rawdata` without the singleton axes of the ITK
         layout, and they are those of the file, before the frame of a
         `DISPVECT` file is converted. Assigning the data drops the chain
         decoded from the previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _itk_field_to_model(self.raw)
+        return _itk_field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -222,7 +222,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         The pending state comes first, since the header describes the
         file as it was read: the dimension is read from an assigned chain,
         or else from the shape of assigned vectors, or else from the
-        header, or else from the shape of `raw`.
+        header, or else from the shape of `rawdata`.
         """
         chain = self._transformations
         if chain:
@@ -233,8 +233,8 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         header = _header(self)
         if header is not None:
             return _itk_ndim(_nifti_shape(header))
-        if self.raw is not None:
-            return _itk_ndim(tuple(self.raw.shape))
+        if self.rawdata is not None:
+            return _itk_ndim(tuple(self.rawdata.shape))
         return None
 
     @smartproperty(cache=True)
@@ -321,7 +321,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         on_loss: tx.Optional[OnLoss] = None,
         **options: tx.Any,
     ) -> tx.Self:
-        """Encode the pending vectors or chain into `raw` and a header.
+        """Encode the pending vectors or chain into `rawdata` and a header.
 
         A field whose chain is decoded from its file keeps its stored
         vectors, assigned or read, under a copy of the header of its
@@ -401,12 +401,12 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -451,7 +451,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         if self._data is not None:
             stored = _itk_field_to_disk(self._data)
         else:
-            stored = self.raw
+            stored = self.rawdata
         if self.metadata is None or stored is None:
             return None
         if self._transformations is not None:

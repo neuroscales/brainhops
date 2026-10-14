@@ -1,24 +1,52 @@
 """Multiscale TIFF images: pyramidal series with one image per level."""
 
-import typing_extensions as tx
+# stdlib
+from io import BytesIO
 
+# dependencies
+import typing_extensions as tx
+from bagof.magic import Inherit, NoRepr, replace
+
+# internals
+from brainhops._core import path
+from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
-from brainhops.datamodel.images import MultiScaleImage
+from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
+from brainhops.io.base._dispatch import _to_filename
+from brainhops.io.base._utils_files import same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     WriterError,
 )
+from brainhops.io.common._geometry import (
+    held_transformations,
+    same_transformations,
+)
+from brainhops.io.common._pyramids import held_images, own_level, own_levels
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.images.tiff import _utils as backend
-from brainhops.io.images.tiff._image import (
-    TiffImage,
-    _bigtiff,
-    _TiffMixin,
-    _wrap_write,
-    _write_geometry,
+
+# this format
+from . import _utils as backend
+from ._data import _TiffProxy
+from ._geometry import level_geometry, record_transformations
+from ._image import TiffImage, _TiffReader
+from ._metadata import TiffMetadata
+from ._raw import TiffRaw, read_record
+from ._views import _image_to_disk
+from ._writer import (
+    Plan,
+    copy_source,
+    keeps_record,
+    plan_file,
+    planned_record,
+    split_options,
+    write_plan,
+    write_target,
 )
 
 # A vendor whole-slide pyramid scores above a single-scale TIFF (LIKELY) and
@@ -32,7 +60,7 @@ _WHOLE_SLIDE = 0.9
 
 @register_format
 class TiffMultiScaleImage(
-    _TiffMixin,
+    _TiffReader,
     BinaryFileReader,
     BinaryFileWriter,
     ImageFormat,
@@ -41,10 +69,14 @@ class TiffMultiScaleImage(
     """A pyramidal TIFF series, read as a multiscale image.
 
     The series is an OME-TIFF or plain TIFF with SubIFD levels, or any other
-    pyramid that tifffile recognises. Each level is a [`TiffImage`][], finest
-    first, whose pixels are read on first access. All levels map to the same
-    `"physical"` system, so the pyramid has no transformation of its own, like
-    an OME-Zarr pyramid that declares no common transformation.
+    pyramid that tifffile recognises. The pyramid holds the record of the
+    series as [`TiffMetadata`][brainhops.io.images.tiff.TiffMetadata], and
+    the lazy array of each level, finest first, as a tuple in `rawdata`.
+    Its levels are [`TiffImage`][] objects decoded from `rawdata` and
+    the record on first access, which hold the same metadata, by
+    identity, and the index `level` of their level in the record, and
+    whose pixels are read when their data is accessed. An assigned list
+    of levels is pending, and so is data assigned to a level.
 
     The pixel size of a level is the pixel size of the base level multiplied
     by the downsampling factor of the level. Along each axis, this factor is
@@ -52,42 +84,108 @@ class TiffMultiScaleImage(
     their extent, so pixel `i` of a level downsampled by `f` is centred on the
     base coordinate `f * i + (f - 1) / 2`. This coordinate is the centre of the
     block of base pixels that the pixel summarises, as in block-averaged and
-    OME-Zarr pyramids.
+    OME-Zarr pyramids. All levels map to the same `"physical"` system, so the
+    pyramid has no transformation of its own, like an OME-Zarr pyramid that
+    declares no common transformation.
+
+    A TIFF file stores the geometry of the finest level only, and the
+    levels are written as they are given, with no check of the ratios of
+    their shapes. A preferred transformation assigned to the pyramid is
+    therefore composed into the transformation of the finest level when
+    the pyramid is written, and the transformations of the coarser levels
+    are not written: a reader derives them again from the shapes of the
+    levels. ImageJ cannot store a pyramid. A pyramid that was read and not
+    changed is written by copying the bytes of its file, because tifffile
+    encodes again everything that it writes.
     """
 
-    dialect: tx.Annotated[
-        tx.Optional[str],
-        tx.Doc("The metadata dialect of the file: 'ome', 'imagej' or None."),
-    ] = None
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = backend.EXTENSIONS
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("tiff", "tifffile")
 
-    ome_xml: tx.Annotated[
-        tx.Optional[str], tx.Doc("The OME-XML of an OME-TIFF file.")
-    ] = None
+    rawdata: NoRepr[tx.Optional[tx.Tuple[ArrayProtocol, ...]]] = None
+    """The array of each level, finest first, as the file stores it.
 
-    imagej_metadata: tx.Annotated[
-        tx.Optional[tx.Dict[str, tx.Any]],
-        tx.Doc("The ImageJ metadata of an ImageJ file."),
-    ] = None
+    After a read, each array is a lazy array of its level. `rawdata` is
+    a tuple, so that it cannot be changed in place, and it describes the
+    file as it was read, or as the pyramid was last consolidated.
+    """
 
-    tags: tx.Annotated[
-        tx.Optional[tx.Dict[str, tx.Any]],
-        tx.Doc("The tags of interest of the first page, by name."),
-    ] = None
+    _images: tx.Optional[tx.List[SingleScaleImage]] = Inherit(
+        "images", default=None
+    )
+    """The levels assigned to the pyramid, or `None`.
 
-    series: tx.Annotated[
-        tx.Optional[int], tx.Doc("The index of the series that was read.")
-    ] = None
+    The pyramid takes over the `images` field of [`MultiScaleImage`][] to
+    store an assigned list under this private name. `None` means that no
+    list was assigned, so the property decodes the levels from `rawdata`
+    and the record and caches them apart.
+    """
 
-    n_series: tx.Annotated[
-        tx.Optional[int], tx.Doc("The number of series in the file.")
-    ] = None
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+    """The placements assigned to the pyramid, or `None`.
 
-    storage_axes: tx.Annotated[
-        tx.Optional[str],
-        tx.Doc("The axes of the series as tifffile stores them."),
-    ] = None
+    `None` means that no list was assigned, so the property decodes the
+    placements of the record, which a TIFF file never stores, and caches
+    the empty list apart.
+    """
 
-    # --- sniff --------------------------------------------------------
+    _metadata: NoRepr[tx.Optional[TiffMetadata]] = None
+
+    metadata = smartproperty(
+        "metadata", invalidates=("images", "transformations")
+    )
+    """The metadata of the series, which holds its record, or `None`.
+
+    Every level of the pyramid holds the same metadata. Assigning other
+    metadata drops the levels and the placements decoded from the
+    previous record, and keeps those that were assigned. The levels that
+    are dropped keep the previous metadata.
+    """
+
+    series: tx.Optional[int] = None
+    """The index of the series that was read, a reader option."""
+
+    @smartproperty(cache=True)
+    def images(self) -> tx.List[SingleScaleImage]:
+        """The levels of the pyramid, finest first.
+
+        The levels are decoded from `rawdata` and the record on first
+        access and cached, apart from an assigned list, so `images[0] is
+        images[0]` and a level changed in place, such as one whose data is
+        assigned, is written. Each level is a [`TiffImage`][] that holds
+        its array of `rawdata`, the metadata of the pyramid and its
+        index in `level`. Assigning a list replaces the stored one, and
+        assigning `None` decodes the levels again.
+        """
+        return _levels(self.rawdata, self.metadata)
+
+    @smartproperty(cache=True)
+    def transformations(self) -> tx.List[Transformation]:
+        """The placements of the pyramid, which a TIFF file never stores.
+
+        The decoded list is empty, and an assigned list is pending: it is
+        composed into the transformation of the finest level when the
+        pyramid is written.
+        """
+        return []
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the finest level, read without reading the pixels.
+
+        The shape is read from the levels that the pyramid holds, or else
+        from the first array of `rawdata`.
+        """
+        images = held_images(self)
+        if images is not None:
+            return tuple(images[0].shape) if images else ()
+        if self.rawdata:
+            return tuple(int(n) for n in self.rawdata[0].shape)
+        return ()
+
+    # --- reading ------------------------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -106,6 +204,24 @@ class TiffMultiScaleImage(
         SCN or Ventana BIF) scores slightly less (0.9), still above
         [`TiffImage`][], so that the dedicated reader of
         [`brainhops.io.images.openslide`][] takes it when installed.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, open in binary mode.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream holds no TIFF file.
+        series : int, default=0
+            The series whose levels are counted.
+        level : int, optional
+            The level that the reader is asked for, which a pyramid refuses.
+        **kwargs : Any
+            The other options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         if level is not None:
             return Confidence.NO
@@ -123,8 +239,6 @@ class TiffMultiScaleImage(
             return Confidence.NO
         return _WHOLE_SLIDE if slide else Confidence.CERTAIN
 
-    # --- load ---------------------------------------------------------
-
     @classmethod
     def from_source(
         cls,
@@ -136,15 +250,49 @@ class TiffMultiScaleImage(
         mmap: bool = True,
         lazy: tx.Optional[bool] = None,
         **kwargs,
-    ) -> tx.Self:
+    ) -> "TiffMultiScaleImage":
         """Read every level of one series.
 
-        The options are those of [`TiffImage.from_source`][], except `level`.
+        The record of the series is read at once, from the IFDs of the
+        file, and each level is a lazy array that reads its pixels when
+        they are needed.
+
+        Parameters
+        ----------
+        source : TiffSource
+            The source from which the file is read.
+        series : int, default=0
+            The series, the first by default. A negative index counts from
+            the end.
+        pixel_size : float or Sequence[float] or Mapping[str, float], optional
+            The pixel size of the finest level, which overrides the pixel
+            size of the file.
+        unit : str or Unit, optional
+            The unit of `pixel_size`, or the unit to which the sizes of the
+            file are converted.
+        origin : bool, float, Sequence[float] or Mapping[str, float], optional
+            The position of the first pixel, which overrides the OME plane
+            positions. `False` ignores the positions of the file.
+        mmap : bool, default=True
+            Whether to memory-map the local uncompressed levels.
+        lazy : bool, optional
+            Whether the data of each level is a dask array.
+        **kwargs : Any
+            Refused, since TIFF has no other option.
+
+        Returns
+        -------
+        TiffMultiScaleImage
+            The pyramid. When `pixel_size`, `unit` or `origin` is given, its
+            levels are assigned, with the transformations that the options
+            give them.
 
         Raises
         ------
         TypeError
             If an unknown option is given.
+        IndexError
+            If there is no such series.
         """
         if kwargs:
             raise TypeError(
@@ -152,101 +300,440 @@ class TiffMultiScaleImage(
                 f"{', '.join(sorted(kwargs))}."
             )
         with source.open() as tif:
-            n = len(tif.series)
-            backend._select(tif, int(series), 0)
-            series = int(series) % n
-            base = tif.series[series]
-            count = len(base.levels)
-        levels = [
-            TiffImage.from_source(
-                source,
-                series=series,
-                level=index,
-                pixel_size=pixel_size,
-                unit=unit,
-                origin=origin,
-                mmap=mmap,
-                lazy=lazy,
-            )
-            for index in range(count)
-        ]
-        first = levels[0]
-        image = cls(
-            images=levels,
-            transformations=[],
-            dialect=first.dialect,
-            ome_xml=first.ome_xml,
-            imagej_metadata=first.imagej_metadata,
-            tags=first.tags,
-            series=series,
-            n_series=first.n_series,
-            storage_axes=first.storage_axes,
+            record = read_record(tif, series)
+        metadata = TiffMetadata.from_raw(record)
+        raw = tuple(
+            _TiffProxy(source, record, index, mmap=mmap, lazy=lazy)
+            for index in range(len(record.levels))
         )
-        image._ome_index = getattr(first, "_ome_index", None)
-        return image
+        pyramid = cls(rawdata=raw, metadata=metadata, series=record.series)
+        if any(value is not None for value in (pixel_size, unit, origin)):
+            # The options describe the geometry, so the levels are assigned
+            # with the transformations that they give.
+            levels = _levels(raw, metadata)
+            for index, level in enumerate(levels):
+                level.transformations = [
+                    level_geometry(
+                        record.storage_axes,
+                        record.levels[0].shape,
+                        record.levels[index].shape,
+                        record,
+                        pixel_size=pixel_size,
+                        unit=unit,
+                        origin=origin,
+                    )
+                ]
+            pyramid.images = levels
+        return pyramid
 
-    # --- save ---------------------------------------------------------
+    @classmethod
+    def from_instance(
+        cls, other: tx.Any, *args, **kwargs
+    ) -> "TiffMultiScaleImage":
+        """Copy a pyramid into this format.
 
-    def _writer(
+        Within the format, the stored fields are copied, so a copy of an
+        untouched pyramid shares `rawdata` and the metadata and decodes
+        nothing. From another class, the levels that `other` reports are
+        copied, because its private fields mean nothing to this format.
+
+        Parameters
+        ----------
+        other : MultiScaleImage
+            The pyramid to copy.
+        *args : Any
+            Positional fields of the copy.
+        **kwargs : Any
+            Other fields of the copy.
+
+        Returns
+        -------
+        TiffMultiScaleImage
+            The copy.
+        """
+        if not isinstance(other, cls):
+            images = getattr(other, "images", None)
+            if images is not None:
+                kwargs.setdefault("images", list(images))
+        return super().from_instance(other, *args, **kwargs)
+
+    # --- writing ------------------------------------------------------
+
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        dialect: tx.Optional[str] = None,
+        name: tx.Optional[str] = None,
+        bigtiff: tx.Optional[bool] = None,
+    ) -> "TiffMultiScaleImage":
+        """Encode pending levels and placements into `rawdata` and the record.
+
+        A pyramid that has a record, whose levels are those of its file,
+        whose placements were never read or are empty, and which is
+        consolidated without options or with options that name what the
+        record holds, is left as it is: the copy shares `rawdata` and
+        the metadata. Any other pyramid is planned as the writer plans
+        its file, and the record of the copy is read from a file of that
+        plan that tifffile writes without pixels, so that it holds what
+        the written file holds. A level of the file keeps its array, a
+        level with pending data gives that data, and a level of another
+        class, or one that holds other metadata, gives its decoded data.
+        The levels are written as they are given. The placements are
+        composed into the transformation of the finest level, which the
+        file stores, and the transformations of the coarser levels are
+        derived again from their shapes. Nothing is pending in the copy,
+        whose levels are decoded from the new record.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this pyramid rather than a copy.
+        dialect : {"ome", "plain"}, optional
+            The metadata dialect. ImageJ cannot store a pyramid.
+        name : str, optional
+            The name of the file, which may ask for OME-TIFF.
+        bigtiff : bool, optional
+            Whether to write BigTIFF. By default, BigTIFF is written only
+            when the levels are too large for a classic TIFF (about 4 GiB).
+
+        Returns
+        -------
+        TiffMultiScaleImage
+            The consolidated copy, or this pyramid with `inplace=True`.
+
+        Raises
+        ------
+        WriterError
+            If the pyramid has no level, a level has no data or another
+            number of axes, or the dialect is unknown or cannot store the
+            pyramid.
+        """
+        if self._untouched(dialect, name, bigtiff):
+            if not inplace:
+                return replace(self, images=None, transformations=None)
+            self.images = None
+            self.transformations = None
+            return self
+        plan = self._planned(dialect, name, bigtiff)
+        record = planned_record(plan)
+        if self.metadata is None:
+            metadata = TiffMetadata.from_raw(record)
+        else:
+            metadata = replace(self.metadata, raw=record)
+        raw = tuple(plan.arrays)
+        if not inplace:
+            return replace(
+                self,
+                images=None,
+                transformations=None,
+                rawdata=raw,
+                metadata=metadata,
+                series=record.series,
+            )
+        self.rawdata = raw
+        self.metadata = metadata
+        self.series = record.series
+        self.images = None
+        self.transformations = None
+        return self
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Encode the pyramid as TIFF.
+
+        The finest level is the main image, and the other levels are its
+        SubIFDs. A pyramid that [`consolidate`][] leaves as it is, and
+        whose `rawdata` holds the lazy arrays of its record, gives the bytes of
+        its file, as they are. Any other pyramid is encoded by tifffile,
+        as the pyramid consolidated with the options holds it. The pyramid
+        itself is not changed.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            The options of [`consolidate`][] (`dialect`, `name` and
+            `bigtiff`), and the options of `TiffWriter.write` of tifffile
+            that encode the pixels: `compression`, `compressionargs`,
+            `predictor`, `tile` and `rowsperstrip`.
+
+        Returns
+        -------
+        bytes
+            The encoded pyramid.
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
+        WriterError
+            If the pyramid cannot be written.
+        """
+        options, encoding = split_options(kwargs)
+        if not encoding and self._copies_source(**options):
+            return self.rawdata[0].read_bytes()
+        buffer = BytesIO()
+        write_plan(self._planned(**options), buffer, encoding)
+        return buffer.getvalue()
+
+    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
+        """Write the pyramid to an open binary file.
+
+        If the file has a name, the name chooses the dialect as in
+        [`to_bytes`][].
+
+        Parameters
+        ----------
+        file : IO
+            The stream, open in binary mode.
+        **kwargs : Any
+            The options of [`to_bytes`][].
+        """
+        kwargs.setdefault("name", _to_filename(file))
+        file.write(self.to_bytes(**kwargs))
+
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """Write the pyramid to a file.
+
+        A pyramid that was read and not changed is written by copying the
+        bytes of its file, and any other pyramid is encoded by tifffile,
+        as [`TiffImage.to_filename`][] describes. When the lazy arrays of
+        the pyramid read the file that is written, the pyramid then holds
+        what the file holds (#426): its `rawdata` is a new tuple of lazy arrays
+        of the new file, and its record is read from it.
+
+        Parameters
+        ----------
+        filename : str or PathLike
+            The path of the file.
+        **kwargs : Any
+            The options of [`to_bytes`][].
+
+        Raises
+        ------
+        TypeError
+            If an unknown option is given.
+        WriterError
+            If the pyramid cannot be written.
+        """
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+        kwargs.setdefault("name", _to_filename(filename))
+        options, encoding = split_options(kwargs)
+        raws = self.rawdata or ()
+        reading = [
+            raw
+            for raw in raws
+            if isinstance(raw, _TiffProxy)
+            and same_file(raw.source.filename, filename)
+        ]
+        if not encoding and self._copies_source(**options):
+            if not reading:
+                source = raws[0].source
+                write_target(filename, lambda f: copy_source(source, f))
+            return
+        plan = self._planned(**options)
+        write_target(filename, lambda f: write_plan(plan, f, encoding))
+        if reading:
+            # The pyramid holds what the file holds, and its lazy arrays
+            # read the new file.
+            source = backend.TiffSource.from_file(filename)
+            with source.open() as tif:
+                record = read_record(tif, 0)
+            mmap, lazy = reading[0].mmap, reading[0].lazy
+            self.rawdata = tuple(
+                _TiffProxy(source, record, index, mmap=mmap, lazy=lazy)
+                for index in range(len(record.levels))
+            )
+            self.metadata = TiffMetadata.from_raw(record)
+            self.series = record.series
+            self.images = None
+            self.transformations = None
+
+    def to_file(self, file: path.FileLike, **kwargs) -> None:
+        """Write the pyramid to a path or a stream.
+
+        Parameters
+        ----------
+        file : path-like or IO
+            The path or the stream.
+        **kwargs : Any
+            The options of [`to_bytes`][].
+        """
+        if isinstance(file, (str, path.PathLike)):
+            return self.to_filename(file, **kwargs)
+        return super().to_file(file, **kwargs)
+
+    # --- helpers ------------------------------------------------------
+
+    def _untouched(
         self,
         dialect: tx.Optional[str] = None,
         name: tx.Optional[str] = None,
         bigtiff: tx.Optional[bool] = None,
-        **options,
-    ) -> tx.Callable[[tx.Any], None]:
-        """Return a function that writes the pyramid in OME-TIFF or plain TIFF,
-        since ImageJ cannot store pyramids.
+    ) -> bool:
+        """Tell whether consolidating with the options changes nothing.
 
-        The full-resolution level is the main image, and the other levels are
-        its SubIFDs. The pixel size is the one of the full-resolution level,
-        and the placement of the other levels is derived again from their
-        shapes on reading.
+        The pyramid has a record, its levels are those of its file, its
+        placements were never read or are empty, and the options name what
+        the record holds.
         """
-        tf = backend._require_tifffile()
-        images = list(self.images or [])
-        if not images:
-            raise WriterError(
-                "This multiscale image has no levels, so there is nothing "
-                "to write."
-            )
-        xform = images[0].transformation
-        if self.transformations:
-            xform = self.transformation @ xform
-        storage, codes, axes = self._level_storage(
-            images[0].data, images[0].transformation, self.storage_axes
+        metadata = self.metadata
+        record = None if metadata is None else metadata.raw
+        if (
+            record is None
+            or self.rawdata is None
+            or not keeps_record(record, dialect, name, bigtiff)
+            or not own_levels(self, TiffImage, record_transformations)
+        ):
+            return False
+        held = held_transformations(self)
+        return held is None or same_transformations(held, [])
+
+    def _copies_source(
+        self,
+        dialect: tx.Optional[str] = None,
+        name: tx.Optional[str] = None,
+        bigtiff: tx.Optional[bool] = None,
+    ) -> bool:
+        """Tell whether a write copies the bytes of the file of the pyramid.
+
+        The pyramid is left as it is by [`consolidate`][], and its
+        `rawdata` holds the lazy array of each level of its record, all
+        of one file.
+        """
+        if not self._untouched(dialect, name, bigtiff):
+            return False
+        record = self.metadata.raw
+        raws = self.rawdata
+        return len(raws) == len(record.levels) and all(
+            isinstance(raw, _TiffProxy)
+            and raw.record is record
+            and raw.level == index
+            and raw.source is raws[0].source
+            for index, raw in enumerate(raws)
         )
-        levels = [storage]
-        for index, image in enumerate(images[1:], start=1):
-            stored, _, _ = self._level_storage(
-                image.data, image.transformation, self.storage_axes, codes
-            )
-            if stored.ndim != storage.ndim:
-                raise WriterError(
-                    f"Level {index} of this pyramid does not have as many "
-                    f"axes as its first level."
-                )
-            levels.append(stored)
-        geometry = _write_geometry(xform, axes)
-        _, opener, write = self._options(
-            storage, codes, geometry, name, dialect, allow_imagej=False
+
+    def _planned(
+        self,
+        dialect: tx.Optional[str] = None,
+        name: tx.Optional[str] = None,
+        bigtiff: tx.Optional[bool] = None,
+    ) -> Plan:
+        """Plan the file of the pyramid, as [`plan_file`][] describes.
+
+        The levels and the placements are read without being stored, so
+        that a write leaves the pyramid as it was.
+
+        Raises
+        ------
+        WriterError
+            If the pyramid has no level, or a level has no data.
+        """
+        metadata = self.metadata
+        record = None if metadata is None else metadata.raw
+        images = held_images(self)
+        if images is None:
+            images = _levels(self.rawdata, metadata)
+        arrays = [
+            _level_array(self, image, index)
+            for index, image in enumerate(images)
+        ]
+        transformation, kept = _finest_transformation(self, images)
+        placements = held_transformations(self) or []
+        if placements:
+            # A TIFF file stores no placement, so the preferred one is
+            # composed into the geometry of the finest level.
+            kept = False
+            if transformation is None:
+                transformation = placements[-1]
+            else:
+                transformation = placements[-1] @ transformation
+        return plan_file(
+            arrays,
+            transformation,
+            record,
+            kept and record is not None,
+            dialect=dialect,
+            name=name,
+            bigtiff=bigtiff,
         )
-        write.update(options)
-        nbytes = sum(level.nbytes for level in levels)
-        opener["bigtiff"] = _bigtiff(nbytes, bigtiff)
-        sub = {
-            key: write[key]
-            for key in ("photometric", "planarconfig")
-            if key in write
-        }
-        sub.update(options)
 
-        def run(target: tx.Any) -> None:
-            def go() -> None:
-                with tf.TiffWriter(target, **opener) as writer:
-                    writer.write(levels[0], subifds=len(levels) - 1, **write)
-                    for level in levels[1:]:
-                        writer.write(level, subfiletype=1, **sub)
 
-            _wrap_write(go)
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
 
-        return run
+
+def _levels(
+    raw: tx.Optional[tx.Tuple[ArrayProtocol, ...]],
+    metadata: tx.Optional[TiffMetadata],
+) -> tx.List[TiffImage]:
+    """Return a level object for each array of a pyramid, finest first."""
+    if raw is None:
+        return []
+    record = None if metadata is None else metadata.raw
+    series = record.series if isinstance(record, TiffRaw) else None
+    return [
+        TiffImage(rawdata=array, metadata=metadata, level=index, series=series)
+        for index, array in enumerate(raw)
+    ]
+
+
+def _level_array(
+    pyramid: TiffMultiScaleImage, image: tx.Any, index: int
+) -> ArrayProtocol:
+    """Return the array that a level of a pyramid stores.
+
+    A level of the file gives its array of `rawdata`, a TIFF level gives
+    its pending data or else its own `rawdata`, and an image of another
+    class gives its decoded data.
+
+    Raises
+    ------
+    WriterError
+        If the level has no data.
+    """
+    if own_level(pyramid, image, index, TiffImage, record_transformations):
+        return pyramid.rawdata[index]
+    if type(image) is TiffImage:
+        if image._data is not None:
+            array = _image_to_disk(image._data)
+        else:
+            array = image.rawdata
+    else:
+        data = image.data
+        array = None if data is None else _image_to_disk(data)
+    if array is None:
+        raise WriterError(
+            f"Level {index} of this pyramid has no data, so it cannot be "
+            f"written."
+        )
+    return array
+
+
+def _finest_transformation(
+    pyramid: TiffMultiScaleImage, images: tx.Sequence[tx.Any]
+) -> tx.Tuple[tx.Optional[Transformation], bool]:
+    """Return the transformation of the finest level of a pyramid to write.
+
+    The transformation is the list that the finest level holds, read
+    without being stored, or the list that its record decodes to. The
+    second value tells whether it is the geometry of the record of the
+    pyramid, so that the dialect of the record can be kept.
+    """
+    if not images:
+        return None, False
+    image = images[0]
+    if type(image) is TiffImage:
+        decoded = record_transformations(image.metadata, image.level)
+        held = held_transformations(image)
+        transformations = decoded if held is None else held
+        kept = image.metadata is pyramid.metadata and (
+            held is None or same_transformations(held, decoded)
+        )
+    else:
+        transformations = list(image.transformations or [])
+        kept = False
+    if not transformations:
+        return None, kept
+    return transformations[-1], kept

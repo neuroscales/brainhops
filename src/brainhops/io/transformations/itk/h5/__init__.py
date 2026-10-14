@@ -69,9 +69,32 @@ dimensions, such as `"AffineTransform_double_3_3"`. The two parameter
 arrays are 1-D float or double datasets. Older ITK versions misspelled
 them `TranformParameters` and `TranformFixedParameters`, and both
 spellings are read.
+
+## Records
+
+The root strings and the blocks of a file are held as an
+[`H5Raw`][brainhops.io.transformations.itk.h5.H5Raw] record by
+[`H5Metadata`][brainhops.io.transformations.itk.h5.H5Metadata], the
+metadata of the file, and an
+[`H5Transform`][brainhops.io.transformations.itk.h5.H5Transform] decodes
+its chain from the record when it is first used. The parameters of the
+warps are read lazily by default, through a
+[`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] that opens
+the file again by its name, and at once with `load=True` or when the file
+is read from a stream. No object keeps the file open. brainhops does not
+write ITK `.h5` files.
 """
 
-__all__ = ["H5Transform", "H5Header", "H5TransformReader", "DelayedH5Array"]
+__all__ = [
+    "DelayedH5Array",
+    "H5Header",
+    "H5Metadata",
+    "H5Raw",
+    "H5Transform",
+]
 
-from ._parser import DelayedH5Array, H5Header, H5TransformReader
+from brainhops.io.common.hdf5 import DelayedH5Array
+
+from ._metadata import H5Metadata
+from ._raw import H5Header, H5Raw
 from ._xform import H5Transform

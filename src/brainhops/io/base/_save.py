@@ -60,10 +60,20 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
        the voxel-to-RAS affine of a NIfTI file only when that is what it
        maps, or when its coordinate systems are not known.
 
-    In steps 3 and 4, when several candidates can hold `obj`, the most
-    specific is used, by the rules reading uses: the longest prefix,
-    then the narrowest declaration, then `PRIORITY`. Two that are
-    equally specific are an ambiguity, and nothing is written.
+    In steps 3 and 4, the candidates are tried from the most specific,
+    by the rules reading uses: the longest prefix, then the narrowest
+    declaration, then `PRIORITY`. Two that are equally specific and can
+    both hold `obj` are an ambiguity, and nothing is written.
+
+    A candidate that refuses `obj` gives way to the next, in step 3
+    and then in step 4, until one writes it. A candidate refuses when
+    `obj` cannot be converted to it, or when its writer cannot write
+    what was built from `obj` and raises a `ConversionError` or a
+    `WriterError`, such as `UnrepresentableTransformationError`: a
+    `register.dat` file refuses an affine between scanner RAS spaces
+    without the geometries of both volumes. An `OSError`, as when the
+    file cannot be written, is raised at once, as is any other error of
+    a writer, and no other candidate is tried.
 
     !!! note "Nothing is approximated"
         A transformation is written only in a format that holds it
@@ -112,8 +122,12 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     AmbiguousFormatError
         If several equally specific formats can hold `obj`.
     WriterError
-        If no format claims the file name, if none of those that do can hold
-        `obj`, or if the chosen format cannot write it.
+        If no format claims the file name, or if every one that does
+        refuses `obj`, with the reason of each. If `obj` already is of one
+        of these formats, the error of its own writer is raised.
+    OSError
+        If the file cannot be written, or the data of `obj` cannot be
+        read.
     MetadataLossError
         If metadata is lost under the `"raise"` policy.
     """
@@ -151,18 +165,17 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     holders = [
         (fmt, match) for fmt, match in claimed if _holds(fmt, obj, reasons)
     ]
-    writer, report = _first_writer(name, obj, holders, _copy, reasons)
+    if _write_first(file, name, obj, holders, _copy, reasons, kwargs):
+        return
     # The second pass converts a transformation (see "Two passes, one
     # conversion" above): the first stays for the formats without
     # converters, and for those with them it runs the same conversion.
-    if writer is None and isinstance(obj, Transformation):
+    if isinstance(obj, Transformation):
         others = [
             candidate for candidate in claimed if candidate not in holders
         ]
-        writer, report = _first_writer(name, obj, others, _convert, reasons)
-    if writer is not None:
-        _write_once(writer, file, report, kwargs)
-        return
+        if _write_first(file, name, obj, others, _convert, reasons, kwargs):
+            return
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))
     detail = "".join(f"\n  - {reason}" for reason in reasons)
@@ -200,23 +213,44 @@ def _convert(obj: Transformation, fmt: type) -> tx.Any:
     return obj.to(fmt)
 
 
-def _first_writer(
+def _write_first(
+    file: path.FileLike,
     name: str,
     obj: tx.Any,
     candidates: tx.List[tx.Tuple[type, tx.Any]],
     build: tx.Callable[[tx.Any, type], tx.Any],
     reasons: tx.List[str],
-) -> tx.Tuple[tx.Any, tx.Optional[ConversionReport]]:
+    options: tx.Dict[str, tx.Any],
+) -> bool:
     """
-    `obj` built into the most specific candidate format that takes it.
+    Write `obj` in the most specific candidate format that takes it.
 
     The candidates are tried tier by tier, most specific first, and
-    `build(obj, fmt)` makes the object to write. The first tier where it
-    succeeds for one format gives the writer; a tier where it succeeds
-    for several is an ambiguity. Why it fails for the others is added to
-    `reasons`. `None` when it fails for every candidate. Each build fills
-    a report of its own with what the conversion of the metadata loses,
-    and the report of the writer is returned with it.
+    `build(obj, fmt)` makes the object to write. A tier where it
+    succeeds for several formats is an ambiguity. In a tier where it
+    succeeds for one, that object is written with `options`, and a
+    `ConversionError` or a `WriterError` from its writer moves on to the
+    next tier. Why each format fails is added to `reasons`. Each build
+    fills a report of its own with what the conversion of the metadata
+    loses, and the write of the object adds to the report of its build
+    (see `_write_once`).
+
+    Building does not touch the file, and any error but an `OSError`
+    means that the format cannot hold `obj`. Writing does, so only the
+    errors by which a writer refuses an object move on: an `OSError`, or
+    an error the writer does not raise on purpose, is raised at once.
+
+    Returns
+    -------
+    bool
+        Whether `obj` was written.
+
+    Raises
+    ------
+    AmbiguousFormatError
+        If several formats of the first tier that takes `obj` take it.
+    OSError
+        If building or writing a candidate raises it.
     """
     for tier in _tiers(candidates):
         writers = []
@@ -227,30 +261,39 @@ def _first_writer(
             try:
                 with metadata_loss_policy(report):
                     writers.append((fmt, build(obj, fmt), report))
+            except OSError:
+                raise
             except Exception as e:  # noqa: BLE001
                 reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
         if len(writers) > 1:
             raise AmbiguousFormatError(
                 _ambiguity_message(name, obj, [fmt for fmt, _, _ in writers])
             )
-        if writers:
-            return writers[0][1], writers[0][2]
-    return None, None
+        if not writers:
+            continue
+        fmt, writer, report = writers[0]
+        try:
+            _write_once(writer, file, report, options)
+        except (ConversionError, WriterError) as e:
+            reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
+            continue
+        return True
+    return False
 
 
 def _write_once(
     writer: tx.Any,
     file: path.FileLike,
     report: ConversionReport,
-    kwargs: tx.Mapping[str, tx.Any],
+    options: tx.Mapping[str, tx.Any],
 ) -> None:
     """Write a converted object, and act once on what the save loses.
 
     The report of the conversion is given to the write as its `on_loss`,
     so that the consolidation of the metadata adds to it, and the loss
-    policy of the save acts on the one report. A format that does not
-    take the metadata of its data model over does not write it, so its
-    fields that are set are reported as lost.
+    policy of the save acts on the one report once the file is written.
+    A format that does not take the metadata of its data model over does
+    not write it, so its fields that are set are reported as lost.
     """
     # The metadata formats import this package, so their helpers are
     # imported when they are used.
@@ -260,16 +303,16 @@ def _write_once(
         unsupported_values,
     )
 
-    kwargs = dict(kwargs)
-    on_loss = kwargs.pop("on_loss", None)
+    options = dict(options)
+    on_loss = options.pop("on_loss", None)
     if _takes_over(type(writer), "metadata"):
-        writer.save(file, on_loss=report, **kwargs)
+        writer.save(file, on_loss=report, **options)
     else:
         metadata = getattr(writer, "metadata", None)
         if metadata is not None:
             lost_fields(unsupported_values(MetadataFormat, metadata), report)
-        writer.save(file, **kwargs)
-    apply_loss_policy(report, on_loss, stacklevel=3)
+        writer.save(file, **options)
+    apply_loss_policy(report, on_loss, stacklevel=4)
 
 
 def _model(cls: type) -> tx.Optional[type]:

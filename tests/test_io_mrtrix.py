@@ -366,8 +366,8 @@ def test_intensity_scaling(tmp_path) -> None:  # noqa: ANN001
     )
     source = _write(tmp_path / "a.mif", _single_file(head, payload))
     image = MrtrixImage.load(source)
-    assert np.array_equal(image.raw.get_unscaled(), stored)
-    assert image.raw.dtype == np.float32
+    assert np.array_equal(image.rawdata.get_unscaled(), stored)
+    assert image.rawdata.dtype == np.float32
     assert np.allclose(np.asarray(image.data), -1 + 0.5 * stored)
 
 
@@ -865,7 +865,7 @@ def test_nothing_but_the_data_reads_the_voxels(
     image = io.load(source)
     assert image.shape == DATA.shape
     assert image.ndim == 3
-    assert image.raw.dtype == np.float32
+    assert image.rawdata.dtype == np.float32
     repr(image)
     assert image.transformations
     assert image.system is not None

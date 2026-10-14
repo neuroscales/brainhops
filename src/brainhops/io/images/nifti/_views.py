@@ -1,7 +1,7 @@
 """How the voxels of a NIfTI image are decoded from the array that the
 file stores, and encoded back.
 
-The two functions convert between `raw`, the array as the file stores it,
+The two functions convert between `rawdata`, the array as the file stores it,
 and `data`, the array that the data model exposes. They are pure and
 invert each other, so that `_image_to_model(_image_to_disk(data))` gives
 `data` back.

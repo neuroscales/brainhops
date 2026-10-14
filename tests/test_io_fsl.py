@@ -269,6 +269,111 @@ def test_a_matlab_like_text_is_not_claimed_as_flirt() -> None:
 
 
 # ----------------------------------------------------------------------
+#   FLIRT RECORDS
+# ----------------------------------------------------------------------
+# The FLIRT matrix of a file is held as a record by the metadata of the
+# transformation. A FLIRT matrix that is assigned is pending, and the
+# images are options that are never part of the record.
+
+
+def _flirt_file(tmp_path) -> Path:  # noqa: ANN001
+    path = tmp_path / "src2ref.mat"
+    np.savetxt(str(path), FLIRT_MATRIX, fmt="%.8g")
+    return path
+
+
+def test_the_flirt_matrix_lives_in_the_record(tmp_path) -> None:  # noqa: ANN001
+    from brainhops.io.transformations.fsl.flirt import (
+        FlirtMetadata,
+        FlirtRaw,
+    )
+
+    path = _flirt_file(tmp_path)
+    flirt = FlirtTransform.load(path)
+    assert isinstance(flirt.metadata, FlirtMetadata)
+    assert isinstance(flirt.metadata.raw, FlirtRaw)
+    assert "_cache_flirt_matrix" not in vars(flirt)
+    assert np.allclose(flirt.flirt_matrix, FLIRT_MATRIX)
+    # The decoded matrix is read-only, and is changed by assignment.
+    assert not flirt.flirt_matrix.flags.writeable
+    assert FlirtMetadata.load(path).raw.matrix == flirt.metadata.raw.matrix
+    assert flirt.consolidate().metadata is flirt.metadata
+
+
+def test_an_assigned_flirt_matrix_is_pending(tmp_path) -> None:  # noqa: ANN001
+    flirt = FlirtTransform.load(
+        _flirt_file(tmp_path),
+        reference=_image(REF_SHAPE, REF_AFFINE),
+        moving=_image(MOV_SHAPE, MOV_AFFINE),
+    )
+    metadata = flirt.metadata
+    before = flirt.homogeneous_matrix
+    flirt.flirt_matrix = np.eye(4)
+    # The views derived from the old matrix are dropped.
+    assert not np.allclose(flirt.homogeneous_matrix, before)
+    assert flirt.metadata is metadata
+    consolidated = flirt.consolidate()
+    assert consolidated.metadata.raw.matrix == tuple(
+        tuple(row) for row in np.eye(4)
+    )
+    assert consolidated._flirt_matrix is None
+    assert consolidated.moving is flirt.moving
+    assert np.allclose(
+        consolidated.homogeneous_matrix, flirt.homogeneous_matrix
+    )
+
+
+def test_changing_an_image_drops_the_derived_views() -> None:
+    flirt = _flirt(
+        reference=_image(REF_SHAPE, REF_AFFINE),
+        moving=_image(MOV_SHAPE, MOV_AFFINE),
+    )
+    before = flirt.homogeneous_matrix
+    flirt.moving = _image(REF_SHAPE, REF_AFFINE)
+    assert not np.allclose(flirt.homogeneous_matrix, before)
+
+
+def test_a_copy_within_the_format_decodes_nothing(tmp_path) -> None:  # noqa: ANN001
+    flirt = FlirtTransform.load(_flirt_file(tmp_path), moving=np.eye(4))
+    copy = FlirtTransform.from_instance(flirt)
+    assert copy.metadata is flirt.metadata
+    assert copy.moving is flirt.moving
+    assert "_cache_flirt_matrix" not in vars(flirt)
+
+
+def test_what_a_flirt_record_cannot_hold_is_refused() -> None:
+    from brainhops.datamodel import systems
+
+    with pytest.raises(UnrepresentableTransformationError):
+        FlirtTransform(flirt_matrix=np.eye(3)).consolidate()
+    flirt = _flirt()
+    flirt.input = systems.LPSmm()
+    with pytest.raises(UnrepresentableTransformationError):
+        flirt.consolidate()
+    with pytest.raises(ValueError, match="cannot be set"):
+        _flirt().data = np.eye(4)[:-1]
+
+
+def test_flirt_is_not_written(tmp_path) -> None:  # noqa: ANN001
+    from brainhops.io.base.parsers import WriterError
+
+    flirt = FlirtTransform.load(_flirt_file(tmp_path))
+    assert not hasattr(flirt, "save")
+    with pytest.raises(WriterError):
+        io.save(flirt, tmp_path / "copy.mat")
+
+
+def test_flirt_options_are_refused(tmp_path) -> None:  # noqa: ANN001
+    from brainhops.io.transformations.fsl.flirt import FlirtRaw
+
+    path = _flirt_file(tmp_path)
+    with pytest.raises(TypeError):
+        FlirtTransform.load(path, position=0)
+    with pytest.raises(TypeError):
+        FlirtRaw.load(path, moving=np.eye(4))
+
+
+# ----------------------------------------------------------------------
 #   FNIRT (synthetic deformation field)
 # ----------------------------------------------------------------------
 

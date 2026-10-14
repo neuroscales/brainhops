@@ -18,7 +18,10 @@ The hints are `niftyreg.aladin`, `niftyreg.cpp` (`niftyreg.f3d`),
 alone selects any of them. NIfTI files are claimed from their header alone,
 while the affine, which is a bare matrix, is only read with a hint such as
 `hint="niftyreg"`. Every
-reader writes back what it reads.
+reader writes back what it reads. The affine file is read in one pass, and
+its whole content is held as a [`NiftyRegAffineRaw`][] record by
+[`NiftyRegAffineMetadata`][], so an affine that is read and written again
+without changes keeps its bytes.
 
 ## Conventions
 
@@ -66,12 +69,14 @@ These conventions were checked against KCL-BMEIS/niftyreg at commit 79a1762
   header. Both agree for a grid made on that reference.
 """
 
-__all__ = ["NiftyRegAffine"]
+__all__ = ["NiftyRegAffine", "NiftyRegAffineMetadata", "NiftyRegAffineRaw"]
 
 from brainhops._core.dependencies import HAS_NIBABEL
 from brainhops.io.base._dispatch import register_missing_format
 
 from ._affine import NiftyRegAffine
+from ._metadata import NiftyRegAffineMetadata
+from ._raw import NiftyRegAffineRaw
 
 # The affine is plain text, but the fields and grids are NIfTI files,
 # which need the optional nibabel.

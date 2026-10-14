@@ -1,26 +1,22 @@
-"""Machinery shared by every OpenSlide format.
+"""The images and pyramids that every OpenSlide vendor shares.
 
-This module opens slides, reads their levels region by region and computes
-their geometry. The vendor classes in `_formats` only add a vendor name,
-extensions and hints.
+The vendor classes of `_formats` derive from the two bases of this module,
+[`OpenSlideImage`][] and [`OpenSlideMultiScaleImage`][], and add only their
+extensions, their hints and their sniffing, which names their vendor.
 """
 
-import functools
-import math
-import os
-import shutil
-import tempfile
-import weakref
-
+# dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Inherit, NoRepr, replace
 
+# internals
 from brainhops._core import path
-from brainhops._core.dependencies import openslide
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -29,425 +25,302 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     SnifferContentError,
     SnifferExistsError,
+    WriterError,
 )
+from brainhops.io.common._geometry import (
+    held_transformations,
+    same_transformations,
+)
+from brainhops.io.common._pyramids import held_images
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.images.base import _utils_raster as raster
+
+# this format
+from ._data import _Slide, _SlideArray, detect, local_path, read_associated
+from ._geometry import level_geometry, record_transformations
+from ._metadata import OpenSlideMetadata
+from ._raw import read_record
+from ._views import _image_to_disk, _image_to_model
 
 # ----------------------------------------------------------------------
-#   CONSTANTS
-# ----------------------------------------------------------------------
-
-# OpenSlide returns C-ordered (y, x, samples) RGBA pixels. The alpha channel
-# only marks the pixels outside the scanned area, and it is composited onto
-# the background colour.
-_STORAGE = "YXS"
-
-# Each dask chunk groups whole tiles until it is at least this many pixels
-# wide along each axis (or covers the whole axis).
-_MIN_CHUNK = 1024
-
-_LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
-
-# This mapping gives the single-scale class of each vendor name. The multiscale
-# classes use it to build their levels, and `_formats` fills it.
-_LEVEL_CLASSES: tx.Dict[str, type] = {}
-
-
-def _require_openslide() -> tx.Any:
-    if openslide is None:
-        raise ImportError(
-            "Reading whole-slide images needs openslide-python and the "
-            "OpenSlide library: pip install brainhops[openslide]"
-        )
-    return openslide
-
-
-# ----------------------------------------------------------------------
-#   OPENING A SLIDE
-# ----------------------------------------------------------------------
-
-
-def _local_path(file: tx.Any) -> tx.Optional[str]:
-    """Return the local path of a path or open file, or `None` if OpenSlide
-    cannot open it by name.
-    """
-    if isinstance(file, (str, path.PathLike)):
-        try:
-            if path.Path(file).protocol.lower() not in _LOCAL_PROTOCOLS:
-                return None
-        except Exception:
-            return None
-        local = str(path.Path(file))
-    else:
-        local = getattr(file, "name", None)
-        if not isinstance(local, str):
-            return None
-    return local if os.path.isfile(local) else None
-
-
-@functools.lru_cache(maxsize=64)
-def _detect(filename: str, mtime: int, size: int) -> tx.Tuple[str, int]:
-    """Return the vendor and level count of a file, or `("", 0)`.
-
-    Every format class sniffs the same file, so the result is cached. The
-    modification time and size of the file are part of the cache key, so
-    that a modified file is detected again.
-    """
-    del mtime, size  # these arguments only serve as the cache key
-    try:
-        vendor = openslide.OpenSlide.detect_format(filename)
-        if not vendor:
-            return "", 0
-        with openslide.OpenSlide(filename) as slide:
-            return str(vendor), int(slide.level_count)
-    except Exception:
-        return "", 0
-
-
-def _detect_file(filename: str) -> tx.Tuple[str, int]:
-    if openslide is None:
-        return "", 0
-    stat = os.stat(filename)
-    return _detect(os.path.abspath(filename), stat.st_mtime_ns, stat.st_size)
-
-
-def _release(state: tx.Dict[str, tx.Any]) -> None:
-    slide = state.pop("slide", None)
-    if slide is not None:
-        slide.close()
-    tempdir = state.pop("tempdir", None)
-    if tempdir is not None:
-        shutil.rmtree(tempdir, ignore_errors=True)
-
-
-class _Slide:
-    """An OpenSlide slide, opened on first use.
-
-    The slide is closed, and its temporary copy deleted, when the last object
-    using it is garbage-collected.
-    """
-
-    def __init__(
-        self, filename: str, tempdir: tx.Optional[str] = None
-    ) -> None:
-        self.filename = filename
-        self._state: tx.Dict[str, tx.Any] = {"tempdir": tempdir}
-        weakref.finalize(self, _release, self._state)
-
-    @classmethod
-    def from_content(cls, content: bytes, suffix: str) -> "_Slide":
-        """Return a slide whose content is written to a temporary file.
-
-        OpenSlide opens slides only by name, so the content must be written to
-        a file first. Multi-file formats cannot be read this way, because the
-        temporary directory holds only the one file.
-        """
-        tempdir = tempfile.mkdtemp(prefix="brainhops-openslide-")
-        filename = os.path.join(tempdir, "slide" + suffix)
-        with open(filename, "wb") as f:
-            f.write(content)
-        return cls(filename, tempdir)
-
-    @property
-    def slide(self) -> tx.Any:
-        slide = self._state.get("slide")
-        if slide is None:
-            os_ = _require_openslide()
-            try:
-                slide = os_.OpenSlide(self.filename)
-            except Exception as e:
-                raise ParserContentError(
-                    f"OpenSlide cannot read this file: {e}"
-                ) from e
-            self._state["slide"] = slide
-        return slide
-
-    @property
-    def vendor(self) -> tx.Optional[str]:
-        return self.slide.properties.get("openslide.vendor")
-
-
-# ----------------------------------------------------------------------
-#   LAZY LEVEL
-# ----------------------------------------------------------------------
-
-
-def _hex_colour(text: tx.Optional[str]) -> np.ndarray:
-    """Convert an `RRGGBB` string to three bytes, white if it is invalid."""
-    try:
-        value = int(str(text), 16)
-    except (TypeError, ValueError):
-        value = 0xFFFFFF
-    return np.array(
-        [(value >> 16) & 255, (value >> 8) & 255, value & 255], dtype=np.uint16
-    )
-
-
-def _bounding(key: tx.Any, n: int) -> tx.Tuple[int, int, tx.Any]:
-    """Return the range `[start, stop)` that an index reads along one axis, and
-    the index into that range.
-    """
-    if isinstance(key, (int, np.integer)):
-        i = int(key)
-        if not -n <= i < n:
-            raise IndexError(f"Index {i} is out of bounds for size {n}.")
-        i %= n
-        return i, i + 1, 0
-    if isinstance(key, slice):
-        start, stop, step = key.indices(n)
-        indices = range(start, stop, step)
-        if not len(indices):
-            return 0, 0, slice(0, 0)
-        lo, hi = min(indices), max(indices) + 1
-        # The range ends after the last index, whatever the sign of the step.
-        return lo, hi, slice(start - lo, None, step)
-    return 0, n, key  # an array index reads the whole axis
-
-
-class _SlideArray:
-    """One level of a slide, as an F-ordered `(x, y, c)` RGB `uint8` array that
-    reads only the region it is indexed with.
-    """
-
-    dtype = np.dtype(np.uint8)
-    ndim = 3
-
-    def __init__(self, slide: _Slide, level: int) -> None:
-        handle = slide.slide
-        self._slide = slide
-        self.level = level
-        width, height = handle.level_dimensions[level]
-        self.shape = (int(width), int(height), 3)
-        self.downsample = float(handle.level_downsamples[level])
-        self._background = _hex_colour(
-            handle.properties.get("openslide.background-color")
-        )
-
-    @property
-    def size(self) -> int:
-        return int(np.prod(self.shape))
-
-    @property
-    def nbytes(self) -> int:
-        return self.size
-
-    def __len__(self) -> int:
-        return self.shape[0]
-
-    def __repr__(self) -> str:
-        return f"<slide level {self.level}, shape {self.shape}, uint8>"
-
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Any = None
-    ) -> np.ndarray:
-        array = self._read(0, 0, self.shape[0], self.shape[1])
-        return array if dtype is None else array.astype(dtype)
-
-    def __getitem__(self, key: tx.Any) -> np.ndarray:
-        """Read the region that an index covers.
-
-        Integers and slices behave as in NumPy, while integer and boolean
-        arrays index each axis independently.
-        """
-        if not isinstance(key, tuple):
-            key = (key,)
-        if any(k is Ellipsis for k in key):
-            i = next(i for i, k in enumerate(key) if k is Ellipsis)
-            fill = (slice(None),) * (self.ndim - len(key) + 1)
-            key = key[:i] + fill + key[i + 1 :]
-        if len(key) > self.ndim or any(k is None for k in key):
-            raise IndexError(
-                "A slide level takes at most three indices (x, y, c), "
-                "and no new axis."
-            )
-        key = key + (slice(None),) * (self.ndim - len(key))
-        x0, x1, kx = _bounding(key[0], self.shape[0])
-        y0, y1, ky = _bounding(key[1], self.shape[1])
-        out = self._read(x0, y0, x1 - x0, y1 - y0)
-        drop = []
-        for axis, k in enumerate((kx, ky, key[2])):
-            if isinstance(k, (int, np.integer)):
-                out = np.take(out, [int(k)], axis=axis)
-                drop.append(axis)
-            elif isinstance(k, slice):
-                out = out[(slice(None),) * axis + (k,)]
-            else:
-                k = np.asarray(k)
-                if k.dtype == bool:
-                    k = np.nonzero(k)[0]
-                out = np.take(out, k, axis=axis)
-        return out.squeeze(axis=tuple(drop)) if drop else out
-
-    def _read(self, x: int, y: int, width: int, height: int) -> np.ndarray:
-        """Read a region given in level pixels, as an `(x, y, c)` RGB array."""
-        if width <= 0 or height <= 0:
-            return np.zeros((max(width, 0), max(height, 0), 3), np.uint8)
-        location = (
-            int(round(x * self.downsample)),
-            int(round(y * self.downsample)),
-        )
-        image = self._slide.slide.read_region(
-            location, self.level, (int(width), int(height))
-        )
-        rgba = np.asarray(image)
-        alpha = rgba[..., 3:4]
-        rgb = rgba[..., :3]
-        if not (alpha == 255).all():
-            # read_region returns RGBA that is not premultiplied by alpha
-            a = alpha.astype(np.uint16)
-            rgb = (
-                rgb.astype(np.uint16) * a + self._background * (255 - a) + 127
-            ) // 255
-            rgb = rgb.astype(np.uint8)
-        return np.ascontiguousarray(rgb).transpose(1, 0, 2)
-
-
-def _level_data(
-    slide: _Slide, level: int, lazy: tx.Optional[bool]
-) -> ArrayProtocol:
-    """Return the data of a level, as a [`_SlideArray`][] or a dask array.
-
-    The data is a dask array of whole tiles if `lazy` is true, or if `lazy` is
-    `None` and dask is the array backend. Otherwise, and whenever dask is not
-    installed, the data is a [`_SlideArray`][].
-    """
-    array = _SlideArray(slide, level)
-    if lazy is None:
-        from brainhops.backends import get_array_backend
-
-        try:
-            import dask.array as da
-        except ImportError:  # pragma: no cover
-            da = None
-        lazy = da is not None and get_array_backend() is da
-    if not lazy:
-        return array
-    try:
-        import dask.array as da
-    except ImportError:
-        return array
-    properties = slide.slide.properties
-    chunks = []
-    for name, n in (("width", array.shape[0]), ("height", array.shape[1])):
-        tile = properties.get(f"openslide.level[{level}].tile-{name}")
-        try:
-            tile = max(int(tile), 1)
-        except (TypeError, ValueError):
-            tile = 256
-        chunks.append(min(n, tile * max(1, math.ceil(_MIN_CHUNK / tile))))
-    return da.from_array(
-        array,
-        chunks=(chunks[0], chunks[1], 3),
-        asarray=False,
-        fancy=False,
-        lock=False,
-        meta=np.empty((0, 0, 0), dtype=np.uint8),
-    )
-
-
-# ----------------------------------------------------------------------
-#   GEOMETRY AND METADATA
-# ----------------------------------------------------------------------
-
-
-def _mpp(properties: tx.Mapping[str, str]) -> tx.Dict[str, tx.Any]:
-    """Return the full-resolution pixel size in micrometres, for the axes whose
-    size the slide records.
-    """
-    out = {}
-    for name in ("x", "y"):
-        try:
-            size = float(properties.get(f"openslide.mpp-{name}", ""))
-        except ValueError:
-            continue
-        if math.isfinite(size) and size > 0:
-            out[name] = (size, "um")
-    return out
-
-
-def _bounds(
-    properties: tx.Mapping[str, str],
-) -> tx.Optional[tx.Tuple[int, int, int, int]]:
-    try:
-        return tuple(
-            int(properties[f"openslide.bounds-{key}"])
-            for key in ("x", "y", "width", "height")
-        )
-    except (KeyError, ValueError):
-        return None
-
-
-def _level_geometry(
-    slide: _Slide,
-    level: int,
-    pixel_size: tx.Any = None,
-    unit: tx.Any = None,
-) -> tx.Any:
-    """Return the pixel-to-physical transformation of a level.
-
-    The full-resolution pixel size is multiplied by the downsampling factor `f`
-    of the level, and pixel `i` is centred on the full-resolution coordinate
-    `f * i + (f - 1) / 2`.
-    """
-    handle = slide.slide
-    axes = raster.storage_axes(_STORAGE)
-    axes = [axes[p] for p in raster.canonical_permutation(axes)]
-    scales = raster.resolve_pixel_size(
-        axes, _mpp(handle.properties), pixel_size=pixel_size, unit=unit
-    )
-    factor = float(handle.level_downsamples[level])
-    return raster.level_transformation(axes, scales, [factor, factor, 1], {})
-
-
-# ----------------------------------------------------------------------
-#   SHARED READER MACHINERY
+#   READING ADAPTERS
 # ----------------------------------------------------------------------
 
 
 class OpenSlideFormat:
     """Base class of every image read with OpenSlide.
 
-    Each vendor format derives from this class, so that the hint `"openslide"`
-    selects every vendor and `"openslide.<vendor>"` selects one. See
-    [OpenSlide](https://openslide.org/).
+    This base holds no state. It gives the hint `"openslide"`, which selects
+    every vendor, while `"openslide.<vendor>"` selects one vendor (see
+    [OpenSlide](https://openslide.org/)). It also turns a path, a stream or
+    bytes into the slide that OpenSlide opens, from which the `from_source`
+    method of each class reads its object. OpenSlide opens slides by the
+    name of a local file only, so a remote file, a stream without a local
+    file and bytes are first copied to a temporary file, which is deleted
+    with the last object that reads it. A stream is sniffed through the
+    name of its local file, with the `sniff_filename` method of each class.
     """
 
-    HINTS = ("openslide",)
-
-    VENDOR: tx.ClassVar[tx.Optional[str]] = None
-    """The vendor name, as `OpenSlide.detect_format` reports it."""
-
-    SCORE: tx.ClassVar[float] = Confidence.CERTAIN
-    """The confidence for a file that OpenSlide attributes to the vendor."""
-
-
-class _OpenSlideMixin(OpenSlideFormat):
-    """Methods that sniff, open and describe slides, shared by single-scale and
-    multiscale images.
-    """
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("openslide",)
 
     @classmethod
-    def _score(cls, levels: int, level: tx.Optional[int]) -> float:
-        """Return the score for a slide of this vendor, given its number of
-        levels and the requested level.
-        """
-        raise NotImplementedError  # pragma: no cover
-
-    @classmethod
-    def _sniff_local(
+    def sniff_fileobj(
         cls,
-        filename: str,
-        error: tx.Union[bool, tx.Type[Exception]],
-        level: tx.Optional[int],
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
     ) -> float:
-        vendor, levels = _detect_file(filename)
-        if cls.VENDOR is not None and vendor == cls.VENDOR:
-            return cls._score(levels, level)
+        """Return the confidence that an open file is a slide of this class.
+
+        OpenSlide sniffs the file through the name of the local file that it
+        was opened from. A stream without such a name scores `NO`, so it is
+        read only by hint.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, open in binary mode.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when the stream is not a slide of this
+            class.
+        **kwargs : Any
+            The options of the reader, such as `level`.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        local = local_path(file)
+        if local is None:
+            if error:
+                if error is True:
+                    error = SnifferContentError
+                raise error("OpenSlide only sniffs local files.")
+            return Confidence.NO
+        return cls.sniff_filename(local, error=error, **kwargs)
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: path.BinaryContentLike,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """Return `NO`, because content in memory is read only by hint.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error, which is always raised when set.
+        **kwargs : Any
+            The options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            `NO`.
+        """
         if error:
             if error is True:
                 error = SnifferContentError
-            raise error(f"This file is not a {cls.VENDOR} slide.")
+            raise error("OpenSlide only sniffs local files.")
         return Confidence.NO
+
+    @classmethod
+    def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
+        """Read a slide from a file.
+
+        A local file is opened in place, and a remote file is first copied
+        to a temporary file.
+
+        Parameters
+        ----------
+        filename : str or PathLike
+            The path of the file.
+        **kwargs : Any
+            The options of `from_source`.
+
+        Raises
+        ------
+        ParserExistsError
+            If the file does not exist.
+        """
+        local = local_path(filename)
+        if local is not None:
+            return cls.from_source(_Slide(local), **kwargs)
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+        if not path.exists(filename):
+            raise ParserExistsError(f"No such file: {filename}")
+        with filename.open("rb") as f:
+            content = f.read()
+        slide = _Slide.from_content(content, _to_filename(filename))
+        return cls.from_source(slide, **kwargs)
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
+        """Read a slide from an open file.
+
+        A local file is opened by name, and any other stream is copied to a
+        temporary file. The position of the stream is restored.
+
+        Parameters
+        ----------
+        file : IO
+            The stream, open in binary mode.
+        **kwargs : Any
+            The options of `from_source`.
+        """
+        local = local_path(file)
+        if local is not None:
+            return cls.from_source(_Slide(local), **kwargs)
+        with preserve_position(file):
+            content = file.read()
+        slide = _Slide.from_content(content, _to_filename(file))
+        return cls.from_source(slide, **kwargs)
+
+    @classmethod
+    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
+        """Read a slide from bytes, through a temporary copy.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of the file.
+        **kwargs : Any
+            The options of `from_source`.
+        """
+        return cls.from_source(_Slide.from_content(bytes(content)), **kwargs)
+
+
+# ----------------------------------------------------------------------
+#   SINGLE-SCALE IMAGE
+# ----------------------------------------------------------------------
+
+
+class OpenSlideImage(
+    OpenSlideFormat, BinaryFileReader, ImageFormat, SingleScaleImage
+):
+    """A single level of a whole-slide image, read with OpenSlide.
+
+    This class is the base of the single-scale image of every vendor, and
+    it reads one level of a slide of any vendor. The image holds the record
+    of the whole slide as
+    [`OpenSlideMetadata`][brainhops.io.images.openslide.OpenSlideMetadata],
+    whose record is an
+    [`OpenSlideRaw`][brainhops.io.images.openslide.OpenSlideRaw], the index
+    `level` of its level in that record, and the pixels of the level as a
+    lazy array in `rawdata`. What OpenSlide reports about the slide,
+    such as its vendor, its properties, the downsampling factors of its
+    levels, its background colour, its bounds and the names of its
+    associated images, is read from the record, as
+    `image.metadata.raw.properties`.
+
+    The data is an F-ordered `(x, y, c)` RGB `uint8` array that reads only
+    the region it is indexed with, or a dask array of whole tiles. The
+    transformation scales pixels to micrometres when the slide records
+    `openslide.mpp-x` and `openslide.mpp-y`, and is otherwise the identity,
+    with no unit. It is decoded from the record on first access, unless the
+    reader options `pixel_size` or `unit` override it, in which case it is
+    assigned.
+
+    OpenSlide cannot write slides, so the class has no writer: an image is
+    saved to another format, such as TIFF. Assigned data is pending until
+    [`consolidate`][] moves it into `rawdata`, and the transformations that the
+    image holds, read or assigned, are kept, since no record can be
+    encoded.
+    """
+
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
+    """The pixels of the level, or `None` without data.
+
+    After a read, `rawdata` is a lazy array of the level, which reads
+    the region that it is indexed with. Assigning `data` leaves it as it
+    is, and [`consolidate`][] stores the assigned array here.
+    """
+
+    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    """The data given to the image, or `None` to decode it from `rawdata`.
+
+    The image takes over the `data` field of [`SingleScaleImage`][] to
+    store it under this private name. An array stored here is pending until
+    [`consolidate`][] moves it into `rawdata`.
+    """
+
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+    """The transformations assigned to the image, or `None`.
+
+    The image takes over the `transformations` field of
+    [`SingleScaleImage`][] to store an assigned list under this private
+    name. `None` means that no list was assigned, so the property decodes
+    the list of the record and caches it apart.
+    """
+
+    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = None
+
+    metadata = smartproperty("metadata", invalidates="transformations")
+    """The metadata of the slide, which holds its record, or `None`.
+
+    An image built from data has no metadata. Assigning other metadata
+    drops the transformations decoded from the previous record, so that
+    they are decoded from the new one, and keeps the transformations that
+    were assigned.
+    """
+
+    level: int = 0
+    """The index of the level in the record, where 0 is the finest level.
+
+    It is a reader option, and a level of a pyramid holds the record of the
+    whole slide, in which it finds its level.
+    """
+
+    @smartproperty(cache=True)
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The pixels of the level, assigned or decoded from `rawdata`.
+
+        An array assigned to the image is returned as it is, and stays
+        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+        data is decoded from `rawdata` on first access and cached: the
+        lazy array itself, which reads only the region that it is
+        indexed with and cannot be written to, or a dask array of whole
+        tiles with the reader option `lazy`. To change the pixels,
+        assign `data`. Assigning `None` decodes `rawdata` again.
+        """
+        if self.rawdata is None:
+            return None
+        return _image_to_model(self.rawdata)
+
+    @smartproperty(cache=True)
+    def transformations(self) -> tx.List[Transformation]:
+        """Pixel-to-physical transformations, decoded from the record.
+
+        The list is decoded on first access and cached, apart from an
+        assigned list, so a change made to it in place is kept. Assigning
+        other metadata drops the decoded list, and keeps an assigned one.
+        An image without metadata has no transformations. Assigning `None`
+        decodes the record again.
+        """
+        return record_transformations(self.metadata, self.level)
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the data, read without reading the pixels.
+
+        The shape is that of the assigned data, or else of `rawdata`,
+        whose lazy array knows its shape from the record. An image
+        without data raises as [`SingleScaleImage`][] does.
+        """
+        if self._data is not None:
+            return tuple(int(d) for d in self._data.shape)
+        if self.rawdata is None:
+            return self.data.shape
+        return tuple(int(d) for d in self.rawdata.shape)
+
+    # --- reading ------------------------------------------------------
 
     @classmethod
     def sniff_filename(
@@ -457,251 +330,31 @@ class _OpenSlideMixin(OpenSlideFormat):
         level: tx.Optional[int] = None,
         **kwargs,
     ) -> float:
-        """Return the confidence that a local file is a slide of this vendor,
-        as OpenSlide detects it.
+        """Return the confidence that a local file is a level of a slide.
+
+        The base class reads the slides of every vendor. A slide scores
+        `CERTAIN` when a level is requested or when it has a single level,
+        and 0.8 times that otherwise, so that the multiscale class reads a
+        pyramid.
+
+        Parameters
+        ----------
+        filename : str or PathLike
+            The path of the file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when OpenSlide does not read the
+            file.
+        level : int, optional
+            The level that the reader is asked for.
+        **kwargs : Any
+            The other options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
-        local = _local_path(filename)
-        if local is None:
-            if error:
-                if error is True:
-                    error = SnifferExistsError
-                raise error(f"No such local file: {filename}")
-            return Confidence.NO
-        return cls._sniff_local(local, error, level)
-
-    @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        level: tx.Optional[int] = None,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that an open file is a slide of this vendor.
-
-        OpenSlide sniffs the file through the name of the local file that it
-        was opened from. A stream without such a name scores `NO`, so it is
-        read only by hint.
-        """
-        local = _local_path(file)
-        if local is None:
-            if error:
-                if error is True:
-                    error = SnifferContentError
-                raise error("OpenSlide only sniffs local files.")
-            return Confidence.NO
-        return cls._sniff_local(local, error, level)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: path.BinaryContentLike,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return `NO`, because content in memory is read only by hint."""
-        if error:
-            if error is True:
-                error = SnifferContentError
-            raise error("OpenSlide only sniffs local files.")
-        return Confidence.NO
-
-    @classmethod
-    def _suffix(cls, name: tx.Optional[str]) -> str:
-        """Return the extension for a temporary copy, since OpenSlide detects
-        some formats by their suffix.
-        """
-        if name:
-            for ext in sorted(cls.EXTENSIONS, key=len, reverse=True):
-                if name.lower().endswith(ext):
-                    return ext
-            ext = os.path.splitext(name)[1]
-            if ext:
-                return ext
-        return cls.EXTENSIONS[0] if cls.EXTENSIONS else ""
-
-    @classmethod
-    def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
-        """Read a slide from a file.
-
-        A local file is opened in place, and a remote file is first copied to a
-        temporary file. The options are those of `from_source`.
-        """
-        local = _local_path(filename)
-        if local is not None:
-            return cls.from_source(_Slide(local), **kwargs)
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.exists(filename):
-            raise ParserExistsError(f"No such file: {filename}")
-        with filename.open("rb") as f:
-            content = f.read()
-        slide = _Slide.from_content(
-            content, cls._suffix(_to_filename(filename))
-        )
-        return cls.from_source(slide, **kwargs)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """Read a slide from an open file.
-
-        A local file is opened by name, and other files are copied to a
-        temporary file. The options are those of `from_source`.
-        """
-        local = _local_path(file)
-        if local is not None:
-            return cls.from_source(_Slide(local), **kwargs)
-        with preserve_position(file):
-            content = file.read()
-        slide = _Slide.from_content(content, cls._suffix(_to_filename(file)))
-        return cls.from_source(slide, **kwargs)
-
-    @classmethod
-    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
-        """Read a slide from bytes, through a temporary copy.
-
-        The options are those of `from_source`.
-        """
-        slide = _Slide.from_content(bytes(content), cls._suffix(None))
-        return cls.from_source(slide, **kwargs)
-
-    @classmethod
-    def _check_vendor(cls, slide: _Slide) -> None:
-        vendor = slide.vendor
-        if vendor != cls.VENDOR:
-            raise ParserContentError(
-                f"This file is a {vendor!r} slide, not a {cls.VENDOR!r} "
-                f"one, so {cls.__name__} does not read it."
-            )
-
-    @staticmethod
-    def _metadata(slide: _Slide) -> tx.Dict[str, tx.Any]:
-        handle = slide.slide
-        properties = dict(handle.properties)
-        return dict(
-            vendor=properties.get("openslide.vendor"),
-            properties=properties,
-            n_levels=int(handle.level_count),
-            level_downsamples=tuple(
-                float(f) for f in handle.level_downsamples
-            ),
-            background_color=properties.get("openslide.background-color"),
-            bounds=_bounds(properties),
-            associated_images=tuple(handle.associated_images.keys()),
-        )
-
-    def associated_image(self, name: str) -> np.ndarray:
-        """Read an associated image of the slide.
-
-        Associated images are the label, macro, thumbnail and other images
-        listed in `associated_images`. They are returned as F-ordered
-        `(x, y, c)` RGB `uint8` arrays, composited onto white.
-
-        Raises
-        ------
-        KeyError
-            If there is no associated image of that name.
-        """
-        slide = getattr(self, "_slide", None)
-        if slide is None:
-            raise KeyError(name)
-        image = slide.slide.associated_images[name]
-        rgba = np.asarray(image.convert("RGBA"))
-        a = rgba[..., 3:4].astype(np.uint16)
-        rgb = rgba[..., :3].astype(np.uint16) * a + 255 * (255 - a) + 127
-        rgb = (rgb // 255).astype(np.uint8)
-        return np.ascontiguousarray(rgb).transpose(1, 0, 2)
-
-
-# The metadata attributes below are shared by single-scale and multiscale
-# images.
-_Properties = tx.Annotated[
-    tx.Optional[tx.Dict[str, str]],
-    tx.Doc(
-        "Every property OpenSlide reports for the slide, by name: the "
-        "standard `openslide.*` ones and the vendor's own."
-    ),
-]
-_Vendor = tx.Annotated[
-    tx.Optional[str],
-    tx.Doc("The vendor of the slide, as OpenSlide names it."),
-]
-_NLevels = tx.Annotated[
-    tx.Optional[int], tx.Doc("The number of levels of the slide.")
-]
-_Downsamples = tx.Annotated[
-    tx.Optional[tx.Tuple[float, ...]],
-    tx.Doc("The downsampling factor of each level (`level_downsamples`)."),
-]
-_Background = tx.Annotated[
-    tx.Optional[str],
-    tx.Doc(
-        "The background colour of the slide (`RRGGBB`), which fills the "
-        "pixels outside the scanned area. It is white if the slide records "
-        "none."
-    ),
-]
-_Bounds = tx.Annotated[
-    tx.Optional[tx.Tuple[int, int, int, int]],
-    tx.Doc(
-        "The bounding box of the scanned area (`x, y, width, height`, in "
-        "full-resolution pixels), if the slide records one."
-    ),
-]
-_Associated = tx.Annotated[
-    tx.Optional[tx.Tuple[str, ...]],
-    tx.Doc(
-        "The names of the slide's associated images (label, macro, "
-        "thumbnail, ...), read with `associated_image`."
-    ),
-]
-
-
-# ----------------------------------------------------------------------
-#   SINGLE-SCALE IMAGE
-# ----------------------------------------------------------------------
-
-
-class OpenSlideImage(
-    _OpenSlideMixin, BinaryFileReader, ImageFormat, SingleScaleImage
-):
-    """A single level of a whole-slide image, read with OpenSlide.
-
-    This class is the base of the single-scale image of every vendor. Its data
-    is an F-ordered `(x, y, c)` RGB `uint8` array that reads only the indexed
-    region, or a dask array of whole tiles. Its transformation scales pixels to
-    micrometres when the slide records `openslide.mpp-x` and `openslide.mpp-y`,
-    and is otherwise the identity, with no unit.
-    """
-
-    vendor: _Vendor = None
-    properties: _Properties = None
-    level: tx.Annotated[
-        tx.Optional[int],
-        tx.Doc("The level that was read, where 0 is the full resolution."),
-    ] = None
-    n_levels: _NLevels = None
-    level_downsamples: _Downsamples = None
-    background_color: _Background = None
-    bounds: _Bounds = None
-    associated_images: _Associated = None
-
-    @smartproperty(cache=True)
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        slide = getattr(self, "_slide", None)
-        if slide is None:
-            return None
-        return _level_data(slide, self.level or 0, self._lazy)
-
-    @classmethod
-    def _score(cls, levels: int, level: tx.Optional[int]) -> float:
-        """Return the vendor score for a requested level or a single-level
-        slide, and 0.8 times that score for a pyramid, which yields to the
-        multiscale class.
-        """
-        if level is not None or levels < 2:
-            return cls.SCORE
-        return 0.8 * cls.SCORE
+        return sniff_level(filename, None, Confidence.CERTAIN, error, level)
 
     @classmethod
     def from_source(
@@ -715,6 +368,10 @@ class OpenSlideImage(
     ) -> tx.Self:
         """Read one level of a slide.
 
+        The class checks with its `sniff_filename` method that OpenSlide
+        attributes the slide to its vendor. The record of the slide is read
+        at once, and the pixels are read when the data is indexed.
+
         Parameters
         ----------
         slide : _Slide
@@ -723,12 +380,22 @@ class OpenSlideImage(
             The level, 0 (the full resolution) by default. A negative level
             counts from the end.
         pixel_size : float or Sequence[float] or Mapping[str, float], optional
-            The full-resolution pixel size, overriding the one of the slide.
+            The full-resolution pixel size, which overrides the one of the
+            slide.
         unit : str or Unit, optional
-            The unit of `pixel_size`, or the unit to convert micrometres to.
+            The unit of `pixel_size`, or the unit to which micrometres are
+            converted.
         lazy : bool, optional
-            Whether the data is a dask array of whole tiles. By default, it is
-            one only when dask is the array backend.
+            Whether the data is a dask array of whole tiles. By default, it
+            is one only when dask is the array backend.
+        **kwargs : Any
+            Refused, since OpenSlide has no other option.
+
+        Returns
+        -------
+        OpenSlideImage
+            The image, whose transformations are assigned when `pixel_size`
+            or `unit` is given.
 
         Raises
         ------
@@ -740,13 +407,10 @@ class OpenSlideImage(
         TypeError
             If an unknown option is given.
         """
-        if kwargs:
-            raise TypeError(
-                f"{cls.__name__} does not take the option(s) "
-                f"{', '.join(sorted(kwargs))}."
-            )
-        cls._check_vendor(slide)
-        count = int(slide.slide.level_count)
+        _no_options(cls, kwargs)
+        cls.sniff_filename(slide.filename, error=ParserContentError)
+        record = read_record(slide.handle)
+        count = len(record.levels)
         index = 0 if level is None else int(level)
         if not -count <= index < count:
             raise IndexError(
@@ -754,13 +418,82 @@ class OpenSlideImage(
             )
         index %= count
         image = cls(
-            transformations=[_level_geometry(slide, index, pixel_size, unit)],
+            rawdata=_SlideArray(slide, record, index, lazy=lazy),
+            metadata=OpenSlideMetadata.from_raw(record),
             level=index,
-            **cls._metadata(slide),
         )
-        image._slide = slide
-        image._lazy = lazy
+        if pixel_size is not None or unit is not None:
+            # The options describe the geometry, so they are assigned.
+            image.transformations = [
+                level_geometry(record, index, pixel_size, unit)
+            ]
         return image
+
+    # --- consolidating ------------------------------------------------
+
+    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+        """Move the pending data into `rawdata`.
+
+        OpenSlide cannot write slides, so no record can be encoded, and
+        consolidating an image is limited to its data: an assigned array
+        becomes `rawdata`, and is no longer pending. The metadata and the level
+        are kept, and so are the transformations that the image holds, read
+        or assigned. An image without pending data is left as it is: the
+        copy shares `rawdata` and the metadata.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this image rather than a copy.
+
+        Returns
+        -------
+        OpenSlideImage
+            The consolidated copy, or this image with `inplace=True`.
+        """
+        # The record cannot be encoded, so a copy is given the list that
+        # the image holds when it is not the list that the record decodes
+        # to, as a list decoded and then changed in place would otherwise
+        # be decoded again and lost.
+        held = held_transformations(self)
+        if held is None or same_transformations(
+            held, record_transformations(self.metadata, self.level)
+        ):
+            held = self._transformations
+        if self._data is None:
+            return self if inplace else replace(self, transformations=held)
+        raw = _image_to_disk(self._data)
+        if not inplace:
+            return replace(self, data=None, rawdata=raw, transformations=held)
+        self.rawdata = raw
+        self.data = None
+        return self
+
+    def associated_image(self, name: str) -> np.ndarray:
+        """Read an associated image of the slide.
+
+        Associated images are the label, the macro, the thumbnail and the
+        other images that `metadata.raw.associated_images` lists. They are
+        read from the slide that `rawdata` reads, and returned as
+        F-ordered `(x, y, c)` RGB `uint8` arrays, composited onto white.
+
+        Parameters
+        ----------
+        name : str
+            The name of the associated image.
+
+        Returns
+        -------
+        np.ndarray
+            The associated image.
+
+        Raises
+        ------
+        KeyError
+            If the slide has no associated image of that name, or if the
+            image reads no slide.
+        """
+        return _associated(self.metadata, (self.rawdata,), name)
 
 
 # ----------------------------------------------------------------------
@@ -769,23 +502,71 @@ class OpenSlideImage(
 
 
 class OpenSlideMultiScaleImage(
-    _OpenSlideMixin, BinaryFileReader, ImageFormat, MultiScaleImage
+    OpenSlideFormat, BinaryFileReader, ImageFormat, MultiScaleImage
 ):
     """A whole-slide image read with OpenSlide, as a pyramid.
 
-    This class is the base of the multiscale image of every vendor. Its levels
-    are single-scale images of the same vendor, finest first, which all cover
-    the whole slide and map to the same `"physical"` system, as in TIFF and
-    OME-Zarr pyramids. The pyramid therefore has no transformation of its own.
+    This class is the base of the multiscale image of every vendor, and it
+    reads a slide of any vendor. The pyramid holds the record of the slide
+    as
+    [`OpenSlideMetadata`][brainhops.io.images.openslide.OpenSlideMetadata],
+    and the lazy array of each level, finest first, as a tuple in
+    `rawdata`. Its levels are single-scale images decoded from `rawdata`
+    and the record on first access, which hold the same metadata, by
+    identity, and the index `level` of their level in the record. The
+    levels of the base class are [`OpenSlideImage`][] objects, and those
+    of a vendor class are objects of the single-scale class of the
+    vendor.
+
+    Every level covers the whole slide and maps to the same `"physical"`
+    system, as in TIFF and OME-Zarr pyramids, so the pyramid has no
+    transformation of its own, and OpenSlide stores none.
+
+    OpenSlide cannot write slides, so the class has no writer, and
+    [`consolidate`][] moves only the pending data of the levels into `rawdata`.
     """
 
-    vendor: _Vendor = None
-    properties: _Properties = None
-    n_levels: _NLevels = None
-    level_downsamples: _Downsamples = None
-    background_color: _Background = None
-    bounds: _Bounds = None
-    associated_images: _Associated = None
+    rawdata: NoRepr[tx.Optional[tx.Tuple[ArrayProtocol, ...]]] = None
+    """The array of each level, finest first.
+
+    After a read, each array is a lazy array of its level. `rawdata` is
+    a tuple, so that it cannot be changed in place, and it describes the
+    slide as it was read, or as the pyramid was last consolidated.
+    """
+
+    _images: tx.Optional[tx.List[SingleScaleImage]] = Inherit(
+        "images", default=None
+    )
+    """The levels assigned to the pyramid, or `None`.
+
+    The pyramid takes over the `images` field of [`MultiScaleImage`][] to
+    store an assigned list under this private name. `None` means that no
+    list was assigned, so the property decodes the levels from `rawdata`
+    and the record and caches them apart.
+    """
+
+    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
+        "transformations", default=None
+    )
+    """The placements assigned to the pyramid, or `None`.
+
+    `None` means that no list was assigned, so the property decodes the
+    placements of the record, which a slide never stores, and caches the
+    empty list apart.
+    """
+
+    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = None
+
+    metadata = smartproperty(
+        "metadata", invalidates=("images", "transformations")
+    )
+    """The metadata of the slide, which holds its record, or `None`.
+
+    Every level of the pyramid holds the same metadata. Assigning other
+    metadata drops the levels and the placements decoded from the previous
+    record, and keeps those that were assigned. The levels that are
+    dropped keep the previous metadata.
+    """
 
     PRIORITY: tx.ClassVar[int] = ImageFormat.PRIORITY + 1
     """Content in memory is not sniffed, so when it is read by hint, the
@@ -794,14 +575,79 @@ class OpenSlideMultiScaleImage(
     `level` option, which leaves such a request to the single-scale class.
     """
 
-    @classmethod
-    def _score(cls, levels: int, level: tx.Optional[int]) -> float:
-        """Return the vendor score when no level is requested and the slide is
-        a pyramid, and `NO` otherwise.
+    @smartproperty(cache=True)
+    def images(self) -> tx.List[SingleScaleImage]:
+        """The levels of the slide, finest first.
+
+        The levels are decoded from `rawdata` and the record on first
+        access and cached, apart from an assigned list, so
+        `images[0] is images[0]` and a level changed in place, such as
+        one whose data is assigned, is seen by [`consolidate`][]. Each
+        level is an [`OpenSlideImage`][] that holds its array of
+        `rawdata`, the metadata of the pyramid and its index in `level`.
+        Assigning a list replaces the stored one, and assigning `None`
+        decodes the levels again.
         """
-        if level is not None or levels < 2:
-            return Confidence.NO
-        return cls.SCORE
+        return decode_levels(OpenSlideImage, self.rawdata, self.metadata)
+
+    @smartproperty(cache=True)
+    def transformations(self) -> tx.List[Transformation]:
+        """The placements of the pyramid, which a slide never stores.
+
+        The decoded list is empty. An assigned list is kept, since no record
+        can be encoded.
+        """
+        return []
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the finest level, read without reading the pixels.
+
+        The shape is read from the levels that the pyramid holds, or else
+        from the first array of `rawdata`.
+        """
+        images = held_images(self)
+        if images is not None:
+            return tuple(images[0].shape) if images else ()
+        if self.rawdata:
+            return tuple(int(n) for n in self.rawdata[0].shape)
+        return ()
+
+    # --- reading ------------------------------------------------------
+
+    @classmethod
+    def sniff_filename(
+        cls,
+        filename: path.FilenameLike,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        level: tx.Optional[int] = None,
+        **kwargs,
+    ) -> float:
+        """Return the confidence that a local file is a pyramidal slide.
+
+        The base class reads the slides of every vendor. A slide of several
+        levels scores `CERTAIN` when no level is requested, and any other
+        file scores `NO`.
+
+        Parameters
+        ----------
+        filename : str or PathLike
+            The path of the file.
+        error : bool or type[Exception], default=False
+            Whether to raise an error when OpenSlide does not read the
+            file.
+        level : int, optional
+            The level that the reader is asked for, which a pyramid
+            declines.
+        **kwargs : Any
+            The other options of the reader, which are ignored.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
+        """
+        return sniff_pyramid(filename, None, Confidence.CERTAIN, error, level)
 
     @classmethod
     def from_source(
@@ -814,26 +660,437 @@ class OpenSlideMultiScaleImage(
     ) -> tx.Self:
         """Read every level of a slide.
 
-        The options are those of [`OpenSlideImage.from_source`][], except
-        `level`.
+        The class checks with its `sniff_filename` method that OpenSlide
+        attributes the slide to its vendor. The record of the slide is read
+        at once, and each level is a lazy array that reads its pixels when
+        its data is indexed.
+
+        Parameters
+        ----------
+        slide : _Slide
+            The slide.
+        pixel_size : float or Sequence[float] or Mapping[str, float], optional
+            The full-resolution pixel size, which overrides the one of the
+            slide.
+        unit : str or Unit, optional
+            The unit of `pixel_size`, or the unit to which micrometres are
+            converted.
+        lazy : bool, optional
+            Whether the data of each level is a dask array of whole tiles.
+        **kwargs : Any
+            Refused, since OpenSlide has no other option. A pyramid refuses
+            `level`, which the single-scale class takes.
+
+        Returns
+        -------
+        OpenSlideMultiScaleImage
+            The pyramid. When `pixel_size` or `unit` is given, its levels
+            are assigned, with the transformations that the options give
+            them.
+
+        Raises
+        ------
+        ParserContentError
+            If OpenSlide cannot read the file, or the slide is of another
+            vendor.
+        TypeError
+            If an unknown option is given.
         """
-        if kwargs:
-            raise TypeError(
-                f"{cls.__name__} does not take the option(s) "
-                f"{', '.join(sorted(kwargs))}."
+        _no_options(cls, kwargs)
+        cls.sniff_filename(slide.filename, error=ParserContentError)
+        record = read_record(slide.handle)
+        raw = tuple(
+            _SlideArray(slide, record, index, lazy=lazy)
+            for index in range(len(record.levels))
+        )
+        pyramid = cls(rawdata=raw, metadata=OpenSlideMetadata.from_raw(record))
+        if pixel_size is not None or unit is not None:
+            # The options describe the geometry, so the levels are assigned
+            # with the transformations that they give.
+            levels = list(pyramid.images)
+            for index, image in enumerate(levels):
+                image.transformations = [
+                    level_geometry(record, index, pixel_size, unit)
+                ]
+            pyramid.images = levels
+        return pyramid
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy a pyramid into this format.
+
+        Within the format, the stored fields are copied, so a copy of an
+        untouched pyramid shares `rawdata` and the metadata and decodes
+        nothing. From another class, the levels that `other` reports are
+        copied, because its private fields mean nothing to this format.
+
+        Parameters
+        ----------
+        other : MultiScaleImage
+            The pyramid to copy.
+        *args : Any
+            Positional fields of the copy.
+        **kwargs : Any
+            Other fields of the copy.
+
+        Returns
+        -------
+        OpenSlideMultiScaleImage
+            The copy.
+        """
+        if not isinstance(other, cls):
+            images = getattr(other, "images", None)
+            if images is not None:
+                kwargs.setdefault("images", list(images))
+        return super().from_instance(other, *args, **kwargs)
+
+    # --- consolidating ------------------------------------------------
+
+    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+        """Move the pending data of the levels into `rawdata`.
+
+        OpenSlide cannot write slides, so no record can be encoded, and
+        consolidating a pyramid is limited to the data of its levels. A
+        pyramid whose levels were neither read nor assigned is left as it
+        is: the copy shares `rawdata` and the metadata. Otherwise each
+        level that the pyramid holds must be a level of its slide: an
+        [`OpenSlideImage`][] that holds the metadata of the pyramid, by
+        identity, at its own index. Its pending data becomes its array in
+        `rawdata`, and the array of a level without pending data is kept, so a
+        pyramid whose levels were only read keeps `rawdata`. The
+        metadata is kept, and so are the placements that the pyramid
+        holds. The levels of the copy are decoded from `rawdata` and the
+        record, unless a level holds transformations that differ from
+        those of the record: the copy then holds a list of its levels,
+        each with its array of `rawdata` and its transformations, since
+        no record can be encoded.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this pyramid rather than a copy.
+
+        Returns
+        -------
+        OpenSlideMultiScaleImage
+            The consolidated copy, or this pyramid with `inplace=True`.
+
+        Raises
+        ------
+        WriterError
+            If the pyramid holds another number of levels than `rawdata`, or a
+            level that is not a level of its slide, such as an image of
+            another class, since no record can describe it.
+        """
+        # The record stores no placement, so a copy is given the list that
+        # the pyramid holds when it is not empty, as a list decoded and then
+        # changed in place would otherwise be decoded again and lost.
+        placements = held_transformations(self)
+        if not placements:
+            placements = self._transformations
+        images = held_images(self)
+        if images is None:
+            if inplace:
+                return self
+            return replace(self, transformations=placements)
+        arrays, levels = _consolidated_levels(self, images)
+        raw = self.rawdata if _same(arrays, self.rawdata) else arrays
+        if not inplace:
+            return replace(
+                self, rawdata=raw, images=levels, transformations=placements
             )
-        cls._check_vendor(slide)
-        single = _LEVEL_CLASSES[cls.VENDOR]
-        levels = [
-            single.from_source(
-                slide,
-                level=index,
-                pixel_size=pixel_size,
-                unit=unit,
-                lazy=lazy,
+        self.rawdata = raw
+        self.images = levels
+        return self
+
+    def associated_image(self, name: str) -> np.ndarray:
+        """Read an associated image of the slide.
+
+        Associated images are the label, the macro, the thumbnail and the
+        other images that `metadata.raw.associated_images` lists. They are
+        read from the slide that the arrays of `rawdata` read, and returned as
+        F-ordered `(x, y, c)` RGB `uint8` arrays, composited onto white.
+
+        Parameters
+        ----------
+        name : str
+            The name of the associated image.
+
+        Returns
+        -------
+        np.ndarray
+            The associated image.
+
+        Raises
+        ------
+        KeyError
+            If the slide has no associated image of that name, or if no
+            array of the pyramid reads a slide.
+        """
+        return _associated(self.metadata, self.rawdata or (), name)
+
+
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+
+def sniff_level(
+    filename: path.FilenameLike,
+    vendor: tx.Optional[str],
+    score: float,
+    error: tx.Union[bool, tx.Type[Exception]],
+    level: tx.Optional[int],
+) -> float:
+    """Score a local file for the single-scale class of a vendor.
+
+    OpenSlide detects the vendor of the file. A slide of the vendor scores
+    `score` when a level is requested or when the slide has a single
+    level, and 0.8 times `score` otherwise, so that the multiscale class of
+    the vendor reads a pyramid.
+
+    Parameters
+    ----------
+    filename : str or PathLike
+        The path of the file.
+    vendor : str or None
+        The vendor, as `OpenSlide.detect_format` names it, or `None` for a
+        slide of any vendor.
+    score : float
+        The confidence for a slide of the vendor.
+    error : bool or type[Exception]
+        Whether to raise an error when the file is not a slide of the
+        vendor, and which.
+    level : int or None
+        The level that the reader is asked for.
+
+    Returns
+    -------
+    float
+        The confidence, between 0 and 1.
+    """
+    levels = _vendor_levels(filename, vendor, error)
+    if levels is None:
+        return Confidence.NO
+    if level is not None or levels < 2:
+        return score
+    return 0.8 * score
+
+
+def sniff_pyramid(
+    filename: path.FilenameLike,
+    vendor: tx.Optional[str],
+    score: float,
+    error: tx.Union[bool, tx.Type[Exception]],
+    level: tx.Optional[int],
+) -> float:
+    """Score a local file for the multiscale class of a vendor.
+
+    OpenSlide detects the vendor of the file. A slide of the vendor that
+    has several levels scores `score` when no level is requested, and any
+    other file scores `NO`.
+
+    Parameters
+    ----------
+    filename : str or PathLike
+        The path of the file.
+    vendor : str or None
+        The vendor, as `OpenSlide.detect_format` names it, or `None` for a
+        slide of any vendor.
+    score : float
+        The confidence for a pyramidal slide of the vendor.
+    error : bool or type[Exception]
+        Whether to raise an error when the file is not a slide of the
+        vendor, and which. A slide of the vendor with a single level, or a
+        request for a level, scores `NO` without an error.
+    level : int or None
+        The level that the reader is asked for.
+
+    Returns
+    -------
+    float
+        The confidence, between 0 and 1.
+    """
+    levels = _vendor_levels(filename, vendor, error)
+    if levels is None or level is not None or levels < 2:
+        return Confidence.NO
+    return score
+
+
+def decode_levels(
+    level_type: type,
+    raw: tx.Optional[tx.Tuple[ArrayProtocol, ...]],
+    metadata: tx.Optional[OpenSlideMetadata],
+) -> tx.List[SingleScaleImage]:
+    """Return a level object for each array of a pyramid, finest first.
+
+    Parameters
+    ----------
+    level_type : type
+        The single-scale class of the levels.
+    raw : tuple of ArrayProtocol or None
+        The arrays of the levels.
+    metadata : OpenSlideMetadata or None
+        The metadata of the pyramid, which every level holds.
+
+    Returns
+    -------
+    list of SingleScaleImage
+        The levels, each with its index in `level`.
+    """
+    if raw is None:
+        return []
+    return [
+        level_type(rawdata=array, metadata=metadata, level=index)
+        for index, array in enumerate(raw)
+    ]
+
+
+def _vendor_levels(
+    filename: path.FilenameLike,
+    vendor: tx.Optional[str],
+    error: tx.Union[bool, tx.Type[Exception]],
+) -> tx.Optional[int]:
+    """Return the number of levels of a slide of a vendor, or `None`.
+
+    Raises
+    ------
+    Exception
+        The class `error`, when it is set and the file is not a local
+        slide of the vendor.
+    """
+    local = local_path(filename)
+    if local is None:
+        if error:
+            if error is True:
+                error = SnifferExistsError
+            raise error(f"No such local file: {filename}")
+        return None
+    found, levels = detect(local)
+    if found and (vendor is None or found == vendor):
+        return levels
+    if error:
+        if error is True:
+            error = SnifferContentError
+        if not found:
+            raise error("OpenSlide does not read this file.")
+        raise error(
+            f"OpenSlide reads this file as a slide of the vendor {found!r}, "
+            f"not {vendor!r}."
+        )
+    return None
+
+
+def _no_options(cls: type, kwargs: tx.Mapping[str, tx.Any]) -> None:
+    """Refuse the options that a reader does not take.
+
+    Raises
+    ------
+    TypeError
+        If any option is given.
+    """
+    if kwargs:
+        raise TypeError(
+            f"{cls.__name__} does not take the option(s) "
+            f"{', '.join(sorted(kwargs))}."
+        )
+
+
+def _associated(
+    metadata: tx.Optional[OpenSlideMetadata],
+    arrays: tx.Sequence[tx.Any],
+    name: str,
+) -> np.ndarray:
+    """Read an associated image through the first array that reads a slide.
+
+    Raises
+    ------
+    KeyError
+        If the record lists no associated image of that name, or if no
+        array reads a slide.
+    """
+    record = None if metadata is None else metadata.raw
+    if record is None or name not in record.associated_images:
+        raise KeyError(name)
+    for array in arrays:
+        if isinstance(array, _SlideArray):
+            return read_associated(array.slide, name)
+    raise KeyError(name)
+
+
+def _consolidated_levels(
+    pyramid: OpenSlideMultiScaleImage, images: tx.Sequence[tx.Any]
+) -> tx.Tuple[
+    tx.Tuple[ArrayProtocol, ...], tx.Optional[tx.List[SingleScaleImage]]
+]:
+    """Return the arrays of the levels of a pyramid, and the levels to keep.
+
+    Each level must be a level of the slide of the pyramid. Its array is
+    its pending data, or else its own `rawdata`. The levels are kept, each with
+    its array and the transformations that it holds, only when a level
+    holds transformations that differ from those of the record.
+
+    Raises
+    ------
+    WriterError
+        If a level is not a level of the slide of the pyramid, or has no
+        data.
+    """
+    raw = pyramid.rawdata or ()
+    metadata = pyramid.metadata
+    if len(images) != len(raw):
+        raise WriterError(
+            f"This pyramid holds {len(images)} level(s) where its slide has "
+            f"{len(raw)}, and OpenSlide cannot write a slide that would "
+            f"describe them."
+        )
+    arrays = []
+    held = []
+    changed = False
+    for index, image in enumerate(images):
+        if (
+            not isinstance(image, OpenSlideImage)
+            or metadata is None
+            or image.metadata is not metadata
+            or image.level != index
+        ):
+            raise WriterError(
+                f"Level {index} of this pyramid is not level {index} of its "
+                f"slide, and OpenSlide cannot write a slide that would "
+                f"describe it."
             )
-            for index in range(int(slide.slide.level_count))
-        ]
-        image = cls(images=levels, transformations=[], **cls._metadata(slide))
-        image._slide = slide
-        return image
+        if image._data is not None:
+            array = _image_to_disk(image._data)
+        else:
+            array = image.rawdata
+        if array is None:
+            raise WriterError(f"Level {index} of this pyramid has no data.")
+        arrays.append(array)
+        transformations = held_transformations(image)
+        held.append(transformations)
+        if transformations is not None and not same_transformations(
+            transformations, record_transformations(metadata, index)
+        ):
+            changed = True
+    if not changed:
+        return tuple(arrays), None
+    levels = [
+        replace(
+            image,
+            data=None,
+            rawdata=array,
+            transformations=None if kept is None else list(kept),
+        )
+        for image, array, kept in zip(images, arrays, held)
+    ]
+    return tuple(arrays), levels
+
+
+def _same(
+    first: tx.Sequence[tx.Any], second: tx.Optional[tx.Sequence[tx.Any]]
+) -> bool:
+    """Tell whether two sequences hold the same objects, in the same order."""
+    return second is not None and (
+        len(first) == len(second)
+        and all(a is b for a, b in zip(first, second))
+    )
