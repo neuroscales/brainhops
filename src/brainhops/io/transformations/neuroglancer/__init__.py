@@ -15,6 +15,14 @@ the transformation decodes its matrix and its coordinate systems from
 the record, and a transformation that is read and written again without
 changes is written as its file stored it.
 
+Neuroglancer has no file for a transform. A `.json` file is read as a
+transform when its keys are those of a transform, and any file is read
+with the hint `"neuroglancer.affine"`. `io.save` writes the format to a
+name that ends in `.ngtransform.json`, a convention of brainhops, or to
+any name with the hint, as in `io.save(affine, "transform.json",
+hint="neuroglancer.affine")`. The hint `"neuroglancer"` names the
+Neuroglancer precomputed volumes of `brainhops.io.images.precomputed`.
+
 ## The conventions of Neuroglancer
 
 The conventions were read in the source of Neuroglancer at

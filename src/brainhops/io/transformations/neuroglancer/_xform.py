@@ -57,9 +57,12 @@ class NeuroglancerTransform(
     Neuroglancer has no file for a transform, so the class claims no
     generic `.json` file: it reads a `.json` file whose keys are those of
     a transform (see [`NeuroglancerTransformRaw.sniff_text`][]), any file
-    with the hints `"neuroglancer"` and `"ngtransform"`, and the files
-    whose names end in `.ngtransform.json`, a convention of brainhops that
-    `io.save` uses to choose this format.
+    with the hint `"neuroglancer.affine"`, and the files whose names end
+    in `.ngtransform.json`, a convention of brainhops. `io.save` writes
+    this format to a name with that extension, or to any name with the
+    hint, as in `io.save(affine, "transform.json",
+    hint="neuroglancer.affine")`. The hint `"neuroglancer"` names the
+    Neuroglancer precomputed volumes.
 
     The JSON is short and is read in one pass, so the whole object is
     held as a [`NeuroglancerTransformRaw`][] record by the
@@ -98,7 +101,7 @@ class NeuroglancerTransform(
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".ngtransform.json",)
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("neuroglancer", "ngtransform")
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("neuroglancer.affine",)
 
     _metadata: NoRepr[tx.Optional[NeuroglancerTransformMetadata]] = None
 

@@ -35,13 +35,13 @@ class NeuroglancerTransformMetadata(
     a [`NeuroglancerTransformRaw`][] and wraps it, and [`to_text`][]
     returns the text of the record. The metadata keeps no open file.
 
-    The metadata answers to the hint `"ngtransform"` only, because the
-    hint `"neuroglancer"` also names the metadata of Neuroglancer
-    volumes.
+    The metadata answers to the hint `"neuroglancer.affine"`, as the
+    transformation does. The hint `"neuroglancer"` names the metadata of
+    Neuroglancer precomputed volumes.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".ngtransform.json",)
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("ngtransform",)
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("neuroglancer.affine",)
 
     raw: NoRepr[tx.Optional[NeuroglancerTransformRaw]] = None
     """The content of the file, or `None` for metadata without a record."""

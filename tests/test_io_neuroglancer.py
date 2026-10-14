@@ -2,8 +2,9 @@
 
 A Neuroglancer coordinate transform is the JSON object that places a data
 source of a layer in the viewer (#227). It is read from a `.json` file
-whose keys are those of a transform, from any file with a hint, and from
-a `.ngtransform.json` file, which `io.save` also writes. The conventions
+whose keys are those of a transform, from any file with the hint
+`"neuroglancer.affine"`, and from a `.ngtransform.json` file, which
+`io.save` also writes, as it writes any name with the hint. The conventions
 of the matrix, the dimensions and the units are those of
 google/neuroglancer@abbdfc5ea97b81c0c0bf04a414f5c59f4d84d27f.
 """
@@ -21,6 +22,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel.transformations import Affine, Scaling, Sequence
 from brainhops.datamodel.units import Unit
 from brainhops.errors import ConversionError
+from brainhops.io.base import format_hints
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -199,10 +201,21 @@ def test_only_the_keys_of_a_transform_are_sniffed(tmp_path) -> None:  # noqa: AN
     file = _write(tmp_path, other)
     assert io.sniff(file) is None
     # A hint selects the format, which keeps the other key.
-    for hint in ("neuroglancer", "ngtransform"):
-        xform = io.load(file, hint=hint)
-        assert type(xform) is NeuroglancerTransform
-        assert xform.metadata.raw.content["comment"] == "kept"
+    xform = io.load(file, hint="neuroglancer.affine")
+    assert type(xform) is NeuroglancerTransform
+    assert xform.metadata.raw.content["comment"] == "kept"
+    metadata = MetadataFormat.load(file, hint="neuroglancer.affine")
+    assert isinstance(metadata, NeuroglancerTransformMetadata)
+
+
+def test_the_hint_neuroglancer_is_left_to_precomputed_volumes() -> None:
+    # The hint of the transform is dotted, so that it does not select a
+    # transform where the hint `"neuroglancer"` of the precomputed volumes
+    # is meant.
+    for cls in (NeuroglancerTransform, NeuroglancerTransformMetadata):
+        assert "neuroglancer.affine" in format_hints(cls)
+        assert "neuroglancer" not in format_hints(cls)
+        assert "ngtransform" not in format_hints(cls)
 
 
 def test_the_metadata_is_read_by_dispatch(tmp_path) -> None:  # noqa: ANN001
@@ -235,6 +248,18 @@ def test_an_anatomical_affine_is_saved_in_millimeters(tmp_path) -> None:  # noqa
     back = io.load(tmp_path / "t.ngtransform.json")
     np.testing.assert_array_equal(back.matrix, MATRIX)
     assert back.output.compatible_with(_systems.RASmm())
+
+
+def test_a_hint_saves_to_a_plain_json_name(tmp_path) -> None:  # noqa: ANN001
+    affine = Affine(MATRIX, input=_systems.RASmm(), output=_systems.RASmm())
+    file = tmp_path / "t.json"
+    with pytest.raises(WriterError):
+        io.save(affine, file)
+    io.save(affine, file, hint="neuroglancer.affine")
+    expected = NeuroglancerTransform.from_any(affine).to_text()
+    assert file.read_text() == expected
+    back = io.load(file, hint="neuroglancer.affine")
+    np.testing.assert_array_equal(back.matrix, MATRIX)
 
 
 def test_units_are_converted_exactly() -> None:
