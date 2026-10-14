@@ -1557,6 +1557,85 @@ its status.
      write numbered files, but would also make the stack a candidate for
      every TIFF and Pillow file that is loaded. Status: decided. The
      stack declares no extension and is chosen only by hint (item 125).
+130. An OME-Zarr pyramid that is saved unchanged does not keep the bytes
+     of its metadata, because the writer encodes the metadata again from
+     the levels and the placements (`io/images/zarr/_multiscale.py`).
+     Keeping them needs the record of the Zarr pass (item 15), and that
+     record has to hold the JSON of the group as it was read, because
+     abczarr writes the numbers of a parsed model again in its own form,
+     such as `1.0` for `1`. Status: open, for the Zarr pass.
+131. OME-NGFF 0.6 only allows a `scale`, an `identity`, or a `scale`
+     followed by a `translation`, in the dataset of a level, and puts any
+     other placement in the transformations of the multiscale. A
+     `MultiScaleImage` lets each level hold any geometry. The writer
+     writes a geometry that only scales and translates each axis in the
+     form of a dataset, whatever its spelling, and moves the geometry of
+     a single level that rotates or shears to the placements of a pyramid
+     that has none, as #434 (66ff758) does. It refuses any other level
+     that rotates or shears, as the maintainer decided on #433
+     (`io/images/zarr/_multiscale.py`, `to_node`). Status: decided.
+     Splitting such a geometry into a diagonal part per level and a part
+     shared by every level is tracked in #447.
+132. OME-NGFF 0.6 identifies a coordinate system by its name and the path
+     of its group, while two brainhops systems are equal when they have
+     the same class, name and axes. Two images whose intrinsic systems are
+     both named `physical` therefore had equal systems in brainhops. The
+     systems of a pyramid outside the root group are now named after the
+     path of that group, as in `labels/cells//physical`, which the reader
+     of the root gives to `OmeZarrImage` as `group`
+     (`io/images/zarr/_ome.py`, `system_name`). No character is reserved
+     in an OME name, and `//` is chosen because a Zarr node name is never
+     empty and never holds a `/`, so it never occurs in a group path. The
+     systems of the root group keep their names, and one whose name holds
+     `//` is preceded by `//`, so the mapping is one-to-one. Status:
+     resolved without a datamodel change, for the systems that a reader
+     names. Item 133 lists what remains.
+133. The naming of item 132 only takes effect when a reader of the root
+     passes the path of a group down, and no reader does yet: labels and
+     scenes are not read, and the transformations of a multiscale that
+     refer to another group are still skipped (`common_transformations`).
+     Reading them needs the axes of the system of the other group, so the
+     reader must open that group. A pyramid opened directly at a subgroup
+     is a root, and its systems keep their OME names. OME-NGFF 0.6 also
+     only requires a name to be unique in its `coordinateSystems` array
+     (ngff-spec tag `0.6`, `index.md`, "coordinateSystems metadata"), while
+     a group may hold several multiscales and a reference gives only a
+     path and a name, so a reference into such a group is ambiguous in OME
+     itself. brainhops reads the first multiscale only. Status: open,
+     until labels or scenes are read.
+134. The table of transformation types of ngff-spec 0.6 lets a `scale` or
+     a `translation` store its values in an array named by `path`, but the
+     schema of version 0.6 requires the inline values
+     (`schemas/coordinate_transformations.schema`), and the conformance
+     cases `bad_scale_path_not_allowed.json` and
+     `bad_translate_path_not_allowed.json` are invalid. An `affine` or a
+     `rotation` may use `path` in both. abczarr 0.2.2 and 0.2.3 accept
+     the `path` of a scale. The maintainer decided on #433 that such
+     metadata is not valid 0.6, so the reader refuses a scale or a
+     translation named by `path`, wherever it is nested
+     (`io/images/zarr/_ome.py`, `check_parameter_paths`). The schemas of
+     versions 0.4 and 0.5, and of the drafts from 0.6.dev3 on, require the
+     values inline too, while the drafts 0.6.dev1 and 0.6.dev2 allowed a
+     `path`, so only these two drafts are still read with one. The writer
+     never names the values of a scale or a translation by `path`.
+     Status: decided.
+135. The schema of version 0.6 requires every entry of a `scale` to be
+     positive (`exclusiveMinimum` 0), while the prose of the
+     specification only says that they SHOULD be non-zero. abczarr 0.2.3
+     accepts a negative scale. The maintainer decided on #433 that a flip
+     is never written as a negative `scale` but as a linear transformation.
+     A scale with an entry that is not positive is written as the
+     equivalent `affine` (`io/transformations/zarr/_map.py`,
+     `_scale_translation_entry`). A dataset only holds a positive scale, so
+     the flip that every level shares goes before the placements of the
+     pyramid as that linear transformation, and each level keeps a
+     positive scale (`io/images/zarr/_multiscale.py`, `to_node`). Levels
+     that flip different axes are refused, as in item 131 (#447), and
+     versions 0.4 and 0.5, which have no slot for an affine, refuse a
+     flip. The transformation of a dataset, from the array of a level to
+     the intrinsic system, is therefore never an affine or a flip
+     (`to_dataset_ome` only returns a positive scale, followed by a
+     translation). Status: decided.
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,
