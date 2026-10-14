@@ -1954,21 +1954,29 @@ registrations of its views back into the XML file.
      checks neither, and places a reference of another shape or resolution
      by its scaled-mm positions, as fslpy does. Status: open.
 230. The Neuroglancer coordinate transform (#227,
-     `io/transformations/neuroglancer`) answers to the hints
-     `"neuroglancer"` and `"ngtransform"`, and its metadata answers to
-     `"ngtransform"` only, because the metadata of Neuroglancer volumes in
-     #436 also answers to `"neuroglancer"`, and one hint would then select
-     two classes of the isolated metadata registry. Status: open, for the
-     maintainer to decide the hints of the two formats together.
+     `io/transformations/neuroglancer`) and its metadata answer to the
+     hint `"neuroglancer.affine"`, in lower case and dotted from the
+     family to the kind, as `"freesurfer.mgh"` is. The hints
+     `"neuroglancer"` and `"ngtransform"` are dropped. The precomputed
+     volumes of #436 keep their hints, `"precomputed"` and
+     `"neuroglancer"`, so `"neuroglancer"` selects them alone, and no
+     hint selects two classes of the isolated metadata registry. The
+     dotted hint is declared as it is, because a family base that
+     declared `"neuroglancer"` would give the transform that hint too.
+     Status: decided by the maintainer.
 231. Neuroglancer has no file for a coordinate transform, which lives in
      the state of the viewer. The format reads a `.json` file whose keys
      are among the four that Neuroglancer reads and that is a valid
      transform, and any file with a hint. It claims the extension
      `.ngtransform.json`, a convention of brainhops, so that `io.save`
-     can choose it, since `io.save` takes no hint, and so that check 5 of
-     the conformance test applies. A plain `.json` name is never claimed.
-     Status: open, for the maintainer to accept the convention or to
-     choose a hint for `io.save`.
+     can choose it, and so that check 5 of the conformance test applies.
+     A plain `.json` name is never claimed. `io.save` also takes a
+     `hint`, which restricts its candidates to the formats that answer to
+     it, as for reading, and which makes them candidates whatever the
+     name when none of them claims it, so that
+     `io.save(affine, "t.json", hint="neuroglancer.affine")` writes this
+     format. Status: decided by the maintainer, the extension stays and
+     the hint is also accepted.
 232. Check 6 of the conformance test is vacuous for the Neuroglancer
      transform, which is parsed in one pass, as for LTA and M3Z (item 66).
      Status: accepted.
@@ -1988,7 +1996,8 @@ registrations of its views back into the XML file.
      unknown unit and the absence of a unit are not told apart. pint
      treats the radian as dimensionless, so a unit is written as `rad/s`
      rather than `Hz` when its name contains `radian`
-     (`_scale_and_unit`). Status: open.
+     (`_scale_and_unit`). Status: accepted for now by the maintainer, with
+     a follow-up issue to tell the two units apart by their dimensions.
 236. The coefficients are converted between the SI prefixes of the input
      and output axes with decimal arithmetic on the shortest
      representation of each number. When the two prefixes are equal,
@@ -1996,8 +2005,8 @@ registrations of its views back into the XML file.
      differ, a coefficient may in rare cases differ in its last bit after
      a write and a read. Status: accepted.
 237. `NeuroglancerTransformRaw.output_dimensions` and `input_dimensions`
-     return the private `Dimension` named tuple. Status: open, to decide
-     whether `Dimension` becomes public.
+     return the private `Dimension` named tuple. Status: decided by the
+     maintainer, `Dimension` stays private.
 250. An N5 pyramid, a group whose datasets are `s0`, `s1`, ..., is read
      as `N5MultiScaleImage`, whose levels are `N5Image` objects
      (`io/images/n5`). Each level follows this design: it holds the
