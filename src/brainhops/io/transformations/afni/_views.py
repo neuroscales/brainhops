@@ -24,10 +24,10 @@ def _warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the sub-bricks of a warp from the array that the BRIK stores.
 
     A lazy array is read with the array backend. The NumPy array that it
-    gives is made read-only, because the writer writes `raw` and not this
+    gives is made read-only, because the writer writes `rawdata` and not this
     array, so an edit in place would be lost. Any other array is returned
     as it is, so that a Dask array stays lazy and an array that was set as
-    data stays the array of `raw`.
+    data stays the array of `rawdata`.
     """
     if not isinstance(raw, _BrikProxy):
         return raw

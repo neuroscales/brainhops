@@ -572,10 +572,10 @@ class _FileBasedModelMixin:
         """Copy an instance, resetting fields that belong to another format.
 
         The data model copies the fields of `other` by name. Fields declared by
-        a file format, such as the `raw` array and the metadata of NIfTI and
-        MGH, are copied only from an object of the same format; otherwise the
-        class default is kept, because the same field name holds something
-        different.
+        a file format, such as the `rawdata` array and the metadata of
+        NIfTI and MGH, are copied only from an object of the same
+        format; otherwise the class default is kept, because the same
+        field name holds something different.
         Converting NIfTI to MGH on save therefore converts the data model only,
         and the writer rebuilds the format state.
 
@@ -583,10 +583,10 @@ class _FileBasedModelMixin:
         file stores them in the private fields `_data` and
         `_transformations`, where `None` means that they are decoded.
         Within the format, the stored values are copied, so a copy of an
-        image whose data was not assigned holds the same `raw` as `other`,
+        image whose data was not assigned holds the same `rawdata` as `other`,
         which stays lazy if it is a proxy, and decodes the same record.
         From another class, the data and the transformations that `other`
-        reports are copied, decoded if need be, because its `raw` and its
+        reports are copied, decoded if need be, because its `rawdata` and its
         record mean nothing to this format.
 
         Parameters

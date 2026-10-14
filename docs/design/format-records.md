@@ -86,7 +86,7 @@ that holds state.
 | Model API       | `Metadata`, `Image`, `Transformation`         | In-memory objects. `Image` and `Transformation` hold a `Metadata`. |
 | Dispatchers     | `MetadataFormat`, `ImageFormat`, `TransformationFormat` | Find the file format to read or write.      |
 | Format metadata | `<X>Metadata(MetadataFormat)`                 | Holds `<X>Raw`, the header record, and calls its methods for input and output. |
-| Format object   | `<X>Image(ImageFormat, SingleScaleImage)`, `<X>Transformation` | Holds a `<X>Metadata` and a `raw` data object. |
+| Format object   | `<X>Image(ImageFormat, SingleScaleImage)`, `<X>Transformation` | Holds a `<X>Metadata` and a `rawdata` data object. |
 
 A dispatcher is a class that does not read a format itself but chooses
 among the formats registered under it, as `format_registry` does today
@@ -132,31 +132,31 @@ For NIfTI, the first pass gives the classes the following bases.
 
 ### Data
 
-On a format object, `raw` is the only attribute that stores data. It
-holds the data as it is laid out in the file. After a read, `raw` is
+On a format object, `rawdata` is the only attribute that stores data. It
+holds the data as it is laid out in the file. After a read, `rawdata` is
 usually a lazy proxy, and once data has been assigned it is an array.
 The proxy types are nibabel's `ArrayProxy`, the existing
 `DelayedH5Array` for HDF5, Zarr arrays, and a new proxy for raw binary
 blocks that knows their offset and compression.
 
-The public `data` attribute is a cached view of `raw`. Each format
+The public `data` attribute is a cached view of `rawdata`. Each format
 defines a pair of pure functions, `to_model` and `to_disk`, with
-`data = to_model(raw)` and `raw = to_disk(data)`. Reading `data` decodes
-`raw` once and caches the result.
+`data = to_model(rawdata)` and `rawdata = to_disk(data)`. Reading `data`
+decodes `rawdata` once and caches the result.
 
 Assigned data is pending. A format takes the `data` field of its model
 over under the private name `_data`, with
 `_data: ... = Inherit("data", default=None)`, and its `data` property is
 a `smartproperty(cache=True)`. An array stored in `_data` is returned as
-it is, and `None` means that `data` is decoded from `raw`. Assigning
+it is, and `None` means that `data` is decoded from `rawdata`. Assigning
 `data` stores the array in `_data` and clears the cache, and it never
-changes `raw`. The data model of a transformation already stores its
+changes `rawdata`. The data model of a transformation already stores its
 data in `_data`, and a format whose model is a chain, such as a NIfTI
 displacement field, declares a private `_data` field of its own.
-`raw` and the record therefore describe the file as it was read, or as
-the object was last consolidated, until `consolidate()` or a write
+`rawdata` and the record therefore describe the file as it was read, or
+as the object was last consolidated, until `consolidate()` or a write
 encodes the pending state. This replaces the rule of #302, which stored
-an assigned array in `raw` at once.
+an assigned array in `rawdata` at once.
 
 The transformations of an image are compared at consolidation instead
 of being pending by assignment. An image takes the `transformations`
@@ -189,13 +189,13 @@ Within a format, `replace` and `from_instance` copy `_data` and
 keeps the lazy proxy and decodes nothing, and a copy of a changed
 object keeps its pending state. From another class, `from_instance`
 reads the decoded `data` and `transformations` of the other object,
-because its `raw` and its record mean nothing to this format.
+because its `rawdata` and its record mean nothing to this format.
 
-Only exact and invertible changes may happen between `raw` and `data`.
-These are permuting axes, removing or adding singleton axes (such as
-the time axis of a NIfTI displacement field), reshaping and changing the
-memory order. Intensity scaling is not one of them, because the proxy
-and the writer options already handle it.
+Only exact and invertible changes may happen between `rawdata` and
+`data`. These are permuting axes, removing or adding singleton axes
+(such as the time axis of a NIfTI displacement field), reshaping and
+changing the memory order. Intensity scaling is not one of them, because
+the proxy and the writer options already handle it.
 
 A small amount of data may also live in the header record, for example
 the matrix of an affine, or the content of a file that is cheaper to
@@ -206,33 +206,34 @@ precedence over the copy in the record.
 
 `consolidate(*, inplace=False, **options)` is the only public method
 that encodes a format object, and every format object has it: images,
-transformations and metadata. It returns a copy whose `raw` and record
-are encoded from the pending state, which is the assigned data, the
-transformations that differ from those of the record and the fields of
-the model, and from the writer options of the format, such as `like=`,
-`dtype=` and header overrides. The options of each class are those that its writer takes.
-The copy holds new metadata that holds the new record, and its `_data`
-and `_transformations` are `None`. With `inplace=True`, the object
-itself is changed, and it is returned. `inplace` and every option are
-keyword-only.
+transformations and metadata. It returns a copy whose `rawdata` and
+record are encoded from the pending state, which is the assigned data,
+the transformations that differ from those of the record and the fields
+of the model, and from the writer options of the format, such as
+`like=`, `dtype=` and header overrides. The options of each class are
+those that its writer takes. The copy holds new metadata that holds the
+new record, and its `_data` and `_transformations` are `None`. With
+`inplace=True`, the object itself is changed, and it is returned.
+`inplace` and every option are keyword-only.
 
 A copy consolidated with an option that changes how the data is stored,
 such as `dtype=` for NIfTI and MGH or `datatype=` for AFNI, MRtrix and
-NRRD, holds what a file written with that option holds. Its `raw` holds
-the values as the writer converts them, with the rounding and the
+NRRD, holds what a file written with that option holds. Its `rawdata`
+holds the values as the writer converts them, with the rounding and the
 clipping of the writer, and its record holds the header that the writer
 writes. NIfTI writes the encoded image to bytes and reads it again, so
-that `raw` is a lazy array of the stored voxels in memory and the record
-holds the scaling that nibabel chose (`_stored_parts` in
+that `rawdata` is a lazy array of the stored voxels in memory and the
+record holds the scaling that nibabel chose (`_stored_parts` in
 `io/common/nifti/_header.py`). MGH, AFNI and NRRD encode the voxels with
 their writer and decode them with their reader. MRtrix encodes them with
-its writer, and `raw` is then a lazy array of those bytes, which applies
-the intensity scaling as a file is read. Data of the stored type, and a
-lazy array of a file, are kept as they are, so that nothing is read.
+its writer, and `rawdata` is then a lazy array of those bytes, which
+applies the intensity scaling as a file is read. Data of the stored
+type, and a lazy array of a file, are kept as they are, so that nothing
+is read.
 
 An object that has a record and nothing pending, consolidated without
-options, gives a copy that shares `raw` and the metadata, so nothing is
-copied and the object is still saved byte for byte. Consolidating a
+options, gives a copy that shares `rawdata` and the metadata, so nothing
+is copied and the object is still saved byte for byte. Consolidating a
 consolidated object changes nothing. Once an object is consolidated,
 its geometry is decoded from the new record, so it has the precision of
 the file, such as the single precision of a NIfTI sform or the
@@ -255,7 +256,7 @@ consolidates the object into a copy with the writer options and writes
 that copy, so the object itself is not changed. The single exception is
 a save over the file that the object's own lazy array reads (#426). The
 object is then consolidated in place with the same options and written,
-and its `raw` then reads the new file, so that the object holds what
+and its `rawdata` then reads the new file, so that the object holds what
 `load(path)` gives. For NIfTI, the record is also read again from the
 new file, because nibabel sets fields such as the offset of the voxels
 when it writes, so the object equals `load(path)`, record included.
@@ -265,7 +266,7 @@ when it writes, so the object equals `load(path)`, record included.
 Consolidation, and therefore every write, follows four steps.
 
 1. The data to store is `to_disk(_data)` when data is pending, and
-   `raw` otherwise.
+   `rawdata` otherwise.
 2. The base record is a copy of the record of the metadata. In the
    fifth pass, only the metadata fields that differ from a fresh decode
    of the record are encoded over it.
@@ -275,10 +276,10 @@ Consolidation, and therefore every write, follows four steps.
 4. The writer writes the header of the consolidated copy, then its
    data.
 
-If `raw` is still the proxy that the reader built, the data is copied
-from the source file without being decoded, so an object that was read
-and not changed is saved byte for byte. Otherwise the array in `raw` is
-written.
+If `rawdata` is still the proxy that the reader built, the data is
+copied from the source file without being decoded, so an object that was
+read and not changed is saved byte for byte. Otherwise the array in
+`rawdata` is written.
 
 ### Rules
 
@@ -292,15 +293,15 @@ writes a record only when it is saved. A record made up for an object
 built from scratch would claim header fields that the object never
 had.
 
-`raw` and the record describe the file as it was read, or as the object
-was last consolidated. Assigning `data`, `transformations` or another
-field of the model leaves them as they are until `consolidate()` or a
-write, where the transformations of an image are compared with those
-of the record. There is no `pending` property. An untouched object, consolidated
-without options, shares `raw` and its metadata with its copy, so that
-`obj.consolidate().metadata is obj.metadata` and
-`obj.consolidate().raw is obj.raw`. After `consolidate()`, nothing is
-pending, and a second `consolidate()` changes nothing.
+`rawdata` and the record describe the file as it was read, or as the
+object was last consolidated. Assigning `data`, `transformations` or
+another field of the model leaves them as they are until `consolidate()`
+or a write, where the transformations of an image are compared with
+those of the record. There is no `pending` property. An untouched
+object, consolidated without options, shares `rawdata` and its metadata
+with its copy, so that `obj.consolidate().metadata is obj.metadata` and
+`obj.consolidate().rawdata is obj.rawdata`. After `consolidate()`,
+nothing is pending, and a second `consolidate()` changes nothing.
 
 Assigning other metadata drops what an object decodes from its record
 and keeps what was assigned to it. This was decided by the maintainer on
@@ -337,7 +338,8 @@ The views that a class decodes from the record are read-only by
 construction, and do not rely on the flags of the arrays in the record.
 
 Each image class gives an explicit `shape` read from the pending data,
-or else from `raw`, without reading the voxels; `ndim` follows from it.
+or else from `rawdata`, without reading the voxels; `ndim` follows from
+it.
 
 A lazy array answers an empty selection without reading the file, so
 that Dask's metadata probe reads nothing.
@@ -347,7 +349,7 @@ cannot be overridden; the writer refuses them with `WriterError`.
 
 A save never removes or overwrites a file that a live proxy reads. When
 it replaces that file, the object is consolidated in place with the
-writer options, and its `raw` reads the new file (#426).
+writer options, and its `rawdata` reads the new file (#426).
 
 A conformance check that is vacuous for a format is logged in the comment
 of the exemplar of that format and in the list of tensions, instead of
@@ -388,57 +390,59 @@ shape, its data type and its chunks, but never its data. One
 `<X>Metadata` holds the record, and the pyramid and each of its levels
 hold the same metadata object, by identity. A level is an object of the
 single-scale format of the same package, such as `OmeZarrLevel` or
-`TiffImage`. It holds the lazy array of its level in `raw`, the shared
-metadata, and the index `level` of its level in the record. The level
-classes are public, and each one reads a single level of a container
-with the reader option `level`. The fourth pass first planned one record
-per level, and this design replaces that plan.
+`TiffImage`. It holds the lazy array of its level in `rawdata`, the
+shared metadata, and the index `level` of its level in the record. The
+level classes are public, and each one reads a single level of a
+container with the reader option `level`. The fourth pass first planned
+one record per level, and this design replaces that plan.
 
-The pyramid holds the tuple of the arrays of its levels in `raw`, finest
-first, so that `raw` stays the only attribute that stores data and an
-untouched copy shares it. Unlike a list, a tuple cannot be changed in
-place. The pyramid takes the `images` and `transformations` fields of
-`MultiScaleImage` over as `_images` and `_transformations`, which hold
-assigned lists only. Its `images` property is a `smartproperty` with a
-cache, which decodes one level object for each array of `raw`, all
-sharing the metadata, and caches the list. Its `transformations`
-property decodes the placements of the pyramid, which map the space of
-its levels to the world, in the same way, and is empty for a container
-that stores no placement. The `metadata` property names both of them in
-`invalidates=`, so other metadata drops the cached levels and placements
-and keeps the assigned ones, as the rules above require. The level
-objects that are dropped keep the old metadata. Within the format,
-`replace` and `from_instance` copy `raw`, the metadata and the assigned
-lists, but not the cache, so a copy of an untouched pyramid decodes
-nothing. From another class, `from_instance` reads the `images` and the
-`transformations` of the other object. Each pyramid gives an explicit
-`shape`, read from the levels that it holds or else from the first array
-of `raw`, without reading the voxels. `MultiScaleImage.data` stays a
-read-only property that returns the data of the finest level.
+The pyramid holds the tuple of the arrays of its levels in `rawdata`,
+finest first, so that `rawdata` stays the only attribute that stores
+data and an untouched copy shares it. Unlike a list, a tuple cannot be
+changed in place. The pyramid takes the `images` and `transformations`
+fields of `MultiScaleImage` over as `_images` and `_transformations`,
+which hold assigned lists only. Its `images` property is a
+`smartproperty` with a cache, which decodes one level object for each
+array of `rawdata`, all sharing the metadata, and caches the list. Its
+`transformations` property decodes the placements of the pyramid, which
+map the space of its levels to the world, in the same way, and is empty
+for a container that stores no placement. The `metadata` property names
+both of them in `invalidates=`, so other metadata drops the cached
+levels and placements and keeps the assigned ones, as the rules above
+require. The level objects that are dropped keep the old metadata.
+Within the format, `replace` and `from_instance` copy `rawdata`, the
+metadata and the assigned lists, but not the cache, so a copy of an
+untouched pyramid decodes nothing. From another class, `from_instance`
+reads the `images` and the `transformations` of the other object. Each
+pyramid gives an explicit `shape`, read from the levels that it holds or
+else from the first array of `rawdata`, without reading the voxels.
+`MultiScaleImage.data` stays a read-only property that returns the data
+of the finest level.
 
 The helpers of `io/common/_pyramids.py` tell which levels of a pyramid
 are still the levels of its file. `held_images` returns the assigned
 list of levels, or else the cached one, or `None` when the levels were
 neither assigned nor read. `own_level` tells whether a held level is an
 object of the level class that holds the metadata of the pyramid at the
-same index, whose `raw` is the array of that index in the `raw` of the
-pyramid, with no pending data, and with transformations that were never
-read or are the same as a fresh decode. `own_levels` applies that test
-to every held level. Each format calls them explicitly, with its level
-class and its function that decodes the transformations of a level.
+same index, whose `rawdata` is the array of that index in the `rawdata`
+of the pyramid, with no pending data, and with transformations that were
+never read or are the same as a fresh decode. `own_levels` applies that
+test to every held level. Each format calls them explicitly, with its
+level class and its function that decodes the transformations of a
+level.
 
 A pyramid that has a record, whose levels are those of its file, whose
 placements were never read or are the same as a fresh decode, and which
-is consolidated without options, gives a copy that shares `raw` and the
-metadata. Otherwise each level gives a stored array and a storage
+is consolidated without options, gives a copy that shares `rawdata` and
+the metadata. Otherwise each level gives a stored array and a storage
 description. A level of the file gives them as they are stored. A level
 with pending data gives `to_disk` of that data, and a level of another
 class, or one that holds other metadata, gives `to_disk` of its decoded
 data. The transformations of a level are compared with a fresh decode
 and encoded only when they differ, and so are the placements. The new
 record is a copy of the held record with new levels, and the
-consolidated copy holds the new arrays in `raw`, new metadata, and no
-assigned list, so its levels are decoded from the new record.
+consolidated copy holds the new arrays in `rawdata`, new metadata, and
+no assigned list, so its levels are decoded from the new record.
 
 Zarr and TIFF write every level as it is given, and no ratio between the
 shapes of the levels is checked, for any format. A format whose writer
@@ -447,7 +451,7 @@ writes from the finest level only, and assumes that the coarser levels
 that the user assigned are downsampled versions of it. It never refuses
 them. A format that cannot write, such as OpenSlide, consolidates only
 its data, as MINC does (item 101). The pending data of each level then
-moves into the tuple `raw`, the metadata and the transformations are
+moves into the tuple `rawdata`, the metadata and the transformations are
 kept, and a level of another class is refused with `WriterError`,
 because no record can describe it. A level whose transformations differ
 from those of the record keeps them in the list of levels of the
@@ -581,11 +585,11 @@ The conformance test runs the following checks on every migrated
 format.
 
 1. The constructor fields of the format are the fields of its model,
-   `raw`, `metadata` and the options the format declares. None of them
-   is named `image`, `header`, `struct`, `_header`, `dataobj` or
+   `rawdata`, `metadata` and the options the format declares. None of
+   them is named `image`, `header`, `struct`, `_header`, `dataobj` or
    `node`.
-2. Loading is lazy. After a load, `raw` is a proxy and no decoded data
-   is cached yet.
+2. Loading is lazy. After a load, `rawdata` is a proxy and no decoded
+   data is cached yet.
 3. Setting `data` leaves the stored data and the record as they are,
    clears the cached data and the views derived from it, and is
    pending. `consolidate()` stores `to_disk(value)` in a copy.
@@ -597,9 +601,10 @@ format.
 7. The metadata can be pickled.
 8. An object built from `data=` alone holds its data pending, and it
    can be consolidated and saved.
-9. `replace` and `from_instance` keep `raw`, `metadata` and the pending
-   fields within a format, so a copy of an untouched object stays lazy,
-   and they reset `raw` and `metadata` when copying from another format.
+9. `replace` and `from_instance` keep `rawdata`, `metadata` and the
+   pending fields within a format, so a copy of an untouched object
+   stays lazy, and they reset `rawdata` and `metadata` when copying from
+   another format.
 10. An edit of `metadata.raw` survives a save, and a changed geometry
     takes precedence over the stale header.
 11. Each format package exports exactly its intended public names, no
@@ -611,7 +616,7 @@ format.
     access and stored, unless they are assigned, and copies within the
     format keep them.
 14. Copies between classes carry the decoded transformations.
-15. Consolidating an untouched object gives a copy that shares `raw`
+15. Consolidating an untouched object gives a copy that shares `rawdata`
     and the metadata, and decodes nothing.
 16. Consolidating is idempotent, nothing is pending afterwards, and the
     copy holds exactly what a file written from the object holds. With
@@ -620,9 +625,9 @@ format.
     header of the file exactly. A format that cannot write consolidates
     only its data.
 17. A save writes the consolidated copy and leaves the object as it was.
-18. A save over the file that the `raw` of the object reads consolidates
-    the object in place, and the object then holds what `load(path)`
-    gives (#426), its header included.
+18. A save over the file that the `rawdata` of the object reads
+    consolidates the object in place, and the object then holds what
+    `load(path)` gives (#426), its header included.
 19. The transformations of an image are compared at consolidation. A
     list that was only read keeps the record and the bytes, an equal
     list that is assigned keeps the record, a list changed in place is
@@ -645,14 +650,15 @@ data in P4, refuses a level of another class in P5, and refuses to write
 in the other checks that write, while P7 and P9 do not apply to it.
 
 - P1. The constructor fields of the pyramid are `images`,
-  `transformations`, `raw`, `metadata` and the options that it declares,
-  and none of them is named `node`, `_slide` or `_source`. `images` and
-  `transformations` are cached properties, and `metadata` invalidates
-  both.
-- P2. Loading is lazy. After a load, `raw` is a tuple of proxies of the
-  level class, and the levels are not decoded. Reading `images` caches a
-  list of objects of the level class, each with its index in `level`, its
-  array of `raw` and the metadata of the pyramid, and no data is decoded.
+  `transformations`, `rawdata`, `metadata` and the options that it
+  declares, and none of them is named `node`, `_slide` or `_source`.
+  `images` and `transformations` are cached properties, and `metadata`
+  invalidates both.
+- P2. Loading is lazy. After a load, `rawdata` is a tuple of proxies of
+  the level class, and the levels are not decoded. Reading `images`
+  caches a list of objects of the level class, each with its index in
+  `level`, its array of `rawdata` and the metadata of the pyramid, and
+  no data is decoded.
 - P3. A level of a loaded pyramid holds the data, the geometry and the
   record of the same level read alone with the option `level`.
 - P4. Data assigned to a level is pending. The arrays and the record of
@@ -663,7 +669,7 @@ in the other checks that write, while P7 and P9 do not apply to it.
 - P5. An assigned list of levels, in which one level is an image of
   another class, is pending and is written.
 - P6. Consolidating an untouched pyramid, or one whose levels and
-  placements were only read, gives a copy that shares `raw` and the
+  placements were only read, gives a copy that shares `rawdata` and the
   metadata and decodes nothing, and consolidating is idempotent.
 - P7. The transformations of a level, and the placements of the pyramid,
   are compared at consolidation. A list that was only read keeps the
@@ -674,11 +680,11 @@ in the other checks that write, while P7 and P9 do not apply to it.
   directory, the files that change when one level changes never change
   when another level changes.
 - P9. A save over the container that the proxies read consolidates the
-  pyramid in place (#426). Its `raw` is then a new tuple of proxies of the
+  pyramid in place (#426). Its `rawdata` is then a new tuple of proxies of the
   new container, and its record is that of a fresh load.
-- P10. `replace` and `from_instance` within the format share `raw` and
-  the metadata and decode nothing, and `from_instance` from another class
-  carries the levels of that object, which are written.
+- P10. `replace` and `from_instance` within the format share `rawdata`
+  and the metadata and decode nothing, and `from_instance` from another
+  class carries the levels of that object, which are written.
 - P11. Assigning other metadata drops the cached levels and placements
   and keeps the assigned ones, as check 20 tests for single images.
 - P12. The metadata of a container reads no data, which is tested on a
@@ -700,10 +706,10 @@ in the fourth pass.
 The third pass moves MGH, AFNI, MRtrix, NRRD and MINC. MGH gets a
 record with its header and its tags, and uses nibabel's proxy. For the
 others, the private `_header` becomes the record, `dataobj` becomes
-`raw`, and the existing transpositions become `to_model` and `to_disk`.
-The transpositions that depend on the record live in the lazy array
-instead, and `to_model` and `to_disk` are the identity for them. The
-intensity scaling of MRtrix stays out of the view. For these image
+`rawdata`, and the existing transpositions become `to_model` and
+`to_disk`. The transpositions that depend on the record live in the lazy
+array instead, and `to_model` and `to_disk` are the identity for them.
+The intensity scaling of MRtrix stays out of the view. For these image
 formats, the pass also decides which header fields the record keeps
 and which ones the geometry encoding replaces, and whether `replace` and
 `from_instance` keep the proxy. Its tests compare compressed variants of
@@ -746,9 +752,9 @@ chain or matrix into a new record in memory (item 311).
 
 The move of the raster images read with Pillow, called pass 4e, gives
 `PillowImage` a record of the frame that it reads, `PillowRaw`, held by
-`PillowMetadata`, and a lazy array of that frame in `raw`. The format,
-the mode, the `info` dictionary and the number of frames leave the
-constructor of the image for the record, and the reader options
+`PillowMetadata`, and a lazy array of that frame in `rawdata`. The
+format, the mode, the `info` dictionary and the number of frames leave
+the constructor of the image for the record, and the reader options
 `frame`, `palette` and `dpi` stay fields of the image. Pillow encodes
 again whatever it writes, so an image that was read and not changed is
 written as the bytes of its file (item 331).
@@ -756,7 +762,7 @@ written as the bytes of its file (item 331).
 Step 4b-i moves the plain Zarr array. `ZarrImage` holds a `ZarrRaw`
 record, which keeps the document of the array as the typed model of
 abczarr together with the bytes of each document as read, and a lazy
-array of the store in `raw`, and the Zarr adapters of
+array of the store in `rawdata`, and the Zarr adapters of
 `io/common/zarr/_parsers.py` no longer hold the opened node. Step 4b-ii
 moves the OME-Zarr images and fields, whose record holds the group
 document and one `ZarrRaw` for each level.
@@ -771,16 +777,16 @@ This list is updated as the work finds new ones, and each entry records
 its status.
 
 1. The constructor assigns fields in their declared order, so the
-   default `raw=None` overwrites a value given as `data=`. A
+   default `rawdata=None` overwrites a value given as `data=`. A
    `__post_init__` applies `data=` again, and for the NIfTI
    transformations it is written once, in `NiftiBasedTransformation`
-   (`io/transformations/nifti/_base.py:84`). When both `raw=` and
+   (`io/transformations/nifti/_base.py:84`). When both `rawdata=` and
    `data=` are given, `data=` wins. Status: resolved by pending data.
    The constructor stores `data=` in `_data`, which the default of
-   `raw` no longer overwrites, so `store_data_argument` and the
+   `rawdata` no longer overwrites, so `store_data_argument` and the
    `__post_init__` methods that only called it are deleted. When both
-   `raw=` and `data=` are given, `data` is read first, and `raw` is kept
-   until the object is consolidated.
+   `rawdata=` and `data=` are given, `data` is read first, and `rawdata`
+   is kept until the object is consolidated.
 2. A `smartproperty` whose setter was added later with `@data.setter`
    lost its `invalidates=` option, because the invalidator was wrapped
    around the setter only when the property was built. Status: resolved
@@ -796,16 +802,16 @@ its status.
    axes. The intent of the record now also takes precedence over
    `like=`, because `_apply_like` copies the intent only when it is 0.
    Status: open.
-5. A NIfTI affine has two sources, a matrix in `raw` or the `sform` of
-   the record, and the inverse of an affine that comes from the header
-   must also come from the header. Status: decided in pass 1c, where a
-   matrix in `raw` takes precedence over the `sform`, and the inverse of
-   an affine read from the header still reads the header.
+5. A NIfTI affine has two sources, a matrix in `rawdata` or the `sform`
+   of the record, and the inverse of an affine that comes from the
+   header must also come from the header. Status: decided in pass 1c,
+   where a matrix in `rawdata` takes precedence over the `sform`, and
+   the inverse of an affine read from the header still reads the header.
 6. Reading `data` turns the proxy into an array with the array backend,
    which copies with NumPy but stays lazy with Dask. An edit made in
    place on the decoded array would then be lost, because an untouched
-   `raw` is written from the proxy. Status: decided in pass 1b, where
-   the proxy is always written and the decoded NumPy arrays are
+   `rawdata` is written from the proxy. Status: decided in pass 1b,
+   where the proxy is always written and the decoded NumPy arrays are
    read-only, so that values are changed by assigning `data`.
 7. In the first pass, `metadata` is a field of the format classes,
    while #287 puts it on the roots of the data model. The name also
@@ -824,7 +830,7 @@ its status.
    one.
 9. A proxy built over a stream that the caller passed in must keep that
    stream alive for as long as the proxy is used. For the same reason,
-   a format whose `raw` is a proxy must override `from_filename` or
+   a format whose `rawdata` is a proxy must override `from_filename` or
    `from_file`, because the adapter's `from_filename` closes the stream
    when it returns. X5 has no name to reopen when its file is read from
    a stream or from bytes, so it reads all its fields at once in that
@@ -869,7 +875,7 @@ its status.
     `X5TransformReaderWriter` is removed, and `to_struct` is removed.
     The design of pending data adds that `to_raw()` and `to_metadata()`
     are removed from every class in favor of `consolidate()`, that
-    assigned data no longer changes `raw`, that a write no longer
+    assigned data no longer changes `rawdata`, that a write no longer
     changes the object except over its own file, and that an untouched
     object is written with its record as it is. Status: open.
 14. The design needs `bagof-magic` 0.3.dev2 or later, which is not on
@@ -901,10 +907,10 @@ its status.
     for byte. The setters of the NIfTI transformations empty the
     private `_data` of the model
     (`io/transformations/nifti/_affines.py:55` and `_fields.py:87`), so
-    that `replace` passes `data=None` and the copy keeps `raw`. Status:
-    resolved by pending data for every format, since `replace` copies
-    `_data`, which is `None` for an untouched object, and the setters
-    that emptied `_data` are deleted.
+    that `replace` passes `data=None` and the copy keeps `rawdata`.
+    Status: resolved by pending data for every format, since `replace`
+    copies `_data`, which is `None` for an untouched object, and the
+    setters that emptied `_data` are deleted.
 19. The `repr` of an image decoded the whole proxy to show `data`.
     Status: resolved in pass 1a, where `SingleScaleImage.data` is
     hidden from `repr`, which changes the public `repr`.
@@ -937,7 +943,7 @@ its status.
     to be written back with code 2, and the padding before `vox_offset`
     was lost. Status: decided in pass 1c for the fields, which treat the
     geometry as unchanged while `_transformations` is unset and then
-    write `raw` under the record with its forms kept. Resolved by
+    write `rawdata` under the record with its forms kept. Resolved by
     consolidation for every NIfTI format, since an untouched object is
     written with its record as it is. A geometry that is assigned, or a
     writer option, encodes the forms again.
@@ -1006,8 +1012,8 @@ its status.
     pending `_data`.
 37. In the conformance tests, check 9 does not convert NiftyReg, ITK
     and FNIRT fields to another format, because they have no converter
-    until #312, and it compares `raw` and `data` only for models that
-    have `data`. Status: accepted.
+    until #312, and it compares `rawdata` and `data` only for models
+    that have `data`. Status: accepted.
 38. Private helpers such as `_always`, `_record_image`,
     `_set_field_data` and `_set_coordinates_intent` were imported by
     other packages from `io/transformations/nifti`. Status: resolved in
@@ -1100,8 +1106,8 @@ its status.
     chain, although in practice it warns once because the decoded result
     is cached, and the writer reads each lazy field whole to copy it.
     Status: accepted.
-56. `M3zMorph` has no `raw` field. The positions live in the record, and
-    the field is a read-only view of `record.positions`
+56. `M3zMorph` has no `rawdata` field. The positions live in the record,
+    and the field is a read-only view of `record.positions`
     (`io/transformations/freesurfer/m3z/_xform.py`). Status: accepted in
     pass 2c, in the same category as the matrix of LTA.
 57. A copy of an M3Z record (`M3zRaw.copy()`) shares its arrays instead
@@ -1186,7 +1192,7 @@ its status.
     `MghReaderWriter`, and `NiftiImage` has had the same gap since pass
     1b. Status: resolved in the pass 3a review (4411bec), where
     `MghImage` and `NiftiImage` each give an explicit `shape` read from
-    `raw.shape`.
+    `rawdata.shape`.
 74. `io/common/mgh/_views.py` repeats about ten lines of
     `_read` from the NIfTI views, as explicit code in each format.
     Status: accepted in the pass 3a review (4411bec).
@@ -1256,9 +1262,9 @@ its status.
     `io/common/afni/_data.py`, and `io/images/afni/_image.py`). This was
     a loss of data, and the rule that a save never removes a file that a
     live proxy reads comes from it. Status: resolved in the pass 3b
-    review (c7e2a4e), where `raw` points to the new BRIK file after the
-    old one is removed. Such a save is now a save over the dataset of
-    the image (#426), so the image is consolidated in place first.
+    review (c7e2a4e), where `rawdata` points to the new BRIK file after
+    the old one is removed. Such a save is now a save over the dataset
+    of the image (#426), so the image is consolidated in place first.
 88. The `__getitem__` of the proxies of AFNI and MRtrix decoded the whole
     file when Dask asked for an empty selection to find the metadata of
     the array, so a Dask array read the file twice. Status: resolved in
@@ -1321,13 +1327,13 @@ its status.
      `_transformations` would keep it exact, but something would then
      stay pending after a consolidation. Status: accepted.
 101. MINC files cannot be written, so `MincImage.consolidate()` only
-     moves pending data into `raw` (`io/images/minc/_image.py`). The
+     moves pending data into `rawdata` (`io/images/minc/_image.py`). The
      metadata is kept, and so are the transformations that the image
      holds, read or assigned, because no record can be encoded. The conformance harness checks
      this data-only consolidation instead of checks 16 and 17. Status:
      accepted.
-102. A consolidated NIfTI affine has no `raw` array, because its matrix
-     lives in the header that the consolidation encodes
+102. A consolidated NIfTI affine has no `rawdata` array, because its
+     matrix lives in the header that the consolidation encodes
      (`io/transformations/nifti/_affines.py`). The harness reads the
      matrix of the header through `Exemplar.stored`, as it reads the
      matrix of LTA. Status: accepted.
@@ -1337,13 +1343,13 @@ its status.
      therefore takes `data=`. Check 1 allows `data` for them. Status:
      accepted, and to be announced with item 13.
 104. A save over the file that the lazy array of an object reads
-     consolidates the object in place, and then points `raw` at the new
-     file. The consolidation alone is not enough, because the lazy array
-     of the old file describes how that file stored the data, such as
-     its offset, its type and its scaling, which the new file may store
-     differently, either because a header changed length or because a
-     writer option such as `dtype=` changed the storage. Status:
-     accepted.
+     consolidates the object in place, and then points `rawdata` at the
+     new file. The consolidation alone is not enough, because the lazy
+     array of the old file describes how that file stored the data, such
+     as its offset, its type and its scaling, which the new file may
+     store differently, either because a header changed length or
+     because a writer option such as `dtype=` changed the storage.
+     Status: accepted.
 105. An AFNI dataset that is encoded again receives a new `IDCODE`, so
      two consolidations of the same image give different headers. Check
      17 therefore compares the files that a save and a save of the
@@ -1352,14 +1358,14 @@ its status.
 106. An X5 file is written with h5py in mode `"w"`, which truncates the
      file, while the lazy fields of an X5 record read the file by its
      name, so an X5 transformation saved over its own file loses its
-     fields. X5 keeps its fields in its record and has no `raw`, so
+     fields. X5 keeps its fields in its record and has no `rawdata`, so
      check 18 does not cover it. The problem is older than this work.
      Status: open.
 107. A writer option that changes how the data is stored, such as
      `dtype=` for NIfTI or `datatype=` for AFNI, was recorded in the
-     header of the consolidated copy, while `raw` held the values before
-     they were converted to that type, and the NIfTI header had no
-     scaling yet. The copy did not hold what its file holds. Status:
+     header of the consolidated copy, while `rawdata` held the values
+     before they were converted to that type, and the NIfTI header had
+     no scaling yet. The copy did not hold what its file holds. Status:
      resolved. The copy holds the values as the writer converts them,
      and the record holds the header that the writer writes, as the
      section on consolidation describes. Check 16 compares them exactly.
@@ -1392,7 +1398,7 @@ its status.
      `UnrepresentableTransformationError`
      (`io/transformations/fsl/fnirt/_base.py`).
 112. A NIfTI image or transformation saved over its own file pointed
-     `raw` at the new file but kept the record of the consolidation,
+     `rawdata` at the new file but kept the record of the consolidation,
      whose header differs from the one written. Status: resolved. The
      object reads the record and the lazy array of the new file, and
      check 18 compares its header with that of `load(path)` for every
@@ -1413,18 +1419,18 @@ its status.
      their chain at consolidation too.
 115. JPEG 2000 has a pyramid before the fourth pass decides the levels of
      a multiscale image (item 15). `Jpeg2000MultiScaleImage` holds a lazy
-     array of the full resolution in `raw`, takes `images` and
+     array of the full resolution in `rawdata`, takes `images` and
      `transformations` over as `OmeZarrImage` does, and decodes its levels
-     from `raw` and the record as `Jpeg2000Image` objects that share its
-     metadata (`io/images/jpeg2000/_multiscale.py`). It is consolidated
-     through its full-resolution level alone. As the maintainer decided,
-     the coarser levels are taken to be downsampled versions of the first
-     one, which the codec derives again: whatever was assigned to them,
-     data or transformations, is ignored rather than refused, and the
-     ratios of their shapes are not checked, here as for any format. The
-     pyramid is listed in `NOT_MIGRATED`, and its full-resolution level
-     is an exemplar. Status: accepted for the coarser levels, and open
-     until the fourth pass.
+     from `rawdata` and the record as `Jpeg2000Image` objects that share
+     its metadata (`io/images/jpeg2000/_multiscale.py`). It is
+     consolidated through its full-resolution level alone. As the
+     maintainer decided, the coarser levels are taken to be downsampled
+     versions of the first one, which the codec derives again: whatever
+     was assigned to them, data or transformations, is ignored rather
+     than refused, and the ratios of their shapes are not checked, here
+     as for any format. The pyramid is listed in `NOT_MIGRATED`, and its
+     full-resolution level is an exemplar. Status: accepted for the
+     coarser levels, and open until the fourth pass.
 116. A raw JPEG 2000 codestream has no resolution box, so the pixel size
      of an image written as a `.j2k` file is lost, as for the Pillow
      formats that store no resolution. The checks of geometry would be
@@ -1443,12 +1449,12 @@ its status.
      new encoder. Status: accepted.
 118. A JPEG 2000 image read with `level=r` for `r > 0` is not the file
      that it reads, so it is encoded again whenever it is consolidated,
-     even untouched. The level is the level that `raw` reads, and not a
-     field, so that the consolidated copy, whose `raw` reads the new
-     file, holds level 0. The options `pixel_size=` and `unit=` of the
-     readers become assigned transformations, so a file read with them
-     is written with that pixel size, and not byte for byte (item 11).
-     Status: accepted.
+     even untouched. The level is the level that `rawdata` reads, and
+     not a field, so that the consolidated copy, whose `rawdata` reads
+     the new file, holds level 0. The options `pixel_size=` and `unit=`
+     of the readers become assigned transformations, so a file read with
+     them is written with that pixel size, and not byte for byte (item
+     11). Status: accepted.
 119. Pillow decodes a whole JPEG 2000 level at once, so a Dask array
      built over the lazy array of a large level, which Dask cuts into
      several chunks, decodes the level once per chunk. Status: open.
@@ -1639,12 +1645,12 @@ its status.
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,
-     which `XfmTransform` reads into `raw` as a tuple of lazy
+     which `XfmTransform` reads into `rawdata` as a tuple of lazy
      `MincImage` objects, one per grid transform
      (`io/transformations/minc/_chain.py`). A file without a grid
-     transform has no `raw`, so check 18 does not apply to the exemplar,
-     and check 6 is vacuous, as for LTA and M3Z (item 66). Status:
-     accepted, pending review.
+     transform has no `rawdata`, so check 18 does not apply to the
+     exemplar, and check 6 is vacuous, as for LTA and M3Z (item 66).
+     Status: accepted, pending review.
 141. brainhops cannot write MINC volumes, so an `XfmTransform` writes a
      grid transform only as the volume that it was read from, which it
      recognizes by the identity of the decoded element, as X5 does (item
@@ -1742,9 +1748,9 @@ its status.
      as a pyramid, `PrecomputedMultiScaleImage`, whose levels are
      `PrecomputedImage` objects (`io/images/precomputed`). Each level
      follows this design: it holds the `info` file of the volume as its
-     record and the lazy array of its scale in `raw`, and it is an
+     record and the lazy array of its scale in `rawdata`, and it is an
      exemplar of the conformance tests. The pyramid holds the same
-     metadata as its levels and has no `raw` of its own, and its
+     metadata as its levels and has no `rawdata` of its own, and its
      `consolidate` consolidates its levels. The rules for the levels and
      the record of a pyramid are decided in the Zarr pass (item 15), so
      the pyramid is listed with the other pyramids among the formats that
@@ -1828,7 +1834,7 @@ its status.
      every resolution level, binned as Imaris bins them, and the
      histograms of every level, which belong to the writer of a pyramid
      whose record is not designed yet (item 15). `ImarisImage.consolidate`
-     therefore moves pending data into `raw` only
+     therefore moves pending data into `rawdata` only
      (`io/images/imaris/_image.py`). Status: open, for the maintainer to
      confirm.
 181. An Imaris pyramid holds no record of its own.
@@ -2060,12 +2066,12 @@ registrations of its views back into the XML file.
      as `N5MultiScaleImage`, whose levels are `N5Image` objects
      (`io/images/n5`). Each level follows this design: it holds the
      attributes of the group and of its datasets as its record and the
-     lazy array of its dataset in `raw`, and it is an exemplar of the
-     conformance tests. The pyramid holds the same metadata as its levels
-     and has no `raw` of its own, and its `consolidate` consolidates its
-     levels. The rules for the levels and the record of a pyramid are
-     decided in the Zarr pass (item 15), so the pyramid is listed among
-     the formats that are not migrated. Status: open.
+     lazy array of its dataset in `rawdata`, and it is an exemplar of
+     the conformance tests. The pyramid holds the same metadata as its
+     levels and has no `rawdata` of its own, and its `consolidate`
+     consolidates its levels. The rules for the levels and the record of
+     a pyramid are decided in the Zarr pass (item 15), so the pyramid is
+     listed among the formats that are not migrated. Status: open.
 251. N5 datasets are read and not written, as MINC (item 101). A dataset
      is a directory of files, while the atomic save of
      `io/base/_utils_files.py`, the save over the file that a proxy reads
@@ -2174,8 +2180,8 @@ registrations of its views back into the XML file.
      accepted.
 285. Check 6 of the conformance test is vacuous for TrakEM2, because the
      metadata holds the whole file, as for LTA and M3Z (item 66), and
-     check 18 does not apply, because the format has no `raw`. Status:
-     accepted.
+     check 18 does not apply, because the format has no `rawdata`.
+     Status: accepted.
 
 The items from 290 on were found in pass 4a, which adds the helpers
 of pyramids (`io/common/_pyramids.py`), `replace_directory`, the toy
@@ -2201,7 +2207,7 @@ pyramid of the conformance test and the checks P1 to P12.
      TIFF file can be saved byte for byte only by copying the bytes of its
      source. A TIFF file whose dialect or levels changed is encoded again.
      Status: implemented in pass 4c, where an image or a pyramid that
-     `consolidate` leaves as it is, and whose `raw` holds the lazy arrays
+     `consolidate` leaves as it is, and whose `rawdata` holds the lazy arrays
      of its record, is written by copying the bytes of its file.
 293. OpenSlide cannot write, so its pyramids and levels consolidate only
      their data. Its 22 classes leave the list of formats that are not
@@ -2258,18 +2264,18 @@ pyramid of the conformance test and the checks P1 to P12.
      accepted in pass 4a.
 299. The pyramid formats merged before pass 4a log tensions that their
      move to the design of pyramids closes. Items 160 and 250 note that
-     the precomputed and N5 pyramids have no `raw` of their own, items
-     161 and 251 note that the rules of atomic and untouched saves were
-     defined for files only, and items 181 and 208 note that the Imaris
-     and BigDataViewer pyramids have no record. The JPEG 2000 pyramid
-     already keeps the cache model of this design, with metadata that
-     drops its decoded `images` and `transformations`, and its writer no
-     longer refuses coarse data that was assigned, as the maintainer
-     decided on 2026-10-13 for every format that derives its levels. The
-     design of pyramids also answers items 130 and 131 of #433, because
-     each record keeps the bytes of its documents, and a level
-     transformation that is not diagonal is refused (#447). Status: open
-     until those pyramids move to the design.
+     the precomputed and N5 pyramids have no `rawdata` of their own,
+     items 161 and 251 note that the rules of atomic and untouched saves
+     were defined for files only, and items 181 and 208 note that the
+     Imaris and BigDataViewer pyramids have no record. The JPEG 2000
+     pyramid already keeps the cache model of this design, with metadata
+     that drops its decoded `images` and `transformations`, and its
+     writer no longer refuses coarse data that was assigned, as the
+     maintainer decided on 2026-10-13 for every format that derives its
+     levels. The design of pyramids also answers items 130 and 131 of
+     #433, because each record keeps the bytes of its documents, and a
+     level transformation that is not diagonal is refused (#447).
+     Status: open until those pyramids move to the design.
 300. The seven plain matrix formats (`io/transformations/matrix`) share
      one record, `MatrixAffineRaw`, because a text container and a binary
      container differ only by the text that a text file keeps and the
@@ -2509,7 +2515,7 @@ pyramid of the conformance test and the checks P1 to P12.
      not of its chain, so assigning a chain does not clear it, and
      `xform.block` still describes the file while the chain is pending. In
      the conformance tests, check 6 is vacuous, as for LTA and M3Z (item
-     66), and checks 18 and 19 do not apply, since the format has no `raw`
+     66), and checks 18 and 19 do not apply, since the format has no `rawdata`
      and is not an image. The chains of several files are checked in
      `tests/test_io_elastix.py`, because the harness builds objects from
      data alone. Status: proposed in the elastix pass.
@@ -2803,15 +2809,15 @@ pyramid of the conformance test and the checks P1 to P12.
      that the checks of a format that cannot write test. Status: accepted
      in pass 4d.
 364. A pyramid that cannot be written moves the pending data of its
-     levels into `raw`, and its consolidated copy decodes its levels again
-     from `raw` and the record. A level whose transformations, read and
-     changed or assigned, differ from those of the record would lose them,
-     so the copy then holds a list of its levels instead, each with its
-     array of `raw` and its transformations, as MINC keeps those of an
-     image. A list of levels that is not the list of the slide, such as a
-     list in another order, a shorter list, or a level of another class,
-     is refused with `WriterError`. Status: decided in pass 4d, for the
-     maintainer to review.
+     levels into `rawdata`, and its consolidated copy decodes its levels again
+     from `rawdata` and the record. A level whose transformations, read
+     and changed or assigned, differ from those of the record would lose
+     them, so the copy then holds a list of its levels instead, each
+     with its array of `rawdata` and its transformations, as MINC keeps
+     those of an image. A list of levels that is not the list of the
+     slide, such as a list in another order, a shorter list, or a level
+     of another class, is refused with `WriterError`. Status: decided in
+     pass 4d, for the maintainer to review.
 365. Pass 4d changes the public API of OpenSlide, to be announced with
      item 13. The fields `vendor`, `properties`, `n_levels`,
      `level_downsamples`, `background_color`, `bounds` and
@@ -2828,7 +2834,7 @@ pyramid of the conformance test and the checks P1 to P12.
      the name of its source only, where it took the first extension of the
      class for bytes, which changes nothing, because only MIRAX is
      detected by its extension and it cannot be read from a copy.
-     `associated_image` reads through the lazy arrays of `raw`, so a
+     `associated_image` reads through the lazy arrays of `rawdata`, so a
      consolidated image whose data was assigned reads none. Status: open,
      as for item 13.
 470. `io.save` tries the candidates tier by tier, most specific first,
@@ -2868,3 +2874,26 @@ pyramid of the conformance test and the checks P1 to P12.
      refused. A plain matrix would be written only by a writer of the
      plain matrix formats, which item 301 leaves to the maintainer.
      Status: open, with item 301.
+472. The arrays that a format object stores are held in `rawdata`, so
+     that they are no longer confused with the record that the metadata
+     of the object holds in `metadata.raw`. The maintainer asked to
+     "rename image.raw/transformation.raw to rawdata (metadata.raw stays
+     as is)". The rename covers the single-scale images and the levels
+     of pyramids, the pyramids that hold the arrays of their levels as a
+     tuple, the transformations that store an array, and `XfmTransform`,
+     whose `rawdata` is the tuple of the lazy `MincImage` objects of its
+     grid transforms. The constructor keyword, `replace`,
+     `from_instance` and the private field `_rawdata` of `XfmTransform`
+     follow the public name. The record keeps its name:
+     `MetadataFormat.raw`, the `raw` field of each metadata class, the
+     `<X>Raw` record classes, the `_raw` modules and the functions that
+     read or build a record, such as `from_raw`, are unchanged. No
+     format class keeps `raw` as an alias, so that the public surface
+     names the arrays in one way only, and the conformance tests make
+     sure that no registered format other than metadata has a `raw`
+     field. Two other names are left as they are, because the request
+     names `raw` only: the `raw_levels` field of `OmeZarrField`, which
+     holds the arrays of the levels of a field, and the `raw` field of
+     the LTA coordinate systems, which holds the geometry block of a
+     volume, a record and not an array. Status: decided by the
+     maintainer, and open for review of `raw_levels`.

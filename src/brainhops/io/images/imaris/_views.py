@@ -29,7 +29,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     NumPy array that it gives is made read-only, because the file cannot
     be written, so an edit in place could never be saved. Any other array
     is reversed as it is, so that the data of an image whose data were
-    set is a view of `raw`.
+    set is a view of `rawdata`.
     """
     if isinstance(raw, _ImarisProxy):
         raw = get_array_backend().asarray(raw)

@@ -250,7 +250,7 @@ def _read_pyramid(cls: type, h5file: h5py.File, source: tx.Any) -> tx.Any:
     metadata = ImarisMetadata.from_raw(record)
     levels = [
         ImarisImage(
-            raw=read_imaris_level(source, record, index),
+            rawdata=read_imaris_level(source, record, index),
             metadata=metadata,
             level=index,
         )

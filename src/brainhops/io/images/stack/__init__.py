@@ -91,7 +91,7 @@ order. Within a file, row zero is the top row, so the axis along the
 rows points down, as for a single TIFF or Pillow image. The file of the
 first number is the first slice.
 
-After a read, `image.raw` is a lazy array that reads a file only when one
+After a read, `image.rawdata` is a lazy array that reads a file only when one
 of its pixels is needed, with the reader of the single-file format:
 `read_series` of the TIFF reader and `read_pillow` of the Pillow reader.
 With NumPy as the array backend, `image.data` reads every file. With

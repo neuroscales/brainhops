@@ -37,10 +37,10 @@ the exception: their colours are looked up in the palette, unless
 `palette=False` keeps the indices. Pillow reduces 16-bit colour PNG files to 8
 bits.
 
-After a read, `raw` is a lazy array of the frame, `(rows, columns[,
+After a read, `rawdata` is a lazy array of the frame, `(rows, columns[,
 samples])`, which Pillow decodes only when `data` is first accessed. Its shape
 and type are known from the header, so `image.shape` decodes nothing. The data
-that it gives is read-only, since the writer writes `raw` and would lose an
+that it gives is read-only, since the writer writes `rawdata` and would lose an
 edit made in place: assign `data` to change the pixels.
 
 ## Geometry

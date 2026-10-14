@@ -129,13 +129,14 @@ class AperioMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`AperioImage`][] objects decoded from `raw` and
-        the record on first access and cached, apart from an assigned
-        list. Each level holds its array of `raw`, the metadata of the
-        pyramid and its index in `level`. Assigning a list replaces the
-        stored one, and assigning `None` decodes the levels again.
+        The levels are [`AperioImage`][] objects decoded from `rawdata`
+        and the record on first access and cached, apart from an
+        assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(AperioImage, self.raw, self.metadata)
+        return decode_levels(AperioImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -257,14 +258,14 @@ class HamamatsuMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`HamamatsuImage`][] objects decoded from `raw`
-        and the record on first access and cached, apart from an
-        assigned list. Each level holds its array of `raw`, the metadata
-        of the pyramid and its index in `level`. Assigning a list
-        replaces the stored one, and assigning `None` decodes the levels
-        again.
+        The levels are [`HamamatsuImage`][] objects decoded from
+        `rawdata` and the record on first access and cached, apart from
+        an assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(HamamatsuImage, self.raw, self.metadata)
+        return decode_levels(HamamatsuImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -374,13 +375,14 @@ class MiraxMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`MiraxImage`][] objects decoded from `raw` and
-        the record on first access and cached, apart from an assigned
-        list. Each level holds its array of `raw`, the metadata of the
-        pyramid and its index in `level`. Assigning a list replaces the
-        stored one, and assigning `None` decodes the levels again.
+        The levels are [`MiraxImage`][] objects decoded from `rawdata`
+        and the record on first access and cached, apart from an
+        assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(MiraxImage, self.raw, self.metadata)
+        return decode_levels(MiraxImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -489,13 +491,14 @@ class LeicaMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`LeicaImage`][] objects decoded from `raw` and
-        the record on first access and cached, apart from an assigned
-        list. Each level holds its array of `raw`, the metadata of the
-        pyramid and its index in `level`. Assigning a list replaces the
-        stored one, and assigning `None` decodes the levels again.
+        The levels are [`LeicaImage`][] objects decoded from `rawdata`
+        and the record on first access and cached, apart from an
+        assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(LeicaImage, self.raw, self.metadata)
+        return decode_levels(LeicaImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -606,13 +609,14 @@ class PhilipsMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`PhilipsImage`][] objects decoded from `raw` and
-        the record on first access and cached, apart from an assigned
-        list. Each level holds its array of `raw`, the metadata of the
-        pyramid and its index in `level`. Assigning a list replaces the
-        stored one, and assigning `None` decodes the levels again.
+        The levels are [`PhilipsImage`][] objects decoded from `rawdata`
+        and the record on first access and cached, apart from an
+        assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(PhilipsImage, self.raw, self.metadata)
+        return decode_levels(PhilipsImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -723,13 +727,14 @@ class VentanaMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`VentanaImage`][] objects decoded from `raw` and
-        the record on first access and cached, apart from an assigned
-        list. Each level holds its array of `raw`, the metadata of the
-        pyramid and its index in `level`. Assigning a list replaces the
-        stored one, and assigning `None` decodes the levels again.
+        The levels are [`VentanaImage`][] objects decoded from `rawdata`
+        and the record on first access and cached, apart from an
+        assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(VentanaImage, self.raw, self.metadata)
+        return decode_levels(VentanaImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -839,13 +844,14 @@ class SakuraMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`SakuraImage`][] objects decoded from `raw` and
-        the record on first access and cached, apart from an assigned
-        list. Each level holds its array of `raw`, the metadata of the
-        pyramid and its index in `level`. Assigning a list replaces the
-        stored one, and assigning `None` decodes the levels again.
+        The levels are [`SakuraImage`][] objects decoded from `rawdata`
+        and the record on first access and cached, apart from an
+        assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(SakuraImage, self.raw, self.metadata)
+        return decode_levels(SakuraImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -957,13 +963,14 @@ class TrestleMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`TrestleImage`][] objects decoded from `raw` and
-        the record on first access and cached, apart from an assigned
-        list. Each level holds its array of `raw`, the metadata of the
-        pyramid and its index in `level`. Assigning a list replaces the
-        stored one, and assigning `None` decodes the levels again.
+        The levels are [`TrestleImage`][] objects decoded from `rawdata`
+        and the record on first access and cached, apart from an
+        assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(TrestleImage, self.raw, self.metadata)
+        return decode_levels(TrestleImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -1071,13 +1078,14 @@ class ZeissMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`ZeissImage`][] objects decoded from `raw` and
-        the record on first access and cached, apart from an assigned
-        list. Each level holds its array of `raw`, the metadata of the
-        pyramid and its index in `level`. Assigning a list replaces the
-        stored one, and assigning `None` decodes the levels again.
+        The levels are [`ZeissImage`][] objects decoded from `rawdata`
+        and the record on first access and cached, apart from an
+        assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(ZeissImage, self.raw, self.metadata)
+        return decode_levels(ZeissImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -1187,14 +1195,14 @@ class DicomWsiMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`DicomWsiImage`][] objects decoded from `raw`
-        and the record on first access and cached, apart from an
-        assigned list. Each level holds its array of `raw`, the metadata
-        of the pyramid and its index in `level`. Assigning a list
-        replaces the stored one, and assigning `None` decodes the levels
-        again.
+        The levels are [`DicomWsiImage`][] objects decoded from
+        `rawdata` and the record on first access and cached, apart from
+        an assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(DicomWsiImage, self.raw, self.metadata)
+        return decode_levels(DicomWsiImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(
@@ -1310,14 +1318,14 @@ class GenericTiffMultiScaleImage(OpenSlideMultiScaleImage):
     def images(self) -> tx.List[SingleScaleImage]:
         """The levels of the slide, finest first.
 
-        The levels are [`GenericTiffImage`][] objects decoded from `raw`
-        and the record on first access and cached, apart from an
-        assigned list. Each level holds its array of `raw`, the metadata
-        of the pyramid and its index in `level`. Assigning a list
-        replaces the stored one, and assigning `None` decodes the levels
-        again.
+        The levels are [`GenericTiffImage`][] objects decoded from
+        `rawdata` and the record on first access and cached, apart from
+        an assigned list. Each level holds its array of `rawdata`, the
+        metadata of the pyramid and its index in `level`. Assigning a
+        list replaces the stored one, and assigning `None` decodes the
+        levels again.
         """
-        return decode_levels(GenericTiffImage, self.raw, self.metadata)
+        return decode_levels(GenericTiffImage, self.rawdata, self.metadata)
 
     @classmethod
     def sniff_filename(

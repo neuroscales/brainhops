@@ -365,7 +365,7 @@ def test_the_padding_is_cropped(single_file) -> None:  # noqa: ANN001
     path, base = single_file
     image = ImarisImage.load(path)
     assert image.shape == (8, 6, 3, 2, 3)
-    assert image.raw.shape == (3, 2, 3, 6, 8)
+    assert image.rawdata.shape == (3, 2, 3, 6, 8)
     data = np.asarray(image.data)
     assert data.dtype == np.uint16
     assert PADDING not in data
@@ -373,7 +373,7 @@ def test_the_padding_is_cropped(single_file) -> None:  # noqa: ANN001
 
 def test_loading_reads_no_voxels(single_file) -> None:  # noqa: ANN001
     image = ImarisImage.load(single_file[0])
-    assert isinstance(image.raw, _ImarisProxy)
+    assert isinstance(image.rawdata, _ImarisProxy)
     assert "_cache_data" not in vars(image)
     assert image.shape == (8, 6, 3, 2, 3)
     assert "_cache_data" not in vars(image)
@@ -396,7 +396,7 @@ def test_loading_reads_no_voxels(single_file) -> None:  # noqa: ANN001
 )
 def test_the_lazy_array_reads_selections(single_file, index) -> None:  # noqa: ANN001
     path, base = single_file
-    raw = ImarisImage.load(path).raw
+    raw = ImarisImage.load(path).rawdata
     reference = np.transpose(base, (1, 0, 2, 3, 4))
     assert np.array_equal(raw[index], reference[index])
     assert np.array_equal(np.asarray(raw), reference)
@@ -404,7 +404,7 @@ def test_the_lazy_array_reads_selections(single_file, index) -> None:  # noqa: A
 
 def test_a_selection_reads_only_its_datasets(tmp_path, single_file) -> None:  # noqa: ANN001
     path, base = single_file
-    raw = ImarisImage.load(path).raw
+    raw = ImarisImage.load(path).rawdata
     # The datasets of channel 1 are replaced by datasets whose values are
     # in an external file that does not exist, so reading them fails.
     with h5py.File(path, "a") as f:
@@ -449,7 +449,7 @@ def test_the_decoded_data_are_read_only(single_file) -> None:  # noqa: ANN001
 def test_dask_blocks_hold_whole_chunks(single_file) -> None:  # noqa: ANN001
     da = pytest.importorskip("dask.array")
     image = ImarisImage.load(single_file[0])
-    assert image.raw.chunks == (1, 1, 2, 4, 4)
+    assert image.rawdata.chunks == (1, 1, 2, 4, 4)
     with backend("dask"):
         data = ImarisImage.load(single_file[0]).data
     assert isinstance(data, da.Array)
@@ -474,7 +474,7 @@ def test_from_memory(single_file, how) -> None:  # noqa: ANN001
         # A file that h5py opened over a stream is kept open and read.
         opened = h5py.File(_io.BytesIO(content), "r")
         image = ImarisImage.from_file(opened)
-        assert image.raw.source is opened
+        assert image.rawdata.source is opened
     assert np.array_equal(np.asarray(image.data), expected(base))
     pyramid = ImarisMultiScaleImage.from_bytes(content)
     assert np.array_equal(np.asarray(pyramid.data), expected(base))
@@ -632,5 +632,5 @@ def test_consolidating_moves_pending_data_only(single_file) -> None:  # noqa: AN
     # The copy decodes the same record again, since the decoded list lives
     # in the cache of the image.
     assert same_transformations(copy.transformations, transformations)
-    assert np.array_equal(copy.raw, value.T)
-    assert isinstance(image.raw, _ImarisProxy)
+    assert np.array_equal(copy.rawdata, value.T)
+    assert isinstance(image.rawdata, _ImarisProxy)

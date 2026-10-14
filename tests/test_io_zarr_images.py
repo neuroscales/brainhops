@@ -1010,7 +1010,7 @@ def test_a_copy_of_a_read_level_stays_lazy(tmp_path: Path) -> None:
     # The copy keeps the lazy array, which permutes the axes, and the
     # record, and reads no array.
     assert copy._data is None
-    assert copy.raw is level.raw
+    assert copy.rawdata is level.rawdata
     assert copy.metadata is level.metadata
     assert getattr(level, "_cache_data", None) is None
     assert np.array_equal(np.asarray(copy.data), np.asarray(level.data))

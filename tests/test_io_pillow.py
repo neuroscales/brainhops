@@ -151,7 +151,8 @@ def test_read_data_is_a_view_of_the_decoded_array(tmp_path: Path) -> None:
         # F-ordered grey data is the transpose of the C-ordered array.
         assert image.data.flags.f_contiguous
         assert image.data.base is not None
-        # The decoded data is read-only, since the writer writes `raw`.
+        # The decoded data is read-only, since the writer writes
+        # `rawdata`.
         assert not image.data.flags.writeable
 
 
@@ -779,7 +780,7 @@ def test_an_untouched_image_is_written_as_its_file(
     source = _FILES[kind](tmp_path)
     content = source.read_bytes()
     image = PillowImage.load(source)
-    assert isinstance(image.raw, _PillowProxy)
+    assert isinstance(image.rawdata, _PillowProxy)
     assert image.to_bytes() == content
     (tmp_path / "copy").mkdir()
     target = tmp_path / "copy" / source.name
@@ -891,8 +892,8 @@ def test_the_shape_is_read_without_decoding(
 
     monkeypatch.setattr(pillow_data, "read_pillow", refuse)
     assert image.shape == (12, 7, 3)
-    assert image.raw.shape == (7, 12, 3)
-    assert image.raw[:0].shape == (0, 12, 3)
+    assert image.rawdata.shape == (7, 12, 3)
+    assert image.rawdata[:0].shape == (0, 12, 3)
     assert [axis.name for axis in image.transformation.input.axes] == [
         "x",
         "y",
@@ -990,8 +991,10 @@ def test_saving_over_its_own_file_reads_the_new_file(tmp_path: Path) -> None:
     image.save(path)
     # The image holds what the file holds, and its lazy array reads it.
     assert image._data is None
-    assert isinstance(image.raw, _PillowProxy)
-    assert image.raw.source == path or str(image.raw.source) == str(path)
+    assert isinstance(image.rawdata, _PillowProxy)
+    assert image.rawdata.source == path or str(image.rawdata.source) == str(
+        path
+    )
     back = load(path)
     assert image.metadata.raw == back.metadata.raw
     np.testing.assert_array_equal(image.data, flipped)

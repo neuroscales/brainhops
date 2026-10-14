@@ -285,10 +285,10 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             _check_shape(header)
 
     _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    """The vectors given to the field, or `None` to decode them from `raw`.
+    """The vectors given to the field, or `None` to decode them from `rawdata`.
 
     Vectors stored here are pending until [`consolidate`][] or a write
-    encodes them into `raw`.
+    encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -298,14 +298,15 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
 
         Vectors that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw`: NiftyReg stores a field with shape
-        (X, Y, Z, 1, 3), and the singleton axis is dropped. The vectors are
-        positions or displacements, as the type of the file says.
-        Assigning the data drops the chain decoded from the previous data.
+        they are decoded from `rawdata`: NiftyReg stores a field with
+        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. The
+        vectors are positions or displacements, as the type of the file
+        says. Assigning the data drops the chain decoded from the
+        previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _field_to_model(self.raw)
+        return _field_to_model(self.rawdata)
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -408,7 +409,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     def consolidate(
         self, *, inplace: bool = False, like: tx.Any = None, **overrides
     ) -> tx.Self:
-        """Encode the pending vectors or chain into `raw` and a header.
+        """Encode the pending vectors or chain into `rawdata` and a header.
 
         A field whose chain is decoded from a NiftyReg file of its own type
         keeps its stored vectors, assigned or read, under a copy of the
@@ -448,12 +449,12 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -499,7 +500,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         if self._data is not None:
             stored = _field_to_disk(self._data)
         else:
-            stored = self.raw
+            stored = self.rawdata
         if stored is None or self.niftyreg_type not in type(self).TYPES:
             return None
         if self._transformations is not None:

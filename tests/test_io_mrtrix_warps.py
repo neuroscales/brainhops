@@ -861,18 +861,18 @@ def test_a_linear_transform_is_pending_until_consolidated(tmp_path) -> None:  # 
 
 def test_a_warp_is_pending_until_consolidated(deformation, tmp_path) -> None:  # noqa: ANN001
     warp = io.load(deformation)
-    raw, metadata = warp.raw, warp.metadata
+    raw, metadata = warp.rawdata, warp.metadata
     assert isinstance(raw, _MrtrixProxy)
     if isinstance(warp.data, np.ndarray):
         assert not warp.data.flags.writeable
     # Assigned coordinates are pending, and drop the decoded chain.
     first = warp.transformations
     warp.data = np.asarray(warp.data) + 1
-    assert warp.raw is raw and warp.metadata is metadata
+    assert warp.rawdata is raw and warp.metadata is metadata
     assert warp.transformations is not first
     consolidated = warp.consolidate()
     assert consolidated._data is None
-    np.testing.assert_array_equal(consolidated.raw, np.asarray(raw) + 1)
+    np.testing.assert_array_equal(consolidated.rawdata, np.asarray(raw) + 1)
     # The geometry and the keys of the record are kept, and the kind of
     # warp is recorded with a `command_history` line of brainhops.
     record = consolidated.metadata.raw
@@ -883,7 +883,7 @@ def test_a_warp_is_pending_until_consolidated(deformation, tmp_path) -> None:  #
     assert record.keyval["command_history"].startswith("brainhops  (version=")
     # Saving over its own file re-points the warp at the new file.
     warp.save(deformation)
-    assert isinstance(warp.raw, _MrtrixProxy) and warp._data is None
+    assert isinstance(warp.rawdata, _MrtrixProxy) and warp._data is None
     np.testing.assert_allclose(warp.data, io.load(deformation).data)
 
 

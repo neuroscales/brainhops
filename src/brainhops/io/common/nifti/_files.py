@@ -179,7 +179,7 @@ def _save_nifti(
 # ----------------------------------------------------------------------
 #   READING THE VOXELS
 # ----------------------------------------------------------------------
-# The views of the NIfTI-based formats convert between `raw`, the array as
+# The views of the NIfTI-based formats convert between `rawdata`, the array as
 # the file stores it, and `data`, the array that the data model exposes.
 # They are defined beside each format, and they all read the stored array
 # with the function below.
@@ -191,10 +191,10 @@ def _read(raw: ArrayProtocol) -> ArrayProtocol:
     A nibabel proxy, which reads the voxels lazily, is read with the array
     backend, which loads it with NumPy and keeps it lazy with Dask. The
     NumPy array that it gives is made read-only, because it is a view that
-    the writer does not read back: the writer writes `raw`, so an edit in
+    the writer does not read back: the writer writes `rawdata`, so an edit in
     place would be lost. Any other array is returned as it is, so that a
     Dask array stays lazy and an array that was set as data stays the
-    array of `raw`.
+    array of `rawdata`.
     """
     if not isinstance(raw, ArrayProxy):
         return raw
