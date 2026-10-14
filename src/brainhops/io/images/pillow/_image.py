@@ -14,6 +14,9 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
@@ -29,6 +32,7 @@ from brainhops.io.common._geometry import (
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 # this format
 from ._data import _PillowProxy, read_pillow_image, reads_from
@@ -541,6 +545,7 @@ class PillowImage(
         inplace: bool = False,
         format: tx.Optional[str] = None,
         dpi: _DpiLike = None,
+        on_loss: tx.Optional[OnLoss] = None,
         **options,
     ) -> "PillowImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -579,6 +584,11 @@ class PillowImage(
         transformations are decoded from the new record. The record held
         before is never changed.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a raster
+        image holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -591,9 +601,14 @@ class PillowImage(
             The resolution recorded by PNG, JPEG, BMP and TIFF. By default
             it is chosen as described above. `False` records none, and a
             number or an `(x, y)` pair is recorded as is.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
         **options : Any
             Options passed to `Image.save`, such as `quality=95` for JPEG.
             Only the options that Pillow reads for the format are taken.
+            An option named after a field of the metadata overrides that
+            field instead.
 
         Returns
         -------
@@ -603,6 +618,10 @@ class PillowImage(
         Raises
         ------
         TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
+        TypeError
             If an option is not one that Pillow reads for the format.
         WriterError
             If there is no data, if the data has more than two spatial
@@ -610,6 +629,17 @@ class PillowImage(
             as `float64`, or `uint16` in JPEG), or if `frame` or `palette`
             differ from those with which `rawdata` reads its file.
         """
+        fields = {
+            name: options.pop(name) for name in list(options) if name in FIELDS
+        }
+        report = ConversionReport(source="PillowImage", target="PillowImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, PillowMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         held = None if self.metadata is None else self.metadata.raw
         target = _target_format(format, held)
         _check_options(target, options)
@@ -632,15 +662,16 @@ class PillowImage(
             and _same_format(format, held)
         ):
             if not inplace:
-                return replace(self, transformations=None)
+                return replace(self, transformations=None, metadata=metadata)
             self.transformations = None
+            self.metadata = metadata
             return self
         content = _encoded(self, target, dpi, options)
         record, raw = read_pillow_image(BytesIO(content), 0, self.palette)
-        if self.metadata is None:
+        if metadata is None:
             metadata = PillowMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,

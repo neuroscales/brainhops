@@ -21,6 +21,8 @@ from brainhops._core.properties import (
     InvalidatorInAttribute,
     smartproperty,
 )
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.errors import IncompatibleSystemError
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
@@ -28,6 +30,11 @@ from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
     UnrepresentableTransformationError,
+)
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
 )
 from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base.affines import (
@@ -282,7 +289,13 @@ class MrtrixLinearTransform(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> "MrtrixLinearTransform":
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> "MrtrixLinearTransform":
         """Encode the pending matrix into a new record.
 
         A transformation that holds a record, and whose matrix was not
@@ -297,10 +310,20 @@ class MrtrixLinearTransform(
         was assigned must be compatible with scanner RAS, which is what
         the file stores.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an
+        MRtrix linear transform holds no field of the vocabulary yet, so
+        a field that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -310,14 +333,32 @@ class MrtrixLinearTransform(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the matrix is not that of a 3-D affine, or if the input or
             the output is not compatible with scanner RAS.
         """
+        report = ConversionReport(
+            source="MrtrixLinearTransform", target="MrtrixLinearTransform"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MrtrixLinearMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         _check_ras(self)
         record = None if self.metadata is None else self.metadata.raw
         if record is not None and self._data is None:
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         matrix = np.asarray(self.homogeneous_matrix, dtype=np.float64)
         if matrix.shape != (_NDIM + 1, _NDIM + 1):
             raise UnrepresentableTransformationError(
@@ -326,10 +367,10 @@ class MrtrixLinearTransform(
             )
         keyval = _new_keyval() if record is None else record.keyval
         record = MrtrixLinearRaw(matrix=matrix, keyval=keyval)
-        if self.metadata is None:
+        if metadata is None:
             metadata = MrtrixLinearMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(self, metadata=metadata, data=None)
         self.metadata = metadata
@@ -348,7 +389,8 @@ class MrtrixLinearTransform(
         Parameters
         ----------
         **kwargs : Any
-            Refused, since the writer has no option.
+            Refused, since the writer has no option. `on_loss` and the
+            fields of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -363,7 +405,8 @@ class MrtrixLinearTransform(
             If the affine does not map scanner RAS to scanner RAS, or is
             not 3-D.
         """
-        return self.consolidate().metadata.to_text(**kwargs)
+        fields, kwargs = metadata_options(kwargs)
+        return self.consolidate(**fields).metadata.to_text(**kwargs)
 
     def to_lines(self, **kwargs) -> tx.List[str]:
         """Return the lines of the file that encodes the transformation.

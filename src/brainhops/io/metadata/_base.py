@@ -4,6 +4,7 @@ __all__ = [
     "MetadataFormat",
     "consolidated",
     "lost_fields",
+    "metadata_options",
     "metadata_to_write",
     "overruled_fields",
     "requested_fields",
@@ -466,6 +467,38 @@ def unsupported_values(
 # ----------------------------------------------------------------------
 #   HELPERS OF THE FORMAT OBJECTS
 # ----------------------------------------------------------------------
+
+
+def metadata_options(
+    kwargs: tx.Mapping[str, tx.Any],
+) -> tx.Tuple[tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
+    """Split the options of a writer into those of the metadata and the rest.
+
+    A writer that writes the record of a consolidated copy gives the
+    options of the metadata, `on_loss` and the fields of the vocabulary,
+    to `consolidate`, and the other options to the writer of the record.
+
+    Parameters
+    ----------
+    kwargs : mapping
+        The keyword arguments given to a writer.
+
+    Returns
+    -------
+    metadata : dict
+        `on_loss` and the fields of the metadata among `kwargs`.
+    others : dict
+        The other options.
+    """
+    metadata = {
+        name: value
+        for name, value in kwargs.items()
+        if name in FIELDS or name == "on_loss"
+    }
+    others = {
+        name: value for name, value in kwargs.items() if name not in metadata
+    }
+    return metadata, others
 
 
 def metadata_to_write(

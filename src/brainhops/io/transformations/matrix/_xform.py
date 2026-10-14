@@ -21,6 +21,8 @@ from brainhops._core.properties import (
     smartproperty,
 )
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -39,6 +41,7 @@ from brainhops.io.common._arrays import (
     TxtArrayReader,
     is_numeric_array,
 )
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
@@ -378,7 +381,13 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
@@ -390,10 +399,20 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
         is held by new metadata, and the matrix and the systems are then
         decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a matrix
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -403,11 +422,15 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(self, TxtMatrixMetadata, inplace)
+        return _consolidated(self, TxtMatrixMetadata, inplace, on_loss, fields)
 
 
 @register_format
@@ -528,7 +551,13 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
@@ -540,10 +569,20 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
         is held by new metadata, and the matrix and the systems are then
         decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a matrix
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -553,11 +592,15 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(self, CsvMatrixMetadata, inplace)
+        return _consolidated(self, CsvMatrixMetadata, inplace, on_loss, fields)
 
 
 @register_format
@@ -678,7 +721,13 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
@@ -690,10 +739,20 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
         is held by new metadata, and the matrix and the systems are then
         decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a matrix
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -703,11 +762,15 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(self, TsvMatrixMetadata, inplace)
+        return _consolidated(self, TsvMatrixMetadata, inplace, on_loss, fields)
 
 
 @register_format
@@ -831,7 +894,13 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
@@ -843,10 +912,20 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
         is held by new metadata, and the matrix and the systems are then
         decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a matrix
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -856,11 +935,15 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(self, NpyMatrixMetadata, inplace)
+        return _consolidated(self, NpyMatrixMetadata, inplace, on_loss, fields)
 
 
 @register_format
@@ -984,7 +1067,13 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
@@ -996,10 +1085,20 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
         is held by new metadata, and the matrix and the systems are then
         decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a matrix
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -1009,11 +1108,15 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(self, NpzMatrixMetadata, inplace)
+        return _consolidated(self, NpzMatrixMetadata, inplace, on_loss, fields)
 
 
 class MatMatrixAffine(MatArrayReader, MatrixAffine):
@@ -1149,7 +1252,13 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
@@ -1161,10 +1270,20 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
         is held by new metadata, and the matrix and the systems are then
         decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a matrix
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -1174,11 +1293,17 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(self, MatLegacyMatrixMetadata, inplace)
+        return _consolidated(
+            self, MatLegacyMatrixMetadata, inplace, on_loss, fields
+        )
 
 
 @register_format
@@ -1302,7 +1427,13 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
@@ -1314,10 +1445,20 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
         is held by new metadata, and the matrix and the systems are then
         decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a matrix
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -1327,11 +1468,17 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(self, Mat73MatrixMetadata, inplace)
+        return _consolidated(
+            self, Mat73MatrixMetadata, inplace, on_loss, fields
+        )
 
 
 MatMatrixAffine.VARIANTS = (MatLegacyMatrixAffine, Mat73MatrixAffine)
@@ -1379,7 +1526,11 @@ def _reader_options(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:
 
 
 def _consolidated(
-    xform: MatrixAffine, metadata_class: tx.Type[MatrixMetadata], inplace: bool
+    xform: MatrixAffine,
+    metadata_class: tx.Type[MatrixMetadata],
+    inplace: bool,
+    on_loss: tx.Optional[OnLoss],
+    fields: tx.Mapping[str, tx.Any],
 ) -> MatrixAffine:
     """Encode the pending matrix and systems of a transformation.
 
@@ -1397,14 +1548,28 @@ def _consolidated(
         If the conventions of the record cannot store the matrix or the
         systems.
     """
+    report = ConversionReport(
+        source=type(xform).__name__, target=type(xform).__name__
+    )
+    requested = requested_fields(xform.metadata, fields)
+    metadata = metadata_to_write(
+        xform.metadata, metadata_class, fields, report
+    )
+    apply_loss_policy(report, on_loss, stacklevel=3)
+    if not requested:
+        metadata = xform.metadata
     record = _record(xform)
     if record is not None and not _overridden(xform, record):
-        return xform if inplace else replace(xform)
+        if not inplace:
+            return replace(xform, metadata=metadata)
+        if requested:
+            xform.metadata = metadata
+        return xform
     record = _encoded(xform, record)
-    if xform.metadata is None:
+    if metadata is None:
         metadata = metadata_class.from_raw(record)
     else:
-        metadata = replace(xform.metadata, raw=record)
+        metadata = replace(metadata, raw=record)
     systems = {"input": record.input, "output": record.output}
     if not inplace:
         return replace(xform, metadata=metadata, data=None, **systems)

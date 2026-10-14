@@ -1050,11 +1050,23 @@ class ToyLevel(
             return tuple(reversed(self.rawdata.shape))
         return ()
 
-    def consolidate(self, *, inplace: bool = False, **options) -> "ToyLevel":
+    def consolidate(
+        self, *, inplace: bool = False, on_loss: tx.Any = None, **options
+    ) -> "ToyLevel":
+        # The metadata is consolidated first, and the toy record holds no
+        # field of the vocabulary, so a field that is set is reported as
+        # lost.
+        fields = {n: options.pop(n) for n in list(options) if n in FIELDS}
+        report = ConversionReport(source="ToyLevel", target="ToyLevel")
+        requested = requested_fields(self.metadata, fields)
+        consolidated = metadata_to_write(
+            self.metadata, ToyPyramidMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss)
         # A level whose record describes it alone, at index 0, with nothing
         # pending, keeps its `rawdata` and its metadata. Any other level
         # is encoded into a record of its level alone.
-        metadata = self.metadata
+        metadata = consolidated if requested else self.metadata
         held = held_transformations(self)
         if (
             self._data is None
@@ -1071,8 +1083,9 @@ class ToyLevel(
             )
         ):
             if not inplace:
-                return replace(self, transformations=None)
+                return replace(self, transformations=None, metadata=metadata)
             self.transformations = None
+            self.metadata = metadata
             return self
         raw, record = _toyp_level_narrowed(self, **options)
         if metadata is None:
@@ -1228,12 +1241,24 @@ class ToyPyramid(
             return tuple(reversed(self.rawdata[0].shape))
         return ()
 
-    def consolidate(self, *, inplace: bool = False, **options) -> "ToyPyramid":
+    def consolidate(
+        self, *, inplace: bool = False, on_loss: tx.Any = None, **options
+    ) -> "ToyPyramid":
+        # The metadata is consolidated first, and the toy record holds no
+        # field of the vocabulary, so a field that is set is reported as
+        # lost.
+        fields = {n: options.pop(n) for n in list(options) if n in FIELDS}
+        report = ConversionReport(source="ToyPyramid", target="ToyPyramid")
+        requested = requested_fields(self.metadata, fields)
+        consolidated = metadata_to_write(
+            self.metadata, ToyPyramidMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss)
         # Nothing is encoded for a pyramid that has a record, whose levels
         # are those of its file, and whose placements are never read or the
         # same as a fresh decode of the record, so its copy shares
         # `rawdata` and the metadata.
-        metadata = self.metadata
+        metadata = consolidated if requested else self.metadata
         held = held_transformations(self)
         if (
             not options
@@ -1247,9 +1272,12 @@ class ToyPyramid(
             )
         ):
             if not inplace:
-                return replace(self, images=None, transformations=None)
+                return replace(
+                    self, images=None, transformations=None, metadata=metadata
+                )
             self.images = None
             self.transformations = None
+            self.metadata = metadata
             return self
         raw, record = _toyp_encoded(self, **options)
         if metadata is None:

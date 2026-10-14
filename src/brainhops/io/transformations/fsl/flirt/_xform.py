@@ -20,6 +20,8 @@ from brainhops._core.typing import ArrayLike
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.errors import IncompatibleSystemError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -27,6 +29,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
 )
 from brainhops.io.common.nifti._header import _NiftiObject
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
 
@@ -353,7 +356,13 @@ class FlirtTransform(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending FLIRT matrix into a new record.
 
         A transformation whose FLIRT matrix was not assigned is left as it
@@ -366,10 +375,20 @@ class FlirtTransform(
         record is held by new metadata, and the FLIRT matrix is then
         decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a FLIRT
+        matrix holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -379,22 +398,40 @@ class FlirtTransform(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the FLIRT matrix is not a `(4, 4)` matrix, or if the
             `input` or `output` is not RAS.
         """
+        report = ConversionReport(
+            source="FlirtTransform", target="FlirtTransform"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, FlirtMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         for end in ("input", "output"):
             try:
                 _check_endpoint(self, end, _RAS)
             except IncompatibleSystemError as e:
                 raise UnrepresentableTransformationError(str(e)) from None
         if self._flirt_matrix is None:
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         record = FlirtRaw(matrix=_matrix_to_disk(self._flirt_matrix))
-        if self.metadata is None:
+        if metadata is None:
             metadata = FlirtMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(self, metadata=metadata, flirt_matrix=None)
         self.metadata = metadata

@@ -17,6 +17,8 @@ from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import (
     open_path,
@@ -31,6 +33,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import _compatible
 from brainhops.io.transformations.itk._common import ItkStruct
@@ -242,7 +245,7 @@ class ElastixTransform(
 
     # --- to -----------------------------------------------------------
 
-    def to_filename(self, filename: path.FilenameLike) -> None:
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a file, with the files of its chain.
 
         The transformation is consolidated into a copy before anything is
@@ -259,6 +262,9 @@ class ElastixTransform(
         ----------
         filename : path-like
             The path of the file.
+        **kwargs : Any
+            `on_loss` and the fields of the metadata, given to
+            [`consolidate`][].
 
         Raises
         ------
@@ -270,29 +276,43 @@ class ElastixTransform(
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
-        record = _record(self.consolidate())
+        record = _record(self.consolidate(**kwargs))
         content = record.to_bytes()
         _place_initial(record, filename, filename)
         write_file(filename, content)
 
-    def to_fileobj(self, file: tx.IO) -> None:
+    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the parameter file to an open text file, without its chain.
 
         The text of [`to_text`][] is written as it is, so that it keeps the
         line endings of the file that was read.
+
+        Parameters
+        ----------
+        file : IO
+            The open text file.
+        **kwargs : Any
+            `on_loss` and the fields of the metadata, given to
+            [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If the chain cannot be written as a single elastix transform.
         """
-        file.write(self.to_text())
+        file.write(self.to_text(**kwargs))
 
-    def to_text(self) -> str:
+    def to_text(self, **kwargs) -> str:
         """Return the text of the parameter file that encodes the chain.
 
         The transformation is consolidated into a copy, whose record is
         written, without the files of its chain.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            `on_loss` and the fields of the metadata, given to
+            [`consolidate`][].
 
         Returns
         -------
@@ -304,10 +324,10 @@ class ElastixTransform(
         UnrepresentableTransformationError
             If the chain cannot be written as a single elastix transform.
         """
-        return _record(self.consolidate()).to_text()
+        return _record(self.consolidate(**kwargs)).to_text()
 
-    def to_lines(self) -> tx.Iterator[str]:
-        return _record(self.consolidate()).to_lines()
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
+        return _record(self.consolidate(**kwargs)).to_lines()
 
 
 @register_format
@@ -421,7 +441,13 @@ class ElastixParameterTransform(ElastixTransform):
     ) -> tx.Self:
         return _from_text(cls, "text", None, lines, initial, origin)
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
 
         The rules are those of [`ElastixTomlTransform.consolidate`][],
@@ -431,6 +457,11 @@ class ElastixParameterTransform(ElastixTransform):
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -440,12 +471,16 @@ class ElastixParameterTransform(ElastixTransform):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the transformation is empty, if the chain cannot be written
             as a single elastix transform, or if a system that was
             assigned is not LPS.
         """
-        return _consolidated(self, "text", inplace)
+        return _consolidated(self, "text", inplace, on_loss, fields)
 
 
 @register_format
@@ -529,7 +564,13 @@ class ElastixTomlTransform(ElastixTransform):
     ) -> tx.Self:
         return _from_text(cls, "toml", None, lines, initial, origin)
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
 
         Systems that were assigned to `input` or `output` must be the LPS
@@ -552,10 +593,20 @@ class ElastixTomlTransform(ElastixTransform):
         resampler, are kept. The option `initial`, which replaced the
         initial transform of the old record, is reset.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an elastix
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -565,12 +616,16 @@ class ElastixTomlTransform(ElastixTransform):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the transformation is empty, if the chain cannot be written
             as a single elastix transform, or if a system that was
             assigned is not LPS.
         """
-        return _consolidated(self, "toml", inplace)
+        return _consolidated(self, "toml", inplace, on_loss, fields)
 
 
 # ----------------------------------------------------------------------
@@ -707,7 +762,11 @@ def _view(record: ElastixRaw) -> ElastixTransform:
 
 
 def _consolidated(
-    xform: ElastixTransform, syntax: str, inplace: bool
+    xform: ElastixTransform,
+    syntax: str,
+    inplace: bool,
+    on_loss: tx.Optional[OnLoss],
+    fields: tx.Mapping[str, tx.Any],
 ) -> ElastixTransform:
     """Encode the pending state of a transformation into a new record.
 
@@ -718,6 +777,16 @@ def _consolidated(
     UnrepresentableTransformationError
         If the transformation cannot be encoded.
     """
+    report = ConversionReport(
+        source=type(xform).__name__, target=type(xform).__name__
+    )
+    requested = requested_fields(xform.metadata, fields)
+    metadata = metadata_to_write(
+        xform.metadata, ElastixMetadata, fields, report
+    )
+    apply_loss_policy(report, on_loss, stacklevel=3)
+    if not requested:
+        metadata = xform.metadata
     record = _record(xform)
     assigned = xform._transformations is not None
     declared = xform._input is not None or xform._output is not None
@@ -730,15 +799,18 @@ def _consolidated(
             _check_lps(xform, ndim_of(record.parameters))
         if record.syntax == syntax:
             if not declared:
-                return xform if inplace else replace(xform)
-            metadata = xform.metadata
+                if not inplace:
+                    return replace(xform, metadata=metadata)
+                if requested:
+                    xform.metadata = metadata
+                return xform
         else:
             raw = ElastixRaw(
                 parameters=record.parameters,
                 syntax=syntax,
                 initial=record.initial,
             )
-            metadata = replace(xform.metadata, raw=raw)
+            metadata = replace(metadata, raw=raw)
         options = {}
     else:
         base = None if record is None else record.parameters
@@ -746,10 +818,10 @@ def _consolidated(
         if declared:
             _check_lps(xform, ndim_of(pmap))
         raw = ElastixRaw(parameters=pmap, syntax=syntax)
-        if xform.metadata is None:
+        if metadata is None:
             metadata = ElastixMetadata.from_raw(raw)
         else:
-            metadata = replace(xform.metadata, raw=raw)
+            metadata = replace(metadata, raw=raw)
         # The initial transform that was given replaced the initial
         # transform of the old record, which the new record does not have.
         options = {"initial": None}

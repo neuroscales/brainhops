@@ -28,6 +28,7 @@ from brainhops.datamodel.transformations import (
     Affine,
     Transformation,
 )
+from brainhops.io.base._base import Format, _takes_over
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
@@ -35,6 +36,7 @@ from brainhops.io.images.minc import MincImage, MincMetadata
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
 from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.images.nrrd import NrrdImage, NrrdMetadata
+from brainhops.io.transformations.c3d import C3dAffine
 from brainhops.io.transformations.freesurfer.lta import (
     LtaMetadata,
     LtaTransformation,
@@ -133,6 +135,19 @@ def test_a_format_built_from_a_data_model_converts_its_metadata() -> None:
     assert type(mgh.metadata) is MghMetadata
     assert mgh.metadata.echo_time == 0.003
     assert mgh.metadata.description == "T1w"
+
+
+def test_every_format_that_holds_metadata_takes_it_over() -> None:
+    # A format that holds the metadata of its own class in `_metadata`
+    # takes the field of the root over, whichever format it is.
+    holders = [
+        cls
+        for cls in Format._REGISTRY
+        if any(field.name == "_metadata" for field in fields(cls))
+    ]
+    assert holders
+    for cls in holders:
+        assert _takes_over(cls, "metadata"), cls.__name__
 
 
 def test_metadata_fields_is_renamed_encoding_fields() -> None:
@@ -339,6 +354,26 @@ def test_a_save_that_converts_warns_once(tmp_path: Path) -> None:
     assert set(report.lost) == {"description", "extra"}
     with pytest.raises(MetadataLossError):
         io.save(image, tmp_path / "raise.mgz", on_loss="raise")
+
+
+def test_a_format_without_a_vocabulary_reports_its_fields_as_lost(
+    tmp_path: Path,
+) -> None:
+    # The record of a Convert3D matrix holds no field of the vocabulary,
+    # so a field that is set is reported as lost by every write and every
+    # consolidation, and the consolidated copy no longer holds it.
+    with metadata_loss_policy("ignore"):
+        xform = C3dAffine(np.eye(4)[:-1], metadata=Metadata(description="r"))
+    report = ConversionReport()
+    path = tmp_path / "affine.mat"
+    xform.save(path, on_loss=report)
+    assert set(report.lost) == {"description"}
+    assert C3dAffine.load(path).metadata.description is None
+    copy = xform.consolidate(on_loss="ignore")
+    assert copy.metadata.description is None
+    assert xform.metadata.description == "r"
+    with pytest.raises(MetadataLossError):
+        xform.consolidate(on_loss="raise", history=("a step",))
 
 
 def test_an_x5_transform_of_one_node_writes_its_metadata(

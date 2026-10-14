@@ -13,6 +13,8 @@ from brainhops._core.properties import (
 )
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.errors import ConversionError
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
@@ -23,6 +25,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 from brainhops.io.transformations.base._conversions import affine_between
 
 # this format
@@ -355,7 +358,12 @@ class AfniAffine(
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, *, inplace: bool = False, oneline: tx.Optional[bool] = None
+        self,
+        *,
+        inplace: bool = False,
+        oneline: tx.Optional[bool] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "AfniAffine":
         """Encode the pending matrix and systems into a new record.
 
@@ -371,6 +379,11 @@ class AfniAffine(
         matrix, after the comment that AFNI writes. The new record is held
         by new metadata, and the record held before is never changed.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an AFNI
+        affine file holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -380,6 +393,11 @@ class AfniAffine(
             (`-1Dmatrix_save`), or a single matrix as 3 lines of 4
             numbers (`cat_matvec`). It defaults to the layout of the
             record, or to one row per matrix without a record.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -388,12 +406,24 @@ class AfniAffine(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If several matrices would be written as 3 lines of 4 numbers,
             or the matrix is not that of a 3-D affine.
         UnrepresentableTransformationError
             If the endpoints cannot be bridged to DICOM.
         """
+        report = ConversionReport(source="AfniAffine", target="AfniAffine")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, AfniAffineMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         record = _record(self)
         declared = self._input is not None or self._output is not None
         changed = self._data is not None or declared
@@ -402,7 +432,11 @@ class AfniAffine(
             and not changed
             and (oneline is None or bool(oneline) == record.oneline)
         ):
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         if record is not None and not changed:
             matrices = record.matrices
         else:
@@ -421,10 +455,10 @@ class AfniAffine(
         record = AfniAffineRaw(
             matrices=matrices, comment=comment, oneline=oneline
         )
-        if self.metadata is None:
+        if metadata is None:
             metadata = AfniAffineMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self, metadata=metadata, data=None, input=None, output=None

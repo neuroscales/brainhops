@@ -12,12 +12,19 @@ from brainhops._core.properties import (
     smartproperty,
 )
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.errors import IncompatibleSystemError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
     UnrepresentableTransformationError,
+)
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
 )
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
@@ -322,7 +329,13 @@ class C3dAffine(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix into a new record.
 
         A transformation that holds a record, and whose matrix was not
@@ -332,10 +345,20 @@ class C3dAffine(
         new metadata. In every case, the input and the output must still
         be RAS, since the file can hold nothing else.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a
+        Convert3D matrix holds no field of the vocabulary yet, so a
+        field that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -345,19 +368,35 @@ class C3dAffine(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the input or the output is not RAS, or if the matrix is not
             the matrix of a 3-D affine.
         """
+        report = ConversionReport(source="C3dAffine", target="C3dAffine")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, C3dAffineMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         _check_systems(self)
         record = _record(self)
         if record is not None and self._data is None:
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         record = _build_raw(self, record)
-        if self.metadata is None:
+        if metadata is None:
             metadata = C3dAffineMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(self, metadata=metadata, data=None)
         self.metadata = metadata
@@ -377,13 +416,16 @@ class C3dAffine(
             The path or the open text file.
         **kwargs : Any
             Options of the writer of the record, which takes none.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If the transformation cannot be encoded.
         """
-        return _written(self).to_file(file, **kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_file(file, **options)
 
     def to_text(self, **kwargs) -> str:
         """Return the content of the file that encodes the transformation.
@@ -395,6 +437,8 @@ class C3dAffine(
         ----------
         **kwargs : Any
             Options of the writer of the record, which takes none.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Returns
         -------
@@ -406,7 +450,8 @@ class C3dAffine(
         UnrepresentableTransformationError
             If the transformation cannot be encoded.
         """
-        return _written(self).to_text(**kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_text(**options)
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the file that encodes the transformation.
@@ -418,6 +463,8 @@ class C3dAffine(
         ----------
         **kwargs : Any
             Options of the writer of the record, which takes none.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Yields
         ------
@@ -429,7 +476,8 @@ class C3dAffine(
         UnrepresentableTransformationError
             If the transformation cannot be encoded.
         """
-        return _written(self).to_lines(**kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_lines(**options)
 
 
 # ----------------------------------------------------------------------
@@ -526,12 +574,19 @@ def _build_raw(
     )
 
 
-def _written(xform: C3dAffine) -> C3dAffineRaw:
+def _written(
+    xform: C3dAffine, kwargs: tx.Mapping[str, tx.Any]
+) -> tx.Tuple[C3dAffineRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from a transformation holds.
+
+    The record is that of the copy consolidated with `on_loss` and the
+    fields of the metadata among `kwargs`, and the other options, for
+    the writer of the record, are returned with it.
 
     Raises
     ------
     UnrepresentableTransformationError
         If the transformation cannot be encoded.
     """
-    return _record(xform.consolidate())
+    metadata, options = metadata_options(kwargs)
+    return _record(xform.consolidate(**metadata)), options
