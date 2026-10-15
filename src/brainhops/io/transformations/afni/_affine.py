@@ -3,7 +3,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Alias, Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Alias, Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path

@@ -10,7 +10,7 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core.properties import (
