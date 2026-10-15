@@ -22,7 +22,7 @@ import brainhops.io as io
 from brainhops.backends import backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling
 from brainhops.io.base import Format
 from brainhops.io.base.parsers import (
@@ -727,7 +727,7 @@ def test_the_view_written(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_the_view_of_a_template_world(tmp_path) -> None:  # noqa: ANN001
-    voxel = CoordinateSystem(
+    voxel = ArrayCoordinateSystem(
         name="voxel", axes=[Axis(n, "space") for n in "xyz"], order="F"
     )
     world = io.load(_source(tmp_path)).transformation.output
@@ -819,7 +819,7 @@ def test_an_oblique_dataset_round_trips(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_time_series_from_another_format(tmp_path) -> None:  # noqa: ANN001
-    voxel = CoordinateSystem(
+    voxel = ArrayCoordinateSystem(
         name="voxel",
         axes=[Axis(n, "space") for n in "xyz"] + [Axis("t", "time")],
         order="F",

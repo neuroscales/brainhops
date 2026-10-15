@@ -20,6 +20,7 @@ from bagof.magic import KwOnly
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.errors import IncompatibleSystemError
 
@@ -168,8 +169,10 @@ def _compatible(
 ) -> bool:
     if system is None:
         return True
-    axes = [axis if axis is ... else _unnamed(axis) for axis in system.axes]
-    wanted = [_unnamed(axis) for axis in expected.axes]
+    axes = [
+        axis if axis is ... else _unnamed(axis) for axis in get_axes(system)
+    ]
+    wanted = [_unnamed(axis) for axis in get_axes(expected)]
     if all(axis is not ... for axis in axes):
         wanted = wanted[: len(axes)]
     wanted = _systems.CoordinateSystem(axes=wanted)

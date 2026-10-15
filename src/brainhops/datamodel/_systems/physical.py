@@ -1,4 +1,5 @@
 __all__ = ["PhysicalCoordinateSystem"]
+from .._sugar import get_axes
 from ..units import is_indexunit, is_physicalunit
 from .base import CoordinateSystem
 
@@ -43,7 +44,7 @@ class PhysicalCoordinateSystem(CoordinateSystem):
     def __post_init__(self) -> None:
         super().__post_init__()
         name = type(self).__name__
-        for axis in self.axes:
+        for axis in get_axes(self):
             if axis is ...:
                 continue
             unit = getattr(axis, "unit", None)

@@ -18,7 +18,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
@@ -628,7 +628,7 @@ def _record_transformations(
 def _mgh_system(record: MghRaw) -> CoordinateSystem:
     """Return the voxel coordinate system of a record."""
     axes = _MGH_AXES[: len(record.shape)]
-    return CoordinateSystem(name="voxel", axes=axes, order="F")
+    return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
 
 def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
