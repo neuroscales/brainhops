@@ -573,9 +573,10 @@ class AxisList(AxisSequence[AXIS], list):
     """Mutable [`AxisSequence`][] for systems with any number of axes.
 
     A list or tuple given to such a system is converted item by item to the
-    axis type of the system. The default, `[...]`, says nothing about the
-    axes, and `axes=None` stands for that default. An `AxisList[Axis]` is
-    finite.
+    axis type of the system. The sequence `[...]` says nothing about the
+    axes. A coordinate system may instead store `None` for unknown axes,
+    which [`get_axes`][brainhops.datamodel._sugar.get_axes] reads as
+    `[...]`. An `AxisList[Axis]` is finite.
 
     !!! example
         ```pycon

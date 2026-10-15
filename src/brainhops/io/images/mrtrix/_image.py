@@ -20,7 +20,7 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     Identity,
@@ -253,7 +253,7 @@ class MrtrixImage(
         if self.metadata is None or self.metadata.raw is None:
             return None
         axes = _mrtrix_axes(self.metadata.raw.ndim)
-        return CoordinateSystem(name="voxel", axes=axes, order="F")
+        return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
     # --- reading ------------------------------------------------------
 
@@ -878,7 +878,9 @@ def _mrtrix_to_transformations(
     """
     ndim = header.ndim
     voxel_axes = _mrtrix_axes(ndim)
-    voxel_space = CoordinateSystem(name="voxel", axes=voxel_axes, order="F")
+    voxel_space = ArrayCoordinateSystem(
+        name="voxel", axes=voxel_axes, order="F"
+    )
 
     phys_axes = [
         replace(axis, unit=_MM if axis.type == "space" else None)

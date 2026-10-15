@@ -14,7 +14,6 @@ from .array import (
     CArrayCoordinateSystem,
     FArrayCoordinateSystem,
 )
-from .decorators import Axes
 from .dispatch import _both, _is2d, _is3d, _is_array
 from .factories import _ArrayAxesFactory
 from .finite import CoordinateSystem2D, CoordinateSystem3D, _2Axes, _3Axes
@@ -43,7 +42,7 @@ class ArrayCoordinateSystem2D(
         The memory order of the indexed array, or `None` when unspecified.
     """
 
-    axes: Inherit[Axes[_2Axes]] = _ArrayAxesFactory(2)
+    axes: Inherit[_2Axes] = _ArrayAxesFactory(2)
 
 
 @ArrayCoordinateSystem.register_polymorph(axes=_is3d)
@@ -64,7 +63,7 @@ class ArrayCoordinateSystem3D(
         The memory order of the indexed array, or `None` when unspecified.
     """
 
-    axes: Inherit[Axes[_3Axes]] = _ArrayAxesFactory(3)
+    axes: Inherit[_3Axes] = _ArrayAxesFactory(3)
 
 
 # Each class below inherits from a class with a fixed number of axes and
@@ -83,7 +82,7 @@ class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
         The pinned memory order.
     """
 
-    axes: Inherit[Axes[_2Axes]] = _ArrayAxesFactory(2)
+    axes: Inherit[_2Axes] = _ArrayAxesFactory(2)
 
 
 class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
@@ -99,7 +98,7 @@ class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
         The pinned memory order.
     """
 
-    axes: Inherit[Axes[_3Axes]] = _ArrayAxesFactory(3)
+    axes: Inherit[_3Axes] = _ArrayAxesFactory(3)
 
 
 class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
@@ -115,7 +114,7 @@ class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
         The pinned memory order.
     """
 
-    axes: Inherit[Axes[_2Axes]] = _ArrayAxesFactory(2)
+    axes: Inherit[_2Axes] = _ArrayAxesFactory(2)
 
 
 class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
@@ -131,4 +130,4 @@ class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
         The pinned memory order.
     """
 
-    axes: Inherit[Axes[_3Axes]] = _ArrayAxesFactory(3)
+    axes: Inherit[_3Axes] = _ArrayAxesFactory(3)

@@ -16,7 +16,6 @@ import typing_extensions as tx
 from bagof.magic import Factory, Inherit
 
 from ..axes import A, AxisTuple, L, P, R, S
-from .decorators import Axes
 from .dispatch import _both, _is_anat, _is_mm
 from .spatial import (
     CVoxelCoordinateSystem,
@@ -37,7 +36,7 @@ class RASCoordinateSystem(
     """
 
     name: ... = "RAS"
-    axes: Inherit[Axes[AxisTuple[R, A, S]]] = Factory()
+    axes: Inherit[AxisTuple[R, A, S]] = Factory()
 
 
 class LPSCoordinateSystem(
@@ -49,7 +48,7 @@ class LPSCoordinateSystem(
     """
 
     name: ... = "LPS"
-    axes: Inherit[Axes[AxisTuple[L, P, S]]] = Factory()
+    axes: Inherit[AxisTuple[L, P, S]] = Factory()
 
 
 class RSACoordinateSystem(
@@ -61,7 +60,7 @@ class RSACoordinateSystem(
     """
 
     name: ... = "RSA"
-    axes: Inherit[Axes[AxisTuple[R, S, A]]] = Factory()
+    axes: Inherit[AxisTuple[R, S, A]] = Factory()
 
 
 # --- Physical ---------------------------------------------------------
@@ -75,7 +74,7 @@ class RASmm(
     """A [`RASCoordinateSystem`][] in millimetres."""
 
     name: ... = "RAS"
-    axes: Inherit[Axes[AxisTuple[R, A, S]]] = Factory(
+    axes: Inherit[AxisTuple[R, A, S]] = Factory(
         lambda: (
             R("x", unit="mm"),
             A("y", unit="mm"),
@@ -92,7 +91,7 @@ class LPSmm(
     """An [`LPSCoordinateSystem`][] in millimetres."""
 
     name: ... = "LPS"
-    axes: Inherit[Axes[AxisTuple[L, P, S]]] = Factory(
+    axes: Inherit[AxisTuple[L, P, S]] = Factory(
         lambda: (
             L("x", unit="mm"),
             P("y", unit="mm"),
@@ -109,7 +108,7 @@ class RSAmm(
     """An [`RSACoordinateSystem`][] in millimetres."""
 
     name: ... = "RSA"
-    axes: Inherit[Axes[AxisTuple[R, S, A]]] = Factory(
+    axes: Inherit[AxisTuple[R, S, A]] = Factory(
         lambda: (
             R("x", unit="mm"),
             S("y", unit="mm"),
@@ -135,7 +134,7 @@ class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
     """An F-ordered voxel grid whose axes point in RAS order."""
 
     name: ... = "fRAS"
-    axes: Inherit[Axes[AxisTuple[R, A, S]]] = Factory(
+    axes: Inherit[AxisTuple[R, A, S]] = Factory(
         lambda: (
             R("x", unit="index"),
             A("y", unit="index"),
@@ -149,7 +148,7 @@ class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
     """An F-ordered voxel grid whose axes point in LPS order."""
 
     name: ... = "fLPS"
-    axes: Inherit[Axes[AxisTuple[L, P, S]]] = Factory(
+    axes: Inherit[AxisTuple[L, P, S]] = Factory(
         lambda: (
             L("x", unit="index"),
             P("y", unit="index"),
@@ -163,7 +162,7 @@ class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
     """An F-ordered voxel grid whose axes point in RSA order."""
 
     name: ... = "fRSA"
-    axes: Inherit[Axes[AxisTuple[R, S, A]]] = Factory(
+    axes: Inherit[AxisTuple[R, S, A]] = Factory(
         lambda: (
             R("x", unit="index"),
             S("y", unit="index"),
@@ -180,7 +179,7 @@ class CRASCoordinateSystem(
 
     name: ... = "cRAS"
     order: tx.Literal["C"] = "C"
-    axes: Inherit[Axes[AxisTuple[S, A, R]]] = Factory(
+    axes: Inherit[AxisTuple[S, A, R]] = Factory(
         lambda: (
             S("z", unit="index"),
             A("y", unit="index"),
@@ -197,7 +196,7 @@ class CLPSCoordinateSystem(
 
     name: ... = "cLPS"
     order: tx.Literal["C"] = "C"
-    axes: Inherit[Axes[AxisTuple[S, P, L]]] = Factory(
+    axes: Inherit[AxisTuple[S, P, L]] = Factory(
         lambda: (
             S("z", unit="index"),
             P("y", unit="index"),
@@ -214,7 +213,7 @@ class CRSACoordinateSystem(
 
     name: ... = "cRSA"
     order: tx.Literal["C"] = "C"
-    axes: Inherit[Axes[AxisTuple[A, S, R]]] = Factory(
+    axes: Inherit[AxisTuple[A, S, R]] = Factory(
         lambda: (
             A("z", unit="index"),
             S("y", unit="index"),

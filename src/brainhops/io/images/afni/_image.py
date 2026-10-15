@@ -25,7 +25,7 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     Identity,
@@ -349,7 +349,7 @@ class AfniImage(
         if self.metadata is None or self.metadata.raw is None:
             return None
         axes = _afni_axes(self.metadata.raw)
-        return CoordinateSystem(name="voxel", axes=axes, order="F")
+        return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
     # --- reading ------------------------------------------------------
 
@@ -1305,7 +1305,9 @@ def _afni_to_transformations(header: AfniRaw) -> tx.List[Transformation]:
        LPS mm.
     """
     voxel_axes = _afni_axes(header)
-    voxel_space = CoordinateSystem(name="voxel", axes=voxel_axes, order="F")
+    voxel_space = ArrayCoordinateSystem(
+        name="voxel", axes=voxel_axes, order="F"
+    )
 
     taxis = header.taxis
     scale = [abs(d) for d in header.delta]

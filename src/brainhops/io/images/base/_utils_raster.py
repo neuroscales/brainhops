@@ -77,7 +77,7 @@ from bagof.magic import replace
 
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     Scaling,
@@ -383,7 +383,7 @@ def pixel_system(axes: tx.Sequence[Axis]) -> CoordinateSystem:
     """
     axes = [replace(axis, unit=_INDEX) for axis in axes]
     name = "pixel" if len(spatial_axes(axes)) == 2 else "voxel"
-    return CoordinateSystem(name=name, axes=axes, order="F")
+    return ArrayCoordinateSystem(name=name, axes=axes, order="F")
 
 
 def physical_system(

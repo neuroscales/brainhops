@@ -18,7 +18,7 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import (
     SpaceUnit,
@@ -539,7 +539,7 @@ def _unit(dimension: MincDimension, axis_type: tx.Optional[str]) -> tx.Any:
 def _minc_system(record: MincRaw) -> CoordinateSystem:
     """Return the voxel system of a record, in Fortran order."""
     axes = [_axis(d.name) for d in reversed(record.dimensions)]
-    return CoordinateSystem(name="voxel", axes=axes, order="F")
+    return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
 
 def _record_transformations(

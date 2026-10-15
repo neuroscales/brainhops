@@ -586,12 +586,14 @@ def test_a_pyramid_consolidates_its_data_only(svs: Path) -> None:
     pyramid = load(svs)
     pyramid.images[2].transformations = [Scaling([3.0, 3.0, 1.0])]
     consolidated = pyramid.consolidate()
-    assert consolidated.rawdata is pyramid.rawdata
+    assert len(consolidated.rawdata) == len(pyramid.rawdata)
+    assert all(a is b for a, b in zip(consolidated.rawdata, pyramid.rawdata))
     assert consolidated._images is not None
     np.testing.assert_allclose(_scale(consolidated.images[2]), [3, 3, 1])
     assert consolidated.images[0]._transformations is None
     twice = consolidated.consolidate()
-    assert twice.rawdata is consolidated.rawdata
+    assert len(twice.rawdata) == len(consolidated.rawdata)
+    assert all(a is b for a, b in zip(twice.rawdata, consolidated.rawdata))
     np.testing.assert_allclose(_scale(twice.images[2]), [3, 3, 1])
     # A level that is not a level of the slide cannot be described.
     pyramid = load(svs)

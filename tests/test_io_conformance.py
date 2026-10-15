@@ -5162,8 +5162,16 @@ def _pending(exemplar: Exemplar, obj: tx.Any) -> tx.Tuple[tx.Any, ...]:
 
 
 def _same(first: tx.Sequence[tx.Any], second: tx.Sequence[tx.Any]) -> bool:
-    """Tell whether two sequences hold the same objects."""
-    return all(a is b for a, b in zip(first, second))
+    """Check shared objects, allowing rebuilt list and tuple containers."""
+    if len(first) != len(second):
+        return False
+    return all(
+        a is b
+        or (
+            type(a) is type(b) and isinstance(a, (list, tuple)) and _same(a, b)
+        )
+        for a, b in zip(first, second)
+    )
 
 
 def _built(cls: type, exemplar: Exemplar, data: tx.Any) -> tx.Any:
@@ -5726,7 +5734,7 @@ def test_15_consolidating_an_untouched_object_changes_nothing(
 ) -> None:
     loaded = _load(cls, exemplar, _saved(cls, exemplar, tmp_path))
     raw, metadata = _rawdata(loaded), loaded.metadata
-    # The copy shares `rawdata` and the metadata, and nothing is
+    # The copy shares the arrays and the metadata, and nothing is
     # decoded.
     consolidated = loaded.consolidate()
     assert consolidated is not loaded
@@ -5805,7 +5813,7 @@ def _check_data_only(exemplar: Exemplar, loaded: tx.Any) -> None:
     once = loaded.consolidate()
     data_once, chain_once = _pending(exemplar, once)
     assert data_once is None
-    assert chain_once is chain
+    assert _same((chain_once,), (chain,))
     if exemplar.stored is None:
         assert once.metadata is loaded.metadata
     else:
@@ -6281,7 +6289,7 @@ def test_p04_assigned_level_data_is_pending(
         assert _same(_pending(level, images[k]), pending)
         # Nothing is pending in the copy.
         twice = consolidated.consolidate()
-        assert twice.rawdata is consolidated.rawdata
+        assert _same(twice.rawdata, consolidated.rawdata)
         assert twice.metadata is consolidated.metadata
 
 
@@ -6300,8 +6308,8 @@ def test_p05_assigned_levels_are_pending_and_written(
     images = list(loaded.images)
     images[1] = SingleScaleImage(value)
     loaded.images = images
-    assert loaded._images is images
-    assert held_images(loaded) is images
+    assert _same(loaded._images, images)
+    assert _same(held_images(loaded), images)
     assert loaded.rawdata is raw
     assert loaded.metadata is metadata
     target = _path(tmp_path, _level_exemplar(exemplar), "assigned")
@@ -6318,7 +6326,7 @@ def test_p05_assigned_levels_are_pending_and_written(
     else:
         assert _all_equal(back, [samples[0], value, samples[2]])
     # Saving leaves the pyramid as it was.
-    assert loaded._images is images
+    assert _same(loaded._images, images)
     assert loaded.rawdata is raw
     assert loaded.metadata is metadata
 
@@ -6333,11 +6341,11 @@ def test_p06_consolidating_an_untouched_pyramid_changes_nothing(
     path = _pyramid_saved(cls, exemplar, tmp_path)
     loaded = cls.load(path)
     raw, metadata = loaded.rawdata, loaded.metadata
-    # The copy shares `rawdata` and the metadata, and nothing is
+    # The copy shares the arrays and the metadata, and nothing is
     # decoded.
     consolidated = loaded.consolidate()
     assert consolidated is not loaded
-    assert consolidated.rawdata is raw
+    assert _same(consolidated.rawdata, raw)
     assert consolidated.metadata is metadata
     assert _decodes_nothing(loaded)
     assert _decodes_nothing(consolidated)
@@ -6346,11 +6354,11 @@ def test_p06_consolidating_an_untouched_pyramid_changes_nothing(
         assert image.transformations is not None
     assert loaded.transformations is not None
     consolidated = loaded.consolidate()
-    assert consolidated.rawdata is raw
+    assert _same(consolidated.rawdata, raw)
     assert consolidated.metadata is metadata
     assert all("_cache_data" not in vars(image) for image in loaded.images)
     assert loaded.consolidate(inplace=True) is loaded
-    assert loaded.rawdata is raw
+    assert _same(loaded.rawdata, raw)
     assert loaded.metadata is metadata
     if exemplar.source is not None:
         return
@@ -6369,14 +6377,14 @@ def test_p06_consolidating_an_untouched_pyramid_changes_nothing(
     )
     assert np.allclose(_world(once), _world(back))
     twice = once.consolidate()
-    assert twice.rawdata is once.rawdata
+    assert _same(twice.rawdata, once.rawdata)
     assert twice.metadata is once.metadata
     # In place, the pyramid holds the consolidated state.
     assert loaded.consolidate(inplace=True) is loaded
     assert loaded._images is None
     raw, metadata = loaded.rawdata, loaded.metadata
     loaded.consolidate(inplace=True)
-    assert loaded.rawdata is raw
+    assert _same(loaded.rawdata, raw)
     assert loaded.metadata is metadata
 
 
@@ -6528,10 +6536,10 @@ def test_p10_copies_keep_rawdata_and_metadata(
 ) -> None:
     level = _level_exemplar(exemplar)
     loaded = cls.load(_pyramid_saved(cls, exemplar, tmp_path))
-    # Within the format, the copies share `rawdata` and the metadata,
+    # Within the format, the copies share the arrays and the metadata,
     # and decode nothing.
     for copy in (replace(loaded), cls.from_instance(loaded)):
-        assert copy.rawdata is loaded.rawdata
+        assert _same(copy.rawdata, loaded.rawdata)
         assert copy.metadata is loaded.metadata
         assert copy._images is None
         assert _decodes_nothing(copy)
@@ -6541,7 +6549,7 @@ def test_p10_copies_keep_rawdata_and_metadata(
     loaded.images = images
     for copy in (replace(loaded), cls.from_instance(loaded)):
         assert _same(copy.images, images)
-        assert copy.rawdata is loaded.rawdata
+        assert _same(copy.rawdata, loaded.rawdata)
     # From another class, the levels that it reports are copied, and the
     # record and the arrays of the format are reset.
     samples = exemplar.levels()
@@ -6623,9 +6631,9 @@ def test_p11_other_metadata_keeps_only_what_was_assigned(
     placements = loaded._transformations
     assigned = _world(loaded)
     loaded.metadata = metadata
-    assert loaded._images is images
+    assert _same(loaded._images, images)
     assert loaded._transformations is placements
-    assert loaded.images is images
+    assert _same(loaded.images, images)
     assert np.allclose(_world(loaded), assigned)
     target = _path(tmp_path, level, "kept")
     if exemplar.source is not None:

@@ -108,12 +108,13 @@ def any_layout(request: pytest.FixtureRequest) -> str:
 # ----------------------------------------------------------------------
 
 
-def test_unknown_axes_are_stored_as_the_default(
-    unknown_axes: tx.Sequence,
-) -> None:
+def test_unknown_axes_are_read_as_unknown(unknown_axes: tx.Sequence) -> None:
     system = CS(axes=unknown_axes)
-    assert type(system.axes) is AxisList and system.axes == [...]
-    assert system == CS()
+    assert get_axes(system) == [...]
+    assert (
+        system.axes is None if unknown_axes is None else system.axes == [...]
+    )
+    assert system.compatible_with(CS())
 
 
 OPEN_CLASSES = [
@@ -125,40 +126,39 @@ OPEN_CLASSES = [
 
 
 @pytest.mark.parametrize("cls", OPEN_CLASSES, ids=lambda c: c.__name__)
-def test_axes_none_reads_as_the_default(cls: type) -> None:
-    # None is stored as [...], so the axes are always an axis sequence.
+def test_axes_none_stays_unspecified(cls: type) -> None:
     system = cls(axes=None)
-    assert type(system) is cls
-    assert type(system.axes) is AxisList and system.axes == [...]
-    assert system == cls() == cls(axes=[...])
-    # Each system gets its own list.
-    assert cls(axes=None).axes is not cls(axes=None).axes
+    assert type(system) is cls and system.axes is None
+    assert get_axes(system) == [...]
+    assert get_axes(system) is not get_axes(system)
+    assert system == cls()
 
 
 def test_axes_none_reads_as_ellipsis_in_any_spelling() -> None:
-    assert CS(axes=None) == CS() == CS(axes=[...])
+    assert CS(axes=None) == CS()
+    assert get_axes(CS(axes=None)) == get_axes(CS(axes=[...]))
     assert CS(None, name="s") == CS(name="s")
     assert CS.from_dict({"axes": None}) == CS()
 
 
 @pytest.mark.parametrize("cls, ndim", FIXED_CLASSES)
-def test_axes_none_is_the_default_of_a_fixed_dimension_class(
+def test_fixed_dimension_classes_refuse_unspecified_axes(
     cls: type, ndim: int
 ) -> None:
-    # A fixed-dimension class cannot store [...], so None gives its defaults.
-    system = cls(axes=None)
-    assert type(system) is cls and type(system.axes) is AxisTuple
-    assert system == cls() and system.ndim == ndim
+    assert cls().ndim == ndim
+    with pytest.raises((TypeError, ConversionError)):
+        cls(axes=None)
+    system = cls()
+    with pytest.raises((TypeError, ConversionError)):
+        system.axes = None
 
 
-def test_axes_default_to_ellipsis() -> None:
-    assert CS().axes == [...] and type(CS().axes) is AxisList
-    assert SpatialCoordinateSystem().axes == [...]
-    assert ArrayCoordinateSystem().axes == [...]
-    # Each system has its own list.
-    first, second = CS(), CS()
-    first.axes.append(X)
-    assert second.axes == [...] and CS().axes == [...]
+def test_variadic_system_defaults_are_unspecified() -> None:
+    for cls in (CS, SpatialCoordinateSystem, ArrayCoordinateSystem):
+        assert cls().axes is None
+        first, second = get_axes(cls()), get_axes(cls())
+        first.append(X)
+        assert second == [...] and get_axes(cls()) == [...]
 
 
 def test_ellipsis_may_sit_anywhere(layout: str) -> None:
@@ -243,11 +243,14 @@ def test_ndim_of_a_missing_system() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_the_default_equals_ellipsis() -> None:
-    assert CS() == CS(axes=[...])
-    assert CS(name="s") == CS(name="s", axes=[...])
-    assert not CS() != CS(axes=[...])
-    assert SpatialCoordinateSystem() == SpatialCoordinateSystem(axes=[...])
+def test_the_default_is_unspecified() -> None:
+    assert CS().axes is None
+    assert CS().compatible_with(CS(axes=[...]))
+    assert CS(name="s").compatible_with(CS(name="s", axes=[...]))
+    assert CS() != CS(axes=[...])
+    assert SpatialCoordinateSystem().compatible_with(
+        SpatialCoordinateSystem(axes=[...])
+    )
 
 
 def test_equality_stays_structural(layout: str) -> None:
@@ -277,7 +280,7 @@ def test_no_system_equals_a_missing_system(unknown_axes: tx.Sequence) -> None:
     assert not (system == None)  # noqa: E711
     # A missing endpoint differs from an explicit system with unknown axes.
     assert Identity(input=system).input != Identity().input
-    assert Identity(input=system).input == Identity(input=CS()).input
+    assert Identity(input=system).input.compatible_with(CS())
 
 
 def test_a_system_that_says_something_differs_from_a_missing_system(
@@ -306,7 +309,8 @@ def test_equality_is_field_wise_in_a_new_subclass() -> None:
     class Mine(CoordinateSystem):
         pass
 
-    assert Mine() == Mine(axes=[...])
+    assert Mine().axes is None
+    assert Mine().compatible_with(Mine(axes=[...]))
     assert Mine(axes=[X, ...]) == Mine(axes=(X, ...))
     assert Mine(axes=[X, ...]) != Mine(axes=[Y, ...])
     assert Mine(name="a") != Mine(name="b")
@@ -350,7 +354,7 @@ def test_the_axes_are_converted_to_the_type_of_the_field() -> None:
     assert CS(axes=["x", ...]).axes == [Axis(name="x"), ...]
     # An axis of the right type is kept as is.
     assert CS(axes=[X, ...]).axes[0] is X
-    # An AxisList is converted too, since the field is not optional.
+    # An AxisList also converts its elements before they are stored.
     given = AxisList([Axis(name="x"), ...])
     assert type(SpatialCoordinateSystem(axes=given).axes[0]) is SpaceAxis
     with pytest.raises(TypeError):
@@ -382,8 +386,9 @@ def test_the_axes_of_a_missing_system_are_unknown() -> None:
     # Only a missing endpoint reads [...]; a system reads its own axes.
     assert get_axes(None) == [...]
     assert type(get_axes(None)) is AxisList
-    for system in (CS(), CS(axes=[X, ...]), RASCoordinateSystem()):
-        assert get_axes(system) is system.axes
+    assert get_axes(CS()) == [...]
+    for system in (CS(axes=[X, ...]), RASCoordinateSystem()):
+        assert get_axes(system) == system.axes
 
 
 def test_the_axes_of_a_fixed_dimension_system() -> None:
@@ -1134,7 +1139,7 @@ def test_a_physical_system_with_no_axes_given() -> None:
         PhysicalCoordinateSystem(),
         PhysicalCoordinateSystem(axes=None),
     ):
-        assert system.axes == [...] and system.ndim is None
+        assert system.axes is None and system.ndim is None
 
 
 @pytest.mark.parametrize(
@@ -1199,8 +1204,9 @@ def test_a_millimetre_system_refuses_any_other_unit(
     "cls", [RASmm, LPSmm, RSAmm], ids=lambda c: c.__name__
 )
 def test_a_millimetre_system_defaults_to_millimetres(cls: type) -> None:
-    for system in (cls(), cls(axes=None)):
-        assert all(str(axis.unit) == "millimeter" for axis in system.axes)
+    assert all(str(axis.unit) == "millimeter" for axis in cls().axes)
+    with pytest.raises((TypeError, ConversionError)):
+        cls(axes=None)
     # A millimetre system has three axes, so `...` is refused.
     with pytest.raises(ConversionError):
         cls(axes=[*cls().axes[:2], ...])
@@ -1377,7 +1383,7 @@ def test_every_system_stores_an_axis_sequence() -> None:
     for cls in SYSTEM_CLASSES:
         if cls is PhysicalCoordinateSystem:
             continue
-        axes = cls().axes
+        axes = get_axes(cls())
         assert isinstance(axes, AxisSequence)
         fixed = issubclass(cls, (CoordinateSystem2D, CoordinateSystem3D))
         assert type(axes) is (AxisTuple if fixed else AxisList)
@@ -1420,3 +1426,100 @@ def test_a_fixed_axis_tuple_field_converts_each_position() -> None:
     # Each position converts to its own axis type.
     ras = RASCoordinateSystem(axes=[Axis(name="r"), Axis(), Axis()])
     assert [type(axis) for axis in ras.axes] == [R, A, S]
+
+
+def test_subclass_axes_conversion_needs_no_special_hint() -> None:
+    from bagof.magic import Factory, Inherit
+
+    class Temporal(CoordinateSystem):
+        axes: Inherit[tx.Optional[AxisList[TimeAxis]]] = Factory(
+            lambda: [TimeAxis()]
+        )
+
+    default = Temporal()
+    assert type(default.axes[0]) is TimeAxis
+    assert default.axes is not Temporal().axes
+    assert Temporal(None).axes is None
+    converted = Temporal(axes=AxisList([Axis(name="t")]))
+    assert type(converted.axes[0]) is TimeAxis
+    assert converted.axes[0].name == "t"
+
+
+def test_a_generic_system_has_no_memory_order_field() -> None:
+    from bagof.magic import fields
+
+    assert "order" not in {f.public_name for f in fields(CoordinateSystem)}
+    assert not hasattr(CoordinateSystem(), "order")
+    with pytest.raises(TypeError, match="order"):
+        CoordinateSystem(order="F")
+
+
+def test_assigning_none_axes_stores_none_and_keeps_conversion() -> None:
+    from bagof.magic import Factory, Inherit
+
+    class Temporal(CoordinateSystem):
+        axes: Inherit[tx.Optional[AxisList[TimeAxis]]] = Factory(
+            lambda: [TimeAxis()]
+        )
+
+    for cls in (CoordinateSystem, Temporal):
+        system = cls()
+        system.axes = None
+        assert system.axes is None
+        assert get_axes(system) == [...]
+    temporal = Temporal()
+    temporal.axes = [Axis(name="t")]
+    assert type(temporal.axes[0]) is TimeAxis
+    assert temporal.axes[0].name == "t"
+
+
+def test_axes_none_normalization_preserves_aliases_and_frozen_fields() -> None:
+    from bagof.magic import Inherit
+
+    class Aliased(CoordinateSystem):
+        axes: ... = Inherit(alias=("axes", "dimensions"))
+
+    assert Aliased(dimensions=None) == Aliased()
+
+    class FrozenSystem(CoordinateSystem, frozen=True, override=True):
+        pass
+
+    frozen = FrozenSystem()
+    with pytest.raises(AttributeError):
+        frozen.axes = None
+
+
+def test_axes_can_select_an_array_before_order_is_forwarded() -> None:
+    from brainhops.datamodel.systems import FPixelCoordinateSystem
+
+    axes = [SpaceAxis(unit="index"), SpaceAxis(unit="index")]
+    assert isinstance(
+        CoordinateSystem(axes=axes, order="F"), FPixelCoordinateSystem
+    )
+
+
+def test_get_axes_keeps_storage_and_empty_sequences() -> None:
+    system = CoordinateSystem()
+    first, second = get_axes(system), get_axes(system)
+    assert first == second == [...] and first is not second
+    assert system.axes is None
+    assert get_axes(CoordinateSystem(axes=[])) == []
+    assert get_axes(AxisTuple(())) == ()
+
+
+@pytest.mark.parametrize("container", [list, AxisList])
+def test_axes_conversion_is_consistent_across_model_operations(
+    container: type,
+) -> None:
+    from bagof.magic import replace
+
+    given = container([Axis(name="x"), ...])
+    system = SpatialCoordinateSystem(axes=given)
+    assigned = SpatialCoordinateSystem()
+    assigned.axes = given
+    replaced = replace(SpatialCoordinateSystem(), axes=given)
+    for result in (system, assigned, replaced):
+        assert type(result.axes[0]) is SpaceAxis
+        assert result.axes[0].name == "x"
+        assert get_axes(result) is result.axes
+    assert system == assigned == replaced

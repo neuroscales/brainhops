@@ -615,7 +615,7 @@ def patch_system() -> _systems.CoordinateSystem:
     AWT, whose integers are at the corners).
     """
     axes = [Axis(name, "space", unit="index") for name in ("x", "y")]
-    return _systems.CoordinateSystem(name=PATCH, axes=axes, order="F")
+    return _systems.ArrayCoordinateSystem(name=PATCH, axes=axes, order="F")
 
 
 def layer_system() -> _systems.CoordinateSystem:

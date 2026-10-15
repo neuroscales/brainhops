@@ -12,7 +12,11 @@ from brainhops.datamodel.axes import (
     TimeAxis,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.systems import AxisList, CoordinateSystem
+from brainhops.datamodel.systems import (
+    ArrayCoordinateSystem,
+    AxisList,
+    CoordinateSystem,
+)
 from brainhops.datamodel.transformations import (
     Identity,
     Sequence,
@@ -341,7 +345,7 @@ class OmeZarrImage(
         # stored axes is F-ordered, as in nibabel; any other permutation leaves
         # the order unspecified.
         reverses = list(perm) == list(range(ndim))[::-1]
-        voxel_system = CoordinateSystem(
+        voxel_system = ArrayCoordinateSystem(
             name="voxel",
             axes=[replace(axis, unit="index") for axis in canonical_axes],
             order="F" if reverses else None,

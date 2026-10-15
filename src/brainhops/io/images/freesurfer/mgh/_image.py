@@ -21,7 +21,7 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
@@ -677,7 +677,7 @@ def _record_transformations(
 def _mgh_system(record: MghRaw) -> CoordinateSystem:
     """Return the voxel coordinate system of a record."""
     axes = _MGH_AXES[: len(record.shape)]
-    return CoordinateSystem(name="voxel", axes=axes, order="F")
+    return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
 
 def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
