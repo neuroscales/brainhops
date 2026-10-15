@@ -13,9 +13,10 @@ __all__ = ["ElastixRaw", "initial_filename", "resolve_initial"]
 import os
 
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Factory, Magic, NoRepr, replace
+from bagof.magic import Factory, NoRepr, replace
 
 from brainhops._core import path
+from brainhops.io.base._raw import Raw
 from brainhops.io.base._utils_files import open_path
 from brainhops.io.base.parsers import (
     Confidence,
@@ -48,12 +49,10 @@ _InitialOption = tx.Union[bool, None, path.FilenameLike]
 
 
 class ElastixRaw(
-    Magic,
+    Raw,
     TextFileReader,
     TextFileWriter,
-    frozen=True,
     eq=False,
-    repr=HIDE_IF_NONE,
 ):
     """Record of an elastix transform parameter file, read in one pass.
 

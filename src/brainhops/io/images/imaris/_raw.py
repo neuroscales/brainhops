@@ -18,6 +18,7 @@ import typing_extensions as tx
 from bagof.magic import Factory, Magic, replace
 
 # internals
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -69,7 +70,7 @@ class ImarisLevel(Magic, frozen=True):
         return np.dtype(self.datatype)
 
 
-class ImarisRaw(Magic, Hdf5Reader, frozen=True):
+class ImarisRaw(Raw, Hdf5Reader):
     """The groups and attributes of an Imaris file, as brainhops reads them.
 
     An Imaris file (`.ims`) is an HDF5 file whose group

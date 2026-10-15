@@ -8,9 +8,10 @@ import numpy as np
 import typing_extensions as tx
 from abczarr import ZarrArray
 from abczarr.metadata.base import ArrayMetadata, NodeMetadata
-from bagof.magic import Magic, NoRepr
+from bagof.magic import NoRepr
 
 # internals
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import ParserContentError, WriterError
 
 # ----------------------------------------------------------------------
@@ -18,7 +19,7 @@ from brainhops.io.base.parsers import ParserContentError, WriterError
 # ----------------------------------------------------------------------
 
 
-class ZarrRaw(Magic, frozen=True):
+class ZarrRaw(Raw):
     """The metadata of a Zarr array, as its store keeps it.
 
     A Zarr array is described by a small JSON document: `zarr.json` in

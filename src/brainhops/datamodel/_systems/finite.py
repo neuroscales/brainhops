@@ -1,0 +1,39 @@
+__all__ = ["CoordinateSystem2D", "CoordinateSystem3D"]
+import typing_extensions as tx
+from bagof.magic import Factory, Inherit
+
+from ..axes import AxisTuple
+from .base import AXIS, CoordinateSystem
+from .decorators import Axes
+from .dispatch import _is2d, _is3d
+
+_2Axes: tx.TypeAlias = AxisTuple[AXIS, AXIS]
+_3Axes: tx.TypeAlias = AxisTuple[AXIS, AXIS, AXIS]
+
+
+class CoordinateSystem2D(CoordinateSystem, on={"axes": _is2d}):
+    """A coordinate system with exactly two axes.
+
+    Parameters
+    ----------
+    axes : tuple[Axis, Axis], default=(Axis(), Axis())
+        The two axes, in order.
+    name : str, optional
+        The name of the system, if any.
+    """
+
+    axes: Inherit[Axes[_2Axes]] = Factory()
+
+
+class CoordinateSystem3D(CoordinateSystem, on={"axes": _is3d}):
+    """A coordinate system with exactly three axes.
+
+    Parameters
+    ----------
+    axes : tuple[Axis, Axis, Axis], default=(Axis(), Axis(), Axis())
+        The three axes, in order.
+    name : str, optional
+        The name of the system, if any.
+    """
+
+    axes: Inherit[Axes[_3Axes]] = Factory()

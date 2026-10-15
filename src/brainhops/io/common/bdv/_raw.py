@@ -12,6 +12,7 @@ from bagof.magic import Magic, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base._utils_files import sibling
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -46,7 +47,7 @@ _Floats = tx.Tuple[float, ...]
 _Ints = tx.Tuple[int, ...]
 
 
-class BdvRaw(Magic, BinaryFileReader, BinaryFileWriter, frozen=True):
+class BdvRaw(Raw, BinaryFileReader, BinaryFileWriter):
     """Record of a BigDataViewer dataset, which holds its XML file.
 
     A BigDataViewer dataset is an XML file, often named `dataset.xml`,

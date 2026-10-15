@@ -176,7 +176,10 @@ class Projection(MetaTransformation):
     # --- attributes ---------------------------------------------------
 
     dropped: NotKwOnly[npvector[Integral]] = ()
+    """Axes of the input coordinate system to remove."""
+
     created: NotKwOnly[npvector[Integral]] = ()
+    """Axes of the output coordinate system to add."""
 
     # --- methods ------------------------------------------------------
 

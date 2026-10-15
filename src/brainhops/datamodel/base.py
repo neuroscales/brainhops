@@ -2,12 +2,17 @@
 
 __all__ = ["DataModelBase", "DataModelConverter", "IdentityComparison"]
 
+# stdlib
 import re
 from collections.abc import Mapping
 
+# dependencies
 import typing_extensions as tx
 from bagof.converters import ConversionError, Converter, register_converter
-from bagof.magic import Field, HideIfNone, Magic, fields
+from bagof.magic import Field, fields
+
+# core
+from brainhops._core.magic import SharedOptions
 
 
 class IdentityComparison:
@@ -29,28 +34,21 @@ class IdentityComparison:
             setattr(cls, name, getattr(object, name))
 
 
-class DataModelBase(
-    Magic,
-    convert=True,
-    mapping=False,
-    repr=HideIfNone,
-    doc=True,
-    pin_discriminant="pin+narrow",
-):
+class DataModelBase(SharedOptions):
     """Base class of all data models.
 
     Every data model converts the values of its fields to their declared
-    types, and can be built from a mapping or from a similar instance with
-    [`from_any`][].
+    types, and can be built from a mapping or from a similar instance
+    with [`from_any`][].
 
     Some data models are polymorphic: calling a class such as `Axis`
     builds the subclass that the arguments select, according to the `on=`
-    condition with which each subclass is declared. A polymorphic class is
-    built only from arguments that match its own condition and refuses the
-    others, so `OrientedAxis(orientation=None)` raises instead of building
-    an oriented axis without an orientation. A field that a class declares
-    itself keeps the type written there, so the fields that select a
-    subclass are typed narrowly, as in `Literal["space"]`.
+    condition with which each subclass is declared. A polymorphic class
+    is built only from arguments that match its own condition and refuses
+    the others, so `OrientedAxis(orientation=None)` raises instead of
+    building an oriented axis without an orientation. A field that a
+    class declares itself keeps the type written there, so the fields
+    that select a subclass are typed narrowly, as in `Literal["space"]`.
     """
 
     # The options given to the class statement apply to the whole hierarchy.
@@ -94,8 +92,8 @@ class DataModelBase(
         Raises
         ------
         ValueError
-            If a fixed field of `other` is set to a value other than the value
-            that the class fixes.
+            If a fixed field of `other` is set to a value other than the
+            value that the class fixes.
         """
         # An instance of this class already satisfies its fixed fields.
         check_fixed = not isinstance(other, cls)

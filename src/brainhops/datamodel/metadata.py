@@ -8,14 +8,12 @@ from .base import DataModelBase
 class Metadata(DataModelBase, kw_only=True):
     """Information that describes an image or a transformation.
 
-    Metadata is what a file records beyond the data and its geometry, such
-    as a repetition time, a description or a gradient table. The data model
-    represents it in a vocabulary shared by all formats, so that it can be
-    carried from one format to another.
+    Metadata is attached to objects that hold data, such as [`Image`][]
+    and [`Transformation`][] and contains information that is not
+    necessarily required for these objects to function, but that is
+    useful to keep track of, and that one may want to write to disk
+    along with the data itself.
 
-    The class has no fields yet. The shared vocabulary is designed in
-    [#233](https://github.com/neuroscales/brainhops/issues/233) and arrives
-    with that work. Until then, a file format keeps what its header records
-    in its own subclass of this class, which a reader of that format
-    returns and which the writer of the same format reads back.
+    Most file formats to encode some form of metadata, and some of this
+    metadata have sibling representations in other formats.
     """

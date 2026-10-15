@@ -5,8 +5,9 @@ __all__ = ["C3dAffineRaw"]
 import math
 
 import typing_extensions as tx
-from bagof.magic import Magic, NoRepr
+from bagof.magic import NoRepr
 
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -18,7 +19,7 @@ from brainhops.io.base.parsers import (
 _Matrix = tx.Tuple[tx.Tuple[float, ...], ...]
 
 
-class C3dAffineRaw(Magic, TextFileReader, TextFileWriter):
+class C3dAffineRaw(Raw, TextFileReader, TextFileWriter):
     """Record of a Convert3D matrix file, which holds the file as parsed.
 
     Greedy, `c3d_affine_tool` and ITK-SNAP save an affine as a text file

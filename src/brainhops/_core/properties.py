@@ -485,7 +485,7 @@ def _make_fget_settable_cacheable(
         if make_fn is None:
             return value
         value = make_fn(self)
-        setattr(self, cache_name, value)
+        object.__setattr__(self, cache_name, value)
         return value
 
     fget.__name__ = name

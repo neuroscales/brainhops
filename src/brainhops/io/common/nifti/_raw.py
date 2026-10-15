@@ -9,12 +9,14 @@ from urllib.parse import urlsplit
 # dependencies
 import nibabel as nb
 import typing_extensions as tx
-from bagof.magic import Factory, Magic
+from bagof.magic import Factory
 from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core import path
+from brainhops._core.magic import replace
 from brainhops._core.streams import open_compressed, preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base._utils_files import is_local, same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -40,7 +42,7 @@ _NiftiHeader = tx.Union[nb.Nifti1Header, nb.Nifti2Header]
 _NibabelImage = tx.Union[nb.Nifti1Image, nb.Nifti2Image]
 
 
-class NiftiRaw(Magic, BinaryFileReader, BinaryFileWriter):
+class NiftiRaw(Raw, BinaryFileReader, BinaryFileWriter):
     """Header of a NIfTI file, as the file stores it.
 
     The record of a NIfTI file is its nibabel header, which also holds the
@@ -63,7 +65,7 @@ class NiftiRaw(Magic, BinaryFileReader, BinaryFileWriter):
     A new record holds an empty NIfTI-1 header.
     """
 
-    def copy(self) -> "NiftiRaw":
+    def copy(self) -> tx.Self:
         """Return a copy of the record that can be changed freely.
 
         The fields of the header are copied. The list of extensions is new,
@@ -75,7 +77,7 @@ class NiftiRaw(Magic, BinaryFileReader, BinaryFileWriter):
         NiftiRaw
             The copy.
         """
-        return NiftiRaw(header=self.header.copy())
+        return replace(self, header=self.header.copy())
 
     @classmethod
     def sniff_fileobj(

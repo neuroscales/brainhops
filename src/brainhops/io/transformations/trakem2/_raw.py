@@ -12,6 +12,7 @@ from bagof.magic import Magic, NoRepr
 
 # internals
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -39,7 +40,7 @@ _Floats = tx.Tuple[float, ...]
 _Ints = tx.Tuple[int, ...]
 
 
-class TrakEM2Raw(Magic, BinaryFileReader, BinaryFileWriter, frozen=True):
+class TrakEM2Raw(Raw, BinaryFileReader, BinaryFileWriter):
     """Record of a TrakEM2 project, which holds its XML file.
 
     TrakEM2 is the Fiji plugin for serial-section electron microscopy. A

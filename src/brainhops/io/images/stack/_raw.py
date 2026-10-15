@@ -16,6 +16,7 @@ from bagof.magic import Magic, replace
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import HAS_PILLOW, HAS_TIFFFILE
+from brainhops.io.base._raw import Raw
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     Confidence,
@@ -129,7 +130,7 @@ class StackMember(Magic, frozen=True):
         return tuple(self.shape[i] for i in self.plane_order)
 
 
-class StackRaw(Magic, frozen=True):
+class StackRaw(Raw):
     """The record of an image stack, which lists its files.
 
     An image stack is a folder of numbered two-dimensional images, such as

@@ -9,11 +9,13 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic, NoRepr
+from bagof.magic import NoRepr
 
-# internals
+# brainhops
 from brainhops._core import path
+from brainhops._core.magic import replace
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -38,162 +40,23 @@ from ._geometry import (
     afni_geometry_from_matrix,
 )
 
+# typing
+_Value = tx.Union[str, tx.Tuple[int, ...], tx.Tuple[float, ...]]
+
+# constants
 _ATTRIBUTE = re.compile(
     r"\s*type\s*=\s*(\S+)\s+name\s*=\s*(\S+)\s+count\s*=\s*([+-]?\d+)"
 )
 _TOKEN = re.compile(r"\s*(\S+)")
 _KINDS = ("integer-attribute", "float-attribute", "string-attribute")
 
-_Value = tx.Union[str, tx.Tuple[int, ...], tx.Tuple[float, ...]]
-
 
 # ----------------------------------------------------------------------
-#   ATTRIBUTES
+#   CLASS
 # ----------------------------------------------------------------------
 
 
-def _decode_string(chars: str) -> str:
-    """Decode a string attribute (`~` to NUL, final NUL dropped)."""
-    value = chars.replace("~", "\0")
-    return value[:-1] if value.endswith("\0") else value
-
-
-def _encode_string(value: str) -> str:
-    """Encode a string attribute (`~` to `*`, NUL to `~`)."""
-    return (value.replace("~", "*") + "\0").replace("\0", "~")
-
-
-def _parse_attributes(text: str) -> "OrderedDict[str, _Value]":
-    """Parse the attributes of a `.HEAD` file."""
-    if "<AFNI_" in text[:1024]:
-        raise ParserContentError(
-            "This AFNI header is in the NIML (XML) variant, which is not "
-            "supported. Rewrite it with AFNI_WRITE_NIML unset (for "
-            "instance with `3dcopy`)."
-        )
-    attributes = OrderedDict()
-    pos = 0
-    end = len(text.rstrip())
-    while pos < end:
-        match = _ATTRIBUTE.match(text, pos)
-        if match is None:
-            if attributes:
-                # As AFNI does, keep what was read before unreadable content.
-                break
-            snippet = text[pos : pos + 40].strip()
-            raise ParserContentError(
-                f"Not an AFNI attribute, at character {pos}: {snippet!r}"
-            )
-        kind, name, count = match.group(1), match.group(2), int(match[3])
-        pos = match.end()
-        if kind not in _KINDS:
-            raise ParserContentError(
-                f"Unknown kind of AFNI attribute {name}: {kind}"
-            )
-        if count <= 0:
-            continue  # AFNI skips empty attributes
-        if kind == "string-attribute":
-            quote = pos
-            while quote < len(text) and text[quote].isspace():
-                quote += 1
-            if quote >= len(text) or text[quote] != "'":
-                raise ParserContentError(
-                    f"The AFNI string attribute {name} does not start "
-                    f"with a quote."
-                )
-            chars = text[quote + 1 : quote + 1 + count]
-            if len(chars) != count:
-                raise ParserContentError(
-                    f"The AFNI string attribute {name} is truncated: "
-                    f"{len(chars)} characters instead of {count}."
-                )
-            attributes[name] = _decode_string(chars)
-            pos = quote + 1 + count
-            continue
-        convert = int if kind == "integer-attribute" else float
-        values = []
-        for _ in range(count):
-            token = _TOKEN.match(text, pos)
-            if token is None:
-                raise ParserContentError(
-                    f"The AFNI attribute {name} holds fewer than {count} "
-                    f"values."
-                )
-            try:
-                values.append(convert(token.group(1)))
-            except ValueError:
-                raise ParserContentError(
-                    f"The AFNI attribute {name} holds a value that is not "
-                    f"{'an integer' if convert is int else 'a number'}: "
-                    f"{token.group(1)!r}"
-                ) from None
-            pos = token.end()
-        attributes[name] = tuple(values)
-    return attributes
-
-
-def _format_float(value: float) -> str:
-    """Format a float with enough digits to round-trip a float32."""
-    return f"{float(value):.9g}"
-
-
-def _format_attribute(name: str, value: _Value) -> str:
-    """Format one attribute as AFNI writes it (`thd_writeatr.c`)."""
-    if isinstance(value, str):
-        chars = _encode_string(value)
-        return (
-            f"\ntype = string-attribute\nname = {name}\n"
-            f"count = {len(chars)}\n'{chars}\n"
-        )
-    values = list(value)
-    if not values:
-        return ""
-    is_float = name in _FLOAT_ATTRIBUTES or any(
-        isinstance(v, (float, np.floating)) for v in values
-    )
-    if is_float:
-        tokens = [_format_float(v) for v in values]
-        kind = "float"
-    else:
-        tokens = [str(int(v)) for v in values]
-        kind = "integer"
-    lines = [
-        " " + " ".join(tokens[i : i + 5]) for i in range(0, len(tokens), 5)
-    ]
-    return (
-        f"\ntype = {kind}-attribute\nname = {name}\ncount = {len(values)}\n"
-        + "\n".join(lines)
-        + "\n"
-    )
-
-
-def _format_attributes(attributes: tx.Mapping[str, _Value]) -> str:
-    """Format the attributes of a `.HEAD` file as the writer spells them."""
-    return "".join(
-        _format_attribute(name, value) for name, value in attributes.items()
-    )
-
-
-# ----------------------------------------------------------------------
-#   RECORD
-# ----------------------------------------------------------------------
-
-
-def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(f"Unknown AFNI reader option(s): {', '.join(kwargs)}")
-
-
-class AfniRaw(
-    Magic, BinaryFileReader, BinaryFileWriter, frozen=True, eq=False
-):
+class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
     """The attributes of an AFNI `.HEAD` file, as the file stores them.
 
     An AFNI dataset is a text header, the `.HEAD` file, and a file of
@@ -227,7 +90,7 @@ class AfniRaw(
     writes them. The text is `None` for a record built from attributes.
     """
 
-    def copy(self) -> "AfniRaw":
+    def copy(self) -> tx.Self:
         """Return a copy of the record that can be changed freely.
 
         The attributes are copied into a new dictionary, and the text is
@@ -239,7 +102,9 @@ class AfniRaw(
         AfniRaw
             The copy.
         """
-        return AfniRaw(attributes=OrderedDict(self.attributes), text=self.text)
+        return replace(
+            self, attributes=OrderedDict(self.attributes), text=self.text
+        )
 
     def __getitem__(self, name: str) -> _Value:
         return self.attributes[name]
@@ -772,6 +637,150 @@ class AfniRaw(
             The content of the file.
         """
         return self.to_text().encode("latin-1")
+
+
+# ----------------------------------------------------------------------
+#   ATTRIBUTES
+# ----------------------------------------------------------------------
+
+
+def _decode_string(chars: str) -> str:
+    """Decode a string attribute (`~` to NUL, final NUL dropped)."""
+    value = chars.replace("~", "\0")
+    return value[:-1] if value.endswith("\0") else value
+
+
+def _encode_string(value: str) -> str:
+    """Encode a string attribute (`~` to `*`, NUL to `~`)."""
+    return (value.replace("~", "*") + "\0").replace("\0", "~")
+
+
+def _parse_attributes(text: str) -> "OrderedDict[str, _Value]":
+    """Parse the attributes of a `.HEAD` file."""
+    if "<AFNI_" in text[:1024]:
+        raise ParserContentError(
+            "This AFNI header is in the NIML (XML) variant, which is not "
+            "supported. Rewrite it with AFNI_WRITE_NIML unset (for "
+            "instance with `3dcopy`)."
+        )
+    attributes = OrderedDict()
+    pos = 0
+    end = len(text.rstrip())
+    while pos < end:
+        match = _ATTRIBUTE.match(text, pos)
+        if match is None:
+            if attributes:
+                # As AFNI does, keep what was read before unreadable content.
+                break
+            snippet = text[pos : pos + 40].strip()
+            raise ParserContentError(
+                f"Not an AFNI attribute, at character {pos}: {snippet!r}"
+            )
+        kind, name, count = match.group(1), match.group(2), int(match[3])
+        pos = match.end()
+        if kind not in _KINDS:
+            raise ParserContentError(
+                f"Unknown kind of AFNI attribute {name}: {kind}"
+            )
+        if count <= 0:
+            continue  # AFNI skips empty attributes
+        if kind == "string-attribute":
+            quote = pos
+            while quote < len(text) and text[quote].isspace():
+                quote += 1
+            if quote >= len(text) or text[quote] != "'":
+                raise ParserContentError(
+                    f"The AFNI string attribute {name} does not start "
+                    f"with a quote."
+                )
+            chars = text[quote + 1 : quote + 1 + count]
+            if len(chars) != count:
+                raise ParserContentError(
+                    f"The AFNI string attribute {name} is truncated: "
+                    f"{len(chars)} characters instead of {count}."
+                )
+            attributes[name] = _decode_string(chars)
+            pos = quote + 1 + count
+            continue
+        convert = int if kind == "integer-attribute" else float
+        values = []
+        for _ in range(count):
+            token = _TOKEN.match(text, pos)
+            if token is None:
+                raise ParserContentError(
+                    f"The AFNI attribute {name} holds fewer than {count} "
+                    f"values."
+                )
+            try:
+                values.append(convert(token.group(1)))
+            except ValueError:
+                raise ParserContentError(
+                    f"The AFNI attribute {name} holds a value that is not "
+                    f"{'an integer' if convert is int else 'a number'}: "
+                    f"{token.group(1)!r}"
+                ) from None
+            pos = token.end()
+        attributes[name] = tuple(values)
+    return attributes
+
+
+def _format_float(value: float) -> str:
+    """Format a float with enough digits to round-trip a float32."""
+    return f"{float(value):.9g}"
+
+
+def _format_attribute(name: str, value: _Value) -> str:
+    """Format one attribute as AFNI writes it (`thd_writeatr.c`)."""
+    if isinstance(value, str):
+        chars = _encode_string(value)
+        return (
+            f"\ntype = string-attribute\nname = {name}\n"
+            f"count = {len(chars)}\n'{chars}\n"
+        )
+    values = list(value)
+    if not values:
+        return ""
+    is_float = name in _FLOAT_ATTRIBUTES or any(
+        isinstance(v, (float, np.floating)) for v in values
+    )
+    if is_float:
+        tokens = [_format_float(v) for v in values]
+        kind = "float"
+    else:
+        tokens = [str(int(v)) for v in values]
+        kind = "integer"
+    lines = [
+        " " + " ".join(tokens[i : i + 5]) for i in range(0, len(tokens), 5)
+    ]
+    return (
+        f"\ntype = {kind}-attribute\nname = {name}\ncount = {len(values)}\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
+def _format_attributes(attributes: tx.Mapping[str, _Value]) -> str:
+    """Format the attributes of a `.HEAD` file as the writer spells them."""
+    return "".join(
+        _format_attribute(name, value) for name, value in attributes.items()
+    )
+
+
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+
+def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+    """Refuse the options of a reader that takes none.
+
+    Raises
+    ------
+    TypeError
+        If an option is given.
+    """
+    if kwargs:
+        raise TypeError(f"Unknown AFNI reader option(s): {', '.join(kwargs)}")
 
 
 def _looks_like_head(head: str) -> bool:

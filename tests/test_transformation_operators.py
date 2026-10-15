@@ -11,13 +11,13 @@ import pytest
 
 from brainhops.datamodel import kinds
 from brainhops.datamodel._transformations import concrete as _concrete
+from brainhops.datamodel._transformations.derived import UNARY_OPERATORS
+from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.systems import (
     CoordinateSystem,
-    SpaceAxis,
     VoxelCoordinateSystem,
 )
 from brainhops.datamodel.transformations import (
-    UNARY_OPERATORS,
     Affine,
     AffineExponential,
     Bijection,

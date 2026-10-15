@@ -7,8 +7,9 @@ import os.path as op
 import h5py
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Factory, Magic
+from bagof.magic import Factory, HideIfNone, Magic
 
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -32,11 +33,7 @@ _LARGE_TYPES = (
 )
 
 
-class H5Header(
-    Magic,
-    convert=True,
-    repr=HIDE_IF_NONE,
-):
+class H5Header(Magic, convert=True, repr=HideIfNone):
     """Provenance strings stored at the root of an ITK HDF5 file."""
 
     HDFVersion: tx.Optional[str] = None
@@ -52,7 +49,7 @@ class H5Header(
     """The operating system version, such as `"6.1.0-1007-oem"`."""
 
 
-class H5Raw(Magic, Hdf5Reader, repr=HIDE_IF_NONE):
+class H5Raw(Raw, Hdf5Reader):
     """Record of an ITK HDF5 (`.h5`) file, which holds its root and blocks.
 
     An ITK `.h5` file records the versions of the libraries that wrote it

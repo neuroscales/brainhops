@@ -8,9 +8,10 @@ import json
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import Magic, NoRepr
+from bagof.magic import NoRepr
 
 # internals
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -23,9 +24,7 @@ from brainhops.io.base.parsers import (
 from ._dimensions import Dimension, check_content, dimensions, is_content
 
 
-class NeuroglancerTransformRaw(
-    Magic, TextFileReader, TextFileWriter, frozen=True, eq=False
-):
+class NeuroglancerTransformRaw(Raw, TextFileReader, TextFileWriter, eq=False):
     """Record of a Neuroglancer coordinate transform, as its JSON holds it.
 
     Neuroglancer, a viewer of large volumes in the browser, places each

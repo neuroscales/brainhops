@@ -128,7 +128,7 @@ def bridge(
     # also counts as open, because its axes read `[...]`.
     source_axes = get_axes(source)
     target_axes = get_axes(target)
-    if source_axes.is_open or target_axes.is_open:
+    if source_axes.is_variadic or target_axes.is_variadic:
         if source_axes.compatible_with(target_axes):
             return Identity(input=source, output=target)
         _cannot_bridge_report(source, target)
@@ -437,7 +437,7 @@ def _cannot_bridge_report(
 ) -> tx.NoReturn:
     source_name = getattr(source, "name", None) or "the source system"
     target_name = getattr(target, "name", None) or "the target system"
-    which = "the source" if get_axes(source).is_open else "the target"
+    which = "the source" if get_axes(source).is_variadic else "the target"
     raise AdaptationError(
         f"Cannot bridge {source_name} to {target_name}: {which} system is "
         f"open (its axes hold `...`), and the axes it states do not match "
@@ -629,7 +629,7 @@ def embed(
     full_axes = get_axes(full)
     in_axes = get_axes(sub_input)
     out_axes = get_axes(sub_output)
-    if any(axes.is_open for axes in (full_axes, in_axes, out_axes)):
+    if any(axes.is_variadic for axes in (full_axes, in_axes, out_axes)):
         return None
     if len(in_axes) != len(out_axes):
         return None
@@ -993,7 +993,7 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
     """
     if isinstance(t, CartesianField) and t.shape is not None:
         axes = get_axes(t.output if at_output else t.input)
-        if axes.is_open:
+        if axes.is_variadic:
             axes = axes.expand(len(t.shape))
         extents: tx.Dict[tx.Any, int] = {}
         for axis, size in zip(axes, t.shape):

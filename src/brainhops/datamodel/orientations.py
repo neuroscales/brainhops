@@ -23,117 +23,159 @@ __all__ = [
     "InferiorToSuperior",
 ]
 import typing_extensions as tx
-from bagof.magic import Narrow
+from bagof.magic import Inherit, NoRepr
 
-from brainhops._core.typing import NoRepr
+from brainhops._core.singleton import singleton
 
 from .base import DataModelBase
-from .enums import OrientationType
-
-_T = tx.TypeVar("_T", bound=type)
+from .enums import AnatomicalOrientationValue, OrientationType
 
 
-def singleton(cls: _T) -> _T:
-    """Make a class a singleton, so that only one instance of it can exist.
-
-    Calling the class again returns the existing instance. Subclassing a
-    singleton raises a TypeError, because a subclass would introduce a second
-    variant of an object that is meant to be unique. The orientation classes
-    in this module are also frozen: every axis with a given orientation holds
-    the same instance, so mutating that instance would change all of them.
-    """
-
-    registry = {}
-
-    cls.__orig_new__ = __orig__new__ = cls.__new__
-
-    def __new__(cls: tx.Type[tx.Self], *args, **kwargs) -> tx.Self:
-        obj = registry.get(cls)
-        if obj is None:
-            registry[cls] = obj = __orig__new__(cls, *args, **kwargs)
-        return obj
-
-    def __init_subclass__(sub: type, **kwargs) -> None:
-        raise TypeError(
-            f"{cls.__name__} is a singleton: it cannot be subclassed."
-        )
-
-    cls.__new__ = __new__
-    cls.__init_subclass__ = classmethod(__init_subclass__)
-
-    return cls
-
-
-class Orientation(DataModelBase, polymorphic=True):
+class Orientation(DataModelBase, polymorphic=True, kw_only=False, slots=True):
     """The orientation of an axis or a space.
 
     The `type` is the frame of reference (an [`OrientationType`][]), and the
     `value` is the specific orientation within that frame, such as
     `"left-to-right"`.
+
+    Parameters
+    ----------
+    value : str, optional
+        Name of the orientation, such as `"left-to-right"`.
+    type : OrientationType, optional
+        Frame of reference of the orientation, such as `"anatomical"`.
     """
 
     value: tx.Optional[str] = None
+    """Name of the orientation, such as `"left-to-right"`."""
+
     type: tx.Optional[OrientationType] = None
+    """Frame of reference of the orientation, such as `"anatomical"`."""
 
 
 class AnatomicalOrientation(Orientation, on={"type": "anatomical"}):
-    """An orientation in the anatomical frame of reference."""
+    """An orientation in the anatomical frame of reference.
 
-    type: NoRepr[Narrow[OrientationType]] = OrientationType.anatomical
+    Instances of `AnatomicalOrientation` are singletons.
+
+    Parameters
+    ----------
+    value : str, optional
+        Name of the orientation, such as `"left-to-right"`.
+    type : literal["anatomical"], default="anatomical"
+        Pinned orientation type.
+    """
+
+    value: Inherit[tx.Optional[AnatomicalOrientationValue]] = None
+    type: NoRepr[...]
 
 
 @singleton
+@Orientation.register_polymorph(on={"value": "left-to-right"})
 class LeftToRight(
     AnatomicalOrientation, on={"value": "left-to-right"}, frozen=True
 ):
-    """Coordinates increase from left to right."""
+    """Coordinates increase from left to right.
 
-    value: NoRepr[Narrow[str]] = "left-to-right"
+    Parameters
+    ----------
+    value : literal["left-to-right"], default="left-to-right"
+        Pinned orientation.
+    type : literal["anatomical"], default="anatomical"
+        Pinned orientation type.
+    """
+
+    value: NoRepr[...]
 
 
 @singleton
+@Orientation.register_polymorph(on={"value": "right-to-left"})
 class RightToLeft(
     AnatomicalOrientation, on={"value": "right-to-left"}, frozen=True
 ):
-    """Coordinates increase from right to left."""
+    """Coordinates increase from right to left.
 
-    value: NoRepr[Narrow[str]] = "right-to-left"
+    Parameters
+    ----------
+    value : literal["right-to-left"], default="right-to-left"
+        Pinned orientation.
+    type : literal["anatomical"], default="anatomical"
+        Pinned orientation type.
+    """
+
+    value: NoRepr[...]
 
 
 @singleton
+@Orientation.register_polymorph(on={"value": "anterior-to-posterior"})
 class AnteriorToPosterior(
     AnatomicalOrientation, on={"value": "anterior-to-posterior"}, frozen=True
 ):
-    """Coordinates increase from front to back."""
+    """Coordinates increase from front to back.
 
-    value: NoRepr[Narrow[str]] = "anterior-to-posterior"
+    Parameters
+    ----------
+    value : literal["anterior-to-posterior"], default="anterior-to-posterior"
+        Pinned orientation.
+    type : literal["anatomical"], default="anatomical"
+        Pinned orientation type.
+    """
+
+    value: NoRepr[...]
 
 
 @singleton
+@Orientation.register_polymorph(on={"value": "posterior-to-anterior"})
 class PosteriorToAnterior(
     AnatomicalOrientation, on={"value": "posterior-to-anterior"}, frozen=True
 ):
-    """Coordinates increase from back to front."""
+    """Coordinates increase from back to front.
 
-    value: NoRepr[Narrow[str]] = "posterior-to-anterior"
+    Parameters
+    ----------
+    value : literal["posterior-to-anterior"], default="posterior-to-anterior"
+        Pinned orientation.
+    type : literal["anatomical"], default="anatomical"
+        Pinned orientation type.
+    """
+
+    value: NoRepr[...]
 
 
 @singleton
+@Orientation.register_polymorph(on={"value": "inferior-to-superior"})
 class InferiorToSuperior(
     AnatomicalOrientation, on={"value": "inferior-to-superior"}, frozen=True
 ):
-    """Coordinates increase from bottom to top."""
+    """Coordinates increase from bottom to top.
 
-    value: NoRepr[Narrow[str]] = "inferior-to-superior"
+    Parameters
+    ----------
+    value : literal["inferior-to-superior"], default="inferior-to-superior"
+        Pinned orientation.
+    type : literal["anatomical"], default="anatomical"
+        Pinned orientation type.
+    """
+
+    value: NoRepr[...]
 
 
 @singleton
+@Orientation.register_polymorph(on={"value": "superior-to-inferior"})
 class SuperiorToInferior(
     AnatomicalOrientation, on={"value": "superior-to-inferior"}, frozen=True
 ):
-    """Coordinates increase from top to bottom."""
+    """Coordinates increase from top to bottom.
 
-    value: NoRepr[Narrow[str]] = "superior-to-inferior"
+    Parameters
+    ----------
+    value : literal["superior-to-inferior"], default="superior-to-inferior"
+        Pinned orientation.
+    type : literal["anatomical"], default="anatomical"
+        Pinned orientation type.
+    """
+
+    value: NoRepr[...]
 
 
 R = LR = leftToRight = LeftToRight()

@@ -1,9 +1,22 @@
 """Helpers for the field tables of [`bagof.magic`][bagof.magic] classes."""
 
 import typing_extensions as tx
-from bagof.magic import Field
+from bagof.magic import Field, HideIfNone, Magic
 
 MISSING = Field().type  # bagof does not export its MISSING sentinel.
+
+
+class SharedOptions(
+    Magic,
+    kw_only=True,
+    convert=True,
+    repr=HideIfNone,
+    pin_discriminant="pin+narrow",
+):
+    """
+    Magic base class with default options used by all magic classes
+    across brainhops.
+    """
 
 
 def field_default(cls: type, name: str, fallback: tx.Any = None) -> tx.Any:
@@ -34,7 +47,9 @@ def stores(cls: type, name: str) -> bool:
     return field is not None and bool(field.init) and not field.var
 
 
-def replace(obj: tx.Any, cls: tx.Optional[type], **changes: tx.Any) -> tx.Any:
+def replace(
+    obj: tx.Any, cls: tx.Optional[type] = None, **changes: tx.Any
+) -> tx.Any:
     """Return a copy of a Magic object with some fields replaced.
 
     Unlike [`replace`][bagof.magic.replace], the function can build the
