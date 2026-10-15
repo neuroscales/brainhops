@@ -49,9 +49,7 @@ class CoordinateSystem(
         * `[..., TimeAxis()]` says that the last axis is time, and
           nothing is known about the others.
         * `[Axis(name="x"), ...]` says that the first axis is x.
-        * `axes=None`, the default, leaves the axes unspecified. The
-          stored value stays `None`; operations read it as `[...]`
-          through [`get_axes`][brainhops.datamodel._sugar.get_axes].
+        * `axes=None`, the default, leaves the axes unspecified.
 
         Fixed-arity classes such as [`CoordinateSystem3D`][] are always
         finite. They store their axes as an immutable [`AxisTuple`][],
@@ -83,8 +81,6 @@ class CoordinateSystem(
     axes: NotKwOnly[tx.Optional[_VariadicAxes]] = None
     """
     The axes, in order.
-    `None` is kept as given. Operations use [`get_axes`][] to read it
-    as `[...]`, which says nothing about the axes.
     """
 
     name: tx.Optional[str] = None
