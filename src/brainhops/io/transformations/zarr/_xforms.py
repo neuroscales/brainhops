@@ -1,11 +1,11 @@
 """The OME-Zarr format of multiscale transformation fields.
 
-A field stored in a Zarr store is read into a [`MultiscaleField`][], in which
-each resolution level is a sequence that samples the field on the grid of that
-level. The format is registered, so that
-[`load`][brainhops.io.transformations.load] discovers it. Arrays and metadata
-are kept exactly as read, so that writing an unchanged field re-emits its OME
-metadata unchanged.
+A field stored in a Zarr store is read into a [`MultiscaleField`][], in
+which each resolution level is a sequence that samples the field on the
+grid of that level. The format is registered, so that
+[`load`][brainhops.io.transformations.load] discovers it. Arrays and
+metadata are kept exactly as read, so that writing an unchanged field
+re-emits its OME metadata unchanged.
 """
 
 import abczarr
@@ -18,7 +18,7 @@ from brainhops._core.affines import inv as _affine_inv
 from brainhops.backends import get_array_backend
 from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
-from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.axes import AxisList
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
@@ -44,18 +44,15 @@ from brainhops.io.common.zarr._parsers import (
     _ZarrNodeReaderWriter,
 )
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.zarr import _map, _node
 
+from . import _map, _node
+from ._errors import OmeFieldError
 
-class OmeFieldError(ValueError):
-    """An OME-Zarr field that cannot be read.
-
-    The error is raised, in particular, for a displacement field placed by a
-    transformation that is not affine, since displacements in world units
-    cannot be rescaled to voxels without a linear part. A field whose axes
-    cannot be read as one vector field raises an
-    [`AxisError`][brainhops.errors.AxisError] instead.
-    """
+# typing
+if tx.TYPE_CHECKING:
+    # This is imported for mkdocstrings to resolve cross-references
+    from brainhops.io.common.zarr import ZarrReader  # noqa: F401
+    from brainhops.io.transformations import load  # noqa: F401
 
 
 @register_format
@@ -64,70 +61,49 @@ class OmeZarrField(
 ):
     """A coordinate or displacement field stored as OME-Zarr.
 
-    The Zarr store is the file format. It is read with `from_store` and written
-    with `to_store`, or `from_node` and `to_node` for an opened node (see
-    [`ZarrReader`][brainhops.io.common.zarr.ZarrReader]), and
-    [`load`][brainhops.io.transformations.load] discovers it.
+    The Zarr store is the file format. It is read with [`from_store`][]
+    and written with [`to_store`][], or [`from_node`][] and [`to_node`][]
+    for an opened node (see [`ZarrReader`][]), and [`load`][] discovers
+    it.
 
-    The field is a [`MultiscaleField`][], so it composes like any multiscale
-    field: reslicing onto a coarser grid picks the matching level, and the
-    finest level is used unless a level is selected. The reader holds the array
-    of every level, the voxel-to-world transformation of the finest level, the
-    axes and the raw OME metadata, all as read, so that an untouched field
-    re-emits its metadata unchanged through [`OmeZarrField.to_ome`][].
+    The field is a [`MultiscaleField`][], so it composes like any
+    multiscale field: reslicing onto a coarser grid picks the matching
+    level, and the finest level is used unless a level is selected. The
+    reader holds the array of every level, the voxel-to-world
+    transformation of the finest level, the axes and the raw OME metadata,
+    all as read, so that an untouched field re-emits its metadata
+    unchanged through [`to_ome`][].
     """
 
-    HINTS = ("ome", "ome-zarr")
+    HINTS = "ome", "ome-zarr"
+    EXTENSIONS = ".zarr", ".ome.zarr"
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
+    raw_levels: tx.Optional[tx.List[ArrayProtocol]] = None
+    """
+    The array of each resolution level, ordered from finest to coarsest,
+    exactly as stored in the file. The values are in world units.
+    """
 
-    raw_levels: tx.Annotated[
-        tx.Optional[tx.List[ArrayProtocol]],
-        tx.Doc(
-            """
-            The array of each resolution level, ordered from finest to
-            coarsest, exactly as stored in the file. The values are in
-            world units.
-            """
-        ),
-    ] = None
+    voxel2world: tx.Optional[Transformation] = None
+    """
+    The voxel-to-world transformation of the finest level. It is the
+    coordinate transformation of the finest dataset in the OME metadata.
+    """
 
-    voxel2world: tx.Annotated[
-        tx.Optional[Transformation],
-        tx.Doc(
-            """
-            The voxel-to-world transformation of the finest level. It is
-            the coordinate transformation of the finest dataset in the OME
-            metadata.
-            """
-        ),
-    ] = None
+    level_transforms: tx.Optional[tx.List[Transformation]] = None
+    """
+    The transformation that maps each level's grid to the finest level's
+    grid, ordered from finest to coarsest. The first entry is the identity.
+    """
 
-    level_transforms: tx.Annotated[
-        tx.Optional[tx.List[Transformation]],
-        tx.Doc(
-            """
-            The transformation that maps each level's grid to the finest
-            level's grid, ordered from finest to coarsest. The first entry
-            is the identity.
-            """
-        ),
-    ] = None
+    axes: tx.Optional[AxisList] = None
+    """The axes declared by the OME metadata."""
 
-    axes: tx.Annotated[
-        tx.Optional[tx.List[Axis]],
-        tx.Doc("The axes declared by the OME metadata."),
-    ] = None
-
-    ome: tx.Annotated[
-        tx.Optional[tx.Any],
-        tx.Doc(
-            """
-            The OME metadata exactly as read. The reader never rewrites
-            this object, so it can be re-emitted unchanged.
-            """
-        ),
-    ] = None
+    ome: tx.Optional[tx.Any] = None
+    """
+    The OME metadata exactly as read. The reader never rewrites this
+    object, so it can be re-emitted unchanged.
+    """
 
     # The degree is an option of the reading, so it is keyword-only and does
     # not move the positional fields of the reader.

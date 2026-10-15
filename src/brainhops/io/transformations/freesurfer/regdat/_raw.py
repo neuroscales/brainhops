@@ -5,8 +5,9 @@ __all__ = ["RegisterDatRaw"]
 import re
 
 import typing_extensions as tx
-from bagof.magic import Magic, NoRepr
+from bagof.magic import NoRepr
 
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -31,7 +32,7 @@ _UNKNOWN_SUBJECT = "subject-unknown"
 
 # The example of a file has lines longer than the limit.
 # ruff: disable[E501]
-class RegisterDatRaw(Magic, TextFileReader, TextFileWriter):
+class RegisterDatRaw(Raw, TextFileReader, TextFileWriter):
     """Record of a FreeSurfer `register.dat` file, as it was read.
 
     A `register.dat` file is the registration that `tkregister2` and

@@ -2,10 +2,12 @@
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import Factory, Magic
+from bagof.magic import Factory
+
+from brainhops.io.base._raw import Raw
 
 
-class OpenSlideLevelRaw(Magic, frozen=True):
+class OpenSlideLevelRaw(Raw):
     """Storage description of one level of a whole-slide image.
 
     A slide stores the same image at several resolutions, its levels,
@@ -26,7 +28,7 @@ class OpenSlideLevelRaw(Magic, frozen=True):
     level, as `level_downsamples` gives it."""
 
 
-class OpenSlideRaw(Magic, frozen=True):
+class OpenSlideRaw(Raw):
     """Record of a whole-slide image, without its pixels.
 
     A whole-slide image, or slide, is the pyramid that a slide scanner

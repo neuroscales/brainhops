@@ -8,10 +8,11 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic, replace
+from bagof.magic import replace
 
 # internals
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -49,7 +50,7 @@ _SNIFF_SIZE = 16 * 1024 * 1024
 """The size above which a stream is not taken for an `attributes.json`."""
 
 
-class N5Raw(Magic, BinaryFileReader, frozen=True):
+class N5Raw(Raw, BinaryFileReader):
     """The attributes of an N5 dataset, or of a group that holds a pyramid.
 
     An N5 container is a directory tree in which every directory is a

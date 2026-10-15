@@ -7,10 +7,11 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic, NoRepr, replace
+from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -53,7 +54,7 @@ _LAYOUT = (
 """The fields of a record that the coded image decides."""
 
 
-class Jpeg2000Raw(Magic, BinaryFileReader, BinaryFileWriter, frozen=True):
+class Jpeg2000Raw(Raw, BinaryFileReader, BinaryFileWriter):
     """The header of a JPEG 2000 file, as brainhops reads it.
 
     A JPEG 2000 file is either a JP2 file, made of boxes, or a raw

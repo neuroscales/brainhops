@@ -6,9 +6,10 @@ import re
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Magic, NoRepr
+from bagof.magic import NoRepr
 
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -58,13 +59,7 @@ class _Variable(tx.NamedTuple):
     """The byte order of the header and the values, `"<"` or `">"`."""
 
 
-class MatRaw(
-    Magic,
-    BinaryFileReader,
-    BinaryFileWriter,
-    convert=True,
-    repr=HIDE_IF_NONE,
-):
+class MatRaw(Raw, BinaryFileReader, BinaryFileWriter):
     """Record of an ITK binary MATLAB (`.mat`) file, which holds its blocks.
 
     A `.mat` file is short and is read in one pass, so the record holds

@@ -21,6 +21,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Factory, Magic, replace
 
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -144,7 +145,7 @@ class X5Header(Magic, repr=HIDE_IF_NONE):
     """Whether the file uses the earlier fslpy layout."""
 
 
-class X5Raw(Magic, Hdf5ReaderWriter, repr=HIDE_IF_NONE):
+class X5Raw(Raw, Hdf5ReaderWriter):
     """Record of an X5 file, which holds the root and the transforms as stored.
 
     An X5 file is an HDF5 file whose root says `Format = "X5"`. Its record

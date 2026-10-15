@@ -1,5 +1,6 @@
 """Tests of orientation values."""
 
+from brainhops.datamodel.enums import AnatomicalOrientationValue
 from brainhops.datamodel.orientations import AnatomicalOrientation, LeftToRight
 
 
@@ -7,4 +8,4 @@ def test_anatomical_orientation_accepts_plain_string_values() -> None:
     obj = AnatomicalOrientation(value="left-to-right")
     assert obj.value == "left-to-right"
     assert LeftToRight().value == "left-to-right"
-    assert type(LeftToRight().value) is str
+    assert LeftToRight().value is AnatomicalOrientationValue.left_to_right

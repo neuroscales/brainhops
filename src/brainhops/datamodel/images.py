@@ -28,11 +28,12 @@ class Image(IdentityComparison, DataModelBase, eq=False, kw_only=True):
     """The base class of all images.
 
     !!! note
-        Images compare and hash by identity: `a == b` means `a is b`, even for
-        images with the same data and transformations, and `==` never raises.
-        Images can therefore be used in sets and as dictionary keys. To compare
-        the contents of two images, compare their data explicitly, for example
-        with `numpy.array_equal(a, b)`, and compare their geometries.
+        Images compare and hash by identity: `a == b` means `a is b`,
+        even for images with the same data and transformations, and
+        `==` never raises. Images can therefore be used in sets and as
+        dictionary keys. To compare the contents of two images, compare
+        their data explicitly, for example with `numpy.array_equal(a, b)`,
+        and compare their geometries.
     """
 
     metadata: NoRepr[tx.Optional[Metadata]] = None
@@ -74,57 +75,56 @@ class Image(IdentityComparison, DataModelBase, eq=False, kw_only=True):
         """The Cartesian field that defines the sampling grid."""
         return self.geometry.grid
 
-
-class SingleScaleImage(Image):
-    """The base class of single-resolution images.
-
-    `data` and `transformations` are the parameters most often given
-    to the constructor, and they can be passed by position in this order.
-    The other parameters are keyword-only, except those that a file
-    reader from `brainhops.io.common` adds, such as the opened Zarr `node`
-    of a plain Zarr array, which follow `transformations`.
-    """
-
-    data: tx.Annotated[
-        NoRepr[tx.Optional[ArrayProtocol]],
-        tx.Doc(
-            """
-            The image data. Must be an array-like object that supports
-            the array protocol (e.g. numpy, cupy or dask array).
-
-            It defaults to `None` so that subclasses can derive it
-            lazily -- a format reader typically holds a handle to the
-            file and materializes the array on first access, and cannot
-            supply it at construction time. This mirrors
-            `Affine.matrix`, which is optional for the same reason.
-
-            The data is left out of the representation of the image,
-            because reading it may load a whole file.
-            """
-        ),
-        NotKwOnly(),
-    ] = None
-
-    transformations: tx.Annotated[
-        tx.List[Transformation],
-        tx.Doc(
-            "A list of transformations from voxel space (i.e., in terms"
-            "of data's axes) to different world spaces. The last "
-            "transformation in the list is the preferred one."
-        ),
-        NotKwOnly(),
-    ] = ()
-
     @property
     def transformation(self) -> Transformation:
-        """The preferred transformation, which is always the last in the list.
+        """
+        The preferred transformation, which is always the last in the
+        `transformations` list.
 
-        The getter returns an [`Identity`][] when the list is empty. Assigning
-        a transformation makes it the preferred one: a new transformation is
-        appended, and one already in the list (compared by identity) is moved
-        to the end. An integer or a string selects an existing transformation
-        by position or by the name of its output space, and an unknown name
-        raises a KeyError.
+        When the list is empty, this property return an [`Identity`][].
+
+        Assigning a transformation makes it the preferred one:
+
+        * if the assigned value is an integer or a string, the corresponding
+          transformation (by index of by output system name) is selected
+          and moved to the end of the list;
+        * if the assigned value is a transformation that is already in
+          the list, it is moved to the end of the list;
+        * if it is a new transformation, it is appended to the list.
+
+        An unknown index or system name raises a `KeyError`.
+
+        !!! example
+            ```pycon
+            >>> voxel = CoordinateSystem(["i", "j", "k"], name="voxel")
+            >>> phys = CoordinateSystem(["x", "y", "z"], name="phys")
+            >>> world = CoordinateSystem(["x", "y", "z"], name="world")
+            >>> aligned = CoordinateSystem(["x", "y", "z"], name="aligned")
+            >>>
+            >>> vox2scanner = Affine(input=voxel, output=phys)
+            >>> vox2world = Affine(input=voxel, output=world)
+            >>> vox2aligned = Affine(input=voxel, output=aligned)
+            >>>
+            >>> img = SingleScaleImage(data, [vox2scanner, vox2world])
+            >>> img.transformation.output
+            CoordinateSystem(name='world', axes=['x', 'y', 'z'])
+            >>>
+            >>> img.transformation = 0
+            >>> img.transformation.output
+            CoordinateSystem(name='phys', axes=['x', 'y', 'z'])
+            >>>
+            >>> img.transformation = "world"
+            >>> img.transformation.output
+            CoordinateSystem(name='world', axes=['x', 'y', 'z'])
+            >>>
+            >>> img.transformation = vox2aligned
+            >>> img.transformation.output
+            CoordinateSystem(name='aligned', axes=['x', 'y', 'z'])
+            >>>
+            >>> [t.output.name for t in img.transformations]
+            ['phys', 'world', 'aligned']
+            ```
+
         """
         if self.transformations:
             return self.transformations[-1]
@@ -154,13 +154,49 @@ class SingleScaleImage(Image):
         transformations.append(value)
         self.transformations = transformations
 
+
+class SingleScaleImage(Image):
+    """The base class of single-resolution images.
+
+    `data` and `transformations` are the parameters most often given
+    to the constructor, and they can be passed by position in this order.
+    The other parameters are keyword-only, except those that a file
+    reader from `brainhops.io.common` adds, such as the opened Zarr
+    `node` of a plain Zarr array, which follow `transformations`.
+    """
+
+    data: tx.Annotated[
+        tx.Optional[ArrayProtocol],
+        NotKwOnly(),
+        NoRepr(),  # leave out from repr to avoid loading a whole file
+    ] = None
+    """
+    The image data.
+
+    Must be an array-like object that supports the array protocol (e.g.
+    numpy, cupy or dask array).
+
+    It defaults to `None` so that subclasses can derive it lazily -- a
+    format reader typically holds a handle to the file and materializes
+    the array on first access, and cannot supply it at construction time.
+    This mirrors `Affine.matrix`, which is optional for the same reason.
+    """
+
+    transformations: NotKwOnly[tx.List[Transformation]] = ()
+    """
+    A list of transformations from voxel space (i.e., in terms of data's
+    axes) to different world spaces.
+
+    The last transformation in the list is the preferred one.
+    """
+
     @property
     def geometry(self) -> Geometry:
         """The geometry of the image.
 
-        The geometry pairs the Cartesian field matching the data shape with the
-        preferred voxel-to-world transformation. Any image can be resliced onto
-        this geometry.
+        The geometry pairs the Cartesian field matching the data shape
+        with the preferred voxel-to-world transformation. Any image can
+        be resliced onto this geometry.
         """
         return Geometry(
             (
@@ -190,13 +226,13 @@ class SingleScaleImage(Image):
         Parameters
         ----------
         geometry : Image or Geometry or Transformation, optional
-            The target voxel-to-world geometry. An image or a geometry also
-            determines the output shape, whereas a bare transformation keeps
-            the current shape. By default, the image is resampled onto its own
-            geometry.
+            The target voxel-to-world geometry. An image or a geometry
+            also determines the output shape, whereas a bare
+            transformation keeps the current shape.
+            By default, the image is resampled onto its ow geometry.
         degree : int, default=1
-            Spline degree, from 0 (nearest neighbour) up to 5. A degree of 1
-            gives linear interpolation.
+            Spline degree, from 0 (nearest neighbour) up to 5.
+            A degree of 1 gives linear interpolation.
         bound : str or float, default="reflect"
             Boundary condition. A float is used as a constant value beyond
             the edge.
@@ -208,14 +244,14 @@ class SingleScaleImage(Image):
                 - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
                 - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
         coeff : bool, default=False
-            Whether the data already holds spline coefficients. If false, the
-            data is prefiltered before interpolation.
+            Whether the data already holds spline coefficients.
+            If false, the data is prefiltered before interpolation.
         copy : bool, default=False
-            If true, the output never shares memory with the input. If false,
-            a reslicing that only rearranges existing voxels, such as a flip,
-            a permutation or a slice with a unit step, may return a view, as
-            `torch.Tensor.to` does. Dask arrays are immutable and are never
-            copied.
+            If true, the output never shares memory with the input.
+            If false, a reslicing that only rearranges existing voxels,
+            such as a flip, a permutation or a slice with a unit step,
+            may return a view, as `torch.Tensor.to` does.
+            Dask arrays are immutable and are never copied.
 
         Returns
         -------
@@ -268,8 +304,8 @@ class SingleScaleImage(Image):
     def __call__(self, transform: Transformation) -> "SingleScaleImage":
         """Apply a transformation lazily, without reslicing.
 
-        The output space of `transform` should match the output space of the
-        preferred transformation. The new preferred transformation,
+        The output space of `transform` should match the output space of
+        the preferred transformation. The new preferred transformation,
         `transform.inverse() @ self.transformation`, is appended to the
         existing ones. No voxel moves, so the new image shares the
         metadata of this image.
@@ -336,28 +372,23 @@ class MultiScaleImage(Image):
     `images` and `transformations` are the parameters most often given
     to the constructor, and they can be passed by position in this order.
     The other parameters are keyword-only, except those that a file
-    reader from `brainhops.io.common` adds, such as the opened Zarr `node`
-    of an OME-Zarr pyramid, which follow `transformations`.
+    reader from `brainhops.io.common` adds, such as the opened Zarr
+    `node` of an OME-Zarr pyramid, which follow `transformations`.
     """
 
-    images: tx.Annotated[
-        tx.List[SingleScaleImage],
-        tx.Doc(
-            "Each image in the multi-resolution pyramid, ordered from "
-            "highest to lowest resolution."
-        ),
-        NotKwOnly(),
-    ] = ()
+    images: NotKwOnly[tx.List[SingleScaleImage]] = ()
+    """
+    Each image in the multi-resolution pyramid, ordered from highest to
+    lowest resolution.
+    """
 
-    transformations: tx.Annotated[
-        tx.List[Transformation],
-        tx.Doc(
-            "A list of transformations from each level's preferred space "
-            "to different world spaces. The last transformation in the list "
-            "is the preferred one."
-        ),
-        NotKwOnly(),
-    ] = ()
+    transformations: NotKwOnly[tx.List[Transformation]] = ()
+    """
+    A list of transformations from each level's preferred space to
+    different world spaces.
+
+    The last transformation in the list is the preferred one.
+    """
 
     @property
     def data(self) -> ArrayProtocol:
@@ -378,45 +409,6 @@ class MultiScaleImage(Image):
         """Every level, as a single-scale image."""
         for i in range(len(self.images)):
             yield self.to_singlescale(i)
-
-    @property
-    def transformation(self) -> Transformation:
-        """The preferred transformation, which is always the last in the list.
-
-        The getter returns an [`Identity`][] when the list is empty. Assigning
-        a transformation makes it the preferred one: a new transformation is
-        appended, and one already in the list (compared by identity) is moved
-        to the end. An integer or a string selects an existing transformation
-        by position or by the name of its output space, and an unknown name
-        raises a KeyError.
-        """
-        if self.transformations:
-            return self.transformations[-1]
-        return Identity()
-
-    @transformation.setter
-    def transformation(
-        self, value: tx.Union[Transformation, int, str]
-    ) -> None:
-        transformations = list(self.transformations)
-        if isinstance(value, int):
-            value = transformations.pop(value)
-        elif isinstance(value, str):
-            for i, x in enumerate(transformations):
-                if getattr(x.output, "name", None) == value:
-                    value = transformations.pop(i)
-                    break
-            else:
-                raise KeyError(
-                    f"no transformation with output space named {value!r}"
-                )
-        else:
-            for i, x in enumerate(transformations):
-                if x is value:
-                    del transformations[i]
-                    break
-        transformations.append(value)
-        self.transformations = transformations
 
     @property
     def geometry(self) -> Geometry:

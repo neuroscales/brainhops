@@ -3,9 +3,9 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic
 
 # internals
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.images.base import _utils_raster as raster
 
@@ -15,7 +15,7 @@ from . import _utils as backend
 _Scales = tx.Dict[str, tx.Tuple[float, tx.Any]]
 
 
-class TiffLevelRaw(Magic, frozen=True):
+class TiffLevelRaw(Raw):
     """Storage description of one level of a series of a TIFF file.
 
     A series of a TIFF file, such as an image, a stack or a hyperstack,
@@ -32,7 +32,7 @@ class TiffLevelRaw(Magic, frozen=True):
     """The name of the NumPy data type of the pixels, such as `"uint16"`."""
 
 
-class TiffRaw(Magic, frozen=True):
+class TiffRaw(Raw):
     """Record of one series of a TIFF file, without its pixels.
 
     A TIFF file holds one or more series, which tifffile assembles from

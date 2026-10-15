@@ -350,32 +350,21 @@ StationaryVelocityField], integrated with `steps` squaring steps
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """Boundary condition outside the field of view."""
 
-    log: tx.Annotated[
-        bool,
-        tx.Doc(
-            """
-            Whether the file holds the stationary velocity whose flow is
-            the map, rather than its displacement.
-            """
-        ),
-        KwOnly(),
-    ] = False
+    log: bool = False
+    """
+    Whether the file holds the stationary velocity whose flow is
+    the map, rather than its displacement.
+    """
 
-    steps: tx.Annotated[
-        tx.Optional[int],
-        tx.Doc(
-            """
-            The number of squaring steps that integrate a velocity (`log`
-            only). If `None`, the default of
-            [`StationaryVelocityField`][brainhops.datamodel.\
-transformations.StationaryVelocityField].
-            """
-        ),
-        KwOnly(),
-    ] = None
+    steps: tx.Optional[int] = None
+    """
+    The number of squaring steps that integrate a velocity (`log` only).
+    If `None`, the default of [`StationaryVelocityField`][].
+    """
 
-    _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    """The vectors given to the field, or `None` to decode them from `rawdata`.
+    _data: NoRepr[tx.Optional[ArrayProtocol]] = None
+    """
+    The vectors given to the field, or `None` to decode them from `rawdata`.
 
     Vectors stored here are pending until [`consolidate`][] or a write
     encodes them into `rawdata`.

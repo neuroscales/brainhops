@@ -9,6 +9,7 @@ from bagof.magic import replace
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel._systems import dispatch
 from brainhops.datamodel.axes import (
     A,
     Axis,
@@ -32,6 +33,7 @@ from brainhops.datamodel.systems import (
     FRASCoordinateSystem,
     FVoxelCoordinateSystem,
     LPSmm,
+    MillimetricCoordinateSystem,
     PhysicalCoordinateSystem,
     PixelCoordinateSystem,
     RASCoordinateSystem,
@@ -135,7 +137,7 @@ def test_axes_none_reads_as_the_default(cls: type) -> None:
 
 def test_axes_none_reads_as_ellipsis_in_any_spelling() -> None:
     assert CS(axes=None) == CS() == CS(axes=[...])
-    assert CS("s", None) == CS(name="s")
+    assert CS(None, name="s") == CS(name="s")
     assert CS.from_dict({"axes": None}) == CS()
 
 
@@ -392,17 +394,17 @@ def test_the_axes_of_a_fixed_dimension_system() -> None:
 
 def test_is_open_and_ndim(any_layout: str) -> None:
     axes = AxisList(ANY_LAYOUTS[any_layout])
-    assert axes.is_open is (any_layout != "closed")
+    assert axes.is_variadic is (any_layout != "closed")
     assert axes.ndim == (2 if any_layout == "closed" else None)
-    assert AxisList([...]).is_open and AxisList([...]).ndim is None
-    assert not AxisList([]).is_open and AxisList([]).ndim == 0
+    assert AxisList([...]).is_variadic and AxisList([...]).ndim is None
+    assert not AxisList([]).is_variadic and AxisList([]).ndim == 0
 
 
 def test_more_than_one_ellipsis_describes_no_axes() -> None:
     axes = AxisList([X, ..., ...])
     for read in (
         lambda: axes.ndim,
-        lambda: axes.is_open,
+        lambda: axes.is_variadic,
         lambda: axes.restrict([0]),
         lambda: axes.expand(3),
     ):
@@ -700,7 +702,7 @@ def test_expand_a_closed_system_to_its_size_is_itself() -> None:
 
 @pytest.mark.parametrize("ndim", [0, 1, 3])
 def test_expand_a_closed_system_to_another_size(ndim: int) -> None:
-    with pytest.raises(ValueError, match="closed list of 2 axes"):
+    with pytest.raises(ValueError, match="finite list of 2 axes"):
         CS(axes=[X, Y]).expand(ndim)
 
 
@@ -1002,12 +1004,12 @@ def test_an_open_system_keeps_the_class_it_was_called_as(
 @pytest.mark.parametrize(
     "predicate",
     [
-        _systems._is2d,
-        _systems._is3d,
-        _systems._is_spatial,
-        _systems._is_array,
-        _systems._is_mm,
-        _systems._is_anat("RAS"),
+        dispatch._is2d,
+        dispatch._is3d,
+        dispatch._is_spatial,
+        dispatch._is_array,
+        dispatch._is_mm,
+        dispatch._is_anat("RAS"),
     ],
     ids=lambda p: p.__name__,
 )
@@ -1165,7 +1167,13 @@ def test_no_array_pixel_or_voxel_system_is_physical() -> None:
         for cls in SYSTEM_CLASSES
         if issubclass(cls, PhysicalCoordinateSystem)
     }
-    assert physical == {PhysicalCoordinateSystem, RASmm, LPSmm, RSAmm}
+    assert physical == {
+        PhysicalCoordinateSystem,
+        MillimetricCoordinateSystem,
+        RASmm,
+        LPSmm,
+        RSAmm,
+    }
 
 
 @pytest.mark.parametrize(
@@ -1304,7 +1312,7 @@ def test_the_shared_api(cls: type) -> None:
     assert X in axes and ... in axes
     assert axes.index("t") == 2 and axes.index(TimeAxis()) == 2
     assert axes.names == ("x", ..., "t")
-    assert axes.ndim is None and axes.is_open
+    assert axes.ndim is None and axes.is_variadic
     assert axes[2] is T and axes.at(-1) is T and axes.at(2) == Axis()
     assert axes.compatible_with([X, Y, T])
     assert axes.compatible_with(AxisTuple([X, Y, T]))

@@ -8,11 +8,12 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic, NoRepr, replace
+from bagof.magic import NoRepr, replace
 from PIL import Image
 
 # internals
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -24,7 +25,7 @@ from brainhops.io.base.parsers import (
 from ._utils import _open, _png_scal, pillow_dpi, pillow_layout, sniff_pillow
 
 
-class PillowRaw(Magic, BinaryFileReader, frozen=True):
+class PillowRaw(Raw, BinaryFileReader):
     """The header of a raster file, as Pillow reads it.
 
     A raster file, such as a PNG or a JPEG file, holds one picture or a

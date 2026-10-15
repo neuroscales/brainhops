@@ -3,9 +3,9 @@
 __all__ = ["FlirtRaw"]
 
 import typing_extensions as tx
-from bagof.magic import Magic
 
 from brainhops._core.peek import peekable_lines
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
@@ -25,7 +25,7 @@ _IDENTITY: _Matrix = (
 )
 
 
-class FlirtRaw(Magic, TextFileReader):
+class FlirtRaw(Raw, TextFileReader):
     """Record of an FSL FLIRT `.mat` file, which holds its matrix as read.
 
     A FLIRT `.mat` file is a plain-text matrix, one row per line, which

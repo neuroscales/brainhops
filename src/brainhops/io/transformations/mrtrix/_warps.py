@@ -1053,31 +1053,21 @@ class MrtrixWarpFull(
 
     HINTS = ("warpfull", "warp_full")
 
-    from_image: tx.Annotated[
-        int,
-        tx.Doc(
-            """
-            Which image the warp moves: `1`, the default, maps image-2
-            points (or midway points, with `midway`) to image-1 points, and
-            `2` maps the other way. This is the `-from` option of MRtrix.
-            """
-        ),
-        KwOnly(),
-    ] = 1
+    from_image: int = 1
+    """
+    Which image the warp moves: `1`, the default, maps image-2 points
+    (or midway points, with `midway`) to image-1 points, and `2` maps
+    the other way. This is the `-from` option of MRtrix.
+    """
 
-    midway: tx.Annotated[
-        bool,
-        tx.Doc(
-            """
-            Whether the warp stops at the midway space, which is the
-            `-midway_space` option of MRtrix, rather than mapping between
-            the two images.
-            """
-        ),
-        KwOnly(),
-    ] = False
+    midway: bool = False
+    """
+    Whether the warp stops at the midway space, which is the
+    `-midway_space` option of MRtrix, rather than mapping between the
+    two images.
+    """
 
-    _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
+    _data: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The warps given to the object, or `None` to decode them.
 
     Warps stored here are pending until [`consolidate`][] or a write

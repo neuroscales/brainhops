@@ -101,9 +101,9 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
     `rawdata`.
     """
 
-    _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
-        "transformations", default=None
-    )
+    _transformations: tx.Annotated[
+        tx.Optional[tx.List[Transformation]], Inherit("transformations")
+    ] = None
     """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
@@ -128,14 +128,11 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
     were assigned.
     """
 
-    level: tx.Annotated[
-        tx.Optional[int],
-        tx.Doc(
-            "The index of the level of a pyramid, where 0 is the finest "
-            "level `s0`. It is `None` for a dataset that was read on its "
-            "own."
-        ),
-    ] = None
+    level: tx.Optional[int] = None
+    """
+    The index of the level of a pyramid, where 0 is the finest level `s0`.
+    It is `None` for a dataset that was read on its own.
+    """
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:

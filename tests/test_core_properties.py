@@ -2,6 +2,7 @@
 
 import pytest
 import typing_extensions as tx
+from bagof.magic import Magic
 
 from brainhops._core.properties import (
     InvalidatorInAttribute,
@@ -100,6 +101,18 @@ def test_the_cache_and_its_invalidation() -> None:
     box = cls(1)
     assert box.value == "computed" and box.value == "computed"
     assert cls.computed == 1
+
+
+def test_a_frozen_object_can_cache_a_read_only_property() -> None:
+    class Frozen(Magic, frozen=True):
+        @smartproperty(cache=True, fset=False)
+        def value(self) -> object:
+            return object()
+
+    obj = Frozen()
+    assert obj.value is obj.value
+    with pytest.raises(AttributeError):
+        obj.value = object()
 
 
 def test_lazyproperty_computes_once_and_reads_a_stored_value() -> None:

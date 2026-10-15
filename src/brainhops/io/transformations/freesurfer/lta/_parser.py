@@ -3,8 +3,9 @@ from enum import Enum
 from warnings import warn
 
 import typing_extensions as tx
-from bagof.magic import Magic, fields
+from bagof.magic import fields
 
+from brainhops._core.magic import SharedOptions
 from brainhops._core.peek import peekable_lines
 from brainhops.io.base.parsers import (
     Confidence,
@@ -23,7 +24,7 @@ _FIRST_LINE = re.compile(r"^type\s*=\s*\d+$")
 # ----------------------------------------------------------------------
 
 
-class LtaReaderWriter(Magic, TextFileReader, TextFileWriter):
+class LtaReaderWriter(SharedOptions, TextFileReader, TextFileWriter):
     """Mixin that lets a class be sniffed, read and written as LTA.
 
     `LtaRaw` and its blocks inherit their `sniff*`, `from_*` and `to_*`

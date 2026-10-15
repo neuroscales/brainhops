@@ -108,7 +108,7 @@ def test_from_dict_refuses_a_fixed_field_that_disagrees() -> None:
 def test_from_other_does_not_read_a_plain_object_as_a_parent() -> None:
     # Every class derives from `object`, but an `object` instance has nothing
     # to read, so the constructor refuses it.
-    with pytest.raises(ConversionError):
+    with pytest.raises(TypeError):
         _Plain.from_any(object())
 
 

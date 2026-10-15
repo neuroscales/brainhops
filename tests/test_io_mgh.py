@@ -856,7 +856,7 @@ def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
     # Other metadata gives its record and its geometry.
     image = loaded()
     edited = image.metadata.raw.copy()
-    edited.tags = b"other"
+    edited = replace(edited, tags=b"other")
     image.metadata = MghMetadata.from_raw(edited)
     assert image.consolidate().metadata.raw is edited
 
