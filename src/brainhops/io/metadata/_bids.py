@@ -23,7 +23,7 @@ import os
 
 # externals
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import Field, NoRepr
 
 # internals
 from brainhops._core import path
@@ -81,7 +81,9 @@ class BidsSidecar(MetadataFormat, TextFileReader, TextFileWriter):
         *_KEYED_FIELDS,
     )
 
-    raw: NoRepr[tx.Optional[tx.Dict[str, tx.Any]]] = None
+    raw: tx.Annotated[
+        tx.Optional[tx.Dict[str, tx.Any]], NoRepr(), Field(convert=False)
+    ] = None
     """The JSON object of the sidecar, or `None` for metadata without a
     record."""
 
