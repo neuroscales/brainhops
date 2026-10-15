@@ -338,7 +338,7 @@ def _encode(
     if "history" in changed:
         tags = encode_history(raw.tags, changed["history"])
         if tags is not None:
-            raw.tags = tags
+            raw = replace(raw, tags=tags)
             changed.pop("history")
     return raw
 

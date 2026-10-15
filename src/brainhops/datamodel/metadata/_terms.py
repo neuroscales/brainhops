@@ -97,7 +97,7 @@ def _space(value: tx.Any) -> tx.Any:
     return _SPACE_TERM(value)
 
 
-class EncodingDirection(DataModelBase):
+class EncodingDirection(DataModelBase, kw_only=False):
     """
     The direction of an encoding axis, such as the phase-encoding or the
     slice-encoding axis, as a unit vector in a coordinate system.

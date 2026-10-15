@@ -35,7 +35,7 @@ if tx.TYPE_CHECKING:  # pragma: no cover
     from ..geometry import Geometry
 
 
-class Indexed(DataModelBase, frozen=True, eq=False, repr=False):
+class Indexed(DataModelBase, frozen=True, eq=False, repr=False, kw_only=False):
     """
     An image indexed as its data array is, `image[index]`.
 
@@ -172,7 +172,7 @@ class Indexed(DataModelBase, frozen=True, eq=False, repr=False):
         return np.linalg.pinv(matrix[:, :-1])
 
 
-class Resampled(DataModelBase, frozen=True, eq=False, repr=False):
+class Resampled(DataModelBase, frozen=True, eq=False, repr=False, kw_only=False):
     """
     An image resampled onto a new geometry, `image.reslice(geometry)`.
 
