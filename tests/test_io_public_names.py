@@ -30,7 +30,9 @@ class Package(tx.NamedTuple):
 
 PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.metadata": Package(
-        names=frozenset({"MetadataFormat"}),
+        names=frozenset(
+            {"BidsSidecar", "MetadataFormat", "from_bids", "to_bids"}
+        ),
     ),
     "brainhops.io.common.nifti": Package(
         names=frozenset(

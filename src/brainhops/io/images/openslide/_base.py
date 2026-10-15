@@ -16,6 +16,8 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
@@ -33,6 +35,7 @@ from brainhops.io.common._geometry import (
 )
 from brainhops.io.common._pyramids import held_images
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 # this format
 from ._data import _Slide, _SlideArray, detect, local_path, read_associated
@@ -260,7 +263,9 @@ class OpenSlideImage(
     the list of the record and caches it apart.
     """
 
-    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = None
+    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the slide, which holds its record, or `None`.
@@ -431,7 +436,13 @@ class OpenSlideImage(
 
     # --- consolidating ------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Move the pending data into `rawdata`.
 
         OpenSlide cannot write slides, so no record can be encoded, and
@@ -441,16 +452,43 @@ class OpenSlideImage(
         or assigned. An image without pending data is left as it is: the
         copy shares `rawdata` and the metadata.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a slide
+        holds no field of the vocabulary yet, so a field that is set is
+        reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
         OpenSlideImage
             The consolidated copy, or this image with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        report = ConversionReport(
+            source="OpenSlideImage", target="OpenSlideImage"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, OpenSlideMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         # The record cannot be encoded, so a copy is given the list that
         # the image holds when it is not the list that the record decodes
         # to, as a list decoded and then changed in place would otherwise
@@ -461,12 +499,26 @@ class OpenSlideImage(
         ):
             held = self._transformations
         if self._data is None:
-            return self if inplace else replace(self, transformations=held)
+            if not inplace:
+                return replace(self, transformations=held, metadata=metadata)
+            if requested:
+                self.transformations = held
+                self.metadata = metadata
+            return self
         raw = _image_to_disk(self._data)
         if not inplace:
-            return replace(self, data=None, rawdata=raw, transformations=held)
+            return replace(
+                self,
+                data=None,
+                rawdata=raw,
+                transformations=held,
+                metadata=metadata,
+            )
         self.rawdata = raw
         self.data = None
+        if requested:
+            self.transformations = held
+            self.metadata = metadata
         return self
 
     def associated_image(self, name: str) -> np.ndarray:
@@ -555,7 +607,9 @@ class OpenSlideMultiScaleImage(
     empty list apart.
     """
 
-    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = None
+    _metadata: NoRepr[tx.Optional[OpenSlideMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("images", "transformations")
@@ -746,7 +800,13 @@ class OpenSlideMultiScaleImage(
 
     # --- consolidating ------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Move the pending data of the levels into `rawdata`.
 
         OpenSlide cannot write slides, so no record can be encoded, and
@@ -765,10 +825,20 @@ class OpenSlideMultiScaleImage(
         each with its array of `rawdata` and its transformations, since
         no record can be encoded.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a slide
+        holds no field of the vocabulary yet, so a field that is set is
+        reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this pyramid rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -777,11 +847,26 @@ class OpenSlideMultiScaleImage(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the pyramid holds another number of levels than `rawdata`, or a
             level that is not a level of its slide, such as an image of
             another class, since no record can describe it.
         """
+        report = ConversionReport(
+            source="OpenSlideMultiScaleImage",
+            target="OpenSlideMultiScaleImage",
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, OpenSlideMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         # The record stores no placement, so a copy is given the list that
         # the pyramid holds when it is not empty, as a list decoded and then
         # changed in place would otherwise be decoded again and lost.
@@ -790,17 +875,29 @@ class OpenSlideMultiScaleImage(
             placements = self._transformations
         images = held_images(self)
         if images is None:
-            if inplace:
-                return self
-            return replace(self, transformations=placements)
+            if not inplace:
+                return replace(
+                    self, transformations=placements, metadata=metadata
+                )
+            if requested:
+                self.transformations = placements
+                self.metadata = metadata
+            return self
         arrays, levels = _consolidated_levels(self, images)
         raw = self.rawdata if _same(arrays, self.rawdata) else arrays
         if not inplace:
             return replace(
-                self, rawdata=raw, images=levels, transformations=placements
+                self,
+                rawdata=raw,
+                images=levels,
+                transformations=placements,
+                metadata=metadata,
             )
         self.rawdata = raw
         self.images = levels
+        if requested:
+            self.transformations = placements
+            self.metadata = metadata
         return self
 
     def associated_image(self, name: str) -> np.ndarray:

@@ -13,6 +13,9 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
@@ -30,6 +33,7 @@ from brainhops.io.common._geometry import (
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 # this format
 from . import _utils as backend
@@ -245,7 +249,9 @@ class TiffImage(
     the list of the record and caches it apart.
     """
 
-    _metadata: NoRepr[tx.Optional[TiffMetadata]] = None
+    _metadata: NoRepr[tx.Optional[TiffMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the series, which holds its record, or `None`.
@@ -444,6 +450,8 @@ class TiffImage(
         dialect: tx.Optional[str] = None,
         name: tx.Optional[str] = None,
         bigtiff: tx.Optional[bool] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "TiffImage":
         """Encode the pending data and geometry into `rawdata` and the record.
 
@@ -470,6 +478,11 @@ class TiffImage(
         tifffile that encode the pixels, such as `compression`, change
         nothing that the record holds, so only the writers take them.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a TIFF
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -481,6 +494,11 @@ class TiffImage(
         bigtiff : bool, optional
             Whether to write BigTIFF. By default, BigTIFF is written only
             when the data is too large for a classic TIFF (about 4 GiB).
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -489,21 +507,34 @@ class TiffImage(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If there is no data, the axes cannot be stored, or the dialect
             is unknown or cannot store the image.
         """
+        report = ConversionReport(source="TiffImage", target="TiffImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, TiffMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         if self._untouched(dialect, name, bigtiff):
             if not inplace:
-                return replace(self, transformations=None)
+                return replace(self, transformations=None, metadata=metadata)
             self.transformations = None
+            self.metadata = metadata
             return self
         plan = self._planned(dialect, name, bigtiff)
         record = planned_record(plan)
-        if self.metadata is None:
+        if metadata is None:
             metadata = TiffMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         raw = plan.arrays[0]
         if not inplace:
             return replace(
@@ -536,9 +567,11 @@ class TiffImage(
         ----------
         **kwargs : Any
             The options of [`consolidate`][] (`dialect`, `name` and
-            `bigtiff`), and the options of `TiffWriter.write` of tifffile
-            that encode the pixels: `compression`, `compressionargs`,
-            `predictor`, `tile` and `rowsperstrip`.
+            `bigtiff`), and the options of `TiffWriter.write` of
+            tifffile that encode the pixels: `compression`,
+            `compressionargs`, `predictor`, `tile` and `rowsperstrip`.
+            `on_loss` and the fields of the metadata are taken as by
+            [`consolidate`][].
 
         Returns
         -------
@@ -552,6 +585,11 @@ class TiffImage(
         WriterError
             If the image cannot be written.
         """
+        on_loss = kwargs.pop("on_loss", None)
+        fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
+        report = ConversionReport(source="TiffImage", target="TiffImage")
+        metadata_to_write(self.metadata, TiffMetadata, fields, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         options, encoding = split_options(kwargs)
         if not encoding and self._copies_source(**options):
             return self.rawdata.read_bytes()
@@ -594,7 +632,8 @@ class TiffImage(
         filename : str or PathLike
             The path of the file.
         **kwargs : Any
-            The options of [`to_bytes`][].
+            The options of [`to_bytes`][]. `on_loss` and the fields of
+            the metadata are taken as by [`consolidate`][].
 
         Raises
         ------
@@ -603,6 +642,11 @@ class TiffImage(
         WriterError
             If the image cannot be written.
         """
+        on_loss = kwargs.pop("on_loss", None)
+        fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
+        report = ConversionReport(source="TiffImage", target="TiffImage")
+        metadata_to_write(self.metadata, TiffMetadata, fields, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if isinstance(filename, str):
             filename = path.Path(filename)
         kwargs.setdefault("name", _to_filename(filename))

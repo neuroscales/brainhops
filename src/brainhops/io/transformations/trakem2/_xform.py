@@ -5,7 +5,7 @@ __all__ = ["TrakEM2PatchAffine"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -14,6 +14,8 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -21,6 +23,11 @@ from brainhops.io.base.parsers import (
     BinaryFileWriter,
     ParserContentError,
     UnrepresentableTransformationError,
+)
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
 
@@ -148,7 +155,9 @@ class TrakEM2PatchAffine(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xml",)
     HINTS = ("trakem2",)
 
-    _metadata: NoRepr[tx.Optional[TrakEM2Metadata]] = None
+    _metadata: NoRepr[tx.Optional[TrakEM2Metadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the project, which holds its XML file as a record.
@@ -434,7 +443,13 @@ class TrakEM2PatchAffine(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         If neither the matrix nor the `input` and `output` systems were
@@ -450,10 +465,20 @@ class TrakEM2PatchAffine(
         system. The new record is held by new metadata, and the matrix is
         then decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a
+        TrakEM2 project holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -463,6 +488,10 @@ class TrakEM2PatchAffine(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the transformation has no record, if the matrix is not a
             2D affine, or if an assigned system is not compatible with the
@@ -470,6 +499,16 @@ class TrakEM2PatchAffine(
         WriterError
             If the record cannot be changed in place.
         """
+        report = ConversionReport(
+            source="TrakEM2PatchAffine", target="TrakEM2PatchAffine"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, TrakEM2Metadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         record = _record(self)
         overridden = (
             self._data is not None
@@ -477,7 +516,11 @@ class TrakEM2PatchAffine(
             or self._output is not None
         )
         if record is not None and not overridden:
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         if record is None:
             raise UnrepresentableTransformationError(
                 "A TrakEM2 affine is written into the project that it was "
@@ -488,7 +531,7 @@ class TrakEM2PatchAffine(
         patch = record.patch(self.patch)
         _check_systems(self, patch)
         record = record.with_transform(patch.oid, _matrix_to_disk(self.matrix))
-        metadata = replace(self.metadata, raw=record)
+        metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,
@@ -514,7 +557,8 @@ class TrakEM2PatchAffine(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer, which are refused.
+            Options of the writer, which are refused. `on_loss` and the
+            fields of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -529,7 +573,8 @@ class TrakEM2PatchAffine(
             If the matrix or the systems cannot be encoded, or if the
             transformation has no record.
         """
-        return _record(self.consolidate()).to_bytes(**kwargs)
+        fields, kwargs = metadata_options(kwargs)
+        return _record(self.consolidate(**fields)).to_bytes(**kwargs)
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to the file at a path, replacing it.

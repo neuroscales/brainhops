@@ -154,7 +154,7 @@ def _(
                 f"given."
             )
     try:
-        record = _lta_written(t)
+        record, _ = _lta_written(t, {})
     except UnrepresentableTransformationError as error:
         raise unrepresentable(t, cls, str(error)) from error
     src, dst = _valid(record.src), _valid(record.dst)

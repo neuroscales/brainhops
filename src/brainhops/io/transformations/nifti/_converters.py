@@ -38,7 +38,10 @@ helper it calls first (`_ras_displacement`, `_ras_coordinates`, or
 `affine_between`). Nothing is resampled or approximated. The options a
 converter is given are the format's own (`metadata=`, and `log=` and
 `steps=` for a displacement field); one that would change the map, such
-as `input=` or `matrix=`, is refused by `format_options`.
+as `input=` or `matrix=`, is refused by `format_options`. Without
+`metadata=`, the format receives the metadata of `t`, which its field
+converts into `NiftiMetadata` without a record, so that the vocabulary
+of an X5 transform, say, is carried into the NIfTI file.
 """
 
 # dependencies
@@ -112,6 +115,8 @@ def _(
     # Exactly, or raise: the bridges, and the reduction to one affine.
     cls = NiftiVoxelToRAS
     options = format_options(t, cls, kwargs, AFFINE_OPTIONS)
+    # The metadata of `t` rides along, converted by the field.
+    options.setdefault("metadata", t.metadata)
     matrix = affine_between(t, VOXEL, RAS, cls)
     return cls(matrix=matrix[:-1], **options)
 
@@ -133,6 +138,8 @@ def _(
     # Exactly, or raise: the bridges, and the reduction to one affine.
     cls = NiftiRASToVoxel
     options = format_options(t, cls, kwargs, AFFINE_OPTIONS)
+    # The metadata of `t` rides along, converted by the field.
+    options.setdefault("metadata", t.metadata)
     matrix = affine_between(t, RAS, VOXEL, cls)
     return cls(matrix=matrix[:-1], **options)
 
@@ -169,6 +176,8 @@ def _(
     options = format_options(
         t, NiftiRASDisplacementField, kwargs, DISPLACEMENT_OPTIONS
     )
+    # The metadata of `t` rides along, converted by the field.
+    options.setdefault("metadata", t.metadata)
     ras2voxel, field, voxel2ras = _ras_displacement(t, options)
     chain = (
         RASToVoxel(matrix=ras2voxel[:-1]),
@@ -193,6 +202,8 @@ def _(
     # of displacements is refused there, with the reason.
     cls = NiftiRASCoordinatesField
     options = format_options(t, cls, kwargs, COORDINATES_OPTIONS)
+    # The metadata of `t` rides along, converted by the field.
+    options.setdefault("metadata", t.metadata)
     field, voxel2ras = _ras_coordinates(t, cls)
     coordinates = ras_coordinate_values(t, field, voxel2ras, cls)
     return cls(field=coordinates, **options)

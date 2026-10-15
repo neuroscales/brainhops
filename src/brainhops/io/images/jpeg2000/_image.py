@@ -14,6 +14,9 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
@@ -29,6 +32,7 @@ from brainhops.io.common._geometry import (
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 # this format
 from ._boxes import rewrite
@@ -123,7 +127,9 @@ class Jpeg2000Image(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[Jpeg2000Metadata]] = None
+    _metadata: NoRepr[tx.Optional[Jpeg2000Metadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
@@ -367,6 +373,7 @@ class Jpeg2000Image(
         container: tx.Optional[str] = None,
         num_resolutions: tx.Optional[int] = None,
         comment: tx.Optional[str] = None,
+        on_loss: tx.Optional[OnLoss] = None,
         **options,
     ) -> "Jpeg2000Image":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -404,6 +411,11 @@ class Jpeg2000Image(
         pending afterwards, so the transformations are decoded from the
         new record, with the precision of the file.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a JPEG
+        2000 file holds no field of the vocabulary yet, so a field that
+        is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -417,6 +429,9 @@ class Jpeg2000Image(
             pixels again.
         comment : str, optional
             The comment of the file, in place of those of the record.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
         **options : Any
             Options of the JPEG 2000 writer of Pillow, which encode the
             pixels again, such as `irreversible=True,
@@ -424,6 +439,8 @@ class Jpeg2000Image(
             `tile_size=(256, 256)`. The options `signed`, `no_jp2` and
             `dpi` are refused, because the data, `container` and the
             transformations decide them.
+            An option named after a field of the metadata overrides that
+            field instead.
 
         Returns
         -------
@@ -433,6 +450,10 @@ class Jpeg2000Image(
         Raises
         ------
         TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
+        TypeError
             If an unknown option is given.
         WriterError
             If there is no data, the data are not a picture of two spatial
@@ -440,6 +461,19 @@ class Jpeg2000Image(
             type, the container is unknown, or the record changes a field
             that the coded image decides.
         """
+        fields = {
+            name: options.pop(name) for name in list(options) if name in FIELDS
+        }
+        report = ConversionReport(
+            source="Jpeg2000Image", target="Jpeg2000Image"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, Jpeg2000Metadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         options = encoder_options(options)
         held = None if self.metadata is None else self.metadata.raw
         if container is None:
@@ -476,8 +510,9 @@ class Jpeg2000Image(
             and comment is None
         ):
             if not inplace:
-                return replace(self, transformations=None)
+                return replace(self, transformations=None, metadata=metadata)
             self.transformations = None
+            self.metadata = metadata
             return self
         if copied:
             content = _rewritten(self, held, container, comment, geometry)
@@ -493,10 +528,10 @@ class Jpeg2000Image(
             )
         record = read_record(content)
         raw = _Jpeg2000Proxy(_Jpeg2000Source(content=content), record, 0)
-        if self.metadata is None:
+        if metadata is None:
             metadata = Jpeg2000Metadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,

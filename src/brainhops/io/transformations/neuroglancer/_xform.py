@@ -5,13 +5,14 @@ __all__ = ["NeuroglancerTransform"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata._report import OnLoss
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -20,6 +21,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
+from brainhops.io.metadata._base import requested_fields
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
@@ -103,7 +105,9 @@ class NeuroglancerTransform(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".ngtransform.json",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("neuroglancer.affine",)
 
-    _metadata: NoRepr[tx.Optional[NeuroglancerTransformMetadata]] = None
+    _metadata: NoRepr[tx.Optional[NeuroglancerTransformMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the JSON object as a record.
@@ -309,7 +313,13 @@ class NeuroglancerTransform(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
@@ -327,6 +337,11 @@ class NeuroglancerTransform(
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with metadata that the format cannot store. By
+            default, the policy in effect.
+        **fields : Any
+            Metadata fields to override before encoding the transform.
 
         Returns
         -------
@@ -339,6 +354,16 @@ class NeuroglancerTransform(
         UnrepresentableTransformationError
             If a transform cannot encode the systems or the matrix.
         """
+        metadata = self.metadata
+        requested = requested_fields(metadata, fields)
+        if metadata is not None:
+            metadata = metadata.consolidate(on_loss=on_loss, **fields)
+            if not requested:
+                metadata = self.metadata
+        elif fields:
+            metadata = NeuroglancerTransformMetadata().consolidate(
+                on_loss=on_loss, **fields
+            )
         record = _record(self)
         overridden = (
             self._data is not None
@@ -346,12 +371,15 @@ class NeuroglancerTransform(
             or self._output is not None
         )
         if record is not None and not overridden:
-            return self if inplace else replace(self)
+            if inplace:
+                self.metadata = metadata
+                return self
+            return replace(self, metadata=metadata)
         record = _encoded(self)
-        if self.metadata is None:
+        if metadata is None:
             metadata = NeuroglancerTransformMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self, metadata=metadata, data=None, input=None, output=None
@@ -362,11 +390,16 @@ class NeuroglancerTransform(
         self.output = None
         return self
 
-    def to_text(self) -> str:
+    def to_text(self, **kwargs) -> str:
         """Return the JSON text of the transform.
 
         The transformation is consolidated into a copy, whose record is
         written, and the transformation itself is not changed.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of [`consolidate`][].
 
         Returns
         -------
@@ -378,10 +411,15 @@ class NeuroglancerTransform(
         UnrepresentableTransformationError
             If a transform cannot encode the systems or the matrix.
         """
-        return _record(self.consolidate()).to_text()
+        return _record(self.consolidate(**kwargs)).to_text()
 
-    def to_lines(self) -> tx.Iterator[str]:
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the JSON text of the transform.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of [`consolidate`][].
 
         Yields
         ------
@@ -393,9 +431,9 @@ class NeuroglancerTransform(
         UnrepresentableTransformationError
             If a transform cannot encode the systems or the matrix.
         """
-        return iter(self.to_text().splitlines())
+        return iter(self.to_text(**kwargs).splitlines())
 
-    def to_fileobj(self, file: tx.IO) -> None:
+    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the JSON text of the transform to a file object.
 
         The text is encoded before anything is written, so a
@@ -405,15 +443,17 @@ class NeuroglancerTransform(
         ----------
         file : file object
             The file, open in text mode.
+        **kwargs : Any
+            Options of [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If a transform cannot encode the systems or the matrix.
         """
-        file.write(self.to_text())
+        file.write(self.to_text(**kwargs))
 
-    def to_filename(self, filename: path.FilenameLike) -> None:
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the JSON text of the transform to a path.
 
         The text is encoded first, and a local file is then replaced at
@@ -423,13 +463,15 @@ class NeuroglancerTransform(
         ----------
         filename : path
             The path of the file.
+        **kwargs : Any
+            Options of [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If a transform cannot encode the systems or the matrix.
         """
-        write_file(filename, self.to_text().encode("utf-8"))
+        write_file(filename, self.to_text(**kwargs).encode("utf-8"))
 
 
 # ----------------------------------------------------------------------

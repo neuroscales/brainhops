@@ -16,6 +16,9 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -66,6 +69,10 @@ from brainhops.io.common.mrtrix._raw import (
     _sniffed_raw,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -170,7 +177,9 @@ class MrtrixImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
@@ -329,6 +338,11 @@ class MrtrixImage(
         The record is read from the header, and the lazy array reads the
         voxels when they are needed.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an MRtrix
+        image holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         filename : path
@@ -408,6 +422,8 @@ class MrtrixImage(
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "MrtrixImage":
         """Encode the pending data and geometry into `rawdata` and the record.
 
@@ -467,6 +483,11 @@ class MrtrixImage(
             Header keys merged into those of the base. A value of `None`
             removes a key. The keys that the other options, the data and
             the geometry decide are refused.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -475,6 +496,10 @@ class MrtrixImage(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If there is no data, the data are zero-dimensional, the type
             cannot be stored, or `keyval` sets a key that the other
@@ -486,6 +511,12 @@ class MrtrixImage(
         options = dict(
             layout=layout, datatype=datatype, scaling=scaling, keyval=keyval
         )
+        report = ConversionReport(source="MrtrixImage", target="MrtrixImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MrtrixMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
         held = held_transformations(self)
@@ -496,6 +527,7 @@ class MrtrixImage(
             self._data is None
             and kept
             and all(value is None for value in options.values())
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
             and stores_as_recorded(self.rawdata, self.metadata.raw)
@@ -505,12 +537,16 @@ class MrtrixImage(
             self.transformations = None
             return self
         record, raw = _encoded(self, None, options)
-        if self.metadata is not None and record is self.metadata.raw:
+        if (
+            self.metadata is not None
+            and record is self.metadata.raw
+            and not requested
+        ):
             metadata = self.metadata
-        elif self.metadata is None:
+        elif metadata is None:
             metadata = MrtrixMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,
@@ -549,7 +585,7 @@ class MrtrixImage(
         TypeError
             If an unknown option is given.
         """
-        image = self.consolidate(**writer_options(kwargs))
+        image = self.consolidate(**_options(kwargs))
         return mrtrix_bytes(image.metadata.raw, image.rawdata)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
@@ -595,7 +631,7 @@ class MrtrixImage(
         TypeError
             If an unknown option is given.
         """
-        options = writer_options(kwargs)
+        options = _options(kwargs)
         reading = reads_from(self.rawdata, written_files(filename))
         if reading:
             mmap = self.rawdata.mmap
@@ -630,6 +666,30 @@ class MrtrixImage(
 # ----------------------------------------------------------------------
 #   WRITING
 # ----------------------------------------------------------------------
+
+
+def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
+    """Return the writer options, refusing unknown ones.
+
+    The options of the writer are read by `writer_options`, and `on_loss`
+    and the fields of the metadata, which go to the consolidation of the
+    metadata, are passed on.
+
+    Raises
+    ------
+    TypeError
+        If an unknown option is given.
+    """
+    metadata = {
+        name: value
+        for name, value in kwargs.items()
+        if name in FIELDS or name == "on_loss"
+    }
+    options = writer_options(
+        {name: v for name, v in kwargs.items() if name not in metadata}
+    )
+    options.update(metadata)
+    return options
 
 
 def _encoded(

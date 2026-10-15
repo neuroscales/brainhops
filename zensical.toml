@@ -5,6 +5,7 @@ nav = [
     "index.md",
      {"Command-line interface" = "start/cli.md"},
      {"Python interface" = "start/python.md"},
+     {"Metadata" = "start/metadata.md"},
   ]},
   {"Command-line API" = [
     "cli/index.md",
@@ -26,6 +27,7 @@ nav = [
       "api/datamodel/transformations.md",
       "api/datamodel/images.md",
       "api/datamodel/metadata.md",
+      {"metadata (format authors)" = "api/datamodel/metadata-formats.md"},
       "api/datamodel/kinds.md",
     ]},
     {"io" = [
@@ -107,7 +109,10 @@ nav = [
         {"enum" = "api/_core/enum.md"},
         {"invfield" = "api/_ext/invfield/index.md"},
     ]}
-  ]}
+  ]},
+  {"Developer guide" = [
+    {"Metadata of a format" = "dev/metadata-formats.md"},
+  ]},
 ]
 
 # The site_name is shown in the page header and the browser window title

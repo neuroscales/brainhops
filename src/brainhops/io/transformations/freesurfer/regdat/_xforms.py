@@ -9,7 +9,7 @@ __all__ = [
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import ConvertTo, KwOnly, NoRepr, replace
+from bagof.magic import ConvertTo, Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -21,6 +21,8 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
@@ -31,6 +33,11 @@ from brainhops.io.common.freesurfer import FreesurferTkrSystem
 from brainhops.io.common.freesurfer._tkr import (
     scanner_vox2ras,
     tkr_to_scanner,
+)
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
 )
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
@@ -167,7 +174,9 @@ class RegisterDatTransformation(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".dat", ".reg")
 
-    _metadata: NoRepr[tx.Optional[RegisterDatMetadata]] = None
+    _metadata: NoRepr[tx.Optional[RegisterDatMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     # A geometry that is given, or assigned, is converted to a `Geometry`
     # and checked by `_as_reference_geometry` or `_as_moving_geometry`.
@@ -393,7 +402,13 @@ class RegisterDatTransformation(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
@@ -410,10 +425,20 @@ class RegisterDatTransformation(
         new metadata, and the matrix and the systems are then decoded
         from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a
+        register.dat file holds no field of the vocabulary yet, so a
+        field that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -423,9 +448,24 @@ class RegisterDatTransformation(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the format cannot encode the systems or the matrix.
         """
+        report = ConversionReport(
+            source="RegisterDatTransformation",
+            target="RegisterDatTransformation",
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, RegisterDatMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         record = _record(self)
         overridden = (
             self._data is not None
@@ -433,12 +473,16 @@ class RegisterDatTransformation(
             or self._output is not None
         )
         if record is not None and not overridden:
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         record = _build_raw(self)
-        if self.metadata is None:
+        if metadata is None:
             metadata = RegisterDatMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self, metadata=metadata, data=None, input=None, output=None
@@ -461,14 +505,16 @@ class RegisterDatTransformation(
         file : path or file object
             The path or the open text file.
         **kwargs : Any
-            Options of the writer of the record.
+            Options of the writer of the record. `on_loss` and the
+            fields of the metadata are given to [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If the format cannot encode the systems or the matrix.
         """
-        return _written(self).to_file(file, **kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_file(file, **options)
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the `register.dat` file of the transformation.
@@ -479,7 +525,8 @@ class RegisterDatTransformation(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record.
+            Options of the writer of the record. `on_loss` and the
+            fields of the metadata are given to [`consolidate`][].
 
         Yields
         ------
@@ -491,7 +538,8 @@ class RegisterDatTransformation(
         UnrepresentableTransformationError
             If the format cannot encode the systems or the matrix.
         """
-        return _written(self).to_lines(**kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_lines(**options)
 
     def to_text(self, **kwargs) -> str:
         """Return the content of the `register.dat` file of the transformation.
@@ -502,7 +550,8 @@ class RegisterDatTransformation(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record.
+            Options of the writer of the record. `on_loss` and the
+            fields of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -514,7 +563,8 @@ class RegisterDatTransformation(
         UnrepresentableTransformationError
             If the format cannot encode the systems or the matrix.
         """
-        return _written(self).to_text(**kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_text(**options)
 
 
 class RegisterDatTransformationRASToRAS(RegisterDatTransformation):
@@ -699,8 +749,14 @@ def _new_record(moving: tx.Optional[Geometry]) -> RegisterDatRaw:
     )
 
 
-def _written(xform: RegisterDatTransformation) -> RegisterDatRaw:
+def _written(
+    xform: RegisterDatTransformation, kwargs: tx.Mapping[str, tx.Any]
+) -> tx.Tuple[RegisterDatRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from a transformation holds.
+
+    The record is that of the copy consolidated with `on_loss` and the
+    fields of the metadata among `kwargs`, and the other options, for
+    the writer of the record, are returned with it.
 
     The record is that of the consolidated copy of the transformation.
 
@@ -709,7 +765,8 @@ def _written(xform: RegisterDatTransformation) -> RegisterDatRaw:
     UnrepresentableTransformationError
         If the format cannot encode the systems or the matrix.
     """
-    return _record(xform.consolidate())
+    metadata, options = metadata_options(kwargs)
+    return _record(xform.consolidate(**metadata)), options
 
 
 def _as_geometry(value: tx.Any, what: str) -> tx.Optional[Geometry]:

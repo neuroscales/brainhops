@@ -661,10 +661,10 @@ def test_a_written_dataset_is_read_by_nibabel(tmp_path) -> None:  # noqa: ANN001
     image = AfniImage.load(_source(tmp_path, orient=(1, 2, 4)))
     # The source has no IJK_TO_DICOM_REAL, which nibabel needs and an
     # untouched copy would not add, so the image is written as a new
-    # dataset.
-    io.save(
-        SingleScaleImage.from_instance(image), tmp_path / "nib+orig.BRIK.gz"
-    )
+    # dataset. A plain image keeps the metadata of its source, record
+    # included, so that record is dropped.
+    plain = replace(SingleScaleImage.from_instance(image), metadata=None)
+    io.save(plain, tmp_path / "nib+orig.BRIK.gz")
     ref = nb.load(str(tmp_path / "nib+orig.HEAD"))
     assert np.allclose(np.squeeze(ref.get_fdata()), DATA)
     assert np.allclose(

@@ -13,6 +13,9 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -26,6 +29,7 @@ from brainhops.io.common._geometry import (
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 # this format
 from ._data import _StackProxy
@@ -127,7 +131,9 @@ class StackImage(
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[StackMetadata]] = None
+    _metadata: NoRepr[tx.Optional[StackMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the stack, which holds its record, or `None`.
@@ -196,6 +202,8 @@ class StackImage(
         *,
         inplace: bool = False,
         axis: tx.Optional[tx.Union[str, int]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "StackImage":
         """Encode the pending data and geometry into `rawdata` and the record.
 
@@ -229,6 +237,11 @@ class StackImage(
         by new metadata, and the record held before is never changed. The
         transformations are then decoded from the new record.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an image
+        stack holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -236,6 +249,11 @@ class StackImage(
         axis : {"x", "y", "z", 0, 1, 2}, optional
             The axis along which to cut the volume into files. By default,
             it is the axis of the record, or z.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -244,11 +262,23 @@ class StackImage(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the image has no data, if its data does not have three
             spatial axes and at most one channel axis, if a name has no
             image extension, or if `axis` is not valid.
         """
+        report = ConversionReport(source="StackImage", target="StackImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, StackMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         record = _record(self.metadata)
         if axis is None:
             axis = record.axis if record is not None else "z"
@@ -268,14 +298,15 @@ class StackImage(
             and axis == record.axis
         ):
             if not inplace:
-                return replace(self, transformations=None)
+                return replace(self, transformations=None, metadata=metadata)
             self.transformations = None
+            self.metadata = metadata
             return self
         record, raw = _encoded(self, axis)
-        if self.metadata is None:
+        if metadata is None:
             metadata = StackMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,
@@ -329,16 +360,21 @@ class StackImage(
             if the folder to replace holds files that are not images.
         """
         axis = kwargs.pop("axis", None)
+        on_loss = kwargs.pop("on_loss", None)
+        fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
         refuse_options(type(self), kwargs)
         target = stack_target(filename)
         read = []
         if isinstance(self.rawdata, _StackProxy):
             read = self.rawdata.filenames()
-        image = self.consolidate(axis=axis)
+        image = self.consolidate(axis=axis, on_loss=on_loss, **fields)
         reading = reads_from(self.rawdata, target, image.metadata.raw)
         if reading:
             fill = self.rawdata.fill
-            image = self.consolidate(inplace=True, axis=axis)
+            # What the metadata loses was acted on by the copy above.
+            image = self.consolidate(
+                inplace=True, axis=axis, on_loss="ignore", **fields
+            )
         written = write_stack(target, image.metadata.raw, image.rawdata, read)
         if not reading:
             return

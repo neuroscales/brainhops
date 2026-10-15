@@ -2,7 +2,7 @@
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
 from brainhops._core.properties import (
@@ -14,6 +14,8 @@ from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     _convert_withlog,
 )
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.errors import IncompatibleSystemError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -23,6 +25,11 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
 )
 from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
+)
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base._conversions import (
     affine_between,
@@ -95,7 +102,9 @@ class NiftyRegAffine(
     # rejected.
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 1 << 16
 
-    _metadata: NoRepr[tx.Optional[NiftyRegAffineMetadata]] = None
+    _metadata: NoRepr[tx.Optional[NiftyRegAffineMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -263,7 +272,13 @@ class NiftyRegAffine(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix into a new record.
 
         A transformation that holds a record, and whose matrix was not
@@ -272,10 +287,20 @@ class NiftyRegAffine(
         by new metadata. In every case, the input and the output must
         still be RAS, since the file can hold nothing else.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a
+        NiftyReg affine holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -285,19 +310,37 @@ class NiftyRegAffine(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the input or the output is not RAS, or if the matrix is not
             the matrix of a 3-D affine.
         """
+        report = ConversionReport(
+            source="NiftyRegAffine", target="NiftyRegAffine"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftyRegAffineMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         _check_systems(self)
         record = record_of(self)
         if record is not None and self._data is None:
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         record = _build_raw(self)
-        if self.metadata is None:
+        if metadata is None:
             metadata = NiftyRegAffineMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(self, metadata=metadata, data=None)
         self.metadata = metadata
@@ -317,13 +360,16 @@ class NiftyRegAffine(
             The path or the open text file.
         **kwargs : Any
             Options of the writer of the record, which takes none.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Raises
         ------
         UnrepresentableTransformationError
             If the transformation cannot be encoded.
         """
-        return _written(self).to_file(file, **kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_file(file, **options)
 
     def to_text(self, **kwargs) -> str:
         """Return the content of the file that encodes the transformation.
@@ -335,6 +381,8 @@ class NiftyRegAffine(
         ----------
         **kwargs : Any
             Options of the writer of the record, which takes none.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Returns
         -------
@@ -346,7 +394,8 @@ class NiftyRegAffine(
         UnrepresentableTransformationError
             If the transformation cannot be encoded.
         """
-        return _written(self).to_text(**kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_text(**options)
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the file that encodes the transformation.
@@ -358,6 +407,8 @@ class NiftyRegAffine(
         ----------
         **kwargs : Any
             Options of the writer of the record, which takes none.
+            `on_loss` and the fields of the metadata are given to
+            [`consolidate`][].
 
         Yields
         ------
@@ -369,7 +420,8 @@ class NiftyRegAffine(
         UnrepresentableTransformationError
             If the transformation cannot be encoded.
         """
-        return _written(self).to_lines(**kwargs)
+        record, options = _written(self, kwargs)
+        return record.to_lines(**options)
 
 
 @converter(_xforms.Identity, NiftyRegAffine)
@@ -449,12 +501,19 @@ def _build_raw(xform: NiftyRegAffine) -> NiftyRegAffineRaw:
     return NiftyRegAffineRaw(matrix=matrix_to_disk(data))
 
 
-def _written(xform: NiftyRegAffine) -> NiftyRegAffineRaw:
+def _written(
+    xform: NiftyRegAffine, kwargs: tx.Mapping[str, tx.Any]
+) -> tx.Tuple[NiftyRegAffineRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from a transformation holds.
+
+    The record is that of the copy consolidated with `on_loss` and the
+    fields of the metadata among `kwargs`, and the other options, for
+    the writer of the record, are returned with it.
 
     Raises
     ------
     UnrepresentableTransformationError
         If the transformation cannot be encoded.
     """
-    return record_of(xform.consolidate())
+    metadata, options = metadata_options(kwargs)
+    return record_of(xform.consolidate(**metadata)), options

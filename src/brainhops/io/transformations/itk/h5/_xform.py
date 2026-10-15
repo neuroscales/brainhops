@@ -4,13 +4,16 @@ __all__ = ["H5Transform"]
 
 import h5py
 import typing_extensions as tx
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.common._geometry import held_transformations
 from brainhops.io.common.hdf5 import Hdf5Reader
+from brainhops.io.metadata._base import metadata_to_write, requested_fields
 
 from .._chains import (
     _check_position,
@@ -54,7 +57,9 @@ class H5Transform(Hdf5Reader, ItkTransform):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".h5", ".hdf5")
     HINTS = ("h5",)
 
-    _metadata: NoRepr[tx.Optional[H5Metadata]] = None
+    _metadata: NoRepr[tx.Optional[H5Metadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the blocks as a record.
@@ -229,7 +234,13 @@ class H5Transform(Hdf5Reader, ItkTransform):
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
 
         A transformation that holds a record is left as it is when its
@@ -248,10 +259,20 @@ class H5Transform(Hdf5Reader, ItkTransform):
         gives an empty record. The new record is held by new metadata, and the
         option `position`, which indexed the old record, is reset.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an ITK
+        HDF5 file holds no field of the vocabulary yet, so a field that
+        is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -261,11 +282,21 @@ class H5Transform(Hdf5Reader, ItkTransform):
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If a transformation of the chain is neither an ITK block nor
             an affine between ITK spaces, or if a system that was set
             differs from the system of the chain.
         """
+        report = ConversionReport(source="H5Transform", target="H5Transform")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(self.metadata, H5Metadata, fields, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         record = _record(self)
         decoded = (
             [] if record is None else _decode(record, self.position, True)
@@ -277,18 +308,23 @@ class H5Transform(Hdf5Reader, ItkTransform):
         ):
             if not inplace:
                 return replace(
-                    self, transformations=None, input=None, output=None
+                    self,
+                    transformations=None,
+                    input=None,
+                    output=None,
+                    metadata=metadata,
                 )
             self.transformations = None
             self.input = None
             self.output = None
+            self.metadata = metadata
             return self
         header = H5Header() if record is None else record.header
         record = H5Raw(header=header, blocks=_encode_chain(chain or []))
-        if self.metadata is None:
+        if metadata is None:
             metadata = H5Metadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,

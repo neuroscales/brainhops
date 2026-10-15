@@ -5,7 +5,7 @@ __all__ = ["BdvViewRegistration"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -13,6 +13,8 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -24,6 +26,11 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common.bdv import BdvMetadata, BdvRaw
 from brainhops.io.common.bdv._geometry import global_system, voxel_system
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
+)
 from brainhops.io.transformations.base import TransformationFormat
 
 # ----------------------------------------------------------------------
@@ -161,7 +168,9 @@ class BdvViewRegistration(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xml",)
     HINTS = ("bdv", "bigdataviewer", "bigstitcher")
 
-    _metadata: NoRepr[tx.Optional[BdvMetadata]] = None
+    _metadata: NoRepr[tx.Optional[BdvMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty(
         "metadata", invalidates=("transformations", "decoded")
@@ -465,7 +474,13 @@ class BdvViewRegistration(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
 
         If neither the chain nor the `input` and `output` systems were
@@ -481,10 +496,20 @@ class BdvViewRegistration(
         record is encoded as a new file with a single view. The new record
         is held by new metadata, and the chain is then decoded from it.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a
+        BigDataViewer dataset holds no field of the vocabulary yet, so a
+        field that is set is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this registration rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -494,25 +519,43 @@ class BdvViewRegistration(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If an element is not a 3D affine, or if an assigned system is
             not compatible with the systems of the file.
         WriterError
             If the record cannot be changed in place.
         """
+        report = ConversionReport(
+            source="BdvViewRegistration", target="BdvViewRegistration"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, BdvMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
         record = _record(self)
         assigned = self._transformations is not None
         declared = self._input is not None or self._output is not None
         if not assigned and not declared and record is not None:
-            return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            if requested:
+                self.metadata = metadata
+            return self
         if declared:
             _check_systems(self)
         setup, timepoint = self.view()
         record = _encode(self, record, setup, timepoint)
-        if self.metadata is None:
+        if metadata is None:
             metadata = BdvMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,
@@ -540,7 +583,8 @@ class BdvViewRegistration(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer, which are refused.
+            Options of the writer, which are refused. `on_loss` and the
+            fields of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -554,7 +598,8 @@ class BdvViewRegistration(
         UnrepresentableTransformationError
             If the chain or the systems cannot be encoded.
         """
-        return _record(self.consolidate()).to_bytes(**kwargs)
+        fields, kwargs = metadata_options(kwargs)
+        return _record(self.consolidate(**fields)).to_bytes(**kwargs)
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the registration to the file at a path, replacing it.

@@ -15,6 +15,8 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
@@ -37,6 +39,10 @@ from brainhops.io.common.minc._utils import (
     minc_version,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -129,7 +135,9 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[MincMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MincMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
@@ -203,7 +211,13 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             return None
         return _minc_system(self.metadata.raw)
 
-    def consolidate(self, *, inplace: bool = False) -> "MincImage":
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> "MincImage":
         """Move the pending data into `rawdata`.
 
         MINC files cannot be written, so no record can be encoded, and
@@ -214,23 +228,52 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         without pending data is left as it is: the copy shares `rawdata`
         and the metadata.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a MINC
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`, and the copy holds the
+        consolidated metadata.
+
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
         MincImage
             The consolidated copy, or this image with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
-        if self._data is None:
+        report = ConversionReport(source="MincImage", target="MincImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MincMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
+        if self._data is None and not requested:
             return self if inplace else replace(self)
-        raw = _image_to_disk(self._data)
+        raw = (
+            self.rawdata if self._data is None else _image_to_disk(self._data)
+        )
         if not inplace:
-            return replace(self, data=None, rawdata=raw)
+            return replace(self, data=None, rawdata=raw, metadata=metadata)
         self.rawdata = raw
         self.data = None
+        self.metadata = metadata
         return self
 
     # --- reading ------------------------------------------------------
