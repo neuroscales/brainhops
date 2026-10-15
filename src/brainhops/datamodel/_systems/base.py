@@ -155,7 +155,7 @@ class CoordinateSystem(
         expanded = axes.expand(ndim)
         if not axes.is_variadic:
             return self
-        return replace(self, axes=list(expanded))
+        return replace(self, axes=expanded)
 
     def restrict(
         self, refs: tx.Iterable[tx.Union[int, str]]

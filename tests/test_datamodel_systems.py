@@ -354,11 +354,11 @@ def test_the_axes_are_converted_to_the_type_of_the_field() -> None:
     assert CS(axes=["x", ...]).axes == [Axis(name="x"), ...]
     # An axis of the right type is kept as is.
     assert CS(axes=[X, ...]).axes[0] is X
-    # An AxisList is converted too, since the field is not optional.
+    # An AxisList also converts its elements before they are stored.
     given = AxisList([Axis(name="x"), ...])
-    assert type(get_axes(SpatialCoordinateSystem(axes=given))[0]) is SpaceAxis
+    assert type(SpatialCoordinateSystem(axes=given).axes[0]) is SpaceAxis
     with pytest.raises(TypeError):
-        get_axes(SpatialCoordinateSystem(axes=AxisList([TimeAxis(), ...])))
+        SpatialCoordinateSystem(axes=AxisList([TimeAxis(), ...]))
 
 
 def test_an_axis_list_is_a_plain_list(any_layout: str) -> None:
@@ -1441,7 +1441,7 @@ def test_subclass_axes_conversion_needs_no_special_hint() -> None:
     assert default.axes is not Temporal().axes
     assert Temporal(None).axes is None
     converted = Temporal(axes=AxisList([Axis(name="t")]))
-    assert type(get_axes(converted)[0]) is TimeAxis
+    assert type(converted.axes[0]) is TimeAxis
     assert converted.axes[0].name == "t"
 
 
@@ -1505,3 +1505,21 @@ def test_get_axes_keeps_storage_and_empty_sequences() -> None:
     assert system.axes is None
     assert get_axes(CoordinateSystem(axes=[])) == []
     assert get_axes(AxisTuple(())) == ()
+
+
+@pytest.mark.parametrize("container", [list, AxisList])
+def test_axes_conversion_is_consistent_across_model_operations(
+    container: type,
+) -> None:
+    from bagof.magic import replace
+
+    given = container([Axis(name="x"), ...])
+    system = SpatialCoordinateSystem(axes=given)
+    assigned = SpatialCoordinateSystem()
+    assigned.axes = given
+    replaced = replace(SpatialCoordinateSystem(), axes=given)
+    for result in (system, assigned, replaced):
+        assert type(result.axes[0]) is SpaceAxis
+        assert result.axes[0].name == "x"
+        assert get_axes(result) is result.axes
+    assert system == assigned == replaced

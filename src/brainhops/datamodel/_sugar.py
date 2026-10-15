@@ -1,5 +1,4 @@
 import typing_extensions as tx
-from bagof.converters import Converter
 
 from brainhops.errors import AxisError
 
@@ -16,13 +15,13 @@ def get_axes(
 
     Parameters
     ----------
-    system : CoordinateSystem or AxisSequence or None
+    system : CoordinateSystem | AxisSequence | None
         A coordinate system, its axes, or `None`.
 
     Returns
     -------
     AxisSequence
-        The axes converted to the system's declared sequence type.
+        The stored axes.
         Missing systems and `axes=None` give a fresh `AxisList([...])`,
         without changing the stored value. An empty sequence stays empty.
     """
@@ -31,13 +30,6 @@ def get_axes(
     axes = getattr(system, "axes", None)
     if axes is None:
         return AxisList([...])
-    field = getattr(type(system), "__magic_fields__", {}).get("axes")
-    if field is not None:
-        hint = field.type
-        args = tx.get_args(hint)
-        if type(None) in args:
-            hint = next(arg for arg in args if arg is not type(None))
-        return Converter.get(hint)(axes)
     return axes
 
 
