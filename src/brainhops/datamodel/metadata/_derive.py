@@ -172,7 +172,9 @@ class Indexed(DataModelBase, frozen=True, eq=False, repr=False, kw_only=False):
         return np.linalg.pinv(matrix[:, :-1])
 
 
-class Resampled(DataModelBase, frozen=True, eq=False, repr=False, kw_only=False):
+class Resampled(
+    DataModelBase, frozen=True, eq=False, repr=False, kw_only=False
+):
     """
     An image resampled onto a new geometry, `image.reslice(geometry)`.
 
@@ -400,7 +402,7 @@ def _axis_types(
     if system is None:
         return (None,) * ndim
     axes = system.axes
-    if axes.is_open:
+    if axes.is_variadic:
         axes = axes.expand(ndim)
     kinds = []  # type: tx.List[tx.Optional[AxisType]]
     for axis in list(axes)[:ndim]:

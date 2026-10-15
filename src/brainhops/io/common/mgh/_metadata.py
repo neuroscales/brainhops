@@ -8,7 +8,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops._core import path
