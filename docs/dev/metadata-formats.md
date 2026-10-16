@@ -5,8 +5,8 @@ a file format. The vocabulary is the set of fields of
 [`Metadata`][brainhops.datamodel.metadata.Metadata], such as
 `repetition_time`, `description` or `slice_timing`, that every format
 shares so that metadata can be carried from one format to another. The
-design is recorded in the memos `docs/design/format-records.md` (#415)
-and `docs/design/format-metadata.md` (#233).
+design is recorded in the memos `spec/design/format-records.md` (#415)
+and `spec/design/format-metadata.md` (#233).
 
 The metadata of a format is the class `<X>Metadata`, a subclass of
 [`MetadataFormat`][brainhops.io.metadata.MetadataFormat] that lives next

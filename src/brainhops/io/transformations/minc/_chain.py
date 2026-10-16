@@ -60,7 +60,7 @@ _Volumes = tx.Optional[tx.Tuple[tx.Any, ...]]
 # from both when it is first used. A chain that is assigned is held by
 # the data model, and it is encoded into a new record when the transform
 # is consolidated or written. The design memo
-# `docs/design/format-records.md` records this layout as item 140.
+# `spec/design/format-records.md` records this layout as item 140.
 
 
 def _record(xform: "XfmTransform") -> tx.Optional[XfmRaw]:
