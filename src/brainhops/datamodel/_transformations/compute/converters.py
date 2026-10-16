@@ -81,12 +81,13 @@ def _(
     t: Transformation, cls: tx.Type[TRANSFORMATION], **kwargs
 ) -> TRANSFORMATION:
     # Every request can reach this catch-all converter, so a target class
-    # from an unrelated family is discarded instead of being built. For
-    # example, an Affine rebuilt from a field would receive the field array
-    # as its matrix. The result then keeps the type of `t`, which is how
-    # `convert` signals that the conversion is impossible.
+    # from an unrelated family is not built. For example, an Affine rebuilt
+    # from a field would receive the field array as its matrix. `t` is then
+    # returned as it is, which is how `convert` learns that the conversion
+    # is impossible. The fields in `kwargs` belong to the target class, so
+    # they are not applied to `t`.
     if not (issubclass(cls, type(t)) or issubclass(type(t), cls)):
-        cls = None
+        return t
     return smart_replace(t, cls, **kwargs)
 
 
@@ -694,6 +695,10 @@ _make_converter_chain(TRANSLATION, IDENTITY, SCALING)
 _make_converter_chain(TRANSLATION, IDENTITY, PERMUTATION)
 _make_converter_chain(SCALING, LINEAR, PERMUTATION)
 _make_converter_chain(PERMUTATION, LINEAR, SCALING)
+# A linear tangent matches both the converter of its own family and the
+# converter from Linear to Rotation, so the request is ambiguous unless the
+# tangent is first turned into its map.
+_make_converter_chain(LINEAR_EXP, LINEAR, ROTATION)
 _make_converter_chain(Sequence, AFFINE, TRANSLATION)
 _make_converter_chain(Sequence, AFFINE, LINEAR)
 _make_converter_chain(Sequence, AFFINE, ROTATION)

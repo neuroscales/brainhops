@@ -24,6 +24,7 @@ from functools import partial
 import typing_extensions as tx
 from bagof.dispatchers import AmbiguousMethodError, Function, NoMethodError
 
+from brainhops._core.magic import field_default
 from brainhops.errors import ConversionError
 
 if tx.TYPE_CHECKING:
@@ -119,6 +120,12 @@ def convert(x: FROM, cls: tx.Type[TO], **kwargs: tx.Any) -> TO:
         If no converter applies, if several apply equally, or if the result
         of the chosen converter is not an instance of `cls`.
     """
+    if field_default(cls, "_log", False) and not getattr(x, "log", False):
+        # A tangent class is the class that `log=True` selects, so a request
+        # for it by name asks for the tangent. A tangent already holds it, and
+        # the flag is then not passed, so that converting a tangent to its own
+        # class stays free.
+        kwargs.setdefault("log", True)
     try:
         result = _convert(x, cls, **kwargs)
     except (NoMethodError, AmbiguousMethodError):
