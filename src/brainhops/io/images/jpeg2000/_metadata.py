@@ -17,7 +17,7 @@ from ._raw import Jpeg2000Raw
 
 
 @register_format
-class Jpeg2000Metadata(MetadataFormat, MetadataReader, MetadataWriter):
+class Jpeg2000Metadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of a JPEG 2000 file, which is its header.
 
     The metadata of a JP2 file or a raw codestream is everything that the

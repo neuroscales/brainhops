@@ -47,7 +47,7 @@ from ._views import _image_to_disk, _image_to_model
 
 
 @register_format
-class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
+class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
     """One resolution level of one view of a BigDataViewer dataset.
 
     A BigDataViewer dataset is an XML file and an HDF5 file (see

@@ -625,7 +625,7 @@ def _toy_spacing(transformation: Transformation, ndim: int) -> np.ndarray:
     raise WriterError("A toy file stores a voxel size, not a general map.")
 
 
-class ToyMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
+class ToyMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
     """Metadata of a toy file, which holds its header."""
 
     EXTENSIONS = (".toy",)
@@ -651,7 +651,7 @@ class ToyMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
 
 class ToyImage(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """Image stored in a toy file.
 
@@ -949,7 +949,7 @@ class ToyPyramidRaw(Magic, frozen=True):
     """Bytes of the document as read, or empty for a record built in memory."""
 
 
-class ToyPyramidMetadata(MetadataFormat, BinaryFileReader):
+class ToyPyramidMetadata(BinaryFileReader, MetadataFormat):
     """Metadata of a toy pyramid, which holds the record of its directory.
 
     The record is read from the document and from the header of each
@@ -1000,7 +1000,7 @@ class ToyPyramidMetadata(MetadataFormat, BinaryFileReader):
 
 
 class ToyLevel(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """One level of a toy pyramid.
 
@@ -1185,7 +1185,7 @@ class ToyLevel(
 
 
 class ToyPyramid(
-    ImageFormat, MultiScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, MultiScaleImage
 ):
     """Pyramid stored in a toy pyramid directory.
 

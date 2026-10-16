@@ -53,8 +53,8 @@ def _record(xform: "FlirtTransform") -> tx.Optional[FlirtRaw]:
 
 @register_format
 class FlirtTransform(
-    FslAffineFormat,
     TextFileReader,
+    FslAffineFormat,
     _xforms.Affine,
     TransformationFormat,
 ):

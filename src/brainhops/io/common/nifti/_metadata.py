@@ -19,7 +19,7 @@ from ._vocabulary import clear_spatial_slots, decode, encode
 
 
 @register_format
-class NiftiMetadata(MetadataFormat, MetadataReader, BinaryFileWriter):
+class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     """Metadata of a NIfTI file, which holds the header of the file.
 
     The metadata of a NIfTI file is read from the header alone, so the

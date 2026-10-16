@@ -25,7 +25,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
@@ -148,8 +148,9 @@ def _record_to_model(record: LtaRaw) -> np.ndarray:
 # ----------------------------------------------------------------------
 
 
+@format_registry
 class LtaFormat(FreesurferTransformationFormat, AffineTransformationFormat):
-    """Marker of affine transformations stored in an LTA file."""
+    """Family of affine transformations stored in an LTA file."""
 
     HINTS = ("lta",)
 
@@ -157,9 +158,9 @@ class LtaFormat(FreesurferTransformationFormat, AffineTransformationFormat):
 # Text adapters supply byte decoding and encoding before the generic bases.
 @register_format
 class LtaTransformation(
-    LtaFormat,
     TextFileReader,
     TextFileWriter,
+    LtaFormat,
     _xforms.Affine,
     TransformationFormat,
 ):

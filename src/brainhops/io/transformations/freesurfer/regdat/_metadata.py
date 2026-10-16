@@ -19,7 +19,7 @@ from ._raw import RegisterDatRaw
 
 
 @register_format
-class RegisterDatMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class RegisterDatMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of a `register.dat` file, which holds the file as a record.
 
     A `register.dat` file is a short text file that is read in one pass,

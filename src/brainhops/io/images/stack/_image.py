@@ -60,7 +60,7 @@ from ._views import _image_to_disk, _image_to_model, _permutation
 
 @register_format
 class StackImage(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """A volume stored as a folder of numbered two-dimensional images.
 

@@ -15,7 +15,7 @@ from ._raw import FlirtRaw
 
 
 @register_format
-class FlirtMetadata(MetadataFormat, MetadataReader):
+class FlirtMetadata(MetadataReader, MetadataFormat):
     """Metadata of an FSL FLIRT `.mat` file, which holds a [`FlirtRaw`][].
 
     A FLIRT file is a short text file that is read in one pass, so its

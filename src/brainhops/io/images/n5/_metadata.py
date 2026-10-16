@@ -16,7 +16,7 @@ from ._raw import N5Raw, no_options, score
 
 
 @register_format
-class N5Metadata(MetadataFormat, MetadataReader):
+class N5Metadata(MetadataReader, MetadataFormat):
     """Metadata of an N5 dataset or pyramid, which is its attributes.
 
     The metadata of an N5 dataset is the content of its `attributes.json`

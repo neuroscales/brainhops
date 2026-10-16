@@ -72,7 +72,7 @@ _NDIM = 3
 
 @register_format
 class AfniBrikWarp(
-    AfniWarp, BinaryFileReader, BinaryFileWriter, _xforms.ImmutableSequence
+    BinaryFileReader, BinaryFileWriter, AfniWarp, _xforms.ImmutableSequence
 ):
     """
     An AFNI nonlinear warp stored as an AFNI dataset (`.HEAD` and

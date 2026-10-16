@@ -19,7 +19,7 @@ from ._raw import BdvRaw
 
 
 @register_format
-class BdvMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class BdvMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of a BigDataViewer dataset, which holds its XML file as a
     [`BdvRaw`][].
 

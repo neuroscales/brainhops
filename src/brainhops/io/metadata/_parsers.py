@@ -54,10 +54,10 @@ class MetadataReader(FileReader):
     already score and read a file. Such a format names its record class
     in the constant `RAW` of
     [`MetadataFormat`][brainhops.io.metadata.MetadataFormat] and lists
-    this class among its bases, after `MetadataFormat`:
+    this class among its bases, before `MetadataFormat`:
 
     ```python
-    class LtaMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+    class LtaMetadata(MetadataReader, MetadataWriter, MetadataFormat):
         RAW = LtaRaw
     ```
 

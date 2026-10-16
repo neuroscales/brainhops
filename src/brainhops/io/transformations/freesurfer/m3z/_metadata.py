@@ -21,7 +21,7 @@ from ._raw import M3zRaw
 
 
 @register_format
-class M3zMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class M3zMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of a morph file, which holds the file as an [`M3zRaw`][].
 
     A morph is a single gzip stream in which the node arrays follow the

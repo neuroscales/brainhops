@@ -21,7 +21,7 @@ from ._raw import NeuroglancerTransformRaw
 
 @register_format
 class NeuroglancerTransformMetadata(
-    MetadataFormat, MetadataReader, MetadataWriter
+    MetadataReader, MetadataWriter, MetadataFormat
 ):
     """Metadata of a Neuroglancer coordinate transform.
 

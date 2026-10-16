@@ -45,7 +45,7 @@ it.
 
 ```python
 @register_format
-class MyMetadata(MetadataFormat, MetadataReader, BinaryFileWriter):
+class MyMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".my",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("my",)
     RAW: tx.ClassVar[type] = MyRaw

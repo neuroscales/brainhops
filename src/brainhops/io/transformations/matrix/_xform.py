@@ -69,8 +69,8 @@ _READER_OPTIONS = _conventions.CONVENTIONS + ("variable", "key")
 
 
 class MatrixAffine(
-    AffineTransformationFormat,
     ArrayReader,
+    AffineTransformationFormat,
     _xforms.Affine,
     TransformationFormat,
     repr=HIDE_IF_NONE,

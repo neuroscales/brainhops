@@ -14,7 +14,7 @@ from ._raw import MrtrixRaw
 
 
 @register_format
-class MrtrixMetadata(MetadataFormat, MetadataReader, BinaryFileWriter):
+class MrtrixMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     """Metadata of an MRtrix image, which is its header.
 
     The metadata of an MRtrix image is its header, held as an

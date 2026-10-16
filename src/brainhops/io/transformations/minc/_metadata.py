@@ -20,7 +20,7 @@ from ._raw import XfmRaw
 
 
 @register_format
-class XfmMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class XfmMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of an MNI transform file, which holds it as an [`XfmRaw`][].
 
     An MNI transform file is a short text file that is read in one pass,

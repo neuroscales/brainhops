@@ -202,14 +202,14 @@ class Note(DataModelBase):
 @pytest.fixture
 def public_formats() -> tx.Iterator[tx.Tuple[type, type, type]]:
     @register_format
-    class Export(Note, FileFormat, TextFileWriter):
+    class Export(Note, TextFileWriter, FileFormat):
         EXTENSIONS = (".capability",)
 
         def to_line(self, **kwargs) -> str:
             return self.text
 
     @register_format
-    class ReadOnly(Note, FileFormat, TextFileReader):
+    class ReadOnly(Note, TextFileReader, FileFormat):
         # A longer extension must not hide the eligible writer on save.
         EXTENSIONS = (".readonly.capability",)
 
@@ -218,7 +218,7 @@ def public_formats() -> tx.Iterator[tx.Tuple[type, type, type]]:
             return cls(text=line)
 
     @register_format
-    class ReadWrite(ReadOnly, TextFileWriter):
+    class ReadWrite(TextFileWriter, ReadOnly):
         EXTENSIONS = (".readwrite",)
 
         def to_line(self, **kwargs) -> str:
@@ -250,7 +250,7 @@ def test_dispatch_ignores_export_only_formats_even_with_matching_names(
         pass
 
     @register_format
-    class Export(Family, TextFileWriter):
+    class Export(TextFileWriter, Family):
         EXTENSIONS = (".exportonly",)
 
         @classmethod
@@ -289,7 +289,7 @@ def test_standalone_metadata_dispatch_does_not_join_public_formats() -> None:
         pass
 
     @register_format
-    class Metadata(MetadataFormats, TextFileReader, TextFileWriter):
+    class Metadata(TextFileReader, TextFileWriter, MetadataFormats):
         @classmethod
         def sniff_line(cls, line: str, **kwargs) -> float:
             return 1.0

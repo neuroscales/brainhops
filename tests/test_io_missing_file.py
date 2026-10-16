@@ -197,13 +197,13 @@ def test_dispatched_sniff_still_predicts_from_the_name(missing) -> None:  # noqa
 @pytest.fixture
 def greeting_root() -> tx.Iterator[type]:
     @format_registry
-    class Root(FileFormat, TextFileReader):
+    class Root(FileFormat):
         pass
 
     fmt = register_format(
         type(
             "Greet",
-            (Root,),
+            (TextFileReader, Root),
             {
                 "EXTENSIONS": (".greet",),
                 "sniff_line": Greeting.__dict__["sniff_line"],

@@ -19,7 +19,7 @@ from ._raw import TrakEM2Raw
 
 
 @register_format
-class TrakEM2Metadata(MetadataFormat, MetadataReader, MetadataWriter):
+class TrakEM2Metadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of a TrakEM2 project, which holds its XML file as a
     [`TrakEM2Raw`][].
 

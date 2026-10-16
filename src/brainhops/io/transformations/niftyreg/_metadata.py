@@ -15,7 +15,7 @@ from ._raw import NiftyRegAffineRaw, is_homogeneous
 
 
 @register_format
-class NiftyRegAffineMetadata(MetadataFormat, TxtArrayReader, MetadataWriter):
+class NiftyRegAffineMetadata(TxtArrayReader, MetadataWriter, MetadataFormat):
     """Metadata of a NiftyReg affine file, which holds the file as a record.
 
     An affine file of `reg_aladin` is a short text file that is read in

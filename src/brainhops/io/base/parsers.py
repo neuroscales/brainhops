@@ -1,8 +1,10 @@
 """Independent sniffing, reading and writing capabilities for file formats.
 
-Native format parsers compose readers and writers independently. Dispatchers
-have their own selection API and share only the private adapter mixins.
-Writers do not inherit reading or sniffing.
+Native format parsers compose readers and writers independently. Writers
+do not inherit reading or sniffing. Dispatchers, which choose between
+formats, have their own API in
+[`FileFormat`][brainhops.io.base.FileFormat] and inherit none of these
+classes.
 
 The errors that these classes raise are also importable from here.
 """
@@ -132,20 +134,14 @@ class disabled:  # noqa: N801
 # ---- sniff -----------------------------------------------------------
 
 
-class _SnifferMixin:
-    """Default `sniff*` methods, which derive one from another.
+class _FileNamesMixin:
+    """Constants that describe the names of the files of a format.
 
-    A class that scores files implements only its lowest entry point,
-    such as `sniff_fileobj` or `sniff_line`, and this mixin derives the
-    other `sniff*` methods from it. The mixin also declares the constants
-    that describe the names of the files of a format, which dispatch reads
-    on every format. It chooses no format: [`FileReader`][] adds it to a
-    reader of one format, whose `sniff*` methods return a confidence, and
-    [`FileFormat`][brainhops.io.base.FileFormat] adds it to dispatchers,
-    whose `sniff*` methods return the class that matched.
+    Dispatch reads these constants on every registered format, including
+    a format that writes files but does not read them. Both
+    [`_SnifferMixin`][] and [`FileFormat`][brainhops.io.base.FileFormat]
+    inherit them.
     """
-
-    _READ_MODE: str = "r"
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """File extensions that the format handles, such as `(".nii", ".nii.gz")`.
@@ -179,6 +175,20 @@ class _SnifferMixin:
     The higher value wins. The priority should stay at 0 unless two parsers
     genuinely collide.
     """
+
+
+class _SnifferMixin(_FileNamesMixin):
+    """Default `sniff*` methods, which derive one from another.
+
+    A class that scores files implements only its lowest entry point,
+    such as `sniff_fileobj` or `sniff_line`, and this mixin derives the
+    other `sniff*` methods from it. It chooses no format: [`FileReader`][]
+    adds it to a reader of one format, whose `sniff*` methods return a
+    confidence. A dispatcher, whose `sniff*` methods return the class
+    that matched, does not inherit it.
+    """
+
+    _READ_MODE: str = "r"
 
     @classmethod
     def sniff(
@@ -482,10 +492,11 @@ class _ReaderMixin:
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
         """Read an object from a path, an open file, or binary content.
 
-        Paths and open files are read with [`from_file`][], and binary content
-        with [`from_bytes`][]. A `str` is always a path, whether or not the
-        file exists, so text held in memory must be read with [`from_text`][]
-        or [`from_content`][].
+        Paths and open files are read with [`from_file`][], binary content
+        with [`from_bytes`][], and a [`SourceSpec`][] with [`from_spec`][].
+        A `str` is always a path, whether or not the file exists, so text
+        held in memory must be read with [`from_text`][] or
+        [`from_content`][].
 
         Raises
         ------
@@ -494,6 +505,9 @@ class _ReaderMixin:
         ParserTypeError
             If the input is of another type.
         """
+        if isinstance(other, SourceSpec):
+            return cls.from_spec(other, **kwargs)
+
         if isinstance(other, str):
             other = path.Path(other)
 

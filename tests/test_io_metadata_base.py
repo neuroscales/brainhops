@@ -178,7 +178,7 @@ class TextDictRaw(DictRaw, TextFileReader, TextFileWriter):
         return (f"{key}={value}" for key, value in self.items())
 
 
-class TextDictMetadata(DictMetadata, MetadataReader, MetadataWriter):
+class TextDictMetadata(MetadataReader, MetadataWriter, DictMetadata):
     """A format whose metadata is read and written through its record."""
 
     RAW: tx.ClassVar[type] = TextDictRaw
@@ -192,7 +192,7 @@ class StreamDictRaw(DictRaw, BinaryFileReader):
         return cls(desc=file.read(4).decode())
 
 
-class StreamDictMetadata(DictMetadata, MetadataReader):
+class StreamDictMetadata(MetadataReader, DictMetadata):
     """A binary format whose record class reads streams."""
 
     RAW: tx.ClassVar[type] = StreamDictRaw

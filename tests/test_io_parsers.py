@@ -120,13 +120,13 @@ def test_dispatch_works_over_a_non_seekable_stream() -> None:
     """A pipe cannot rewind, so dispatch buffers it."""
 
     @format_registry
-    class Root(FileFormat, TextFileReader):
+    class Root(FileFormat):
         pass
 
     fmt = register_format(
         type(
             "Greet",
-            (Root,),
+            (TextFileReader, Root),
             {
                 "EXTENSIONS": (".greet",),
                 "sniff_line": Greeting.__dict__["sniff_line"],
@@ -312,13 +312,13 @@ def test_a_bytes_only_parser_still_loads_from_a_fileobj() -> None:
 def test_a_dispatcher_mixin_does_not_count_as_a_fileobj_override() -> None:
     from brainhops.io.base._base import FileFormat
 
-    class Concrete(FileFormat, Neither):
+    class Concrete(Neither, FileFormat):
         pass
 
     with pytest.raises(ParserNotImplementedError):
         Concrete.from_bytes(b"data")
 
-    class ConcreteHeader(FileFormat, HeaderOnly):
+    class ConcreteHeader(HeaderOnly, FileFormat):
         pass
 
     assert ConcreteHeader.from_bytes(b"WXYZ!").magic == b"WXYZ"

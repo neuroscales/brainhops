@@ -14,7 +14,7 @@ from ._utils import EXTENSIONS
 
 
 @register_format
-class PillowMetadata(MetadataFormat, MetadataReader):
+class PillowMetadata(MetadataReader, MetadataFormat):
     """Metadata of a raster image, which is its header as Pillow reads it.
 
     The metadata of a raster file, such as a PNG or a JPEG file, is held

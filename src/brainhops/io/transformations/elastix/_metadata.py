@@ -20,7 +20,7 @@ from ._raw import ElastixRaw
 
 
 @register_format
-class ElastixMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class ElastixMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of an elastix transform parameter file.
 
     The metadata holds the file as an [`ElastixRaw`][] record. A transform

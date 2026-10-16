@@ -139,9 +139,9 @@ def _decode_block(
 
 @register_format
 class XfmTransform(
-    XfmFormat,
     TextFileReader,
     TextFileWriter,
+    XfmFormat,
     _xforms.ImmutableSequence,
     TransformationFormat,
 ):

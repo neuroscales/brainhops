@@ -60,10 +60,10 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 
 @register_format
 class MrtrixLinearTransform(
-    MrtrixTransformationFormat,
-    AffineTransformationFormat,
     TextFileReader,
     TextFileWriter,
+    MrtrixTransformationFormat,
+    AffineTransformationFormat,
     RASToRAS,
 ):
     """

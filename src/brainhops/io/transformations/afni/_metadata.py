@@ -17,7 +17,7 @@ from ._raw import AfniAffineRaw
 
 
 @register_format
-class AfniAffineMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class AfniAffineMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of an AFNI matrix file, which holds the whole file.
 
     An AFNI matrix file is a short text file that is read in one pass, so

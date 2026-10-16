@@ -15,7 +15,7 @@ from ._raw import TfmRaw
 
 
 @register_format
-class TfmMetadata(MetadataFormat, MetadataReader):
+class TfmMetadata(MetadataReader, MetadataFormat):
     """Metadata of an ITK text `.tfm` file, which holds it as a [`TfmRaw`][].
 
     A `.tfm` file is a short text file that is read in one pass, so its

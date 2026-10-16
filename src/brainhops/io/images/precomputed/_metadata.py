@@ -16,7 +16,7 @@ from ._raw import PrecomputedRaw, _no_options, _score
 
 
 @register_format
-class PrecomputedMetadata(MetadataFormat, MetadataReader):
+class PrecomputedMetadata(MetadataReader, MetadataFormat):
     """Metadata of a Neuroglancer precomputed volume, which is its `info`.
 
     The metadata of a precomputed volume is its `info` file, held as a

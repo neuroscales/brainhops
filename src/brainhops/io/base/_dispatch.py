@@ -256,12 +256,23 @@ def _registry_depth(cls: type) -> int:
     ancestors that own a registry are counted, rather than all ancestors,
     because the depth of the class hierarchy says nothing about how well a
     format matches.
+
+    The dispatchers of a family of formats, such as
+    `AfniTransformationFormat`, are not counted either. Only the root and
+    the kinds of objects that derive from it directly, such as
+    `ImageFormat` or `MetadataFormat`, are counted, so that a format does
+    not win a tie because it belongs to more families than another.
     """
     # The import is local because the module that defines the registries
     # imports this one.
-    from brainhops.io.base._base import is_format_registry
+    from brainhops.io.base._base import FileFormat, is_format_registry
 
-    return sum(1 for base in cls.__mro__ if is_format_registry(base))
+    return sum(
+        1
+        for base in cls.__mro__
+        if is_format_registry(base)
+        and (base is FileFormat or FileFormat in base.__bases__)
+    )
 
 
 def _drop_base_classes(

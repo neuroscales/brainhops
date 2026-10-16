@@ -5,6 +5,7 @@ hints."""
 import typing_extensions as tx
 
 # internals
+from brainhops.io.base._base import format_registry
 from brainhops.io.common.afni import AfniFormat
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
@@ -12,19 +13,22 @@ from brainhops.io.transformations.base import (
 )
 
 
+@format_registry
 class AfniTransformationFormat(TransformationFormat, AfniFormat):
-    """Marker of transformations stored in an AFNI format.
+    """Family of transformations stored in an AFNI format.
 
-    The marker answers to the hint `"afni"`, which it inherits from
+    The family answers to the hint `"afni"`, which it inherits from
     [`AfniFormat`][brainhops.io.common.afni.AfniFormat], and to
     `"xform.afni"`.
     """
 
 
+@format_registry
 class AfniAffineFormat(AfniTransformationFormat, AffineTransformationFormat):
-    """Marker of affine transformations stored in an AFNI format."""
+    """Family of affine transformations stored in an AFNI format."""
 
 
+@format_registry
 class AfniWarp(AfniTransformationFormat):
     """A nonlinear warp stored in an AFNI format, as `3dQwarp` writes it.
 

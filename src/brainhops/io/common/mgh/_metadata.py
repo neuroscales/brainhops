@@ -25,7 +25,7 @@ from ._tags import decode_history, encode_history
 
 
 @register_format
-class MghMetadata(MetadataFormat, MetadataReader, BinaryFileWriter):
+class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     """Metadata of an MGH or MGZ file, which holds everything but the voxels.
 
     The metadata of an MGH file is its header, the footer of acquisition

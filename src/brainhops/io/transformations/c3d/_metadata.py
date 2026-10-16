@@ -17,7 +17,7 @@ from ._raw import C3dAffineRaw
 
 
 @register_format
-class C3dAffineMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class C3dAffineMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of a Convert3D matrix file, which holds the file as a record.
 
     A matrix file of Greedy, `c3d_affine_tool` or ITK-SNAP is a short

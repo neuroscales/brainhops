@@ -17,7 +17,7 @@ from ._raw import MrtrixLinearRaw
 
 
 @register_format
-class MrtrixLinearMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class MrtrixLinearMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of an MRtrix linear transform file, which holds the file.
 
     A linear transform file is a short text file that is read in one pass,

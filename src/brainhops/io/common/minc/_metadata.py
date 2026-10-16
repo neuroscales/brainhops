@@ -13,7 +13,7 @@ from ._raw import MincRaw
 
 
 @register_format
-class MincMetadata(MetadataFormat, MetadataReader):
+class MincMetadata(MetadataReader, MetadataFormat):
     """Metadata of a MINC image, which is its header.
 
     The metadata of a MINC image is its header, held as a [`MincRaw`][]

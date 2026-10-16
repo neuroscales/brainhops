@@ -14,7 +14,7 @@ from ._raw import NrrdRaw
 
 
 @register_format
-class NrrdMetadata(MetadataFormat, MetadataReader, BinaryFileWriter):
+class NrrdMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     """Metadata of a NRRD image, which is its header.
 
     The metadata of a NRRD image is its header, held as an [`NrrdRaw`][]

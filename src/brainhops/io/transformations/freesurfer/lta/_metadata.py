@@ -19,7 +19,7 @@ from ._raw import LtaRaw
 
 
 @register_format
-class LtaMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class LtaMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of an LTA file, which holds the file as an [`LtaRaw`][].
 
     An LTA file is a short text file that is read in one pass, so its

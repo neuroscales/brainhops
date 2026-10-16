@@ -30,7 +30,7 @@ def root() -> tx.Iterator[type]:
     """
 
     @format_registry
-    class Root(FileFormat, TextFileReader):
+    class Root(FileFormat):
         pass
 
     yield Root
@@ -54,7 +54,7 @@ def _format(root: type, name: str, **attrs: tx.Any) -> type:
 
     namespace = {"sniff_line": sniff_line, "from_line": from_line}
     namespace.update(attrs)
-    return register_format(type(name, (root,), namespace))
+    return register_format(type(name, (TextFileReader, root), namespace))
 
 
 # ----------------------------------------------------------------------
@@ -137,7 +137,7 @@ def test_longest_matching_extension_wins(root: type, tmp_path) -> None:  # noqa:
     broad = register_format(
         type(
             "Broad",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".gz",),
                 "sniff_line": sniff_line,
@@ -148,7 +148,7 @@ def test_longest_matching_extension_wins(root: type, tmp_path) -> None:  # noqa:
     narrow = register_format(
         type(
             "Narrow",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii.gz",),
                 "sniff_line": sniff_line,
@@ -176,7 +176,7 @@ def test_a_prefix_constraint_beats_an_unconstrained_format(
     generic = register_format(
         type(
             "Generic",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii",),
                 "sniff_line": sniff_line,
@@ -187,7 +187,7 @@ def test_a_prefix_constraint_beats_an_unconstrained_format(
     spm = register_format(
         type(
             "Spm",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii",),
                 "PREFIXES": ("y_",),
@@ -246,7 +246,7 @@ def test_an_apparent_tie_that_only_one_format_can_read_is_not_an_error(
     register_format(
         type(
             "Broken",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".t",),
                 "sniff_line": sniff_line,
@@ -286,7 +286,7 @@ def test_brute_force_is_opt_in(root: type) -> None:
     register_format(
         type(
             "Silent",
-            (root,),
+            (TextFileReader, root),
             {
                 "sniff_line": classmethod(
                     lambda cls, line, error=False, **kw: Confidence.NO
@@ -313,7 +313,7 @@ def test_a_longer_required_prefix_is_more_specific(
     short = register_format(
         type(
             "Short",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii",),
                 "PREFIXES": ("sub",),
@@ -325,7 +325,7 @@ def test_a_longer_required_prefix_is_more_specific(
     long_ = register_format(
         type(
             "Long",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii",),
                 "PREFIXES": ("sub_y_",),
@@ -358,7 +358,7 @@ def test_declaring_more_prefixes_does_not_buy_specificity(
         register_format(
             type(
                 name,
-                (root,),
+                (TextFileReader, root),
                 {
                     "EXTENSIONS": (".nii",),
                     "PREFIXES": prefixes,

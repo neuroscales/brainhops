@@ -26,7 +26,7 @@ from ._raw import X5Raw
 
 
 @register_format
-class X5Metadata(MetadataFormat, Hdf5ReaderWriter):
+class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
     """Metadata of an X5 file, which holds the file as an [`X5Raw`][].
 
     An X5 file has no header that precedes its data. Its record holds the

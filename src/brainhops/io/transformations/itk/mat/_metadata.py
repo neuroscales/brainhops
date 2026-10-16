@@ -19,7 +19,7 @@ from ._raw import MatRaw
 
 
 @register_format
-class MatMetadata(MetadataFormat, MetadataReader, MetadataWriter):
+class MatMetadata(MetadataReader, MetadataWriter, MetadataFormat):
     """Metadata of an ITK `.mat` file, which holds it as a [`MatRaw`][].
 
     A `.mat` file is a short binary file that is read in one pass, so its
