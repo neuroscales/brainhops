@@ -236,6 +236,19 @@ from the first range to the last one and keeps only what the ranges
 select. Its `stored` description is the source and the byte range of
 the data, which a writer copies when the target stores the same layout.
 
+A `StridedProxy` takes a `cache` option, which is false by default.
+When it is true, the proxy keeps the decoded bytes that it read, so
+that later reads of the same file do not decompress it again. This
+matters most for codecs that cannot seek, such as bzip2, which Dask
+would otherwise decompress once for each chunk. The cache belongs to
+the source, so a proxy derived from another one by indexing shares the
+cache of its parent. The cache is dropped when the proxy is pickled, so
+each Dask worker process fills its own, and threads share one cache
+through a lock. Before the proxy uses the cache, it checks that the size
+and the modification time of a local file have not changed, so that a
+file written again is read again. The option breaks the rule that a
+proxy keeps nothing between reads, which is why it is off by default.
+
 Two generic proxies complete the layer. `ScaledProxy` applies a slope
 and an intercept that broadcast against the shape, which covers the
 single factor of NIfTI and MRtrix, the factor of each AFNI sub-brick and
@@ -324,14 +337,20 @@ optional dependency for a conversion to nibabel images.
 6. Replace the `isinstance` checks of the writers by `stored` and
    `reads(file)`, and make nibabel optional.
 
-## Open questions
+## Later work
 
-- Should a `StridedProxy` keep a small cache of decoded bytes for
-  codecs that cannot seek, so that Dask does not decompress a bzip2
-  file once per chunk? A cache would break the rule that a proxy keeps
-  nothing between reads.
-- Should remote sources read their byte ranges with
-  `fsspec.AbstractFileSystem.cat_ranges`, which can fetch them in
-  parallel, rather than with seeks on one stream?
-- Writing through a proxy, which `readwrite.py` prepares for, is left
-  out of this memo, because no writer needs it yet.
+Remote sources will read their byte ranges with
+`fsspec.AbstractFileSystem.cat_ranges`, which fetches several ranges
+in one call, rather than with seeks on one stream. This comes after the
+layers above are in place.
+
+The proxies stay synchronous, and no asynchronous interface is planned.
+The file systems of fsspec for HTTP and cloud storage are asynchronous
+inside, and `cat_ranges` already fetches the ranges of one read
+concurrently. Dask already reads several chunks at once from its
+threads. An asynchronous interface would add a second way to call every
+proxy for a small gain, and it can be reconsidered if a consumer that
+is itself asynchronous, such as a viewer, needs it.
+
+Writing through a proxy, which `readwrite.py` prepares for, is left out
+of this memo, because no writer needs it yet. It is tracked in #479.
