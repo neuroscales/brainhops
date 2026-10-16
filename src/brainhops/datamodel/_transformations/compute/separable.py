@@ -30,7 +30,7 @@ from brainhops._core.bsplines import (
     pull_axes,
     spline_matrix,
 )
-from brainhops._core.typing import Clip
+from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops.backends import copy_array, get_array_backend, may_share_memory
 from brainhops.datamodel import kinds
 from brainhops.datamodel._sugar import get_axes
@@ -41,6 +41,10 @@ from ..concrete import Affine, CartesianField, Permutation
 from ..meta import SubspaceTransformation
 from ..sequence import Sequence, _interpolates
 from .utils import axis_list
+
+_AxisLabels = tx.List[tx.Tuple[tx.Literal["data", "grid"], int]]
+_StepResult = tx.Tuple[ArrayProtocol, _AxisLabels, tx.Optional[ArrayProtocol]]
+_StepRunner = tx.Callable[[ArrayProtocol, _AxisLabels], _StepResult]
 
 # ======================================================================
 #
@@ -100,13 +104,11 @@ def pull_separable(
         Resliced data, with the shape of the output grid.
     """
     clip = _normalize_clip(clip, data.ndim)
-    opt = dict(degree=degree, bound=bound, coeff=coeff)
-    steps = _plan(tuple(data.shape), seq, clip=clip, **opt)
+    opt = dict(degree=degree, bound=bound, coeff=coeff, clip=clip)
+    steps = _plan(tuple(data.shape), seq, **opt)
     if steps is None:
         # The monolithic pull writes into an array that it allocates.
-        return _fresh(
-            pull(data, seq.compute().field, clip=clip, **opt), data, copy, True
-        )
+        return _fresh(pull(data, seq.compute().field, **opt), data, copy, True)
 
     # The steps work in floating point so that an integer input is not
     # rounded between them. The gather and pull steps preserve the dtype that
@@ -118,7 +120,7 @@ def pull_separable(
     # Only the gather steps and the transpose can return a view of `data`,
     # so `fresh` records whether the result is known to be a new array.
     fresh = not floating or any(step["kind"] != "gather" for step in steps)
-    labels: tx.List[tx.Any] = [("data", i) for i in range(data.ndim)]
+    labels: _AxisLabels = [("data", i) for i in range(data.ndim)]
     masks = []
     for step in steps:
         arr, labels, mask = step["run"](arr, labels)
@@ -509,12 +511,12 @@ def _make_gather(
     data_shape: tx.Tuple[int, ...],
     shape: tx.Tuple[int, ...],
     clip: Clip,
-) -> tx.Callable:
+) -> _StepRunner:
     n_in = data_shape[d]
     n_out = shape[g]
     bound0 = bound if isinstance(bound, str) else 0.0
 
-    def run(arr: tx.Any, labels: tx.List[tx.Any]) -> tuple:
+    def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         ab = get_array_backend(arr)
         axis = labels.index(("data", d))
         coords = np.arange(n_out) * scale + shift
@@ -559,11 +561,11 @@ def _make_matrix(
     data_shape: tx.Tuple[int, ...],
     shape: tx.Tuple[int, ...],
     clip: Clip,
-) -> tx.Callable:
+) -> _StepRunner:
     n_in = data_shape[d]
     n_out = shape[g]
 
-    def run(arr: tx.Any, labels: tx.List[tx.Any]) -> tuple:
+    def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         ab = get_array_backend(arr)
         axis = labels.index(("data", d))
         coords = ab.arange(n_out) * scale + shift
@@ -596,14 +598,14 @@ def _make_pull(
     coeff: bool,
     data_shape: tx.Tuple[int, ...],
     clip: Clip,
-) -> tx.Callable:
+) -> _StepRunner:
     chain: tx.List[Transformation] = [
         CartesianField(shape=tuple(shape[g] for g in grid_axes))
     ]
     if inner is not None:
         chain.append(inner)
 
-    def run(arr: tx.Any, labels: tx.List[tx.Any]) -> tuple:
+    def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         coords = Sequence(transformations=chain).compute().field
         positions = [labels.index(("data", d)) for d in data_axes]
         moved = pull_axes(arr, coords, positions, degree, bound, coeff)
@@ -633,7 +635,9 @@ def _fresh(arr: tx.Any, data: tx.Any, copy: bool, fresh: bool) -> tx.Any:
     return copy_array(arr)
 
 
-def _apply_clip_masks(arr: tx.Any, masks: tx.List[tuple]) -> tx.Any:
+def _apply_clip_masks(
+    arr: ArrayProtocol, masks: tx.List[tx.Tuple[ArrayProtocol, tx.List[int]]]
+) -> ArrayProtocol:
     """Zero the union of group cutoffs after every interpolation step.
 
     Delaying the masks prevents a later nonzero constant boundary from
