@@ -3,10 +3,10 @@
 This memo decides which array package holds the values of an image or
 a transformation, how a user moves an object from one package to
 another, and how a computation chooses the package of its result. It is
-agreed and tracked in #486. Its first two steps are implemented: the
-backend settings in `brainhops.backends` (#490), and the conversion
-methods of lazy arrays (#491). The other steps are not implemented
-yet.
+agreed and tracked in #486. Its first three steps are implemented:
+the backend settings in `brainhops.backends` (#490), the conversion
+methods of lazy arrays (#491), and those of images and transformations
+(#492). The other steps are not implemented yet.
 
 ## What a backend is for
 
@@ -120,6 +120,21 @@ A proxy has the `to_*` methods as well, so that code can call them on
 any array that it receives. It has no `as_*` methods, because a proxy
 is an array rather than an object that holds one.
 
+An object that holds other objects converts them with their own `as_*`
+methods. A multi-scale image converts every level, and its `to_*`
+methods return the data of the finest level, as `data` does. A sequence
+converts its members, an inverse converts its forward, and a subspace
+or a bijection converts the transformations inside it. A sequence holds
+transformations rather than data, so its `to_*` methods raise a
+`TypeError`. A file format of a field, such as a displacement field
+read from a NIfTI file, derives its members from the field that it
+stores in `data`, so it converts that field alone, and its members are
+derived again from it.
+
+Each of these classes overrides `as_backend`. By default, `to_backend`
+converts `data`, and `as_backend` returns the object as it is, which is
+right for a transformation that holds only small parameters.
+
 Names that start with `with_` are kept for methods that replace a field
 by a value that the caller gives, such as a future `with_data(array)`.
 Methods named after the package alone, as `Tensor.numpy()` in PyTorch,
@@ -207,7 +222,7 @@ NumPy array.
    its `to_dask` place its chunks on a GPU. This step is implemented,
    and `to_dask(cupy=True)` gives the chunks of `"dask+cupy"`.
 3. Add the `to_*` and `as_*` methods to the classes of images and
-   transformations.
+   transformations. This step is implemented (#492).
 4. Make `data` return what the object holds, and update the code and
    the tests that compute on it.
 5. Apply the rules of computations: resolve the proxies of the inputs,

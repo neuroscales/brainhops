@@ -55,6 +55,7 @@ from brainhops.io.metadata._base import (
 )
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
+    StoredFieldMixin,
     ras_displacement_chain,
     split_ras_displacement_chain,
 )
@@ -242,7 +243,7 @@ class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
 
 @register_format
 class NiftiRASDisplacementField(
-    NiftiBasedTransformation, _xforms.ImmutableSequence
+    NiftiBasedTransformation, StoredFieldMixin, _xforms.ImmutableSequence
 ):
     """
     Field of RAS displacements stored in a NIfTI file.

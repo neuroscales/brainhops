@@ -71,6 +71,7 @@ from brainhops.io.metadata._base import (
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
+    StoredFieldMixin,
     homogeneous_matrix,
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -462,7 +463,10 @@ class MrtrixWarp(
 
 @register_format
 class MrtrixCoordinatesField(
-    MrtrixWarp, MrtrixTransformationFormat, _xforms.ImmutableSequence
+    MrtrixWarp,
+    MrtrixTransformationFormat,
+    StoredFieldMixin,
+    _xforms.ImmutableSequence,
 ):
     """
     Field of scanner RAS coordinates (an MRtrix *deformation*), stored
@@ -736,7 +740,10 @@ class MrtrixCoordinatesField(
 
 @register_format
 class MrtrixDisplacementField(
-    MrtrixWarp, MrtrixTransformationFormat, _xforms.ImmutableSequence
+    MrtrixWarp,
+    MrtrixTransformationFormat,
+    StoredFieldMixin,
+    _xforms.ImmutableSequence,
 ):
     """
     Field of scanner RAS displacements (an MRtrix *displacement*),
@@ -1005,7 +1012,10 @@ class MrtrixDisplacementField(
 
 @register_format
 class MrtrixWarpFull(
-    MrtrixWarp, MrtrixTransformationFormat, _xforms.ImmutableSequence
+    MrtrixWarp,
+    MrtrixTransformationFormat,
+    StoredFieldMixin,
+    _xforms.ImmutableSequence,
 ):
     """
     The four midway-space warps and two linear transforms of a

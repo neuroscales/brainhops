@@ -5,7 +5,9 @@ from bagof.magic import NotKwOnly, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import npvector
+from brainhops.backends import _CURRENT
 from brainhops.datamodel import kinds
+from brainhops.datamodel._backends import _with_fields
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError
@@ -145,6 +147,35 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
         if self.transformation is not None:
             obj = self.to(transformation=self.transformation.sqrt())
         return obj.compute(**kwargs) if compute else obj
+
+    def as_backend(
+        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+    ) -> tx.Self:
+        """Return the subspace with its inner transformation converted.
+
+        The inner transformation is converted with its own `as_backend`,
+        and the axes stay NumPy arrays.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+        inplace : bool, default=False
+            Whether this subspace holds the converted transformation and
+            is returned, instead of a new subspace.
+
+        Returns
+        -------
+        SubspaceTransformation
+            A transformation of the same class.
+        """
+        inner = self.transformation
+        if inner is None:
+            return self
+        converted = inner.as_backend(backend)
+        if converted is inner:
+            return self
+        return _with_fields(self, inplace, transformation=converted)
 
 
 class Projection(MetaTransformation):
@@ -298,6 +329,37 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
             backward=None if backward is None else backward.sqrt(),
         )
         return obj.compute(**kwargs) if compute else obj
+
+    def as_backend(
+        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+    ) -> tx.Self:
+        """Return the bijection with both of its sides converted.
+
+        The forward and the backward transformations are converted with
+        their own `as_backend`.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+        inplace : bool, default=False
+            Whether this transformation holds the converted sides and
+            is returned, instead of a new transformation.
+
+        Returns
+        -------
+        Bijection
+            A transformation of the same class.
+        """
+        changes = {}
+        for name in ("forward", "backward"):
+            side = getattr(self, name)
+            if side is None:
+                continue
+            converted = side.as_backend(backend)
+            if converted is not side:
+                changes[name] = converted
+        return _with_fields(self, inplace, **changes)
 
 
 def _same_axes(t: SubspaceTransformation) -> bool:

@@ -4,6 +4,7 @@ from bagof.magic import NoRepr
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
+from brainhops.datamodel._backends import _BackendsMixin
 from brainhops.datamodel.base import DataModelBase, IdentityComparison
 from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.systems import CoordinateSystem
@@ -24,7 +25,12 @@ if tx.TYPE_CHECKING:
 @kinds.Transformation.register
 @nocycles.register_transformation
 class Transformation(
-    IdentityComparison, DataModelBase, reverse=True, eq=False, kw_only=True
+    _BackendsMixin,
+    IdentityComparison,
+    DataModelBase,
+    reverse=True,
+    eq=False,
+    kw_only=True,
 ):
     """A map of coordinates from an input system to an output system.
 

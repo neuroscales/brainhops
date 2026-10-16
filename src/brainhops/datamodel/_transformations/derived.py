@@ -31,6 +31,8 @@ from bagof.magic import Forget, NotKwOnly, fields
 
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.properties import smartproperty
+from brainhops.backends import _CURRENT
+from brainhops.datamodel._backends import _with_fields
 
 from . import nocycles
 from .base import Transformation, _copied
@@ -222,6 +224,36 @@ class DerivedTransformation(Transformation):
         # Converting to any other type, even the family's own, resolves the
         # operator first.
         return self._materialize().to(cls, lossy=lossy, **kwargs)
+
+    def as_backend(
+        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+    ) -> tx.Self:
+        """Return the operation with its forward converted.
+
+        The operation derives its own parameter from its forward, so
+        only the forward is converted, with its own `as_backend`, and the
+        parameter is derived again from it when it is read.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+        inplace : bool, default=False
+            Whether this transformation holds the converted forward and
+            is returned, instead of a new transformation.
+
+        Returns
+        -------
+        DerivedTransformation
+            A transformation of the same class.
+        """
+        forward = self.forward
+        if forward is None:
+            return self
+        converted = forward.as_backend(backend)
+        if converted is forward:
+            return self
+        return _with_fields(self, inplace, forward=converted)
 
     # --- helpers ------------------------------------------------------
 

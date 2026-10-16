@@ -56,6 +56,7 @@ from brainhops.io.transformations.base._converters import (
 )
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
+    StoredFieldMixin,
     homogeneous_matrix,
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -244,7 +245,9 @@ class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
         return _vox2world(header)
 
 
-class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
+class NiftyRegSequence(
+    NiftyRegField, StoredFieldMixin, _xforms.ImmutableSequence
+):
     """
     NiftyReg field, mapping the reference RAS space to the floating RAS space.
 
