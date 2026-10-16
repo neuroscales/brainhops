@@ -1339,7 +1339,7 @@ def test_reader_maps_a_map_axis_to_a_permutation(tmp_path: Path) -> None:
 
 def test_reader_refuses_a_map_axis_over_a_subset_of_the_axes() -> None:
     # A subset of the input axes was never a valid mapAxis, and the drop is
-    # spelled projectAxis (docs/design/compute-api-and-open-systems.md,
+    # spelled projectAxis (spec/design/compute-api-and-open-systems.md,
     # section A.8); tested on the mapping, since such a level is not wired
     # through the reader. abczarr 0.2.3 already refuses it when it parses
     # it, with a value error.

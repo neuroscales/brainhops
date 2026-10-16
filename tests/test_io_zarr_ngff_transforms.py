@@ -812,7 +812,7 @@ def test_project_axis_refuses_a_created_index_out_of_range() -> None:
 
 def test_a_dropping_projection_into_the_intrinsic_space_is_refused() -> None:
     # A projection that drops an axis has no inverse
-    # (docs/design/compute-api-and-open-systems.md, section A.8).
+    # (spec/design/compute-api-and-open-systems.md, section A.8).
     with pytest.raises(OmeImageError, match="dropping axes"):
         _commons(
             [

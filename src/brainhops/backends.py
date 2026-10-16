@@ -3,7 +3,7 @@
 brainhops holds its arrays with NumPy, CuPy or Dask. The backend setting
 decides which package a conversion produces and in which package new
 arrays are created. The design is described in the memo
-`docs/design/array-backends.md`.
+`spec/design/array-backends.md`.
 
 A setting is one of the following names, or `None`.
 
