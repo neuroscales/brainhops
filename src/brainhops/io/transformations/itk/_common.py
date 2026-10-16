@@ -1,4 +1,5 @@
 import math
+import re
 
 import numpy as np
 import typing_extensions as tx
@@ -12,9 +13,19 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base._raw import Raw
+from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
-from ._systems import _make_system
+from ._systems import _make_grid_system, _make_system
+
+# An ITK transform type name is `{Class}_{Precision}_{InputDim}_{OutputDim}`.
+# A B-spline whose degree is not 3 appends its degree, as in
+# `BSplineTransform_double_3_3_1`.
+_TRANSFORM_TYPE_RE = re.compile(
+    r"^(?P<type>\w+)_(?P<precision>float|double)_"
+    r"(?P<input_dim>\d+)_(?P<output_dim>\d+)"
+    r"(?:_(?P<degree>[0-3]))?$"
+)
 
 
 class ItkTransformClass(StrEnum):
@@ -344,15 +355,21 @@ class ItkDisplacementBase(ItkBlockBase):
     # --- slots --------------------------------------------------------
 
     @smartproperty(cache=True)
-    def lps2voxel(self) -> LPSToVoxel:
+    def lps2voxel(self) -> _xforms.Affine:
         """Affine from LPS world coordinates to warp-grid voxels."""
         vox2lps, _ = self._grid
-        return LPSToVoxel(matrix=_affines.inv(vox2lps))
+        if self.ndim_input == 3:
+            return LPSToVoxel(matrix=_affines.inv(vox2lps))
+        return _xforms.Affine(
+            matrix=_affines.inv(vox2lps),
+            input=self.input,
+            output=_make_grid_system(self.ndim_input),
+        )
 
     @smartproperty(cache=True)
     def displacement(self) -> _xforms.DisplacementField:
         """The displacement field on the warp grid."""
-        VOX = _systems.VoxelCoordinateSystem()
+        VOX = _make_grid_system(self.ndim_input)
         return _xforms.DisplacementField(
             data=self.field,
             input=VOX,
@@ -363,10 +380,16 @@ class ItkDisplacementBase(ItkBlockBase):
         )
 
     @smartproperty(cache=True)
-    def voxel2lps(self) -> VoxelToLPS:
+    def voxel2lps(self) -> _xforms.Affine:
         """Affine from warp-grid voxels to LPS world coordinates."""
         vox2lps, _ = self._grid
-        return VoxelToLPS(matrix=vox2lps)
+        if self.ndim_input == 3:
+            return VoxelToLPS(matrix=vox2lps)
+        return _xforms.Affine(
+            matrix=vox2lps,
+            input=_make_grid_system(self.ndim_input),
+            output=self.output,
+        )
 
     # --- sequence -----------------------------------------------------
 
@@ -776,12 +799,19 @@ class ItkBSplineStruct(
 ):
     """ITK B-spline transform.
 
-    The field holds cubic B-spline coefficients on a grid of control points,
+    The field holds B-spline coefficients on a grid of control points,
     and coefficients outside the grid are taken as zero. The coefficients are
     stored as one planar image per axis.
     """
 
-    degree: tx.ClassVar[int] = 3
+    degree: int = 3
+    """The spline degree of the coefficients.
+
+    ITK writes a degree other than 3 as a suffix of the transform type
+    name, such as `BSplineTransform_double_3_3_1`, and older files that
+    have no suffix hold cubic splines.
+    """
+
     store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.zeros
@@ -935,3 +965,22 @@ def _euler_to_matrix(
     Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=np.float64)
     Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]], dtype=np.float64)
     return Rz @ Ry @ Rx if compute_zyx else Rz @ Rx @ Ry
+
+
+def _type_fields(match: re.Match) -> tx.Dict[str, tx.Any]:
+    """Return the block fields encoded by an ITK transform type name."""
+    kind = ItkTransformClass(match.group("type"))
+    fields = dict(
+        type=kind,
+        precision=match.group("precision"),
+        ndim_input=int(match.group("input_dim")),
+        ndim_output=int(match.group("output_dim")),
+    )
+    degree = match.group("degree")
+    if degree is not None:
+        if kind != ItkTransformClass.BSplineTransform:
+            raise ParserContentError(
+                "Only B-spline types have a degree suffix."
+            )
+        fields["degree"] = int(degree)
+    return fields

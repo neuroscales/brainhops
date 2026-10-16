@@ -2,8 +2,6 @@
 
 __all__ = ["MatRaw"]
 
-import re
-
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoRepr
@@ -19,14 +17,15 @@ from brainhops.io.base.parsers import (
 )
 
 from .._chains import _check_composite, _read_only
-from .._common import ItkPrecision, ItkStruct, ItkTransformClass
-
-_CLASS_RE = re.compile(
-    r"^(?P<type>\w+)_"
-    r"(?P<precision>float|double)_"
-    r"(?P<input_dim>\d+)_"
-    r"(?P<output_dim>\d+)$"
+from .._common import (
+    _TRANSFORM_TYPE_RE,
+    ItkPrecision,
+    ItkStruct,
+    ItkTransformClass,
+    _type_fields,
 )
+
+_CLASS_RE = _TRANSFORM_TYPE_RE
 # A MATLAB v4 variable header is five 32-bit integers: the type, the number of
 # rows, the number of columns, the complex flag and the length of the name.
 _HEADER_SIZE = 20
@@ -464,10 +463,7 @@ def _decode(
             )
         blocks.append(
             ItkStruct(
-                type=ItkTransformClass(match.group("type")),
-                precision=match.group("precision"),
-                ndim_input=int(match.group("input_dim")),
-                ndim_output=int(match.group("output_dim")),
+                **_type_fields(match),
                 parameters=_read_only(parameters),
                 fixed_parameters=_read_only(fixed_parameters),
             )
@@ -494,6 +490,11 @@ def _encode(blocks: tx.Sequence[ItkStruct], byteorder: str) -> bytes:
             f"{ItkTransformClass(block.type).value}_{precision.value}_"
             f"{block.ndim_input}_{block.ndim_output}"
         )
+        if (
+            block.type == ItkTransformClass.BSplineTransform
+            and block.degree != 3
+        ):
+            name += f"_{block.degree}"
         content += _write_variable(
             name, block.parameters, byteorder, precision
         ) + _write_variable(
@@ -525,6 +526,7 @@ def _same_blocks(
             or one.precision != two.precision
             or one.ndim_input != two.ndim_input
             or one.ndim_output != two.ndim_output
+            or getattr(one, "degree", None) != getattr(two, "degree", None)
         ):
             return False
         for name in ("parameters", "fixed_parameters"):

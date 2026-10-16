@@ -21,7 +21,12 @@ from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5Reader
 from brainhops.io.common.hdf5._parsers import read_string
 
 from .._chains import _check_composite, _read_only
-from .._common import ItkStruct, ItkTransformClass
+from .._common import (
+    _TRANSFORM_TYPE_RE,
+    ItkStruct,
+    ItkTransformClass,
+    _type_fields,
+)
 
 TRANSFORM_GROUP = "TransformGroup"
 
@@ -178,15 +183,11 @@ def _read_block(group: h5py.Group, source: tx.Optional[str]) -> ItkStruct:
     `TranformFixedParameters`, and both spellings are read.
     """
     kind = read_string(group["TransformType"])
-    try:
-        kind, precision, ndim_input, ndim_output = kind.split("_")
-    except ValueError:
-        raise ParserContentError(
-            f"An ITK transform type is written as "
-            f"`{{Class}}_{{Precision}}_{{InputDim}}_{{OutputDim}}`, not "
-            f"{kind!r}."
-        ) from None
-    kind = ItkTransformClass(kind)
+    match = _TRANSFORM_TYPE_RE.match(kind)
+    if not match:
+        raise ParserContentError(f"Malformed ITK transform type: {kind!r}.")
+    fields = _type_fields(match)
+    kind = fields["type"]
     parameters = _dataset(group, "TransformParameters", "TranformParameters")
     fixed_parameters = _dataset(
         group, "TransformFixedParameters", "TranformFixedParameters"
@@ -202,10 +203,7 @@ def _read_block(group: h5py.Group, source: tx.Optional[str]) -> ItkStruct:
     else:
         fixed_parameters = fixed_parameters[()]
     return ItkStruct(
-        type=kind,
-        precision=precision,
-        ndim_input=int(ndim_input),
-        ndim_output=int(ndim_output),
+        **fields,
         parameters=_read_only(parameters),
         fixed_parameters=_read_only(fixed_parameters),
     )
