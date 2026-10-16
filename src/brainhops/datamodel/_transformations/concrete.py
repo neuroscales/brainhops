@@ -30,7 +30,6 @@ from brainhops._core.properties import (
     smartproperty,
 )
 from brainhops._core.typing import (
-    ArrayLike,
     ArrayProtocol,
     npmatrix,
     npvector,
@@ -43,7 +42,6 @@ from brainhops.datamodel.enums import (
     InterpolationOrder,
     StoreEnum,
 )
-from brainhops.datamodel.systems import CoordinateSystem
 
 from . import nocycles
 from .base import Transformation
@@ -282,7 +280,7 @@ class TransformationField(ConcreteTransformation):
     # --- class attributes ---------------------------------------------
 
     map_field: _FieldName = "field"
-    data_fields: _FieldNames = "data",
+    data_fields: _FieldNames = ("data",)
     encoding_fields: _FieldNames = "degree", "bound", "store"
     derived_fields: _FieldNames = "field", "values", "coefficients", "_inverse"
 
@@ -707,8 +705,8 @@ class Affine(ConcreteTransformation, polymorphic=True):
     # --- class attributes ---------------------------------------------
 
     map_field: _FieldName = "matrix"
-    data_fields: _FieldNames = "data",
-    encoding_fields: _FieldNames = "log",
+    data_fields: _FieldNames = ("data",)
+    encoding_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = (
         "matrix",
         "homogeneous_matrix",
@@ -806,8 +804,8 @@ class Linear(ConcreteTransformation, polymorphic=True):
     # --- class attributes ---------------------------------------------
 
     map_field: _FieldName = "matrix"
-    data_fields: _FieldNames = "data",
-    encoding_fields: _FieldNames = "log",
+    data_fields: _FieldNames = ("data",)
+    encoding_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = "matrix", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -932,7 +930,7 @@ class Permutation(ConcreteTransformation):
     # --- class attributes ---------------------------------------------
 
     map_field: _FieldNames = "permutation"
-    data_fields: _FieldNames = "data",
+    data_fields: _FieldNames = ("data",)
     derived_fields: _FieldNames = "permutation", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1010,8 +1008,8 @@ class Scaling(ConcreteTransformation, polymorphic=True):
     # --- class attributes ---------------------------------------------
 
     map_field: _FieldNames = "scale"
-    data_fields: _FieldNames = "data",
-    encoding_fields: _FieldNames = "log",
+    data_fields: _FieldNames = ("data",)
+    encoding_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = "scale", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1082,7 +1080,7 @@ class Translation(ConcreteTransformation):
     # --- class attributes ---------------------------------------------
 
     map_field: _FieldNames = "translation"
-    data_fields: _FieldNames = "data",
+    data_fields: _FieldNames = ("data",)
     derived_fields: _FieldNames = "translation", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
