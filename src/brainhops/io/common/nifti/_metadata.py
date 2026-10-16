@@ -1,8 +1,5 @@
 """The metadata of a NIfTI file."""
 
-# stdlib
-from io import BytesIO
-
 # dependencies
 import typing_extensions as tx
 from bagof.magic import NoRepr, replace
@@ -12,8 +9,8 @@ from brainhops._core import path
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
 from brainhops.datamodel.metadata._report import OnLoss
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import BinaryFileReader, BinaryFileWriter
-from brainhops.io.metadata import MetadataFormat
+from brainhops.io.base.parsers import BinaryFileWriter
+from brainhops.io.metadata import MetadataFormat, MetadataReader
 from brainhops.io.metadata._base import consolidated
 
 # this format
@@ -22,7 +19,7 @@ from ._vocabulary import clear_spatial_slots, decode, encode
 
 
 @register_format
-class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
+class NiftiMetadata(MetadataFormat, MetadataReader, BinaryFileWriter):
     """Metadata of a NIfTI file, which holds the header of the file.
 
     The metadata of a NIfTI file is read from the header alone, so the
@@ -166,29 +163,6 @@ class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         if self.raw is None:
             return derived
         return replace(derived, raw=clear_spatial_slots(self.raw))
-
-    @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that a stream holds a NIfTI header.
-
-        The stream is tested with [`NiftiRaw.sniff_fileobj`][].
-        """
-        return NiftiRaw.sniff_fileobj(file, error=error, **kwargs)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes start with a NIfTI header."""
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     def to_bytes(
         self, *, on_loss: tx.Optional[OnLoss] = None, **fields: tx.Any

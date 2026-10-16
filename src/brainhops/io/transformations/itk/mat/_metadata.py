@@ -8,15 +8,18 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import BinaryFileReader, BinaryFileWriter
-from brainhops.io.metadata import MetadataFormat
+from brainhops.io.metadata import (
+    MetadataFormat,
+    MetadataReader,
+    MetadataWriter,
+)
 
 # this format
 from ._raw import MatRaw
 
 
 @register_format
-class MatMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
+class MatMetadata(MetadataFormat, MetadataReader, MetadataWriter):
     """Metadata of an ITK `.mat` file, which holds it as a [`MatRaw`][].
 
     A `.mat` file is a short binary file that is read in one pass, so its
@@ -28,9 +31,11 @@ class MatMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     transformation. The file stores nothing else, such as a name or a
     version of ITK.
 
-    The file is read and written by the record: [`from_fileobj`][] reads a
-    [`MatRaw`][] and wraps it, and [`to_bytes`][] returns the bytes of the
-    record. The metadata keeps no open file.
+    The file is read and written by the record, through
+    [`MetadataReader`][brainhops.io.metadata.MetadataReader] and
+    [`MetadataWriter`][brainhops.io.metadata.MetadataWriter]. The metadata
+    keeps no open file. Metadata without a record is written as a new
+    record.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
@@ -40,102 +45,12 @@ class MatMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     raw: NoRepr[tx.Optional[MatRaw]] = None
     """The blocks of the file, or `None` for metadata without a record."""
 
-    @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score a binary stream as an ITK `.mat` file.
-
-        The stream is scored by [`MatRaw.sniff_fileobj`][].
-
-        Parameters
-        ----------
-        file : file object
-            The stream, open in binary mode.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content is not an ITK
-            `.mat` file.
-        **kwargs : Any
-            Options of the reader.
+    def _record_to_write(self) -> MatRaw:
+        """Return the record, or a new record if the metadata has none.
 
         Returns
         -------
-        float
-            The confidence, between 0 and 1.
+        MatRaw
+            The record that the metadata writes.
         """
-        return MatRaw.sniff_fileobj(file, error=error, **kwargs)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score bytes as those of an ITK `.mat` file.
-
-        The bytes are scored by [`MatRaw.sniff_bytes`][].
-
-        Parameters
-        ----------
-        content : bytes
-            The content, or its beginning.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content is not an ITK
-            `.mat` file.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return MatRaw.sniff_bytes(content, error=error, **kwargs)
-
-    @classmethod
-    def sniff_lines(
-        cls,
-        lines: tx.Iterable[str],
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Reject text, which is never an ITK `.mat` file.
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the content.
-        error : bool or type[Exception], default=False
-            Whether to raise an error instead of returning 0.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        float
-            Always `Confidence.NO`.
-        """
-        return MatRaw.sniff_lines(lines, error=error, **kwargs)
-
-    def to_bytes(self, **kwargs) -> bytes:
-        """Return the bytes of the ITK `.mat` file that the record holds.
-
-        Metadata without a record is written as a new, empty record, which
-        is a file without blocks.
-
-        Parameters
-        ----------
-        **kwargs : Any
-            Options of [`MatRaw.to_bytes`][].
-
-        Returns
-        -------
-        bytes
-            The content of the file.
-        """
-        raw = MatRaw() if self.raw is None else self.raw
-        return raw.to_bytes(**kwargs)
+        return MatRaw() if self.raw is None else self.raw

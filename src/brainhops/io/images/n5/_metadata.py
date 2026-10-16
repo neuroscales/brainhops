@@ -1,8 +1,5 @@
 """The metadata of an N5 dataset or pyramid."""
 
-# stdlib
-from io import BytesIO
-
 # dependencies
 import typing_extensions as tx
 from bagof.magic import NoRepr
@@ -10,8 +7,8 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import BinaryFileReader, Confidence
-from brainhops.io.metadata import MetadataFormat
+from brainhops.io.base.parsers import Confidence
+from brainhops.io.metadata import MetadataFormat, MetadataReader
 
 # this format
 from ._data import read_node
@@ -19,7 +16,7 @@ from ._raw import N5Raw, no_options, score
 
 
 @register_format
-class N5Metadata(MetadataFormat, BinaryFileReader):
+class N5Metadata(MetadataFormat, MetadataReader):
     """Metadata of an N5 dataset or pyramid, which is its attributes.
 
     The metadata of an N5 dataset is the content of its `attributes.json`
@@ -69,58 +66,6 @@ class N5Metadata(MetadataFormat, BinaryFileReader):
         except Exception:  # noqa: BLE001
             return score(Confidence.NO, error)
         return Confidence.CERTAIN
-
-    @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that a stream holds dataset attributes.
-
-        Parameters
-        ----------
-        file : IO
-            The stream, open in binary mode.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the stream holds no attributes
-            of an N5 dataset.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, `Confidence.CERTAIN` or `Confidence.NO`.
-        """
-        return N5Raw.sniff_fileobj(file, error=error)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold dataset attributes.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of an `attributes.json` file.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no attributes
-            of an N5 dataset.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, `Confidence.CERTAIN` or `Confidence.NO`.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def from_filename(

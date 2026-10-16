@@ -9,19 +9,19 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import (
-    BinaryFileReader,
-    BinaryFileWriter,
-    WriterError,
+from brainhops.io.base.parsers import WriterError
+from brainhops.io.metadata import (
+    MetadataFormat,
+    MetadataReader,
+    MetadataWriter,
 )
-from brainhops.io.metadata import MetadataFormat
 
 # this format
 from ._raw import M3zRaw
 
 
 @register_format
-class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
+class M3zMetadata(MetadataFormat, MetadataReader, MetadataWriter):
     """Metadata of a morph file, which holds the file as an [`M3zRaw`][].
 
     A morph is a single gzip stream in which the node arrays follow the
@@ -32,9 +32,10 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     is therefore decoded from the record of its metadata, and reading
     the metadata of a file reads the same content as reading the morph.
 
-    The file is read and written by the record: [`from_fileobj`][] reads
-    an [`M3zRaw`][] and wraps it, and [`to_bytes`][] encodes the record.
-    The metadata keeps no open file. A copy of the record, as
+    The file is read and written by the record, through
+    [`MetadataReader`][brainhops.io.metadata.MetadataReader] and
+    [`MetadataWriter`][brainhops.io.metadata.MetadataWriter]. The
+    metadata keeps no open file. A copy of the record, as
     [`M3zRaw.copy`][] returns it, shares the arrays of the record, so that
     copying metadata never duplicates the nodes.
     """
@@ -46,87 +47,7 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     raw: NoRepr[tx.Optional[M3zRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
 
-    # --- sniff --------------------------------------------------------
-
-    @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score an open binary file from its first bytes only.
-
-        The file is scored by [`M3zRaw.sniff_fileobj`][].
-
-        Parameters
-        ----------
-        file : IO
-            The open binary file, whose position is restored.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the file is not a morph.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return M3zRaw.sniff_fileobj(file, error=error, **kwargs)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score bytes, gzipped or not.
-
-        The bytes are scored by [`M3zRaw.sniff_bytes`][].
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes are not a morph.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return M3zRaw.sniff_bytes(content, error=error, **kwargs)
-
     # --- to -----------------------------------------------------------
-
-    def to_bytes(self, compress: bool = True) -> bytes:
-        """Return the content of the morph file that the record holds.
-
-        The content is gzipped (`.m3z`) unless `compress=False`
-        (`.m3d`).
-
-        Parameters
-        ----------
-        compress : bool, default=True
-            Whether to gzip the content.
-
-        Returns
-        -------
-        bytes
-            The content of the file.
-
-        Raises
-        ------
-        WriterError
-            If the metadata holds no record, since a morph cannot be
-            written without its nodes.
-        """
-        return _record(self).to_bytes(compress=compress)
 
     def to_filename(
         self,
@@ -151,19 +72,23 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         WriterError
             If the metadata holds no record.
         """
-        _record(self).to_filename(filename, compress=compress)
+        self._record_to_write().to_filename(filename, compress=compress)
 
+    def _record_to_write(self) -> M3zRaw:
+        """Return the record that the metadata writes.
 
-def _record(metadata: M3zMetadata) -> M3zRaw:
-    """Return the record that metadata writes.
+        Returns
+        -------
+        M3zRaw
+            The record.
 
-    Raises
-    ------
-    WriterError
-        If the metadata holds no record. Unlike the record of a header,
-        an empty record would make up a morph without nodes, which
-        FreeSurfer cannot read.
-    """
-    if metadata.raw is None:
-        raise WriterError("This metadata holds no morph to write.")
-    return metadata.raw
+        Raises
+        ------
+        WriterError
+            If the metadata holds no record. Unlike the record of a header,
+            an empty record would make up a morph without nodes, which
+            FreeSurfer cannot read.
+        """
+        if self.raw is None:
+            raise WriterError("This metadata holds no morph to write.")
+        return self.raw

@@ -3,7 +3,6 @@
 # stdlib
 import functools
 import math
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -16,8 +15,8 @@ from brainhops._core.numeric import shortest_decimal
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import BinaryFileReader, BinaryFileWriter
-from brainhops.io.metadata import MetadataFormat
+from brainhops.io.base.parsers import BinaryFileWriter
+from brainhops.io.metadata import MetadataFormat, MetadataReader
 from brainhops.io.metadata._base import consolidated
 
 # this format
@@ -26,7 +25,7 @@ from ._tags import decode_history, encode_history
 
 
 @register_format
-class MghMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
+class MghMetadata(MetadataFormat, MetadataReader, BinaryFileWriter):
     """Metadata of an MGH or MGZ file, which holds everything but the voxels.
 
     The metadata of an MGH file is its header, the footer of acquisition
@@ -141,58 +140,6 @@ class MghMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             on_loss=on_loss,
             fields=fields,
         )
-
-    @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that a stream holds an MGH header.
-
-        The stream is tested with [`MghRaw.sniff_fileobj`][].
-
-        Parameters
-        ----------
-        file : IO
-            The stream, which is read from its current position.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the stream holds no MGH header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return MghRaw.sniff_fileobj(file, error=error, **kwargs)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes start with an MGH header.
-
-        Parameters
-        ----------
-        data : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no MGH header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     def to_bytes(
         self, *, on_loss: tx.Optional[OnLoss] = None, **fields: tx.Any

@@ -169,7 +169,7 @@ class Metadata(
 
 # brainhops/io/common/nifti/_metadata.py
 @register_format
-class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
+class NiftiMetadata(MetadataFormat, MetadataReader, BinaryFileWriter):
     SUPPORTED_FIELDS = ("description", "sources", "intent", ...)
     raw: NoRepr[tx.Optional[NiftiRaw]] = None
 
