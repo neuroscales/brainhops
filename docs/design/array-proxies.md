@@ -237,17 +237,53 @@ select. Its `stored` description is the source and the byte range of
 the data, which a writer copies when the target stores the same layout.
 
 A `StridedProxy` takes a `cache` option, which is false by default.
-When it is true, the proxy keeps the decoded bytes that it read, so
-that later reads of the same file do not decompress it again. This
-matters most for codecs that cannot seek, such as bzip2, which Dask
-would otherwise decompress once for each chunk. The cache belongs to
-the source, so a proxy derived from another one by indexing shares the
-cache of its parent. The cache is dropped when the proxy is pickled, so
-each Dask worker process fills its own, and threads share one cache
-through a lock. Before the proxy uses the cache, it checks that the size
-and the modification time of a local file have not changed, so that a
-file written again is read again. The option breaks the rule that a
-proxy keeps nothing between reads, which is why it is off by default.
+The cache holds only what the proxy computes to decode a compressed or
+encoded file, and never the values of a file that can be read in
+place. A local file that is not compressed is memory-mapped, and the
+operating system already caches its pages.
+
+- For a codec that cannot seek, such as bzip2, xz, the text encodings
+  of NRRD or the packed bits of MRtrix, the cache holds the decoded
+  bytes, so that Dask does not decode the file once for each chunk.
+- For gzip read through indexed_gzip, the cache holds the index of
+  seek points that indexed_gzip builds, which is small. Without it,
+  each read builds the index again, which costs a decompression of the
+  file up to the values read.
+
+Because only compressed and encoded files are cached, and such files
+cannot be written in part (#479), a write through a proxy never makes
+a cache stale. A file written again by other code is detected by its
+size and its modification time, which the proxy checks before it uses
+the cache. The cache belongs to the source, so a proxy derived from
+another one by indexing shares the cache of its parent. The cache is
+dropped when the proxy is pickled, so each Dask worker process fills
+its own, and threads share one cache through a lock. The option breaks
+the rule that a proxy keeps nothing between reads, which is why it is
+off by default.
+
+#### Remote sources
+
+A remote file, for example on S3, reaches a reader as a path object of
+bagof-paths whose `open` method goes through fsspec. A `ByteSource`
+keeps that path and opens it for each read, as it does a local path.
+The stream that fsspec returns can seek, and each read after a seek
+becomes an HTTP request for a range of bytes, so `StridedProxy` reads
+the merged ranges of a selection without downloading the whole file. A
+remote file cannot be memory-mapped. A compressed remote file is read
+through the same decompressors, and gzip benefits most from the cached
+index, because each decompression downloads the file again.
+
+The proxy does not cache remote bytes itself. fsspec already provides
+caches, either on the stream (the `cache_type` option) or as a link of
+a chain such as `simplecache::s3://bucket/image.nii`, which keeps a
+local copy of the file. A `ByteSource` checks that a remote file has
+not changed through the entity tag or the modification time that
+`fs.info` returns, when the file system gives one.
+
+Credentials should come from the environment or the configuration of
+the file system, such as an AWS profile. Options passed to the path,
+such as a key and a secret, are pickled with the proxy and sent to
+every Dask worker.
 
 Two generic proxies complete the layer. `ScaledProxy` applies a slope
 and an intercept that broadcast against the shape, which covers the
@@ -353,4 +389,6 @@ proxy for a small gain, and it can be reconsidered if a consumer that
 is itself asynchronous, such as a viewer, needs it.
 
 Writing through a proxy, which `readwrite.py` prepares for, is left out
-of this memo, because no writer needs it yet. It is tracked in #479.
+of this memo, because no writer needs it yet. It is tracked in #479,
+which records that compressed files and remote files will not be
+written in part.
