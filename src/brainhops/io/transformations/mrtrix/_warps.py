@@ -131,7 +131,7 @@ on. A larger warp is subsampled with a regular step."""
 
 
 class MrtrixWarp(
-    MrtrixTransformationFormat, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, MrtrixTransformationFormat
 ):
     """A warp stored in an MRtrix image.
 

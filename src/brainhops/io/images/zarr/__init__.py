@@ -97,7 +97,7 @@ refused. A `byDimension` is read only when its parts are affine, or when
 each part writes the axes that it reads. A transformation of the
 multiscale that refers to a system of another group, such as a labels
 image, is skipped, since labels and scenes are not read yet (items 132
-and 133 of the tensions in `docs/design/format-records.md`), and only the
+and 133 of the tensions in `spec/design/format-records.md`), and only the
 first multiscale of a group is read. A `scale` or a `translation` whose
 values are stored in an array named by `path` is refused, since the
 schema of version 0.6 requires them inline, as those of versions 0.4 and

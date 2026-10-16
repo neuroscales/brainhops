@@ -1,7 +1,7 @@
 """Format-independent machinery shared by every kind of file-based object."""
 
 __all__ = [
-    "Format",
+    "FileFormat",
     "format_registry",
     "load",
     "save",
@@ -20,7 +20,7 @@ __all__ = [
 
 from . import parsers
 from ._base import (
-    Format,
+    FileFormat,
     format_registry,
     register_format,
 )

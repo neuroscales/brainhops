@@ -374,7 +374,7 @@ def _(
         return Permutation(permutation=permutation)
     # A subset of the input axes was never a valid mapAxis, so it is
     # refused, and `projectAxis` is the spelling of a drop
-    # (docs/design/compute-api-and-open-systems.md, section A.8).
+    # (spec/design/compute-api-and-open-systems.md, section A.8).
     raise OmeMappingError(
         f"This OME mapAxis {mapping} is not a permutation of the input "
         "axes, which OME-NGFF 0.6 requires. A transformation that drops "
@@ -776,7 +776,7 @@ def _scale_translation_entry(
     # otherwise a sequence of a scale and a translation. The schema of
     # OME-NGFF 0.6 requires a positive scale, and a flip is never written as
     # a negative one: a scale with an entry that is not positive is written
-    # as the equivalent affine (docs/design/format-records.md, item 135).
+    # as the equivalent affine (spec/design/format-records.md, item 135).
     scale = np.asarray(scale, dtype=float)
     translation = np.asarray(translation, dtype=float)
     if bool((scale <= 0).any()):
@@ -968,7 +968,7 @@ def _parameter(
     # metadata, which is how the field paths are resolved too. Version 0.6
     # only allows `path` for an affine or a rotation, and the reader of an
     # image refuses it for a scale or a translation, except in the drafts
-    # 0.6.dev1 and 0.6.dev2, which allowed it (docs/design/format-records.md,
+    # 0.6.dev1 and 0.6.dev2, which allowed it (spec/design/format-records.md,
     # item 134).
     # abczarr marks an absent field with a sentinel that is false.
     values = getattr(transform, name, None)

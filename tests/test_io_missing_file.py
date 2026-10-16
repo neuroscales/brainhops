@@ -20,7 +20,7 @@ from brainhops.cli._errors import CliError  # noqa: E402
 from brainhops.cli._io import load_image, load_transform  # noqa: E402
 from brainhops.io.base import ImageSpec  # noqa: E402
 from brainhops.io.base._base import (  # noqa: E402
-    Format,
+    FileFormat,
     format_registry,
     register_format,
 )
@@ -118,7 +118,7 @@ def test_dispatched_load_of_a_missing_file(missing, entry) -> None:  # noqa: ANN
 
 
 @pytest.mark.parametrize(
-    "dispatcher", [Format, ImageFormat, TransformationFormat]
+    "dispatcher", [FileFormat, ImageFormat, TransformationFormat]
 )
 def test_dispatched_from_file_of_a_missing_file(missing, dispatcher) -> None:  # noqa: ANN001
     for source in _spellings(missing):
@@ -171,7 +171,7 @@ def test_concrete_sniff_of_a_missing_file(missing, as_str) -> None:  # noqa: ANN
 
 @pytest.mark.parametrize(
     "entry",
-    [Format.sniff, Format.sniff_file],
+    [FileFormat.sniff, FileFormat.sniff_file],
     ids=["sniff", "sniff_file"],
 )
 def test_dispatched_sniff_of_a_missing_file(tmp_path, entry) -> None:  # noqa: ANN001
@@ -197,13 +197,13 @@ def test_dispatched_sniff_still_predicts_from_the_name(missing) -> None:  # noqa
 @pytest.fixture
 def greeting_root() -> tx.Iterator[type]:
     @format_registry
-    class Root(Format, TextFileReader):
+    class Root(FileFormat):
         pass
 
     fmt = register_format(
         type(
             "Greet",
-            (Root,),
+            (TextFileReader, Root),
             {
                 "EXTENSIONS": (".greet",),
                 "sniff_line": Greeting.__dict__["sniff_line"],
@@ -214,7 +214,7 @@ def greeting_root() -> tx.Iterator[type]:
     try:
         yield Root
     finally:
-        Format._REGISTRY.discard(fmt)
+        FileFormat._REGISTRY.discard(fmt)
 
 
 def test_dispatched_text_is_content_not_a_path(greeting_root) -> None:  # noqa: ANN001

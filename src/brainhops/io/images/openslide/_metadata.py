@@ -24,7 +24,7 @@ from ._raw import OpenSlideRaw, read_record
 
 
 @register_format
-class OpenSlideMetadata(MetadataFormat, BinaryFileReader):
+class OpenSlideMetadata(BinaryFileReader, MetadataFormat):
     """Metadata of a whole-slide image, held as an [`OpenSlideRaw`][] record.
 
     The metadata of a slide is what OpenSlide reports about it when it opens

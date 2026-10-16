@@ -54,7 +54,7 @@ _KEYED_FIELDS = tuple(
 
 
 @register_format
-class BidsSidecar(MetadataFormat, TextFileReader, TextFileWriter):
+class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
     """
     Metadata of a BIDS JSON sidecar, which holds the decoded JSON object.
 

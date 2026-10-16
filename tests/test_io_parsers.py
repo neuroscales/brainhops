@@ -7,7 +7,7 @@ import typing_extensions as tx
 
 from brainhops._core.path import exists
 from brainhops.io.base._base import (
-    Format,
+    FileFormat,
     format_registry,
     register_format,
 )
@@ -120,13 +120,13 @@ def test_dispatch_works_over_a_non_seekable_stream() -> None:
     """A pipe cannot rewind, so dispatch buffers it."""
 
     @format_registry
-    class Root(Format, TextFileReader):
+    class Root(FileFormat):
         pass
 
     fmt = register_format(
         type(
             "Greet",
-            (Root,),
+            (TextFileReader, Root),
             {
                 "EXTENSIONS": (".greet",),
                 "sniff_line": Greeting.__dict__["sniff_line"],
@@ -145,7 +145,7 @@ def test_dispatch_works_over_a_non_seekable_stream() -> None:
     try:
         assert Root.from_fileobj(Pipe("HELLO world\n")) == "HELLO world"
     finally:
-        Format._REGISTRY.discard(fmt)
+        FileFormat._REGISTRY.discard(fmt)
 
 
 # ----------------------------------------------------------------------
@@ -223,19 +223,19 @@ def test_a_boolean_sniffer_is_a_valid_scoring_sniffer() -> None:
 def test_the_writer_entry_point_does_not_shadow_the_converter() -> None:
     """The writer entry point must not shadow Transformation.to(cls)."""
     from brainhops.datamodel.transformations import Transformation
-    from brainhops.io.base.parsers import FileWriter
+    from brainhops.io.base.parsers import FileWriter, _WriterMixin
     from brainhops.io.transformations.base import (
         TransformationFormat,
     )
 
     class WritableTransformation(
-        TransformationFormat, FileWriter, Transformation
+        FileWriter, TransformationFormat, Transformation
     ):
         pass
 
     mro = WritableTransformation.__mro__
     assert next(c for c in mro if "to" in c.__dict__) is Transformation
-    assert next(c for c in mro if "save" in c.__dict__) is FileWriter
+    assert next(c for c in mro if "save" in c.__dict__) is _WriterMixin
 
 
 # ----------------------------------------------------------------------
@@ -310,15 +310,15 @@ def test_a_bytes_only_parser_still_loads_from_a_fileobj() -> None:
 
 
 def test_a_dispatcher_mixin_does_not_count_as_a_fileobj_override() -> None:
-    from brainhops.io.base._base import Format
+    from brainhops.io.base._base import FileFormat
 
-    class Concrete(Format, Neither):
+    class Concrete(Neither, FileFormat):
         pass
 
     with pytest.raises(ParserNotImplementedError):
         Concrete.from_bytes(b"data")
 
-    class ConcreteHeader(Format, HeaderOnly):
+    class ConcreteHeader(HeaderOnly, FileFormat):
         pass
 
     assert ConcreteHeader.from_bytes(b"WXYZ!").magic == b"WXYZ"

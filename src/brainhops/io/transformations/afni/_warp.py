@@ -73,9 +73,9 @@ _NDIM = 3
 
 @register_format
 class AfniBrikWarp(
-    AfniWarp,
     BinaryFileReader,
     BinaryFileWriter,
+    AfniWarp,
     StoredFieldMixin,
     _xforms.ImmutableSequence,
 ):

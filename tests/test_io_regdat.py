@@ -24,7 +24,7 @@ from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Affine, DisplacementField
 from brainhops.errors import ConversionError
-from brainhops.io import Format
+from brainhops.io import FileFormat
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -318,11 +318,11 @@ def test_a_plain_matrix_named_dat_is_not_a_register_dat(tmp_path) -> None:  # no
 
 
 def test_register_dat_is_a_registered_writable_format() -> None:
-    assert RegisterDatTransformation in Format._REGISTRY
+    assert RegisterDatTransformation in FileFormat._REGISTRY
     assert RegisterDatTransformation in TransformationFormat._REGISTRY
     assert RegisterDatTransformation.EXTENSIONS == (".dat", ".reg")
     # The view reads the same files, so registering it would be ambiguous.
-    assert RegisterDatTransformationRASToRAS not in Format._REGISTRY
+    assert RegisterDatTransformationRASToRAS not in FileFormat._REGISTRY
 
 
 @pytest.mark.parametrize("hint", ["regdat", "freesurfer.regdat"])

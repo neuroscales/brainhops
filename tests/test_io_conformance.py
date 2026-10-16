@@ -76,7 +76,7 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base._base import Format, _takes_over, register_format
+from brainhops.io.base._base import FileFormat, _takes_over, register_format
 from brainhops.io.base._save import _model
 from brainhops.io.base._utils_files import replace_directory
 from brainhops.io.base.parsers import (
@@ -625,7 +625,7 @@ def _toy_spacing(transformation: Transformation, ndim: int) -> np.ndarray:
     raise WriterError("A toy file stores a voxel size, not a general map.")
 
 
-class ToyMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
+class ToyMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
     """Metadata of a toy file, which holds its header."""
 
     EXTENSIONS = (".toy",)
@@ -651,7 +651,7 @@ class ToyMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
 
 class ToyImage(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """Image stored in a toy file.
 
@@ -949,7 +949,7 @@ class ToyPyramidRaw(Magic, frozen=True):
     """Bytes of the document as read, or empty for a record built in memory."""
 
 
-class ToyPyramidMetadata(MetadataFormat, BinaryFileReader):
+class ToyPyramidMetadata(BinaryFileReader, MetadataFormat):
     """Metadata of a toy pyramid, which holds the record of its directory.
 
     The record is read from the document and from the header of each
@@ -1000,7 +1000,7 @@ class ToyPyramidMetadata(MetadataFormat, BinaryFileReader):
 
 
 class ToyLevel(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """One level of a toy pyramid.
 
@@ -1185,7 +1185,7 @@ class ToyLevel(
 
 
 class ToyPyramid(
-    ImageFormat, MultiScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, MultiScaleImage
 ):
     """Pyramid stored in a toy pyramid directory.
 
@@ -2358,7 +2358,7 @@ def _regdat_edit_record(record: tx.Any) -> tx.Any:
 # are never written. The view `RegisterDatTransformationRASToRAS` is not
 # a variant here, because it reads no matrix without both geometries,
 # which the checks do not give when they load a file (item 150 of the
-# tensions in `docs/design/format-records.md`). Its tests are in
+# tensions in `spec/design/format-records.md`). Its tests are in
 # `test_io_regdat.py`. Check 6 is vacuous, as it is for LTA, because the
 # file has no data beside its record.
 _REGDAT = Exemplar(
@@ -5260,7 +5260,7 @@ def test_every_registered_format_is_in_one_table() -> None:
     assert not set(EXEMPLARS) & not_migrated
     registered = {
         cls
-        for cls in Format._REGISTRY | MetadataFormat._REGISTRY
+        for cls in FileFormat._REGISTRY | MetadataFormat._REGISTRY
         if cls.__module__.startswith("brainhops.")
         and _resolve(f"{cls.__module__}.{cls.__name__}") is not None
     }
@@ -5298,8 +5298,8 @@ def test_a_shared_format_differs_only_in_its_sniffing(name: str) -> None:
 def test_the_metadata_registry_is_isolated() -> None:
     assert MetadataFormat._is_dispatcher()
     assert ToyMetadata in MetadataFormat._REGISTRY
-    assert ToyMetadata not in Format._REGISTRY
-    assert MetadataFormat not in Format._REGISTRY
+    assert ToyMetadata not in FileFormat._REGISTRY
+    assert MetadataFormat not in FileFormat._REGISTRY
 
 
 def test_no_format_holds_its_arrays_in_raw() -> None:
@@ -5308,7 +5308,7 @@ def test_no_format_holds_its_arrays_in_raw() -> None:
     holders = {_resolve(name, require_backend=False) for name in RAWDATA} - {
         None
     }
-    for cls in Format._REGISTRY:
+    for cls in FileFormat._REGISTRY:
         if not cls.__module__.startswith("brainhops."):
             continue
         names = {field.name for field in fields(cls)}

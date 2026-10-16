@@ -75,8 +75,8 @@ _COEFFICIENT_INTENTS = frozenset(
     }
 )
 
-# Deformation fields are linear B-splines on the reference grid; coefficient
-# fields are quadratic or cubic on a coarse knot grid.
+# Deformation fields are linear B-splines on the grid of their header;
+# coefficient fields are quadratic or cubic on a coarse knot grid.
 _SPLINE_DEGREE = {
     0: 1,  # Native convertwarp/invwarp dense fields omit the FSL intent.
     FSL_FNIRT_DISPLACEMENT_FIELD: 1,
@@ -89,7 +89,7 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 
 
 # Developer notes on the coefficient files (see also items 220 to 223 of
-# docs/design/format-records.md):
+# spec/design/format-records.md):
 # - The header conventions are those of `src/warpfns/fnirt_file_writer.cpp`,
 #   `src/warpfns/fnirt_file_reader.cpp` and `src/basisfield/fsl_splines.h`
 #   of FSL 5.0.9, as mirrored at https://github.com/neurodebian/fsl (commit
@@ -125,8 +125,8 @@ class FnirtWarpField(
 
     | Intent | Kind | Degree | Grid |
     | ------ | ---- | ------ | ---- |
-    | 0 | deformation (explicit `fnirt` hint) | 1 | reference voxels |
-    | 2006 | deformation | 1 | reference voxels |
+    | 0 | deformation (explicit `fnirt` hint) | 1 | header voxels |
+    | 2006 | deformation | 1 | header voxels |
     | 2007 | cubic coefficients | 3 | knot grid |
     | 2009 | quadratic coefficients | 2 | knot grid |
 
@@ -149,9 +149,13 @@ class FnirtWarpField(
     reference position moved by the inverse of the initial affine.
     Coefficients beyond the grid count as zero.
 
-    A deformation field carries the reference geometry itself, so only the
-    moving image is required. A coefficient field carries neither image's
-    geometry, so both the reference and the moving image are required. A
+    A deformation field carries its grid geometry in its header. Its
+    storage axes and resolution can differ from the reference image.
+    Vector components stay in FSL scaled millimetres regardless of that
+    storage layout. Without a separate reference image, the header also
+    defines the reference geometry, so only the moving image is required.
+    A coefficient field carries neither image's geometry, so both the
+    reference and the moving image are required. A
     reference of another resolution than the one used at registration is
     placed by its scaled-mm positions. A discrete-cosine-transform
     coefficient field (intent 2008) is recognized but not supported.
@@ -493,11 +497,11 @@ class FnirtWarpField(
     def _ref_to_field(self, ref: _ImageGeometry) -> np.ndarray:
         """Affine from reference voxels to the coordinates of the warp grid.
 
-        The warp grid of a dense field is the voxel grid of the reference,
-        so the affine is the identity. The grid of a coefficient field is
-        placed from the scaled-mm positions of the reference, divided by
-        the knot spacing in millimetres and shifted by the offset of the
-        knots of FSL.
+        A dense field uses the voxel-to-world geometry in its own header.
+        Its storage axes and resolution can differ from the reference.
+        The grid of a coefficient field is placed from the scaled-mm
+        positions of the reference, divided by the knot spacing in
+        millimetres and shifted by the offset of the knots of FSL.
         """
         # FSL places coefficient `c` of an axis at the voxel
         # `(c - degree // 2) * ksp` of the reference that it registered to,
@@ -522,7 +526,8 @@ class FnirtWarpField(
         # from the stored voxels instead, which differs from FSL when the
         # reference has a positive determinant (item 220 of the memo).
         if not self._is_coeff():
-            return np.eye(4, dtype=np.float64)
+            grid = _ImageGeometry(_header(self))
+            return grid.ras2vox @ ref.vox2ras
         knot_mm = self._reference_pixdim() * self._stored_knot_spacing()
         grid = np.diag(np.concatenate([1.0 / knot_mm, [1.0]])) @ ref.vox2fsl
         grid[:3, 3] += _anchor_offsets(
@@ -579,7 +584,8 @@ class FnirtWarpField(
             return field
 
         shape = tuple(int(s) for s in field.shape[:3])
-        ref_scaled = _voxel_grid_in_scaled_mm(shape, ref.vox2fsl, backend)
+        grid_to_scaled = ref.vox2fsl @ np.linalg.inv(self._ref_to_field(ref))
+        ref_scaled = _voxel_grid_in_scaled_mm(shape, grid_to_scaled, backend)
 
         deformation_type = self.deformation_type
         if deformation_type is None:

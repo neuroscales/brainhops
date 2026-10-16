@@ -15,7 +15,7 @@ from ._raw import ImarisRaw
 
 
 @register_format
-class ImarisMetadata(MetadataFormat, Hdf5Reader):
+class ImarisMetadata(Hdf5Reader, MetadataFormat):
     """Metadata of an Imaris file, which holds its groups and parameters.
 
     An Imaris file is an HDF5 file with no header before its data. Its

@@ -42,7 +42,7 @@ from . import _conventions
 from ._raw import MatrixAffineRaw
 
 
-class MatrixMetadata(MetadataFormat, ArrayReader):
+class MatrixMetadata(ArrayReader, MetadataFormat):
     """Metadata of a plain matrix file, which holds the file as a record.
 
     A plain matrix file holds a small matrix and nothing else, so it is

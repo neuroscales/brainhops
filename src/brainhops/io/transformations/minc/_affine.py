@@ -126,10 +126,10 @@ def _decoded(block: XfmRaw.Linear) -> np.ndarray:
 # Text adapters supply byte decoding and encoding before the generic bases.
 @register_format
 class XfmAffine(
-    XfmFormat,
-    AffineTransformationFormat,
     TextFileReader,
     TextFileWriter,
+    XfmFormat,
+    AffineTransformationFormat,
     _xforms.Affine,
     TransformationFormat,
 ):

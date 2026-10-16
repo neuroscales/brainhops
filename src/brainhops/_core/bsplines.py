@@ -6,6 +6,7 @@ from types import ModuleType
 
 import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
+from bagof.hints.numpy import DTypeLike
 
 from brainhops._core.dependencies import da, np
 from brainhops._core.typing import Clip
@@ -145,6 +146,7 @@ def pull(
     coeff: bool,
     *,
     clip: Clip = None,
+    dtype: tx.Optional[DTypeLike] = None,
 ) -> ArrayProtocol:
     """Interpolate an array at the coordinates of a field.
 
@@ -183,6 +185,13 @@ def pull(
         Clipped samples are zero even when `bound` is a nonzero number.
         Coordinates are not clamped or modified.
 
+    dtype : DTypeLike, optional
+        Output dtype. None preserves the input dtype. An explicit dtype
+        promotes the input and output dtypes to choose floating working
+        precision, with a minimum of float32. Integer-only combinations
+        use float64. A floating output retains interpolated fractions.
+        Integer output keeps rounding half away from zero and saturation.
+
     Returns
     -------
     ArrayProtocol
@@ -190,6 +199,9 @@ def pull(
     """
     nx = best_backend(input, coords)
     nd = get_ndimage_backend(nx)
+    if dtype is not None:
+        dtype = np.dtype(dtype)
+        input = input.astype(_sampling_dtype(input.dtype, dtype), copy=False)
     ndim = coords.shape[-1]
     clip = _normalize_clip(clip, ndim)
     batch = input.shape[:-ndim]
@@ -211,11 +223,54 @@ def pull(
         lambda x: map_coordinates(x, coords, **opts),
         tuple(coords.shape[1:]),
     )
-    return (
+    output = (
         nx.where(mask, output, nx.zeros_like(output))
         if mask is not None
         else output
     )
+    return _cast_output(output, dtype) if dtype is not None else output
+
+
+def _sampling_dtype(
+    input_dtype: DTypeLike, output_dtype: tx.Optional[DTypeLike]
+) -> np.dtype:
+    """Choose working precision without changing the separable defaults.
+
+    Explicit requests promote the input and output types. SciPy does not
+    sample float16 inputs, so floating precision is at least float32.
+    Integer-only combinations need float64 to preserve fractions.
+    """
+    input_dtype = np.dtype(input_dtype)
+    if output_dtype is None:
+        return (
+            input_dtype
+            if np.issubdtype(input_dtype, np.floating)
+            else np.dtype(float)
+        )
+    promoted = np.result_type(input_dtype, output_dtype)
+    if not np.issubdtype(promoted, np.inexact):
+        return np.result_type(promoted, np.float64)
+    return np.result_type(promoted, np.float32)
+
+
+def _cast_output(values: ArrayProtocol, dtype: DTypeLike) -> ArrayProtocol:
+    """Convert sampled values using the existing SciPy output convention."""
+    dtype = np.dtype(dtype)
+    if values.dtype == dtype:
+        return values
+    nx = get_array_backend(values)
+    if dtype.kind == "b":
+        return nx.trunc(values).astype(dtype)
+    if np.issubdtype(dtype, np.integer):
+        # Adding 0.5 in float32 can move a value just below a rounding
+        # threshold onto the threshold. Convert before that addition.
+        values = values.astype(
+            np.result_type(values.dtype, np.float64), copy=False
+        )
+        rounded = nx.trunc(nx.where(values > 0, values + 0.5, values - 0.5))
+        info = np.iinfo(dtype)
+        return nx.clip(rounded, info.min, info.max).astype(dtype)
+    return values.astype(dtype)
 
 
 def pull_axes(
@@ -227,6 +282,7 @@ def pull_axes(
     coeff: bool,
     *,
     clip: Clip = None,
+    dtype: tx.Optional[DTypeLike] = None,
 ) -> ArrayProtocol:
     """Interpolate an array along a subset of its axes.
 
@@ -255,6 +311,9 @@ def pull_axes(
         Zero samples outside the voxel margins, as in [`pull`][].
         Per-axis pairs follow `axes`, not the original array axis order.
 
+    dtype : DTypeLike, optional
+        Output dtype, as in [`pull`][]. None preserves the input dtype.
+
     Returns
     -------
     ArrayProtocol
@@ -267,7 +326,7 @@ def pull_axes(
     ndim = len(axes)
     dest = list(range(input.ndim - ndim, input.ndim))
     moved = nx.moveaxis(input, axes, dest)
-    return pull(moved, coords, degree, bound, coeff, clip=clip)
+    return pull(moved, coords, degree, bound, coeff, clip=clip, dtype=dtype)
 
 
 def spline_matrix(

@@ -43,9 +43,9 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 
 @register_format
 class NeuroglancerTransform(
-    AffineTransformationFormat,
     TextFileReader,
     TextFileWriter,
+    AffineTransformationFormat,
     _xforms.Affine,
     TransformationFormat,
 ):

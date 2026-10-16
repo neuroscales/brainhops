@@ -89,11 +89,11 @@ _MGH_DTYPES = {
 
 @register_format
 class MghImage(
-    ImageFormat,
-    SingleScaleImage,
-    FreesurferFormat,
     BinaryFileReader,
     BinaryFileWriter,
+    ImageFormat,
+    FreesurferFormat,
+    SingleScaleImage,
 ):
     """An image stored in a FreeSurfer MGH or MGZ file.
 

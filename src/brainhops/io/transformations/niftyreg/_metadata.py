@@ -7,15 +7,15 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import Confidence, TextFileWriter, WriterError
+from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
-from brainhops.io.metadata import MetadataFormat
+from brainhops.io.metadata import MetadataFormat, MetadataWriter
 
 from ._raw import NiftyRegAffineRaw, is_homogeneous
 
 
 @register_format
-class NiftyRegAffineMetadata(MetadataFormat, TxtArrayReader, TextFileWriter):
+class NiftyRegAffineMetadata(TxtArrayReader, MetadataWriter, MetadataFormat):
     """Metadata of a NiftyReg affine file, which holds the file as a record.
 
     An affine file of `reg_aladin` is a short text file that is read in
@@ -25,6 +25,12 @@ class NiftyRegAffineMetadata(MetadataFormat, TxtArrayReader, TextFileWriter):
     therefore lives in the record of its metadata, and reading the
     metadata of a file reads the same content as reading the
     transformation. The metadata keeps no open file.
+
+    The file is scored as a text array by
+    [`TxtArrayReader`][brainhops.io.common._arrays.TxtArrayReader],
+    because [`NiftyRegAffineRaw`][] has no sniffer, but its text is read
+    by the record. The file is written by the record, through
+    [`MetadataWriter`][brainhops.io.metadata.MetadataWriter].
 
     Nothing marks the file as NiftyReg's, so the metadata scores
     `Confidence.WEAK`, as the transformation does, and loses a `.txt` file
@@ -55,67 +61,67 @@ class NiftyRegAffineMetadata(MetadataFormat, TxtArrayReader, TextFileWriter):
         """Score `Confidence.WEAK` for a homogeneous (4, 4) matrix."""
         return cls.SNIFF_CONFIDENCE if is_homogeneous(array) else 0.0
 
-    # --- to -----------------------------------------------------------
+    # --- from ---------------------------------------------------------
+    # The record class has no sniffer, so the metadata cannot list
+    # `MetadataReader`, and passes the text to the record here. Every
+    # other input reaches one of these two methods through the adapters
+    # of `TxtArrayReader`.
 
-    def to_text(self, **kwargs) -> str:
-        """Return the content of the file that the record holds.
+    @classmethod
+    def from_text(cls, text: str, **kwargs) -> tx.Self:
+        """Read the metadata from the text of a file, through the record.
 
         Parameters
         ----------
+        text : str
+            The text of the file.
         **kwargs : Any
-            Options of [`NiftyRegAffineRaw.to_text`][], which takes none.
+            Options of the reader of the record.
 
         Returns
         -------
-        str
-            The content of the file.
-
-        Raises
-        ------
-        WriterError
-            If the metadata has no record, since the file is made of the
-            matrix alone.
+        Self
+            The metadata.
         """
-        return _record(self).to_text(**kwargs)
+        return cls.from_raw(NiftyRegAffineRaw.from_text(text, **kwargs))
 
-    def to_lines(self, **kwargs) -> tx.Iterator[str]:
-        """Yield the lines of the file that the record holds.
+    @classmethod
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
+        """Read the metadata from the lines of a file, through the record.
 
         Parameters
         ----------
+        lines : Iterable[str]
+            The lines of the file.
         **kwargs : Any
-            Options of [`NiftyRegAffineRaw.to_lines`][], which takes none.
+            Options of the reader of the record.
 
-        Yields
-        ------
-        str
-            The lines of the file, without line breaks.
+        Returns
+        -------
+        Self
+            The metadata.
+        """
+        return cls.from_raw(NiftyRegAffineRaw.from_lines(lines, **kwargs))
+
+    # --- to -----------------------------------------------------------
+
+    def _record_to_write(self) -> NiftyRegAffineRaw:
+        """Return the record that the metadata writes.
+
+        Returns
+        -------
+        NiftyRegAffineRaw
+            The record.
 
         Raises
         ------
         WriterError
             If the metadata has no record.
         """
-        return _record(self).to_lines(**kwargs)
-
-
-# ----------------------------------------------------------------------
-#   HELPERS
-# ----------------------------------------------------------------------
-
-
-def _record(metadata: NiftyRegAffineMetadata) -> NiftyRegAffineRaw:
-    """Return the record of metadata that is written.
-
-    Raises
-    ------
-    WriterError
-        If the metadata has no record.
-    """
-    if metadata.raw is None:
-        raise WriterError(
-            "Metadata of a NiftyReg affine without a record cannot be "
-            "written, because the file holds the matrix and nothing else. "
-            "Write the transformation instead."
-        )
-    return metadata.raw
+        if self.raw is None:
+            raise WriterError(
+                "Metadata of a NiftyReg affine without a record cannot be "
+                "written, because the file holds the matrix and nothing else. "
+                "Write the transformation instead."
+            )
+        return self.raw

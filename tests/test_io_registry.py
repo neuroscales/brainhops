@@ -4,7 +4,7 @@ import pytest
 import typing_extensions as tx
 
 from brainhops.io.base._base import (
-    Format,
+    FileFormat,
     format_registry,
     is_format_registry,
     register_format,
@@ -30,12 +30,12 @@ def root() -> tx.Iterator[type]:
     """
 
     @format_registry
-    class Root(Format, TextFileReader):
+    class Root(FileFormat):
         pass
 
     yield Root
     for fmt in list(Root._REGISTRY):
-        Format._REGISTRY.discard(fmt)
+        FileFormat._REGISTRY.discard(fmt)
 
 
 def _format(root: type, name: str, **attrs: tx.Any) -> type:
@@ -54,7 +54,7 @@ def _format(root: type, name: str, **attrs: tx.Any) -> type:
 
     namespace = {"sniff_line": sniff_line, "from_line": from_line}
     namespace.update(attrs)
-    return register_format(type(name, (root,), namespace))
+    return register_format(type(name, (TextFileReader, root), namespace))
 
 
 # ----------------------------------------------------------------------
@@ -70,13 +70,13 @@ def test_format_registry_gives_a_class_its_own_registry(root: type) -> None:
 def test_register_format_fills_every_ancestor_registry(root: type) -> None:
     fmt = _format(root, "A", EXTENSIONS=(".a",))
     assert fmt in root._REGISTRY
-    assert fmt in Format._REGISTRY
+    assert fmt in FileFormat._REGISTRY
     # Keep the real registries clean.
-    Format._REGISTRY.discard(fmt)
+    FileFormat._REGISTRY.discard(fmt)
 
 
 def test_dispatchers_are_not_registered_as_formats(root: type) -> None:
-    assert root not in Format._REGISTRY
+    assert root not in FileFormat._REGISTRY
 
 
 def test_registering_a_dispatcher_is_an_error(root: type) -> None:
@@ -90,7 +90,7 @@ def test_registering_twice_is_a_no_op(root: type) -> None:
     before = len(root._REGISTRY)
     register_format(fmt)
     assert len(root._REGISTRY) == before
-    Format._REGISTRY.discard(fmt)
+    FileFormat._REGISTRY.discard(fmt)
 
 
 # ----------------------------------------------------------------------
@@ -137,7 +137,7 @@ def test_longest_matching_extension_wins(root: type, tmp_path) -> None:  # noqa:
     broad = register_format(
         type(
             "Broad",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".gz",),
                 "sniff_line": sniff_line,
@@ -148,7 +148,7 @@ def test_longest_matching_extension_wins(root: type, tmp_path) -> None:  # noqa:
     narrow = register_format(
         type(
             "Narrow",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii.gz",),
                 "sniff_line": sniff_line,
@@ -160,7 +160,7 @@ def test_longest_matching_extension_wins(root: type, tmp_path) -> None:  # noqa:
     scan.write_text("content\n")
     assert root.from_file(scan) == "narrow"
     for fmt in (broad, narrow):
-        Format._REGISTRY.discard(fmt)
+        FileFormat._REGISTRY.discard(fmt)
 
 
 def test_a_prefix_constraint_beats_an_unconstrained_format(
@@ -176,7 +176,7 @@ def test_a_prefix_constraint_beats_an_unconstrained_format(
     generic = register_format(
         type(
             "Generic",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii",),
                 "sniff_line": sniff_line,
@@ -187,7 +187,7 @@ def test_a_prefix_constraint_beats_an_unconstrained_format(
     spm = register_format(
         type(
             "Spm",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii",),
                 "PREFIXES": ("y_",),
@@ -201,7 +201,7 @@ def test_a_prefix_constraint_beats_an_unconstrained_format(
         target.write_text("content\n")
         assert root.from_file(target) == expected
     for fmt in (generic, spm):
-        Format._REGISTRY.discard(fmt)
+        FileFormat._REGISTRY.discard(fmt)
 
 
 def test_a_subclass_outranks_its_own_base(root: type) -> None:
@@ -218,7 +218,7 @@ def test_a_subclass_outranks_its_own_base(root: type) -> None:
     )
     assert root.from_line("X hello") == "derived"
     for fmt in (base, derived):
-        Format._REGISTRY.discard(fmt)
+        FileFormat._REGISTRY.discard(fmt)
 
 
 def test_indistinguishable_formats_raise_rather_than_guess(
@@ -246,7 +246,7 @@ def test_an_apparent_tie_that_only_one_format_can_read_is_not_an_error(
     register_format(
         type(
             "Broken",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".t",),
                 "sniff_line": sniff_line,
@@ -286,7 +286,7 @@ def test_brute_force_is_opt_in(root: type) -> None:
     register_format(
         type(
             "Silent",
-            (root,),
+            (TextFileReader, root),
             {
                 "sniff_line": classmethod(
                     lambda cls, line, error=False, **kw: Confidence.NO
@@ -313,7 +313,7 @@ def test_a_longer_required_prefix_is_more_specific(
     short = register_format(
         type(
             "Short",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii",),
                 "PREFIXES": ("sub",),
@@ -325,7 +325,7 @@ def test_a_longer_required_prefix_is_more_specific(
     long_ = register_format(
         type(
             "Long",
-            (root,),
+            (TextFileReader, root),
             {
                 "EXTENSIONS": (".nii",),
                 "PREFIXES": ("sub_y_",),
@@ -338,7 +338,7 @@ def test_a_longer_required_prefix_is_more_specific(
     target.write_text("content\n")
     assert root.from_file(target) == "long"
     for fmt in (short, long_):
-        Format._REGISTRY.discard(fmt)
+        FileFormat._REGISTRY.discard(fmt)
 
 
 def test_declaring_more_prefixes_does_not_buy_specificity(
@@ -358,7 +358,7 @@ def test_declaring_more_prefixes_does_not_buy_specificity(
         register_format(
             type(
                 name,
-                (root,),
+                (TextFileReader, root),
                 {
                     "EXTENSIONS": (".nii",),
                     "PREFIXES": prefixes,
@@ -561,7 +561,7 @@ def test_a_format_without_a_docstring_is_not_described() -> None:
 
 def test_isolated_registry_stops_registration_at_its_boundary() -> None:
     @format_registry(isolated=True)
-    class MetadataFormat(Format):
+    class MetadataFormat(FileFormat):
         pass
 
     @format_registry
@@ -574,5 +574,5 @@ def test_isolated_registry_stops_registration_at_its_boundary() -> None:
 
     assert Header in HeaderFormat._REGISTRY
     assert Header in MetadataFormat._REGISTRY
-    assert Header not in Format._REGISTRY
+    assert Header not in FileFormat._REGISTRY
     assert HeaderFormat not in MetadataFormat._REGISTRY

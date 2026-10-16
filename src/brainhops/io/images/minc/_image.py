@@ -62,7 +62,7 @@ _RAS_ORIENTATION = {
 _UNIT_TYPES = {"space": SpaceUnit, "time": TimeUnit}
 
 
-class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
+class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
     """An image stored in a MINC file, of version 1 or 2.
 
     This class answers to the format hint `"minc"` and reads both

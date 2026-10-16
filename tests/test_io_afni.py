@@ -24,7 +24,7 @@ from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling
-from brainhops.io.base import Format
+from brainhops.io.base import FileFormat
 from brainhops.io.base.parsers import (
     Confidence,
     FileWriter,
@@ -555,7 +555,7 @@ def test_dispatch_by_extension_and_hints(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_the_format_is_registered() -> None:
-    assert AfniImage in Format._REGISTRY
+    assert AfniImage in FileFormat._REGISTRY
     assert AfniImage in ImageFormat._REGISTRY
     assert issubclass(AfniImage, FileWriter)
 

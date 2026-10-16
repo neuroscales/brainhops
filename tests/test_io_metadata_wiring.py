@@ -28,7 +28,7 @@ from brainhops.datamodel.transformations import (
     Affine,
     Transformation,
 )
-from brainhops.io.base._base import Format, _takes_over
+from brainhops.io.base._base import FileFormat, _takes_over
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
@@ -142,7 +142,7 @@ def test_every_format_that_holds_metadata_takes_it_over() -> None:
     # takes the field of the root over, whichever format it is.
     holders = [
         cls
-        for cls in Format._REGISTRY
+        for cls in FileFormat._REGISTRY
         if any(field.name == "_metadata" for field in fields(cls))
     ]
     assert holders

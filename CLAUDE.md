@@ -9,7 +9,7 @@ organisation-wide ones.
 ## Documentation
 
 Documentation here means the README, the pages under `docs/`, the design
-memos in `docs/design/`, the specification notes in `spec/`, every
+memos in `spec/design/`, the specification notes in `spec/`, every
 docstring and every explanatory comment in `src/` and `tests/`, and the
 `tx.Doc(...)` strings that annotate attributes. All of it follows the
 rules below.
@@ -117,6 +117,6 @@ Keep:
   `codespell -I codespell-ignore-words.txt` on the changed files.
 - Pages under `docs/api/` use `::: package.module` directives. A
   directive must name a module that exists.
-- Design memos in `docs/design/` record the decision, the reason for it
+- Design memos in `spec/design/` record the decision, the reason for it
   and its status (implemented or not). They do not keep the history of
   how the decision was reached.

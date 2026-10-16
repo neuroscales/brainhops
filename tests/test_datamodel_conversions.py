@@ -1,7 +1,7 @@
 """
 The rules that tie `to()`, `from_instance()` and `from_any()` together.
 
-The rules are those of `docs/design/conversions.md`: the three spellings
+The rules are those of `spec/design/conversions.md`: the three spellings
 give the same result, a class copies by name only the fields of a related
 class, a transformation is converted by its converters, `to()` returns the
 object itself when nothing changes, and lazy wrappers are not targets.

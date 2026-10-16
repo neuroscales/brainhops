@@ -8,15 +8,14 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import TextFileReader
-from brainhops.io.metadata import MetadataFormat
+from brainhops.io.metadata import MetadataFormat, MetadataReader
 
 # this format
 from ._raw import FlirtRaw
 
 
 @register_format
-class FlirtMetadata(MetadataFormat, TextFileReader):
+class FlirtMetadata(MetadataReader, MetadataFormat):
     """Metadata of an FSL FLIRT `.mat` file, which holds a [`FlirtRaw`][].
 
     A FLIRT file is a short text file that is read in one pass, so its
@@ -40,31 +39,3 @@ class FlirtMetadata(MetadataFormat, TextFileReader):
 
     raw: NoRepr[tx.Optional[FlirtRaw]] = None
     """The matrix of the file, or `None` for metadata without a record."""
-
-    @classmethod
-    def sniff_lines(
-        cls,
-        lines: tx.Iterable[str],
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score the lines of a file as those of a FLIRT file.
-
-        The lines are scored by [`FlirtRaw.sniff_lines`][].
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the lines do not hold a FLIRT
-            matrix.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return FlirtRaw.sniff_lines(lines, error=error, **kwargs)

@@ -27,7 +27,7 @@ from ._image import BdvImage, _no_options, _sniff_path, _sniff_stream
 
 
 @register_format
-class BdvMultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
+class BdvMultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
     """Every resolution level of one view of a BigDataViewer dataset.
 
     Each level is a [`BdvImage`][], finest first, whose voxels are read
