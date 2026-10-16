@@ -21,6 +21,7 @@ import typing_extensions as tx
 from bagof.magic import fields
 
 from brainhops._core import path
+from brainhops.io.base._registry import Candidates
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     ParserContentError,
@@ -355,6 +356,38 @@ def _candidates(
     return _tiers(candidates, scores)
 
 
+def _as_candidates(
+    registry: tx.Union[tx.Iterable[type], Candidates],
+) -> Candidates:
+    """Wrap the formats given to dispatch, which may be a plain set."""
+    if isinstance(registry, Candidates):
+        return registry
+    return Candidates(registry)
+
+
+def _first_pass(
+    source: "Source",
+    hints: tx.FrozenSet[str],
+    options: tx.Optional[tx.Mapping[str, tx.Any]] = None,
+) -> tx.Optional[tx.Callable[[type], bool]]:
+    """Return which stubs a first pass of dispatch resolves.
+
+    With hints, the first pass resolves the stubs that answer to them.
+    Without hints, it resolves the stubs whose file name matches the input.
+    `None` means that every stub must be resolved, which is the case when
+    options are given, because only a format can tell which options it
+    accepts, and when the input has no name.
+    """
+    if options:
+        return None
+    if hints:
+        return lambda stub: bool(format_hints(stub) & hints)
+    name = source.name
+    if not name:
+        return None
+    return lambda stub: _match_name(name, stub) is not None
+
+
 def parse(
     source: "Source",
     registry: tx.Set[tx.Type[_T]],
@@ -374,6 +407,13 @@ def parse(
     succeed, the input is ambiguous. If `brute` is set and no ranked format
     succeeds, every remaining allowed format is tried in turn.
 
+    Formats that are registered as stubs (see
+    [`brainhops.io.base._registry`][]) are imported only when they may read
+    the input. A first pass considers the formats that are already
+    imported, together with the stubs that answer to the hints or, without
+    hints, those whose file name matches the input. If no format of the
+    first pass reads the input, every format is tried as above.
+
     !!! note "Why brute force is opt-in"
         A reader applied to arbitrary bytes may succeed on a partial parse and
         quietly return an object of the wrong format.
@@ -382,7 +422,7 @@ def parse(
     ----------
     source : Source
         The input.
-    registry : set of type
+    registry : set of type or Candidates
         The formats to choose between.
     fn_parse : str
         The name of the parsing method, such as `"from_file"`.
@@ -408,6 +448,48 @@ def parse(
         If an option is given twice, if no parser accepts the hints and
         options, or if no parser could read the input.
     """
+    candidates = _as_candidates(registry)
+    requested_hints = _normalize_hints(hints, hint)
+    keep = _first_pass(source, requested_hints, options)
+
+    def among(formats: tx.Set[type]) -> _T:
+        return _parse_among(
+            source,
+            formats,
+            fn_parse,
+            fn_sniff,
+            brute,
+            hints,
+            hint,
+            options,
+            **kwargs,
+        )
+
+    if keep is None:
+        return among(candidates.resolve())
+    if requested_hints:
+        # Formats that do not answer to the hints are not allowed anyway.
+        return among(candidates.resolve(keep))
+    try:
+        return among(candidates.resolve(keep))
+    except ParserContentError:
+        if source.missing is not None or not candidates.pending(keep):
+            raise
+    return among(candidates.resolve())
+
+
+def _parse_among(
+    source: "Source",
+    registry: tx.Set[tx.Type[_T]],
+    fn_parse: str,
+    fn_sniff: str,
+    brute: bool = False,
+    hints: tx.Iterable[str] = (),
+    hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
+    options: tx.Optional[tx.Mapping[str, tx.Union[str, SourceSpec]]] = None,
+    **kwargs,
+) -> _T:
+    """Read `source` with the best of the formats in `registry`."""
 
     errors: tx.List[tx.Tuple[type, str, Exception]] = []
     tried: tx.List[type] = []
@@ -660,8 +742,9 @@ def sniff(
     ----------
     source : Source
         The input.
-    registry : set of type
-        The formats to choose between.
+    registry : set of type or Candidates
+        The formats to choose between. Stubs are imported only when they
+        may recognize the input, as [`parse`][] imports them.
     fn_sniff : str
         The name of the sniffing method, such as `"sniff_file"`.
     error : bool or type of Exception, default=False
@@ -692,6 +775,38 @@ def sniff(
     SnifferContentError
         If `error` is set and no format recognizes the input.
     """
+    candidates = _as_candidates(registry)
+    requested_hints = _normalize_hints(hints, hint)
+    keep = _first_pass(source, requested_hints)
+
+    def among(
+        formats: tx.Set[type], error: tx.Union[bool, tx.Type[Exception]]
+    ) -> tx.Optional[type]:
+        return _sniff_among(
+            source, formats, fn_sniff, error, what, hints, hint, **kwargs
+        )
+
+    if keep is None:
+        return among(candidates.resolve(), error)
+    if requested_hints or not candidates.pending(keep):
+        return among(candidates.resolve(keep), error)
+    found = among(candidates.resolve(keep), False)
+    if found is not None:
+        return found
+    return among(candidates.resolve(), error)
+
+
+def _sniff_among(
+    source: "Source",
+    registry: tx.Set[type],
+    fn_sniff: str,
+    error: tx.Union[bool, tx.Type[Exception]] = False,
+    what: str = "input content",
+    hints: tx.Iterable[str] = (),
+    hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
+    **kwargs,
+) -> tx.Optional[type]:
+    """Identify the best of the formats in `registry`."""
     requested_hints = _normalize_hints(hints, hint)
     allowed = {
         subclass

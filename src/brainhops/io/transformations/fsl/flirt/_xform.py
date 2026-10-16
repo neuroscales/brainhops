@@ -23,7 +23,6 @@ from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.errors import IncompatibleSystemError
-from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
     UnrepresentableTransformationError,
@@ -34,7 +33,7 @@ from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
 
 from .._affines import _ImageGeometry
-from .._formats import FslAffineFormat
+from . import FlirtTransformStub
 from ._metadata import FlirtMetadata
 from ._raw import FlirtRaw
 
@@ -51,10 +50,9 @@ def _record(xform: "FlirtTransform") -> tx.Optional[FlirtRaw]:
     return None if metadata is None else metadata.raw
 
 
-@register_format
 class FlirtTransform(
     TextFileReader,
-    FslAffineFormat,
+    FlirtTransformStub,
     _xforms.Affine,
     TransformationFormat,
 ):
@@ -82,8 +80,6 @@ class FlirtTransform(
     record is only held in memory.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
-    HINTS = ("flirt",)
     # The data field is the FLIRT matrix. The `matrix` view is derived
     # from the FLIRT matrix and the two images, so computing it is costly
     # and may raise. Naming the FLIRT matrix here keeps the identity check
@@ -495,3 +491,9 @@ def _matrix_to_disk(matrix: ArrayLike) -> tx.Tuple[tx.Tuple[float, ...], ...]:
             f"{matrix.shape}."
         )
     return tuple(tuple(float(v) for v in row) for row in matrix)
+
+
+# Importing the private converters registers them with the data model,
+# so that a conversion into this format, such as `t.to(FlirtTransform)`,
+# fails with a reason instead of building a wrong object.
+from . import _converters  # noqa: E402, F401  isort: skip

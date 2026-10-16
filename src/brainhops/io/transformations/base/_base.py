@@ -9,10 +9,6 @@ from brainhops.io.base._base import (
     _FileBasedModelMixin,
     format_registry,
 )
-from brainhops.io.transformations.base._conversions import (
-    convert_instance,
-    converts_to,
-)
 
 
 @format_registry
@@ -84,6 +80,11 @@ class TransformationFormat(
         ConversionError
             If the format cannot hold the transformation.
         """
+        # The conversions import the data model of transformations, which
+        # a format family must not import, so that the families can be
+        # imported before any format is used.
+        from ._conversions import convert_instance, converts_to
+
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
         return super().from_any(other, *args, **kwargs)
@@ -125,6 +126,8 @@ class TransformationFormat(
         ConversionError
             If the format cannot hold the transformation.
         """
+        from ._conversions import convert_instance, converts_to
+
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
         if isinstance(other, cls) and _stores_data(cls):

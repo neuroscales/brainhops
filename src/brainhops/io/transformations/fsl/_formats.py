@@ -1,9 +1,9 @@
 """Format families of FSL transformations, which define their hints."""
 
 from brainhops.io.base._base import format_registry
-from brainhops.io.transformations.base import (
+from brainhops.io.transformations.base._base import TransformationFormat
+from brainhops.io.transformations.base._formats import (
     AffineTransformationFormat,
-    TransformationFormat,
 )
 
 

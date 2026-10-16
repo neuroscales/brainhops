@@ -7,15 +7,14 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 # internals
-from brainhops.io.base._base import register_format
-from brainhops.io.metadata import MetadataFormat, MetadataReader
+from brainhops.io.metadata import MetadataReader
 
 # this format
+from . import FlirtMetadataStub
 from ._raw import FlirtRaw
 
 
-@register_format
-class FlirtMetadata(MetadataReader, MetadataFormat):
+class FlirtMetadata(MetadataReader, FlirtMetadataStub):
     """Metadata of an FSL FLIRT `.mat` file, which holds a [`FlirtRaw`][].
 
     A FLIRT file is a short text file that is read in one pass, so its
@@ -33,8 +32,6 @@ class FlirtMetadata(MetadataReader, MetadataFormat):
     the metadata cannot be written either.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("fsl", "flirt")
     RAW: tx.ClassVar[type] = FlirtRaw
 
     raw: NoRepr[tx.Optional[FlirtRaw]] = None

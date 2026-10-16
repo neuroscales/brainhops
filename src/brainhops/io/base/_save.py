@@ -29,6 +29,7 @@ from brainhops.io.base._dispatch import (
     _tiers,
     _to_filename,
 )
+from brainhops.io.base._registry import is_stub, resolve
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     FileReader,
@@ -163,13 +164,25 @@ def save(
         )
 
     hints = _normalize_hints((), hint)
-    registry = (
-        fmt
-        for fmt in FileFormat._REGISTRY
+    entries = [
+        entry
+        for entry in FileFormat._REGISTRY.entries()
+        if not hints or format_hints(entry) & hints
+    ]
+    matches = [(entry, _match_name(name, entry)) for entry in entries]
+    if not hints:
+        # Without hints, a format is chosen by its extension, so a stub
+        # whose extension does not match is not imported.
+        matches = [
+            (entry, match)
+            for entry, match in matches
+            if match is not None or not is_stub(entry)
+        ]
+    matches = [
+        (fmt, match)
+        for fmt, match in ((resolve(entry), match) for entry, match in matches)
         if issubclass(fmt, FileWriter)
-        and (not hints or format_hints(fmt) & hints)
-    )
-    matches = [(fmt, _match_name(name, fmt)) for fmt in registry]
+    ]
     claimed = [(fmt, match) for fmt, match in matches if match is not None]
     if not claimed and hints:
         # A hint names the formats, which are written whatever the name.

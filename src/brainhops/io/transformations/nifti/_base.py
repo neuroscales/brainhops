@@ -30,14 +30,16 @@ from brainhops.io.common.nifti._raw import (
     reads_file,
     write_nifti,
 )
-from brainhops.io.transformations.base import TransformationFormat
+from brainhops.io.transformations.nifti._stubs import (
+    NiftiBasedTransformationStub,
+)
 
 _NiftiHeader = tx.Union[nb.Nifti1Header, nb.Nifti2Header]
 _NibabelImage = tx.Union[nb.Nifti1Image, nb.Nifti2Image]
 
 
 class NiftiBasedTransformation(
-    BinaryFileReader, BinaryFileWriter, TransformationFormat
+    BinaryFileReader, BinaryFileWriter, NiftiBasedTransformationStub
 ):
     """A transformation stored in a NIfTI file.
 
@@ -68,9 +70,6 @@ class NiftiBasedTransformation(
     `_metadata: ... = Inherit("metadata", default=None)`, so that the
     field holds [`NiftiMetadata`][] and converts other metadata into it.
     """
-
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The array of the file as it is stored, or `None` without one.

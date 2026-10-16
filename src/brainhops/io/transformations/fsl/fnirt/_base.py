@@ -10,7 +10,6 @@ from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
-from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
     UnrepresentableTransformationError,
@@ -44,9 +43,9 @@ from brainhops.io.transformations.nifti._views import _field_to_model
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
-from .._formats import FslTransformationFormat
 from .._keywords import pop_aliased
 from .._repr import stored_repr
+from . import FnirtWarpFieldStub
 
 # Intent codes of FSL, which its own copy of `nifti1.h` defines, as
 # listed in `fsl/data/constants.py` of fslpy 3.29.1.
@@ -102,9 +101,8 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 #   as fslpy does, while FSL's reader evaluates the field on the grid stored
 #   in the file (item 223).
 # - FSL cannot write a DCT coefficient field (intent 2008) either.
-@register_format
 class FnirtWarpField(
-    FslTransformationFormat,
+    FnirtWarpFieldStub,
     NiftiBasedTransformation,
     _xforms.ImmutableSequence,
 ):
@@ -168,8 +166,6 @@ class FnirtWarpField(
         a coefficient file. A field built from an array alone is written as
         a deformation field.
     """
-
-    HINTS = ("fnirt",)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -860,3 +856,9 @@ def _detect_deformation_type(field: tx.Any, ref_scaled: tx.Any) -> str:
         backend.sum(backend.std(field - ref_scaled, axis=axes))
     )
     return "absolute" if std_absolute > std_relative else "relative"
+
+
+# Importing the private converters registers them with the data model,
+# so that a conversion into this format, such as `t.to(FnirtWarpField)`,
+# fails with a reason instead of building a wrong object.
+from . import _converters  # noqa: E402, F401  isort: skip

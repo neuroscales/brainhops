@@ -10,6 +10,11 @@ from bagof.magic import Field, fields
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._dispatch import Source, parse, sniff
+from brainhops.io.base._registry import (
+    Candidates,
+    FormatRegistry,
+    register_stub,
+)
 from brainhops.io.base.parsers import (
     FileReader,
     FileWriter,
@@ -59,7 +64,7 @@ def format_registry(
 
     # The registry is set in cls.__dict__ so that a class that owns a registry
     # can be told apart from a class that inherits one.
-    cls._REGISTRY = set()
+    cls._REGISTRY = FormatRegistry()
     cls._REGISTRY_ISOLATED = isolated
     return cls
 
@@ -86,12 +91,20 @@ def is_format_registry(cls: type) -> bool:
     return "_REGISTRY" in cls.__dict__
 
 
-def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
+def register_format(cls: tx.Union[tx.Type[_T], str]) -> tx.Any:
     """Register a concrete format into ancestor registries up to isolation.
 
     A format such as `NiftiImage` is thereby found both by `images.load` and by
     the generic [`load`][brainhops.io.base.load]. Registration is idempotent,
     so re-importing a module is harmless.
+
+    A format whose module is costly to import can be registered before it
+    is imported. Its package then defines a stub, which is a small class
+    that derives from the dispatchers of the format and declares its hints,
+    extensions, prefixes and priority, and decorates the stub with
+    `@register_format("module:qualname")`, which names the format. The
+    format derives from its stub, and is imported the first time dispatch
+    needs it (see [`brainhops.io.base._registry`][]).
 
     !!! note "Dispatchers are not formats"
         Registries are flat. A format is in the registry of every ancestor,
@@ -106,17 +119,40 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
         order: candidates that cannot be told apart raise
         [`AmbiguousFormatError`][brainhops.errors.AmbiguousFormatError].
 
+    Parameters
+    ----------
+    cls : type or str
+        The format, or the import path of the format that the decorated
+        stub stands for, written `"module:qualname"`. A module that starts
+        with a dot is relative to the package of the stub.
+
+    Returns
+    -------
+    type or callable
+        The format, or a decorator that registers a stub.
+
     Raises
     ------
     TypeError
         If `cls` owns a registry.
     """
+    if isinstance(cls, str):
+        target = cls
+        return lambda stub: _register(stub, target)
+    return _register(cls)
+
+
+def _register(
+    cls: tx.Type[_T], target: tx.Optional[str] = None
+) -> tx.Type[_T]:
+    """Add a format, or a stub that stands for `target`, to its registries."""
     if is_format_registry(cls):
         raise TypeError(
             f"{cls.__name__} owns a registry (@format_registry), so it "
             f"dispatches to formats rather than being one; it must not "
             f"also be decorated with @register_format."
         )
+    registries = []
     pending = list(cls.__bases__)
     visited = set()
     while pending:
@@ -125,10 +161,15 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
             continue
         visited.add(base)
         if is_format_registry(base):
-            base._REGISTRY.add(cls)
+            registries.append(base._REGISTRY)
             if base.__dict__.get("_REGISTRY_ISOLATED", False):
                 continue
         pending.extend(base.__bases__)
+    if target is None:
+        for registry in registries:
+            registry.add(cls)
+    else:
+        register_stub(cls, target, registries)
     return cls
 
 
@@ -198,13 +239,15 @@ class FileFormat(_FileNamesMixin):
             )
 
     @classmethod
-    def _reader_formats(cls) -> tx.Set[type]:
+    def _reader_formats(cls) -> Candidates:
         """Select readable candidates without requiring reader inheritance.
 
         A public format can implement a read route directly or inherit it
         from its native parser. Writers whose only read routes are the
         defaults of the reader mixins are export-only and must not be
-        selected by sniffing or loading.
+        selected by sniffing or loading. Whether a format is a reader can
+        only be told once it is imported, so the test is applied to each
+        stub when dispatch resolves it.
         """
         adapters = (FileFormat, _ReaderMixin, _TextReaderMixin)
         routes = (
@@ -219,17 +262,16 @@ class FileFormat(_FileNamesMixin):
             "from_lines",
             "from_line",
         )
-        return {
-            candidate
-            for candidate in cls._REGISTRY
-            if not issubclass(candidate, FileWriter)
-            or any(
+
+        def is_reader(candidate: type) -> bool:
+            return not issubclass(candidate, FileWriter) or any(
                 name in base.__dict__
                 for base in candidate.__mro__
                 if base not in adapters
                 for name in routes
             )
-        }
+
+        return Candidates(cls._REGISTRY.entries(), accept=is_reader)
 
     # ---- sniff -------------------------------------------------------
 

@@ -15,7 +15,15 @@ __all__ = [
     "FnirtWarpField",
 ]
 
+from brainhops._core.lazy import lazy_exports
+
 from . import flirt, fnirt
-from ._systems import FslCoordinateSystem
-from .flirt import FlirtTransform
-from .fnirt import FnirtWarpField
+
+__getattr__, __dir__ = lazy_exports(
+    __name__,
+    {
+        "FslCoordinateSystem": "._systems",
+        "FlirtTransform": ".flirt",
+        "FnirtWarpField": ".fnirt",
+    },
+)
