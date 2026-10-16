@@ -113,6 +113,29 @@ def test_loaded_dense_field_uses_its_own_grid(
 
 
 @pytest.mark.parametrize("convention", ["relative", "absolute"])
+def test_dense_field_type_inference_uses_the_field_grid(
+    tmp_path: Path,
+    convention: str,
+) -> None:
+    source_path, ref_path, field_path, values = _files(
+        tmp_path, "LAS", 0.5, convention
+    )
+    with backend("numpy"):
+        source = io.images.load(source_path, hint="nifti")
+        reference = io.images.load(ref_path, hint="nifti")
+        warp = io.load(
+            field_path, hint="fnirt", moving=source, reference=reference
+        )
+        result = source(warp).reslice(reference, bound="nearest")
+    points = _world(nb.load(ref_path).affine, _grid(SHAPE))
+    voxels = _world(np.linalg.inv(nb.load(source_path).affine), _pull(points))
+    expected = map_coordinates(
+        values, np.moveaxis(voxels, -1, 0), order=1, mode="nearest"
+    )
+    np.testing.assert_allclose(result.data, expected, atol=3e-5)
+
+
+@pytest.mark.parametrize("convention", ["relative", "absolute"])
 def test_dense_grid_placement_keeps_dask_fields_lazy(
     tmp_path: Path,
     convention: str,
