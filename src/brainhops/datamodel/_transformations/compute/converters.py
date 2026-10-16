@@ -1,7 +1,7 @@
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.magic import replace
+from brainhops._core.magic import replace, stores
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel._sugar import get_axes
@@ -110,16 +110,18 @@ def _convert_withlog(
     # a `log` flag have no tangent, so for them nothing is transferred.
     out_log = kwargs.get("log", _is_tangent(cls))
     crossing = getattr(t, "log", False) != out_log
-    # A format reader may derive its public data from metadata while its
-    # inherited _data remains None (only an explicitly assigned value is
-    # stored there). Field presence alone therefore cannot tell whether
-    # replace() would preserve the map. When leaving the concrete class,
-    # transfer the public parameter view rather than its storage slot.
+    # Keep stored parameters in their existing encoding when only the class
+    # changes: reading matrix/field could exponentiate a tangent or integrate
+    # a velocity. Readers with an empty inherited storage slot must transfer
+    # their public data, which is decoded from metadata instead.
     changes_class = not issubclass(cls, type(t))
     if crossing or changes_class:
         fields = set(cls.data_fields) | set(cls.derived_fields)
         if not (fields & set(kwargs)):
-            kwargs.setdefault(_fallback, getattr(t, _fallback))
+            if crossing or not stores(type(t), "_data"):
+                kwargs[_fallback] = getattr(t, _fallback)
+            elif getattr(t, "_data", None) is None:
+                kwargs["data"] = t.data
         if crossing:
             # The rebuild would otherwise carry the flag over from `t`, but
             # changing the encoding is the purpose of this conversion, so

@@ -40,3 +40,21 @@ def test_loaded_affine_survives_conversion_and_direct_image_application(
             actual.data[:-1, 1:-1, 1:-1], values[1:, 1:-1, 1:-1]
         )
         np.testing.assert_allclose(transform.to(Affine).matrix, pull[:3])
+
+
+@pytest.mark.parametrize("hint", ["niftyreg.aladin", "mrtrix.linear"])
+def test_noop_and_explicit_data_override_do_not_decode_reader(
+    tmp_path: Path, hint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "transform.txt"
+    np.savetxt(path, np.eye(4))
+    source = io.load(path, hint=hint)
+    replacement = np.eye(4)[:3]
+
+    def forbid_decode(*args, **kwargs) -> None:
+        pytest.fail("This conversion must not decode the source reader")
+
+    monkeypatch.setattr(type(source), "data", property(forbid_decode))
+    assert source.to() is source
+    result = source.to(Affine, data=replacement)
+    np.testing.assert_array_equal(result.matrix, replacement)
