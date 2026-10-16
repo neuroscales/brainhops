@@ -26,7 +26,7 @@ from brainhops.datamodel.metadata._report import (
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.io.base._base import (
-    Format,
+    FileFormat,
     _FileBasedModelMixin,
     format_registry,
 )
@@ -43,7 +43,7 @@ _Encoder = tx.Callable[
 
 @register_parser(Metadata)
 @format_registry(isolated=True)
-class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
+class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
     """Format dispatcher and common base for the metadata of files.
 
     The metadata of a file is what its header records beside the data. Each
@@ -80,8 +80,9 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
     Metadata compares by identity.
 
     The metadata registry is separate from the registry of
-    [`Format`][], so that [`load`][brainhops.io.load] never returns
-    metadata when it reads an image or a transformation. A concrete
+    [`FileFormat`][brainhops.io.base.FileFormat], so that
+    [`load`][brainhops.io.load] never returns metadata when it reads an
+    image or a transformation. A concrete
     subclass is added to the metadata registry with `@register_format`.
     """
 

@@ -11,7 +11,7 @@ import inspect
 import pytest
 
 from brainhops.io.base._base import (
-    Format,
+    FileFormat,
     format_registry,
 )
 from brainhops.io.base.parsers import (
@@ -76,20 +76,20 @@ def test_dispatcher_overrides_are_pass_throughs_for_concrete_formats() -> None:
     """For non-dispatchers, Format overrides defer to super()."""
     overridden = [
         name
-        for name, value in vars(Format).items()
+        for name, value in vars(FileFormat).items()
         if (name.startswith(("from_", "sniff")) or name == "load")
         and isinstance(value, classmethod)
     ]
     assert overridden, "no reading methods found to check"
     for name in overridden:
-        source = inspect.getsource(getattr(Format, name).__func__)
+        source = inspect.getsource(getattr(FileFormat, name).__func__)
         assert "_is_dispatcher()" in source, name
         assert "super()." + name in source, name
 
 
 def test_resolution_does_not_depend_on_base_order() -> None:
     @format_registry
-    class Root(Format):
+    class Root(FileFormat):
         pass
 
     class Special(BinaryFileReader):
@@ -104,7 +104,7 @@ def test_resolution_does_not_depend_on_base_order() -> None:
         pass
 
     assert _owner(SpecialFirst, "from_file") is Special
-    assert _owner(RootFirst, "from_file") is Format
+    assert _owner(RootFirst, "from_file") is FileFormat
     assert SpecialFirst.from_file("x") == "special-reader"
     assert RootFirst.from_file("x") == "special-reader"
 

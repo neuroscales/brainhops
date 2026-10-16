@@ -1,6 +1,6 @@
 __all__ = [
     "format_registry",
-    "Format",
+    "FileFormat",
     "register_format",
 ]
 
@@ -13,10 +13,10 @@ from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
     FileReader,
     FileWriter,
-    _FileReadAdapters,
-    _FileSniffAdapters,
     _passthrough_from_fileobj,
-    _TextReadAdapters,
+    _ReaderMixin,
+    _SnifferMixin,
+    _TextReaderMixin,
 )
 from brainhops.io.base.specs import SourceSpec
 
@@ -37,7 +37,7 @@ def format_registry(
     among the formats registered under it. Its `sniff*` methods return the
     best-scoring registered format, and its `load` and `from_*` methods choose
     that format and delegate to it. The decorator is applied to the root
-    [`Format`][] and to the base class of each kind of object, such
+    [`FileFormat`][] and to the base class of each kind of object, such
     as `ImageFormat` and `TransformationFormat`. A dispatcher is never
     added to the registries of its ancestors; only classes decorated with
     [`register_format`][] are.
@@ -96,7 +96,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
         whereas a dispatcher is in no registry at all, so each format is tried
         once per load. If a dispatcher were registered, its formats would be
         tried twice, once directly and once through the dispatcher, and
-        `Format.load` would recurse into itself.
+        `FileFormat.load` would recurse into itself.
 
     !!! note "Order does not matter"
         A registry is an unordered set, because registration follows import
@@ -136,18 +136,25 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
 
 
 @format_registry
-class Format(_FileReadAdapters, _FileSniffAdapters):
+class FileFormat(_ReaderMixin, _SnifferMixin):
     """Dispatch between the formats registered under a dispatcher.
 
     On a class decorated with [`format_registry`][], the `sniff*` methods
     identify the registered format that matches the input, and `load` and the
     `from_*` methods choose a format and delegate to it. On a class without a
-    registry, which is a concrete format, every method behaves as the
-    corresponding input adapter or concrete reader method.
+    registry, which is a concrete format, every method passes the call on
+    with `super()`, to the reader that the format lists among its bases.
 
-    Dispatchers and readers have independent APIs. They share only input
-    adapter mixins; this class does not inherit `FileReader`, whose
-    sniffing contract returns confidence scores.
+    This class inherits the mixins of `io/base/parsers.py` for three
+    reasons, although it overrides each of their methods. The `super()`
+    calls of a concrete format need a default to reach when the format
+    lists no reader, as an export-only format does. The mixins declare the
+    constants, such as `EXTENSIONS`, that dispatch reads on every format.
+    Finally, [`_reader_formats`][] tells a format that reads files apart
+    from one that only writes them by looking for a `from_*` method
+    defined outside these defaults. This class does not inherit
+    `FileReader`, whose `sniff*` methods return a confidence rather than
+    a class.
 
     This class owns the root registry used by generic loading and saving.
     A standalone family, such as metadata, uses
@@ -175,7 +182,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         from its native parser. Writers with only default input adapters are
         export-only and must not be selected by sniffing or loading.
         """
-        adapters = (Format, _FileReadAdapters, _TextReadAdapters)
+        adapters = (FileFormat, _ReaderMixin, _TextReaderMixin)
         routes = (
             "load",
             "from_spec",
@@ -523,7 +530,7 @@ class _FileBasedModelMixin:
     `MetadataFormat`, must precede `DataModelBase` in each concrete class's
     MRO. The format dispatcher
     supplies file handling; the concrete class supplies its data model.
-    Keeping this mixin separate from the input adapters lets native parsers
+    Keeping this mixin separate from the reader mixins lets native parsers
     retain their specialized methods without hiding file-aware construction.
 
     !!! note "Every string is a file"
@@ -555,7 +562,7 @@ class _FileBasedModelMixin:
         """
         for base in cls.__mro__:
             if issubclass(base, DataModelBase) and not issubclass(
-                base, (Format, FileReader, FileWriter)
+                base, (FileFormat, FileReader, FileWriter)
             ):
                 return base
         return cls
@@ -675,7 +682,7 @@ class _FileBasedModelMixin:
 def _check_format_first(cls: type) -> None:
     """Refuse a format that lists a class of its data model before its format.
 
-    A root of the formats, such as `TransformationFormat`, lists `Format`
+    A root of the formats, such as `TransformationFormat`, lists `FileFormat`
     among its own bases and is not checked.
 
     Raises
@@ -686,11 +693,11 @@ def _check_format_first(cls: type) -> None:
     """
     # `bagof.magic` builds a stand-in class of this name only to compute an
     # MRO, then builds the class itself, which is checked.
-    if Format in cls.__bases__ or cls.__name__ == "__magic_discard__":
+    if FileFormat in cls.__bases__ or cls.__name__ == "__magic_discard__":
         return
     before = []
     for base in cls.__mro__[1:]:
-        if issubclass(base, Format):
+        if issubclass(base, FileFormat):
             break
         if issubclass(base, DataModelBase) and not issubclass(
             base, (FileReader, FileWriter)
@@ -733,7 +740,7 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
         if is_format_registry(klass):
             continue
         names = [field.public_name for field in fields(klass)]
-        if issubclass(klass, (Format, FileReader, FileWriter)):
+        if issubclass(klass, (FileFormat, FileReader, FileWriter)):
             for name in names:
                 owners.setdefault(name, []).append(klass)
         else:
@@ -770,7 +777,7 @@ def _takes_over(cls: type, name: str) -> bool:
     for klass in cls.__mro__:
         if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
             continue
-        if issubclass(klass, (Format, FileReader, FileWriter)):
+        if issubclass(klass, (FileFormat, FileReader, FileWriter)):
             continue
         return any(field.name == name for field in fields(klass))
     return False

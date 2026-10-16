@@ -6,7 +6,7 @@ object can be used wherever the generic object is expected.
 """
 
 __all__ = [
-    "Format",
+    "FileFormat",
     "base",
     "images",
     "load",
@@ -18,4 +18,4 @@ __all__ = [
 ]
 
 from . import base, images, metadata, transformations, vectors
-from .base import Format, load, save, sniff
+from .base import FileFormat, load, save, sniff

@@ -76,7 +76,7 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base._base import Format, _takes_over, register_format
+from brainhops.io.base._base import FileFormat, _takes_over, register_format
 from brainhops.io.base._save import _model
 from brainhops.io.base._utils_files import replace_directory
 from brainhops.io.base.parsers import (
@@ -5260,7 +5260,7 @@ def test_every_registered_format_is_in_one_table() -> None:
     assert not set(EXEMPLARS) & not_migrated
     registered = {
         cls
-        for cls in Format._REGISTRY | MetadataFormat._REGISTRY
+        for cls in FileFormat._REGISTRY | MetadataFormat._REGISTRY
         if cls.__module__.startswith("brainhops.")
         and _resolve(f"{cls.__module__}.{cls.__name__}") is not None
     }
@@ -5298,8 +5298,8 @@ def test_a_shared_format_differs_only_in_its_sniffing(name: str) -> None:
 def test_the_metadata_registry_is_isolated() -> None:
     assert MetadataFormat._is_dispatcher()
     assert ToyMetadata in MetadataFormat._REGISTRY
-    assert ToyMetadata not in Format._REGISTRY
-    assert MetadataFormat not in Format._REGISTRY
+    assert ToyMetadata not in FileFormat._REGISTRY
+    assert MetadataFormat not in FileFormat._REGISTRY
 
 
 def test_no_format_holds_its_arrays_in_raw() -> None:
@@ -5308,7 +5308,7 @@ def test_no_format_holds_its_arrays_in_raw() -> None:
     holders = {_resolve(name, require_backend=False) for name in RAWDATA} - {
         None
     }
-    for cls in Format._REGISTRY:
+    for cls in FileFormat._REGISTRY:
         if not cls.__module__.startswith("brainhops."):
             continue
         names = {field.name for field in fields(cls)}

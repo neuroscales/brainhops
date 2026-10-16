@@ -5,7 +5,7 @@ from bagof.magic import fields
 
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._base import (
-    Format,
+    FileFormat,
     _FileBasedModelMixin,
     format_registry,
 )
@@ -19,7 +19,7 @@ from brainhops.io.transformations.base._conversions import (
 class TransformationFormat(
     _FileBasedModelMixin,
     DataModelBase,
-    Format,
+    FileFormat,
     reverse=True,
     eq=False,
     kw_only=True,
@@ -57,7 +57,7 @@ class TransformationFormat(
 
         A transformation that is not of this format is converted exactly as
         `other.to(cls)` converts it. Anything else is read or built as
-        [`Format.from_any`][brainhops.io.base.Format.from_any] does.
+        [`FileFormat.from_any`][brainhops.io.base.FileFormat.from_any] does.
 
         Parameters
         ----------
@@ -94,7 +94,8 @@ class TransformationFormat(
 
         A transformation that is not of this format is converted exactly as
         `other.to(cls)` converts it. An instance of this format is copied
-        as [`Format.from_instance`][brainhops.io.base.Format.from_instance]
+        as
+        [`FileFormat.from_instance`][brainhops.io.base.FileFormat.from_instance]
         copies it, except that a format that stores its data in the
         private field `_data` passes the stored value on. That value is
         `None` unless the data were assigned, so the copy decodes the
