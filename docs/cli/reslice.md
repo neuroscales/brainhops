@@ -3,7 +3,7 @@
 === ":octicons-terminal-24:"
 
     ```shell
-    brainhops reslice SOURCE --reference SOURCE [--transform SOURCE ...] --output IMAGE [--degree DEGREE] [--bound BOUND] [--clip MARGIN]
+    brainhops reslice SOURCE --reference SOURCE [--transform SOURCE ...] --output IMAGE [--degree DEGREE] [--bound BOUND] [--clip MARGIN] [--dtype DTYPE]
     ```
 
 The `reslice` command resamples an image onto the grid of a reference image,

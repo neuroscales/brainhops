@@ -304,6 +304,7 @@ class SingleScaleImage(Image):
         copy: bool = False,
         *,
         clip: Clip = None,
+        dtype: tx.Optional[DTypeLike] = None,
     ) -> "SingleScaleImage":
         """Resample the data onto another geometry.
 
@@ -348,6 +349,13 @@ class SingleScaleImage(Image):
             Inside this interval, `bound` still extends interpolation
             stencils; clipping never clamps the coordinates.
 
+        dtype : DTypeLike, optional
+            Output dtype. None preserves the input dtype. A floating
+            dtype retains interpolated fractions of integer input.
+            An explicit dtype samples in at least double precision.
+            Integer output keeps rounding half away from zero and
+            saturation. Dask arrays remain lazy.
+
         Returns
         -------
         SingleScaleImage
@@ -360,7 +368,12 @@ class SingleScaleImage(Image):
             The metadata keeps its class and its record.
         """
         opt = dict(
-            degree=degree, bound=bound, coeff=coeff, copy=copy, clip=clip
+            degree=degree,
+            bound=bound,
+            coeff=coeff,
+            copy=copy,
+            clip=clip,
+            dtype=dtype,
         )
 
         if geometry is None:
@@ -533,6 +546,7 @@ class MultiScaleImage(Image):
         copy: bool = False,
         *,
         clip: Clip = None,
+        dtype: tx.Optional[DTypeLike] = None,
     ) -> "SingleScaleImage":
         """Reslice the level whose voxel size best matches the target grid.
 
@@ -577,13 +591,22 @@ class MultiScaleImage(Image):
             Inside this interval, `bound` still extends interpolation
             stencils; clipping never clamps the coordinates.
 
+        dtype : DTypeLike, optional
+            Output dtype, as in [`SingleScaleImage.reslice`][].
+            None preserves the selected level's dtype.
+
         Returns
         -------
         SingleScaleImage
             The resliced image.
         """
         opt = dict(
-            degree=degree, bound=bound, coeff=coeff, copy=copy, clip=clip
+            degree=degree,
+            bound=bound,
+            coeff=coeff,
+            copy=copy,
+            clip=clip,
+            dtype=dtype,
         )
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
