@@ -33,7 +33,7 @@ from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.properties import smartproperty
 
 from . import nocycles
-from .base import Transformation
+from .base import Transformation, _copied
 from .compute.simplify import SimplifyLike
 from .compute.simplify import simplify as _simplify
 from .concrete import (
@@ -168,6 +168,7 @@ class DerivedTransformation(Transformation):
         cls: tx.Optional[tx.Type[Transformation]] = None,
         *,
         lossy: bool = False,
+        copy: bool = False,
         **kwargs,
     ) -> Transformation:
         """Convert the wrapper to another type or encoding.
@@ -186,7 +187,17 @@ class DerivedTransformation(Transformation):
           forward instead.
         - Passing a target class `cls` resolves the operator first and then
           converts the result.
+        - With `copy=True`, a result that would be an existing object, such
+          as the wrapper itself, is copied.
         """
+        return _copied(self, self._to(cls, lossy, kwargs), copy)
+
+    def _to(
+        self,
+        cls: tx.Optional[tx.Type[Transformation]],
+        lossy: bool,
+        kwargs: tx.Dict[str, tx.Any],
+    ) -> Transformation:
         if cls is None or cls is type(self):
             derived = [k for k in kwargs if k in type(self).derived_fields]
             if derived:

@@ -533,6 +533,20 @@ class _FileBasedModelMixin:
     """
 
     @classmethod
+    def _data_model(cls) -> type:
+        """Return the data model of the format, such as `SingleScaleImage`.
+
+        This is the first class in the MRO that is a data model but not a
+        parser, a writer or a format.
+        """
+        for base in cls.__mro__:
+            if issubclass(base, DataModelBase) and not issubclass(
+                base, (Format, FileReader, FileWriter)
+            ):
+                return base
+        return cls
+
+    @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """Build an object from a file or any value the data model takes.
 

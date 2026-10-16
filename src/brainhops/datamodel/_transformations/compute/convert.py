@@ -117,9 +117,19 @@ def convert(x: FROM, cls: tx.Type[TO], **kwargs: tx.Any) -> TO:
     Raises
     ------
     ConversionError
-        If no converter applies, if several apply equally, or if the result
-        of the chosen converter is not an instance of `cls`.
+        If no converter applies, if several apply equally, if the result
+        of the chosen converter is not an instance of `cls`, or if `cls` is
+        a lazy wrapper, such as `InverseAffine`, which `inverse()` returns.
     """
+    operator = getattr(cls, "_operator", None)
+    if operator is not None and not isinstance(x, cls):
+        # A lazy wrapper holds the transformation that it derives from, not
+        # the parameters of a map, so no transformation converts to one.
+        raise ConversionError(
+            f"{cls.__name__} is the class that `{operator}()` returns, and "
+            f"no transformation is converted to it. Call `t.{operator}()` "
+            f"instead."
+        )
     if field_default(cls, "_log", False) and not getattr(x, "log", False):
         # A tangent class is the class that `log=True` selects, so a request
         # for it by name asks for the tangent. A tangent already holds it, and

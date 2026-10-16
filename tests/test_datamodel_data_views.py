@@ -436,12 +436,17 @@ def test_an_unknown_key_names_the_convenience_keywords() -> None:
     assert "'matrices'" in str(error.value)
 
 
-def test_an_instance_is_read_through_its_data() -> None:
+def test_an_instance_of_another_class_is_converted() -> None:
+    # A displacement is not a field of coordinates, so the data are not
+    # copied as they are: the field is converted, as `to()` converts it,
+    # and keeps its encoding.
     t = DisplacementField(
         data=_coefficients(_values()), degree=3, store="coefficients"
     )
     copy = CoordinatesField.from_instance(t)
-    assert copy.data is t.data
+    np.testing.assert_allclose(
+        np.asarray(copy.data), np.asarray(t.to(CoordinatesField).data)
+    )
     assert (copy.store, copy.degree) == ("coefficients", 3)
 
 

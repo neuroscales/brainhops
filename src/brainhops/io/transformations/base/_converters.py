@@ -37,6 +37,7 @@ __all__ = ["relabel", "relabelling", "relabels"]
 
 import typing_extensions as tx
 
+from brainhops._core.magic import replace
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import (
     convert,
@@ -176,7 +177,10 @@ def relabel(
         # A chain that a format decodes from its file is not held in a
         # field, so the copy would not find it there.
         kwargs.setdefault("transformations", tuple(t))
-        source = t
+        # Another kind of chain, such as a mutable one, holds the same
+        # fields, and is rebuilt as the data model so that the copy is
+        # between related classes.
+        source = t if isinstance(t, model) else replace(t, model)
     elif isinstance(t, model):
         source = t
     else:

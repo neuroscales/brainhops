@@ -147,6 +147,7 @@ class Metadata(
         self,
         cls: tx.Optional[tx.Type["Metadata"]] = None,
         *,
+        copy: bool = False,
         on_loss: tx.Optional[OnLoss] = None,
         **values: tx.Any,
     ) -> "Metadata":
@@ -164,8 +165,11 @@ class Metadata(
         ----------
         cls : type, optional
             The metadata class to convert into, such as `Metadata` or
-            `NiftiMetadata`. By default, the class of this metadata,
-            which makes a copy.
+            `NiftiMetadata`. By default, the class of this metadata.
+        copy : bool, default=False
+            Whether to return new metadata when nothing changes. By
+            default, metadata converted to its own class without any
+            field is returned itself.
         on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
             What to do with the fields that `cls` has no slot for. By
             default, the policy in effect (see
@@ -195,7 +199,9 @@ class Metadata(
         ```
         """
         target = type(self) if cls is None else cls
-        return target.from_any(self, on_loss=on_loss, **values)
+        if type(self) is target and not values and not copy:
+            return self
+        return target.from_instance(self, on_loss=on_loss, **values)
 
     def derive(
         self,

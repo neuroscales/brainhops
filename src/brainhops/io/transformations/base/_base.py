@@ -1,6 +1,7 @@
 __all__ = ["TransformationFormat"]
 
 import typing_extensions as tx
+from bagof.magic import fields
 
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._base import (
@@ -94,7 +95,11 @@ class TransformationFormat(
         A transformation that is not of this format is converted exactly as
         `other.to(cls)` converts it. An instance of this format is copied
         as [`Format.from_instance`][brainhops.io.base.Format.from_instance]
-        copies it.
+        copies it, except that a format that stores its data in the
+        private field `_data` passes the stored value on. That value is
+        `None` unless the data were assigned, so the copy decodes the
+        same record as `other`, and a record that was not decoded stays
+        so.
 
         Parameters
         ----------
@@ -121,4 +126,14 @@ class TransformationFormat(
         """
         if converts_to(cls, other):
             return convert_instance(cls, other, *args, **kwargs)
+        if isinstance(other, cls) and _stores_data(cls):
+            kwargs.setdefault("data", other._data)
         return super().from_instance(other, *args, **kwargs)
+
+
+def _stores_data(cls: type) -> bool:
+    """Return whether `cls` stores its data in `_data`, set with `data=`."""
+    return any(
+        field.name == "_data" and field.public_name == "data" and field.init
+        for field in fields(cls)
+    )

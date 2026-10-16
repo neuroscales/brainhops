@@ -222,44 +222,6 @@ class MatrixAffine(
             f"of a container, such as TxtMatrixAffine."
         )
 
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy a transformation, sharing the record of the same format.
-
-        Within a format, the record of the metadata carries the matrix,
-        so the matrix is not decoded and passed on, and the copy holds the
-        same metadata as `other`. A transformation of the format that
-        holds a pending matrix is copied with that matrix. Any other
-        transformation, including one of another container, is converted
-        as `other.to(cls)` converts it, from its decoded matrix and its
-        coordinate systems.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`. A transformation that is converted takes keyword
-            options only.
-        **kwargs : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`, or options of the conversion.
-
-        Returns
-        -------
-        Self
-            The copy.
-
-        Raises
-        ------
-        ConversionError
-            If the format cannot hold a transformation that is converted.
-        """
-        if isinstance(other, cls) and other._data is None:
-            kwargs.setdefault("data", None)
-        return super().from_instance(other, *args, **kwargs)
-
 
 @register_format
 class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
