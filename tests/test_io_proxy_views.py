@@ -13,7 +13,7 @@ import pytest
 from bagof.magic import replace
 
 import brainhops.io as io
-from brainhops._ext.npfileobj.proxy import ArrayProxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops.backends import backend
 from brainhops.datamodel.images import SingleScaleImage
 

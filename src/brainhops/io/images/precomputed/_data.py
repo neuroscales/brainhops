@@ -10,7 +10,7 @@ import typing_extensions as tx
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import ts
-from brainhops._ext.npfileobj.proxy import ArrayProxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     ParserContentError,

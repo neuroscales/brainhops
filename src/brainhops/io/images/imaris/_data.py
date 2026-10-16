@@ -10,7 +10,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops._ext.npfileobj.proxy import ArrayProxy
+from brainhops._core.proxy import ArrayProxy
 
 # this format
 from ._raw import ImarisLevel, ImarisRaw

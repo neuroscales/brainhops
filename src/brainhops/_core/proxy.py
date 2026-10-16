@@ -74,7 +74,7 @@ class ArrayProxy(abc.ABC):
     view, which shares the state of its parent and selects a part of its
     values. Nothing is read until NumPy converts the view with
     `np.asarray`, or until Dask computes the array that
-    [`to_dask`][brainhops._ext.npfileobj.proxy.ArrayProxy.to_dask]
+    [`to_dask`][brainhops._core.proxy.ArrayProxy.to_dask]
     returns.
 
     A subclass describes the stored array and knows how to read a box of

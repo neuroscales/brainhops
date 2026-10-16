@@ -5,7 +5,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops._ext.npfileobj.proxy import ArrayProxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format
