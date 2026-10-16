@@ -10,6 +10,7 @@ import typing_extensions as tx
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import ts
+from brainhops._ext.npfileobj.proxy import ArrayProxy
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     ParserContentError,
@@ -144,7 +145,7 @@ def stream_location(file: tx.Any) -> str:
     return node_location(name)
 
 
-class _N5Proxy:
+class _N5Proxy(ArrayProxy):
     """A lazy array of the samples of an N5 dataset.
 
     The proxy holds the directory of the dataset and the shape and the
@@ -153,45 +154,32 @@ class _N5Proxy:
     the first time that values are needed, and each read then decodes
     only the blocks that it needs. A missing block reads as zeros, since
     N5 datasets are sparse. The samples are indexed in the order of the
-    `dimensions` of the dataset, fastest first. The proxy keeps no open
-    dataset when it is pickled or copied.
+    `dimensions` of the dataset, fastest first. Indexing the proxy
+    returns another lazy array (see [`ArrayProxy`][]), which shares the
+    open dataset. The proxy keeps no open dataset when it is pickled.
     """
 
     def __init__(self, location: str, record: N5Raw) -> None:
         self.location = location
         """The directory of the dataset."""
-        self.shape = tuple(int(n) for n in record.dimensions)
-        """The shape of the samples, read from the record."""
-        self.dtype = record.dtype
-        """The type of the samples, in the native byte order."""
+        self._shape = tuple(int(n) for n in record.dimensions)
+        self._dtype = record.dtype
         self._store = None
 
     @property
-    def ndim(self) -> int:
-        """The number of dimensions of the samples."""
-        return len(self.shape)
+    def base_shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the samples, read from the record."""
+        return self._shape
+
+    @property
+    def dtype(self) -> np.dtype:
+        """The type of the samples, in the native byte order."""
+        return self._dtype
 
     def __getstate__(self) -> tx.Dict[str, tx.Any]:
         state = dict(self.__dict__)
         state["_store"] = None
         return state
-
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = self._read(Ellipsis)
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without reading the dataset.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        basic = _basic_index(index, self.shape)
-        if basic is None:
-            return np.asarray(self)[index]
-        return self._read(basic)
 
     def __repr__(self) -> str:
         return (
@@ -199,8 +187,11 @@ class _N5Proxy:
             f"dtype={self.dtype})"
         )
 
-    def _read(self, index: tx.Any) -> np.ndarray:
-        """Read a selection of the samples with TensorStore.
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        """Read a box of the samples with TensorStore.
+
+        TensorStore reads the integers and the slice bounds that the base
+        class gives as absolute positions, which they are.
 
         Raises
         ------
@@ -243,14 +234,14 @@ class _N5Proxy:
                 f"TensorStore cannot open the N5 dataset at {self.location}: "
                 f"{e}"
             ) from e
-        if tuple(store.shape) != self.shape or store.dtype.numpy_dtype != (
+        if tuple(store.shape) != self._shape or store.dtype.numpy_dtype != (
             self.dtype
         ):
             raise ParserContentError(
                 f"The N5 dataset at {self.location} holds {store.dtype} "
                 f"samples of shape {tuple(store.shape)}, but the attributes "
                 f"that the image was read with say {self.dtype} and "
-                f"{self.shape}."
+                f"{self._shape}."
             )
         self._store = store
         return store
@@ -271,49 +262,3 @@ def _read_attributes(location: str) -> N5Raw:
         return parse_attributes({})
     with open(filename, "rb") as file:
         return parse_attributes(json_attributes(file.read()))
-
-
-def _basic_index(
-    index: tx.Any, shape: tx.Tuple[int, ...]
-) -> tx.Optional[tx.Tuple[tx.Any, ...]]:
-    """Translate a basic NumPy index into one that TensorStore reads.
-
-    TensorStore reads integers and slice bounds as absolute positions,
-    without wrapping negative values, so each integer and each slice with
-    a positive step is made explicit with the help of `range`. `None` is
-    returned for any other index, such as an array, a new axis or a
-    negative step, which the caller then applies with NumPy after a full
-    read.
-    """
-    if not isinstance(index, tuple):
-        index = (index,)
-    if sum(item is Ellipsis for item in index) > 1:
-        return None
-    explicit = [item for item in index if item is not Ellipsis]
-    if len(explicit) > len(shape):
-        return None
-    expanded: tx.List[tx.Any] = []
-    for item in index:
-        if item is Ellipsis:
-            expanded += [slice(None)] * (len(shape) - len(explicit))
-        else:
-            expanded.append(item)
-    expanded += [slice(None)] * (len(shape) - len(expanded))
-    out: tx.List[tx.Any] = []
-    for item, n in zip(expanded, shape):
-        if isinstance(item, (int, np.integer)) and not isinstance(item, bool):
-            out.append(range(n)[int(item)])
-        elif isinstance(item, slice):
-            selected = range(n)[item]
-            if selected.step < 1:
-                return None
-            out.append(
-                slice(
-                    selected.start,
-                    max(selected.start, selected.stop),
-                    selected.step,
-                )
-            )
-        else:
-            return None
-    return tuple(out)

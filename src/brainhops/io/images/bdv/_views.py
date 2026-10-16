@@ -10,12 +10,9 @@ The functions invert each other, so that
 `_image_to_model(_image_to_disk(data))` gives `data` back.
 """
 
-# dependencies
-import numpy as np
-
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.io.base._utils_proxies import load_proxy
 from brainhops.io.common.bdv._hdf5 import _BdvProxy
 
 
@@ -30,9 +27,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     data were set is a view of `rawdata`.
     """
     if isinstance(raw, _BdvProxy):
-        raw = get_array_backend().asarray(raw)
-        if isinstance(raw, np.ndarray):
-            raw.flags.writeable = False
+        raw = load_proxy(raw)
     return raw.T
 
 

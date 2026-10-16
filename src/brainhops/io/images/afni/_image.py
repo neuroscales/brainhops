@@ -56,6 +56,7 @@ from brainhops.io.common.afni._data import (
     encode_bricks,
     read_afni,
     reads_brik,
+    stores_brik,
     write_brik,
 )
 from brainhops.io.common.afni._files import (
@@ -1021,12 +1022,13 @@ def _stored_data(
     else:
         raw = image.rawdata
     if isinstance(raw, _BrikProxy):
-        if datatype is None:
-            return raw
-        stored = brick_dtype(datatype)
-        native = [dtype.newbyteorder("=") for dtype in raw.record.dtypes]
-        if all(dtype == stored for dtype in native):
-            return raw
+        if not raw.is_view:
+            if datatype is None:
+                return raw
+            stored = brick_dtype(datatype)
+            native = [dtype.newbyteorder("=") for dtype in raw.record.dtypes]
+            if all(dtype == stored for dtype in native):
+                return raw
         # The lazy array is read here rather than through `data`, so that
         # no cached view of the old file outlives a write over that file.
         raw = np.asarray(raw)
@@ -1057,7 +1059,7 @@ def _stored_voxels(record: AfniRaw, data: ArrayProtocol) -> ArrayProtocol:
     WriterError
         If integer values overflow their stored type.
     """
-    if isinstance(data, _BrikProxy):
+    if stores_brik(data):
         return data
     dtype = np.dtype(data.dtype).newbyteorder("=")
     if all(stored.newbyteorder("=") == dtype for stored in record.dtypes):
@@ -1076,7 +1078,7 @@ def _layout(
     little-endian order without scale factors, and its statistics are
     computed from its values.
     """
-    if isinstance(data, _BrikProxy):
+    if stores_brik(data):
         return OrderedDict(
             (name, data.record[name])
             for name in _LAYOUT

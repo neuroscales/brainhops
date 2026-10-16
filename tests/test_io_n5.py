@@ -254,7 +254,7 @@ def test_an_empty_selection_reads_nothing(tmp_path: tx.Any) -> None:
     proxy = N5Image.load(tmp_path / "d").rawdata
     assert proxy[0:0].shape == (0, 3, 4)
     assert proxy._store is None
-    proxy[0, 0, 0]
+    np.asarray(proxy[0, 0, 0])
     assert proxy._store is not None
     # A pickled proxy keeps no open dataset, and reads again.
     clone = pickle.loads(pickle.dumps(proxy))

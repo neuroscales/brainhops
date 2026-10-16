@@ -631,7 +631,7 @@ def test_a_missing_slice_reads_no_file(
     os.remove(folder / "z4.tif")
     reads = _count_reads(monkeypatch)
     image = StackImage.load(folder)
-    assert (image.rawdata[4] == 0).all()
+    assert (np.asarray(image.rawdata[4]) == 0).all()
     assert reads == []
     with backend("dask"):
         data = StackImage.load(folder).data
@@ -701,7 +701,7 @@ def test_a_file_changed_after_loading_is_refused(tmp_path: Path) -> None:
         np.asarray(image.rawdata)
     os.remove(folder / "z3.tif")
     with pytest.raises(ParserContentError, match="no longer exists"):
-        image.rawdata[3]
+        np.asarray(image.rawdata[3])
 
 
 # ----------------------------------------------------------------------

@@ -658,6 +658,7 @@ class PillowImage(
             and (dpi is None or dpi is True)
             and held is not None
             and isinstance(self.rawdata, _PillowProxy)
+            and not self.rawdata.is_view
             and self.rawdata.record is held
             and _same_format(format, held)
         ):
