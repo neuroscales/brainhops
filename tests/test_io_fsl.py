@@ -755,3 +755,54 @@ def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     out_full = _world_field(warp, _real_ref())
     out_folded = _world_field(computed, _real_ref())
     assert np.allclose(out_folded, out_full, atol=1e-4)
+
+
+@pytest.mark.parametrize("deformation_type", ["absolute", "relative"])
+def test_native_dense_fields_without_intent(
+    tmp_path: Path, deformation_type: str
+) -> None:
+    """convertwarp/invwarp fields retain scaled-mm semantics with intent 0."""
+    _, absolute, relative = _fnirt_setup()
+    values = absolute if deformation_type == "absolute" else relative
+    path = tmp_path / "native-warp.nii.gz"
+    image = nb.Nifti1Image(values.astype(np.float32), REF_AFFINE)
+    assert image.header["intent_code"] == 0
+    nb.save(image, path)
+    moving = _image(MOV_SHAPE, MOV_AFFINE)
+    reference = _image(REF_SHAPE, REF_AFFINE)
+    # Intent 0 must not make the reader claim arbitrary vector images.
+    assert FnirtWarpField.sniff(path) == 0
+    transform = io.transformations.load(
+        path,
+        hint="fnirt",
+        moving=moving,
+        reference=reference,
+        deformation_type=deformation_type,
+    )
+    assert transform.deformation_type == deformation_type
+    assert transform.degree == 1 and transform.store == "values"
+    moving_scaled = _fsl_vox2scaled(MOV_AFFINE, MOV_SHAPE, [1.5, 1.5, 3.0])
+    expected = _apply(MOV_AFFINE @ np.linalg.inv(moving_scaled), absolute)
+    np.testing.assert_allclose(
+        _world_field(transform, reference), expected, atol=1e-3
+    )
+
+
+def test_fnirt_stream_preserves_deformation_type(tmp_path: Path) -> None:
+    _, absolute, _ = _fnirt_setup()
+    image = nb.Nifti1Image(absolute.astype(np.float32), REF_AFFINE)
+    path = tmp_path / "warp.nii"
+    nb.save(image, path)
+    moving = _image(MOV_SHAPE, MOV_AFFINE)
+    with path.open("rb") as stream:
+        transform = FnirtWarpField.from_fileobj(
+            stream, moving=moving, deformation_type="absolute"
+        )
+        assert transform.deformation_type == "absolute"
+        expected = _warp(absolute)
+        expected.deformation_type = "absolute"
+        reference = _image(REF_SHAPE, REF_AFFINE)
+        np.testing.assert_allclose(
+            _world_field(transform, reference),
+            _world_field(expected, reference),
+        )
