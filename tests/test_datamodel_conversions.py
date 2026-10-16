@@ -248,3 +248,19 @@ def test_a_pyramid_format_takes_a_single_scale_image(
     np.testing.assert_array_equal(
         np.asarray(pyramid.images[0].data), np.asarray(image.data)
     )
+
+
+def test_a_format_that_lists_its_data_model_first_is_refused() -> None:
+    from brainhops.io.base.parsers import TextFileReader
+    from brainhops.io.transformations.base import TransformationFormat
+
+    with pytest.raises(TypeError, match="before its format base"):
+
+        class Late(X.Affine, TransformationFormat):
+            pass
+
+    # A base that only reads may come first.
+    class Early(TextFileReader, TransformationFormat, X.Affine):
+        pass
+
+    assert issubclass(Early, X.Affine)

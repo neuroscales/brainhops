@@ -530,7 +530,21 @@ class _FileBasedModelMixin:
         No file-based class takes a string as the first constructor argument,
         so a string always names a file or a store. A file that cannot be read
         fails in `load`, rather than being passed to the constructor as data.
+
+    !!! warning "The format base comes before the data model"
+        A file format lists its format base, such as `TransformationFormat`
+        or a class derived from it, before the class of its data model, such
+        as `Affine` or `ImmutableSequence`. Bases that only read or write,
+        such as `BinaryFileReader`, may come first. The format then decides
+        whether to convert or to copy another object before the data model
+        copies any field. A conversion that received the fields that the data
+        model had already copied would build the wrong map. A class that
+        breaks the rule raises `TypeError` when it is defined.
     """
+
+    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _check_format_first(cls)
 
     @classmethod
     def _data_model(cls) -> type:
@@ -656,6 +670,39 @@ class _FileBasedModelMixin:
             if transformations is not None:
                 kwargs.setdefault("transformations", transformations)
         return super().from_instance(other, *args, **kwargs)
+
+
+def _check_format_first(cls: type) -> None:
+    """Refuse a format that lists a class of its data model before its format.
+
+    A root of the formats, such as `TransformationFormat`, lists `Format`
+    among its own bases and is not checked.
+
+    Raises
+    ------
+    TypeError
+        If a class of the data model comes before the first format class
+        in the method resolution order of `cls`.
+    """
+    # `bagof.magic` builds a stand-in class of this name only to compute an
+    # MRO, then builds the class itself, which is checked.
+    if Format in cls.__bases__ or cls.__name__ == "__magic_discard__":
+        return
+    before = []
+    for base in cls.__mro__[1:]:
+        if issubclass(base, Format):
+            break
+        if issubclass(base, DataModelBase) and not issubclass(
+            base, (FileReader, FileWriter)
+        ):
+            before.append(base.__name__)
+    if before:
+        raise TypeError(
+            f"{cls.__name__} lists its data model ({', '.join(before)}) "
+            f"before its format base. List the format base first, so that "
+            f"the format decides whether to convert another object before "
+            f"the data model copies its fields."
+        )
 
 
 def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:

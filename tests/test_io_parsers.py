@@ -229,7 +229,7 @@ def test_the_writer_entry_point_does_not_shadow_the_converter() -> None:
     )
 
     class WritableTransformation(
-        Transformation, TransformationFormat, FileWriter
+        TransformationFormat, FileWriter, Transformation
     ):
         pass
 

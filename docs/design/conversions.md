@@ -148,8 +148,13 @@ A file format lists its format base before its data model, so that
 before `ConcreteTransformation.from_instance()` copies any field.
 Otherwise the data model would copy the map of the source into the
 arguments of the conversion, and that copy would replace the map that
-an exact converter builds. A test checks that no format passes such
-arguments to its converter.
+an exact converter builds. The format alone can decide, because two
+formats of the same data model may mean different maps: an LTA affine
+between voxel systems and an MNI affine between RAS systems are both
+`Affine`. Bases that only read or write, such as `BinaryFileReader`,
+may come first. `_FileBasedModelMixin` raises `TypeError` when a class
+that breaks the rule is defined, and a test checks that no format
+passes copied fields to its converter.
 
 ## 5. Open questions
 
