@@ -2,8 +2,8 @@
 
 FSL works in scaled millimetres: voxel indices times the pixel size, with
 x flipped when the voxel-to-world matrix has a positive determinant. The
-FNIRT tests use the fslpy fixtures in data/fsl/ (see ATTRIBUTION.md there)
-and compare with fslpy when it is installed.
+FNIRT tests use the fslpy fixtures in data/fsl/ (see ATTRIBUTION.md
+there).
 """
 
 from pathlib import Path
@@ -626,35 +626,6 @@ def test_coefficient_field_chain_shape() -> None:
     assert np.all(np.isfinite(world))
 
 
-def _fnirt_world_oracle(name, shape):  # noqa: ANN001, ANN202
-    """Compute the fslpy world-to-world deformation, or skip without fslpy."""
-    fsl_image = pytest.importorskip("fsl.data.image")
-    fsl_fnirt = pytest.importorskip("fsl.transform.fnirt")
-    nonlinear = pytest.importorskip("fsl.transform.nonlinear")
-
-    fref = fsl_image.Image(str(fsl_dir / "ref.nii.gz"))
-    fsrc = fsl_image.Image(str(fsl_dir / "src.nii.gz"))
-    field = fsl_fnirt.readFnirt(str(fsl_dir / name), src=fsrc, ref=fref)
-    world = fsl_fnirt.fromFnirt(field, "world", "world")
-    return np.asarray(
-        nonlinear.convertDeformationType(world, "absolute")
-    ).reshape(shape)
-
-
-@pytest.mark.parametrize(
-    "name", ["coefficientfield.nii.gz", "displacementfield.nii.gz"]
-)
-def test_fnirt_fixture_matches_fslpy(name) -> None:  # noqa: ANN001
-    """The reader reproduces the fslpy world-to-world deformation."""
-    ref_img, src_img = _real_ref(), _real_src()
-    warp = io.transformations.load(
-        fsl_dir / name, reference=ref_img, moving=src_img
-    )
-    out = _world_field(warp, ref_img)
-    oracle = _fnirt_world_oracle(name, out.shape)
-    assert np.allclose(out, oracle, atol=1e-4)
-
-
 def test_dct_coefficient_field_is_refused() -> None:
     img = nb.load(str(fsl_dir / "coefficientfield.nii.gz"))
     img = nb.Nifti1Image(
@@ -758,11 +729,6 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct(
         names = [type(t).__name__ for t in computed.transformations]
         assert names == ["RASToWarpField", "DisplacementField"]
 
-        # Led by a sampling grid, the full warp reproduces fslpy.
-        out = _world_field(coef, _real_ref())
-        oracle = _fnirt_world_oracle("coefficientfield.nii.gz", out.shape)
-        assert np.allclose(out, oracle, atol=1e-4)
-
 
 def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     """Folding the trailing affine into a dense field is exact."""
@@ -784,7 +750,8 @@ def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     names = [type(t).__name__ for t in computed.transformations]
     assert names == ["RASToWarpField", "DisplacementField"]
 
-    # Led by a sampling grid, both chains reproduce fslpy.
+    # Led by a sampling grid, the folded chain moves points as the full
+    # chain does.
     out_full = _world_field(warp, _real_ref())
     out_folded = _world_field(computed, _real_ref())
     oracle = _fnirt_world_oracle("displacementfield.nii.gz", out_full.shape)

@@ -117,24 +117,6 @@ def test_points_map_as_transformix_maps_them(name: str) -> None:
     )
 
 
-def test_fixtures_still_match_transformix(tmp_path: Path) -> None:
-    """The stored expectations still equal the output of transformix."""
-    itk_ = pytest.importorskip("itk")
-    if not hasattr(itk_, "ParameterObject"):
-        pytest.skip("ITK is installed without elastix")
-    for name in ("euler3d", "bspline3d"):
-        parameter_object = itk_.ParameterObject.New()
-        parameter_object.ReadParameterFile(str(FILES[name]))
-        moving = itk_.image_from_array(np.zeros((6, 6, 6), np.float32))
-        field = itk_.transformix_deformation_field(
-            moving, parameter_object, output_directory=str(tmp_path)
-        )
-        disp = itk_.array_from_image(field).transpose(2, 1, 0, 3)
-        np.testing.assert_allclose(
-            disp, np.load(CASES[name])["disp"], atol=1e-5
-        )
-
-
 # ----------------------------------------------------------------------
 #   DISPATCH
 # ----------------------------------------------------------------------

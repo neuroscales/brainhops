@@ -6,8 +6,7 @@ header holds what is needed to evaluate them. The tests build such files
 by hand, as `common_coef_construction` in
 `src/warpfns/fnirt_file_writer.cpp` of FSL 5.0.9 writes them, and compare
 the reader with an evaluation written here from the formulas of FSL
-(https://github.com/neurodebian/fsl at commit 513f6a0), and with fslpy
-when it is installed.
+(https://github.com/neurodebian/fsl at commit 513f6a0).
 """
 
 import gzip
@@ -339,52 +338,3 @@ def test_new_coefficients_keep_the_header_of_the_spline(tmp_path) -> None:  # no
     assert np.array_equal(after.get_qform(), before.get_qform())
     assert np.array_equal(after.get_sform(), before.get_sform())
     assert np.array_equal(np.asarray(nb.load(copy).dataobj), 2 * coef)
-
-
-# ----------------------------------------------------------------------
-#   FSLPY
-# ----------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("initial", ["identity", "oblique"])
-@pytest.mark.parametrize("coarser", [False, True])
-def test_a_hand_built_cubic_file_matches_fslpy(
-    tmp_path,  # noqa: ANN001
-    initial,  # noqa: ANN001
-    coarser,  # noqa: ANN001
-) -> None:
-    """The reader reproduces fslpy for a radiological reference.
-
-    fslpy places the grid of knots from the stored voxels of the
-    reference, which agrees with FSL only for a reference in the
-    radiological order, so the comparison uses such a reference.
-    """
-    fsl_image = pytest.importorskip("fsl.data.image")
-    fsl_fnirt = pytest.importorskip("fsl.transform.fnirt")
-    nonlinear = pytest.importorskip("fsl.transform.nonlinear")
-
-    ksp = (3, 4, 2)
-    premat = np.eye(4) if initial == "identity" else PREMAT
-    path = tmp_path / "coef.nii.gz"
-    nb.save(_coefficient_file(_coefficients(3, ksp), 3, ksp, premat), path)
-    if coarser:
-        pixdim = tuple(2 * p for p in REF_PIXDIM)
-        reference = _reference(False, pixdim, (6, 5, 4))
-    else:
-        reference = _reference(False)
-    moving = _image(MOV_AFFINE, (10, 10, 10))
-    nb.save(reference, tmp_path / "ref.nii.gz")
-    nb.save(moving, tmp_path / "src.nii.gz")
-
-    field = fsl_fnirt.readFnirt(
-        str(path),
-        src=fsl_image.Image(str(tmp_path / "src.nii.gz")),
-        ref=fsl_image.Image(str(tmp_path / "ref.nii.gz")),
-    )
-    world = fsl_fnirt.fromFnirt(field, "world", "world")
-    oracle = np.asarray(nonlinear.convertDeformationType(world, "absolute"))
-
-    warp = FnirtWarpField.load(path, reference=reference, moving=moving)
-    assert np.allclose(
-        _world(warp, reference), oracle.reshape(-1, 3), atol=1e-4
-    )

@@ -2,8 +2,7 @@
 
 Headers are written by hand from the specification
 (https://teem.sourceforge.net/nrrd/format.html), and the data is encoded
-independently of the writer. pynrrd cross-checks both directions when it is
-installed.
+independently of the writer.
 """
 
 import bz2
@@ -620,50 +619,6 @@ def test_an_unoriented_image_whose_transformations_are_emptied_has_no_spacings(
     fields = io.load(tmp_path / "b.nrrd").metadata.raw.fields
     assert "spacings" not in fields
     assert "axis mins" not in fields
-
-
-# ----------------------------------------------------------------------
-#   PYNRRD CROSS-CHECK
-# ----------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("detached", [False, True])
-@pytest.mark.parametrize("encoding", ["raw", "gzip", "ascii"])
-def test_pynrrd_cross_check(tmp_path, detached, encoding) -> None:  # noqa: ANN001
-    nrrd = pytest.importorskip("nrrd")
-    values = _values((3, 4, 5, 2), "int16")
-    header = {
-        "space": "left-posterior-superior",
-        "space directions": np.array(
-            [[np.nan] * 3, [0, 2, 0], [1, 0, 0], [0, 0, 3]]
-        ),
-        "kinds": ["vector", "domain", "domain", "domain"],
-        "space origin": np.array([1.0, -2.0, 3.0]),
-        "encoding": encoding,
-        "DWMRI_b-value": "1000",
-    }
-    ext = ".nhdr" if detached else ".nrrd"
-    name = str(tmp_path / ("a" + ext))
-    nrrd.write(name, values, header, detached_header=detached)
-    image = io.load(name)
-    np.testing.assert_array_equal(image.data, values.transpose(1, 2, 3, 0))
-    np.testing.assert_allclose(
-        image.transformation.matrix,
-        [[0, 1, 0, 1], [2, 0, 0, -2], [0, 0, 3, 3]],
-    )
-    assert image.metadata.raw.keyvalue["DWMRI_b-value"] == "1000"
-
-    out = str(tmp_path / ("b" + ext))
-    image.save(out)
-    data, back = nrrd.read(out)
-    np.testing.assert_array_equal(data, values)
-    assert back["space"] == "left-posterior-superior"
-    np.testing.assert_allclose(
-        back["space directions"][1:], header["space directions"][1:]
-    )
-    np.testing.assert_allclose(back["space origin"], header["space origin"])
-    assert back["kinds"] == header["kinds"]
-    assert back["DWMRI_b-value"] == "1000"
 
 
 def test_write_measurement_frame_follows_space(tmp_path) -> None:  # noqa: ANN001

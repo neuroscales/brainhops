@@ -376,7 +376,8 @@ def test_intensity_scaling(tmp_path) -> None:  # noqa: ANN001
 # ----------------------------------------------------------------------
 
 
-def test_a_header_with_a_separate_data_file(tmp_path) -> None:  # noqa: ANN001
+@pytest.mark.parametrize("ending", ["END\n", "", "\n"])
+def test_a_header_with_a_separate_data_file(tmp_path, ending: str) -> None:  # noqa: ANN001
     layout = "-0,-1,+2"
     payload = _reference_bytes(DATA, layout, ">f")
     (tmp_path / "sub").mkdir()
@@ -384,7 +385,7 @@ def test_a_header_with_a_separate_data_file(tmp_path) -> None:  # noqa: ANN001
     head = _header_text(
         DATA.shape, layout, "Float32BE", file="sub/values.dat 7"
     )
-    source = _write(tmp_path / "a.mih", (head + "END\n").encode())
+    source = _write(tmp_path / "a.mih", (head + ending).encode())
 
     image = io.load(source)
     assert isinstance(image, MrtrixImage)
@@ -919,3 +920,12 @@ def test_an_image_whose_transformations_are_emptied_has_no_geometry(
     assert np.allclose(written, np.eye(4)[:3])
     image.transformations = None
     assert np.allclose(image.transformation.to(Affine).matrix, matrix)
+
+
+@pytest.mark.parametrize("file", [None, ". 1024"])
+def test_embedded_or_missing_data_reference_still_requires_end(
+    file: str,
+) -> None:
+    head = _header_text(DATA.shape, "+0,+1,+2", "Float32LE", file=file)
+    with pytest.raises(ParserContentError, match="no END"):
+        MrtrixRaw.from_text(head)
