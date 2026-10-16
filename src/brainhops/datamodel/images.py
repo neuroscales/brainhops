@@ -390,6 +390,15 @@ class MultiScaleImage(Image):
     The last transformation in the list is the preferred one.
     """
 
+    @classmethod
+    def _as_model(cls, other: DataModelBase) -> DataModelBase:
+        # A single-scale image is a pyramid of one level. The level keeps its
+        # own transformations, and the pyramid adds none, so the image keeps
+        # its geometry.
+        if isinstance(other, SingleScaleImage):
+            return MultiScaleImage(images=[other], metadata=other.metadata)
+        return other
+
     @property
     def data(self) -> ArrayProtocol:
         """The data of the highest-resolution level."""

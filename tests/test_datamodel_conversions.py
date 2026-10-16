@@ -77,10 +77,27 @@ def test_related_classes_are_copied_by_name_with_their_checks() -> None:
 
 def test_unrelated_classes_are_refused() -> None:
     image = SingleScaleImage(np.zeros((2, 2, 2)))
+    pyramid = MultiScaleImage.from_instance(image)
+    # Taking a level out of a pyramid of several would lose the others.
     with pytest.raises(ConversionError):
-        MultiScaleImage.from_instance(image)
+        SingleScaleImage.from_instance(pyramid)
     with pytest.raises(ConversionError):
         Metadata.from_instance(A.LeftToRightAxis())
+
+
+def test_a_single_scale_image_is_a_pyramid_of_one_level() -> None:
+    image = SingleScaleImage(
+        np.zeros((2, 2, 2)), transformations=[X.Scaling([2.0, 2.0, 2.0])]
+    )
+    for pyramid in (
+        MultiScaleImage.from_instance(image),
+        image.to(MultiScaleImage),
+        MultiScaleImage.from_any(image),
+    ):
+        assert pyramid.images == [image]
+        # The level keeps its transformations, so the geometry is the same.
+        assert list(pyramid.transformations) == []
+        assert pyramid.metadata is image.metadata
 
 
 def test_from_instance_takes_only_data_models() -> None:
@@ -194,3 +211,24 @@ def test_a_format_converts_without_fields_of_its_data_model(
         # The first call is the conversion that was asked for. A converter
         # that goes through other classes calls the dispatcher again.
         assert calls[:1] == [{}], type(source).__name__
+
+
+@pytest.mark.parametrize(
+    "module, name",
+    [
+        ("brainhops.io.images.tiff._multiscale", "TiffMultiScaleImage"),
+        ("brainhops.io.images.zarr._multiscale", "OmeZarrImage"),
+    ],
+    ids=["tiff", "ome-zarr"],
+)
+def test_a_pyramid_format_takes_a_single_scale_image(
+    module: str, name: str
+) -> None:
+    cls = getattr(pytest.importorskip(module), name)
+    image = SingleScaleImage(np.arange(8.0).reshape(2, 2, 2))
+    pyramid = cls.from_instance(image)
+    assert isinstance(pyramid, cls)
+    assert pyramid.nscales == 1
+    np.testing.assert_array_equal(
+        np.asarray(pyramid.images[0].data), np.asarray(image.data)
+    )

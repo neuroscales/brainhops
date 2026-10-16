@@ -599,12 +599,14 @@ class _FileBasedModelMixin:
         Within the format, the stored values are copied, so a copy of an
         image whose data was not assigned holds the same `rawdata` as
         `other`, which stays lazy if it is a proxy, and decodes the same
-        record. From another class, the data and the transformations that
-        `other` reports are copied, decoded if need be, because its
-        `rawdata` and its record mean nothing to this format. A format that
-        takes `metadata` over receives the metadata of `other`, which its
-        field converts into the metadata of the format, without the record
-        of `other`.
+        record. From another class, the data, the levels of a pyramid and
+        the transformations that `other` reports are copied, decoded if
+        need be, because its `rawdata` and its record mean nothing to this
+        format. A format that takes `metadata` over receives the metadata
+        of `other`, which its field converts into the metadata of the
+        format, without the record of `other`. An object that its data
+        model converts before copying, such as a single-scale image copied
+        into a pyramid, is converted first.
 
         Parameters
         ----------
@@ -622,21 +624,25 @@ class _FileBasedModelMixin:
         Self
             The copy.
         """
+        other = cls._data_model()._as_model(other)
         for field in _foreign_format_fields(cls, other):
             if field.factory is True:
                 default = field.default()
             else:
                 default = field.default
             kwargs.setdefault(field.public_name, default)
-        # The fields `_data` and `_transformations` of another class, if it
-        # has them, are its own stored values, so the decoded views are
-        # read instead. A transformation model stores its data as `_data`
-        # itself, and its own `from_instance` converts the data of another
-        # class, so only a format that takes `data` over reads it here.
-        if not isinstance(other, cls) and _takes_over(cls, "data"):
-            data = getattr(other, "data", None)
-            if data is not None:
-                kwargs.setdefault("data", data)
+        # The fields `_data`, `_images` and `_transformations` of another
+        # class, if it has them, are its own stored values, so the decoded
+        # views are read instead. A transformation model stores its data as
+        # `_data` itself, and its own `from_instance` converts the data of
+        # another class, so only a format that takes `data` over reads it
+        # here. A pyramid that takes `images` over reads its levels from
+        # the file, so the levels of another pyramid are read here.
+        for name in ("data", "images"):
+            if not isinstance(other, cls) and _takes_over(cls, name):
+                value = getattr(other, name, None)
+                if value is not None:
+                    kwargs.setdefault(name, value)
         # The metadata of a data model, generic or of another format, is
         # given to the field that this format takes it over with, which
         # converts it into the metadata of this format.

@@ -332,37 +332,6 @@ class TiffMultiScaleImage(
             pyramid.images = levels
         return pyramid
 
-    @classmethod
-    def from_instance(
-        cls, other: tx.Any, *args, **kwargs
-    ) -> "TiffMultiScaleImage":
-        """Copy a pyramid into this format.
-
-        Within the format, the stored fields are copied, so a copy of an
-        untouched pyramid shares `rawdata` and the metadata and decodes
-        nothing. From another class, the levels that `other` reports are
-        copied, because its private fields mean nothing to this format.
-
-        Parameters
-        ----------
-        other : MultiScaleImage
-            The pyramid to copy.
-        *args : Any
-            Positional fields of the copy.
-        **kwargs : Any
-            Other fields of the copy.
-
-        Returns
-        -------
-        TiffMultiScaleImage
-            The copy.
-        """
-        if not isinstance(other, cls):
-            images = getattr(other, "images", None)
-            if images is not None:
-                kwargs.setdefault("images", list(images))
-        return super().from_instance(other, *args, **kwargs)
-
     # --- writing ------------------------------------------------------
 
     def consolidate(

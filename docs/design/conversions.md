@@ -1,6 +1,6 @@
 # Design: conversions between the classes of the data model
 
-Status: decided and implemented, except for the open questions at the
+Status: decided and implemented, except for the open question at the
 end. This memo records how an object of the data model is turned into
 an object of another class: an axis into a more specific axis, a
 linear map into a rotation, a transformation into a file format. It
@@ -102,12 +102,32 @@ reason. A missing converter therefore fails the test.
 |---|---|---|
 | axes, systems, orientations | by fixed fields | copy by name with checks (C3) |
 | metadata | by the fields a format stores | copy by name with a loss report |
-| images | by the file record, or single scale against pyramid | copy by name between formats; refused between single scale and pyramid |
+| images | by the file record, or single scale against pyramid | copy by name between formats; a single-scale image becomes a pyramid of one level |
 | transformations | by representation and by promises on values | converters (C4) |
 
 A requested tangent class implies `log=True`, so `x.to(AffineExponential)`
 is `x.to(Affine, log=True)`. `convert()` adds the flag at every step of
 a multi-step conversion, unless the source already holds a tangent.
+
+A transformation converted to a chain, as in `t.to(Sequence)`, becomes a
+chain of one element. A file format that stores a chain decides with its
+own converters what it holds, so a single affine is not written as a
+chain file of one element, which would make `save()` ambiguous between
+chain formats and single-affine formats that share an extension.
+`Sequence.is_identity(compute=True)` computes the chain and asks the
+result, so a chain that reduces to the identity converts exactly to
+`Identity`.
+
+A data model whose classes store their content differently converts a
+related object before its fields are copied, in the class method
+`_as_model()` of `DataModelBase`, which returns the object unchanged by
+default. `MultiScaleImage` uses it to turn a single-scale image into a
+pyramid of one level. The level keeps its own transformations and the
+pyramid adds none, so the image keeps its geometry. Both
+`DataModelBase.from_instance()` and the `from_instance()` of file
+formats call it first, so a pyramid format such as OME-Zarr takes a
+single-scale image as well. A pyramid is not converted to a single-scale
+image, because taking one level would lose the others.
 
 ## 4. Refusals that are deliberate
 
@@ -118,22 +138,17 @@ not computed, and `to(log=True)` is the way to read a field that holds
 a velocity. A matrix with no real logarithm, such as a permutation that
 swaps two axes, raises `DomainError` when a tangent class is requested.
 
+A file format whose data model comes before `TransformationFormat` in
+its method resolution order, such as the NIfTI formats and
+`TrakEM2PatchAffine`, converts in its own `from_instance()`. Otherwise
+its data model would copy the map of the source into the arguments of
+the conversion, and that copy would replace the map that an exact
+converter builds. A test checks that no format passes such arguments.
+
 ## 5. Open questions
 
-1. Wrapping a transformation in a sequence of one, as `t.to(Sequence)`,
-   is refused. It is exact and cheap, but it changes the kind of the
-   object, so it may belong to the constructor rather than to `to()`.
-2. `Sequence.is_identity(compute=True)` does not compute the chain, so
-   a chain that reduces to the identity does not convert exactly to
-   `Identity`. The completeness test marks this pair as an expected
-   failure. A checker that computes the chain must not be used by
-   `compute()` itself, which relies on the checkers.
-3. A single-scale image and a pyramid are unrelated, so converting one
-   into the other is refused. A converter could build a pyramid of one
-   level, and take the only level of a pyramid.
-4. `TrakEM2PatchAffine` has its data model first in its method
-   resolution order, like NIfTI, but it does not convert in its own
-   override. A transformation that it converts reaches
-   `TransformationFormat` with the map that its data model has already
-   copied into the arguments. This works today but depends on the
-   converters accepting those arguments.
+1. A pyramid could be built from an array or a single-scale image with
+   its levels computed, through an option such as `nlevels`, so that
+   `image.to(MultiScaleImage, nlevels=5)` builds five levels. This is
+   not implemented. It needs a method that computes the levels, which
+   `_as_model()` would then call.
