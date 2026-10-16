@@ -19,7 +19,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import _CURRENT, get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import _BackendsMixin
+from brainhops.datamodel._backends import _as_backend_data, _BackendsMixin
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base.parsers import WriterError
 
@@ -106,7 +106,7 @@ class StoredFieldMixin:
         object
             An object of the same class.
         """
-        return self._as_backend_data(backend, inplace)
+        return _as_backend_data(self, backend, inplace)
 
 
 # ----------------------------------------------------------------------

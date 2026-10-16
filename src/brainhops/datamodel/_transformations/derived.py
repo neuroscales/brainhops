@@ -32,6 +32,7 @@ from bagof.magic import Forget, NotKwOnly, fields
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.properties import smartproperty
 from brainhops.backends import _CURRENT
+from brainhops.datamodel._backends import _with_fields
 
 from . import nocycles
 from .base import Transformation, _copied
@@ -252,7 +253,7 @@ class DerivedTransformation(Transformation):
         converted = forward.as_backend(backend)
         if converted is forward:
             return self
-        return self._with_fields(inplace, forward=converted)
+        return _with_fields(self, inplace, forward=converted)
 
     # --- helpers ------------------------------------------------------
 

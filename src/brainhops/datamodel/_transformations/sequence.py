@@ -7,7 +7,7 @@ from bagof.magic import NotKwOnly, replace
 from brainhops._core.properties import smartproperty
 from brainhops.backends import _CURRENT
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import as_backend_all
+from brainhops.datamodel._backends import _with_fields, as_backend_all
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
 
@@ -456,7 +456,7 @@ class Sequence(SequenceMixin, Transformation):
         converted = as_backend_all(members, backend)
         if converted is members:
             return self
-        return self._with_fields(inplace, transformations=converted)
+        return _with_fields(self, inplace, transformations=converted)
 
 
 class MutableSequence(MutableSequenceMixin, Sequence):

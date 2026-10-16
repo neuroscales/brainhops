@@ -5,7 +5,7 @@ families of methods. The `to_*` methods return the data of an object as a
 bare array of a backend, and the `as_*` methods return an object of the
 same class whose data are arrays of that backend. The backend settings
 are described in [`brainhops.backends`][], and the design in the memo
-`docs/design/array-backends.md`.
+`spec/design/array-backends.md`.
 
 The mixin below gives every class both families. A class whose data
 need more than the default conversion overrides `to_backend` or
@@ -22,6 +22,8 @@ from brainhops.backends import _CURRENT, Setting
 
 _Default = tx.Union[Setting, tx.Any]
 """The type of a backend argument, whose default is the current setting."""
+
+_T = tx.TypeVar("_T")
 
 
 class _BackendsMixin:
@@ -141,31 +143,6 @@ class _BackendsMixin:
         """
         return self.as_backend("dask", inplace=inplace)
 
-    def _as_backend_data(self, backend: _Default, inplace: bool) -> tx.Self:
-        """Return the object with `data` converted, for the overrides.
-
-        The object is returned as it is when the conversion keeps the
-        array, so that an object that needs no conversion stays the same
-        object.
-        """
-        data = self.data
-        if data is None:
-            return self
-        converted = backends.to_backend(data, backend)
-        if converted is data:
-            return self
-        return self._with_fields(inplace, data=converted)
-
-    def _with_fields(self, inplace: bool, **changes: tx.Any) -> tx.Self:
-        """Assign new values of fields to the object, or to a copy of it."""
-        if not changes:
-            return self
-        if inplace:
-            for name, value in changes.items():
-                setattr(self, name, value)
-            return self
-        return replace(self, **changes)
-
 
 def as_backend_all(
     objects: tx.Optional[tx.Sequence[_BackendsMixin]], backend: _Default
@@ -192,3 +169,58 @@ def as_backend_all(
     if all(new is old for new, old in zip(converted, objects)):
         return objects
     return type(objects)(converted)
+
+
+def _as_backend_data(obj: _T, backend: _Default, inplace: bool) -> _T:
+    """Return an object with its `data` converted, for the overrides.
+
+    The object is returned as it is when the conversion keeps the array,
+    so that an object that needs no conversion stays the same object.
+
+    Parameters
+    ----------
+    obj : object
+        An image or a transformation that stores `data`.
+    backend : str or module
+        The setting.
+    inplace : bool
+        Whether the object itself holds the converted array.
+
+    Returns
+    -------
+    object
+        The object, or a copy of it.
+    """
+    data = obj.data
+    if data is None:
+        return obj
+    converted = backends.to_backend(data, backend)
+    if converted is data:
+        return obj
+    return _with_fields(obj, inplace, data=converted)
+
+
+def _with_fields(obj: _T, inplace: bool, **changes: tx.Any) -> _T:
+    """Assign new values of fields to an object, or to a copy of it.
+
+    Parameters
+    ----------
+    obj : object
+        An image or a transformation.
+    inplace : bool
+        Whether the object itself is changed.
+    **changes : Any
+        The new value of each field, by name.
+
+    Returns
+    -------
+    object
+        The object, or the copy.
+    """
+    if not changes:
+        return obj
+    if inplace:
+        for name, value in changes.items():
+            setattr(obj, name, value)
+        return obj
+    return replace(obj, **changes)

@@ -7,6 +7,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import npvector
 from brainhops.backends import _CURRENT
 from brainhops.datamodel import kinds
+from brainhops.datamodel._backends import _with_fields
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError
@@ -174,7 +175,7 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
         converted = inner.as_backend(backend)
         if converted is inner:
             return self
-        return self._with_fields(inplace, transformation=converted)
+        return _with_fields(self, inplace, transformation=converted)
 
 
 class Projection(MetaTransformation):
@@ -358,7 +359,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
             converted = side.as_backend(backend)
             if converted is not side:
                 changes[name] = converted
-        return self._with_fields(inplace, **changes)
+        return _with_fields(self, inplace, **changes)
 
 
 def _same_axes(t: SubspaceTransformation) -> bool:

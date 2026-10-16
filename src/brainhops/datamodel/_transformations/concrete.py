@@ -37,6 +37,7 @@ from brainhops._core.typing import (
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.backends import _CURRENT, backend, get_array_backend
 from brainhops.datamodel import kinds
+from brainhops.datamodel._backends import _as_backend_data
 from brainhops.datamodel.enums import (
     BoundaryCondition,
     InterpolationOrder,
@@ -421,7 +422,7 @@ class TransformationField(ConcreteTransformation):
         TransformationField
             A field of the same class.
         """
-        return self._as_backend_data(backend, inplace)
+        return _as_backend_data(self, backend, inplace)
 
 
 class DisplacementField(TransformationField, polymorphic=True):

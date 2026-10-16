@@ -9,7 +9,12 @@ from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops.backends import _CURRENT
 
-from ._backends import _BackendsMixin, as_backend_all
+from ._backends import (
+    _as_backend_data,
+    _BackendsMixin,
+    _with_fields,
+    as_backend_all,
+)
 from ._transformations.multiscale import (
     _as_affine_ignoring_fields,
     _at_resolution,
@@ -305,12 +310,12 @@ class SingleScaleImage(Image):
         SingleScaleImage
             An image of the same class.
         """
-        obj = self._as_backend_data(backend, inplace)
+        obj = _as_backend_data(self, backend, inplace)
         transformations = obj.transformations
         converted = as_backend_all(transformations, backend)
         if converted is transformations:
             return obj
-        return obj._with_fields(inplace, transformations=converted)
+        return _with_fields(obj, inplace, transformations=converted)
 
     @property
     def geometry(self) -> Geometry:
@@ -575,7 +580,7 @@ class MultiScaleImage(Image):
             converted = as_backend_all(value, backend)
             if converted is not value:
                 changes[name] = converted
-        return self._with_fields(inplace, **changes)
+        return _with_fields(self, inplace, **changes)
 
     def to_singlescale(self, index: int = 0) -> SingleScaleImage:
         """Return a level as a single-scale image in world space."""
