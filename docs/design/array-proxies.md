@@ -274,10 +274,11 @@ is used only to parse and write headers. The remaining work is the
 following.
 
 - NIfTI-1 and NIfTI-2: the fixed header is a NumPy structured dtype
-  of 348 or 540 bytes, read in either byte order. The code also needs the conversion between
-  the quaternion of the `qform` and a matrix, the rules that choose
-  between the `qform` and the `sform`, the tables of data types,
-  intents and units, and the chain of extensions. The source holds
+  of 348 or 540 bytes, read in either byte order. The code also
+  needs the conversion between the quaternion of the `qform` and a
+  matrix, the rules that choose between the `qform` and the `sform`,
+  the tables of data types, intents and units, and the chain of
+  extensions. The source holds
   about 110 references to `nb.Nifti1Image`, `nb.Nifti1Header` and their
   NIfTI-2 counterparts, most of them in the writers of transformation
   fields, and they would use `NiftiRaw` instead.
