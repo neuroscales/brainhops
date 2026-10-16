@@ -6,7 +6,7 @@ from bagof.hints.numpy import DTypeLike
 from bagof.magic import NoRepr, NotKwOnly
 
 from brainhops._core.affines import axis_scales
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core.typing import ArrayProtocol, Clip
 
 from ._transformations.multiscale import (
     _as_affine_ignoring_fields,
@@ -217,9 +217,11 @@ class SingleScaleImage(Image):
             tx.Union[tx.Self, Geometry, Transformation]
         ] = None,
         degree: int = 1,
-        bound: str = "reflect",
+        bound: tx.Union[str, float] = "reflect",
         coeff: bool = False,
         copy: bool = False,
+        *,
+        clip: Clip = None,
     ) -> "SingleScaleImage":
         """Resample the data onto another geometry.
 
@@ -253,6 +255,17 @@ class SingleScaleImage(Image):
             may return a view, as `torch.Tensor.to` does.
             Dask arrays are immutable and are never copied.
 
+        clip : float, pair, sequence of pairs, or None, default=None
+            A scalar sets symmetric margins. A `(lower, upper)` pair sets
+            asymmetric margins on every input axis; a sequence of pairs
+            follows the input data axes, independently of output permutations.
+            Samples outside the closed interval
+            ``[-lower, size - 1 + upper]`` on any axis are zero. None preserves
+            extrapolation with `bound`. Use 0.5 for the outer voxel edges,
+            0 for border voxel centres, or -0.5 for inner voxel edges.
+            Inside this interval, `bound` still extends interpolation
+            stencils; clipping never clamps the coordinates.
+
         Returns
         -------
         SingleScaleImage
@@ -264,7 +277,9 @@ class SingleScaleImage(Image):
             map of the voxels, and `"reslice"` is appended to `history`.
             The metadata keeps its class and its record.
         """
-        opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
+        opt = dict(
+            degree=degree, bound=bound, coeff=coeff, copy=copy, clip=clip
+        )
 
         if geometry is None:
             geometry = self.geometry
@@ -431,9 +446,11 @@ class MultiScaleImage(Image):
             tx.Union[Image, Geometry, Transformation]
         ] = None,
         degree: int = 1,
-        bound: str = "reflect",
+        bound: tx.Union[str, float] = "reflect",
         coeff: bool = False,
         copy: bool = False,
+        *,
+        clip: Clip = None,
     ) -> "SingleScaleImage":
         """Reslice the level whose voxel size best matches the target grid.
 
@@ -467,12 +484,25 @@ class MultiScaleImage(Image):
             `torch.Tensor.to` does. Dask arrays are immutable and are never
             copied.
 
+        clip : float, pair, sequence of pairs, or None, default=None
+            A scalar sets symmetric margins. A `(lower, upper)` pair sets
+            asymmetric margins on every input axis; a sequence of pairs
+            follows the input data axes, independently of output permutations.
+            Samples outside the closed interval
+            ``[-lower, size - 1 + upper]`` on any axis are zero. None preserves
+            extrapolation with `bound`. Use 0.5 for the outer voxel edges,
+            0 for border voxel centres, or -0.5 for inner voxel edges.
+            Inside this interval, `bound` still extends interpolation
+            stencils; clipping never clamps the coordinates.
+
         Returns
         -------
         SingleScaleImage
             The resliced image.
         """
-        opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
+        opt = dict(
+            degree=degree, bound=bound, coeff=coeff, copy=copy, clip=clip
+        )
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
             _as_affine_ignoring_fields(_reslice_voxel2world(self, geometry)),
