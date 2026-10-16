@@ -22,6 +22,8 @@ import argparse
 import ast
 
 import typing_extensions as tx
+from bagof.hints.numpy import DTypeLike
+from numpy import dtype as numpy_dtype
 
 from brainhops._core.typing import Clip
 from brainhops.datamodel.images import Image
@@ -145,6 +147,12 @@ def add_parser(
         "centres, 0.5=outer edges, -0.5=inner edges), or a quoted "
         "(lower, upper) pair / list of pairs. Default: extrapolate.",
     )
+    parser.add_argument(
+        "--dtype",
+        type=numpy_dtype,
+        default=None,
+        help="Output dtype, for example float32. Default: input dtype.",
+    )
     parser.set_defaults(func=run)
     return parser
 
@@ -197,6 +205,7 @@ def reslice_image(
     bound: str = "reflect",
     *,
     clip: Clip = None,
+    dtype: tx.Optional[DTypeLike] = None,
 ) -> Image:
     """Resample an image onto a reference grid after a chain of transforms.
 
@@ -208,7 +217,8 @@ def reslice_image(
     `degree` is the spline degree (0 for nearest neighbour, 1 for linear and
     3 for cubic), and `bound` is the boundary condition outside the field of
     view. `clip` optionally zeros samples outside the closed voxel margin
-    described by `Image.reslice`; None preserves extrapolation.
+    described by `Image.reslice`; None preserves extrapolation. `dtype`
+    chooses the output dtype; None preserves the input dtype.
     """
     input_spec = (
         input_path
@@ -225,7 +235,9 @@ def reslice_image(
         else _split_image_spec(reference_path)
     )
     reference = load_image(reference_spec)
-    return image.reslice(reference, degree=degree, bound=bound, clip=clip)
+    return image.reslice(
+        reference, degree=degree, bound=bound, clip=clip, dtype=dtype
+    )
 
 
 def run(args: argparse.Namespace) -> int:
@@ -237,6 +249,7 @@ def run(args: argparse.Namespace) -> int:
         degree=args.degree,
         bound=args.bound,
         clip=args.clip,
+        dtype=args.dtype,
     )
     save_image(resliced, args.output)
     print(f"Wrote {args.output}")

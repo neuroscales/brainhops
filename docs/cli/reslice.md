@@ -3,7 +3,7 @@
 === ":octicons-terminal-24:"
 
     ```shell
-    brainhops reslice SOURCE --reference SOURCE [--transform SOURCE ...] --output IMAGE [--degree DEGREE] [--bound BOUND] [--clip MARGIN]
+    brainhops reslice SOURCE --reference SOURCE [--transform SOURCE ...] --output IMAGE [--degree DEGREE] [--bound BOUND] [--clip MARGIN] [--dtype DTYPE]
     ```
 
 The `reslice` command resamples an image onto the grid of a reference image,
@@ -35,6 +35,7 @@ resampling runs in the opposite direction.
 | `--degree`          | `int`    | Spline degree (`0` = nearest, `1` = linear, `3` = cubic).                                                                         | `1`        |
 | `--bound`           | `str`    | Boundary condition used outside the field of view.                                                                                | `reflect`  |
 | `--clip`            | `literal` | Scalar margin, asymmetric pair, or list of pairs; zero samples outside the resulting closed voxel box. | `None` |
+| `--dtype`           | `str`    | Output data type. | input dtype |
 
 ## Source specifications
 

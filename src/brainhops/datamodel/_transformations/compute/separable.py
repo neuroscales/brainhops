@@ -22,10 +22,13 @@ separable, because the monolithic pull is then used unchanged.
 
 import numpy as np
 import typing_extensions as tx
+from bagof.hints.numpy import DTypeLike
 
 from brainhops._core.bsplines import (
+    _cast_output,
     _clip_mask,
     _normalize_clip,
+    _sampling_dtype,
     pull,
     pull_axes,
     spline_matrix,
@@ -62,6 +65,7 @@ def pull_separable(
     coeff: bool,
     copy: bool = False,
     clip: Clip = None,
+    dtype: tx.Optional[DTypeLike] = None,
 ) -> tx.Any:
     """Reslice data through a transformation, exploiting separable axes.
 
@@ -98,6 +102,12 @@ def pull_separable(
         Zero samples outside the closed voxel margin, as in [`pull`][].
         Each independent group builds its own mask, without a full field.
 
+    dtype : DTypeLike, optional
+        Output dtype. None preserves the input dtype. An explicit dtype
+        promotes input and output dtypes to select working precision,
+        as in [`pull`][], then uses the existing rounding and saturation
+        rules for integer output.
+
     Returns
     -------
     array-like
@@ -108,18 +118,26 @@ def pull_separable(
     steps = _plan(tuple(data.shape), seq, **opt)
     if steps is None:
         # The monolithic pull writes into an array that it allocates.
-        return _fresh(pull(data, seq.compute().field, **opt), data, copy, True)
+        return _fresh(
+            pull(data, seq.compute().field, dtype=dtype, **opt),
+            data,
+            copy,
+            True,
+        )
 
     # The steps work in floating point so that an integer input is not
     # rounded between them. The gather and pull steps preserve the dtype that
     # they are given, so an integer input is converted to float once here.
     ab = get_array_backend(data)
-    out_dtype = np.dtype(data.dtype)
-    floating = np.issubdtype(out_dtype, np.floating)
-    arr = data if floating else data.astype(float)
+    inp_dtype = np.dtype(data.dtype)
+    out_dtype = np.dtype(inp_dtype if dtype is None else dtype)
+    tmp_dtype = _sampling_dtype(inp_dtype, dtype)
+    arr = data.astype(tmp_dtype, copy=False)
     # Only the gather steps and the transpose can return a view of `data`,
     # so `fresh` records whether the result is known to be a new array.
-    fresh = not floating or any(step["kind"] != "gather" for step in steps)
+    fresh = tmp_dtype != inp_dtype or any(
+        step["kind"] != "gather" for step in steps
+    )
     labels: _AxisLabels = [("data", i) for i in range(data.ndim)]
     masks = []
     for step in steps:
@@ -136,19 +154,7 @@ def pull_separable(
     # or boolean output is converted back in the same way as in scipy.
     if arr.dtype != out_dtype:
         fresh = True
-        if out_dtype.kind == "b":
-            # scipy truncates toward zero for a boolean output, so a value
-            # such as 0.6 becomes False.
-            arr = ab.trunc(arr).astype(out_dtype)
-        elif np.issubdtype(out_dtype, np.integer):
-            # scipy rounds an integer output half away from zero, then clips
-            # it to the dtype range, so that an overshoot saturates instead
-            # of wrapping.
-            rounded = ab.trunc(ab.where(arr > 0, arr + 0.5, arr - 0.5))
-            info = np.iinfo(out_dtype)
-            arr = ab.clip(rounded, info.min, info.max).astype(out_dtype)
-        else:
-            arr = arr.astype(out_dtype)
+        arr = _cast_output(arr, out_dtype)
     return _fresh(arr, data, copy, fresh)
 
 

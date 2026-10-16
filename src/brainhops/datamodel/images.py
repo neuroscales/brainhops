@@ -3,7 +3,7 @@
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
-from bagof.magic import NoRepr, NotKwOnly
+from bagof.magic import NoRepr, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol, Clip
@@ -304,6 +304,7 @@ class SingleScaleImage(Image):
         copy: bool = False,
         *,
         clip: Clip = None,
+        dtype: tx.Optional[DTypeLike] = None,
     ) -> "SingleScaleImage":
         """Resample the data onto another geometry.
 
@@ -348,6 +349,15 @@ class SingleScaleImage(Image):
             Inside this interval, `bound` still extends interpolation
             stencils; clipping never clamps the coordinates.
 
+        dtype : DTypeLike, optional
+            Output dtype. None preserves the input dtype. A floating
+            dtype retains interpolated fractions of integer input.
+            An explicit dtype promotes the input and output dtypes to
+            choose working precision, with a minimum of float32.
+            Integer-only combinations use float64.
+            Integer output keeps rounding half away from zero and
+            saturation. Dask arrays remain lazy.
+
         Returns
         -------
         SingleScaleImage
@@ -360,7 +370,12 @@ class SingleScaleImage(Image):
             The metadata keeps its class and its record.
         """
         opt = dict(
-            degree=degree, bound=bound, coeff=coeff, copy=copy, clip=clip
+            degree=degree,
+            bound=bound,
+            coeff=coeff,
+            copy=copy,
+            clip=clip,
+            dtype=dtype,
         )
 
         if geometry is None:
@@ -392,6 +407,8 @@ class SingleScaleImage(Image):
             metadata = metadata.derive(
                 Resampled(new2old, geometry), history="reslice"
             )
+            if dtype is not None:
+                metadata = replace(metadata, dtype=new_data.dtype)
         return SingleScaleImage(
             data=new_data,
             transformations=[geometry.transformation],
@@ -533,6 +550,7 @@ class MultiScaleImage(Image):
         copy: bool = False,
         *,
         clip: Clip = None,
+        dtype: tx.Optional[DTypeLike] = None,
     ) -> "SingleScaleImage":
         """Reslice the level whose voxel size best matches the target grid.
 
@@ -577,13 +595,22 @@ class MultiScaleImage(Image):
             Inside this interval, `bound` still extends interpolation
             stencils; clipping never clamps the coordinates.
 
+        dtype : DTypeLike, optional
+            Output dtype, as in [`SingleScaleImage.reslice`][].
+            None preserves the selected level's dtype.
+
         Returns
         -------
         SingleScaleImage
             The resliced image.
         """
         opt = dict(
-            degree=degree, bound=bound, coeff=coeff, copy=copy, clip=clip
+            degree=degree,
+            bound=bound,
+            coeff=coeff,
+            copy=copy,
+            clip=clip,
+            dtype=dtype,
         )
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
