@@ -22,15 +22,15 @@ import operator
 import numpy as np
 import typing_extensions as tx
 
+# internals
+from brainhops import backends
+
 _Selection = tx.Union[int, range, np.ndarray]
 """What a view selects along one axis of the stored array: a position,
 which drops the axis, or the ordered positions that the axis keeps."""
 
 _ReadIndex = tx.Tuple[tx.Union[int, slice], ...]
 """The index that [`ArrayProxy._read`][] receives."""
-
-_CURRENT_SETTING = object()
-"""The default of `ArrayProxy.to_backend`, which means the current setting."""
 
 
 @tx.runtime_checkable
@@ -493,11 +493,9 @@ class ArrayProxy(abc.ABC):
         ImportError
             If CuPy is not installed.
         """
-        from brainhops.backends import to_backend
+        return backends.to_backend(self, "cupy")
 
-        return to_backend(self, "cupy")
-
-    def to_backend(self, backend: tx.Any = _CURRENT_SETTING) -> tx.Any:
+    def to_backend(self, backend: tx.Any = backends._CURRENT) -> tx.Any:
         """Convert the proxy as a backend setting says.
 
         The settings are described in [`brainhops.backends`][]. Under
@@ -522,11 +520,7 @@ class ArrayProxy(abc.ABC):
         ImportError
             If a package that the setting needs is not installed.
         """
-        from brainhops.backends import to_backend
-
-        if backend is _CURRENT_SETTING:
-            return to_backend(self)
-        return to_backend(self, backend)
+        return backends.to_backend(self, backend)
 
     def to_dask(self, *, cupy: bool = False, **kwargs: tx.Any) -> tx.Any:
         """Return a Dask array that reads the proxy block by block.
@@ -556,12 +550,9 @@ class ArrayProxy(abc.ABC):
         ImportError
             If Dask is not installed, or CuPy when `cupy` is true.
         """
-        try:
-            import dask.array as da
-        except ImportError:
-            raise ImportError(
-                "Dask is needed to read a proxy lazily."
-            ) from None
+        da = backends.da
+        if da is None:
+            raise ImportError("Dask is needed to read a proxy lazily.")
         options = {
             "chunks": self.chunks or "auto",
             "asarray": True,
@@ -572,12 +563,11 @@ class ArrayProxy(abc.ABC):
         lazy = da.from_array(self, **options)
         if not cupy:
             return lazy
-        try:
-            import cupy as cp
-        except ImportError:
+        cp = backends.cp
+        if cp is None:
             raise ImportError(
                 "CuPy is needed to place the blocks of a proxy on a GPU."
-            ) from None
+            )
         meta = cp.empty((0,) * lazy.ndim, lazy.dtype)
         return lazy.map_blocks(cp.asarray, meta=meta)
 
