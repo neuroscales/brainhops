@@ -49,6 +49,7 @@ SCALING = tx.TypeVar("SCALING", bound=Scaling)
 PERMUTATION = tx.TypeVar("PERMUTATION", bound=Permutation)
 TRANSLATION = tx.TypeVar("TRANSLATION", bound=Translation)
 IDENTITY = tx.TypeVar("IDENTITY", bound=Identity)
+SEQUENCE = tx.TypeVar("SEQUENCE", bound=Sequence)
 SVF = tx.TypeVar("SVF", bound=StationaryVelocityField)
 AFFINE_EXP = tx.TypeVar("AFFINE_EXP", bound=AffineExponential)
 LINEAR_EXP = tx.TypeVar("LINEAR_EXP", bound=LinearExponential)
@@ -89,6 +90,24 @@ def _(
     if not (issubclass(cls, type(t)) or issubclass(type(t), cls)):
         return t
     return smart_replace(t, cls, **kwargs)
+
+
+@converter
+def _(t: Transformation, cls: tx.Type[SEQUENCE], **kwargs) -> SEQUENCE:
+    if cls._data_model() is not cls:
+        # A file format that stores a chain decides with its own converters
+        # what it holds. Without one, it is rebuilt from a chain of a related
+        # class, as the catch-all converter rebuilds it, and anything else is
+        # returned unchanged, which tells `convert` that the format does not
+        # hold it.
+        if issubclass(cls, type(t)) or issubclass(type(t), cls):
+            return smart_replace(t, cls, **kwargs)
+        return t
+    # Another chain holds the same fields, and is rebuilt as the requested
+    # chain. Any other transformation becomes a chain of one element.
+    if isinstance(t, Sequence):
+        return smart_replace(t, cls, **kwargs)
+    return cls([t], **kwargs)
 
 
 def _convert_withdata(

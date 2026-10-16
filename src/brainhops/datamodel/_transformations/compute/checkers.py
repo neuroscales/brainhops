@@ -25,6 +25,7 @@ wrappers rely on, and it registers names for the field and wrapper
 kinds.
 """
 
+from contextvars import ContextVar
 from functools import lru_cache, wraps
 
 import typing_extensions as tx
@@ -53,6 +54,7 @@ from ..meta import (
     Projection,
     SubspaceTransformation,
 )
+from ..sequence import Sequence
 from .check import checker, is_kind, register_kind_alias
 
 
@@ -171,6 +173,34 @@ def _(query: CoordinatesField, kind: IdentityType, compute: bool) -> bool:
 @identity_from("shape")
 def _(query: CartesianField, kind: IdentityType, compute: bool) -> bool:
     return bool(compute)
+
+
+# The chains whose identity is being decided by computing them. Computing a
+# chain asks questions of kind membership, and if it asked this one of the
+# same chain, the chain is not computed a second time.
+_COMPUTING: ContextVar[frozenset] = ContextVar(
+    "_COMPUTING", default=frozenset()
+)
+
+
+@checker
+def _(query: Sequence, kind: IdentityType, compute: bool) -> bool:
+    # A chain of identities is the identity, which the elements tell at
+    # either level. With `compute=True`, the chain is also computed, and the
+    # result is asked again, unless the chain could not be reduced to a
+    # single transformation.
+    if all(t.is_identity(compute) for t in query):
+        return True
+    if not compute or id(query) in _COMPUTING.get():
+        return False
+    token = _COMPUTING.set(_COMPUTING.get() | {id(query)})
+    try:
+        result = query.compute()
+    finally:
+        _COMPUTING.reset(token)
+    if isinstance(result, Sequence):
+        return False
+    return result.is_identity(compute=True)
 
 
 # --- Translation ------------------------------------------------------

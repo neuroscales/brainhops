@@ -9,6 +9,7 @@ object itself when nothing changes, and lazy wrappers are not targets.
 
 import numpy as np
 import pytest
+import typing_extensions as tx
 
 from brainhops.datamodel import axes as A
 from brainhops.datamodel import systems as S
@@ -125,3 +126,71 @@ def test_a_lazy_wrapper_is_not_a_conversion_target() -> None:
         affine.to(X.InverseAffine)
     inverse = affine.inverse()
     assert inverse.to(type(inverse)) is inverse
+
+
+# ----------------------------------------------------------------------
+#   FORMATS
+# ----------------------------------------------------------------------
+
+
+def _transformation_formats() -> tx.List[type]:
+    """Return every concrete transformation format that can be imported."""
+    import importlib
+    import pkgutil
+
+    import brainhops.io.transformations as package
+    from brainhops.io.transformations.base import TransformationFormat
+
+    prefix = package.__name__ + "."
+    for module in pkgutil.walk_packages(package.__path__, prefix):
+        try:
+            importlib.import_module(module.name)
+        except ImportError:
+            continue
+    found, stack = set(), [TransformationFormat]
+    while stack:
+        for sub in stack.pop().__subclasses__():
+            if sub not in found:
+                found.add(sub)
+                stack.append(sub)
+    # The data model leaves classes named `__magic_discard__` behind, which
+    # are not formats.
+    return sorted(
+        (
+            c
+            for c in found
+            if issubclass(c, X.Transformation)
+            and not c.__name__.startswith("__")
+        ),
+        key=lambda c: (c.__module__, c.__qualname__),
+    )
+
+
+@pytest.mark.parametrize(
+    "cls", _transformation_formats(), ids=lambda c: c.__name__
+)
+def test_a_format_converts_without_fields_of_its_data_model(
+    cls: type, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Whatever the order of its bases, a format converts another
+    # transformation as `to()` does, without the fields that its data model
+    # would copy, which would replace the map that the converter builds.
+    from brainhops.datamodel._transformations.compute import convert
+
+    calls = []
+    real = convert._convert
+
+    def spy(other: tx.Any, target: type, **kwargs: tx.Any) -> tx.Any:
+        calls.append(kwargs)
+        return real(other, target, **kwargs)
+
+    monkeypatch.setattr(convert, "_convert", spy)
+    for source in (X.Identity(), X.Affine(np.eye(4)[:3])):
+        calls.clear()
+        try:
+            cls.from_instance(source)
+        except (ConversionError, TypeError, ValueError):
+            pass
+        # The first call is the conversion that was asked for. A converter
+        # that goes through other classes calls the dispatcher again.
+        assert calls[:1] == [{}], type(source).__name__

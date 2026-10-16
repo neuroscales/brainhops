@@ -30,6 +30,10 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
+from brainhops.io.transformations.base._conversions import (
+    convert_instance,
+    converts_to,
+)
 
 # this format
 from ._metadata import TrakEM2Metadata
@@ -437,6 +441,12 @@ class TrakEM2PatchAffine(
         ConversionError
             If the format cannot hold a transformation that is converted.
         """
+        # The data model comes before `TransformationFormat` in the method
+        # resolution order, and its `from_instance` would add the map of an
+        # affine to the arguments of the conversion, so the conversion is
+        # run here.
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
         if isinstance(other, cls) and other._data is None:
             kwargs.setdefault("data", None)
         return super().from_instance(other, *args, **kwargs)

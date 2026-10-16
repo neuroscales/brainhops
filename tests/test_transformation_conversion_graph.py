@@ -73,19 +73,15 @@ _REFUSED = {
     # not a conversion.
     **{
         ("DisplacementField", t): "a field is not a matrix"
-        for t in (_MATRICES - {"Identity"}) | {"Sequence"}
+        for t in _MATRICES - {"Identity"}
     },
     # The logarithm of a displacement is not computed, and the error says
     # to use `to(log=True)` on a field that holds a velocity.
     ("DisplacementField", "StationaryVelocityField"): "no logarithm",
-    # Wrapping a transformation in a sequence of one is not a conversion
-    # yet (open question in the design memo).
-    **{(s, "Sequence"): "not a conversion yet" for s in _SOURCES},
 }
 # A displacement field converts to a field of coordinates.
 del _REFUSED["DisplacementField", "DisplacementField"]
 del _REFUSED["DisplacementField", "CoordinatesField"]
-del _REFUSED["Sequence", "Sequence"]
 
 # The general samples whose map has no real logarithm, so that a tangent
 # class cannot hold it: a permutation that swaps two axes has a negative
@@ -101,24 +97,12 @@ _NO_LOGARITHM = {
 } | {("Rotation", "ScalingExponential")}
 
 
-# The pairs that should convert but do not yet, and why.
-_KNOWN_GAPS = {
-    # `is_identity(compute=True)` does not compute a sequence, so the
-    # identity of a sequence of one zero translation is not recognised.
-    ("Sequence", "Identity"): "is_identity does not compute a sequence",
-}
-
-
 @pytest.mark.parametrize("target", _TARGETS)
 @pytest.mark.parametrize("source", _SOURCES)
 def test_every_pair_converts_or_is_refused_on_purpose(
     source: str,
     target: str,
-    request: pytest.FixtureRequest,
 ) -> None:
-    if (source, target) in _KNOWN_GAPS:
-        reason = _KNOWN_GAPS[source, target]
-        request.applymarker(pytest.mark.xfail(strict=True, reason=reason))
     cls = getattr(X, target)
     identity, general = _samples()[source]
     with warnings.catch_warnings():
