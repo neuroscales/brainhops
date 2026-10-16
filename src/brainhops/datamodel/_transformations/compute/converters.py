@@ -629,6 +629,17 @@ def _(t: Affine, cls: tx.Type[Linear], **kwargs) -> Linear:
     return u
 
 
+@converter
+def _(t: Affine, cls: tx.Type[TRANSLATION], **kwargs) -> TRANSLATION:
+    if t.matrix is None:
+        return convert(convert(t, Identity), cls, **kwargs)
+    kwargs.setdefault("translation", t.matrix[:, -1])
+    u = _convert_withdata(t, cls, **kwargs)
+    if not t.is_translation(compute=True):
+        raise LossyConversionError(result=u)
+    return u
+
+
 # ----------------------------------------------------------------------
 #   MULTI-HOPS
 # ----------------------------------------------------------------------
@@ -647,9 +658,19 @@ def _make_converter_chain(*types: type) -> None:
 
     @converter(first, last)
     def _(t: Transformation, cls: type, **kwargs) -> Transformation:
+        # A hop that loses information does not stop the walk. Its result is
+        # converted through the remaining hops, so that the loss is reported
+        # with a result of the requested class rather than of an
+        # intermediate type.
+        lossy = False
         for hop in hops:
-            t = convert(t, hop)
+            try:
+                t = convert(t, hop)
+            except LossyConversionError as e:
+                lossy, t = True, e.result
         t = convert(t, cls, **kwargs)  # overrides apply to the last hop
+        if lossy:
+            raise LossyConversionError(result=t)
         return t
 
 
@@ -667,3 +688,14 @@ _make_converter_chain(AFFINE, LINEAR, PERMUTATION)
 _make_converter_chain(LINEAR, IDENTITY, TRANSLATION)
 _make_converter_chain(SCALING, IDENTITY, TRANSLATION)
 _make_converter_chain(PERMUTATION, IDENTITY, TRANSLATION)
+_make_converter_chain(TRANSLATION, IDENTITY, LINEAR)
+_make_converter_chain(TRANSLATION, IDENTITY, ROTATION)
+_make_converter_chain(TRANSLATION, IDENTITY, SCALING)
+_make_converter_chain(TRANSLATION, IDENTITY, PERMUTATION)
+_make_converter_chain(SCALING, LINEAR, PERMUTATION)
+_make_converter_chain(PERMUTATION, LINEAR, SCALING)
+_make_converter_chain(Sequence, AFFINE, TRANSLATION)
+_make_converter_chain(Sequence, AFFINE, LINEAR)
+_make_converter_chain(Sequence, AFFINE, ROTATION)
+_make_converter_chain(Sequence, AFFINE, SCALING)
+_make_converter_chain(Sequence, AFFINE, PERMUTATION)
