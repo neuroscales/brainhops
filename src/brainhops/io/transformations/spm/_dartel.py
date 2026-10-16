@@ -7,7 +7,7 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core.properties import smartproperty
@@ -19,6 +19,8 @@ from brainhops.datamodel.enums import (
     InterpolationOrder,
     StoreEnum,
 )
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -26,14 +28,22 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _header,
+    _keep_given_fields,
     _nifti_shape,
     _NiftiObject,
     _record_image,
+    _split_options,
     _stored_parts,
+)
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import homogeneous_matrix
@@ -81,7 +91,7 @@ _WHAT = "A DARTEL flow field"
 
 
 @register_format
-class DartelFlowField(_xforms.ImmutableSequence, NiftiBasedTransformation):
+class DartelFlowField(NiftiBasedTransformation, _xforms.ImmutableSequence):
     """
     DARTEL flow field written by SPM, in a file whose name starts with `u_`.
 
@@ -135,11 +145,15 @@ class DartelFlowField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         KwOnly(),
     ] = DARTEL_STEPS
 
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
+
     _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    """The velocity given to the field, or `None` to decode it from `raw`.
+    """The velocity given to the field, or `None` to decode it from `rawdata`.
 
     A velocity stored here is pending until [`consolidate`][] or a write
-    encodes it into `raw`.
+    encodes it into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -149,13 +163,13 @@ class DartelFlowField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
         A velocity that is assigned is returned as it is, and stays pending
         until [`consolidate`][] or a write encodes it. Otherwise it is
-        decoded from `raw`: the file stores the field with shape
+        decoded from `rawdata`: the file stores the field with shape
         (X, Y, Z, 1, 3), and the singleton axis is dropped. Assigning the
         data drops the chain decoded from the previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _field_to_model(self.raw)
+        return _field_to_model(self.rawdata)
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -301,10 +315,15 @@ class DartelFlowField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
         """
-        Encode the pending velocity or chain into `raw` and a header.
+        Encode the pending velocity or chain into `rawdata` and a header.
 
         A field whose chain is decoded from its stored velocity, assigned
         or read, keeps the velocity under a copy of the header of its
@@ -317,8 +336,9 @@ class DartelFlowField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         the file must be read with them. A field without metadata is
         described as `"Flow Field"`, as `spm_dartel_warp` describes it.
         Non-encoding header fields are copied from `like`, and `overrides`
-        are applied last. A field that has a header and nothing pending,
-        consolidated without options, is left as it is.
+        are applied last. Metadata fields are consolidated first, and loss
+        is reported once through `on_loss`. A field that has a header and
+        nothing pending, consolidated without options, is left as it is.
 
         Parameters
         ----------
@@ -327,9 +347,10 @@ class DartelFlowField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with metadata that the NIfTI header cannot hold.
+        **options : Any
+            Metadata fields and header fields to override.
 
         Returns
         -------
@@ -344,28 +365,47 @@ class DartelFlowField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         WriterError
             If the field has no velocity.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         if (
             self._data is None
             and self._transformations is None
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
-        image, steps = _dartel_encoded(self, like, overrides)
+        if "dtype" in requested:
+            overrides["dtype"] = requested["dtype"]
+        source = (
+            self
+            if metadata is self.metadata
+            else replace(self, metadata=metadata)
+        )
+        image, steps = _dartel_encoded(source, like, overrides)
+        image = _keep_given_fields(image, fields)
         raw, record = _stored_parts(image)
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
                 steps=steps,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -532,7 +572,7 @@ def _dartel_encoded(
     if field._data is not None:
         stored = _field_to_disk(field._data)
     else:
-        stored = field.raw
+        stored = field.rawdata
     if field._transformations is None:
         if stored is None:
             raise WriterError(

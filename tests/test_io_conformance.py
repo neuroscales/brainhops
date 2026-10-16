@@ -314,8 +314,6 @@ try:
     from brainhops.io.transformations.spm import (
         DartelFlowField,
         SpmCoordinatesField,
-        SpmSnMetadata,
-        SpmSnTransformation,
     )
 except ImportError:
     nb = None

@@ -113,7 +113,8 @@ def _(
     # stationary velocity on that grid as DARTEL integrates it, and an
     # affine into RAS. The steps of the velocity become the option of the
     # format, since the file does not store them.
-    format_options(t, cls, kwargs)
+    options = format_options(t, cls, kwargs, ("metadata",))
+    options.setdefault("metadata", t.metadata)
     ras2voxel, velocity, voxel2ras = split_field_chain(t, RAS, RAS, cls)
     for reason in (
         velocity_refusal(velocity),
@@ -126,7 +127,11 @@ def _(
         velocity,
         VoxelToRAS(matrix=voxel2ras[:-1]),
     )
-    return cls(transformations=chain, steps=int(velocity._compute_steps))
+    return cls(
+        transformations=chain,
+        steps=int(velocity._compute_steps),
+        **options,
+    )
 
 
 @converter

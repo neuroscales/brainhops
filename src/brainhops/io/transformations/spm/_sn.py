@@ -5,7 +5,7 @@ __all__ = ["SpmSnTransformation", "dct_basis", "sn_positions"]
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core.properties import smartproperty
@@ -31,9 +31,9 @@ from ._sn_raw import SPM_TO_NIFTI, SpmSnRaw
 
 @register_format
 class SpmSnTransformation(
+    TransformationFormat,
     BinaryFileReader,
     _xforms.ImmutableSequence,
-    TransformationFormat,
 ):
     """Spatial normalisation stored in an SPM `*_sn.mat` file.
 
@@ -82,7 +82,9 @@ class SpmSnTransformation(
     HINTS = ("spm", "sn")
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = ("_sn.mat",)
 
-    _metadata: NoRepr[tx.Optional[SpmSnMetadata]] = None
+    _metadata: NoRepr[tx.Optional[SpmSnMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds the file as a record.
