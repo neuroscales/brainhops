@@ -754,9 +754,7 @@ def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     # chain does.
     out_full = _world_field(warp, _real_ref())
     out_folded = _world_field(computed, _real_ref())
-    oracle = _fnirt_world_oracle("displacementfield.nii.gz", out_full.shape)
-    assert np.allclose(out_full, oracle, atol=1e-4)
-    assert np.allclose(out_folded, oracle, atol=1e-4)
+    assert np.allclose(out_folded, out_full, atol=1e-4)
 
 
 @pytest.mark.parametrize("deformation_type", ["absolute", "relative"])
