@@ -248,22 +248,6 @@ def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
     return extension, prefix
 
 
-def _registry_depth(cls: type) -> int:
-    """Count the dispatcher levels above a format.
-
-    A format registered under `ImageFormat` is classified more finely than
-    one registered only under the root, and therefore wins a tie. Only the
-    ancestors that own a registry are counted, rather than all ancestors,
-    because the depth of the class hierarchy says nothing about how well a
-    format matches.
-    """
-    # The import is local because the module that defines the registries
-    # imports this one.
-    from brainhops.io.base._base import is_format_registry
-
-    return sum(1 for base in cls.__mro__ if is_format_registry(base))
-
-
 def _drop_base_classes(
     candidates: tx.List[tx.Tuple[type, tx.Any]],
 ) -> tx.List[tx.Tuple[type, tx.Any]]:
@@ -295,11 +279,9 @@ def _specificity(
     1. the confidence of the sniffer;
     2. the length of the matching extension;
     3. the length of the matching required prefix;
-    4. the registry depth, that is, the number of dispatchers above the
-       format;
-    5. the narrowness of the declared extensions: a parser declaring `.lta`
+    4. the narrowness of the declared extensions: a parser declaring `.lta`
        alone beats one declaring five, and both beat one declaring none;
-    6. the explicit `PRIORITY`.
+    5. the explicit `PRIORITY`.
 
     Candidates with equal keys cannot be told apart, and dispatch does not
     guess between them.
@@ -309,7 +291,6 @@ def _specificity(
         -(score[cls] if score else 0.0),
         -extension,
         -prefix,
-        -_registry_depth(cls),
         0 if cls.EXTENSIONS else 1,
         len(cls.EXTENSIONS),
         -cls.PRIORITY,

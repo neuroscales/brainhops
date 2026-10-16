@@ -22,7 +22,7 @@ from brainhops.datamodel.metadata import (
 from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import ConversionError
-from brainhops.io.base._base import Format, _takes_over
+from brainhops.io.base._base import FileFormat, _takes_over
 from brainhops.io.base._dispatch import (
     _match_name,
     _normalize_hints,
@@ -153,7 +153,7 @@ def save(
     """
     name = _to_filename(file)
     if name is None:
-        if isinstance(obj, Format) and isinstance(obj, FileWriter):
+        if isinstance(obj, FileFormat) and isinstance(obj, FileWriter):
             obj.save(file, **kwargs)
             return
         raise WriterError(
@@ -165,7 +165,7 @@ def save(
     hints = _normalize_hints((), hint)
     registry = (
         fmt
-        for fmt in Format._REGISTRY
+        for fmt in FileFormat._REGISTRY
         if issubclass(fmt, FileWriter)
         and (not hints or format_hints(fmt) & hints)
     )
@@ -363,7 +363,7 @@ def _model(cls: type) -> tx.Optional[type]:
     """
     for base in cls.__mro__:
         if issubclass(base, DataModelBase) and not issubclass(
-            base, (Format, FileReader, FileWriter)
+            base, (FileFormat, FileReader, FileWriter)
         ):
             return base
     return None

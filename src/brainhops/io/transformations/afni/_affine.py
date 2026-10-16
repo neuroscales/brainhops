@@ -49,9 +49,9 @@ _SOURCE = ("source", "moving", "mov", "src")
 
 @register_format
 class AfniAffine(
-    AfniAffineFormat,
     TextFileReader,
     TextFileWriter,
+    AfniAffineFormat,
     _xforms.Affine,
 ):
     """

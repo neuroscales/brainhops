@@ -2,9 +2,10 @@
 
 Reading, writing and format dispatch have separate APIs. `FileReader`
 provides `sniff*`, `load` and `from_*` for one format; `FileWriter` provides
-`save` and `to_*`. `Format` selects among registered formats.
-Readers and dispatchers share private input adapter mixins, but neither
-inherits the other's public API. In particular, a reader's `sniff*` returns
+`save` and `to_*`. `FileFormat` selects among registered formats.
+Readers take their default methods from private mixins, which
+dispatchers do not inherit, and neither inherits the other's public
+API. In particular, a reader's `sniff*` returns
 a confidence score; a dispatcher's `sniff*` returns a selected class or
 `None`. These capabilities add no fields to the object's representation.
 Text and binary variants supply the corresponding stream modes and adapters.
@@ -25,8 +26,8 @@ Conversely, a reader does not acquire writing methods.
 
 Public format objects implement the Image/Transformation API and hold their
 internal representation. They can use the shared readers and writers without
-inheriting a parser. `Format` owns the format-selection methods and reuses
-the input adapter mixins. `Format` is the root registry for public
+inheriting a parser. `FileFormat` owns the format-selection methods, which
+only run on a class that owns a registry. `FileFormat` is the root registry for public
 objects; `ImageFormat` and `TransformationFormat` scope it to images and
 transformations. `TransformationFormat` also supplies the `xform` hint,
 without a separate marker class. Neither dispatcher inherits `Image` or
@@ -34,7 +35,12 @@ without a separate marker class. Neither dispatcher inherits `Image` or
 retain field-free construction support
 from `DataModelBase` for cooperative `from_any` and `from_instance` calls.
 A family owns a registry through `@format_registry`; a concrete format joins
-its ancestors' registries through `@register_format`.
+its ancestors' registries through `@register_format`. The families of
+formats own a registry too, so that their `load` chooses among the
+formats of the family. A family can hold several kinds of objects, such
+as `AfniFormat` and `FreesurferFormat`, which hold images and
+transformations, or a single kind, such as `AffineTransformationFormat`
+or `AfniTransformationFormat`.
 
 ```python
 @register_format
@@ -48,19 +54,23 @@ class MyTransformation(
 ```
 
 These examples illustrate the bases rather than complete format
-implementations. List the specialized text/binary adapters before generic
-I/O bases so that their encoding and stream modes take precedence. Readers
+implementations. A concrete format lists its reader and its writer
+before its format base, so that its reading methods are those of the
+reader rather than the dispatch methods of `FileFormat`, and a format
+that does otherwise is refused when it is defined. List the specialized
+text/binary adapters before generic I/O bases so that their encoding and
+stream modes take precedence. Readers
 and writers share no inheritance dependency; when both occur in a hierarchy,
 keep their order consistent across its bases.
 
-`Format` provides dispatch entry points, without inheriting `FileReader` or
+`FileFormat` provides dispatch entry points, without inheriting `FileReader` or
 `FileWriter`. A public export-only object combines its model with
-`Format` and a writer. Generic `io.save` selects writers from the
-`Format` registry. Sniffing and loading exclude writers that have
+`FileFormat` and a writer. Generic `io.save` selects writers from the
+`FileFormat` registry. Sniffing and loading exclude writers that have
 no implemented read route, so an export-only format is never selected for
 reading just because its extension matches.
 
-A standalone metadata dispatcher inherits `Format` and uses
+A standalone metadata dispatcher inherits `FileFormat` and uses
 `@format_registry(isolated=True)`. Registration stops at this boundary:
 its concrete formats join its own and nested registries, without entering
 generic object loading or saving. An object's metadata
@@ -74,7 +84,7 @@ writer bases explicitly. Format-specific classes use `*Reader` when they only re
 `*ReaderWriter` when they implement both routes. For example, `Hdf5Reader`
 only reads, while `LtaReaderWriter` and `Hdf5ReaderWriter` also write.
 
-The `FileBased*` and `WritableFileBased*` wrappers are removed. Use `Format`,
+The `FileBased*` and `WritableFileBased*` wrappers are removed. Use `FileFormat`,
 `ImageFormat`, or `TransformationFormat` and obtain writing from the native
 parser or an explicit writer base. Code that checks writing support should test `FileWriter`.
 Dispatchers do not inherit `FileReader`; concrete public

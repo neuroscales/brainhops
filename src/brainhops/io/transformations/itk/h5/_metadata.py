@@ -17,7 +17,7 @@ from ._raw import H5Raw
 
 
 @register_format
-class H5Metadata(MetadataFormat, Hdf5Reader):
+class H5Metadata(Hdf5Reader, MetadataFormat):
     """Metadata of an ITK `.h5` file, which holds the file as an [`H5Raw`][].
 
     An ITK `.h5` file has no header that precedes its data. Its record

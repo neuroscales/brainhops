@@ -46,7 +46,7 @@ from ._raw import Jpeg2000Raw
 
 @register_format
 class Jpeg2000MultiScaleImage(
-    ImageFormat, MultiScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, MultiScaleImage
 ):
     """Every resolution level of a JPEG 2000 image, finest first.
 

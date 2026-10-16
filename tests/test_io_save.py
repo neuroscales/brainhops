@@ -31,7 +31,7 @@ from brainhops.errors import (
     ConversionError,
     UnrepresentableTransformationError,
 )
-from brainhops.io.base import Format
+from brainhops.io.base import FileFormat
 from brainhops.io.base._base import (
     is_format_registry,
     register_format,
@@ -87,7 +87,7 @@ def _note_format(name: str, model: type = Note, **attrs: tx.Any) -> type:
 
     namespace = {"to_lines": to_lines}
     namespace.update(attrs)
-    return type(name, (model, Format, TextFileWriter), namespace)
+    return type(name, (model, FileFormat, TextFileWriter), namespace)
 
 
 @pytest.fixture

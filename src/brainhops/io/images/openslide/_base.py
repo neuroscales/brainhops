@@ -49,10 +49,10 @@ from ._views import _image_to_disk, _image_to_model
 # ----------------------------------------------------------------------
 
 
-class OpenSlideFormat:
-    """Base class of every image read with OpenSlide.
+class OpenSlideReader(BinaryFileReader):
+    """Reader of every image read with OpenSlide.
 
-    This base holds no state. It gives the hint `"openslide"`, which selects
+    This reader holds no state. It gives the hint `"openslide"`, which selects
     every vendor, while `"openslide.<vendor>"` selects one vendor (see
     [OpenSlide](https://openslide.org/)). It also turns a path, a stream or
     bytes into the slide that OpenSlide opens, from which the `from_source`
@@ -203,9 +203,7 @@ class OpenSlideFormat:
 # ----------------------------------------------------------------------
 
 
-class OpenSlideImage(
-    OpenSlideFormat, BinaryFileReader, ImageFormat, SingleScaleImage
-):
+class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
     """A single level of a whole-slide image, read with OpenSlide.
 
     This class is the base of the single-scale image of every vendor, and
@@ -553,9 +551,7 @@ class OpenSlideImage(
 # ----------------------------------------------------------------------
 
 
-class OpenSlideMultiScaleImage(
-    OpenSlideFormat, BinaryFileReader, ImageFormat, MultiScaleImage
-):
+class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
     """A whole-slide image read with OpenSlide, as a pyramid.
 
     This class is the base of the multiscale image of every vendor, and it

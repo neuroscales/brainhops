@@ -32,11 +32,15 @@ from brainhops.datamodel.metadata import (
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     TextFileReader,
+    TextFileWriter,
+    WriterError,
     _overrides_from_fileobj,
 )
 from brainhops.io.metadata import (
     BidsSidecar,
     MetadataFormat,
+    MetadataReader,
+    MetadataWriter,
     from_bids,
     to_bids,
 )
@@ -159,8 +163,8 @@ class SecondContainerMetadata(_SharedRecordMetadata):
     """Another format whose record is that of the same base."""
 
 
-class TextDictRaw(DictRaw, TextFileReader):
-    """A record that reads itself from `key=value` lines."""
+class TextDictRaw(DictRaw, TextFileReader, TextFileWriter):
+    """A record that reads and writes itself as `key=value` lines."""
 
     @classmethod
     def from_lines(cls, lines, **kwargs) -> "TextDictRaw":  # noqa: ANN001
@@ -168,9 +172,14 @@ class TextDictRaw(DictRaw, TextFileReader):
             raise TypeError(f"Unknown option(s): {', '.join(kwargs)}")
         return cls(line.split("=", 1) for line in lines if line.strip())
 
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
+        if kwargs:
+            raise TypeError(f"Unknown option(s): {', '.join(kwargs)}")
+        return (f"{key}={value}" for key, value in self.items())
 
-class TextDictMetadata(DictMetadata, TextFileReader):
-    """A format whose metadata is read through its record class."""
+
+class TextDictMetadata(MetadataReader, MetadataWriter, DictMetadata):
+    """A format whose metadata is read and written through its record."""
 
     RAW: tx.ClassVar[type] = TextDictRaw
 
@@ -183,7 +192,7 @@ class StreamDictRaw(DictRaw, BinaryFileReader):
         return cls(desc=file.read(4).decode())
 
 
-class StreamDictMetadata(DictMetadata, BinaryFileReader):
+class StreamDictMetadata(MetadataReader, DictMetadata):
     """A binary format whose record class reads streams."""
 
     RAW: tx.ClassVar[type] = StreamDictRaw
@@ -237,6 +246,33 @@ def test_a_format_with_a_record_class_reads_every_input_through_it(
     # The options go to the record class, which refuses them.
     with pytest.raises(TypeError, match="bogus"):
         TextDictMetadata.from_text("desc=short", bogus=True)
+
+
+def test_a_format_with_a_record_class_writes_every_output_through_it(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    meta = TextDictMetadata.from_text("desc=short\nKey=v")
+    assert list(meta.to_lines()) == ["desc=short", "Key=v"]
+    assert meta.to_text() == "desc=short\nKey=v"
+    assert meta.to_bytes() == b"desc=short\nKey=v"
+    stream = _io.StringIO()
+    meta.to_fileobj(stream)
+    assert stream.getvalue() == "desc=short\nKey=v\n"
+    path = tmp_path / "meta.txt"
+    meta.save(path)
+    assert path.read_text() == "desc=short\nKey=v"
+    # The options go to the record, which refuses them.
+    with pytest.raises(TypeError, match="bogus"):
+        meta.to_text(bogus=True)
+    # Metadata without a record has nothing to write.
+    with pytest.raises(WriterError, match="no record"):
+        TextDictMetadata().to_text()
+
+
+def test_a_format_with_a_record_class_opens_files_in_its_mode() -> None:
+    assert TextDictMetadata._READ_MODE == TextDictRaw._READ_MODE == "rt"
+    assert StreamDictMetadata._READ_MODE == StreamDictRaw._READ_MODE == "rb"
+    assert TextDictMetadata._WRITE_MODE == TextDictRaw._WRITE_MODE
 
 
 def test_a_record_class_that_reads_streams_reads_bytes_too() -> None:

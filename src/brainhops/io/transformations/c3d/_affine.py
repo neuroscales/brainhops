@@ -46,9 +46,9 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 # Text adapters supply byte decoding and encoding before the generic bases.
 @register_format
 class C3dAffine(
-    AffineTransformationFormat,
     TextFileReader,
     TextFileWriter,
+    AffineTransformationFormat,
     RASToRAS,
     TransformationFormat,
 ):

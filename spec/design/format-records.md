@@ -113,9 +113,11 @@ Each class implements only its lowest entry points, and implements them
 by calling the layer just below it. The format object calls
 `<X>Metadata`, which calls `<X>Raw`. The format object adds its own code
 to build the data object from the source and the record. `<X>Metadata`
-writes no reader of its own when `<X>Raw` reads files: it names the
-record class in its constant `RAW`, and `MetadataFormat` then reads every
-input through the method of the same name of `<X>Raw` (implemented). A
+writes no reader or writer of its own when `<X>Raw` reads and writes
+files: it names the record class in its constant `RAW` and lists
+`MetadataReader` and `MetadataWriter` among its bases, which pass every
+input and every output to the method of the same name of `<X>Raw`, and
+take their file modes from it (implemented). A
 format that cannot read or write some kind of input or output, such as
 bytes for a dataset of several files, assigns `disabled(error, message)`
 to the method instead of writing a method that only raises
@@ -134,7 +136,7 @@ For NIfTI, the first pass gives the classes the following bases.
 | Class                      | Bases                                                     | Lowest entry points                               |
 |----------------------------|-----------------------------------------------------------|---------------------------------------------------|
 | `NiftiRaw`                 | `Magic`, `BinaryFileReader`, `BinaryFileWriter`           | `sniff_fileobj`, `from_fileobj` and `to_fileobj`, which read and write the header only |
-| `NiftiMetadata`            | `MetadataFormat`, `BinaryFileReader`, `BinaryFileWriter`  | `sniff_fileobj`, `to_bytes` and `to_filename`, which call `NiftiRaw`, and `RAW = NiftiRaw`, through which every input is read |
+| `NiftiMetadata`            | `MetadataFormat`, `MetadataReader`, `BinaryFileWriter`    | `to_bytes` and `to_filename`, which consolidate and call `NiftiRaw`, and `RAW = NiftiRaw`, through which every input is scored and read |
 | `NiftiImage`               | `ImageFormat`, `SingleScaleImage`, `BinaryFileReader`, `BinaryFileWriter` | `sniff_fileobj`, `from_file`, `from_fileobj`, `to_file` and `to_bytes` |
 | `NiftiBasedTransformation` | `TransformationFormat`, `BinaryFileReader`, `BinaryFileWriter` | the same as `NiftiImage`, written once for all NIfTI transformations |
 

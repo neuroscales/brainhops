@@ -26,7 +26,7 @@ from ._raw import PrecomputedRaw, _no_options, _score
 
 
 class PrecomputedMultiScaleImage(
-    ImageFormat, MultiScaleImage, BinaryFileReader
+    BinaryFileReader, ImageFormat, MultiScaleImage
 ):
     """A Neuroglancer precomputed volume, read as a multiscale image.
 

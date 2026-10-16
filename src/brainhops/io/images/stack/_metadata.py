@@ -25,7 +25,7 @@ from ._raw import (
 
 
 @register_format
-class StackMetadata(MetadataFormat, BinaryFileReader):
+class StackMetadata(BinaryFileReader, MetadataFormat):
     """Metadata of an image stack, which is the list of its files.
 
     An image stack is a folder of numbered two-dimensional images that

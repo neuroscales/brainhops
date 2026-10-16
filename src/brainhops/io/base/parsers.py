@@ -1,8 +1,10 @@
 """Independent sniffing, reading and writing capabilities for file formats.
 
-Native format parsers compose readers and writers independently. Dispatchers
-have their own selection API and share only the private adapter mixins.
-Writers do not inherit reading or sniffing.
+Native format parsers compose readers and writers independently. Writers
+do not inherit reading or sniffing. Dispatchers, which choose between
+formats, have their own API in
+[`FileFormat`][brainhops.io.base.FileFormat] and inherit none of these
+classes.
 
 The errors that these classes raise are also importable from here.
 """
@@ -132,15 +134,14 @@ class disabled:  # noqa: N801
 # ---- sniff -----------------------------------------------------------
 
 
-class _FileSniffAdapters:
-    """Input adaptation for sniffing, with no format-selection policy.
+class _FileNamesMixin:
+    """Constants that describe the names of the files of a format.
 
-    Public sniffers and dispatchers share these adapters, but declare their
-    own contracts: a sniffer scores one format, a dispatcher selects a class.
-    A dispatcher's concrete subclasses use the adapters as fallbacks.
+    Dispatch reads these constants on every registered format, including
+    a format that writes files but does not read them. Both
+    [`_SnifferMixin`][] and [`FileFormat`][brainhops.io.base.FileFormat]
+    inherit them.
     """
-
-    _READ_MODE: str = "r"
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """File extensions that the format handles, such as `(".nii", ".nii.gz")`.
@@ -174,6 +175,20 @@ class _FileSniffAdapters:
     The higher value wins. The priority should stay at 0 unless two parsers
     genuinely collide.
     """
+
+
+class _SnifferMixin(_FileNamesMixin):
+    """Default `sniff*` methods, which derive one from another.
+
+    A class that scores files implements only its lowest entry point,
+    such as `sniff_fileobj` or `sniff_line`, and this mixin derives the
+    other `sniff*` methods from it. It chooses no format: [`FileReader`][]
+    adds it to a reader of one format, whose `sniff*` methods return a
+    confidence. A dispatcher, whose `sniff*` methods return the class
+    that matched, does not inherit it.
+    """
+
+    _READ_MODE: str = "r"
 
     @classmethod
     def sniff(
@@ -462,17 +477,26 @@ def _overrides_from_fileobj(cls: type) -> bool:
     return False
 
 
-class _FileReadAdapters:
-    """Reusable input adapters, independent of parsing and format selection."""
+class _ReaderMixin:
+    """Default `load` and `from_*` methods, which derive one from another.
+
+    A class that reads files implements only its lowest entry point, such
+    as `from_fileobj` or `from_lines`, and this mixin derives the other
+    `from_*` methods and `load` from it. The mixin chooses no format:
+    [`FileReader`][] adds it to a reader of one format, and
+    [`FileFormat`][brainhops.io.base.FileFormat] adds it to dispatchers
+    and to the formats that they choose between.
+    """
 
     @classmethod
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
         """Read an object from a path, an open file, or binary content.
 
-        Paths and open files are read with [`from_file`][], and binary content
-        with [`from_bytes`][]. A `str` is always a path, whether or not the
-        file exists, so text held in memory must be read with [`from_text`][]
-        or [`from_content`][].
+        Paths and open files are read with [`from_file`][], binary content
+        with [`from_bytes`][], and a [`SourceSpec`][] with [`from_spec`][].
+        A `str` is always a path, whether or not the file exists, so text
+        held in memory must be read with [`from_text`][] or
+        [`from_content`][].
 
         Raises
         ------
@@ -481,6 +505,9 @@ class _FileReadAdapters:
         ParserTypeError
             If the input is of another type.
         """
+        if isinstance(other, SourceSpec):
+            return cls.from_spec(other, **kwargs)
+
         if isinstance(other, str):
             other = path.Path(other)
 
@@ -628,19 +655,27 @@ class _FileReadAdapters:
         )
 
 
-class FileReader(_FileReadAdapters, _FileSniffAdapters):
-    """Read one format, with sniffing that returns a confidence score.
+class FileReader(_ReaderMixin, _SnifferMixin):
+    """Reader of one format, with sniffing that returns a confidence score.
 
-    Format dispatchers independently use the adapter mixins; they do not
-    inherit this reader API.
+    A dispatcher such as [`FileFormat`][brainhops.io.base.FileFormat] uses
+    the same mixins but does not inherit this class, so that
+    `issubclass(cls, FileReader)` tells a reader of one format apart from
+    a dispatcher.
     """
 
 
 # ---- to --------------------------------------------------------------
 
 
-class FileWriter:
-    """Output adapters, independent of reading and sniffing."""
+class _WriterMixin:
+    """Default `save` and `to_*` methods, which derive one from another.
+
+    A class that writes files implements only its lowest entry point, such
+    as `to_bytes` or `to_lines`, and this mixin derives the other `to_*`
+    methods and `save` from it. It is the counterpart of
+    [`_ReaderMixin`][], and is independent of reading and sniffing.
+    """
 
     _WRITE_MODE = "w"
 
@@ -750,13 +785,24 @@ class FileWriter:
         )
 
 
+class FileWriter(_WriterMixin):
+    """Writer of one format.
+
+    The writing methods come from [`_WriterMixin`][], as the reading
+    methods of [`FileReader`][] come from [`_ReaderMixin`][]. A format
+    can write files when `issubclass(cls, FileWriter)` holds, which is
+    how [`save`][brainhops.io.save] chooses the formats that it writes
+    with.
+    """
+
+
 # ----------------------------------------------------------------------
 #   TEXT
 # ----------------------------------------------------------------------
 
 
-class _TextSniffAdapters(_FileSniffAdapters):
-    """Class that can sniff text files for its type."""
+class _TextSnifferMixin(_SnifferMixin):
+    """Default `sniff*` methods for a text format, which decode bytes."""
 
     _READ_MODE: str = "rt"
 
@@ -820,8 +866,8 @@ def _not_text(
     return Confidence.NO
 
 
-class _TextReadAdapters(_FileReadAdapters):
-    """Class that can read text files of its type."""
+class _TextReaderMixin(_ReaderMixin):
+    """Default `from_*` methods for a text format, which decode bytes."""
 
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
@@ -833,7 +879,7 @@ class _TextReadAdapters(_FileReadAdapters):
         return cls.from_text(content.decode(encoding), **kwargs)
 
 
-class TextFileReader(_TextReadAdapters, _TextSniffAdapters, FileReader):
+class TextFileReader(_TextReaderMixin, _TextSnifferMixin, FileReader):
     """Read one text format and score its content."""
 
 

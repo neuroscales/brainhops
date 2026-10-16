@@ -16,7 +16,6 @@ import math
 import typing_extensions as tx
 from bagof.magic import NoRepr, replace
 
-from brainhops._core import path
 from brainhops._core.compare import differs
 from brainhops.datamodel.metadata import ConversionReport, Metadata
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
@@ -27,11 +26,10 @@ from brainhops.datamodel.metadata._report import (
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.io.base._base import (
-    Format,
+    FileFormat,
     _FileBasedModelMixin,
     format_registry,
 )
-from brainhops.io.base.parsers import _delegated_from_fileobj
 from brainhops.io.base.specs import register_parser
 
 # An encoder of the vocabulary of a format: `encode(record, changed,
@@ -45,7 +43,7 @@ _Encoder = tx.Callable[
 
 @register_parser(Metadata)
 @format_registry(isolated=True)
-class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
+class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
     """Format dispatcher and common base for the metadata of files.
 
     The metadata of a file is what its header records beside the data. Each
@@ -82,8 +80,9 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
     Metadata compares by identity.
 
     The metadata registry is separate from the registry of
-    [`Format`][], so that [`load`][brainhops.io.load] never returns
-    metadata when it reads an image or a transformation. A concrete
+    [`FileFormat`][brainhops.io.base.FileFormat], so that
+    [`load`][brainhops.io.load] never returns metadata when it reads an
+    image or a transformation. A concrete
     subclass is added to the metadata registry with `@register_format`.
     """
 
@@ -101,15 +100,15 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
     RAW: tx.ClassVar[tx.Optional[type]] = None
     """The class of the record of the format, or `None`.
 
-    When the record class of a format can read a file, the format sets
-    this constant to it, and its metadata is read through the record.
-    The methods `from_filename`, `from_fileobj`, `from_bytes`,
-    `from_text` and `from_lines` then pass their input and their keyword
-    arguments to the method of the same name of the record class, and
-    build the metadata from the record with [`from_raw`][]. The record
-    class therefore decides how each input is read and which options it
-    takes. A format that reads its header in another way leaves this
-    constant at `None` and overrides the methods that it needs.
+    When the record class of a format can read or write a file, the
+    format sets this constant to it and lists
+    [`MetadataReader`][brainhops.io.metadata.MetadataReader] or
+    [`MetadataWriter`][brainhops.io.metadata.MetadataWriter] among its
+    bases. These classes pass every input to the record class and every
+    output to the record, so the record class decides how each input is
+    read and which options it takes. A format that reads or writes its
+    header in another way leaves this constant at `None` and uses the
+    readers and writers of `io/base/parsers.py` instead.
     """
 
     raw: NoRepr[tx.Any] = None
@@ -143,130 +142,6 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, Format, eq=False):
             The metadata.
         """
         return cls(raw=raw, **kwargs)
-
-    # --- from ---------------------------------------------------------
-    # Without a record class, each method below passes its input on to the
-    # next class in the MRO: the dispatcher of `Format`, then the input
-    # adapters of the parser. `from_fileobj` is marked as delegated to the
-    # record class, so that the adapters take it for a reader of the format
-    # only when the record class reads streams. Otherwise `from_bytes` would
-    # fall back to it, and the fallback would loop.
-
-    @classmethod
-    def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
-        """Read the metadata from a path.
-
-        The file is read by the method of the same name of [`RAW`][],
-        when the format sets it.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        Self
-            The metadata.
-        """
-        if cls.RAW is None:
-            return super().from_filename(filename, **kwargs)
-        return cls.from_raw(cls.RAW.from_filename(filename, **kwargs))
-
-    @classmethod
-    @_delegated_from_fileobj(lambda cls: cls.RAW)
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        """Read the metadata from a file object open for reading.
-
-        The file is read by the method of the same name of [`RAW`][],
-        when the format sets it.
-
-        Parameters
-        ----------
-        file : IO
-            The open file.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        Self
-            The metadata.
-        """
-        if cls.RAW is None:
-            return super().from_fileobj(file, **kwargs)
-        return cls.from_raw(cls.RAW.from_fileobj(file, **kwargs))
-
-    @classmethod
-    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
-        """Read the metadata from the content of a file.
-
-        The content is read by the method of the same name of [`RAW`][],
-        when the format sets it.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the file.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        Self
-            The metadata.
-        """
-        if cls.RAW is None:
-            return super().from_bytes(content, **kwargs)
-        return cls.from_raw(cls.RAW.from_bytes(content, **kwargs))
-
-    @classmethod
-    def from_text(cls, text: str, **kwargs) -> tx.Self:
-        """Read the metadata from the text of a file.
-
-        The text is read by the method of the same name of [`RAW`][],
-        when the format sets it.
-
-        Parameters
-        ----------
-        text : str
-            The text of the file.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        Self
-            The metadata.
-        """
-        if cls.RAW is None:
-            return super().from_text(text, **kwargs)
-        return cls.from_raw(cls.RAW.from_text(text, **kwargs))
-
-    @classmethod
-    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
-        """Read the metadata from the lines of a file.
-
-        The lines are read by the method of the same name of [`RAW`][],
-        when the format sets it.
-
-        Parameters
-        ----------
-        lines : Iterable[str]
-            The lines of the file.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        Self
-            The metadata.
-        """
-        if cls.RAW is None:
-            return super().from_lines(lines, **kwargs)
-        return cls.from_raw(cls.RAW.from_lines(lines, **kwargs))
 
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:

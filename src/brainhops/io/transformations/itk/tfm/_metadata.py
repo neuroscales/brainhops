@@ -8,15 +8,14 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import TextFileReader
-from brainhops.io.metadata import MetadataFormat
+from brainhops.io.metadata import MetadataFormat, MetadataReader
 
 # this format
 from ._raw import TfmRaw
 
 
 @register_format
-class TfmMetadata(MetadataFormat, TextFileReader):
+class TfmMetadata(MetadataReader, MetadataFormat):
     """Metadata of an ITK text `.tfm` file, which holds it as a [`TfmRaw`][].
 
     A `.tfm` file is a short text file that is read in one pass, so its
@@ -39,31 +38,3 @@ class TfmMetadata(MetadataFormat, TextFileReader):
 
     raw: NoRepr[tx.Optional[TfmRaw]] = None
     """The blocks of the file, or `None` for metadata without a record."""
-
-    @classmethod
-    def sniff_line(
-        cls,
-        line: str,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score a line as the first block of a `.tfm` file.
-
-        The line is scored by [`TfmRaw.sniff_line`][].
-
-        Parameters
-        ----------
-        line : str
-            The first line of the file that is not a comment.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the line does not start a
-            block.
-        **kwargs : Any
-            Options of the reader.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return TfmRaw.sniff_line(line, error=error, **kwargs)

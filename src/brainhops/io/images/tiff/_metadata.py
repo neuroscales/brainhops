@@ -24,7 +24,7 @@ from ._raw import TiffRaw, read_record
 
 
 @register_format
-class TiffMetadata(MetadataFormat, BinaryFileReader):
+class TiffMetadata(BinaryFileReader, MetadataFormat):
     """Metadata of a series of a TIFF file, held as a [`TiffRaw`][] record.
 
     The metadata of a TIFF file is what its IFDs, its OME-XML and its

@@ -10,6 +10,11 @@ the vocabulary that a format can store are listed in its constant
 `SUPPORTED_FIELDS`, and `consolidate` encodes the fields that changed
 into a copy of the header.
 
+When the class of the header of a format can already read and write a
+file, the metadata of the format lists [`MetadataReader`][] and
+[`MetadataWriter`][] among its bases, which read and write every input
+and output through the class of the header.
+
 A file format that holds data, such as an image, keeps its metadata in a
 `metadata` field and the data as stored in the file in a `rawdata`
 field. The `rawdata` field of such an object is usually a lazy proxy that
@@ -29,7 +34,15 @@ metadata only, and [`from_bids`][] and [`to_bids`][] convert generic
 metadata from and to the JSON object of a sidecar.
 """
 
-__all__ = ["MetadataFormat", "BidsSidecar", "from_bids", "to_bids"]
+__all__ = [
+    "MetadataFormat",
+    "MetadataReader",
+    "MetadataWriter",
+    "BidsSidecar",
+    "from_bids",
+    "to_bids",
+]
 
 from ._base import MetadataFormat
 from ._bids import BidsSidecar, from_bids, to_bids
+from ._parsers import MetadataReader, MetadataWriter

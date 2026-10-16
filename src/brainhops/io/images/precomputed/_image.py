@@ -49,7 +49,7 @@ _UNIT = "nm"
 """The unit of the resolution of a scale, and of the physical space."""
 
 
-class PrecomputedImage(ImageFormat, SingleScaleImage, BinaryFileReader):
+class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
     """One scale of a Neuroglancer precomputed volume.
 
     A precomputed volume is a directory, local or remote, that holds an

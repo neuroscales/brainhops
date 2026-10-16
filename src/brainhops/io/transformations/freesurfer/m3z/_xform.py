@@ -16,7 +16,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -140,17 +140,18 @@ def _check_ras(xform: "M3zMorph") -> None:
 # ----------------------------------------------------------------------
 
 
+@format_registry
 class M3zFormat(FreesurferTransformationFormat):
-    """Marker of non-linear transformations stored in a FreeSurfer morph."""
+    """Family of non-linear transformations stored in a FreeSurfer morph."""
 
     HINTS = ("m3z",)
 
 
 @register_format
 class M3zMorph(
-    M3zFormat,
     BinaryFileReader,
     BinaryFileWriter,
+    M3zFormat,
     _xforms.ImmutableSequence,
     TransformationFormat,
 ):
