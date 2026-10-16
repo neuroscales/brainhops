@@ -187,8 +187,9 @@ def pull(
 
     dtype : DTypeLike, optional
         Output dtype. None preserves the input dtype. An explicit dtype
-        samples in at least double precision before conversion, so a
-        floating output retains interpolated fractions of integer input.
+        promotes the input and output dtypes to choose floating working
+        precision, with a minimum of float32. Integer-only combinations
+        use float64. A floating output retains interpolated fractions.
         Integer output keeps rounding half away from zero and saturation.
 
     Returns
@@ -200,9 +201,7 @@ def pull(
     nd = get_ndimage_backend(nx)
     if dtype is not None:
         dtype = np.dtype(dtype)
-        input = input.astype(
-            np.result_type(input.dtype, dtype, np.float64), copy=False
-        )
+        input = input.astype(_sampling_dtype(input.dtype, dtype), copy=False)
     ndim = coords.shape[-1]
     clip = _normalize_clip(clip, ndim)
     batch = input.shape[:-ndim]
@@ -232,6 +231,28 @@ def pull(
     return _cast_output(output, dtype) if dtype is not None else output
 
 
+def _sampling_dtype(
+    input_dtype: DTypeLike, output_dtype: tx.Optional[DTypeLike]
+) -> np.dtype:
+    """Choose working precision without changing the separable defaults.
+
+    Explicit requests promote the input and output types. SciPy does not
+    sample float16 inputs, so floating precision is at least float32.
+    Integer-only combinations need float64 to preserve fractions.
+    """
+    input_dtype = np.dtype(input_dtype)
+    if output_dtype is None:
+        return (
+            input_dtype
+            if np.issubdtype(input_dtype, np.floating)
+            else np.dtype(float)
+        )
+    promoted = np.result_type(input_dtype, output_dtype)
+    if not np.issubdtype(promoted, np.inexact):
+        return np.result_type(promoted, np.float64)
+    return np.result_type(promoted, np.float32)
+
+
 def _cast_output(values: ArrayProtocol, dtype: DTypeLike) -> ArrayProtocol:
     """Convert sampled values using the existing SciPy output convention."""
     dtype = np.dtype(dtype)
@@ -241,6 +262,11 @@ def _cast_output(values: ArrayProtocol, dtype: DTypeLike) -> ArrayProtocol:
     if dtype.kind == "b":
         return nx.trunc(values).astype(dtype)
     if np.issubdtype(dtype, np.integer):
+        # Adding 0.5 in float32 can move a value just below a rounding
+        # threshold onto the threshold. Convert before that addition.
+        values = values.astype(
+            np.result_type(values.dtype, np.float64), copy=False
+        )
         rounded = nx.trunc(nx.where(values > 0, values + 0.5, values - 0.5))
         info = np.iinfo(dtype)
         return nx.clip(rounded, info.min, info.max).astype(dtype)

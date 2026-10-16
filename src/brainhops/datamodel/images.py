@@ -352,7 +352,9 @@ class SingleScaleImage(Image):
         dtype : DTypeLike, optional
             Output dtype. None preserves the input dtype. A floating
             dtype retains interpolated fractions of integer input.
-            An explicit dtype samples in at least double precision.
+            An explicit dtype promotes the input and output dtypes to
+            choose working precision, with a minimum of float32.
+            Integer-only combinations use float64.
             Integer output keeps rounding half away from zero and
             saturation. Dask arrays remain lazy.
 

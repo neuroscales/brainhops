@@ -28,6 +28,7 @@ from brainhops._core.bsplines import (
     _cast_output,
     _clip_mask,
     _normalize_clip,
+    _sampling_dtype,
     pull,
     pull_axes,
     spline_matrix,
@@ -103,8 +104,9 @@ def pull_separable(
 
     dtype : DTypeLike, optional
         Output dtype. None preserves the input dtype. An explicit dtype
-        samples in at least double precision, then uses the existing
-        rounding and saturation rules for integer output.
+        promotes input and output dtypes to select working precision,
+        as in [`pull`][], then uses the existing rounding and saturation
+        rules for integer output.
 
     Returns
     -------
@@ -127,16 +129,15 @@ def pull_separable(
     # rounded between them. The gather and pull steps preserve the dtype that
     # they are given, so an integer input is converted to float once here.
     ab = get_array_backend(data)
-    out_dtype = np.dtype(data.dtype if dtype is None else dtype)
-    floating = np.issubdtype(data.dtype, np.floating)
-    arr = data if floating else data.astype(float)
-    if dtype is not None:
-        arr = data.astype(
-            np.result_type(data.dtype, out_dtype, np.float64), copy=False
-        )
+    inp_dtype = np.dtype(data.dtype)
+    out_dtype = np.dtype(inp_dtype if dtype is None else dtype)
+    tmp_dtype = _sampling_dtype(inp_dtype, dtype)
+    arr = data.astype(tmp_dtype, copy=False)
     # Only the gather steps and the transpose can return a view of `data`,
     # so `fresh` records whether the result is known to be a new array.
-    fresh = not floating or any(step["kind"] != "gather" for step in steps)
+    fresh = tmp_dtype != inp_dtype or any(
+        step["kind"] != "gather" for step in steps
+    )
     labels: _AxisLabels = [("data", i) for i in range(data.ndim)]
     masks = []
     for step in steps:

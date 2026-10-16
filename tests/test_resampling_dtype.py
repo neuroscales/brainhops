@@ -7,12 +7,91 @@ import pytest
 from scipy.ndimage import map_coordinates
 
 from brainhops import io
+from brainhops._core import bsplines
 from brainhops._core.bsplines import pull, pull_axes
 from brainhops.backends import backend
 from brainhops.cli import main
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.images import MultiScaleImage
 from brainhops.datamodel.transformations import Affine, CartesianField
+
+
+@pytest.mark.parametrize(
+    "input_dtype,output_dtype,pull_dtype,separable_dtype",
+    [
+        (np.float32, np.float32, np.float32, np.float32),
+        (np.float32, np.float64, np.float64, np.float64),
+        (np.float64, np.float32, np.float64, np.float64),
+        (np.int16, np.float32, np.float32, np.float32),
+        (np.int32, np.float32, np.float64, np.float64),
+        (np.int16, np.int16, np.float64, np.float64),
+        (np.uint8, np.float16, np.float32, np.float32),
+        (np.complex64, np.complex64, np.complex64, np.complex64),
+        (np.float32, None, np.float32, np.float32),
+        (np.int16, None, np.int16, np.float64),
+    ],
+)
+def test_sampling_precision_promotes_only_as_needed(
+    input_dtype: object,
+    output_dtype: object,
+    pull_dtype: object,
+    separable_dtype: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = np.array([0, 3, 9], dtype=input_dtype)
+    sampled = []
+    factory = bsplines._map_coordinates_for
+
+    def capture_factory(nx: object, nd: object) -> object:
+        sample = factory(nx, nd)
+
+        def capture(input: np.ndarray, coords: np.ndarray, **opts) -> object:
+            sampled.append(input.dtype)
+            return sample(input, coords, **opts)
+
+        return capture
+
+    monkeypatch.setattr(bsplines, "_map_coordinates_for", capture_factory)
+    pull(
+        values,
+        np.array([[0.25]]),
+        1,
+        "nearest",
+        False,
+        dtype=output_dtype,
+    )
+    assert sampled == [np.dtype(pull_dtype)]
+
+    def run(arr: np.ndarray, labels: object) -> tuple:
+        assert arr.dtype == separable_dtype
+        return arr, [("grid", 0)], None
+
+    monkeypatch.setattr(
+        sep, "_plan", lambda *args, **opts: [{"kind": "pull", "run": run}]
+    )
+    with backend("numpy"):
+        result = sep.pull_separable(
+            values,
+            CartesianField(shape=(3,)),
+            degree=1,
+            bound="nearest",
+            coeff=False,
+            dtype=output_dtype,
+        )
+    expected_dtype = input_dtype if output_dtype is None else output_dtype
+    assert result.dtype == expected_dtype
+    np.testing.assert_array_equal(result, values)
+
+
+def test_float32_integer_conversion_keeps_values_below_half_thresholds() -> (
+    None
+):
+    near = np.nextafter(np.float32(0.5), np.float32(0))
+    values = np.array([near, -near, 0.5, -0.5], dtype=np.float32)
+    result = pull(
+        values, np.arange(4)[:, None], 0, "nearest", False, dtype="int16"
+    )
+    np.testing.assert_array_equal(result, [0, 0, 1, -1])
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int8, np.uint8])
