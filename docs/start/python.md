@@ -214,6 +214,18 @@ mov = src(aff).reslice(dst)  # move src by aff, then resample onto dst
 mov = src(aff)(dsp).reslice(dst)  # apply aff first, then dsp
 ```
 
+By default, the output keeps the input dtype. A floating output dtype
+retains interpolated fractions when the input stores integers:
+
+```python
+mov = src(aff).reslice(dst, dtype="float32")
+io.save(mov, "resampled.nii.gz")
+```
+
+The loaded image is unchanged. An explicit dtype samples in at least
+double precision before the final conversion. Integer output keeps the
+existing rounding and saturation rules, and Dask arrays remain lazy.
+
 Without an argument, `reslice` resamples the image onto its own grid.
 Inferring the output grid from the transformations themselves, for example
 from a chain that starts with a `Geometry` or with a displacement field

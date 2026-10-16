@@ -3,7 +3,7 @@
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
-from bagof.magic import NoRepr, NotKwOnly
+from bagof.magic import NoRepr, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol, Clip
@@ -405,6 +405,8 @@ class SingleScaleImage(Image):
             metadata = metadata.derive(
                 Resampled(new2old, geometry), history="reslice"
             )
+            if dtype is not None:
+                metadata = replace(metadata, dtype=new_data.dtype)
         return SingleScaleImage(
             data=new_data,
             transformations=[geometry.transformation],

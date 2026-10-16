@@ -35,6 +35,7 @@ resampling runs in the opposite direction.
 | `--degree`          | `int`    | Spline degree (`0` = nearest, `1` = linear, `3` = cubic).                                                                         | `1`        |
 | `--bound`           | `str`    | Boundary condition used outside the field of view.                                                                                | `reflect`  |
 | `--clip`            | `literal` | Scalar margin, asymmetric pair, or list of pairs; zero samples outside the resulting closed voxel box. | `None` |
+| `--dtype`           | `str`    | Output dtype, such as `float32`, to retain interpolated fractions of integer input. | input dtype |
 
 ## Source specifications
 

@@ -99,9 +99,11 @@ def test_native_loaded_image_and_pyramid_support_float_output(
         pyramid_output = pyramid.reslice(reference, dtype="float32")
     expected = values[:3, :4, :5] + 7.5
     assert output.dtype == pyramid_output.dtype == np.float32
+    assert output.metadata.dtype == np.float32
     np.testing.assert_array_equal(output.data, expected)
     np.testing.assert_array_equal(pyramid_output.data, expected)
     assert source.dtype == np.int16
+    assert source.metadata.dtype == np.int16
     np.testing.assert_array_equal(source.data, original)
 
 
@@ -154,6 +156,26 @@ def test_cli_can_save_float_output_from_integer_input(tmp_path: Path) -> None:
     saved = nib.load(output)
     assert saved.get_data_dtype() == np.float32
     np.testing.assert_array_equal(saved.get_fdata(), values[:1, :2, :3] + 3)
+
+
+def test_native_dask_image_reslice_keeps_dtype_selection_lazy(
+    tmp_path: Path,
+) -> None:
+    nib = pytest.importorskip("nibabel")
+    da = pytest.importorskip("dask.array")
+    callbacks = pytest.importorskip("dask.callbacks")
+    values = np.arange(120, dtype=np.int16).reshape(4, 5, 6)
+    path = tmp_path / "image.nii"
+    nib.save(nib.Nifti1Image(values, np.eye(4)), path)
+    tasks = []
+    callback = callbacks.Callback(pretask=lambda *args: tasks.append(True))
+    with backend("dask"), callback:
+        image = io.images.load(path, hint="nifti")
+        output = image.reslice(dtype="float32")
+        assert isinstance(output.data, da.Array)
+        assert output.dtype == np.float32 and image.dtype == np.int16
+        assert not tasks
+    np.testing.assert_array_equal(output.data.compute(), values)
 
 
 @pytest.mark.parametrize("dtype", [np.int16, np.float32])
