@@ -1,7 +1,7 @@
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.magic import replace, stores
+from brainhops._core.magic import replace
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel._sugar import get_axes
@@ -110,13 +110,13 @@ def _convert_withlog(
     # a `log` flag have no tangent, so for them nothing is transferred.
     out_log = kwargs.get("log", _is_tangent(cls))
     crossing = getattr(t, "log", False) != out_log
-    # Some transformations derive their data instead of storing it, such as
-    # a reader that parses its matrix from a file or a grid that builds its
-    # coordinates from a shape. Such a transformation does not keep its data
-    # under the name that the rebuild reads, so a class that is not one of
-    # its own receives the map through the `_fallback` field instead.
-    derived = not stores(type(t), "_data") and not issubclass(cls, type(t))
-    if crossing or derived:
+    # A format reader may derive its public data from metadata while its
+    # inherited _data remains None (only an explicitly assigned value is
+    # stored there). Field presence alone therefore cannot tell whether
+    # replace() would preserve the map. When leaving the concrete class,
+    # transfer the public parameter view rather than its storage slot.
+    changes_class = not issubclass(cls, type(t))
+    if crossing or changes_class:
         fields = set(cls.data_fields) | set(cls.derived_fields)
         if not (fields & set(kwargs)):
             kwargs.setdefault(_fallback, getattr(t, _fallback))
