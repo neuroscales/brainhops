@@ -768,13 +768,10 @@ def read_series(
                 order="C",
             )
         if lazy is None:
-            from brainhops.backends import get_array_backend
+            from brainhops.backends import is_lazy
 
-            try:
-                import dask.array as da
-            except ImportError:  # pragma: no cover
-                da = None
-            lazy = da is not None and get_array_backend() is da
+            nbytes = math.prod(one.shape) * np.dtype(one.dtype).itemsize
+            lazy = is_lazy(nbytes)
         if lazy:
             array = _read_lazily(source, series, level)
             if array is not None:

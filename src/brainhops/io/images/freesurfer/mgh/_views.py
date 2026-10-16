@@ -16,7 +16,7 @@ from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.backends import to_backend
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
@@ -30,7 +30,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """
     if not isinstance(raw, ArrayProxy):
         return raw
-    data = get_array_backend().asarray(raw)
+    data = to_backend(raw)
     if isinstance(data, np.ndarray):
         data.flags.writeable = False
     return data

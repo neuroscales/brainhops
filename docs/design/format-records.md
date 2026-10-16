@@ -2719,9 +2719,9 @@ pyramid of the conformance test and the checks P1 to P12.
      the record is lost. The problem is older than this work. Status:
      open.
 336. The lazy array of a raster image decodes the whole frame each time
-     its values are read. Dask, which is the default backend when it is
-     installed, reads the lazy array once per chunk, so a frame larger
-     than one chunk is decoded once per chunk. The compressed MRtrix
+     its values are read. When the backend setting gives a Dask array,
+     Dask reads the lazy array once per chunk, so a frame larger than one
+     chunk is decoded once per chunk. The compressed MRtrix
      images behave in the same way. Status: open.
 337. Pass 4e changes the following public names and behaviors of
      `PillowImage`, to be announced with item 13. The fields

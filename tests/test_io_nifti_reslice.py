@@ -11,6 +11,7 @@ nb = pytest.importorskip("nibabel")
 ndi = pytest.importorskip("scipy.ndimage")
 
 import brainhops.io as io  # noqa: E402
+from brainhops import backends  # noqa: E402
 from brainhops.datamodel._transformations.compute import (  # noqa: E402
     separable,
 )
@@ -187,7 +188,10 @@ def test_a_4d_nifti_is_resliced_through_its_spatial_affine(
         )
     else:
         pytest.importorskip("dask.array")
-        assert type(img.data).__module__.startswith("dask")
+        # The default setting reads a small file with NumPy, so Dask is
+        # selected while the data are decoded.
+        with backends.backend("dask"):
+            assert type(img.data).__module__.startswith("dask")
 
     resliced = img.reslice(geometry.geometry)
 
