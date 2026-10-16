@@ -1,9 +1,8 @@
 import math
-from warnings import warn
+import re
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic
 
 from brainhops._core import affines as _affines
 from brainhops._core.enum import StrEnum
@@ -13,14 +12,26 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
-from ._systems import _make_system
+from ._systems import _make_grid_system, _make_system
+
+# An ITK transform type name is `{Class}_{Precision}_{InputDim}_{OutputDim}`.
+# A B-spline whose degree is not 3 appends its degree, as in
+# `BSplineTransform_double_3_3_1`.
+_TRANSFORM_TYPE_RE = re.compile(
+    r"^(?P<type>\w+)_(?P<precision>float|double)_"
+    r"(?P<input_dim>\d+)_(?P<output_dim>\d+)"
+    r"(?:_(?P<degree>[0-3]))?$"
+)
 
 
 class ItkTransformClass(StrEnum):
     """Names of the ITK transform classes.
+
+    `ComposeScaleSkewVersor3DTransform` composes rotation, scale and skew.
 
     The transform class names the kind of transform that an ITK file block
     stores. Each value is the class name itself, as it appears in the file:
@@ -36,6 +47,7 @@ class ItkTransformClass(StrEnum):
     | `Euler2DTransform`           | `"Euler2DTransform"`           |
     | `Euler3DTransform`           | `"Euler3DTransform"`           |
     | `VersorTransform`            | `"VersorTransform"`            |
+    | `QuaternionRigidTransform`  | `"QuaternionRigidTransform"`  |
     | `VersorRigid3DTransform`     | `"VersorRigid3DTransform"`     |
     | `ScaleVersor3DTransform`     | `"ScaleVersor3DTransform"`     |
     | `ScaleSkewVersor3DTransform` | `"ScaleSkewVersor3DTransform"` |
@@ -60,9 +72,12 @@ class ItkTransformClass(StrEnum):
     Euler3DTransform = "Euler3DTransform"
     VersorTransform = "VersorTransform"
 
+    QuaternionRigidTransform = "QuaternionRigidTransform"
     VersorRigid3DTransform = "VersorRigid3DTransform"
     ScaleVersor3DTransform = "ScaleVersor3DTransform"
     ScaleSkewVersor3DTransform = "ScaleSkewVersor3DTransform"
+
+    ComposeScaleSkewVersor3DTransform = "ComposeScaleSkewVersor3DTransform"
 
     AffineTransform = "AffineTransform"
     MatrixOffsetTransformBase = "MatrixOffsetTransformBase"
@@ -74,6 +89,22 @@ class ItkTransformClass(StrEnum):
 
 
 _ITKT = ItkTransformClass
+
+_7floats = tx.Tuple[float, float, float, float, float, float, float]
+_12floats = tx.Tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+]
 
 
 class ItkPrecision(StrEnum):
@@ -91,7 +122,7 @@ class ItkPrecision(StrEnum):
     Double = "double"
 
 
-class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
+class ItkStruct(Raw, kw_only=True, convert=True, polymorphic=True, eq=False):
     """One ITK transform block, holding only what the file stores.
 
     An ITK file stores, for each block, its transform class, its precision,
@@ -160,7 +191,7 @@ class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
 # ----------------------------------------------------------------------
 
 
-class ItkBlockBase(ItkStruct, _xforms.ImmutableSequence):
+class ItkBlockBase(ItkStruct, _xforms.ImmutableSequence, frozen=False):
     """Common base of ITK blocks, which map between LPS world coordinates.
 
     Whatever a block encodes, it maps LPS world coordinates to LPS world
@@ -346,15 +377,21 @@ class ItkDisplacementBase(ItkBlockBase):
     # --- slots --------------------------------------------------------
 
     @smartproperty(cache=True)
-    def lps2voxel(self) -> LPSToVoxel:
+    def lps2voxel(self) -> _xforms.Affine:
         """Affine from LPS world coordinates to warp-grid voxels."""
         vox2lps, _ = self._grid
-        return LPSToVoxel(matrix=_affines.inv(vox2lps))
+        if self.ndim_input == 3:
+            return LPSToVoxel(matrix=_affines.inv(vox2lps))
+        return _xforms.Affine(
+            matrix=_affines.inv(vox2lps),
+            input=self.input,
+            output=_make_grid_system(self.ndim_input),
+        )
 
     @smartproperty(cache=True)
     def displacement(self) -> _xforms.DisplacementField:
         """The displacement field on the warp grid."""
-        VOX = _systems.VoxelCoordinateSystem()
+        VOX = _make_grid_system(self.ndim_input)
         return _xforms.DisplacementField(
             data=self.field,
             input=VOX,
@@ -365,10 +402,16 @@ class ItkDisplacementBase(ItkBlockBase):
         )
 
     @smartproperty(cache=True)
-    def voxel2lps(self) -> VoxelToLPS:
+    def voxel2lps(self) -> _xforms.Affine:
         """Affine from warp-grid voxels to LPS world coordinates."""
         vox2lps, _ = self._grid
-        return VoxelToLPS(matrix=vox2lps)
+        if self.ndim_input == 3:
+            return VoxelToLPS(matrix=vox2lps)
+        return _xforms.Affine(
+            matrix=vox2lps,
+            input=_make_grid_system(self.ndim_input),
+            output=self.output,
+        )
 
     # --- sequence -----------------------------------------------------
 
@@ -532,6 +575,53 @@ class ItkVersorStruct(ItkAffineBase, on={"type": _ITKT.VersorTransform}):
     def linear(self) -> _xforms.Rotation:
         """The rotation."""
         return _xforms.Rotation(_versor_to_matrix(self.parameters[:3]))
+
+
+class ItkQuaternionRigidStruct(
+    ItkAffineBase, on={"type": _ITKT.QuaternionRigidTransform}
+):
+    """ITK quaternion rigid transform, storing all four quaternion values."""
+
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
+    parameters: _7floats
+    """The quaternion `(x, y, z, w)`, then the translation."""
+    fixed_parameters: tx.Tuple[float, float, float]
+    """The center of rotation."""
+
+    @smartproperty(cache=True)
+    def linear(self) -> _xforms.Linear:
+        """ITK's quaternion matrix, without normalising the stored values."""
+        x, y, z, w = self.parameters[:4]
+        # ITK uses the conjugate VNL quaternion's rotation_matrix_transpose.
+        # VNL does not normalise: a nonunit quaternion also scales by |q|^2.
+        return _xforms.Linear(
+            np.array(
+                [
+                    [
+                        w * w + x * x - y * y - z * z,
+                        2 * (x * y - w * z),
+                        2 * (x * z + w * y),
+                    ],
+                    [
+                        2 * (x * y + w * z),
+                        w * w - x * x + y * y - z * z,
+                        2 * (y * z - w * x),
+                    ],
+                    [
+                        2 * (x * z - w * y),
+                        2 * (y * z + w * x),
+                        w * w - x * x - y * y + z * z,
+                    ],
+                ],
+                dtype=np.float64,
+            )
+        )
+
+    @smartproperty(cache=True)
+    def translation(self) -> _xforms.Translation:
+        """The translation after rotation about the stored center."""
+        return _xforms.Translation(self.parameters[4:7])
 
 
 class ItkVersorRigid3DStruct(
@@ -719,6 +809,37 @@ class ItkScaleSkewVersor3DStruct(
         return _xforms.Translation(self.parameters[3:6])
 
 
+class ItkComposeScaleSkewVersor3DStruct(
+    ItkAffineBase, on={"type": _ITKT.ComposeScaleSkewVersor3DTransform}
+):
+    """ITK rotation composed with scale and upper-triangular shear.
+
+    Unlike ScaleSkewVersor3DTransform, this stores three shears and
+    multiplies `R @ diag(scale) @ shear` instead of adding matrix entries.
+    """
+
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
+    parameters: _12floats
+    """The versor, translation, scales and `(kxy, kxz, kyz)` shears."""
+    fixed_parameters: tx.Tuple[float, float, float]
+    """The center of rotation."""
+
+    @smartproperty(cache=True)
+    def linear(self) -> _xforms.Linear:
+        """The composed rotation, scale and shear matrix."""
+        rotation = _versor_to_matrix(self.parameters[:3])
+        scales = np.diag(self.parameters[6:9])
+        xy, xz, yz = self.parameters[9:12]
+        shear = np.array([[1, xy, xz], [0, 1, yz], [0, 0, 1]], dtype=float)
+        return _xforms.Linear(rotation @ scales @ shear)
+
+    @smartproperty(cache=True)
+    def translation(self) -> _xforms.Translation:
+        """The translation after the centered linear map."""
+        return _xforms.Translation(self.parameters[3:6])
+
+
 class _ItkMatrixOffsetBase(ItkAffineBase):
     """Base of blocks that store a full matrix, then a translation."""
 
@@ -778,12 +899,19 @@ class ItkBSplineStruct(
 ):
     """ITK B-spline transform.
 
-    The field holds cubic B-spline coefficients on a grid of control points,
+    The field holds B-spline coefficients on a grid of control points,
     and coefficients outside the grid are taken as zero. The coefficients are
     stored as one planar image per axis.
     """
 
-    degree: tx.ClassVar[int] = 3
+    degree: int = 3
+    """The spline degree of the coefficients.
+
+    ITK writes a degree other than 3 as a suffix of the transform type
+    name, such as `BSplineTransform_double_3_3_1`, and older files that
+    have no suffix hold cubic splines.
+    """
+
     store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.zeros
@@ -794,66 +922,6 @@ class ItkBSplineStruct(
 # ----------------------------------------------------------------------
 #   UTILITIES
 # ----------------------------------------------------------------------
-
-
-def _application_order(
-    blocks: tx.List[tx.Any],
-    composites: tx.List[int],
-    position: tx.Optional[int] = None,
-) -> tx.List[tx.Any]:
-    """Return the blocks of an ITK file in application order.
-
-    ITK writes a `CompositeTransform` as a header followed by its queue of
-    transforms, from front to back, but it applies the queue from back to
-    front, so that a queue `[T0, T1]` maps `x` to `T0(T1(x))`. A
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
-    transformations in the order in which they apply, so the blocks of a
-    composite are reversed. In a file without a composite, every block is a
-    separate top-level transform. The first top-level transform is returned by
-    default, with a warning when the file holds several.
-
-    Parameters
-    ----------
-    blocks : list
-        The blocks in file order, without composite headers.
-    composites : list of int
-        The file positions of the skipped composite headers.
-    position : int, optional
-        The index of the top-level transform to return.
-
-    Raises
-    ------
-    ParserContentError
-        If a composite header is not the first block, or if there is no
-        top-level transform at `position`.
-    """
-    if composites:
-        if list(composites) != [0]:
-            raise ParserContentError(
-                "ITK only writes a CompositeTransform as the first block "
-                "of a file, and it cannot be nested."
-            )
-        transforms = [list(reversed(blocks))]
-    else:
-        transforms = [[block] for block in blocks]
-
-    if position is None:
-        if len(transforms) > 1:
-            warn(
-                f"This ITK file holds {len(transforms)} transforms and no "
-                f"composite, so only the first one is read. Pass "
-                f"`position=` to read another one.",
-                stacklevel=2,
-            )
-        position = 0
-    if not transforms and position == 0:
-        return []
-    if not 0 <= position < len(transforms):
-        raise ParserContentError(
-            f"This ITK file has {len(transforms)} transform(s), so it has "
-            f"no transform {position}."
-        )
-    return transforms[position]
 
 
 def _inverse_chain(
@@ -997,3 +1065,22 @@ def _euler_to_matrix(
     Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=np.float64)
     Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]], dtype=np.float64)
     return Rz @ Ry @ Rx if compute_zyx else Rz @ Rx @ Ry
+
+
+def _type_fields(match: re.Match) -> tx.Dict[str, tx.Any]:
+    """Return the block fields encoded by an ITK transform type name."""
+    kind = ItkTransformClass(match.group("type"))
+    fields = dict(
+        type=kind,
+        precision=match.group("precision"),
+        ndim_input=int(match.group("input_dim")),
+        ndim_output=int(match.group("output_dim")),
+    )
+    degree = match.group("degree")
+    if degree is not None:
+        if kind != ItkTransformClass.BSplineTransform:
+            raise ParserContentError(
+                "Only B-spline types have a degree suffix."
+            )
+        fields["degree"] = int(degree)
+    return fields

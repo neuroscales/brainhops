@@ -10,6 +10,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
@@ -155,7 +156,7 @@ def _is_scaled(record: MrtrixRaw) -> bool:
     return bool(scaling) and tuple(scaling) != (0.0, 1.0)
 
 
-class _MrtrixProxy:
+class _MrtrixProxy(ArrayProxy):
     """A lazy array of the voxels of an MRtrix image.
 
     The proxy holds where the voxels lie, which is a path or the stream
@@ -169,7 +170,8 @@ class _MrtrixProxy:
 
     The voxels of a local file that is not compressed are memory-mapped
     when `mmap` is true, so that reading them gives a read-only view of
-    the file.
+    the file. Indexing the proxy returns another lazy array (see
+    [`ArrayProxy`][]), but any read decodes the whole file for now.
     """
 
     def __init__(
@@ -192,14 +194,9 @@ class _MrtrixProxy:
         """Whether a local file that is not compressed is memory-mapped."""
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the image, read from the record."""
         return tuple(self.record.dim)
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions of the image."""
-        return len(self.shape)
 
     @property
     def dtype(self) -> np.dtype:
@@ -208,6 +205,9 @@ class _MrtrixProxy:
 
     def read_stored(self) -> bytes:
         """Return the bytes of the voxels as the file stores them.
+
+        The bytes are those of the whole file, whatever part of it a view
+        of the proxy selects.
 
         Raises
         ------
@@ -230,7 +230,11 @@ class _MrtrixProxy:
         return content
 
     def get_unscaled(self) -> np.ndarray:
-        """Return the stored values in the axis order of the header."""
+        """Return all the stored values in the axis order of the header.
+
+        The values are those of the whole file, whatever part of it a view
+        of the proxy selects, and the intensity scaling is not applied.
+        """
         local = None
         if isinstance(self.source, (str, os.PathLike, path.PathLike)):
             local = _local_path(self.source)
@@ -249,26 +253,13 @@ class _MrtrixProxy:
                 return decode_data(self.record, buffer)
         return decode_data(self.record, self.read_stored())
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = self.get_unscaled()
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        values = self.get_unscaled()[index]
         if _is_scaled(self.record):
             offset, scale = self.record.scaling
             values = offset + scale * np.asarray(values, dtype=self.dtype)
             values = values.astype(self.dtype, copy=False)
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without reading the file.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        return np.asarray(self)[index]
-
-    def __repr__(self) -> str:
-        return f"_MrtrixProxy(shape={self.shape}, dtype={self.dtype})"
+        return values
 
 
 def _read_at(file: tx.BinaryIO, offset: int, nbytes: int) -> bytes:

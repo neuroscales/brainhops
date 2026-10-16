@@ -2,12 +2,19 @@
 
 __all__ = ["DataModelBase", "DataModelConverter", "IdentityComparison"]
 
+# stdlib
 import re
 from collections.abc import Mapping
 
+# dependencies
 import typing_extensions as tx
 from bagof.converters import ConversionError, Converter, register_converter
-from bagof.magic import Field, HideIfNone, Magic, fields
+from bagof.magic import Field, fields
+
+from brainhops import errors
+
+# core
+from brainhops._core.magic import SharedOptions
 
 
 class IdentityComparison:
@@ -29,31 +36,35 @@ class IdentityComparison:
             setattr(cls, name, getattr(object, name))
 
 
-class DataModelBase(
-    Magic,
-    convert=True,
-    mapping=False,
-    repr=HideIfNone,
-    doc=True,
-    pin_discriminant="pin+narrow",
-):
+class DataModelBase(SharedOptions):
     """Base class of all data models.
 
     Every data model converts the values of its fields to their declared
-    types, and can be built from a mapping or from a similar instance with
-    [`from_any`][].
+    types, and can be built from a mapping or from a similar instance
+    with [`from_any`][].
 
     Some data models are polymorphic: calling a class such as `Axis`
     builds the subclass that the arguments select, according to the `on=`
-    condition with which each subclass is declared. A polymorphic class is
-    built only from arguments that match its own condition and refuses the
-    others, so `OrientedAxis(orientation=None)` raises instead of building
-    an oriented axis without an orientation. A field that a class declares
-    itself keeps the type written there, so the fields that select a
-    subclass are typed narrowly, as in `Literal["space"]`.
+    condition with which each subclass is declared. A polymorphic class
+    is built only from arguments that match its own condition and refuses
+    the others, so `OrientedAxis(orientation=None)` raises instead of
+    building an oriented axis without an orientation. A field that a
+    class declares itself keeps the type written there, so the fields
+    that select a subclass are typed narrowly, as in `Literal["space"]`.
     """
 
     # The options given to the class statement apply to the whole hierarchy.
+
+    @classmethod
+    def _data_model(cls) -> type:
+        """Return the data model that the class instantiates.
+
+        A data model is its own data model. A file format returns the
+        data model that it stores, such as `SingleScaleImage` for
+        `NiftiImage`, so that two formats of the same data model are
+        related.
+        """
+        return cls
 
     @classmethod
     def from_dict(cls, other: tx.Mapping, *args, **kwargs) -> tx.Self:
@@ -81,22 +92,70 @@ class DataModelBase(
         return _build(cls, read, args, kwargs, init_vars=True)
 
     @classmethod
-    def from_instance(cls, other: tx.Self, *args, **kwargs) -> tx.Self:
-        """Build an instance from an instance of a similar class.
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Build an instance from an instance of a related data model.
+
+        Two classes are related when one of them is a parent of the
+        other, or when both belong to the same polymorphic family, that
+        is, to the subclasses of a class such as `Axis` whose calls build
+        the subclass that the arguments select. For a file format, the
+        class that is compared is its data model, such as
+        `SingleScaleImage` for `NiftiImage`. Fields with the same name
+        then mean the same thing, so the fields are copied by name.
 
         Only attributes that name keyword fields are used, and an attribute
         that is `None` leaves the default of the class in place. The extra
         arguments are passed to the constructor and take precedence. Unless
         `other` is already an instance of this class, attributes that name
         fixed fields are checked, so a generic axis oriented right to left
-        cannot be read as a `LeftToRightAxis`.
+        cannot be read as a `LeftToRightAxis`. The result is an instance of
+        this class, possibly of the subclass that a polymorphic class
+        selects. This method is the conversion that
+        [`to`][brainhops.datamodel.base.DataModelBase.to] runs with
+        `copy=True`, so the two give the same result.
+
+        Parameters
+        ----------
+        other : DataModelBase
+            The instance to copy.
+        *args : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+        **kwargs : Any
+            Constructor arguments, which take precedence over the fields
+            of `other`.
+
+        Returns
+        -------
+        Self
+            The new instance.
 
         Raises
         ------
+        TypeError
+            If `other` is not an instance of a data model. A file, a
+            mapping and any other value are read by
+            [`from_any`][brainhops.datamodel.base.DataModelBase.from_any].
+        ConversionError
+            If the class of `other` is not related to this class, so that
+            fields with the same name may mean different things.
         ValueError
-            If a fixed field of `other` is set to a value other than the value
-            that the class fixes.
+            If a fixed field of `other` is set to a value other than the
+            value that the class fixes.
         """
+        if not isinstance(other, DataModelBase):
+            raise TypeError(
+                f"{cls.__name__}.from_instance() copies an instance of a "
+                f"data model, not a {type(other).__name__}. Use "
+                f"{cls.__name__}.from_any() to read a file, a mapping or "
+                f"another value."
+            )
+        if not _related(cls, other):
+            raise errors.ConversionError(
+                f"A {type(other).__name__} cannot be copied into a "
+                f"{cls.__name__}, because neither class is a parent of the "
+                f"other and they belong to no common polymorphic family."
+            )
         # An instance of this class already satisfies its fixed fields.
         check_fixed = not isinstance(other, cls)
         # A polymorphic class also fixes the fields it is selected on, such as
@@ -119,15 +178,14 @@ class DataModelBase(
 
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Build an instance from a mapping, a similar instance or an argument.
+        """Build an instance from a mapping, a data model or an argument.
 
-        A similar instance is an instance of this class, of one of its
-        parents within the data model, or of another class in the same
-        polymorphic family. The family matters because calling a polymorphic
-        class such as `Axis` builds the subclass that the arguments select, so
-        an axis built as a generic `Axis` is often an instance of a sibling
-        class such as `TimeAxis`. Any other object, including an instance of
-        a parent outside the data model, is passed to the constructor.
+        A mapping is read field by field. An instance of a data model is
+        converted by
+        [`from_instance`][brainhops.datamodel.base.DataModelBase.from_instance],
+        which refuses a class that is not related to this one. Any other
+        object is passed to the constructor. A file format also reads a
+        file or its content here.
 
         Raises
         ------
@@ -139,14 +197,47 @@ class DataModelBase(
         if isinstance(other, Mapping):
             _refuse_unknown_keys(cls, other)
             return cls.from_dict(other, *args, **kwargs)
-        elif isinstance(other, cls):
-            return cls.from_instance(other, *args, **kwargs)
-        elif isinstance(other, DataModelBase) and issubclass(cls, type(other)):
-            return cls.from_instance(other, *args, **kwargs)
-        elif isinstance(other, DataModelBase) and _same_family(cls, other):
+        elif isinstance(other, DataModelBase):
             return cls.from_instance(other, *args, **kwargs)
         else:
             return cls(other, *args, **kwargs)
+
+    def to(
+        self, cls: tx.Optional[type] = None, *, copy: bool = False, **kwargs
+    ) -> tx.Any:
+        """Convert the object to another class of its data model.
+
+        Without a class, the object keeps its own class. When the object
+        is already of exactly the requested class and no field is given,
+        the object itself is returned, unless `copy` is true. Otherwise,
+        the object is converted by the `from_instance` of the requested
+        class, which copies the fields of a related class by name.
+        Transformations replace this conversion by their converters.
+
+        Parameters
+        ----------
+        cls : type, optional
+            The class to convert to. By default, the class of the object.
+        copy : bool, default=False
+            Whether to return a new object even when nothing changes.
+        **kwargs : Any
+            Fields of the result, which take precedence over those of the
+            object.
+
+        Returns
+        -------
+        DataModelBase
+            The converted object, an instance of `cls`.
+
+        Raises
+        ------
+        ConversionError
+            If `cls` is not related to the class of the object.
+        """
+        target = type(self) if cls is None else cls
+        if type(self) is target and not kwargs and not copy:
+            return self
+        return target.from_instance(self, **kwargs)
 
 
 # --- helpers ----------------------------------------------------------
@@ -259,6 +350,21 @@ def _is_polymorphic(cls: type) -> bool:
     """Return whether calling `cls` builds the subclass that is selected."""
     options = getattr(cls, _OPTIONS, None)
     return bool(getattr(options, "polymorphic", False))
+
+
+def _related(cls: type, other: tx.Any) -> bool:
+    """Return whether the data model of `other` is related to that of `cls`.
+
+    The classes are related when one data model is a parent of the other,
+    or when `other` belongs to a polymorphic family of `cls`.
+    """
+    mine = cls._data_model()
+    theirs = type(other)._data_model()
+    return (
+        issubclass(mine, theirs)
+        or issubclass(theirs, mine)
+        or _same_family(mine, other)
+    )
 
 
 def _same_family(cls: type, other: tx.Any) -> bool:

@@ -35,6 +35,7 @@ class MrtrixMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mrtrix",)
+    RAW: tx.ClassVar[type] = MrtrixRaw
 
     raw: NoRepr[tx.Optional[MrtrixRaw]] = None
     """The record of the image, or `None` for metadata without a record."""
@@ -92,28 +93,6 @@ class MrtrixMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             The confidence, between 0 and 1.
         """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MrtrixMetadata":
-        """Read the metadata from an MRtrix stream, gzipped or not.
-
-        The record is read with [`MrtrixRaw.from_fileobj`][], which
-        receives the keyword arguments and refuses them.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream, which may be gzipped.
-        **kwargs : Any
-            Options of the reader, which [`MrtrixRaw.from_fileobj`][]
-            refuses.
-
-        Returns
-        -------
-        MrtrixMetadata
-            The metadata, which holds the record of the header.
-        """
-        return cls.from_raw(MrtrixRaw.from_fileobj(file, **kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header of the record as the file stores it.

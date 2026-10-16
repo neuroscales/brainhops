@@ -15,7 +15,9 @@ from brainhops.datamodel import systems as _systems
 from ._matrix_utils import _get_orient
 from ._raw import LtaRaw
 
-_3SpatialAxes = tx.Tuple[
+# The axes are an `AxisTuple`, as in every coordinate system. A plain tuple
+# would replace the type of the field that the base class declares.
+_3SpatialAxes = _axes.AxisTuple[
     _axes.SpaceAxis,
     _axes.SpaceAxis,
     _axes.SpaceAxis,

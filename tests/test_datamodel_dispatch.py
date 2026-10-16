@@ -11,6 +11,7 @@ from bagof.magic import PolymorphError
 
 from brainhops.datamodel import axes as ax
 from brainhops.datamodel import systems as cs
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.orientations import (
     AnatomicalOrientation,
     AnteriorToPosterior,
@@ -317,7 +318,7 @@ def test_ras_dispatch_follows_the_orientations() -> None:
 def test_a_physical_system_needs_physical_axes() -> None:
     # A physical system may be open or leave its unit unspecified (#112), so
     # its defaults are not refused.
-    assert cs.PhysicalCoordinateSystem().axes == [...]
+    assert cs.PhysicalCoordinateSystem().axes is None
     assert cs.PhysicalCoordinateSystem(axes=[]).ndim == 0
     # A physical axis never counts samples.
     with pytest.raises(ValueError, match="counts samples"):
@@ -403,11 +404,11 @@ def test_two_default_systems_share_no_axis_with_another_class(
     # A default system holds axes of its own, shared with no other default.
     system = getattr(cs, name)()
     # The ellipsis of an open system is not an axis.
-    mine = {id(axis) for axis in system.axes if axis is not ...}
+    mine = {id(axis) for axis in get_axes(system) if axis is not ...}
     for other in _DEFAULT_SYSTEMS:
         if other == name:
             continue
-        theirs = getattr(cs, other)().axes
+        theirs = get_axes(getattr(cs, other)())
         assert not mine & {id(axis) for axis in theirs if axis is not ...}
 
 
@@ -465,17 +466,22 @@ def _bases(cls: type) -> tx.List[type]:
 @pytest.mark.parametrize("cls", _ORDERED, ids=lambda c: c.__name__)
 def test_an_ordered_class_has_its_order(cls: type) -> None:
     order = "C" if issubclass(cls, cs.CArrayCoordinateSystem) else "F"
-    assert cls().order == order and cls(axes=None).order == order
+    assert cls().order == order
+    if issubclass(cls, (cs.CoordinateSystem2D, cs.CoordinateSystem3D)):
+        with pytest.raises((TypeError, ValueError)):
+            cls(axes=None)
+    else:
+        assert cls(axes=None).order == order
     other = "F" if order == "C" else "C"
     with pytest.raises((TypeError, ValueError)):
         cls(order=other)
 
 
 @pytest.mark.parametrize("cls", _ORDERED, ids=lambda c: c.__name__)
-def test_an_ordered_class_is_reached_from_every_base(cls: type) -> None:
+def test_an_ordered_class_is_reached_from_every_array_base(cls: type) -> None:
     default = cls()
-    bases = _bases(cls)
-    assert cs.CoordinateSystem in bases
+    bases = [b for b in _bases(cls) if issubclass(b, cs.ArrayCoordinateSystem)]
+    assert cs.CoordinateSystem not in bases
     assert cs.ArrayCoordinateSystem in bases
     for base in bases:
         built = base(axes=list(default.axes), order=default.order)
@@ -485,29 +491,44 @@ def test_an_ordered_class_is_reached_from_every_base(cls: type) -> None:
 @pytest.mark.parametrize(
     "base, axes, order, expected",
     [
-        (cs.CoordinateSystem, _plain(4), "C", cs.CArrayCoordinateSystem),
+        (cs.ArrayCoordinateSystem, _plain(4), "C", cs.CArrayCoordinateSystem),
         (
-            cs.CoordinateSystem,
+            cs.ArrayCoordinateSystem,
             [ax.Axis(), ...],
             "F",
             cs.FArrayCoordinateSystem,
         ),
-        (cs.CoordinateSystem, _plain(2), "C", cs.CArrayCoordinateSystem2D),
-        (cs.CoordinateSystem, _plain(3), "F", cs.FArrayCoordinateSystem3D),
+        (
+            cs.ArrayCoordinateSystem,
+            _plain(2),
+            "C",
+            cs.CArrayCoordinateSystem2D,
+        ),
+        (
+            cs.ArrayCoordinateSystem,
+            _plain(3),
+            "F",
+            cs.FArrayCoordinateSystem3D,
+        ),
         # An order says that the axes index an array, so unitless spatial axes
         # suffice.
-        (cs.CoordinateSystem, _space(2), "C", cs.CPixelCoordinateSystem),
+        (cs.ArrayCoordinateSystem, _space(2), "C", cs.CPixelCoordinateSystem),
         (
-            cs.SpatialCoordinateSystem,
+            cs.PixelCoordinateSystem,
             _space(2),
             "F",
             cs.FPixelCoordinateSystem,
         ),
-        (cs.CoordinateSystem, _space(3), "C", cs.CVoxelCoordinateSystem),
+        (cs.ArrayCoordinateSystem, _space(3), "C", cs.CVoxelCoordinateSystem),
         (cs.ArrayCoordinateSystem, _space(3), "F", cs.FVoxelCoordinateSystem),
-        (cs.CoordinateSystem, _oriented("RAS"), "F", cs.FRASCoordinateSystem),
         (
-            cs.CoordinateSystem,
+            cs.ArrayCoordinateSystem,
+            _oriented("RAS"),
+            "F",
+            cs.FRASCoordinateSystem,
+        ),
+        (
+            cs.ArrayCoordinateSystem,
             _oriented("SPL", "index"),
             "C",
             cs.CLPSCoordinateSystem,
@@ -545,8 +566,13 @@ def test_the_order_and_the_axes_select_the_class(
 def test_an_unspecified_order_builds_the_generic_class(
     base: type, axes: list, expected: type
 ) -> None:
-    for built in (base(axes=axes), base(axes=axes, order=None)):
-        assert type(built) is expected and built.order is None
+    built = base(axes=axes)
+    assert type(built) is expected
+    if issubclass(base, cs.ArrayCoordinateSystem):
+        assert base(axes=axes, order=None) == built
+        assert built.order is None
+    elif not isinstance(built, cs.ArrayCoordinateSystem):
+        assert not hasattr(built, "order")
 
 
 @pytest.mark.parametrize(
@@ -560,7 +586,7 @@ def test_an_unspecified_order_builds_the_generic_class(
     ],
 )
 def test_only_an_array_system_has_an_order(build: tx.Callable) -> None:
-    with pytest.raises(ValueError, match="indexes no array"):
+    with pytest.raises(TypeError, match="order"):
         build()
 
 

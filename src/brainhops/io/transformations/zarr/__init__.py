@@ -2,7 +2,8 @@
 
 __all__ = ["OmeZarrField", "OmeFieldError"]
 
-from ._xforms import OmeFieldError, OmeZarrField
+from ._errors import OmeFieldError
+from ._xforms import OmeZarrField
 
 # Importing the private converters registers them with the data model,
 # so that a conversion into one of these formats, such as

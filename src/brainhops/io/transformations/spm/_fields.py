@@ -6,21 +6,31 @@ SPM deformation fields, stored in NIfTI files prefixed with `y_` or `iy_`.
 import nibabel as nb
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core.properties import smartproperty
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
+from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
+    _keep_given_fields,
     _NiftiObject,
     _record_image,
     _set_coordinates_intent,
+    _split_options,
     _stored_parts,
+)
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
@@ -40,7 +50,7 @@ from brainhops.io.transformations.nifti._views import (
 
 
 @register_format
-class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
+class SpmCoordinatesField(NiftiBasedTransformation, _xforms.ImmutableSequence):
     """
     Field of RAS coordinates written by SPM.
 
@@ -88,7 +98,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     """The coordinates given to the field, or `None` to decode them.
 
     Coordinates stored here are pending until [`consolidate`][] or a
-    write encodes them into `raw`.
+    write encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -98,13 +108,18 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
         Coordinates that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw`: NIfTI stores the field with shape
-        (X, Y, Z, 1, 3), and the singleton axis is dropped. Assigning the
-        data drops the chain decoded from the previous data.
+        they are decoded from `rawdata`: NIfTI stores the field with
+        shape (X, Y, Z, 1, 3), and the singleton axis is dropped.
+        Assigning the data drops the chain decoded from the previous
+        data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _field_to_model(self.raw)
+        return _field_to_model(self.rawdata)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -126,13 +141,13 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
         The decoded chain is made of the RAS-to-voxel affine of the header
         and the field of RAS coordinates of the file. Both hold the metadata
-        of this field, and the field holds its `raw` array and its pending
+        of this field, and the field holds its `rawdata` array and its pending
         coordinates too.
         """
         return (
             NiftiRASToVoxel(metadata=self.metadata),
             NiftiRASCoordinatesField(
-                data=self._data, raw=self.raw, metadata=self.metadata
+                data=self._data, rawdata=self.rawdata, metadata=self.metadata
             ),
         )
 
@@ -163,7 +178,7 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         xform = self.transformations[1]
         if xform is None:
             xform = NiftiRASCoordinatesField(
-                data=self._data, raw=self.raw, metadata=self.metadata
+                data=self._data, rawdata=self.rawdata, metadata=self.metadata
             )
         return xform
 
@@ -178,10 +193,16 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
         """
-        Encode the pending coordinates or chain into `raw` and a header.
+        Encode the pending coordinates or chain into `rawdata` and a
+        header.
 
         The coordinates of `rasfield`, as values, become the array, with
         the `VECTOR` (1007) intent code and the intent name `"Mapping"`
@@ -196,6 +217,13 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         override header fields last. A field that has a header and nothing
         pending, consolidated without options, is left as it is.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`, and a `dtype` that is given, or changed
+        in the metadata, is the type of the stored array. What the write
+        loses or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -203,9 +231,14 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description` or
+            `dtype`, and header fields, which take precedence over the
+            derived values and `like`. A header field that holds a field
+            of the metadata, such as `descrip`, is refused.
 
         Returns
         -------
@@ -214,29 +247,50 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
         Raises
         ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the field has no coordinates.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         if (
             self._data is None
             and self._transformations is None
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
-        raw, record = _stored_parts(_spm_encoded(self, like, overrides))
+        if "dtype" in requested:
+            overrides["dtype"] = requested["dtype"]
+        base = None if metadata is None else metadata.raw
+        raw, record = _stored_parts(
+            _spm_encoded(self, like, overrides, base, fields)
+        )
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -247,8 +301,12 @@ def _spm_encoded(
     field: SpmCoordinatesField,
     like: tx.Any,
     overrides: tx.Mapping[str, tx.Any],
+    base: tx.Optional[NiftiRaw],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """Encode an SPM field over a copy of its record.
+    """Encode an SPM field over a copy of a record.
+
+    The record, `base`, is that of the consolidated metadata.
 
     The stored coordinates, assigned or read, are kept when the chain was
     not assigned, and the chain is encoded otherwise.
@@ -261,9 +319,10 @@ def _spm_encoded(
     if field._data is not None:
         stored = _field_to_disk(field._data)
     else:
-        stored = field.raw
+        stored = field.rawdata
     if stored is not None and field._transformations is None:
-        image = _record_image(stored, field._record(), overrides=overrides)
+        record = None if base is None else base.copy()
+        image = _record_image(stored, record, overrides=overrides)
     else:
         what = "An SPM deformation field"
         # The inverse of a `NiftiRASToVoxel` read from a header is that
@@ -277,8 +336,10 @@ def _spm_encoded(
             )
         backend = get_array_backend(coordinates)
         coordinates = _field_to_disk(backend.asarray(coordinates))
-        image = _record_image(coordinates, field._record(), vox2ras, overrides)
+        record = None if base is None else base.copy()
+        image = _record_image(coordinates, record, vox2ras, overrides)
     _set_coordinates_intent(image.header)
     _apply_like(image, like)
+    _keep_given_fields(image, fields)
     _apply_overrides(image, overrides)
     return image

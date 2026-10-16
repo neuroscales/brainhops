@@ -2,9 +2,11 @@
 
 import pytest
 import typing_extensions as tx
+from bagof.magic import Magic
 
 from brainhops._core.properties import (
     InvalidatorInAttribute,
+    cached_value,
     drop_cache,
     lazyproperty,
     smartproperty,
@@ -99,6 +101,18 @@ def test_the_cache_and_its_invalidation() -> None:
     box = cls(1)
     assert box.value == "computed" and box.value == "computed"
     assert cls.computed == 1
+
+
+def test_a_frozen_object_can_cache_a_read_only_property() -> None:
+    class Frozen(Magic, frozen=True):
+        @smartproperty(cache=True, fset=False)
+        def value(self) -> object:
+            return object()
+
+    obj = Frozen()
+    assert obj.value is obj.value
+    with pytest.raises(AttributeError):
+        obj.value = object()
 
 
 def test_lazyproperty_computes_once_and_reads_a_stored_value() -> None:
@@ -318,6 +332,15 @@ def test_drop_cache_deletes_the_cached_values_it_names() -> None:
     assert box.value == 1
     drop_cache(box, "value", "never_cached")
     assert box.value == 2
+
+
+def test_cached_value_reads_a_cache_without_computing_it() -> None:
+    box = _cached_box("setter")(1)
+    assert cached_value(box, "value") is None
+    assert box.value == 1
+    assert cached_value(box, "value") == 1
+    drop_cache(box, "value")
+    assert cached_value(box, "value") is None
 
 
 # smartsetter

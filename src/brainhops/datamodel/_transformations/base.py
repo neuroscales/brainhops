@@ -1,9 +1,11 @@
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel.base import DataModelBase, IdentityComparison
+from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import ConversionError, LossyConversionError
 
@@ -61,7 +63,7 @@ class Transformation(
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Names of the attributes that parameterize the transformation."""
 
-    metadata_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    encoding_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Names of the attributes that define the encoding."""
 
     derived_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
@@ -132,6 +134,19 @@ class Transformation(
 
     input = smartproperty("input")
     output = smartproperty("output")
+
+    metadata: NoRepr[tx.Optional[Metadata]] = None
+    """What describes the transformation beyond its parameters, or `None`.
+
+    The metadata holds the common vocabulary of
+    [`Metadata`][brainhops.datamodel.metadata.Metadata], such as a
+    description or the images of a registration. A transformation built
+    from parameters has none unless it is given some. A file format takes
+    the field over to hold the metadata of its own class, which also
+    holds the header of the file, and converts the metadata it is given
+    into that class. The field is keyword-only and is left out of the
+    representation of the transformation.
+    """
 
     # --- methods ------------------------------------------------------
 
@@ -347,12 +362,72 @@ class Transformation(
             f"The square root of a {type(self).__name__} is not implemented."
         )
 
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy an instance of this class, or convert another transformation.
+
+        A transformation that is not an instance of this class is
+        converted exactly as `other.to(cls, copy=True)` converts it, with
+        the converters of its family, which check what this class
+        promises, such as the orthogonal matrix of a rotation. An
+        instance of this class is copied as
+        [`DataModelBase.from_instance`][brainhops.datamodel.base.DataModelBase.from_instance]
+        copies it. For a file format, an instance of its data model, such
+        as the `Affine` of an LTA file, is copied as well, because the
+        converters of the format build the format that way.
+
+        Parameters
+        ----------
+        other : DataModelBase
+            The transformation to copy or convert.
+        *args : Any
+            Constructor arguments of a copy. A conversion takes keyword
+            arguments only.
+        **kwargs : Any
+            Fields of the result, which take precedence over those of
+            `other`.
+
+        Returns
+        -------
+        Self
+            The new transformation.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a conversion.
+        ConversionError
+            If no converter turns `other` into this class without loss.
+        """
+        if cls._converts(other):
+            if args:
+                raise TypeError(
+                    f"{cls.__name__}.from_instance() converts a "
+                    f"{type(other).__name__} with keyword arguments only, "
+                    f"but was given {len(args)} positional argument(s)."
+                )
+            return other.to(cls, copy=True, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
+
+    @classmethod
+    def _converts(cls, other: tx.Any) -> bool:
+        """Return whether `from_instance` converts `other` rather than copy it.
+
+        A transformation is converted unless it is an instance of the data
+        model of this class, which is the class itself for a data model and
+        the data model that a file format stores.
+        """
+        return isinstance(other, Transformation) and not isinstance(
+            other, cls._data_model()
+        )
+
     def to(
         self,
         cls: tx.Optional[tx.Type[tx.Self]] = None,
         *,
         lossy: bool = False,
         error: tx.Union[tx.Type[Exception], Exception, bool] = True,
+        copy: bool = False,
         **kwargs,
     ) -> tx.Self:
         """Convert the transformation to another type or encoding.
@@ -373,6 +448,10 @@ class Transformation(
             What to do when the conversion fails. `True` (the default) raises
             the original error again, an exception or exception type is raised
             from it, and any other value is returned in place of the result.
+        copy : bool, default=False
+            Whether to return a new object when the conversion has nothing
+            to change. By default, a transformation converted to its own
+            class without any field is returned itself.
         **kwargs : Any
             Attributes of the converted transformation. `store="coefficients"`
             re-encodes the data of a displacement field and keeps its map. A
@@ -386,7 +465,7 @@ class Transformation(
         """
         cls = cls or self._target_class(kwargs)
         try:
-            return convert(self, cls, **kwargs)
+            return _copied(self, convert(self, cls, **kwargs), copy)
         except LossyConversionError as e:
             if lossy:
                 # The caller accepts a lossy result, which the exception
@@ -635,3 +714,12 @@ def _mutually_exclusive(
         f"transformation, use t.to(...); to store an array as it is "
         f"encoded, pass data= alone."
     )
+
+
+def _copied(
+    original: Transformation, result: Transformation, copy: bool
+) -> Transformation:
+    """Return `result`, or a copy of it when it is `original` and `copy`."""
+    if copy and result is original:
+        return type(original).from_instance(original)
+    return result

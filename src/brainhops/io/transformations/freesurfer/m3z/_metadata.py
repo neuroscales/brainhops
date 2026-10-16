@@ -41,6 +41,7 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("m3z",)
+    RAW: tx.ClassVar[type] = M3zRaw
 
     raw: NoRepr[tx.Optional[M3zRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -100,29 +101,6 @@ class M3zMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             The confidence, between 0 and 1.
         """
         return M3zRaw.sniff_bytes(content, error=error, **kwargs)
-
-    # --- from ---------------------------------------------------------
-
-    @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> "M3zMetadata":
-        """Read the metadata from the rest of an open binary file.
-
-        The record is read by [`M3zRaw.from_fileobj`][], and the keyword
-        arguments are other fields of the metadata.
-
-        Parameters
-        ----------
-        file : IO
-            The open binary file.
-        **kwargs : Any
-            Other fields of the metadata.
-
-        Returns
-        -------
-        M3zMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(M3zRaw.from_fileobj(file), **kwargs)
 
     # --- to -----------------------------------------------------------
 

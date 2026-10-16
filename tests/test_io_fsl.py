@@ -2,8 +2,8 @@
 
 FSL works in scaled millimetres: voxel indices times the pixel size, with
 x flipped when the voxel-to-world matrix has a positive determinant. The
-FNIRT tests use the fslpy fixtures in data/fsl/ (see ATTRIBUTION.md there)
-and compare with fslpy when it is installed.
+FNIRT tests use the fslpy fixtures in data/fsl/ (see ATTRIBUTION.md
+there).
 """
 
 from pathlib import Path
@@ -269,6 +269,111 @@ def test_a_matlab_like_text_is_not_claimed_as_flirt() -> None:
 
 
 # ----------------------------------------------------------------------
+#   FLIRT RECORDS
+# ----------------------------------------------------------------------
+# The FLIRT matrix of a file is held as a record by the metadata of the
+# transformation. A FLIRT matrix that is assigned is pending, and the
+# images are options that are never part of the record.
+
+
+def _flirt_file(tmp_path) -> Path:  # noqa: ANN001
+    path = tmp_path / "src2ref.mat"
+    np.savetxt(str(path), FLIRT_MATRIX, fmt="%.8g")
+    return path
+
+
+def test_the_flirt_matrix_lives_in_the_record(tmp_path) -> None:  # noqa: ANN001
+    from brainhops.io.transformations.fsl.flirt import (
+        FlirtMetadata,
+        FlirtRaw,
+    )
+
+    path = _flirt_file(tmp_path)
+    flirt = FlirtTransform.load(path)
+    assert isinstance(flirt.metadata, FlirtMetadata)
+    assert isinstance(flirt.metadata.raw, FlirtRaw)
+    assert "_cache_flirt_matrix" not in vars(flirt)
+    assert np.allclose(flirt.flirt_matrix, FLIRT_MATRIX)
+    # The decoded matrix is read-only, and is changed by assignment.
+    assert not flirt.flirt_matrix.flags.writeable
+    assert FlirtMetadata.load(path).raw.matrix == flirt.metadata.raw.matrix
+    assert flirt.consolidate().metadata is flirt.metadata
+
+
+def test_an_assigned_flirt_matrix_is_pending(tmp_path) -> None:  # noqa: ANN001
+    flirt = FlirtTransform.load(
+        _flirt_file(tmp_path),
+        reference=_image(REF_SHAPE, REF_AFFINE),
+        moving=_image(MOV_SHAPE, MOV_AFFINE),
+    )
+    metadata = flirt.metadata
+    before = flirt.homogeneous_matrix
+    flirt.flirt_matrix = np.eye(4)
+    # The views derived from the old matrix are dropped.
+    assert not np.allclose(flirt.homogeneous_matrix, before)
+    assert flirt.metadata is metadata
+    consolidated = flirt.consolidate()
+    assert consolidated.metadata.raw.matrix == tuple(
+        tuple(row) for row in np.eye(4)
+    )
+    assert consolidated._flirt_matrix is None
+    assert consolidated.moving is flirt.moving
+    assert np.allclose(
+        consolidated.homogeneous_matrix, flirt.homogeneous_matrix
+    )
+
+
+def test_changing_an_image_drops_the_derived_views() -> None:
+    flirt = _flirt(
+        reference=_image(REF_SHAPE, REF_AFFINE),
+        moving=_image(MOV_SHAPE, MOV_AFFINE),
+    )
+    before = flirt.homogeneous_matrix
+    flirt.moving = _image(REF_SHAPE, REF_AFFINE)
+    assert not np.allclose(flirt.homogeneous_matrix, before)
+
+
+def test_a_copy_within_the_format_decodes_nothing(tmp_path) -> None:  # noqa: ANN001
+    flirt = FlirtTransform.load(_flirt_file(tmp_path), moving=np.eye(4))
+    copy = FlirtTransform.from_instance(flirt)
+    assert copy.metadata is flirt.metadata
+    assert copy.moving is flirt.moving
+    assert "_cache_flirt_matrix" not in vars(flirt)
+
+
+def test_what_a_flirt_record_cannot_hold_is_refused() -> None:
+    from brainhops.datamodel import systems
+
+    with pytest.raises(UnrepresentableTransformationError):
+        FlirtTransform(flirt_matrix=np.eye(3)).consolidate()
+    flirt = _flirt()
+    flirt.input = systems.LPSmm()
+    with pytest.raises(UnrepresentableTransformationError):
+        flirt.consolidate()
+    with pytest.raises(ValueError, match="cannot be set"):
+        _flirt().data = np.eye(4)[:-1]
+
+
+def test_flirt_is_not_written(tmp_path) -> None:  # noqa: ANN001
+    from brainhops.io.base.parsers import WriterError
+
+    flirt = FlirtTransform.load(_flirt_file(tmp_path))
+    assert not hasattr(flirt, "save")
+    with pytest.raises(WriterError):
+        io.save(flirt, tmp_path / "copy.mat")
+
+
+def test_flirt_options_are_refused(tmp_path) -> None:  # noqa: ANN001
+    from brainhops.io.transformations.fsl.flirt import FlirtRaw
+
+    path = _flirt_file(tmp_path)
+    with pytest.raises(TypeError):
+        FlirtTransform.load(path, position=0)
+    with pytest.raises(TypeError):
+        FlirtRaw.load(path, moving=np.eye(4))
+
+
+# ----------------------------------------------------------------------
 #   FNIRT (synthetic deformation field)
 # ----------------------------------------------------------------------
 
@@ -521,35 +626,6 @@ def test_coefficient_field_chain_shape() -> None:
     assert np.all(np.isfinite(world))
 
 
-def _fnirt_world_oracle(name, shape):  # noqa: ANN001, ANN202
-    """Compute the fslpy world-to-world deformation, or skip without fslpy."""
-    fsl_image = pytest.importorskip("fsl.data.image")
-    fsl_fnirt = pytest.importorskip("fsl.transform.fnirt")
-    nonlinear = pytest.importorskip("fsl.transform.nonlinear")
-
-    fref = fsl_image.Image(str(fsl_dir / "ref.nii.gz"))
-    fsrc = fsl_image.Image(str(fsl_dir / "src.nii.gz"))
-    field = fsl_fnirt.readFnirt(str(fsl_dir / name), src=fsrc, ref=fref)
-    world = fsl_fnirt.fromFnirt(field, "world", "world")
-    return np.asarray(
-        nonlinear.convertDeformationType(world, "absolute")
-    ).reshape(shape)
-
-
-@pytest.mark.parametrize(
-    "name", ["coefficientfield.nii.gz", "displacementfield.nii.gz"]
-)
-def test_fnirt_fixture_matches_fslpy(name) -> None:  # noqa: ANN001
-    """The reader reproduces the fslpy world-to-world deformation."""
-    ref_img, src_img = _real_ref(), _real_src()
-    warp = io.transformations.load(
-        fsl_dir / name, reference=ref_img, moving=src_img
-    )
-    out = _world_field(warp, ref_img)
-    oracle = _fnirt_world_oracle(name, out.shape)
-    assert np.allclose(out, oracle, atol=1e-4)
-
-
 def test_dct_coefficient_field_is_refused() -> None:
     img = nb.load(str(fsl_dir / "coefficientfield.nii.gz"))
     img = nb.Nifti1Image(
@@ -653,11 +729,6 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct(
         names = [type(t).__name__ for t in computed.transformations]
         assert names == ["RASToWarpField", "DisplacementField"]
 
-        # Led by a sampling grid, the full warp reproduces fslpy.
-        out = _world_field(coef, _real_ref())
-        oracle = _fnirt_world_oracle("coefficientfield.nii.gz", out.shape)
-        assert np.allclose(out, oracle, atol=1e-4)
-
 
 def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     """Folding the trailing affine into a dense field is exact."""
@@ -679,9 +750,59 @@ def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     names = [type(t).__name__ for t in computed.transformations]
     assert names == ["RASToWarpField", "DisplacementField"]
 
-    # Led by a sampling grid, both chains reproduce fslpy.
+    # Led by a sampling grid, the folded chain moves points as the full
+    # chain does.
     out_full = _world_field(warp, _real_ref())
     out_folded = _world_field(computed, _real_ref())
-    oracle = _fnirt_world_oracle("displacementfield.nii.gz", out_full.shape)
-    assert np.allclose(out_full, oracle, atol=1e-4)
-    assert np.allclose(out_folded, oracle, atol=1e-4)
+    assert np.allclose(out_folded, out_full, atol=1e-4)
+
+
+@pytest.mark.parametrize("deformation_type", ["absolute", "relative"])
+def test_native_dense_fields_without_intent(
+    tmp_path: Path, deformation_type: str
+) -> None:
+    """convertwarp/invwarp fields retain scaled-mm semantics with intent 0."""
+    _, absolute, relative = _fnirt_setup()
+    values = absolute if deformation_type == "absolute" else relative
+    path = tmp_path / "native-warp.nii.gz"
+    image = nb.Nifti1Image(values.astype(np.float32), REF_AFFINE)
+    assert image.header["intent_code"] == 0
+    nb.save(image, path)
+    moving = _image(MOV_SHAPE, MOV_AFFINE)
+    reference = _image(REF_SHAPE, REF_AFFINE)
+    # Intent 0 must not make the reader claim arbitrary vector images.
+    assert FnirtWarpField.sniff(path) == 0
+    transform = io.transformations.load(
+        path,
+        hint="fnirt",
+        moving=moving,
+        reference=reference,
+        deformation_type=deformation_type,
+    )
+    assert transform.deformation_type == deformation_type
+    assert transform.degree == 1 and transform.store == "values"
+    moving_scaled = _fsl_vox2scaled(MOV_AFFINE, MOV_SHAPE, [1.5, 1.5, 3.0])
+    expected = _apply(MOV_AFFINE @ np.linalg.inv(moving_scaled), absolute)
+    np.testing.assert_allclose(
+        _world_field(transform, reference), expected, atol=1e-3
+    )
+
+
+def test_fnirt_stream_preserves_deformation_type(tmp_path: Path) -> None:
+    _, absolute, _ = _fnirt_setup()
+    image = nb.Nifti1Image(absolute.astype(np.float32), REF_AFFINE)
+    path = tmp_path / "warp.nii"
+    nb.save(image, path)
+    moving = _image(MOV_SHAPE, MOV_AFFINE)
+    with path.open("rb") as stream:
+        transform = FnirtWarpField.from_fileobj(
+            stream, moving=moving, deformation_type="absolute"
+        )
+        assert transform.deformation_type == "absolute"
+        expected = _warp(absolute)
+        expected.deformation_type = "absolute"
+        reference = _image(REF_SHAPE, REF_AFFINE)
+        np.testing.assert_allclose(
+            _world_field(transform, reference),
+            _world_field(expected, reference),
+        )

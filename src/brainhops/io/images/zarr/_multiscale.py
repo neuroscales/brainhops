@@ -1,10 +1,9 @@
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
-from bagof.magic import Inherit, NoRepr, replace
+from bagof.magic import Inherit, replace
 
 from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import (
     Axis,
@@ -13,12 +12,25 @@ from brainhops.datamodel.axes import (
     TimeAxis,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.systems import AxisList, CoordinateSystem
-from brainhops.datamodel.transformations import Transformation
+from brainhops.datamodel.systems import (
+    ArrayCoordinateSystem,
+    AxisList,
+    CoordinateSystem,
+)
+from brainhops.datamodel.transformations import (
+    Identity,
+    Sequence,
+    Transformation,
+)
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.zarr import StoreLike, ZarrReaderWriter
-from brainhops.io.common.zarr._parsers import _as_node
+from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
+from brainhops.io.common.zarr._data import _ZarrProxy, store_location
+from brainhops.io.common.zarr._parsers import (
+    _as_node,
+    _ZarrNodeReaderWriter,
+    opened_node,
+)
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map
@@ -26,7 +38,9 @@ from brainhops.io.transformations.zarr import _map
 from ._image import ZarrImage
 from ._ome import (
     OmeImageError,
+    check_parameter_paths,
     common_transformations,
+    group_path,
     intrinsic_name,
     level_transformation,
     looks_like_multiscale,
@@ -34,45 +48,41 @@ from ._ome import (
     read_multiscale,
     resolve_world_names,
     resolve_write_version,
+    split_system_name,
     system_axes,
+    system_name,
     write_multiscale,
 )
 
-_Ellipsis = type(Ellipsis)
-# `types.EllipsisType` only exists from Python 3.10 onwards.
+if tx.TYPE_CHECKING:
+    from types import EllipsisType
+else:
+    # `types.EllipsisType` only exists from Python 3.10 onwards.
+    EllipsisType = type(Ellipsis)
 
 
 class OmeZarrLevel(ZarrImage):
     """One resolution level of an OME-Zarr pyramid.
 
-    The array is transposed into the brainhops axis order only when `data`
-    is read, so opening a pyramid reads no array data.
+    The level holds the lazy array of its dataset in `rawdata`, which presents
+    the stored axes in the brainhops order, and the record of the array of
+    its dataset. Its transformations are those of its dataset, assigned
+    when the pyramid is read. Opening a pyramid reads no array data, and a
+    copy made with `replace` keeps the lazy array. Step 4b-ii of the
+    fourth pass makes the level hold the record of its pyramid instead.
     """
-
-    _perm: NoRepr[tx.Optional[tx.Tuple[int, ...]]] = None
-    """The permutation from the stored axes to the brainhops order.
-
-    The level keeps it as a field, so that a copy made with `replace`
-    keeps the node and still transposes the array that it reads.
-    """
-
-    @smartproperty(cache=True)
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        raw = super().data
-        backend = get_array_backend(raw)
-        if self._perm is not None:
-            raw = backend.transpose(raw, self._perm)
-        return raw
 
 
 # `kw_only=True` is repeated here because bagof takes each class option
 # from the first base in the method resolution order, whether that base
-# sets the option or keeps the default. That base is `ZarrReaderWriter`,
+# sets the option or keeps the default. That base is `_ZarrNodeReaderWriter`,
 # which keeps the default, so the fields declared by this class would
 # otherwise be positional.
 @register_format
 class OmeZarrImage(
-    ZarrReaderWriter, ImageFormat, MultiScaleImage, kw_only=True
+    _ZarrNodeReaderWriter,
+    ImageFormat,
+    MultiScaleImage,
 ):
     """Multiscale image backed by an OME-Zarr pyramid.
 
@@ -87,28 +97,39 @@ class OmeZarrImage(
 
     # ---- attributes --------------------------------------------------
 
-    _axes: tx.Annotated[
-        tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]],
-        tx.Doc(
-            "The axes to store a pyramid under, in the brainhops order, "
-            "when it is built from scratch, as an `AxisList`. As in a "
-            "coordinate system, a single `...` may stand for the axes "
-            "about which nothing is known; it is closed to the number of "
-            "axes of the data when the pyramid is written. `None` is not "
-            "`[...]`: it leaves the axes unset, so a pyramid read from a "
-            "store takes its axes from `ome`."
-        ),
-    ] = None
+    _axes: tx.Optional[AxisList[tx.Union[Axis, EllipsisType]]] = None
+    """
+    The axes to store a pyramid under, in the brainhops order, when it
+    is built from scratch, as an `AxisList`. As in a coordinate system,
+    a single `...` may stand for the axes about which nothing is known;
+    it is closed to the number of axes of the data when the pyramid is
+    written. `None` is not `[...]`: it leaves the axes unset, so a
+    pyramid read from a store takes its axes from `ome`.
+    """
 
-    _ome: tx.Annotated[
-        tx.Optional[Multiscale],
-        tx.Doc("The OME multiscale metadata, normalized to 0.6."),
-    ] = None
+    _ome: tx.Optional[Multiscale] = None
+    """The OME multiscale metadata, normalized to 0.6."""
+
+    _group: str = ""
+    """
+    The path of the group of the pyramid from the root of its Zarr
+    hierarchy, such as `labels/cells`.
+
+    The coordinate systems of a pyramid in another group than the root
+    are named after that path, as in `labels/cells//physical`, so that
+    the systems of two groups stay distinct. A Zarr group does not know
+    its path, so the reader that opened the root of the hierarchy gives
+    it.
+
+    The empty string, the default, is the root group, whose systems keep
+    their OME names.
+    """
 
     _images: tx.Optional[tx.List[SingleScaleImage]] = Inherit(
         "images", default=None
     )
-    """The levels given to the pyramid, or `None` to read them.
+    """
+    The levels given to the pyramid, or `None` to read them.
 
     The pyramid takes over the `images` field of [`MultiScaleImage`][]
     to store it under this private name. The constructor still takes
@@ -120,7 +141,8 @@ class OmeZarrImage(
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The placements given to the pyramid, or `None` to read them.
+    """
+    The placements given to the pyramid, or `None` to read them.
 
     The pyramid takes over the `transformations` field of
     [`MultiScaleImage`][] in the same way as `images`. `None`, the
@@ -149,7 +171,12 @@ class OmeZarrImage(
                 delattr(self, name)
 
     @property
-    def axes(self) -> tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]]:
+    def group(self) -> str:
+        """Path of the group of the pyramid from the root of its hierarchy."""
+        return getattr(self, "_group", "")
+
+    @property
+    def axes(self) -> tx.Optional[AxisList[tx.Union[Axis, EllipsisType]]]:
         """Axes under which a pyramid built from scratch is stored."""
         return getattr(self, "_axes", None)
 
@@ -198,44 +225,9 @@ class OmeZarrImage(
         The metadata is parsed immediately, so unreadable metadata is refused
         when the group is opened rather than on first access.
         """
-        image = super().from_node(node, **kwargs)
+        image = cls(node=opened_node(node), **kwargs)
         _ = image._layout
         return image
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an instance of this class or of another multiscale image.
-
-        The pyramid stores its levels in the private field `_images`, where
-        `None` means that they are read from `node`. Within this class, the
-        stored value is copied, so a copy of a pyramid whose levels were
-        not assigned reads them from the same node. From another class,
-        the levels that `other` reports are copied, read if need be,
-        because the private field of `other` means nothing to this class.
-        The placements in `_transformations` are copied in the same way by
-        the `from_instance` of [`ImageFormat`][].
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy.
-        *args : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`.
-        **kwargs : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`.
-
-        Returns
-        -------
-        Self
-            The copy.
-        """
-        if not isinstance(other, cls):
-            images = getattr(other, "images", None)
-            if images is not None:
-                kwargs.setdefault("images", images)
-        return super().from_instance(other, *args, **kwargs)
 
     # ---- workers  ----------------------------------------------------
 
@@ -269,6 +261,7 @@ class OmeZarrImage(
                 "cannot be read as a multiscale image."
             )
 
+        check_parameter_paths(multiscale, source_version)
         datasets = list(multiscale.datasets)
         if not datasets:
             raise OmeImageError(
@@ -286,27 +279,38 @@ class OmeZarrImage(
                 "dimensions."
             )
 
+        try:
+            group = group_path(self.group)
+        except ValueError as error:
+            raise OmeImageError(str(error)) from error
         perm = _axisorder.to_canonical(store_axes)
         canonical_axes = _axisorder.permute(store_axes, perm)
-        # Without common transformations, the intrinsic space is the world
-        # space.
+        # Each named system sorts its own axes into the brainhops order, and
+        # the mapping of a transformation reorders its parameters by the
+        # orders of its two systems. Without common transformations, the
+        # intrinsic space is the world space.
         declared = system_axes(multiscale)
+        orders = {
+            name: _axisorder.to_canonical(axes)
+            for name, axes in declared.items()
+        }
 
         def system(name: tx.Optional[str]) -> CoordinateSystem:
-            # Fall back to the canonical axes when the axis count of a named
-            # system does not match the array.
+            # A name that no system declares takes the axes of the array. A
+            # system is named after its group, unless it is in the root.
             axes = declared.get(name) if isinstance(name, str) else None
-            if axes is None or len(axes) != ndim:
-                axes = canonical_axes
-            else:
-                axes = _axisorder.permute(axes, perm)
-            return CoordinateSystem(name=name, axes=axes)
+            label = system_name(name, group) if isinstance(name, str) else None
+            if axes is None:
+                return CoordinateSystem(name=label, axes=canonical_axes)
+            return CoordinateSystem(
+                name=label, axes=_axisorder.permute(axes, orders[name])
+            )
 
         # Stored arrays are C-ordered. A level whose permutation reverses the
         # stored axes is F-ordered, as in nibabel; any other permutation leaves
         # the order unspecified.
         reverses = list(perm) == list(range(ndim))[::-1]
-        voxel_system = CoordinateSystem(
+        voxel_system = ArrayCoordinateSystem(
             name="voxel",
             axes=[replace(axis, unit="index") for axis in canonical_axes],
             order="F" if reverses else None,
@@ -320,21 +324,19 @@ class OmeZarrImage(
             geometry = level_transformation(
                 dataset,
                 perm,
-                ndim,
                 node=node,
                 store_axes=store_axes,
                 input=voxel_system,
                 output=intrinsic_system,
+                orders=orders,
             )
-            level = OmeZarrLevel(
-                transformations=[geometry], node=array, perm=perm
-            )
+            level = _level(array, perm, geometry)
             images.append(level)
 
         commons = common_transformations(
             multiscale,
+            orders,
             perm,
-            ndim,
             node=node,
             store_axes=store_axes,
             input=intrinsic_system,
@@ -383,7 +385,12 @@ class OmeZarrImage(
         ------
         WriterError
             If `node` is an array, if a level is missing or empty, or if the
-            axes or transformations cannot be written.
+            axes or transformations cannot be written. This includes a
+            level that does not only scale and translate each axis in a
+            pyramid of several levels, or in a pyramid that has its own
+            placements, since an OME-NGFF 0.6 dataset only holds a scale and
+            a translation. The geometry of a single level becomes the
+            placement of a pyramid that has none.
         """
         node = _as_node(node)
         if not isinstance(node, ZarrGroup):
@@ -408,6 +415,33 @@ class OmeZarrImage(
 
         levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
         rich = False
+        placements = list(self.transformations or [])
+        moved_placement = False
+        # A dataset only holds a positive scale, and a flip is never written
+        # as a negative one (item 135). The flip that every level shares
+        # therefore goes before the placements of the pyramid, as a linear
+        # transformation, and each level keeps the rest of its geometry.
+        geometries = [image.transformation for image in images]
+        signs = _shared_flip(geometries, ndim)
+        if signs is not None:
+            geometries = [
+                _map.unflipped(geometry, signs, ndim)
+                for geometry in geometries
+            ]
+            linear = _map.flip(signs)
+            if placements:
+                placements = [
+                    Sequence(
+                        [linear, placement],
+                        input=getattr(placement, "input", None),
+                        output=getattr(placement, "output", None),
+                    )
+                    for placement in placements
+                ]
+            else:
+                output = getattr(images[0].transformation, "output", None)
+                placements = [replace(linear, output=output)]
+            moved_placement = True
         for index, image in enumerate(images):
             data = image.data
             if data is None:
@@ -415,8 +449,8 @@ class OmeZarrImage(
                     f"Level {index} of this multiscale image has no data."
                 )
             try:
-                entry = _map.to_ome(
-                    image.transformation,
+                entry = _map.to_dataset_ome(
+                    geometries[index],
                     storage_perm,
                     len(data.shape),
                 )
@@ -425,6 +459,25 @@ class OmeZarrImage(
                     f"Level {index} of this image cannot be written as "
                     f"OME-Zarr metadata. {error}"
                 ) from error
+            if entry is None:
+                # A dataset only scales and translates. The geometry of a
+                # single level becomes the placement of the pyramid, which is
+                # exact. Splitting the geometry of several levels into a
+                # diagonal part per level and a shared placement is not done
+                # yet (#447).
+                if len(images) != 1 or placements:
+                    raise WriterError(
+                        f"Level {index} of this image is placed by a "
+                        "transformation that does not only scale and "
+                        "translate each axis, which an OME-NGFF 0.6 dataset "
+                        "cannot hold. Give the levels a scale and a "
+                        "translation, and the multiscale image the rest of "
+                        "the placement. Splitting it when writing is tracked "
+                        "in neuroscales/brainhops#447."
+                    )
+                placements.append(geometries[index])
+                entry = _map.to_ome(Identity(), storage_perm, len(data.shape))
+                moved_placement = True
             rich = rich or _map.needs_rich_version(entry)
             backend = get_array_backend(data)
             stored = backend.transpose(data, storage_perm)
@@ -436,7 +489,6 @@ class OmeZarrImage(
 
         # Placements are written once as common transformations instead of
         # being folded into the levels, so a round trip keeps them apart.
-        placements = list(self.transformations or [])
         entries = []  # type: tx.List[tx.Dict[str, tx.Any]]
         for placement in placements:
             try:
@@ -448,15 +500,30 @@ class OmeZarrImage(
                 ) from error
             rich = rich or _map.needs_rich_version(entry)
             entries.append(entry)
+        rich = rich or moved_placement
         # Only 0.6 and later name coordinate systems, which several world
         # spaces require.
         rich = rich or len(entries) > 1
-        worlds = resolve_world_names(
-            [
-                getattr(getattr(placement, "output", None), "name", None)
-                for placement in placements
-            ]
-        )
+        # A system of the group of the pyramid is written under its OME name.
+        # A system of another group cannot be the world space of this one.
+        try:
+            own = group_path(self.group)
+        except ValueError as error:
+            raise WriterError(str(error)) from error
+        names = []  # type: tx.List[tx.Optional[str]]
+        for placement in placements:
+            name = getattr(getattr(placement, "output", None), "name", None)
+            if isinstance(name, str):
+                group, name = split_system_name(name)
+                if group != own:
+                    raise WriterError(
+                        "This pyramid is placed in the coordinate system "
+                        f"{name!r} of the group {group!r}, which is not its "
+                        "own group, so it cannot be written as one of its "
+                        "world spaces."
+                    )
+            names.append(name)
+        worlds = resolve_world_names(names)
         commons = list(zip(worlds, entries))
 
         resolved = resolve_write_version(version, self._ome_version, rich)
@@ -481,7 +548,7 @@ class OmeZarrImage(
 
     def _write_axes(self, ndim: int) -> tx.List[Axis]:
         axes = self.axes
-        if axes and (axes.is_open or axes.ndim == ndim):
+        if axes and (axes.is_variadic or axes.ndim == ndim):
             # OME-Zarr cannot store `...`, so an open axis list is closed to
             # the dimensionality of the data.
             try:
@@ -512,3 +579,37 @@ def _default_canonical_axes(ndim: int) -> tx.List[Axis]:
         for i in range(extra)
     ]
     return spatial + non_spatial
+
+
+def _shared_flip(
+    geometries: tx.Sequence[Transformation], ndim: int
+) -> tx.Optional[tx.Any]:
+    # Return the signs of the flip that every level shares, or `None` when
+    # no level flips an axis or when a level does not only scale and
+    # translate, which the writer handles level by level. Levels that flip
+    # different axes cannot share one placement (#447).
+    signs = [_map.diagonal_signs(geometry, ndim) for geometry in geometries]
+    if any(sign is None for sign in signs):
+        return None
+    if not any(bool((sign < 0).any()) for sign in signs):
+        return None
+    if any(list(sign) != list(signs[0]) for sign in signs):
+        raise WriterError(
+            "The levels of this image flip different axes, so the flip "
+            "cannot be moved to a placement that they share, and an "
+            "OME-NGFF dataset only holds a positive scale. Splitting the "
+            "geometry of the levels when writing is tracked in "
+            "neuroscales/brainhops#447."
+        )
+    return signs[0]
+
+
+def _level(
+    array: tx.Any, perm: tx.Sequence[int], geometry: Transformation
+) -> OmeZarrLevel:
+    """Return the level of a dataset, which reads its array lazily."""
+    return OmeZarrLevel(
+        transformations=[geometry],
+        rawdata=_ZarrProxy(array, store_location(array), perm),
+        metadata=ZarrMetadata.from_raw(ZarrRaw.from_node(array)),
+    )

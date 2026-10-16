@@ -37,16 +37,22 @@ __all__ = ["relabel", "relabelling", "relabels"]
 
 import typing_extensions as tx
 
+from brainhops._core.magic import replace
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._transformations.compute.adaptors import bridge
 from brainhops.datamodel._transformations.compute.convert import (
     convert,
     find_converter,
 )
-from brainhops.errors import ConversionError, IncompatibleSystemError
+from brainhops.errors import (
+    AdaptationError,
+    ConversionError,
+    IncompatibleSystemError,
+)
 
 from ._base import TransformationFormat
 from ._conversions import unrepresentable
-from .affines import _check_endpoint
+from .affines import _check_endpoint, _compatible
 
 
 def relabelling(
@@ -132,7 +138,14 @@ def relabel(
     none, and with the system that the relabelled format reports, as the
     classes bound to coordinate systems check when they are built. An
     endpoint of `t` that is not known passes, and so does any endpoint
-    on a side where the format has no system of its own.
+    on a side where the format has no system of its own. A format that
+    stores an affine first carries `t` into its own systems when they
+    differ: each such endpoint is bridged as composition bridges two
+    neighbours, by reordering, flipping and rescaling axes, so an affine
+    between LPS systems is held exactly by a format between RAS systems.
+    A voxel system is not bridged to a world system, because that needs
+    the geometry of the volume, which a format converts in its own exact
+    converter.
 
     Parameters
     ----------
@@ -176,11 +189,15 @@ def relabel(
         # A chain that a format decodes from its file is not held in a
         # field, so the copy would not find it there.
         kwargs.setdefault("transformations", tuple(t))
-        source = t
-    elif isinstance(t, model):
-        source = t
+        # Another kind of chain, such as a mutable one, holds the same
+        # fields, and is rebuilt as the data model so that the copy is
+        # between related classes.
+        source = t if isinstance(t, model) else replace(t, model)
     else:
-        source = _within_data_model(t, cls, model)
+        t = _adapted(t, cls)
+        source = (
+            t if isinstance(t, model) else _within_data_model(t, cls, model)
+        )
     _check_endpoints(t, cls, cls())
     result = _rebuild(t, cls, source, kwargs)
     _check_endpoints(t, cls, result)
@@ -204,6 +221,35 @@ def _data_model(cls: type) -> tx.Optional[type]:
         ):
             return base
     return None
+
+
+def _adapted(t: _xforms.Transformation, cls: type) -> _xforms.Transformation:
+    # `t` carried into the coordinate systems of the format, when an
+    # endpoint of `t` is known but differs from the system of the format
+    # on that side. Each such endpoint is bridged, as composition bridges
+    # two neighbours: by reordering, flipping and rescaling axes, which is
+    # exact, and the bridged chain is composed into an affine. A system
+    # that cannot be bridged this way, such as a voxel system against a
+    # world system, leaves `t` as it is, and the check of the endpoints
+    # then refuses it.
+    held = cls()
+    chain = [t]
+    if held.input is not None and not _compatible(t.input, held.input):
+        chain.insert(0, (held.input, t.input))
+    if held.output is not None and not _compatible(t.output, held.output):
+        chain.append((t.output, held.output))
+    if len(chain) == 1:
+        return t
+    try:
+        chain = [
+            bridge(*link, allow_type_grouped_positional=True)
+            if isinstance(link, tuple)
+            else link
+            for link in chain
+        ]
+        return convert(_xforms.Sequence(chain), _xforms.Affine)
+    except (AdaptationError, ConversionError):
+        return t
 
 
 def _within_data_model(

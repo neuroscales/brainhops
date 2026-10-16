@@ -390,17 +390,18 @@ def test_writer_writes_a_non_axis_aligned_geometry_as_an_affine(
     # OME carries a sheared placement as a full affine.
     matrix = np.eye(3, 4)
     matrix[0, 1] = 0.5
-    image = SingleScaleImage(
-        data=np.zeros((3, 3, 3), "float32"),
+    image = SingleScaleImage(np.zeros((3, 3, 3), "float32"))
+    pyramid = OmeZarrImage(
+        images=[image],
+        axes=_spatial_axes(),
         transformations=[Affine(matrix=matrix)],
     )
-    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
     path = str(tmp_path / "sheared.zarr")
 
     pyramid.save(path)
     back = images.load(path)
 
-    geometry = back.images[0].transformation
+    geometry = back.transformation
     assert isinstance(geometry, Affine)
     np.testing.assert_allclose(_world_matrix(geometry), matrix)
 
@@ -433,20 +434,21 @@ def test_writer_round_trips_a_rotation_placement(tmp_path: Path) -> None:
             [0.0, 0.0, 1.0],
         ]
     )
-    image = SingleScaleImage(
-        data=np.zeros((3, 4, 5), "float32"),
+    image = SingleScaleImage(np.zeros((3, 4, 5), "float32"))
+    pyramid = OmeZarrImage(
+        images=[image],
+        axes=_spatial_axes(),
         transformations=[Rotation(matrix=linear)],
     )
-    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
     path = str(tmp_path / "rot.zarr")
 
     pyramid.save(path)
     back = images.load(path)
 
-    geometry = back.images[0].transformation
+    geometry = back.transformation
     assert isinstance(geometry, Rotation)
     np.testing.assert_allclose(
-        _world_matrix(geometry), _world_matrix(image.transformation)
+        _world_matrix(geometry), _world_matrix(pyramid.transformation)
     )
 
 
@@ -469,22 +471,340 @@ def test_writer_round_trips_a_sequence_placement(tmp_path: Path) -> None:
     placement = Sequence(
         [Rotation(matrix=linear), Translation(translation=[10.0, 20.0, 30.0])]
     )
-    image = SingleScaleImage(
-        data=np.zeros((3, 4, 5), "float32"), transformations=[placement]
+    image = SingleScaleImage(np.zeros((3, 4, 5), "float32"))
+    pyramid = OmeZarrImage(
+        images=[image], axes=_spatial_axes(), transformations=[placement]
     )
-    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
     path = str(tmp_path / "seq.zarr")
 
     pyramid.save(path)
     back = images.load(path)
 
-    geometry = back.images[0].transformation
+    geometry = back.transformation
     assert isinstance(geometry, Sequence)
     kinds = [type(part).__name__ for part in geometry.transformations]
     assert kinds == ["Rotation", "Translation"]
     np.testing.assert_allclose(
-        _world_matrix(geometry), _world_matrix(image.transformation)
+        _world_matrix(geometry), _world_matrix(pyramid.transformation)
     )
+
+
+# ---- the 0.6 dataset rule on write -----------------------------------
+
+
+def _rotation() -> tx.Any:
+    from brainhops.datamodel.transformations import Rotation
+
+    theta = 0.4
+    return Rotation(
+        matrix=[
+            [np.cos(theta), -np.sin(theta), 0.0],
+            [np.sin(theta), np.cos(theta), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+
+
+def _dataset_entries(path: str) -> tx.List[dict]:
+    import json
+
+    with open(Path(path) / "zarr.json") as stream:
+        ome = json.load(stream)["attributes"]["ome"]
+    return [
+        dataset["coordinateTransformations"][0]
+        for dataset in ome["multiscales"][0]["datasets"]
+    ]
+
+
+def test_writer_moves_the_rotation_of_a_single_level_to_the_pyramid(
+    tmp_path: Path,
+) -> None:
+    # A 0.6 dataset only scales and translates, so the rotation of the only
+    # level becomes the placement of the pyramid, which is exact.
+    rotation = _rotation()
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5), "float32"), transformations=[rotation]
+    )
+    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
+    path = str(tmp_path / "moved.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    assert [entry["type"] for entry in _dataset_entries(path)] == ["scale"]
+    np.testing.assert_allclose(
+        _world_matrix(back.images[0].transformation), np.eye(3, 4)
+    )
+    np.testing.assert_allclose(
+        _world_matrix(back.transformation), _world_matrix(rotation)
+    )
+
+
+@pytest.mark.parametrize("levels", [1, 2])
+def test_writer_refuses_a_rotated_level_it_cannot_move(
+    tmp_path: Path, levels: int
+) -> None:
+    # Splitting the geometry of the levels into a diagonal part per level and
+    # a shared placement is not done yet (#447), so a rotated level of a
+    # pyramid of several levels, or of a pyramid that has its own
+    # placement, is refused.
+    data = np.zeros((4, 4, 4), "float32")
+    rotated = SingleScaleImage(data, transformations=[_rotation()])
+    if levels == 2:
+        coarse = SingleScaleImage(
+            data[::2, ::2, ::2],
+            transformations=[_diag_affine([2.0, 2.0, 2.0], [0.5] * 3)],
+        )
+        pyramid = OmeZarrImage(images=[rotated, coarse], axes=_spatial_axes())
+    else:
+        pyramid = OmeZarrImage(
+            images=[rotated],
+            axes=_spatial_axes(),
+            transformations=[Translation(translation=[1.0, 2.0, 3.0])],
+        )
+
+    with pytest.raises(WriterError, match="#447"):
+        pyramid.save(str(tmp_path / "refused.zarr"))
+
+
+def test_writer_writes_a_diagonal_level_as_a_scale_then_a_translation(
+    tmp_path: Path,
+) -> None:
+    # A translation followed by a scale only scales and translates each
+    # axis, so it is written in the order that the prose of 0.6 asks for.
+    from brainhops.datamodel.transformations import Scaling, Sequence
+
+    data = np.zeros((4, 4, 4), "float32")
+    shifted = Sequence(
+        [
+            Translation(translation=[1.0, 2.0, 3.0]),
+            Scaling(scale=[2.0, 3.0, 4.0]),
+        ]
+    )
+    fine = SingleScaleImage(data, transformations=[shifted])
+    coarse = SingleScaleImage(
+        data[::2, ::2, ::2],
+        transformations=[_diag_affine([4.0, 6.0, 8.0], [3.0, 7.0, 13.0])],
+    )
+    pyramid = OmeZarrImage(images=[fine, coarse], axes=_spatial_axes())
+    path = str(tmp_path / "diagonal.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    first = _dataset_entries(path)[0]
+    kinds = [step["type"] for step in first["transformations"]]
+    assert kinds == ["scale", "translation"]
+    np.testing.assert_allclose(
+        _world_matrix(back.images[0].transformation), _world_matrix(shifted)
+    )
+
+
+# ---- flips on write ----------------------------------------------------
+
+
+def _scales_written(path: str) -> tx.List[tx.List[float]]:
+    # Every OME scale of the metadata, in the levels and in the placements.
+    import json
+
+    with open(Path(path) / "zarr.json") as stream:
+        ome = json.load(stream)["attributes"]["ome"]
+    found = []  # type: tx.List[tx.List[float]]
+
+    def walk(entry: dict) -> None:
+        if entry.get("type") == "scale":
+            found.append(entry["scale"])
+        for child in entry.get("transformations", []):
+            walk(child)
+
+    for multiscale in ome["multiscales"]:
+        for dataset in multiscale["datasets"]:
+            for entry in dataset["coordinateTransformations"]:
+                walk(entry)
+        for entry in multiscale.get("coordinateTransformations", []):
+            walk(entry)
+    return found
+
+
+def _flipped_pyramid(placements: tx.Optional[list] = None) -> OmeZarrImage:
+    data = np.zeros((4, 4, 4), "float32")
+    fine = SingleScaleImage(
+        data, transformations=[_diag_affine([-1.0, 2.0, 3.0], [5, 6, 7])]
+    )
+    coarse = SingleScaleImage(
+        data[::2, ::2, ::2],
+        transformations=[_diag_affine([-2.0, 4.0, 6.0], [4.5, 7, 8])],
+    )
+    return OmeZarrImage(
+        images=[fine, coarse],
+        axes=_spatial_axes(),
+        transformations=placements,
+    )
+
+
+def _world_of_level(pyramid: tx.Any, index: int) -> np.ndarray:
+    from brainhops.datamodel.transformations import Sequence
+
+    level = pyramid.images[index].transformation
+    if not pyramid.transformations:
+        return _world_matrix(level)
+    return _world_matrix(Sequence([level, pyramid.transformation]))
+
+
+@pytest.mark.parametrize("placed", [False, True])
+def test_writer_moves_a_shared_flip_to_the_placement(
+    tmp_path: Path, placed: bool
+) -> None:
+    # The flip that every level shares becomes a linear placement, written
+    # as an affine, and each level keeps a positive scale (memo item 135).
+    placements = [Translation([1.0, 2.0, 3.0])] if placed else None
+    pyramid = _flipped_pyramid(placements)
+    path = str(tmp_path / "flipped.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    assert all(value > 0 for scale in _scales_written(path) for value in scale)
+    for index in range(2):
+        np.testing.assert_allclose(
+            _world_of_level(back, index), _world_of_level(pyramid, index)
+        )
+
+
+def test_writer_writes_a_flipped_placement_as_an_affine(
+    tmp_path: Path,
+) -> None:
+    from brainhops.datamodel.transformations import Scaling
+
+    pyramid = OmeZarrImage(
+        images=[SingleScaleImage(np.zeros((3, 4, 5), "float32"))],
+        axes=_spatial_axes(),
+        transformations=[Scaling([-1.0, 1.0, 2.0])],
+    )
+    path = str(tmp_path / "flipped.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    assert all(value > 0 for scale in _scales_written(path) for value in scale)
+    np.testing.assert_allclose(
+        _world_matrix(back.transformation),
+        _world_matrix(pyramid.transformation),
+    )
+
+
+def test_writer_refuses_levels_that_flip_different_axes(
+    tmp_path: Path,
+) -> None:
+    data = np.zeros((4, 4, 4), "float32")
+    fine = SingleScaleImage(
+        data, transformations=[_diag_affine([-1.0, 2.0, 3.0], [0, 0, 0])]
+    )
+    coarse = SingleScaleImage(
+        data[::2, ::2, ::2],
+        transformations=[_diag_affine([2.0, -4.0, 6.0], [0, 0, 0])],
+    )
+    pyramid = OmeZarrImage(images=[fine, coarse], axes=_spatial_axes())
+
+    with pytest.raises(WriterError, match="#447"):
+        pyramid.save(str(tmp_path / "refused.zarr"))
+
+
+def test_writer_refuses_a_flip_in_a_version_without_affines(
+    tmp_path: Path,
+) -> None:
+    # Versions 0.4 and 0.5 only hold scales and translations, with no slot
+    # for the linear placement of a flip.
+    with pytest.raises(WriterError, match="flip"):
+        _flipped_pyramid().save(str(tmp_path / "old.zarr"), version="0.5")
+
+
+# ---- systems of other groups ------------------------------------------
+
+
+def _parent_and_labels(tmp_path: Path) -> tx.Any:
+    # Two pyramids whose systems have the same OME names: one in the root
+    # group, one in its labels group.
+    path = str(tmp_path / "parent.zarr")
+    data = np.zeros((3, 4, 5), "float32")
+    OmeZarrImage(images=[SingleScaleImage(data)], axes=_spatial_axes()).save(
+        path
+    )
+    root = abczarr.open_group(path, mode="a")
+    cells = root.create_group("labels").create_group("cells")
+    labels = OmeZarrImage(
+        images=[SingleScaleImage(data.astype("uint8"))], axes=_spatial_axes()
+    )
+    labels.to_node(cells)
+    return root
+
+
+def test_reader_names_the_systems_of_a_group_after_its_path(
+    tmp_path: Path,
+) -> None:
+    root = _parent_and_labels(tmp_path)
+
+    parent = OmeZarrImage.from_node(root)
+    labels = OmeZarrImage.from_node(root["labels/cells"], group="labels/cells")
+
+    parent_space = parent.images[0].transformation.output
+    labels_space = labels.images[0].transformation.output
+    assert parent_space.name == "physical"
+    assert labels_space.name == "labels/cells//physical"
+    assert parent_space != labels_space
+
+
+def test_reader_of_a_group_without_its_path_keeps_the_ome_names(
+    tmp_path: Path,
+) -> None:
+    # Without the path, which only the reader of the root knows, the labels
+    # are read as a root group, and their system cannot be told apart from
+    # the one of the parent (memo item 132).
+    root = _parent_and_labels(tmp_path)
+
+    parent = OmeZarrImage.from_node(root)
+    labels = OmeZarrImage.from_node(root["labels/cells"])
+
+    assert (
+        labels.images[0].transformation.output
+        == parent.images[0].transformation.output
+    )
+
+
+def test_writer_writes_the_ome_names_of_the_systems_of_its_group(
+    tmp_path: Path,
+) -> None:
+    # A pyramid read from a labels group is written under the OME names of
+    # its systems.
+    root = _parent_and_labels(tmp_path)
+    labels = OmeZarrImage.from_node(root["labels/cells"], group="labels/cells")
+    world = labels.images[0].transformation.output
+    placed = replace(
+        labels,
+        transformations=[Translation([1.0, 2.0, 3.0], output=world)],
+    )
+    path = str(tmp_path / "copy.zarr")
+
+    placed.save(path)
+
+    back = OmeZarrImage.from_store(path)
+    assert back.transformation.output.name == "physical"
+
+
+def test_writer_refuses_a_world_space_of_another_group(
+    tmp_path: Path,
+) -> None:
+    from brainhops.datamodel.systems import CoordinateSystem
+
+    other = CoordinateSystem(name="labels/cells//physical")
+    pyramid = OmeZarrImage(
+        images=[SingleScaleImage(np.zeros((3, 4, 5), "float32"))],
+        axes=_spatial_axes(),
+        transformations=[Translation([1.0, 2.0, 3.0], output=other)],
+    )
+
+    with pytest.raises(WriterError, match="labels/cells"):
+        pyramid.save(str(tmp_path / "other.zarr"))
 
 
 def test_reader_refuses_unsupported_coordinate_transformation(
@@ -687,10 +1007,11 @@ def test_a_copy_of_a_read_level_stays_lazy(tmp_path: Path) -> None:
     _small_pyramid().save(path)
     level = OmeZarrImage.from_store(path).images[0]
     copy = replace(level)
-    # The copy keeps the node and the permutation, and reads no array.
+    # The copy keeps the lazy array, which permutes the axes, and the
+    # record, and reads no array.
     assert copy._data is None
-    assert copy.node is level.node
-    assert copy._perm == level._perm
+    assert copy.rawdata is level.rawdata
+    assert copy.metadata is level.metadata
     assert getattr(level, "_cache_data", None) is None
     assert np.array_equal(np.asarray(copy.data), np.asarray(level.data))
     # An assigned array is copied as it is.
@@ -879,6 +1200,7 @@ def _authored_pyramid(
     axes: tx.List[dict],
     shape: tuple,
     arrays: tx.Optional[dict] = None,
+    inner_transform: tx.Optional[dict] = None,
 ) -> str:
     """Write a 0.6 group whose one level carries `transform`.
 
@@ -896,18 +1218,36 @@ def _authored_pyramid(
             group.create_array(name, data=data, dimension_names=names)
         else:
             group.create_array(name, data=array)
+    transformations = (
+        {
+            "coordinateTransformations": [
+                dict(
+                    transform,
+                    input={"name": "phys"},
+                    output={"name": "model"},
+                )
+            ]
+        }
+        if transform
+        else {}
+    )
+    inner_transform = inner_transform or {"type": "identity"}
     group.ome = v6.OME.from_json(
         {
             "version": "0.6",
             "multiscales": [
                 {
-                    "coordinateSystems": [{"name": "phys", "axes": axes}],
+                    "coordinateSystems": [
+                        {"name": "phys", "axes": axes},
+                        {"name": "model", "axes": axes},
+                    ],
+                    **transformations,
                     "datasets": [
                         {
                             "path": "0",
                             "coordinateTransformations": [
                                 dict(
-                                    transform,
+                                    inner_transform,
                                     input={"path": "0"},
                                     output={"name": "phys"},
                                 )
@@ -938,7 +1278,7 @@ def test_reader_maps_a_rotation_to_a_rotation(tmp_path: Path) -> None:
         _SPACE2,
         (5, 4),
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Rotation)
     # The stored (y, x) rotation is reordered to (x, y).
     np.testing.assert_allclose(
@@ -953,7 +1293,7 @@ def test_reader_maps_an_affine_to_an_affine(tmp_path: Path) -> None:
         _SPACE2,
         (5, 4),
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Affine)
     np.testing.assert_allclose(
         np.asarray(geometry.matrix), [[3.0, 0.0, 6.0], [0.0, 2.0, 5.0]]
@@ -969,15 +1309,16 @@ def test_reader_maps_a_sequence_to_a_sequence(tmp_path: Path) -> None:
 
     path = _authored_pyramid(
         tmp_path,
-        {
+        {},
+        _SPACE3,
+        (6, 5, 4),
+        inner_transform={
             "type": "sequence",
             "transformations": [
                 {"type": "scale", "scale": [3.0, 2.0, 1.0]},
                 {"type": "translation", "translation": [30.0, 20.0, 10.0]},
             ],
         },
-        _SPACE3,
-        (6, 5, 4),
     )
     geometry = OmeZarrImage.from_store(path).images[0].transformation
     assert isinstance(geometry, Sequence)
@@ -991,23 +1332,40 @@ def test_reader_maps_a_map_axis_to_a_permutation(tmp_path: Path) -> None:
     path = _authored_pyramid(
         tmp_path, {"type": "mapAxis", "mapAxis": [1, 0]}, _SPACE2, (5, 4)
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Permutation)
     np.testing.assert_array_equal(np.asarray(geometry.permutation), [1, 0])
 
 
-def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
-    # A mapAxis over a subset of the input axes is a Projection; tested on
-    # the mapping, since such a level is not wired through the reader.
+def test_reader_refuses_a_map_axis_over_a_subset_of_the_axes() -> None:
+    # A subset of the input axes was never a valid mapAxis, and the drop is
+    # spelled projectAxis (spec/design/compute-api-and-open-systems.md,
+    # section A.8); tested on the mapping, since such a level is not wired
+    # through the reader. abczarr 0.2.3 already refuses it when it parses
+    # it, with a value error.
+    from abczarr.ome.v0_6.transformations import CoordinateTransformation
+
+    from brainhops.io.images.zarr import _ome
+
+    with pytest.raises((OmeImageError, ValueError)):
+        transform = CoordinateTransformation.from_json(
+            {"type": "mapAxis", "mapAxis": [0, 2]}
+        )
+        _ome._map_transform(transform, [0, 1, 2], [0, 1])
+
+
+def test_reader_maps_a_project_axis_to_a_projection() -> None:
+    # A projectAxis that drops an input axis is a Projection; tested on the
+    # mapping, since such a level is not wired through the reader.
     from abczarr.ome.v0_6.transformations import CoordinateTransformation
 
     from brainhops.datamodel.transformations import Projection
     from brainhops.io.images.zarr import _ome
 
     transform = CoordinateTransformation.from_json(
-        {"type": "mapAxis", "mapAxis": [0, 2]}
+        {"type": "projectAxis", "droppedInputs": [1]}
     )
-    projection = _ome._map_transform(transform, perm=[0, 1, 2], ndim=3)
+    projection = _ome._map_transform(transform, [0, 1, 2], [0, 1])
     assert isinstance(projection, Projection)
     np.testing.assert_array_equal(np.asarray(projection.dropped), [1])
     np.testing.assert_array_equal(np.asarray(projection.created), [])
@@ -1076,14 +1434,24 @@ def _authored_field_pyramid(
             "version": "0.6",
             "multiscales": [
                 {
-                    "coordinateSystems": [{"name": "phys", "axes": _SPACE3}],
+                    "coordinateSystems": [
+                        {"name": "phys", "axes": _SPACE3},
+                        {"name": "model", "axes": _SPACE3},
+                    ],
+                    "coordinateTransformations": [
+                        {
+                            "type": "displacements",
+                            "path": "disp",
+                            "input": {"name": "phys"},
+                            "output": {"name": "model"},
+                        }
+                    ],
                     "datasets": [
                         {
                             "path": "0",
                             "coordinateTransformations": [
                                 {
-                                    "type": "displacements",
-                                    "path": "disp",
+                                    "type": "identity",
                                     "input": {"path": "0"},
                                     "output": {"name": "phys"},
                                 }
@@ -1112,12 +1480,14 @@ def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
             ("d", "displacement"),
         ],
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, DisplacementField)
     result = np.asarray(geometry.field)
-    # Read as (x, y, z, component), without reordering the values.
+    # Read as (x, y, z, component). Component `i` belongs to the stored
+    # output axis `i` (ngff-spec 0.6, "Vector component mapping"), so the
+    # stored (z, y, x) components are reordered into (x, y, z).
     assert result.shape == (4, 5, 6, 3)
-    np.testing.assert_allclose(result[0, 0, 0, :], [100.0, 200.0, 300.0])
+    np.testing.assert_allclose(result[0, 0, 0, :], [300.0, 200.0, 100.0])
 
 
 def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
@@ -1131,13 +1501,13 @@ def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, DisplacementField)
     field = np.asarray(geometry.field)
     # The component axis moves to the end.
     assert field.shape == (4, 5, 6, 3)
-    # The component values are not reordered.
-    np.testing.assert_allclose(field[0, 0, 0, :], [100.0, 200.0, 300.0])
+    # The components follow the output axes into the (x, y, z) order.
+    np.testing.assert_allclose(field[0, 0, 0, :], [300.0, 200.0, 100.0])
 
 
 def test_reader_reads_a_field_by_its_axis_names_not_position(
@@ -1154,11 +1524,11 @@ def test_reader_reads_a_field_by_its_axis_names_not_position(
         (6, 5, 4),
         arrays={"disp": (field, ("z", "y", "x", "d"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, DisplacementField)
     result = np.asarray(geometry.field)
     assert result.shape == (4, 5, 6, 3)
-    np.testing.assert_allclose(result[0, 0, 0, :], [100.0, 200.0, 300.0])
+    np.testing.assert_allclose(result[0, 0, 0, :], [300.0, 200.0, 100.0])
 
 
 def test_reader_refuses_a_field_that_does_not_name_its_axes(
@@ -1186,7 +1556,7 @@ def test_reader_reads_a_coordinate_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"coord": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, CoordinatesField)
     assert np.asarray(geometry.field).shape == (4, 5, 6, 3)
 
@@ -1211,7 +1581,7 @@ def test_reader_reads_an_affine_surrounded_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Sequence)
     assert isinstance(geometry.transformations[0], Scaling)
     assert isinstance(geometry.transformations[1], DisplacementField)
@@ -1240,7 +1610,7 @@ def test_reader_maps_a_multi_field_sequence_without_banning(
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    geometry = OmeZarrImage.from_store(path).transformation
     assert isinstance(geometry, Sequence)
     assert all(
         isinstance(part, DisplacementField)
@@ -1248,31 +1618,326 @@ def test_reader_maps_a_multi_field_sequence_without_banning(
     )
 
 
+# ---- named coordinate systems of OME-NGFF 0.6 ------------------------
+
+
+_UM = "micrometer"
+
+
+def _space(names: str, unit: tx.Optional[str] = _UM) -> tx.List[dict]:
+    axes = []
+    for name in names:
+        axis = {"name": name, "type": "space"}
+        if unit is not None:
+            axis["unit"] = unit
+        axes.append(axis)
+    return axes
+
+
+def _named_pyramid(
+    tmp_path: Path,
+    systems: tx.List[dict],
+    commons: tx.List[dict],
+    arrays: tx.Optional[tx.Dict[str, np.ndarray]] = None,
+    scale: tx.Sequence[float] = (1.0, 1.0, 1.0),
+) -> str:
+    """Write a 0.6 pyramid of one (z, y, x) level onto `intrinsic`, with
+    other named systems and the common transformations that reach them.
+    """
+    from abczarr.ome import v0_6 as v6
+
+    path = str(tmp_path / "named.zarr")
+    group = abczarr.open_group(path, mode="w")
+    group.create_array("0", data=np.ones((6, 5, 4), "float32"))
+    for name, array in (arrays or {}).items():
+        group.create_array(name, data=array)
+    block = {
+        "coordinateSystems": [{"name": "intrinsic", "axes": _space("zyx")}]
+        + systems,
+        "datasets": [
+            {
+                "path": "0",
+                "coordinateTransformations": [
+                    {
+                        "type": "scale",
+                        "scale": list(scale),
+                        "input": {"path": "0"},
+                        "output": {"name": "intrinsic"},
+                    }
+                ],
+            }
+        ],
+        "coordinateTransformations": commons,
+    }
+    group.ome = v6.OME.from_json({"version": "0.6", "multiscales": [block]})
+    return path
+
+
+@pytest.mark.parametrize("kind", ["scale", "translation"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_reader_refuses_a_scale_or_translation_named_by_path(
+    tmp_path: Path, kind: str, nested: bool
+) -> None:
+    # OME-NGFF 0.6 requires the values of a scale or a translation inline
+    # (memo item 134), wherever the transformation sits.
+    by_path = {"type": kind, "path": "params"}
+    if nested:
+        by_path = {
+            "type": "sequence",
+            "transformations": [{"type": "identity"}, by_path],
+        }
+    common = dict(
+        by_path, input={"name": "intrinsic"}, output={"name": "moved"}
+    )
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "moved", "axes": _space("zyx")}],
+        [common],
+        arrays={"params": np.asarray([1.0, 2.0, 3.0])},
+    )
+    with pytest.raises(OmeImageError, match="inline"):
+        OmeZarrImage.from_store(path)
+
+
+def test_reader_reads_an_affine_named_by_path(tmp_path: Path) -> None:
+    # An affine or a rotation may still name an array of parameters.
+    matrix = np.eye(3, 4)
+    matrix[:, 3] = [1.0, 2.0, 3.0]
+    common = {
+        "type": "affine",
+        "path": "params",
+        "input": {"name": "intrinsic"},
+        "output": {"name": "moved"},
+    }
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "moved", "axes": _space("zyx")}],
+        [common],
+        arrays={"params": matrix},
+    )
+    placement = OmeZarrImage.from_store(path).transformation
+    # The stored (z, y, x) translation is reordered to (x, y, z).
+    np.testing.assert_allclose(_world_matrix(placement)[:, 3], [3.0, 2.0, 1.0])
+
+
+def test_reader_names_each_system_with_its_own_axes_and_units(
+    tmp_path: Path,
+) -> None:
+    # The world system lists its axes as (x, y, z) and in millimeters, and
+    # the mapAxis only spells out that reordering.
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "world", "axes": _space("xyz", "millimeter")}],
+        [
+            {
+                "type": "mapAxis",
+                "mapAxis": [2, 1, 0],
+                "input": {"name": "intrinsic"},
+                "output": {"name": "world"},
+            }
+        ],
+    )
+    pyramid = OmeZarrImage.from_store(path)
+    (placement,) = pyramid.transformations
+    assert placement.input.name == "intrinsic"
+    assert placement.output.name == "world"
+    assert [a.name for a in placement.input.axes] == ["x", "y", "z"]
+    assert [str(a.unit) for a in placement.input.axes] == [_UM] * 3
+    assert [a.name for a in placement.output.axes] == ["x", "y", "z"]
+    assert [str(a.unit) for a in placement.output.axes] == ["millimeter"] * 3
+    np.testing.assert_allclose(_world_matrix(placement), np.eye(3, 4))
+
+
+def test_reader_keeps_a_system_with_fewer_axes(tmp_path: Path) -> None:
+    # The plane system is reached by dropping z, so it has two axes.
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "plane", "axes": _space("yx")}],
+        [
+            {
+                "type": "projectAxis",
+                "droppedInputs": [0],
+                "input": {"name": "intrinsic"},
+                "output": {"name": "plane"},
+            }
+        ],
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    assert [a.name for a in placement.output.axes] == ["x", "y"]
+
+
+def test_reader_inverts_a_transformation_into_the_intrinsic_space(
+    tmp_path: Path,
+) -> None:
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "world", "axes": _space("zyx")}],
+        [
+            {
+                "type": "scale",
+                "scale": [2.0, 4.0, 8.0],
+                "input": {"name": "world"},
+                "output": {"name": "intrinsic"},
+            }
+        ],
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    assert placement.output.name == "world"
+    np.testing.assert_allclose(
+        np.diag(_world_matrix(placement)[:, :3]), [1 / 8, 1 / 4, 1 / 2]
+    )
+
+
+def test_reader_reads_parameters_stored_in_an_array(tmp_path: Path) -> None:
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "world", "axes": _space("zyx")}],
+        [
+            {
+                "type": "affine",
+                "path": "params/affine",
+                "input": {"name": "intrinsic"},
+                "output": {"name": "world"},
+            }
+        ],
+        arrays={
+            "params/affine": np.asarray(
+                [[3.0, 0, 0, 30], [0, 2.0, 0, 20], [0, 0, 1.0, 10]]
+            )
+        },
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    np.testing.assert_allclose(
+        _world_matrix(placement),
+        [[1.0, 0, 0, 10], [0, 2.0, 0, 20], [0, 0, 3.0, 30]],
+    )
+
+
+def test_writer_refuses_a_placement_that_is_not_affine(
+    tmp_path: Path,
+) -> None:
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "plane", "axes": _space("yx")}],
+        [
+            {
+                "type": "projectAxis",
+                "droppedInputs": [0],
+                "input": {"name": "intrinsic"},
+                "output": {"name": "plane"},
+            }
+        ],
+    )
+    pyramid = OmeZarrImage.from_store(path)
+    with pytest.raises(WriterError):
+        pyramid.save(str(tmp_path / "resaved.zarr"))
+
+
+def test_writer_writes_an_inverted_placement_forward(tmp_path: Path) -> None:
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "world", "axes": _space("zyx")}],
+        [
+            {
+                "type": "scale",
+                "scale": [2.0, 4.0, 8.0],
+                "input": {"name": "world"},
+                "output": {"name": "intrinsic"},
+            }
+        ],
+    )
+    target = str(tmp_path / "resaved.zarr")
+    OmeZarrImage.from_store(path).save(target)
+    block = abczarr.open(target, mode="r").ome.to_json()["multiscales"][0]
+    (common,) = block["coordinateTransformations"]
+    assert common["output"] == {"name": "world"}
+    np.testing.assert_allclose(common["scale"], [0.5, 0.25, 0.125])
+
+
+def _displacement_group(
+    group: tx.Any,
+    path: str,
+    vector: tx.List[float],
+    kind: str = "displacement",
+) -> None:
+    """Write a 0.6 field group with a constant vector.
+
+    The vector axis comes before the spatial axes, as OME-NGFF 0.6
+    requires, and the field is sampled every two units. `kind` is the type
+    of the vector axis, `"displacement"` or `"coordinate"`.
+    """
+    from abczarr.ome import v0_6 as v6
+
+    field = np.zeros((len(vector), 3, 3, 2), dtype="float32")
+    for component, value in enumerate(vector):
+        field[component] = value
+    node = group.create_group(path)
+    node.create_array("0", data=field)
+    axes = [{"name": "d", "type": kind, "discrete": True}]
+    node.ome = v6.OME.from_json(
+        {
+            "version": "0.6",
+            "multiscales": [
+                {
+                    "coordinateSystems": [
+                        {"name": "intrinsic", "axes": axes + _space("zyx")}
+                    ],
+                    "datasets": [
+                        {
+                            "path": "0",
+                            "coordinateTransformations": [
+                                {
+                                    "type": "scale",
+                                    "scale": [1.0, 2.0, 2.0, 2.0],
+                                    "input": {"path": "0"},
+                                    "output": {"name": "intrinsic"},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_reader_reads_a_displacement_field_group_of_version_0_6(
+    tmp_path: Path,
+) -> None:
+    from brainhops.datamodel.transformations import (
+        CoordinatesField,
+        Permutation,
+    )
+
+    path = _named_pyramid(
+        tmp_path,
+        [{"name": "warped", "axes": _space("zyx")}],
+        [
+            {
+                "type": "displacements",
+                "path": "fields/disp",
+                "input": {"name": "intrinsic"},
+                "output": {"name": "warped"},
+            }
+        ],
+    )
+    # The stored components are (dz, dy, dx).
+    _displacement_group(
+        abczarr.open_group(path, mode="r+"), "fields/disp", [1.0, 2.0, 3.0]
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    first, field, last = placement.transformations
+    assert isinstance(first, Permutation)
+    assert isinstance(last, Permutation)
+    # A point is carried by (dx, dy, dz) = (3, 2, 1), in brainhops order.
+    points = np.asarray([[[[0.5, 1.0, 1.5]]]])
+    moved = placement(CoordinatesField(field=points), compute=True)
+    np.testing.assert_allclose(
+        np.asarray(moved.field)[0, 0, 0], [3.5, 3.0, 2.5]
+    )
+
+
 # ---- base Zarr writer ------------------------------------------------
-
-
-class _RecordingStorePath:
-    """A store path that records the targets it is copied to."""
-
-    def __init__(self) -> None:
-        self.copies: tx.List[tx.Any] = []
-
-    def copy(self, target: tx.Any) -> None:
-        self.copies.append(target)
-
-
-class _FakeNode(abczarr.ZarrNode):
-    """A minimal Zarr node whose store path records each copy."""
-
-    zarr_version = 3
-    metadata = None
-
-    def __init__(self) -> None:
-        self._store_path = _RecordingStorePath()
-
-    @property
-    def store_path(self) -> _RecordingStorePath:
-        return self._store_path
 
 
 def _base_writer_class() -> tx.Type[tx.Any]:
@@ -1284,24 +1949,91 @@ def _base_writer_class() -> tx.Type[tx.Any]:
     return _Writer
 
 
-def test_base_to_node_returns_the_node_written_into() -> None:
-    source = _FakeNode()
-    target = _FakeNode()
-    writer = _base_writer_class()(node=source)
-    assert writer.to_node(target) is target
-    assert source.store_path.copies == [target.store_path]
+def test_the_base_writer_holds_no_state() -> None:
+    # The adapter adds methods and no field, so it takes no argument.
+    with pytest.raises(TypeError):
+        _base_writer_class()(node=None)
+    assert vars(_base_writer_class()()) == {}
 
 
-def test_base_to_node_refuses_a_parser_without_a_node() -> None:
-    writer = _base_writer_class()()
-    with pytest.raises(WriterError, match="nothing to write"):
-        writer.to_node(_FakeNode())
-
-
-def test_base_to_store_refuses_a_parser_without_a_node(
+def test_the_base_writer_leaves_writing_to_the_format(
     tmp_path: Path,
 ) -> None:
     writer = _base_writer_class()()
-    with pytest.raises(WriterError, match="nothing to write"):
+    with pytest.raises(NotImplementedError):
+        writer.to_node(None)
+    with pytest.raises(NotImplementedError):
         writer.to_store(str(tmp_path / "out.zarr"))
     assert not (tmp_path / "out.zarr").exists()
+
+
+def _field_pyramid(
+    tmp_path: Path,
+    kind: str,
+    vector: tx.List[float],
+    interpolation: tx.Optional[str] = None,
+) -> str:
+    """Write a pyramid placed in `warped` by a 0.6 field group."""
+    common = {
+        "type": kind + "s",
+        "path": "fields/f",
+        "input": {"name": "intrinsic"},
+        "output": {"name": "warped"},
+    }
+    if interpolation is not None:
+        common["interpolation"] = interpolation
+    path = _named_pyramid(
+        tmp_path, [{"name": "warped", "axes": _space("zyx")}], [common]
+    )
+    group = abczarr.open_group(path, mode="r+")
+    _displacement_group(group, "fields/f", vector, kind)
+    return path
+
+
+@pytest.mark.parametrize(
+    ("interpolation", "degree"),
+    [("nearest", 0), ("linear", 1), ("bspline-cubic", 3), (None, 1)],
+)
+def test_reader_reads_the_interpolation_of_a_field_group(
+    tmp_path: Path, interpolation: tx.Optional[str], degree: int
+) -> None:
+    from brainhops.datamodel.transformations import DisplacementField
+
+    path = _field_pyramid(
+        tmp_path, "displacement", [1.0, 2.0, 3.0], interpolation
+    )
+    (placement,) = OmeZarrImage.from_store(path).transformations
+    field = placement.transformations[1]
+    (vectors,) = [
+        part
+        for part in field.transformations
+        if isinstance(part, DisplacementField)
+    ]
+    assert int(vectors.degree) == degree
+
+
+def test_reader_refuses_an_unknown_interpolation(tmp_path: Path) -> None:
+    path = _field_pyramid(
+        tmp_path, "displacement", [1.0, 2.0, 3.0], "windowed-sinc"
+    )
+    with pytest.raises(OmeImageError, match="windowed-sinc"):
+        OmeZarrImage.from_store(path)
+
+
+def test_reader_refuses_coordinates_of_another_length(
+    tmp_path: Path,
+) -> None:
+    # The field has two components, but the output system has three axes.
+    path = _field_pyramid(tmp_path, "coordinate", [1.0, 2.0])
+    with pytest.raises(OmeImageError, match="components"):
+        OmeZarrImage.from_store(path)
+
+
+def test_the_base_writer_refuses_streams_and_bytes() -> None:
+    from io import BytesIO
+
+    writer = _base_writer_class()()
+    with pytest.raises(WriterError):
+        writer.to_fileobj(BytesIO())
+    with pytest.raises(WriterError):
+        writer.to_bytes()

@@ -483,3 +483,158 @@ def test_ants_use_inverse_is_the_inverse(ndim: int) -> None:
     np.testing.assert_allclose(
         _affine(inverse), np.linalg.inv(homogeneous)[:ndim], atol=1e-12
     )
+
+
+# ----------------------------------------------------------------------
+#   RECORDS
+# ----------------------------------------------------------------------
+# The blocks, the byte order and the bytes of a file are held as a record
+# by the metadata of the transformation, which decodes its chain from it.
+
+
+def _two_blocks() -> bytes:
+    parameters, fixed = _parameters(3)
+    return b"".join(
+        [
+            _variable("AffineTransform_double_3_3", parameters),
+            _variable("fixed", fixed),
+            _variable("TranslationTransform_double_3_3", [1.0, 2.0, 3.0]),
+            _variable("fixed", []),
+        ]
+    )
+
+
+def test_the_record_holds_every_block_and_the_bytes() -> None:
+    content = _two_blocks()
+    transform = MatTransform.from_bytes(content, position=1)
+    record = transform.metadata.raw
+    assert isinstance(transform.metadata, itk.mat.MatMetadata)
+    assert isinstance(record, itk.mat.MatRaw)
+    assert [block.type for block in record.blocks] == [
+        itk.ItkTransformClass.AffineTransform,
+        itk.ItkTransformClass.TranslationTransform,
+    ]
+    assert record.byteorder == "<"
+    assert record.content == content
+    # The chain holds the blocks of the record, whose arrays are read-only.
+    (shift,) = transform.transformations
+    assert shift is record.blocks[1]
+    assert not np.asarray(shift.parameters).flags.writeable
+
+
+def test_an_untouched_file_is_written_whole() -> None:
+    """The option `position` selects what is read, not what is written."""
+    content = _two_blocks()
+    transform = MatTransform.from_bytes(content, position=1)
+    assert transform.to_bytes() == content
+    # Reading the chain keeps the record, since it still holds its blocks.
+    assert len(transform.transformations) == 1
+    assert transform.consolidate().metadata is transform.metadata
+    assert transform.to_bytes() == content
+
+
+def test_a_file_that_itk_could_write_otherwise_is_kept_byte_for_byte() -> None:
+    """Variables stored row by row, or a fixed vector named otherwise."""
+    parameters, fixed = _parameters(3)
+    content = _variable(
+        "AffineTransform_float_3_3", parameters, ">", "f4", rowwise=True
+    ) + _variable("center", fixed, ">", "f4", rowwise=True)
+    transform = MatTransform.from_bytes(content)
+    assert transform.to_bytes() == content
+    # Encoding the same blocks again gives other bytes, which is why the
+    # bytes are kept.
+    record = transform.metadata.raw
+    encoded = itk.mat.MatRaw(blocks=record.blocks, byteorder=">").to_bytes()
+    assert encoded != content
+    assert np.array_equal(
+        np.asarray(MatTransform.from_bytes(encoded)[0].parameters),
+        np.asarray(transform[0].parameters),
+    )
+
+
+@pytest.mark.parametrize("ndim", NDIMS)
+def test_the_fixtures_are_encoded_again_byte_for_byte(ndim: int) -> None:
+    """A file that SimpleITK wrote is also what the encoder writes."""
+    content = _fixture(ndim).read_bytes()
+    record = MatTransform.from_bytes(content).metadata.raw
+    encoded = itk.mat.MatRaw(blocks=record.blocks, byteorder="<")
+    assert encoded.to_bytes() == content
+
+
+def test_a_block_changed_in_place_is_written() -> None:
+    content = _fixture(3).read_bytes()
+    transform = MatTransform.from_bytes(content)
+    metadata = transform.metadata
+    shift = xforms.Translation([1.0, 2.0, 3.0])
+    transform[0] = shift
+    consolidated = transform.consolidate()
+    assert consolidated.metadata is not metadata
+    assert transform.metadata is metadata
+    (block,) = MatTransform.from_bytes(transform.to_bytes())
+    assert block.type == itk.ItkTransformClass.AffineTransform
+    np.testing.assert_allclose(
+        np.asarray(block.parameters)[-3:], [1.0, 2.0, 3.0]
+    )
+
+
+def test_a_chain_written_again_keeps_the_byte_order_of_its_file() -> None:
+    parameters, fixed = _parameters(3)
+    name = "AffineTransform_double_3_3"
+    content = _variable(name, parameters, ">") + _variable("fixed", fixed, ">")
+    transform = MatTransform.from_bytes(content)
+    transform.transformations = [xforms.Translation([1.0, 2.0, 3.0])]
+    mopt = np.frombuffer(transform.to_bytes(), ">i4", count=1)[0]
+    assert mopt == 1000
+    mopt = np.frombuffer(transform.to_bytes(byteorder="<"), "<i4", count=1)
+    assert mopt[0] == 0
+
+
+def test_writer_options_are_consolidated_into_a_copy() -> None:
+    content = _fixture(3).read_bytes()
+    transform = MatTransform.from_bytes(content)
+    metadata = transform.metadata
+    # Options that agree with the record keep it.
+    same = transform.consolidate(byteorder="<", precision="double")
+    assert same.metadata is metadata
+    # Other options encode every block again, and the copy holds what the
+    # file holds.
+    single = transform.consolidate(precision="float")
+    assert transform.metadata is metadata
+    (block,) = single.metadata.raw.blocks
+    assert block.precision == itk.ItkPrecision.Float
+    back = MatTransform.from_bytes(single.to_bytes())
+    np.testing.assert_array_equal(
+        np.asarray(back[0].parameters), np.asarray(block.parameters)
+    )
+    assert transform.to_bytes(precision="float") == single.to_bytes()
+
+
+def test_unknown_options_are_refused() -> None:
+    content = _fixture(3).read_bytes()
+    with pytest.raises(TypeError):
+        MatTransform.from_bytes(content, foo=1)
+    with pytest.raises(TypeError):
+        MatTransform.from_bytes(content).to_bytes(foo=1)
+    with pytest.raises(TypeError):
+        itk.mat.MatRaw.from_bytes(content, position=1)
+
+
+def test_systems_other_than_those_of_the_chain_are_refused() -> None:
+    from brainhops.datamodel import systems
+
+    transform = MatTransform.from_bytes(_fixture(3).read_bytes())
+    transform.input = transform[0].input
+    assert transform.consolidate().metadata is transform.metadata
+    transform.input = systems.RASmm()
+    with pytest.raises(UnrepresentableTransformationError):
+        transform.to_bytes()
+
+
+def test_the_metadata_reads_and_writes_the_record() -> None:
+    from brainhops.io.metadata import MetadataFormat
+
+    path = _fixture(3)
+    metadata = MetadataFormat.load(path)
+    assert isinstance(metadata, itk.mat.MatMetadata)
+    assert metadata.to_bytes() == path.read_bytes()
+    assert itk.mat.MatMetadata().to_bytes() == b""

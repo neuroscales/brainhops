@@ -695,15 +695,20 @@ def test_an_affine_lta_cannot_encode_is_refused(
     affine: Affine,
 ) -> None:
     # An affine without LTA systems is refused, and no file is created.
-    with pytest.raises(UnrepresentableTransformationError):
+    # `io.save` gives the reason of each format that claims `.lta`.
+    with pytest.raises(
+        WriterError, match="UnrepresentableTransformationError"
+    ):
         io.save(affine, tmp_path / "x.lta")
     assert not (tmp_path / "x.lta").exists()
-    assert issubclass(UnrepresentableTransformationError, WriterError)
+    with pytest.raises(UnrepresentableTransformationError):
+        LtaTransformation.from_instance(affine).save(tmp_path / "x.lta")
+    assert not (tmp_path / "x.lta").exists()
 
 
 def test_a_non_3d_affine_is_refused(tmp_path) -> None:  # noqa: ANN001
     affine = Affine(
         np.eye(3)[:-1], input=_systems.RASmm(), output=_systems.RASmm()
     )
-    with pytest.raises(UnrepresentableTransformationError, match="shape"):
+    with pytest.raises(WriterError, match="shape"):
         io.save(affine, tmp_path / "x.lta")

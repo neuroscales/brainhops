@@ -389,13 +389,16 @@ def test_an_lta_relabels_an_affine_between_ras_spaces(
         )
 
 
-def test_an_lps_affine_is_not_relabelled_as_a_ras_lta() -> None:
+def test_an_lps_affine_is_bridged_into_a_ras_lta() -> None:
     # An LTA of the RAS type maps RAS to RAS, so an affine between LPS
-    # spaces would mean another map. It is refused by every entry point.
+    # spaces is carried into RAS by every entry point, by flipping the
+    # first two axes on both sides, rather than relabelled as it is.
     t = _families(LPSmm(), LPSmm())["affine"]
-    for convert in _conversions(LtaTransformationRASToRAS):
-        with pytest.raises(ConversionError, match="not compatible"):
-            convert(t)
+    flip = np.diag([-1.0, -1.0, 1.0, 1.0])
+    expected = (flip @ t.homogeneous_matrix @ flip)[:-1]
+    for lta in _entry_points(t, LtaTransformationRASToRAS):
+        assert type(lta) is LtaTransformationRASToRAS
+        np.testing.assert_allclose(lta.matrix, expected)
 
 
 def test_an_affine_without_systems_is_relabelled_as_an_lta() -> None:

@@ -9,15 +9,15 @@ dependencies = [
     "numpy",
     "scipy",
     "bagof-dispatchers >= 0.3.1",
-    "bagof-hints >= 0.1",
+    "bagof-hints ~= 0.1",
     # 0.2 parameterises a polymorphic class (`Inverse[Affine]`), which the
     # typed inverses declare; 0.1 raises on it. 0.3 registers a subclass
     # with every polymorphic level above it and conjoins the constraints
     # it inherits, which the axes and coordinate systems rely on. 0.3.dev3
     # lets a subclass forget an inherited field (`Forget`) or take it over
     # under another name (`Inherit`).
-    "bagof-magic >= 0.3.dev3",
-    "bagof-paths >= 0.2",
+    "bagof-magic ~= 0.3",
+    "bagof-paths ~= 0.2",
     # Units are parsed by pint, imported on first use. 0.21.1 is the last
     # release for Python 3.8; 0.24 is the first to support numpy 2.
     "pint >= 0.21; python_version < '3.9'",
@@ -39,6 +39,8 @@ backends = ["brainhops[dask]", "brainhops[cupy]"]
 h5py = ["h5py"]
 itk = ["brainhops[h5py]"]
 x5 = ["brainhops[h5py]"]
+# BigDataViewer images are HDF5 files; their registrations are XML only.
+bdv = ["brainhops[h5py]"]
 # MATLAB v7.3 (HDF5) .mat matrices; text, .npy, .npz and v4-v7 .mat need
 # only numpy and scipy.
 matrix = ["brainhops[h5py]"]
@@ -53,6 +55,7 @@ nifti = ["brainhops[nibabel]"]
 mgh = ["brainhops[nibabel]"]
 # MINC1 is read with nibabel; MINC2 (HDF5) also needs h5py.
 minc = ["brainhops[nibabel]", "brainhops[h5py]"]
+imaris = ["brainhops[h5py]"]
 spm = ["brainhops[nifti]"]
 fsl = ["brainhops[nifti]"]
 niftyreg = ["brainhops[nifti]"]
@@ -64,7 +67,8 @@ niftyreg = ["brainhops[nifti]"]
 zarr = [
     # 0.2 for OME 0.6 support;
     # 0.2.1 opens and creates a store from any os.PathLike.
-    "abczarr >= 0.2.1",
+    # 0.2.3 checks that a 0.6 dataset only scales and translates.
+    "abczarr >= 0.2.3",
     # abczarr reads and writes Zarr through a driver.
     # The zarr-py driver needs zarr-python 3, which requires python >= 3.11
     "zarr >= 3; python_version >= '3.11'",
@@ -73,15 +77,21 @@ zarr = [
     # range 3.8-3.10.
     "tensorstore >= 0.1.43 ; python_version <= '3.10'",
 ]
-zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
-zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]
-zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
+# N5 datasets are read with TensorStore, whose n5 driver decodes the raw,
+# gzip, bzip2, xz and blosc compressions.
+n5 = ["tensorstore >= 0.1.45"]
+precomputed = ["tensorstore >= 0.1.45"]
+zarr-python = ["abczarr[zarr-py] >= 0.2.3"]
+zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.3", "tensorstore >= 0.1.43"]
+zarr-zarrista = ["abczarr[zarrista] >= 0.2.3"]
 io = [
     "brainhops[h5py]",
     "brainhops[nibabel]",
     "brainhops[pillow]",
     "brainhops[tiff]",
     "brainhops[openslide]",
+    "brainhops[n5]",
+    "brainhops[precomputed]",
     "brainhops[zarr]",
 ]
 
@@ -95,7 +105,11 @@ test = [
     "brainhops[pillow]",
     "brainhops[tiff]",
     "brainhops[openslide]",
-    "brainhops[zarr]"
+    "brainhops[n5]",
+    "brainhops[precomputed]",
+    "brainhops[zarr]",
+    # Some tests open remote paths with universal_pathlib.
+    "universal_pathlib",
 ]
 
 # doc
