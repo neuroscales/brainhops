@@ -96,25 +96,6 @@ io = [
 ]
 
 # test
-# Third-party libraries that the tests use only to cross-check brainhops
-# (they are not dependencies of any I/O); tests that need one skip when it
-# is missing.
-test-interop = [
-    "SimpleITK",
-    # SimpleITK 2.5 has no wheels for Python 3.8, and building it from
-    # source is slow.
-    "SimpleITK < 2.5 ; python_version < '3.9'",
-    # itk-elastix pulls in ITK and adds elastix/transformix to it. ITK
-    # 5.4.4, the last release with Python 3.8 wheels, uses `numpy.bool`,
-    # which only numpy >= 2 (Python 3.9+) has.
-    "itk-elastix ; python_version >= '3.9'",
-    "nitransforms",
-    "fslpy",
-    # fslpy 3.28 uses syntax that needs Python 3.9.
-    "fslpy < 3.28 ; python_version < '3.9'",
-    "pynrrd",
-    "universal_pathlib",
-]
 test = [
     "pytest",
     "pytest-cov",
@@ -127,7 +108,8 @@ test = [
     "brainhops[n5]",
     "brainhops[precomputed]",
     "brainhops[zarr]",
-    "brainhops[test-interop]",
+    # Some tests open remote paths with universal_pathlib.
+    "universal_pathlib",
 ]
 
 # doc
