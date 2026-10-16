@@ -99,6 +99,8 @@ io = [
 test = [
     "pytest",
     "pytest-cov",
+    # Runs the tests in parallel (`pytest -n auto`).
+    "pytest-xdist",
     "brainhops[dask]",
     "brainhops[h5py]",
     "brainhops[nibabel]",

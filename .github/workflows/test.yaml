@@ -47,4 +47,5 @@ jobs:
           pip install -e .[test]
       - name: Test with pytest
         shell: bash
-        run: pytest
+        # Run the tests in parallel, one process per CPU.
+        run: pytest -n auto
