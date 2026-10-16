@@ -1,11 +1,14 @@
 import functools
 import itertools
+import math
+from numbers import Real
 from types import ModuleType
 
 import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 
 from brainhops._core.dependencies import da, np
+from brainhops._core.typing import Clip
 from brainhops.backends import (
     best_backend,
     copy_array,
@@ -19,11 +22,11 @@ def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
 
     A constant boundary, whether it is given by the name `"constant"` or as
     a numeric fill value, becomes the SciPy mode `"grid-constant"`. In that
-    mode, every coordinate beyond the grid takes the fill value for a spline
-    of any degree, which matches the zero padding with which FNIRT
-    coefficient fields are evaluated. The `"constant"` mode of SciPy is not
-    equivalent above degree 1, so it is not used. Other names are passed
-    through unchanged.
+    mode, interpolation stencils include constant-valued samples outside
+    the grid. This matches the zero extension used for FNIRT coefficient
+    fields. SciPy's `"constant"` instead returns the fill value as soon as
+    the query lies beyond the border voxel centres, so it is not equivalent.
+    Other names are passed through unchanged.
     """
     if isinstance(bound, str):
         return ("grid-constant" if bound == "constant" else str(bound)), 0.0
@@ -87,12 +90,61 @@ def _over_batch(
     return output
 
 
+def _normalize_clip(
+    clip: Clip, ndim: int
+) -> tx.Optional[tx.Tuple[tx.Tuple[float, float], ...]]:
+    """Validate margin metadata without inspecting data or coordinates."""
+    if clip is None:
+        return None
+    if isinstance(clip, Real):
+        pairs = [(clip, clip)] * ndim
+    else:
+        try:
+            items = tuple(clip)
+            if len(items) == 2 and all(isinstance(x, Real) for x in items):
+                pairs = [items] * ndim
+            else:
+                pairs = [tuple(pair) for pair in items]
+            if len(pairs) != ndim or any(len(pair) != 2 for pair in pairs):
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "clip must be a scalar, a (lower, upper) pair, or one "
+                "pair per sampled dimension"
+            ) from error
+    if any(
+        not isinstance(x, Real) or not math.isfinite(x)
+        for pair in pairs
+        for x in pair
+    ):
+        raise ValueError("clip margins must be finite real numbers")
+    return tuple((float(lower), float(upper)) for lower, upper in pairs)
+
+
+def _clip_mask(
+    coords: ArrayProtocol,
+    shape: tx.Sequence[int],
+    clip: tx.Optional[tx.Sequence[tx.Tuple[float, float]]],
+) -> tx.Optional[ArrayProtocol]:
+    """Build a lazy mask from normalized margins, with components last."""
+    if clip is None:
+        return None
+    mask = None
+    for axis, (size, (lower, upper)) in enumerate(zip(shape, clip)):
+        component = coords[..., axis]
+        inside = (component >= -lower) & (component <= size - 1 + upper)
+        mask = inside if mask is None else mask & inside
+    return mask
+
+
 def pull(
     input: ArrayProtocol,
     coords: ArrayProtocol,
     degree: int,
     bound: tx.Union[str, float],
     coeff: bool,
+    *,
+    clip: Clip = None,
 ) -> ArrayProtocol:
     """Interpolate an array at the coordinates of a field.
 
@@ -120,6 +172,17 @@ def pull(
         Whether `input` already holds spline coefficients. When false, the
         input is prefiltered before it is interpolated.
 
+    clip : float, pair, sequence of pairs, or None, default=None
+        A scalar sets symmetric margins. A `(lower, upper)` pair sets
+        asymmetric margins shared by all sampled axes; a sequence of pairs
+        sets them in coordinate-component order. Samples outside the closed
+        interval ``[-lower, size - 1 + upper]`` on any axis are zero.
+        None keeps extrapolating with `bound`; 0.5 includes the outer
+        voxel edges, 0 the border voxel centres, and -0.5 the inner edges.
+        `bound` still controls interpolation stencils inside this box.
+        Clipped samples are zero even when `bound` is a nonzero number.
+        Coordinates are not clamped or modified.
+
     Returns
     -------
     ArrayProtocol
@@ -128,7 +191,9 @@ def pull(
     nx = best_backend(input, coords)
     nd = get_ndimage_backend(nx)
     ndim = coords.shape[-1]
+    clip = _normalize_clip(clip, ndim)
     batch = input.shape[:-ndim]
+    mask = _clip_mask(coords, input.shape[-ndim:], clip)
     coords = nx.moveaxis(coords, -1, 0)
     mode, cval = _scipy_boundary(bound)
     degree = int(degree)
@@ -139,12 +204,17 @@ def pull(
         "prefilter": not coeff,
     }
     map_coordinates = _map_coordinates_for(nx, nd)
-    return _over_batch(
+    output = _over_batch(
         nx,
         input,
         batch,
         lambda x: map_coordinates(x, coords, **opts),
         tuple(coords.shape[1:]),
+    )
+    return (
+        nx.where(mask, output, nx.zeros_like(output))
+        if mask is not None
+        else output
     )
 
 
@@ -155,6 +225,8 @@ def pull_axes(
     degree: int,
     bound: tx.Union[str, float],
     coeff: bool,
+    *,
+    clip: Clip = None,
 ) -> ArrayProtocol:
     """Interpolate an array along a subset of its axes.
 
@@ -179,6 +251,10 @@ def pull_axes(
     coeff : bool
         Whether `input` already holds spline coefficients.
 
+    clip : float, pair, sequence of pairs, or None, default=None
+        Zero samples outside the voxel margins, as in [`pull`][].
+        Per-axis pairs follow `axes`, not the original array axis order.
+
     Returns
     -------
     ArrayProtocol
@@ -191,7 +267,7 @@ def pull_axes(
     ndim = len(axes)
     dest = list(range(input.ndim - ndim, input.ndim))
     moved = nx.moveaxis(input, axes, dest)
-    return pull(moved, coords, degree, bound, coeff)
+    return pull(moved, coords, degree, bound, coeff, clip=clip)
 
 
 def spline_matrix(
