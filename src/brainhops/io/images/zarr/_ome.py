@@ -692,7 +692,7 @@ def common_transformations(
         if target == root and source not in (None, root):
             # The transformation ends in the intrinsic space, so its inverse
             # starts there. A projection that drops axes has no inverse
-            # (docs/design/compute-api-and-open-systems.md, section A.8).
+            # (spec/design/compute-api-and-open-systems.md, section A.8).
             if _drops_axes(mapped):
                 raise OmeImageError(
                     f"This OME multiscale reaches its intrinsic space from "

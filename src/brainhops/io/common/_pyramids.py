@@ -8,7 +8,7 @@ format of the same package, which holds the lazy array of its level in
 `rawdata` and the index `level` of the level in the record. The pyramid holds
 the tuple of the level arrays in `rawdata`, and it decodes its levels
 from `rawdata` and the record on first access. The memo
-`docs/design/format-records.md` describes this design in its section on
+`spec/design/format-records.md` describes this design in its section on
 pyramids.
 
 When a pyramid is consolidated or written, its format must tell which

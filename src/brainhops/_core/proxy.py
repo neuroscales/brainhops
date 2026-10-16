@@ -4,7 +4,7 @@ A proxy stands for an array whose values lie elsewhere, usually in a
 file, and reads them only when NumPy converts it with `np.asarray`.
 Indexing a proxy or transposing it returns another proxy, which reads
 only the values that it selects. The design is described in the memo
-`docs/design/array-proxies.md`.
+`spec/design/array-proxies.md`.
 
 [`ArrayProxyProtocol`][] states what a consumer of a proxy may rely on,
 and [`ArrayProxy`][] is the base class that implements a proxy from a

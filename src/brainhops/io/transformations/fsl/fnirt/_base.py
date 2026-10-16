@@ -86,7 +86,7 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 
 
 # Developer notes on the coefficient files (see also items 220 to 223 of
-# docs/design/format-records.md):
+# spec/design/format-records.md):
 # - The header conventions are those of `src/warpfns/fnirt_file_writer.cpp`,
 #   `src/warpfns/fnirt_file_reader.cpp` and `src/basisfield/fsl_splines.h`
 #   of FSL 5.0.9, as mirrored at https://github.com/neurodebian/fsl (commit
