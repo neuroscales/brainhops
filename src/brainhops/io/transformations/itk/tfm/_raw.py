@@ -17,15 +17,9 @@ from brainhops.io.base.parsers import (
 )
 
 from .._chains import _check_composite, _read_only
-from .._common import ItkStruct, ItkTransformClass
+from .._common import _TRANSFORM_TYPE_RE, ItkStruct, _type_fields
 
-_TRANSFORM_RE = re.compile(
-    r"^Transform:\s*"
-    r"(?P<type>\w+)_"
-    r"(?P<precision>float|double)_"
-    r"(?P<input_dim>\d+)_"
-    r"(?P<output_dim>\d+)$"
-)
+_TRANSFORM_RE = re.compile(r"^Transform:\s*" + _TRANSFORM_TYPE_RE.pattern[1:])
 _PARAMETERS_RE = re.compile(r"^Parameters:\s*(?P<values>.*)$")
 _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
@@ -150,10 +144,7 @@ class TfmRaw(Raw, TextFileReader):
                 lines.next()
             blocks.append(
                 ItkStruct(
-                    type=ItkTransformClass(transform.group("type")),
-                    precision=transform.group("precision"),
-                    ndim_input=int(transform.group("input_dim")),
-                    ndim_output=int(transform.group("output_dim")),
+                    **_type_fields(transform),
                     parameters=_read_vector(parameters),
                     fixed_parameters=_read_vector(fixed_parameters),
                 )

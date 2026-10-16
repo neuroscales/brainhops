@@ -1,4 +1,5 @@
 import math
+import re
 
 import numpy as np
 import typing_extensions as tx
@@ -12,9 +13,10 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base._raw import Raw
+from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
-from ._systems import _make_system
+from ._systems import _make_grid_system, _make_system
 
 
 class ItkTransformClass(StrEnum):
@@ -344,15 +346,21 @@ class ItkDisplacementBase(ItkBlockBase):
     # --- slots --------------------------------------------------------
 
     @smartproperty(cache=True)
-    def lps2voxel(self) -> LPSToVoxel:
+    def lps2voxel(self) -> _xforms.Affine:
         """Affine from LPS world coordinates to warp-grid voxels."""
         vox2lps, _ = self._grid
-        return LPSToVoxel(matrix=_affines.inv(vox2lps))
+        if self.ndim_input == 3:
+            return LPSToVoxel(matrix=_affines.inv(vox2lps))
+        return _xforms.Affine(
+            matrix=_affines.inv(vox2lps),
+            input=self.input,
+            output=_make_grid_system(self.ndim_input),
+        )
 
     @smartproperty(cache=True)
     def displacement(self) -> _xforms.DisplacementField:
         """The displacement field on the warp grid."""
-        VOX = _systems.VoxelCoordinateSystem()
+        VOX = _make_grid_system(self.ndim_input)
         return _xforms.DisplacementField(
             data=self.field,
             input=VOX,
@@ -363,10 +371,16 @@ class ItkDisplacementBase(ItkBlockBase):
         )
 
     @smartproperty(cache=True)
-    def voxel2lps(self) -> VoxelToLPS:
+    def voxel2lps(self) -> _xforms.Affine:
         """Affine from warp-grid voxels to LPS world coordinates."""
         vox2lps, _ = self._grid
-        return VoxelToLPS(matrix=vox2lps)
+        if self.ndim_input == 3:
+            return VoxelToLPS(matrix=vox2lps)
+        return _xforms.Affine(
+            matrix=vox2lps,
+            input=_make_grid_system(self.ndim_input),
+            output=self.output,
+        )
 
     # --- sequence -----------------------------------------------------
 
@@ -776,12 +790,19 @@ class ItkBSplineStruct(
 ):
     """ITK B-spline transform.
 
-    The field holds cubic B-spline coefficients on a grid of control points,
+    The field holds B-spline coefficients on a grid of control points,
     and coefficients outside the grid are taken as zero. The coefficients are
     stored as one planar image per axis.
     """
 
-    degree: tx.ClassVar[int] = 3
+    spline_order: int = 3
+    """The order encoded by ITK's optional type-name suffix (default cubic)."""
+
+    @property
+    def degree(self) -> int:
+        """The order of the stored B-spline coefficients."""
+        return self.spline_order
+
     store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.zeros
@@ -935,3 +956,29 @@ def _euler_to_matrix(
     Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=np.float64)
     Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]], dtype=np.float64)
     return Rz @ Ry @ Rx if compute_zyx else Rz @ Rx @ Ry
+
+
+_TRANSFORM_TYPE_RE = re.compile(
+    r"^(?P<type>\w+)_(?P<precision>float|double)_"
+    r"(?P<input_dim>\d+)_(?P<output_dim>\d+)"
+    r"(?:_(?P<spline_order>[0-3]))?$"
+)
+
+
+def _type_fields(match: re.Match) -> tx.Dict[str, tx.Any]:
+    """Decode an ITK type name, retaining a B-spline's template order."""
+    kind = ItkTransformClass(match.group("type"))
+    fields = dict(
+        type=kind,
+        precision=match.group("precision"),
+        ndim_input=int(match.group("input_dim")),
+        ndim_output=int(match.group("output_dim")),
+    )
+    order = match.group("spline_order")
+    if order is not None:
+        if kind != ItkTransformClass.BSplineTransform:
+            raise ParserContentError(
+                "Only B-spline types have an order suffix."
+            )
+        fields["spline_order"] = int(order)
+    return fields
