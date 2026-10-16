@@ -3,9 +3,10 @@
 This memo decides which array package holds the values of an image or
 a transformation, how a user moves an object from one package to
 another, and how a computation chooses the package of its result. It is
-agreed and tracked in #486. Its first step, the backend settings, is
-implemented in `brainhops.backends` (#490), and the other steps are not
-implemented yet.
+agreed and tracked in #486. Its first two steps are implemented: the
+backend settings in `brainhops.backends` (#490), and the conversion
+methods of lazy arrays (#491). The other steps are not implemented
+yet.
 
 ## What a backend is for
 
@@ -203,7 +204,8 @@ NumPy array.
    64 MiB by default, and both `set_auto_threshold` and
    `backend(..., threshold=...)` change it.
 2. Add `to_numpy`, `to_cupy` and `to_backend` to `ArrayProxy`, and let
-   its `to_dask` place its chunks on a GPU.
+   its `to_dask` place its chunks on a GPU. This step is implemented,
+   and `to_dask(cupy=True)` gives the chunks of `"dask+cupy"`.
 3. Add the `to_*` and `as_*` methods to the classes of images and
    transformations.
 4. Make `data` return what the object holds, and update the code and
