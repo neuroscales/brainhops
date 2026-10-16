@@ -79,6 +79,22 @@ class ItkTransformClass(StrEnum):
 
 _ITKT = ItkTransformClass
 
+_7floats = tx.Tuple[float, float, float, float, float, float, float]
+_12floats = tx.Tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+]
+
 
 class ItkPrecision(StrEnum):
     """Precisions of ITK transforms.
@@ -545,7 +561,7 @@ class ItkQuaternionRigidStruct(
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
-    parameters: tx.Tuple[float, float, float, float, float, float, float]
+    parameters: _7floats
     """The quaternion `(x, y, z, w)`, then the translation."""
     fixed_parameters: tx.Tuple[float, float, float]
     """The center of rotation."""
@@ -781,20 +797,7 @@ class ItkComposeScaleSkewVersor3DStruct(
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
-    parameters: tx.Tuple[
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-    ]
+    parameters: _12floats
     """The versor, translation, scales and `(kxy, kxz, kyz)` shears."""
     fixed_parameters: tx.Tuple[float, float, float]
     """The center of rotation."""
