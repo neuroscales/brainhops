@@ -141,6 +141,7 @@ def test_reader_images_and_cli_use_the_same_clip_margin(
     nb = pytest.importorskip("nibabel")
     from brainhops import io
     from brainhops.cli import main
+    from brainhops.datamodel.images import MultiScaleImage
 
     source_path = tmp_path / "source.nii.gz"
     reference_path = tmp_path / "reference.nii.gz"
@@ -165,6 +166,11 @@ def test_reader_images_and_cli_use_the_same_clip_margin(
         x = -0.75 + np.arange(21) * 0.25
         expected[(x < -0.5) | (x > 3.5)] = 0
         np.testing.assert_array_equal(result.data, expected)
+        pyramid = MultiScaleImage(images=[source])
+        level = pyramid.reslice(
+            reference, bound="nearest", clip=[(0.5, 0.5)] * 3
+        )
+        np.testing.assert_array_equal(level.data, expected)
         assert (
             main(
                 [

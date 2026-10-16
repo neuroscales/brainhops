@@ -22,11 +22,11 @@ def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
 
     A constant boundary, whether it is given by the name `"constant"` or as
     a numeric fill value, becomes the SciPy mode `"grid-constant"`. In that
-    mode, every coordinate beyond the grid takes the fill value for a spline
-    of any degree, which matches the zero padding with which FNIRT
-    coefficient fields are evaluated. The `"constant"` mode of SciPy is not
-    equivalent above degree 1, so it is not used. Other names are passed
-    through unchanged.
+    mode, interpolation stencils include constant-valued samples outside
+    the grid. This matches the zero extension used for FNIRT coefficient
+    fields. SciPy's `"constant"` instead returns the fill value as soon as
+    the query lies beyond the border voxel centres, so it is not equivalent.
+    Other names are passed through unchanged.
     """
     if isinstance(bound, str):
         return ("grid-constant" if bound == "constant" else str(bound)), 0.0
