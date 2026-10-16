@@ -1147,7 +1147,7 @@ def _copies_samples(
     encoding, the type and the byte order that its record stores, or are
     not given.
     """
-    if not isinstance(raw, _NrrdProxy) or not raw.copyable:
+    if not isinstance(raw, _NrrdProxy) or raw.is_view or not raw.copyable:
         return False
     record = raw.record
     if list(image_order(record)) != list(order):
@@ -1366,10 +1366,7 @@ def _payload(image: NrrdImage, record: NrrdRaw) -> bytes:
         return image.rawdata.read_stored()
     # A lazy array is read here rather than through `data`, so that no
     # cached view of the old file outlives a write over that file.
-    if isinstance(image.rawdata, _NrrdProxy):
-        values = image.rawdata.read_samples()
-    else:
-        values = np.asarray(image.rawdata)
+    values = np.asarray(image.rawdata)
     return encode_data(record, values.transpose(np.argsort(order)))
 
 

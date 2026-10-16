@@ -421,7 +421,7 @@ def test_a_selection_reads_only_its_datasets(tmp_path, single_file) -> None:  # 
     assert np.array_equal(raw[0, 1], base[1, 0])
     assert np.array_equal(raw[2, :, 1:], base[:, 2, 1:])
     with pytest.raises(OSError):
-        raw[1]
+        np.asarray(raw[1])
 
 
 def test_an_empty_selection_reads_nothing(tmp_path) -> None:  # noqa: ANN001

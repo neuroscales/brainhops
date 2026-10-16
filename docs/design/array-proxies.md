@@ -1,10 +1,15 @@
 # Lazy arrays of file data
 
-This memo is a proposal and nothing in it is implemented yet. It
-decides how brainhops reads the voxels of a file only when they are
-needed, and how the classes that do so share their code. It also
-explains how the same design lets brainhops read NIfTI, MGH and MINC
-files without nibabel.
+This memo decides how brainhops reads the voxels of a file only when
+they are needed, and how the classes that do so share their code. It
+also explains how the same design lets brainhops read NIfTI, MGH and
+MINC files without nibabel.
+
+The first two layers below are implemented in
+`brainhops._ext.npfileobj.proxy`, and the fifteen proxies of brainhops
+derive from the base class. The third and fourth layers, and the
+reading of NIfTI, MGH and MINC without nibabel, are not implemented
+yet. The steps are listed at the end of the memo.
 
 ## What a proxy is for
 
@@ -24,7 +29,7 @@ while the format object exists. When the caller passed a stream rather
 than a path, the proxy keeps the stream and its starting position, and
 the caller must keep the stream open.
 
-## What the code has today
+## What the code had before the base class
 
 brainhops defines fifteen proxy classes, and NIfTI and MGH use the
 `ArrayProxy` of nibabel. They fall in two groups.
@@ -51,9 +56,9 @@ stacks (`_StackProxy`), JPEG 2000 (`_Jpeg2000Proxy`) and Pillow
 that an index selects. TIFF does so only when it memory-maps the file,
 and JPEG 2000 and Pillow always decode the whole image.
 
-None of these classes shares a base class or a protocol, and each one
+None of these classes shared a base class or a protocol, and each one
 is recognized by `isinstance` checks against its own class. They
-nevertheless repeat the same code:
+repeated the same code:
 
 - the `shape`, `ndim` and `dtype` properties, read from the record;
 - an `__array__` method that ignores its `copy` argument;
@@ -71,31 +76,35 @@ nevertheless repeat the same code:
   writer does not empty a file before the proxy has read it
   (`reads_brik`, `reads_file`, `reads_from`, `reads_store`).
 
-Each of the format views (`_views.py`) also turns the proxy into an
+Each of the format views (`_views.py`) also turned the proxy into an
 array in its own way: some call `asarray` of the backend, some call
 `da.from_array` with the chunks of the proxy, and others call a method
 such as `to_dask`, `view` or `read`.
 
 The module `brainhops._ext.npfileobj` was started to give lazy access
 to an array stored contiguously in any file-like object, including a
-remote one. It holds index arithmetic (`indexing.py`) and the writing
+remote one. It held index arithmetic (`indexing.py`) and the writing
 counterpart of `nibabel.fileslice` (`readwrite.py`), but no proxy, and
-nothing in brainhops uses it. Its writing functions import private
+nothing in brainhops used it. Its writing functions import private
 helpers of nibabel.
 
 ## Problems
 
-The proxies of the first group that brainhops wrote read the whole file
-each time they are indexed, and then select the values in memory. Dask
-splits an array into chunks and indexes the proxy once for each chunk,
-so the file is read once per chunk. A float32 image of shape
-`(256, 256, 256, 4)`, which takes 256 MiB, is split into eight chunks by
-the default settings of Dask 2026.8, so it is decompressed eight times
-when it is stored with gzip. A local file that is not compressed is
-memory-mapped, which makes the repeated read cheap, but the MRtrix and
-AFNI proxies then apply the intensity scaling to the whole volume
-before they select a chunk, which costs as much as reading it. Only the
-nibabel proxy and the proxies of the second group avoid the problem.
+The proxies of the first group that brainhops wrote decode the whole
+file each time their values are read, and then select the values in
+memory. Dask
+splits an array into chunks and reads the proxy once for each chunk, so
+the file is read once per chunk. The base class does not change this,
+because the proxies of the first group still implement `_read` by
+decoding the whole file, and the third layer is what fixes it. A float32
+image of shape `(256, 256, 256, 4)`, which takes 256 MiB, is split into
+eight chunks by the default settings of Dask 2026.8, so it is
+decompressed eight times when it is stored with gzip. A local file that
+is not compressed is memory-mapped, which makes the repeated read cheap,
+but the MRtrix and AFNI proxies then apply the intensity scaling to the
+whole volume before they select a chunk, which costs as much as reading
+it. Only the nibabel proxy and the proxies of the second group avoid the
+problem.
 
 A writer recognizes a proxy that it can copy without decoding by
 checking for its own class. A NIfTI image whose `rawdata` is an MRtrix
@@ -160,42 +169,60 @@ them raises an `IndexError` that tells the caller to write
 ### Second layer: a base class
 
 `ArrayProxy` is an abstract class that implements everything the
-proxies repeat today. A subclass of the base class defines `shape`,
-`dtype` and one method, `_read(index)`, which reads the values of an
-index that is already normalized: a tuple with one integer or one slice
-with a positive step for each axis of the stored array. The base class
-provides the rest.
+proxies repeated. A subclass of the base class defines `base_shape`,
+the shape of the stored array, `dtype`, and one method, `_read(index)`,
+which reads a box of the stored array. The index of `_read` has one
+entry for each stored axis: an integer, or a slice whose start, stop
+and step are integers with a positive step. A subclass may also define
+`base_chunks`, the block shape that the storage prefers, such as the
+chunks of a Zarr array or one slice of a stack. The base class provides
+the rest.
 
-- `__getitem__` normalizes the index with the functions of
-  `npfileobj.indexing`, composes it with the index that the proxy
-  already holds, and returns a new proxy. Nothing is read, so the
-  shortcut for an empty selection is no longer needed. A subclass may
-  override the composition when it has a cheaper one, as the third
-  layer does.
-- `transpose(perm)` and `T` return a new proxy in another axis order,
-  in the same way. The composition of an index and a permutation uses
-  `compose_index` and `split_operation` of `npfileobj.indexing`.
-- `__array__` calls `_read` with the bounding box of the composed
-  index, then applies negative steps, new axes, integer arrays and the
-  permutation in memory, so that a subclass never sees them. It
-  honors `dtype`, and it raises a `ValueError` when `copy=False` asks
-  for a view that the proxy cannot give, as NumPy 2 requires.
-- `chunks` is the block shape that the storage prefers, such as the
-  chunks of a Zarr array or one slice of a stack. It is `None` when
-  the storage has no preference.
+- `__getitem__` returns a new proxy, called a view, and reads nothing,
+  so the shortcut for an empty selection is no longer needed. A view
+  keeps, for each stored axis, either the position that it selects,
+  which drops the axis, or the ordered positions that it keeps, as a
+  `range` or as an array of integers. It also keeps the order of its
+  axes, which may include new axes. Indexing a view composes the new
+  index with these positions by indexing the `range` objects and the
+  arrays, so an index applied to a view gives what NumPy gives for the
+  same chain of indexes.
+- `transpose(perm)` and `T` return a view in another axis order.
+- A view reads through the proxy that a reader built, which it keeps
+  as `_root`, so that a handle that this proxy opens, such as an open
+  store, is opened once and shared by every view.
+- `__array__` calls `_read` with the smallest box with a positive step
+  that holds the positions of the view. It then applies negative steps,
+  arrays of positions, the order of the axes and new axes in memory, so
+  that a subclass never sees them. It honors `dtype`, and it raises a
+  `ValueError` when `copy=False` is asked for, since the values cannot
+  be read without making them.
+- `shape`, `ndim`, `size`, `nbytes` and `len()` describe the view, and
+  `chunks` carries `base_chunks` through the index of the view.
 - `to_dask()` calls `da.from_array` with these chunks, with
-  `fancy=False`, and with a `meta` argument, so that Dask does not
-  index the proxy to learn the type.
-- `reads(file)` tells whether the proxy reads a given file, and
-  replaces the four functions that do so today. It returns `False`
-  unless the subclass knows its file.
-- `stored` returns a description of the bytes that a writer may copy
-  as they are, or `None` when there are none (see below). A proxy that
-  was indexed or transposed no longer covers the stored array, so its
-  `stored` is `None` and a writer encodes its values.
+  `asarray=True`, with `fancy=False`, and with a `meta` argument, so
+  that Dask does not index the proxy to learn the type.
+- `is_view` tells whether the proxy presents something else than the
+  stored array. A writer that copies the stored bytes of a proxy as
+  they are, which every format with such a shortcut does through an
+  `isinstance` check, also checks that the proxy is not a view, because
+  the bytes would hold the whole stored array. The test
+  `tests/test_io_proxy_views.py` writes a flipped view of a file in
+  each of these formats.
 
-The format views then share one function, which returns the proxy as a
-read-only NumPy array or as `to_dask()` depending on the backend.
+Two members are not implemented yet. `reads(file)` will tell whether
+the proxy reads a given file, and replace the functions that do so
+today (`reads_brik`, `reads_from`, `reads_store` and others). `stored`
+will return a description of the bytes that a writer may copy as they
+are, or `None` for a view, and replace the `isinstance` and `is_view`
+checks of the writers.
+
+The format views share one function,
+`brainhops.io.base._utils_proxies.load_proxy`, which returns the proxy
+as a read-only NumPy array, or as `to_dask()` with the Dask backend.
+The views of TIFF and OpenSlide keep their own functions, because
+tifffile can give a memory map or a Dask array itself, and an
+OpenSlide level stays a proxy with the NumPy backend.
 
 ### Third layer: strided data behind a file
 
@@ -360,9 +387,10 @@ optional dependency for a conversion to nibabel images.
 
 ## Order of the work
 
-1. Add the protocol and the base class, and move the proxies of the
-   second group onto the base class. This removes the duplicated code
-   and changes no behavior.
+1. Add the protocol and the base class, and move every proxy of
+   brainhops onto the base class. This step is implemented. It removes
+   the duplicated code and makes indexing lazy for every proxy. The
+   proxies of the first group still decode the whole file for any read.
 2. Write `ByteSource`, `Layout` and `StridedProxy` in `npfileobj`
    without nibabel, and rewrite `readwrite.py` on them.
 3. Move MRtrix, NRRD and AFNI onto the third layer. This fixes the

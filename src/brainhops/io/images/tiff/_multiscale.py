@@ -659,6 +659,7 @@ class TiffMultiScaleImage(
         raws = self.rawdata
         return len(raws) == len(record.levels) and all(
             isinstance(raw, _TiffProxy)
+            and not raw.is_view
             and raw.record is record
             and raw.level == index
             and raw.source is raws[0].source

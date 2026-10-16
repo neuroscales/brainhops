@@ -8,13 +8,9 @@ block per chunk of the store. The two functions are pure and invert each
 other, so that `_image_to_model(_image_to_disk(data))` gives `data` back.
 """
 
-# dependencies
-import numpy as np
-
 # internals
-from brainhops._core.dependencies import da
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.io.base._utils_proxies import load_proxy
 from brainhops.io.common.zarr._data import _ZarrProxy
 
 
@@ -31,13 +27,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """
     if not isinstance(raw, _ZarrProxy):
         return raw
-    backend = get_array_backend()
-    if da is not None and backend is da:
-        return raw.to_dask()
-    data = backend.asarray(raw)
-    if isinstance(data, np.ndarray):
-        data.flags.writeable = False
-    return data
+    return load_proxy(raw)
 
 
 def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:

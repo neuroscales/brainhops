@@ -16,6 +16,7 @@ from bagof.magic import replace
 
 # internals
 from brainhops._core import path
+from brainhops._ext.npfileobj.proxy import ArrayProxy
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 from brainhops.io.common.hdf5 import DelayedH5Array
 from brainhops.io.common.hdf5._parsers import read_string
@@ -30,7 +31,7 @@ _LEGACY_TYPE = np.dtype("uint16")
 """The type of the voxels of a file without a `dataType` attribute."""
 
 
-class _BdvProxy:
+class _BdvProxy(ArrayProxy):
     """A lazy array of the voxels of one level of one view.
 
     The proxy holds a
@@ -41,7 +42,9 @@ class _BdvProxy:
     and in that type. The 16-bit signed values of an older file are
     reinterpreted as unsigned, bit for bit, as BigDataViewer reads them,
     and values stored in another type than the one that the `dataType`
-    attribute declares are converted to it.
+    attribute declares are converted to it. Indexing the proxy returns
+    another lazy array (see [`ArrayProxy`][]), and converting that array
+    reads only the selected part of the dataset.
     """
 
     def __init__(self, cells: DelayedH5Array, dtype: tx.Any) -> None:
@@ -50,14 +53,9 @@ class _BdvProxy:
         self._dtype = np.dtype(dtype)
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the voxels, in the order z, y, x of the file."""
-        return tuple(int(d) for d in self.cells.shape)
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions of the voxels."""
-        return len(self.shape)
+        return tuple(int(d) for d in self.cells.base_shape)
 
     @property
     def dtype(self) -> np.dtype:
@@ -73,25 +71,10 @@ class _BdvProxy:
             return values.view(_LEGACY_TYPE)
         return values.astype(self._dtype)
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = self._converted(self.cells[...])
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without reading the file.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        try:
-            values = self.cells[index]
-        except (TypeError, ValueError):
-            # h5py reads slices and sorted indices only, so any other
-            # selection is made in memory.
-            return np.asarray(self)[index]
-        return self._converted(values)
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        # h5py reads the integers and the slices with a positive step that
+        # the base class gives.
+        return self._converted(self.cells._read(index))
 
     def __repr__(self) -> str:
         return f"_BdvProxy(shape={self.shape}, dtype={self.dtype})"

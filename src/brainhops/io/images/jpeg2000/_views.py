@@ -16,6 +16,7 @@ import numpy as np
 # internals
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
+from brainhops.io.base._utils_proxies import load_proxy
 
 # this format
 from ._data import _Jpeg2000Proxy
@@ -30,7 +31,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     so an edit made in place would be lost. A Dask array stays lazy.
     """
     if isinstance(raw, _Jpeg2000Proxy):
-        raw = get_array_backend().asarray(raw)
+        raw = load_proxy(raw)
     perm = [1, 0] + list(range(2, len(raw.shape)))
     data = get_array_backend(raw).transpose(raw, perm)
     if isinstance(data, np.ndarray):

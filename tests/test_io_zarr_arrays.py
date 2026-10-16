@@ -270,10 +270,10 @@ class _Refusing:
 
 def test_an_empty_selection_reads_nothing() -> None:
     proxy = _ZarrProxy(_Refusing(), "nowhere")
-    assert proxy[0:0].shape == (0, 4, 4)
-    assert proxy[..., 2:2].shape == (4, 4, 0)
+    assert np.asarray(proxy[0:0]).shape == (0, 4, 4)
+    assert np.asarray(proxy[..., 2:2]).shape == (4, 4, 0)
     with pytest.raises(AssertionError):
-        proxy[0]
+        np.asarray(proxy[0])
 
 
 def test_a_permuted_proxy_reads_the_transposed_array(tmp_path: Path) -> None:
