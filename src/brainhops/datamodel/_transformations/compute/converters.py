@@ -130,16 +130,18 @@ def _convert_withlog(
     # a `log` flag have no tangent, so for them nothing is transferred.
     out_log = kwargs.get("log", _is_tangent(cls))
     crossing = getattr(t, "log", False) != out_log
-    # Some transformations derive their data instead of storing it, such as
-    # a reader that parses its matrix from a file or a grid that builds its
-    # coordinates from a shape. Such a transformation does not keep its data
-    # under the name that the rebuild reads, so a class that is not one of
-    # its own receives the map through the `_fallback` field instead.
-    derived = not stores(type(t), "_data") and not issubclass(cls, type(t))
-    if crossing or derived:
+    # Keep stored parameters in their existing encoding when only the class
+    # changes: reading matrix/field could exponentiate a tangent or integrate
+    # a velocity. Readers with an empty inherited storage slot must transfer
+    # their public data, which is decoded from metadata instead.
+    changes_class = not issubclass(cls, type(t))
+    if crossing or changes_class:
         fields = set(cls.data_fields) | set(cls.derived_fields)
         if not (fields & set(kwargs)):
-            kwargs.setdefault(_fallback, getattr(t, _fallback))
+            if crossing or not stores(type(t), "_data"):
+                kwargs[_fallback] = getattr(t, _fallback)
+            elif getattr(t, "_data", None) is None:
+                kwargs["data"] = t.data
         if crossing:
             # The rebuild would otherwise carry the flag over from `t`, but
             # changing the encoding is the purpose of this conversion, so

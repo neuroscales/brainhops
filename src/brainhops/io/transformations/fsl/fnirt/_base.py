@@ -75,6 +75,7 @@ _COEFFICIENT_INTENTS = frozenset(
 # Deformation fields are linear B-splines on the reference grid; coefficient
 # fields are quadratic or cubic on a coarse knot grid.
 _SPLINE_DEGREE = {
+    0: 1,  # Native convertwarp/invwarp dense fields omit the FSL intent.
     FSL_FNIRT_DISPLACEMENT_FIELD: 1,
     FSL_QUADRATIC_SPLINE_COEFFICIENTS: 2,
     FSL_CUBIC_SPLINE_COEFFICIENTS: 3,
@@ -120,6 +121,7 @@ class FnirtWarpField(
 
     | Intent | Kind | Degree | Grid |
     | ------ | ---- | ------ | ---- |
+    | 0 | deformation (explicit `fnirt` hint) | 1 | reference voxels |
     | 2006 | deformation | 1 | reference voxels |
     | 2007 | cubic coefficients | 3 | knot grid |
     | 2009 | quadratic coefficients | 2 | knot grid |
@@ -255,16 +257,19 @@ class FnirtWarpField(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            The `moving` and `reference` images, under any of their
-            aliases, and the options of the nibabel readers.
+            The `moving` and `reference` images under any of their aliases,
+            `deformation_type`, and the options of the nibabel readers.
 
         Returns
         -------
         FnirtWarpField
             The field, whose array is read lazily.
         """
+        deformation_type = kwargs.pop("deformation_type", None)
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_filename(filename, **kwargs)
+        if deformation_type is not None:
+            obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
     @classmethod
@@ -276,16 +281,19 @@ class FnirtWarpField(
         fileobj : BinaryIO
             The stream, which must stay open while the data may be read.
         **kwargs : Any
-            The `moving` and `reference` images, under any of their
-            aliases, and the options of the nibabel readers.
+            The `moving` and `reference` images under any of their aliases,
+            `deformation_type`, and the options of the nibabel readers.
 
         Returns
         -------
         FnirtWarpField
             The field, whose array is read lazily.
         """
+        deformation_type = kwargs.pop("deformation_type", None)
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_fileobj(fileobj, **kwargs)
+        if deformation_type is not None:
+            obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
     def consolidate(

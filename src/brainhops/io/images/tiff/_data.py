@@ -5,6 +5,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
+from brainhops._core.proxy import ArrayProxy
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format
@@ -12,7 +13,7 @@ from . import _utils as backend
 from ._raw import TiffRaw
 
 
-class _TiffProxy:
+class _TiffProxy(ArrayProxy):
     """A lazy array of the pixels of one level of a series of a TIFF file.
 
     The proxy holds the source of the file, which is a local file name or
@@ -28,6 +29,8 @@ class _TiffProxy:
     [`read_series`][brainhops.io.images.tiff._utils.read_series] describes:
     a local, uncompressed and contiguous level is memory-mapped, a level
     may be read as a dask array, and any other level is read in full.
+    Indexing the proxy returns another lazy array (see [`ArrayProxy`][]),
+    which reads only its selection of a memory map or of a dask array.
     """
 
     def __init__(
@@ -51,16 +54,11 @@ class _TiffProxy:
         array backend to decide."""
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the level in the order of brainhops."""
         stored = self.record.levels[self.level].shape
         perm = raster.canonical_permutation(self.record.storage_axes)
         return tuple(int(stored[p]) for p in perm)
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions of the level."""
-        return len(self.shape)
 
     @property
     def dtype(self) -> np.dtype:
@@ -72,13 +70,20 @@ class _TiffProxy:
 
         The array is a transposed view of the memory map, of the dask array
         or of the NumPy array that tifffile gives, so a memory map and a
-        dask array are not read here.
+        dask array are not read here. A view of the proxy reads its
+        selection and returns it as a NumPy array.
 
         Raises
         ------
         ParserContentError
             If tifffile cannot decode the level.
         """
+        if self.is_view:
+            return np.asarray(self)
+        return self._level_array()
+
+    def _level_array(self) -> tx.Any:
+        """Return the whole level as tifffile gives it, transposed."""
         stored = backend.read_series(
             self.source,
             series=self.record.series,
@@ -89,19 +94,8 @@ class _TiffProxy:
         data, _ = raster.to_canonical(stored, self.record.storage_axes)
         return data
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = np.asarray(self.read())
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without reading the file.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        return np.asarray(self)[index]
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        return np.asanyarray(self._level_array()[index])
 
     def read_bytes(self) -> bytes:
         """Return the bytes of the whole file that the proxy reads.
@@ -115,6 +109,3 @@ class _TiffProxy:
             return self.source.content
         with open(self.source.filename, "rb") as file:
             return file.read()
-
-    def __repr__(self) -> str:
-        return f"_TiffProxy(shape={self.shape}, dtype={self.dtype})"

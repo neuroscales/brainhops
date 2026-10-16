@@ -735,6 +735,7 @@ def _encoded(
 
     if (
         isinstance(raw, _MrtrixProxy)
+        and not raw.is_view
         and not moved
         and keeps_storage(raw.record, layout, datatype, scaling)
     ):

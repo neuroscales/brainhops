@@ -13,6 +13,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
@@ -234,7 +235,7 @@ def _storage(header: NrrdRaw) -> tx.Tuple[tx.Any, ...]:
 # ----------------------------------------------------------------------
 
 
-class _NrrdProxy:
+class _NrrdProxy(ArrayProxy):
     """A lazy array of the samples of a NRRD image.
 
     The proxy holds where the header lies, which is a path or the stream
@@ -255,6 +256,8 @@ class _NrrdProxy:
 
     Raw samples in a single local file are memory-mapped when `mmap` is
     true, so that reading them gives a read-only view of the file.
+    Indexing the proxy returns another lazy array (see
+    [`ArrayProxy`][]), but any read decodes the whole file for now.
     """
 
     def __init__(
@@ -279,15 +282,10 @@ class _NrrdProxy:
         """Whether raw samples in a single local file are memory-mapped."""
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the image, read from the record."""
         sizes = self.record.sizes
         return tuple(sizes[i] for i in image_order(self.record))
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions of the image."""
-        return len(self.shape)
 
     @property
     def dtype(self) -> np.dtype:
@@ -356,7 +354,10 @@ class _NrrdProxy:
             return file.read()
 
     def read_samples(self) -> np.ndarray:
-        """Return the samples in the axis order of the image.
+        """Return all the samples in the axis order of the image.
+
+        The samples are those of the whole file, whatever part of them a
+        view of the proxy selects.
 
         Raises
         ------
@@ -367,23 +368,8 @@ class _NrrdProxy:
         values = _decode(self.record, self._locations(), self.mmap)
         return values.transpose(image_order(self.record))
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = self.read_samples()
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, which Dask asks for to learn the type of the
-        # array, is answered without reading the file.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)
-        selected = selected[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        return np.asarray(self)[index]
-
-    def __repr__(self) -> str:
-        return f"_NrrdProxy(shape={self.shape}, dtype={self.dtype})"
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        return self.read_samples()[index]
 
 
 def read_nrrd(

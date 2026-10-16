@@ -11,12 +11,9 @@ and keeps it lazy with Dask. The two functions are pure and invert each
 other, so that `_warp_to_model(_warp_to_disk(data))` gives `data` back.
 """
 
-# dependencies
-import numpy as np
-
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.io.base._utils_proxies import load_proxy
 from brainhops.io.common.mrtrix._data import _MrtrixProxy
 
 
@@ -31,10 +28,7 @@ def _warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """
     if not isinstance(raw, _MrtrixProxy):
         return raw
-    data = get_array_backend().asarray(raw)
-    if isinstance(data, np.ndarray):
-        data.flags.writeable = False
-    return data
+    return load_proxy(raw)
 
 
 def _warp_to_disk(data: ArrayProtocol) -> ArrayProtocol:

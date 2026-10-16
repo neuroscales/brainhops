@@ -28,3 +28,16 @@ def _make_system(ndim: int) -> _systems.SpatialCoordinateSystem:
         return _systems.LPSmm()
     else:
         return _systems.SpatialCoordinateSystem(axes=_lps_axes(ndim))
+
+
+def _make_grid_system(ndim: int) -> _systems.CoordinateSystem:
+    """Return the index space of a field without adding or dropping axes."""
+    if ndim == 2:
+        return _systems.PixelCoordinateSystem()
+    if ndim == 3:
+        return _systems.VoxelCoordinateSystem()
+    return _systems.CoordinateSystem(
+        axes=tuple(
+            _axes.SpaceAxis(name=f"dim{i}", unit="index") for i in range(ndim)
+        )
+    )

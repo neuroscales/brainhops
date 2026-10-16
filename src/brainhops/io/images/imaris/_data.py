@@ -2,13 +2,15 @@
 
 # stdlib
 import contextlib
-import operator
 from io import BytesIO
 
 # dependencies
 import h5py
 import numpy as np
 import typing_extensions as tx
+
+# internals
+from brainhops._core.proxy import ArrayProxy
 
 # this format
 from ._raw import ImarisLevel, ImarisRaw
@@ -18,7 +20,7 @@ _Source = tx.Union[str, bytes, h5py.File]
 an HDF5 file that the caller opened."""
 
 
-class _ImarisProxy:
+class _ImarisProxy(ArrayProxy):
     """A lazy array of the voxels of one resolution level of an Imaris file.
 
     An Imaris file stores each channel at each time point of a level as
@@ -28,9 +30,10 @@ class _ImarisProxy:
     which is the reverse of the order of the data of an image. It knows
     its shape and type from the record, and it reads the file only when
     its values are needed, opening the file each time unless the caller
-    gave an open file. A selection reads only the datasets and the voxels
-    that it covers, so that Dask reads one block at a time, and an empty
-    selection reads nothing.
+    gave an open file. Indexing the proxy returns another lazy array (see
+    [`ArrayProxy`][]), and converting that array reads only the datasets
+    and the voxels that it covers, so that Dask reads one block at a
+    time.
     """
 
     def __init__(self, source: _Source, record: ImarisRaw, level: int) -> None:
@@ -47,15 +50,10 @@ class _ImarisProxy:
         return self.record.levels[self.level]
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape `(channels, time points, z, y, x)`, from the record."""
         x, y, z = self._level.size
         return (self.record.channels, self.record.timepoints, z, y, x)
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions, which is 5."""
-        return 5
 
     @property
     def dtype(self) -> np.dtype:
@@ -63,48 +61,30 @@ class _ImarisProxy:
         return self._level.dtype
 
     @property
-    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
         """The shape of the chunks of the file, or `None` if it has none.
 
         A chunk covers one channel at one time point. Dask reads it to
         choose blocks that hold whole chunks. The file is opened once to
         read it, and the voxels are not read.
         """
-        if self._chunks is None:
+        owner = self._root if self._root is not None else self
+        if owner._chunks is None:
             with _opened(self.source) as f:
                 chunks = f[_path(self.level, 0, 0)].chunks
             if chunks is None:
                 return None
-            self._chunks = (1, 1) + tuple(
-                min(int(c), n) for c, n in zip(chunks, self.shape[2:])
+            owner._chunks = (1, 1) + tuple(
+                min(int(c), n) for c, n in zip(chunks, self.base_shape[2:])
             )
-        return self._chunks
+        return owner._chunks
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = self[(slice(None),) * 5]
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # The selection is checked, and an empty one, such as the one that
-        # Dask reads to learn the type of an array, is answered without
-        # reading the file.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        parts = _basic_index(index, self.shape)
-        if parts is None:
-            # Other selections, such as arrays of indices, read the whole
-            # level first.
-            return np.asarray(self)[index]
-        return self._read(parts)
-
-    def _read(self, parts: tx.List[tx.Union[int, slice]]) -> np.ndarray:
-        """Read a selection of integers and slices, one per axis."""
-        channels = _positions(parts[0], self.shape[0])
-        times = _positions(parts[1], self.shape[1])
-        spatial = [_span(p, n) for p, n in zip(parts[2:], self.shape[2:])]
+    def _read(self, parts: tx.Tuple[tx.Union[int, slice], ...]) -> np.ndarray:
+        """Read a box of integers and slices, one per axis."""
+        shape = self.base_shape
+        channels = _positions(parts[0], shape[0])
+        times = _positions(parts[1], shape[1])
+        spatial = [_span(p, n) for p, n in zip(parts[2:], shape[2:])]
         read = tuple(slice(lo, hi) for lo, hi, _ in spatial)
         steps = tuple(step for _, _, step in spatial)
         shape = [len(channels), len(times)]
@@ -187,44 +167,6 @@ def _path(level: int, time: int, channel: int) -> str:
         f"/DataSet/ResolutionLevel {level}/TimePoint {time}/"
         f"Channel {channel}/Data"
     )
-
-
-def _basic_index(
-    index: tx.Any, shape: tx.Sequence[int]
-) -> tx.Optional[tx.List[tx.Union[int, slice]]]:
-    """Return one integer or slice per axis, or `None` for any other
-    selection.
-
-    An ellipsis is expanded and missing axes are selected whole. Negative
-    integers are counted from the end. The selection is assumed to be
-    valid, since the caller has checked it.
-    """
-    if not isinstance(index, tuple):
-        index = (index,)
-    if sum(item is Ellipsis for item in index) > 1:
-        return None
-    parts: tx.List[tx.Any] = []
-    for item in index:
-        if item is Ellipsis:
-            parts.append(item)
-        elif isinstance(item, slice):
-            parts.append(item)
-        elif isinstance(item, (bool, np.bool_)) or item is None:
-            return None
-        else:
-            try:
-                parts.append(operator.index(item))
-            except TypeError:
-                return None
-    if Ellipsis in parts:
-        at = parts.index(Ellipsis)
-        fill = [slice(None)] * (len(shape) - len(parts) + 1)
-        parts[at : at + 1] = fill
-    parts += [slice(None)] * (len(shape) - len(parts))
-    return [
-        p + n if isinstance(p, int) and p < 0 else p
-        for p, n in zip(parts, shape)
-    ]
 
 
 def _positions(part: tx.Union[int, slice], size: int) -> tx.List[int]:

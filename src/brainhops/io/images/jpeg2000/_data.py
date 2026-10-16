@@ -16,8 +16,10 @@ import numpy as np
 import typing_extensions as tx
 from PIL import Image, ImageFile
 
-# internals
 from brainhops._core import path
+
+# internals
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._utils_files import is_local, same_file
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
@@ -81,7 +83,7 @@ class _Jpeg2000Source:
         return f"_Jpeg2000Source(<{len(self.content)} bytes>)"
 
 
-class _Jpeg2000Proxy:
+class _Jpeg2000Proxy(ArrayProxy):
     """A lazy array of the samples of one resolution level.
 
     The proxy holds the source of the file, the record that the file was
@@ -90,7 +92,8 @@ class _Jpeg2000Proxy:
     presented as Pillow decodes them, `(rows, columns)` or `(rows,
     columns, samples)`, with the values that the codestream holds: the
     scaling of Pillow to 8 or 16 bits, and its offset of signed samples,
-    are undone.
+    are undone. Indexing the proxy returns another lazy array (see
+    [`ArrayProxy`][]), but Pillow decodes the whole level for any read.
     """
 
     def __init__(
@@ -105,14 +108,9 @@ class _Jpeg2000Proxy:
         """The resolution level, where 0 is the full resolution."""
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the samples, read from the record."""
-        return self.record.stored_shape(self.level)
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions of the samples."""
-        return len(self.shape)
+        return tuple(self.record.stored_shape(self.level))
 
     @property
     def dtype(self) -> np.dtype:
@@ -120,7 +118,10 @@ class _Jpeg2000Proxy:
         return self.record.dtype
 
     def read_samples(self) -> np.ndarray:
-        """Decode the samples of the level.
+        """Decode all the samples of the level.
+
+        The samples are those of the whole level, whatever part of it a
+        view of the proxy selects.
 
         Returns
         -------
@@ -140,27 +141,17 @@ class _Jpeg2000Proxy:
             Pillow, even when a coarse level is asked for.
         """
         values = _decode_level(self.source, self.record, self.level)
-        if values.shape != self.shape or values.dtype != self.dtype:
+        shape = self.base_shape
+        if values.shape != shape or values.dtype != self.dtype:
             raise ParserContentError(
                 f"Pillow decoded level {self.level} of this JPEG 2000 file "
                 f"as {values.dtype} samples of shape {values.shape}, but its "
-                f"header says {self.dtype} samples of shape {self.shape}."
+                f"header says {self.dtype} samples of shape {shape}."
             )
         return values
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = self.read_samples()
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without reading the file.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        return np.asarray(self)[index]
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        return self.read_samples()[index]
 
     def __repr__(self) -> str:
         return (

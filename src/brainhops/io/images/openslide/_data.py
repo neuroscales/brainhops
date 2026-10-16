@@ -23,6 +23,7 @@ import typing_extensions as tx
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import openslide
+from brainhops._core.proxy import ArrayProxy
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import ParserContentError
 
@@ -243,18 +244,19 @@ def read_associated(slide: _Slide, name: str) -> np.ndarray:
 # ----------------------------------------------------------------------
 
 
-class _SlideArray:
-    """A lazy array of one level of a slide, which reads only what is indexed.
+class _SlideArray(ArrayProxy):
+    """A lazy array of one level of a slide, which reads only what is selected.
 
     The array holds the slide, the record of the slide and the index of the
     level in the record, and it knows its shape, its type and its background
     colour from the record, without opening the file. It presents the level
     as an F-ordered `(x, y, c)` RGB `uint8` array whose row 0 is the top of
-    the slide. Indexing it reads the region that the index covers with
-    `read_region`, and `numpy.asarray` reads the whole level. OpenSlide
-    decodes RGBA pixels whose alpha channel only marks the pixels outside
-    the scanned area, and these pixels are composited onto the background
-    colour of the slide.
+    the slide. Indexing it returns another lazy array (see
+    [`ArrayProxy`][]), and converting that array with `numpy.asarray` reads
+    the region that it covers with `read_region`. OpenSlide decodes RGBA
+    pixels whose alpha channel only marks the pixels outside the scanned
+    area, and these pixels are composited onto the background colour of the
+    slide.
 
     The reader option `lazy`, which the array keeps, decides whether the
     data of the level is this array itself or a dask array of whole tiles
@@ -279,7 +281,7 @@ class _SlideArray:
         to decide."""
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the level: width, height and three samples."""
         return tuple(int(n) for n in self.record.levels[self.level].shape)
 
@@ -289,22 +291,9 @@ class _SlideArray:
         return np.dtype(self.record.levels[self.level].dtype)
 
     @property
-    def ndim(self) -> int:
-        """The number of dimensions of the level."""
-        return len(self.shape)
-
-    @property
-    def size(self) -> int:
-        """The number of values of the level."""
-        return int(np.prod(self.shape))
-
-    @property
-    def nbytes(self) -> int:
-        """The number of bytes of the level once it is read."""
-        return self.size * self.dtype.itemsize
-
-    def __len__(self) -> int:
-        return self.shape[0]
+    def base_chunks(self) -> tx.Tuple[int, int, int]:
+        """The blocks that group whole tiles of the level."""
+        return _chunks(self.record, self.level, self.base_shape)
 
     def __repr__(self) -> str:
         return f"_SlideArray(level={self.level}, shape={self.shape}, uint8)"
@@ -315,7 +304,7 @@ class _SlideArray:
         The data is a dask array whose chunks group whole tiles when `lazy`
         is true, or when `lazy` is `None` and dask is the array backend.
         Otherwise, and whenever dask is not installed, the data is this
-        array, which reads the region that it is indexed with.
+        array, which reads the region that it selects when it is converted.
 
         Returns
         -------
@@ -333,62 +322,27 @@ class _SlideArray:
             lazy = get_array_backend() is da
         if not lazy:
             return self
-        return da.from_array(
-            self,
-            chunks=_chunks(self.record, self.level, self.shape),
-            asarray=False,
-            fancy=False,
-            lock=False,
-            meta=np.empty((0, 0, 0), dtype=self.dtype),
-        )
+        return self.to_dask(lock=False)
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        array = self._read(0, 0, self.shape[0], self.shape[1])
-        return array if dtype is None else array.astype(dtype)
-
-    def __getitem__(self, key: tx.Any) -> np.ndarray:
-        """Read the region that an index covers.
-
-        Integers and slices behave as in NumPy, while integer and boolean
-        arrays index each axis independently. An empty selection, such as
-        the one that Dask reads to learn the type of an array, is answered
-        without reading the slide.
-        """
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[key]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        if not isinstance(key, tuple):
-            key = (key,)
-        if any(k is Ellipsis for k in key):
-            i = next(i for i, k in enumerate(key) if k is Ellipsis)
-            fill = (slice(None),) * (self.ndim - len(key) + 1)
-            key = key[:i] + fill + key[i + 1 :]
-        if len(key) > self.ndim or any(k is None for k in key):
-            raise IndexError(
-                "A slide level takes at most three indices (x, y, c), "
-                "and no new axis."
-            )
-        key = key + (slice(None),) * (self.ndim - len(key))
-        x0, x1, kx = _bounding(key[0], self.shape[0])
-        y0, y1, ky = _bounding(key[1], self.shape[1])
-        out = self._read(x0, y0, x1 - x0, y1 - y0)
-        drop = []
-        for axis, k in enumerate((kx, ky, key[2])):
-            if isinstance(k, (int, np.integer)):
-                out = np.take(out, [int(k)], axis=axis)
-                drop.append(axis)
-            elif isinstance(k, slice):
-                out = out[(slice(None),) * axis + (k,)]
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        # The region that the x and y indices cover is read, and the steps
+        # and the sample index are applied to it.
+        bounds = []
+        within = []
+        for item in index[:2]:
+            if isinstance(item, int):
+                bounds.append((item, item + 1))
+                within.append(0)
             else:
-                k = np.asarray(k)
-                if k.dtype == bool:
-                    k = np.nonzero(k)[0]
-                out = np.take(out, k, axis=axis)
-        return out.squeeze(axis=tuple(drop)) if drop else out
+                bounds.append((item.start, item.stop))
+                within.append(slice(None, None, item.step))
+        (x0, x1), (y0, y1) = bounds
+        out = self._read_region(x0, y0, x1 - x0, y1 - y0)
+        return out[tuple(within) + (index[2],)]
 
-    def _read(self, x: int, y: int, width: int, height: int) -> np.ndarray:
+    def _read_region(
+        self, x: int, y: int, width: int, height: int
+    ) -> np.ndarray:
         """Read a region given in level pixels, as an `(x, y, c)` RGB array."""
         if width <= 0 or height <= 0:
             return np.zeros((max(width, 0), max(height, 0), 3), np.uint8)
@@ -459,27 +413,6 @@ def _hex_colour(text: tx.Optional[str]) -> np.ndarray:
     return np.array(
         [(value >> 16) & 255, (value >> 8) & 255, value & 255], dtype=np.uint16
     )
-
-
-def _bounding(key: tx.Any, n: int) -> tx.Tuple[int, int, tx.Any]:
-    """Return the range `[start, stop)` that an index reads along one axis, and
-    the index into that range.
-    """
-    if isinstance(key, (int, np.integer)):
-        i = int(key)
-        if not -n <= i < n:
-            raise IndexError(f"Index {i} is out of bounds for size {n}.")
-        i %= n
-        return i, i + 1, 0
-    if isinstance(key, slice):
-        start, stop, step = key.indices(n)
-        indices = range(start, stop, step)
-        if not len(indices):
-            return 0, 0, slice(0, 0)
-        lo, hi = min(indices), max(indices) + 1
-        # The range ends after the last index, whatever the sign of the step.
-        return lo, hi, slice(start - lo, None, step)
-    return 0, n, key  # an array index reads the whole axis
 
 
 def _chunks(

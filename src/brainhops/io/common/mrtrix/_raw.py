@@ -218,7 +218,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         """
         Parse the header lines from `mrtrix image` to `END`.
 
-        Lines after `END` are ignored.
+        Lines after `END` are ignored. Detached headers may end at EOF.
 
         Parameters
         ----------
@@ -235,8 +235,9 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         Raises
         ------
         ParserContentError
-            If the first line is wrong, if `END`, `dim`, `vox` or `datatype` is
-            missing, or if an entry is malformed.
+            If the first line is wrong, if `dim`, `vox` or `datatype` is
+            missing, if an embedded header has no `END`, or if an entry
+            is malformed.
         """
         lines = iter(lines)
         first = next(lines, None)
@@ -281,9 +282,6 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
                 transform.append(_parse_floats(value, "transform"))
             elif value:
                 keyval.setdefault(key, []).append(value)
-        if not ended:
-            raise ParserContentError("The MRtrix header has no END line.")
-
         if not dim:
             raise ParserContentError("The MRtrix header has no 'dim'.")
         if any(d < 1 for d in dim):
@@ -331,6 +329,12 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
                     f"Invalid offset in MRtrix 'file' entry: {entry}"
                 ) from error
             file = (name, offset)
+
+        # Native MRtrix writes detached .mih headers through EOF, without
+        # an END marker. Embedded images still need it to separate text
+        # from binary data; an incomplete header must not be accepted.
+        if not ended and (file is None or file[0] == "."):
+            raise ParserContentError("The MRtrix header has no END line.")
 
         return cls(
             dim=dim,

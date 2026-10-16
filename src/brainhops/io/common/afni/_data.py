@@ -13,6 +13,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import open_compressed
 from brainhops.io.base._utils_files import is_local, replace_file
 from brainhops.io.base._utils_files import local_path as _local_path
@@ -227,7 +228,7 @@ _CHUNK = 1 << 20
 """The number of bytes copied at a time from one BRIK to another."""
 
 
-class _BrikProxy:
+class _BrikProxy(ArrayProxy):
     """A lazy array of the voxels that a BRIK file stores.
 
     The proxy holds the path of the BRIK and the record of the dataset,
@@ -241,7 +242,9 @@ class _BrikProxy:
 
     A local BRIK that is not compressed and whose sub-bricks share a
     type is memory-mapped when `mmap` is true, so that reading the values
-    gives a read-only view of the file.
+    gives a read-only view of the file. Indexing the proxy returns
+    another lazy array (see [`ArrayProxy`][]), but any read decodes and
+    scales the whole BRIK for now.
     """
 
     def __init__(self, brik: tx.Any, record: AfniRaw, mmap: bool) -> None:
@@ -253,15 +256,10 @@ class _BrikProxy:
         """Whether a local, uncompressed BRIK is memory-mapped."""
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the image, read from the record."""
         nvals = self.record.nvals
         return self.record.shape + ((nvals,) if nvals > 1 else ())
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions of the image."""
-        return len(self.shape)
 
     @property
     def dtype(self) -> np.dtype:
@@ -272,7 +270,11 @@ class _BrikProxy:
         return stored
 
     def get_unscaled(self) -> np.ndarray:
-        """Return the stored values as a `(x, y, z, sub-brick)` array."""
+        """Return all the stored values as a `(x, y, z, sub-brick)` array.
+
+        The values are those of the whole BRIK, whatever part of it a view
+        of the proxy selects, and the scale factors are not applied.
+        """
         return _read_bricks(self.record, self.brik, self.mmap)
 
     def copy_to(self, out: tx.BinaryIO) -> None:
@@ -300,21 +302,11 @@ class _BrikProxy:
                 out.write(chunk)
                 remaining -= len(chunk)
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         values = scale_bricks(self.record, self.get_unscaled())
         if self.record.nvals == 1:
             values = values[..., 0]
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without reading the file.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        return np.asarray(self)[index]
+        return values[index]
 
     def __repr__(self) -> str:
         return f"_BrikProxy({str(self.brik)!r}, shape={self.shape})"
@@ -426,12 +418,13 @@ def _read_bricks(header: AfniRaw, brik: tx.Any, mmap: bool) -> np.ndarray:
 def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
     """Write a BRIK, compressed according to its suffix.
 
-    A [`_BrikProxy`][] is copied as the file stores it. A local BRIK is
-    written beside its target and moved over it, so that a proxy that
-    reads the target copies the old file. When the proxy reads a remote
-    file that is written, its bytes are read into memory first, since
-    opening the file for writing empties it. Any other array is encoded
-    with the types and the scale factors of the header.
+    A [`_BrikProxy`][] that is not a view is copied as the file stores
+    it. A local BRIK is written beside its target and moved over it, so
+    that a proxy that reads the target copies the old file. When the
+    proxy reads a remote file that is written, its bytes are read into
+    memory first, since opening the file for writing empties it. Any
+    other array is encoded with the types and the scale factors of the
+    header.
 
     Raises
     ------
@@ -453,7 +446,7 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
         else:
             out = f
         try:
-            if isinstance(data, _BrikProxy):
+            if stores_brik(data):
                 data.copy_to(out)
             elif isinstance(data, bytes):
                 out.write(data)
@@ -471,7 +464,7 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
     if is_local(brik):
         replace_file(brik, write_named)
         return
-    if isinstance(data, _BrikProxy) and _same_file(data.brik, brik):
+    if stores_brik(data) and _same_file(data.brik, brik):
         copied = BytesIO()
         data.copy_to(copied)
         data = copied.getvalue()
@@ -485,6 +478,26 @@ def _same_file(first: tx.Any, second: tx.Any) -> bool:
     if first is None or second is None:
         return False
     return os.path.samefile(first, second)
+
+
+def stores_brik(raw: tx.Any) -> bool:
+    """Tell whether an array is a lazy array of a whole BRIK file.
+
+    The bytes of such a lazy array can be copied as the BRIK stores
+    them. A view of a lazy array, which selects a part of the BRIK or
+    reorders its axes, is encoded like an array in memory.
+
+    Parameters
+    ----------
+    raw : array
+        The `rawdata` array of an object.
+
+    Returns
+    -------
+    bool
+        Whether `raw` is a lazy array of a BRIK that is not a view.
+    """
+    return isinstance(raw, _BrikProxy) and not raw.is_view
 
 
 def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:

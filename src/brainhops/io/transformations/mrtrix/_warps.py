@@ -1887,8 +1887,10 @@ def _encoded(
     layout, datatype = options["layout"], options["datatype"]
     scaling = options["scaling"]
     merged = merged_keyval(held, options["keyval"])
-    if isinstance(source, _MrtrixProxy) and keeps_storage(
-        source.record, layout, datatype, scaling
+    if (
+        isinstance(source, _MrtrixProxy)
+        and not source.is_view
+        and keeps_storage(source.record, layout, datatype, scaling)
     ):
         shape, strides = source.record.dim, source.record.layout
         stored_type, stored_scaling = (

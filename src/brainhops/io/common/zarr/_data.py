@@ -12,6 +12,7 @@ from abczarr import create
 # core
 from brainhops._core import path
 from brainhops._core.dependencies import da
+from brainhops._core.proxy import ArrayProxy
 
 # internals
 from brainhops.io.base._utils_files import is_local, same_file
@@ -24,14 +25,14 @@ from ._raw import ZarrRaw, _document_keys, same_storage
 # ----------------------------------------------------------------------
 
 
-class _ZarrProxy:
-    """A lazy array that reads an opened Zarr array when it is indexed.
+class _ZarrProxy(ArrayProxy):
+    """A lazy array that reads an opened Zarr array when it is converted.
 
     The proxy holds the abczarr node of the array, the location of its
     store, and an optional permutation of its axes. Opening it reads
-    nothing but the document of the array, and indexing it reads only the
-    chunks that the selection needs. An empty selection is answered
-    without reading the store, so that the probe of Dask reads nothing.
+    nothing but the document of the array. Indexing it returns another
+    lazy array (see [`ArrayProxy`][]), and converting that array reads
+    only the chunks that the selection needs.
 
     The permutation `perm` presents the stored axes in another order:
     axis `i` of the proxy is axis `perm[i]` of the store, as in
@@ -61,7 +62,7 @@ class _ZarrProxy:
         self.perm = None if perm is None else tuple(int(p) for p in perm)
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the array, in the order of the proxy."""
         shape = tuple(int(n) for n in self.node.shape)
         if self.perm is None:
@@ -74,49 +75,19 @@ class _ZarrProxy:
         return np.dtype(self.node.dtype)
 
     @property
-    def ndim(self) -> int:
-        """The number of dimensions."""
-        return len(self.node.shape)
-
-    @property
-    def size(self) -> int:
-        """The number of elements."""
-        return int(np.prod(self.shape, dtype=np.int64))
-
-    @property
-    def chunks(self) -> tx.Tuple[int, ...]:
+    def base_chunks(self) -> tx.Tuple[int, ...]:
         """The shape of a chunk, in the order of the proxy."""
         chunks = tuple(int(n) for n in self.node.chunks)
         if self.perm is None:
             return chunks
         return tuple(chunks[p] for p in self.perm)
 
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        """Read a selection of the array.
-
-        An empty selection of slices and integers is answered without
-        reading the store. A selection with a negative step, or a
-        selection of another kind, such as an array of indices, of a
-        proxy that permutes its axes, reads the whole array first,
-        because the drivers of abczarr read neither.
-        """
-        basic = _basic_index(index, len(self.shape))
-        if basic is not None:
-            selected = np.broadcast_to(np.empty((), bool), self.shape)[basic]
-            if selected.size == 0:
-                return np.empty(selected.shape, self.dtype)
-        if basic is not None and not _reverses(basic):
-            return self._read(basic)
-        if self.perm is None and basic is None:
-            return np.asarray(self.node[index])
-        return self._read((slice(None),) * len(self.shape))[index]
-
-    def _read(self, basic: tx.Tuple[tx.Any, ...]) -> np.ndarray:
-        """Read a selection of slices with a positive step and integers."""
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        """Read a box of the array, through the permutation of the axes."""
         if self.perm is None:
-            return np.asarray(self.node[basic])
+            return np.asarray(self.node[index])
         stored = [slice(None)] * len(self.perm)
-        for axis, item in enumerate(basic):
+        for axis, item in enumerate(index):
             stored[self.perm[axis]] = item
         read = np.asarray(self.node[tuple(stored)])
         kept = [
@@ -126,28 +97,10 @@ class _ZarrProxy:
         ]
         order = [
             kept.index(self.perm[axis])
-            for axis, item in enumerate(basic)
+            for axis, item in enumerate(index)
             if not isinstance(item, (int, np.integer))
         ]
         return np.transpose(read, order)
-
-    def __array__(
-        self, dtype: tx.Optional[np.dtype] = None, copy: tx.Any = None
-    ) -> np.ndarray:
-        """Read the whole array into a NumPy array."""
-        data = self[...]
-        if dtype is not None:
-            data = data.astype(dtype, copy=False)
-        return data
-
-    def to_dask(self) -> tx.Any:
-        """Return a Dask array that reads the chunks of the store lazily.
-
-        The blocks of the Dask array are the chunks of the store, and each
-        block is read through the proxy, so a selection of the Dask array
-        reads only the chunks that it needs.
-        """
-        return da.from_array(self, chunks=self.chunks, asarray=True)
 
 
 def store_location(node: tx.Any) -> tx.Any:
@@ -261,7 +214,9 @@ def _store(node: tx.Any, raw: tx.Any) -> None:
 
 def _copies_chunks(raw: tx.Any, record: ZarrRaw) -> bool:
     """Tell whether the chunk files of the store of `raw` can be copied."""
-    if not isinstance(raw, _ZarrProxy) or raw.perm is not None:
+    if not isinstance(raw, _ZarrProxy) or raw.is_view:
+        return False
+    if raw.perm is not None:
         return False
     if raw.location is None or not _local(raw.location):
         return False
@@ -289,44 +244,6 @@ def _copy_chunks(source: str, target: str) -> None:
 def _all_document_keys() -> tx.Tuple[str, ...]:
     """Return the names of the document files of an array in any version."""
     return _document_keys(3) + _document_keys(2)
-
-
-def _basic_index(
-    index: tx.Any, ndim: int
-) -> tx.Optional[tx.Tuple[tx.Any, ...]]:
-    """Expand a selection of slices, integers and an ellipsis to `ndim`.
-
-    `None` is returned for a selection of another kind, such as an array
-    of indices or a new axis.
-    """
-    if not isinstance(index, tuple):
-        index = (index,)
-    if any(
-        not isinstance(item, (slice, int, np.integer, type(Ellipsis)))
-        or isinstance(item, bool)
-        for item in index
-    ):
-        return None
-    ellipses = [i for i, item in enumerate(index) if item is Ellipsis]
-    if len(ellipses) > 1:
-        return None
-    if ellipses:
-        at = ellipses[0]
-        fill = ndim - (len(index) - 1)
-        if fill < 0:
-            return None
-        index = index[:at] + (slice(None),) * fill + index[at + 1 :]
-    if len(index) > ndim:
-        return None
-    return tuple(index) + (slice(None),) * (ndim - len(index))
-
-
-def _reverses(index: tx.Tuple[tx.Any, ...]) -> bool:
-    """Tell whether a selection has a slice with a negative step."""
-    return any(
-        isinstance(item, slice) and item.step is not None and item.step < 0
-        for item in index
-    )
 
 
 def _local(location: tx.Any) -> bool:

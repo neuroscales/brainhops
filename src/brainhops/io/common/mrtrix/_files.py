@@ -187,7 +187,7 @@ def stores_as_recorded(raw: tx.Any, record: MrtrixRaw) -> bool:
     bool
         Whether the voxels can be written under the record as they are.
     """
-    if not isinstance(raw, _MrtrixProxy):
+    if not _stored_proxy(raw):
         return True
     stored = raw.record
     if stored is record:
@@ -312,7 +312,7 @@ def payload(record: MrtrixRaw, source: ArrayProtocol) -> bytes:
     bytes
         The stored voxels.
     """
-    if isinstance(source, _MrtrixProxy):
+    if _stored_proxy(source):
         return source.read_stored()
     if record.scaling and tuple(record.scaling) != (0.0, 1.0):
         offset, scale = record.scaling
@@ -343,7 +343,7 @@ def stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
     array
         The voxels that a file of the record holds.
     """
-    if isinstance(source, _MrtrixProxy):
+    if _stored_proxy(source):
         return source
     stored = _scaled_dtype(record).newbyteorder("=")
     if not _is_scaled(record) and stored == np.dtype(
@@ -352,6 +352,16 @@ def stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
         return source
     content = BytesIO(payload(record, source))
     return _MrtrixProxy(content, 0, 0, record, mmap=False)
+
+
+def _stored_proxy(raw: tx.Any) -> bool:
+    """Tell whether an array is a lazy array of a whole MRtrix file.
+
+    The stored bytes of such a lazy array can be copied as they are. A
+    view of a lazy array, which selects a part of the file or reorders
+    its axes, is encoded like an array in memory.
+    """
+    return isinstance(raw, _MrtrixProxy) and not raw.is_view
 
 
 # ----------------------------------------------------------------------

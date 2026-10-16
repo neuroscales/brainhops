@@ -719,6 +719,7 @@ class TiffImage(
         return (
             self._untouched(dialect, name, bigtiff)
             and isinstance(raw, _TiffProxy)
+            and not raw.is_view
             and raw.level == 0
             and raw.record is self.metadata.raw
         )

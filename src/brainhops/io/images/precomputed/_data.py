@@ -10,6 +10,7 @@ import typing_extensions as tx
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import ts
+from brainhops._core.proxy import ArrayProxy
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     ParserContentError,
@@ -152,7 +153,7 @@ def stream_location(file: tx.Any) -> str:
     return dataset_location(name)
 
 
-class _PrecomputedProxy:
+class _PrecomputedProxy(ArrayProxy):
     """A lazy array of the voxels of one scale of a precomputed volume.
 
     The proxy holds the location of the volume and the record of the
@@ -162,8 +163,9 @@ class _PrecomputedProxy:
     then decodes only the chunks that it needs. The voxels are presented
     as `[x, y, z, channel]`, with the first voxel at index 0 whatever the
     `voxel_offset` of the scale, and the channel axis is dropped when the
-    volume has a single channel. The proxy keeps no open scale when it is
-    pickled or copied.
+    volume has a single channel. Indexing the proxy returns another lazy
+    array (see [`ArrayProxy`][]), which shares the open scale. The proxy
+    keeps no open scale when it is pickled.
     """
 
     def __init__(
@@ -175,12 +177,11 @@ class _PrecomputedProxy:
         """The record of the scale that the proxy reads."""
         self.num_channels = record.num_channels
         """The number of channels of the volume."""
-        self.dtype = record.dtype
-        """The type of the voxels."""
+        self._dtype = record.dtype
         self._store = None
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the voxels, read from the record."""
         shape = tuple(self.scale.size)
         if self.num_channels != 1:
@@ -188,31 +189,14 @@ class _PrecomputedProxy:
         return shape
 
     @property
-    def ndim(self) -> int:
-        """The number of dimensions of the voxels."""
-        return len(self.shape)
+    def dtype(self) -> np.dtype:
+        """The type of the voxels."""
+        return self._dtype
 
     def __getstate__(self) -> tx.Dict[str, tx.Any]:
         state = dict(self.__dict__)
         state["_store"] = None
         return state
-
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = self._read(Ellipsis)
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without reading the volume.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        basic = _basic_index(index, self.shape)
-        if basic is None:
-            return np.asarray(self)[index]
-        return self._read(basic)
 
     def __repr__(self) -> str:
         return (
@@ -220,8 +204,11 @@ class _PrecomputedProxy:
             f"dtype={self.dtype})"
         )
 
-    def _read(self, index: tx.Any) -> np.ndarray:
-        """Read a selection of the voxels with TensorStore.
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        """Read a box of the voxels with TensorStore.
+
+        TensorStore reads the integers and the slice bounds that the base
+        class gives as absolute positions, which they are.
 
         Raises
         ------
@@ -265,11 +252,12 @@ class _PrecomputedProxy:
         store = store.translate_to[0]
         if self.num_channels == 1:
             store = store[..., 0]
-        if tuple(store.shape) != self.shape:
+        if tuple(store.shape) != self.base_shape:
             raise ParserContentError(
                 f"The scale {self.scale.key!r} of the precomputed volume at "
                 f"{self.location} has shape {tuple(store.shape)}, but the "
-                f"info file that the image was read with says {self.shape}."
+                f"info file that the image was read with says "
+                f"{self.base_shape}."
             )
         self._store = store
         return store
@@ -311,43 +299,3 @@ def _open_kvstore(location: str) -> tx.Any:
             f"TensorStore cannot read the precomputed volume at {location}: "
             f"{e}"
         ) from e
-
-
-def _basic_index(
-    index: tx.Any, shape: tx.Tuple[int, ...]
-) -> tx.Optional[tx.Tuple[tx.Any, ...]]:
-    """Translate a basic NumPy index into one that TensorStore reads.
-
-    TensorStore reads integers and slices as absolute positions, with no
-    wrapping of negative values, so integers and slices with a positive
-    step are made explicit. `None` is returned for any other index, such
-    as an array, a new axis or a negative step, which the caller then
-    applies with NumPy after a full read.
-    """
-    if not isinstance(index, tuple):
-        index = (index,)
-    if sum(item is Ellipsis for item in index) > 1:
-        return None
-    explicit = len([item for item in index if item is not Ellipsis])
-    if explicit > len(shape):
-        return None
-    expanded: tx.List[tx.Any] = []
-    for item in index:
-        if item is Ellipsis:
-            expanded += [slice(None)] * (len(shape) - explicit)
-        else:
-            expanded.append(item)
-    expanded += [slice(None)] * (len(shape) - len(expanded))
-    out: tx.List[tx.Any] = []
-    for item, n in zip(expanded, shape):
-        if isinstance(item, (int, np.integer)) and not isinstance(item, bool):
-            item = int(item)
-            out.append(item + n if item < 0 else item)
-        elif isinstance(item, slice):
-            start, stop, step = item.indices(n)
-            if step < 1:
-                return None
-            out.append(slice(start, max(start, stop), step))
-        else:
-            return None
-    return tuple(out)

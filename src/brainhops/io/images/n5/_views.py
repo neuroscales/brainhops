@@ -9,12 +9,9 @@ read with the array backend. They invert each other, so that
 `_image_to_model(_image_to_disk(data))` gives `data` back.
 """
 
-# dependencies
-import numpy as np
-
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.io.base._utils_proxies import load_proxy
 
 # this format
 from ._data import _N5Proxy
@@ -29,9 +26,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     place would be lost. Any other array is returned as it is.
     """
     if isinstance(raw, _N5Proxy):
-        raw = get_array_backend().asarray(raw)
-        if isinstance(raw, np.ndarray):
-            raw.flags.writeable = False
+        raw = load_proxy(raw)
     return raw
 
 
