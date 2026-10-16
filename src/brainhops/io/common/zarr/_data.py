@@ -12,7 +12,7 @@ from abczarr import create
 # core
 from brainhops._core import path
 from brainhops._core.dependencies import da
-from brainhops._ext.npfileobj.proxy import ArrayProxy
+from brainhops._core.proxy import ArrayProxy
 
 # internals
 from brainhops.io.base._utils_files import is_local, same_file

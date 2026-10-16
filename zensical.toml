@@ -107,8 +107,8 @@ nav = [
         {"properties" = "api/_core/properties.md"},
         {"numeric" = "api/_core/numeric.md"},
         {"enum" = "api/_core/enum.md"},
+        {"proxy" = "api/_core/proxy.md"},
         {"invfield" = "api/_ext/invfield/index.md"},
-        {"proxy" = "api/_ext/npfileobj/proxy.md"},
     ]}
   ]},
   {"Developer guide" = [

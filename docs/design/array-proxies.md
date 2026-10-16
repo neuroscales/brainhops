@@ -6,7 +6,7 @@ also explains how the same design lets brainhops read NIfTI, MGH and
 MINC files without nibabel.
 
 The first two layers below are implemented in
-`brainhops._ext.npfileobj.proxy`, and the fifteen proxies of brainhops
+`brainhops._core.proxy`, and the fifteen proxies of brainhops
 derive from the base class. The third and fourth layers, and the
 reading of NIfTI, MGH and MINC without nibabel, are not implemented
 yet. The steps are listed at the end of the memo.
@@ -80,13 +80,6 @@ Each of the format views (`_views.py`) also turned the proxy into an
 array in its own way: some call `asarray` of the backend, some call
 `da.from_array` with the chunks of the proxy, and others call a method
 such as `to_dask`, `view` or `read`.
-
-The module `brainhops._ext.npfileobj` was started to give lazy access
-to an array stored contiguously in any file-like object, including a
-remote one. It held index arithmetic (`indexing.py`) and the writing
-counterpart of `nibabel.fileslice` (`readwrite.py`), but no proxy, and
-nothing in brainhops used it. Its writing functions import private
-helpers of nibabel.
 
 ## Problems
 
@@ -226,9 +219,8 @@ OpenSlide level stays a proxy with the NumPy backend.
 
 ### Third layer: strided data behind a file
 
-This layer is what `npfileobj` was started for, and it lives there
-because it knows nothing about brain images. It is made of three
-parts.
+This layer will live in `brainhops._core`, next to the base class.
+It knows nothing about brain images, and it is made of three parts.
 
 A `ByteSource` says how to open a fresh stream of the decoded bytes. It
 holds a path, a URL that fsspec can open, a stream with its starting
@@ -252,8 +244,8 @@ transposing a layout returns another layout, computed by arithmetic
 alone, so `StridedProxy` composes an index by changing its layout. A
 layout also turns a selection into the list of byte ranges to read.
 Ranges that are close are merged, so that one large read replaces many
-small ones. This replaces `nibabel.fileslice`, and the writing functions
-of `readwrite.py` are rewritten on it.
+small ones. This replaces `nibabel.fileslice`, and the functions that
+write through a proxy will be built on it (#479).
 
 `StridedProxy` is the `ArrayProxy` that pairs a source with a layout.
 Its `_read` memory-maps a local file that is not compressed and returns
@@ -391,8 +383,8 @@ optional dependency for a conversion to nibabel images.
    brainhops onto the base class. This step is implemented. It removes
    the duplicated code and makes indexing lazy for every proxy. The
    proxies of the first group still decode the whole file for any read.
-2. Write `ByteSource`, `Layout` and `StridedProxy` in `npfileobj`
-   without nibabel, and rewrite `readwrite.py` on them.
+2. Write `ByteSource`, `Layout` and `StridedProxy` in `brainhops._core`,
+   without nibabel.
 3. Move MRtrix, NRRD and AFNI onto the third layer. This fixes the
    repeated whole-file reads, and the existing tests cover the result.
 4. Parse MGH headers without nibabel, which is the smallest header and
@@ -416,7 +408,6 @@ threads. An asynchronous interface would add a second way to call every
 proxy for a small gain, and it can be reconsidered if a consumer that
 is itself asynchronous, such as a viewer, needs it.
 
-Writing through a proxy, which `readwrite.py` prepares for, is left out
-of this memo, because no writer needs it yet. It is tracked in #479,
-which records that compressed files and remote files will not be
-written in part.
+Writing through a proxy is left out of this memo, because no writer
+needs it yet. It is tracked in #479, which records that compressed
+files and remote files will not be written in part.

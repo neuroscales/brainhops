@@ -9,9 +9,10 @@ import h5py
 import numpy as np
 import typing_extensions as tx
 
+from brainhops._core.proxy import ArrayProxy
+
 # core
 from brainhops._core.typing import ArrayProtocol
-from brainhops._ext.npfileobj.proxy import ArrayProxy
 
 # this format
 from ._parsers import H5Like
@@ -23,7 +24,7 @@ class DelayedH5Array(ArrayProxy):
     reopening the file on demand.
 
     Indexing the array returns another lazy array (see
-    [`ArrayProxy`][brainhops._ext.npfileobj.proxy.ArrayProxy]), and
+    [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]), and
     converting that array reads only the selected part of the dataset.
     A view reads through the array that it was made from, and opening or
     closing a view opens or closes the file of that array.

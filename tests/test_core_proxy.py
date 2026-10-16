@@ -1,11 +1,11 @@
-"""Tests of the lazy array base class of npfileobj."""
+"""Tests of the lazy array base class of brainhops._core.proxy."""
 
 import pickle
 
 import numpy as np
 import pytest
 
-from brainhops._ext.npfileobj.proxy import ArrayProxy, ArrayProxyProtocol
+from brainhops._core.proxy import ArrayProxy, ArrayProxyProtocol
 
 
 class _Recording(ArrayProxy):
