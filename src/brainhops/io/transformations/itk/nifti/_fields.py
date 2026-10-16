@@ -53,7 +53,10 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
-from brainhops.io.transformations.base.fields import LPSCoordinatesField
+from brainhops.io.transformations.base.fields import (
+    LPSCoordinatesField,
+    StoredFieldMixin,
+)
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 
@@ -146,7 +149,9 @@ def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
     return matrix
 
 
-class ItkNiftiField(NiftiBasedTransformation, _xforms.ImmutableSequence):
+class ItkNiftiField(
+    NiftiBasedTransformation, StoredFieldMixin, _xforms.ImmutableSequence
+):
     """
     Base class of the fields stored in ITK NIfTI vector images.
 

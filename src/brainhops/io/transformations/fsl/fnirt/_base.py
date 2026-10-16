@@ -37,7 +37,10 @@ from brainhops.io.metadata._base import (
     overruled_fields,
     requested_fields,
 )
-from brainhops.io.transformations.base.fields import voxel_grid_coordinates
+from brainhops.io.transformations.base.fields import (
+    StoredFieldMixin,
+    voxel_grid_coordinates,
+)
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import _field_to_model
@@ -106,6 +109,7 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 class FnirtWarpField(
     FslTransformationFormat,
     NiftiBasedTransformation,
+    StoredFieldMixin,
     _xforms.ImmutableSequence,
 ):
     """Non-linear transformation stored in an FSL FNIRT NIfTI file.

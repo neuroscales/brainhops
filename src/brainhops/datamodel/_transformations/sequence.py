@@ -5,7 +5,9 @@ import typing_extensions as tx
 from bagof.magic import NotKwOnly, replace
 
 from brainhops._core.properties import smartproperty
+from brainhops.backends import _CURRENT
 from brainhops.datamodel import kinds
+from brainhops.datamodel._backends import as_backend_all
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
 
@@ -403,6 +405,58 @@ class Sequence(SequenceMixin, Transformation):
             else:
                 flattened.append(t)
         return self.to(transformations=flattened)
+
+    # --- conversion to another backend --------------------------------
+
+    def to_backend(self, backend: tx.Any = _CURRENT) -> tx.Any:
+        """Refuse to return data, because a sequence holds none.
+
+        A sequence holds transformations rather than data. Its members
+        are converted with `as_backend`, or one by one.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+
+        Raises
+        ------
+        TypeError
+            Always.
+        """
+        raise TypeError(
+            f"A {type(self).__name__} holds transformations rather than "
+            "data. Convert it with as_backend, or convert its "
+            "transformations."
+        )
+
+    def as_backend(
+        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+    ) -> tx.Self:
+        """Return the sequence with its members converted.
+
+        Each member is converted with its own `as_backend`, so that the
+        fields of the sequence are converted and its affine
+        transformations are kept.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+        inplace : bool, default=False
+            Whether this transformation holds the converted members and
+            is returned, instead of a new transformation.
+
+        Returns
+        -------
+        Sequence
+            A transformation of the same class.
+        """
+        members = self.transformations
+        converted = as_backend_all(members, backend)
+        if converted is members:
+            return self
+        return self._with_fields(inplace, transformations=converted)
 
 
 class MutableSequence(MutableSequenceMixin, Sequence):

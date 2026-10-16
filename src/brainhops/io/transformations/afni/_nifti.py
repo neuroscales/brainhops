@@ -49,6 +49,7 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base._conversions import format_options
+from brainhops.io.transformations.base.fields import StoredFieldMixin
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import (
@@ -87,7 +88,10 @@ _NIFTI_NUMS = re.compile(r"NIfTI_nums\s*=\s*[\"']([^\"']*)[\"']")
 
 @register_format
 class AfniNiftiWarp(
-    AfniWarp, NiftiBasedTransformation, _xforms.ImmutableSequence
+    AfniWarp,
+    NiftiBasedTransformation,
+    StoredFieldMixin,
+    _xforms.ImmutableSequence,
 ):
     """
     An AFNI nonlinear warp stored as a NIfTI file, such as the

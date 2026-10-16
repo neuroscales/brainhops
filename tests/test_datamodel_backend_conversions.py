@@ -11,9 +11,12 @@ from brainhops.backends import backend
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.transformations import (
     Affine,
+    Bijection,
+    CartesianField,
     DisplacementField,
     Identity,
     Sequence,
+    SubspaceTransformation,
 )
 
 da = pytest.importorskip("dask.array")
@@ -80,6 +83,32 @@ def test_composites_convert_their_members() -> None:
         Sequence([affine]).to_numpy()
 
 
+def test_meta_transformations_convert_their_inner_ones() -> None:
+    # A subspace converts its inner transformation, and a bijection both
+    # of its sides.
+    field = DisplacementField(FIELD)
+    subspace = SubspaceTransformation(field, [0, 1, 2], [0, 1, 2])
+    assert isinstance(subspace.as_dask().transformation.data, da.Array)
+    bijection = Bijection(field, DisplacementField(FIELD)).as_dask()
+    assert isinstance(bijection.forward.data, da.Array)
+    assert isinstance(bijection.backward.data, da.Array)
+    affine = SubspaceTransformation(Affine(MATRIX))
+    assert affine.as_dask() is affine
+
+
+def test_a_grid_is_kept() -> None:
+    # A grid stores only its shape, so as_* returns it unchanged.
+    grid = CartesianField(shape=(2, 3))
+    assert grid.as_dask() is grid
+
+
+def test_inplace_converts_the_members_of_a_sequence() -> None:
+    # With inplace=True, the sequence itself holds the converted members.
+    sequence = Sequence([DisplacementField(FIELD)])
+    assert sequence.as_dask(inplace=True) is sequence
+    assert isinstance(sequence.transformations[0].data, da.Array)
+
+
 def test_a_pyramid_converts_every_level() -> None:
     # as_* converts every level, and to_* gives the finest one.
     pyramid = MultiScaleImage(
@@ -121,6 +150,7 @@ def test_objects_read_from_files(tmp_path) -> None:  # noqa: ANN001
         field = io.transformations.load(
             tmp_path / "disp.nii.gz", hint="displacements"
         )
+        assert isinstance(field.to_dask(), da.Array)
         lazy = field.as_dask()
         assert isinstance(lazy.data, da.Array)
         io.save(lazy, tmp_path / "out.nii.gz")

@@ -7,35 +7,40 @@ same class whose data are arrays of that backend. The backend settings
 are described in [`brainhops.backends`][], and the design in the memo
 `docs/design/array-backends.md`.
 
-A class defines `to_backend` and `as_backend`, and the mixin below
-derives the methods named after each backend from them.
+The mixin below gives every class both families. A class whose data
+need more than the default conversion overrides `to_backend` or
+`as_backend`, and the methods named after each backend call them.
 """
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import replace
 
 # internals
 from brainhops import backends
-from brainhops.backends import _CURRENT, Setting, to_backend
-
-if tx.TYPE_CHECKING:
-    from .base import DataModelBase
+from brainhops.backends import _CURRENT, Setting
 
 _Default = tx.Union[Setting, tx.Any]
 """The type of a backend argument, whose default is the current setting."""
 
 
-class BackendConversions:
+class _BackendsMixin:
     """The `to_*` and `as_*` methods of the classes that hold data.
 
-    A subclass defines `to_backend(backend)`, which returns its data as a
-    bare array, and `as_backend(backend, inplace=False)`, which returns an
-    object of the same class whose data are converted. The other methods
-    call them with the name of a backend.
+    By default, `to_backend` converts `data`, and `as_backend` returns
+    the object as it is, because most transformations hold only small
+    parameters, which stay NumPy arrays. Images, transformation fields
+    and the transformations that hold other transformations override
+    `as_backend`.
     """
 
     def to_backend(self, backend: _Default = _CURRENT) -> tx.Any:
         """Return the data as a bare array of the backend of a setting.
+
+        The object does not change. Small parameters, such as the matrix
+        of an affine transformation, are converted too, since the caller
+        asks for them. An object without data, such as the identity,
+        gives `None`.
 
         Parameters
         ----------
@@ -44,15 +49,22 @@ class BackendConversions:
 
         Returns
         -------
-        array
+        array or None
             The data.
         """
-        raise NotImplementedError
+        data = self.data
+        if data is None:
+            return None
+        return backends.to_backend(data, backend)
 
     def as_backend(
         self, backend: _Default = _CURRENT, *, inplace: bool = False
     ) -> tx.Self:
-        """Return the object with its data converted as a setting says.
+        """Return the object with its voxels converted as a setting says.
+
+        By default, the object holds no voxels and is returned as it is.
+        Small parameters stay NumPy arrays where they are stored, so that
+        code can convert a list of objects without testing their type.
 
         Parameters
         ----------
@@ -67,7 +79,7 @@ class BackendConversions:
         object
             An object of the same class.
         """
-        raise NotImplementedError
+        return self
 
     def to_numpy(self) -> tx.Any:
         """Return the data as a NumPy array, reading or computing them."""
@@ -129,99 +141,54 @@ class BackendConversions:
         """
         return self.as_backend("dask", inplace=inplace)
 
+    def _as_backend_data(self, backend: _Default, inplace: bool) -> tx.Self:
+        """Return the object with `data` converted, for the overrides.
 
-def convert_member(value: tx.Any, backend: _Default) -> tx.Any:
-    """Convert an object that another object holds, or return it as it is.
+        The object is returned as it is when the conversion keeps the
+        array, so that an object that needs no conversion stays the same
+        object.
+        """
+        data = self.data
+        if data is None:
+            return self
+        converted = backends.to_backend(data, backend)
+        if converted is data:
+            return self
+        return self._with_fields(inplace, data=converted)
 
-    A transformation or an image is converted with its `as_backend`
-    method, a list or a tuple of them element by element, and any other
-    value is returned as it is. The value itself is never changed, so a
-    member that needs no conversion is the same object afterwards.
+    def _with_fields(self, inplace: bool, **changes: tx.Any) -> tx.Self:
+        """Assign new values of fields to the object, or to a copy of it."""
+        if not changes:
+            return self
+        if inplace:
+            for name, value in changes.items():
+                setattr(self, name, value)
+            return self
+        return replace(self, **changes)
+
+
+def as_backend_all(
+    objects: tx.Optional[tx.Sequence[_BackendsMixin]], backend: _Default
+) -> tx.Any:
+    """Convert every object of a list or a tuple with its `as_backend`.
+
+    The list or the tuple is returned as it is when no object changes.
 
     Parameters
     ----------
-    value : object
-        The member.
+    objects : list or tuple, optional
+        The objects, such as the members of a sequence.
     backend : str or module
         The setting.
 
     Returns
     -------
-    object
-        The converted member.
+    list or tuple or None
+        The converted objects.
     """
-    if isinstance(value, BackendConversions):
-        return value.as_backend(backend)
-    if isinstance(value, (list, tuple)) and value:
-        converted = [convert_member(item, backend) for item in value]
-        if all(new is old for new, old in zip(converted, value)):
-            return value
-        return type(value)(converted)
-    return value
-
-
-def convert_array(value: tx.Any, backend: _Default) -> tx.Any:
-    """Convert an array as a setting says, or return `None` as it is."""
-    if value is None:
-        return None
-    if isinstance(backend, backends._Current):
-        return to_backend(value)
-    return to_backend(value, backend)
-
-
-def stores_field(cls: type, name: str) -> bool:
-    """Tell whether a class stores a field under a constructor name.
-
-    A field derived from others, such as the `data` of an inverse, is not
-    stored, so converting it would compute it.
-
-    Parameters
-    ----------
-    cls : type
-        A class of the data model.
-    name : str
-        The name of a constructor argument.
-
-    Returns
-    -------
-    bool
-        Whether a field of the class takes that name.
-    """
-    from bagof.magic import fields
-
-    try:
-        declared = fields(cls)
-    except TypeError:
-        return False
-    return any(
-        field.init and name in (field.name, *(field.aliases or ()))
-        for field in declared
-    )
-
-
-def apply_changes(
-    obj: "DataModelBase", changes: tx.Dict[str, tx.Any], inplace: bool
-) -> tx.Any:
-    """Assign the converted members to an object, or to a copy of it.
-
-    Parameters
-    ----------
-    obj : DataModelBase
-        The object.
-    changes : dict
-        The new value of each converted member, by name.
-    inplace : bool
-        Whether the object itself is changed.
-
-    Returns
-    -------
-    DataModelBase
-        The object, or the copy.
-    """
-    from bagof.magic import replace
-
-    if inplace:
-        for name, value in changes.items():
-            setattr(obj, name, value)
-        return obj
-    return replace(obj, **changes)
+    if not objects:
+        return objects
+    converted = [obj.as_backend(backend) for obj in objects]
+    if all(new is old for new, old in zip(converted, objects)):
+        return objects
+    return type(objects)(converted)

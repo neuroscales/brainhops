@@ -9,12 +9,7 @@ from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops.backends import _CURRENT
 
-from ._backends import (
-    BackendConversions,
-    apply_changes,
-    convert_array,
-    convert_member,
-)
+from ._backends import _BackendsMixin, as_backend_all
 from ._transformations.multiscale import (
     _as_affine_ignoring_fields,
     _at_resolution,
@@ -32,7 +27,7 @@ from .transformations import (
 
 
 class Image(
-    BackendConversions,
+    _BackendsMixin,
     IdentityComparison,
     DataModelBase,
     eq=False,
@@ -287,24 +282,6 @@ class SingleScaleImage(Image):
 
     # --- conversion to another backend -------------------------------
 
-    def to_backend(self, backend: tx.Any = _CURRENT) -> tx.Any:
-        """Return `data` as a bare array of the backend of a setting.
-
-        The setting is described in [`brainhops.backends`][]. The image
-        does not change.
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting. By default, the current setting is used.
-
-        Returns
-        -------
-        array or None
-            The data.
-        """
-        return convert_array(self.data, backend)
-
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
     ) -> tx.Self:
@@ -328,16 +305,12 @@ class SingleScaleImage(Image):
         SingleScaleImage
             An image of the same class.
         """
-        changes = {}
-        data = self.data
-        converted = convert_array(data, backend)
-        if converted is not data:
-            changes["data"] = converted
-        transformations = self.transformations
-        converted = convert_member(transformations, backend)
-        if converted is not transformations:
-            changes["transformations"] = converted
-        return apply_changes(self, changes, inplace)
+        obj = self._as_backend_data(backend, inplace)
+        transformations = obj.transformations
+        converted = as_backend_all(transformations, backend)
+        if converted is transformations:
+            return obj
+        return obj._with_fields(inplace, transformations=converted)
 
     @property
     def geometry(self) -> Geometry:
@@ -561,21 +534,6 @@ class MultiScaleImage(Image):
 
     # --- conversion to another backend -------------------------------
 
-    def to_backend(self, backend: tx.Any = _CURRENT) -> tx.Any:
-        """Return the data of the highest-resolution level as a bare array.
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting. By default, the current setting is used.
-
-        Returns
-        -------
-        array or None
-            The data of the highest-resolution level.
-        """
-        return self.images[0].to_backend(backend)
-
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
     ) -> tx.Self:
@@ -597,10 +555,10 @@ class MultiScaleImage(Image):
         changes = {}
         for name in ("images", "transformations"):
             value = getattr(self, name)
-            converted = convert_member(value, backend)
+            converted = as_backend_all(value, backend)
             if converted is not value:
                 changes[name] = converted
-        return apply_changes(self, changes, inplace)
+        return self._with_fields(inplace, **changes)
 
     def to_singlescale(self, index: int = 0) -> SingleScaleImage:
         """Return a level as a single-scale image in world space."""

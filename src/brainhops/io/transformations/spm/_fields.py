@@ -35,6 +35,7 @@ from brainhops.io.metadata._base import (
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
+    StoredFieldMixin,
     homogeneous_matrix,
 )
 from brainhops.io.transformations.nifti import (
@@ -50,7 +51,9 @@ from brainhops.io.transformations.nifti._views import (
 
 
 @register_format
-class SpmCoordinatesField(NiftiBasedTransformation, _xforms.ImmutableSequence):
+class SpmCoordinatesField(
+    NiftiBasedTransformation, StoredFieldMixin, _xforms.ImmutableSequence
+):
     """
     Field of RAS coordinates written by SPM.
 

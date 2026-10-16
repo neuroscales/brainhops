@@ -51,6 +51,7 @@ from brainhops.io.common.afni._raw import (
 from brainhops.io.images.afni import AfniImage
 from brainhops.io.metadata._base import requested_fields
 from brainhops.io.transformations.base.fields import (
+    StoredFieldMixin,
     ras_displacement_chain,
     split_ras_displacement_chain,
 )
@@ -72,7 +73,11 @@ _NDIM = 3
 
 @register_format
 class AfniBrikWarp(
-    AfniWarp, BinaryFileReader, BinaryFileWriter, _xforms.ImmutableSequence
+    AfniWarp,
+    BinaryFileReader,
+    BinaryFileWriter,
+    StoredFieldMixin,
+    _xforms.ImmutableSequence,
 ):
     """
     An AFNI nonlinear warp stored as an AFNI dataset (`.HEAD` and

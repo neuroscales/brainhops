@@ -36,7 +36,7 @@ from brainhops._core.typing import (
     npvector,
 )
 from brainhops._ext.invfield import inverse as inverse_disp
-from brainhops.backends import backend, get_array_backend
+from brainhops.backends import _CURRENT, backend, get_array_backend
 from brainhops.datamodel import kinds
 from brainhops.datamodel.enums import (
     BoundaryCondition,
@@ -283,7 +283,6 @@ class TransformationField(ConcreteTransformation):
     map_field: tx.ClassVar[str] = "field"
 
     data_fields: _FieldNames = ("data",)
-    holds_voxels: tx.ClassVar[bool] = True
     encoding_fields: _FieldNames = "degree", "bound", "store"
     derived_fields: _FieldNames = "field", "values", "coefficients", "_inverse"
 
@@ -452,6 +451,31 @@ class TransformationField(ConcreteTransformation):
         flag is assigned, so the lazy inverse runs the inversion only once.
         """
         raise NotImplementedError
+
+    # --- conversion to another backend --------------------------------
+
+    def as_backend(
+        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+    ) -> tx.Self:
+        """Return the field with its stored array converted.
+
+        The array in `data` holds voxels, so it is converted as the
+        setting says, which is described in [`brainhops.backends`][].
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+        inplace : bool, default=False
+            Whether this field holds the converted array and is returned,
+            instead of a new field.
+
+        Returns
+        -------
+        TransformationField
+            A field of the same class.
+        """
+        return self._as_backend_data(backend, inplace)
 
 
 class DisplacementField(TransformationField, polymorphic=True):
@@ -721,6 +745,28 @@ class CartesianField(CoordinatesField):
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         require_endomorphism(self, "square root")
         return self.compute(**kwargs) if compute else self
+
+    def as_backend(
+        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+    ) -> tx.Self:
+        """Return the grid as it is.
+
+        A grid stores only its shape, and its coordinates are created
+        when they are read, so there is no stored array to convert.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting, which is not used.
+        inplace : bool, default=False
+            Whether the grid itself is returned, which it always is.
+
+        Returns
+        -------
+        CartesianField
+            This grid.
+        """
+        return self
 
 
 @kinds.Affine
