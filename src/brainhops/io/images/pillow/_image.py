@@ -178,7 +178,7 @@ that is not listed takes no option.
 
 @register_format
 class PillowImage(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """A two-dimensional raster image, read and written with Pillow.
 

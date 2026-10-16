@@ -31,7 +31,14 @@ class Package(tx.NamedTuple):
 PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.metadata": Package(
         names=frozenset(
-            {"BidsSidecar", "MetadataFormat", "from_bids", "to_bids"}
+            {
+                "BidsSidecar",
+                "MetadataFormat",
+                "MetadataReader",
+                "MetadataWriter",
+                "from_bids",
+                "to_bids",
+            }
         ),
     ),
     "brainhops.io.common.nifti": Package(
@@ -68,7 +75,7 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.images.openslide": Package(
         names=frozenset(
             {
-                "OpenSlideFormat",
+                "OpenSlideReader",
                 "OpenSlideImage",
                 "OpenSlideLevelRaw",
                 "OpenSlideMetadata",

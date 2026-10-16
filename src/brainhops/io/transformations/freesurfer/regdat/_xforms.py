@@ -23,7 +23,7 @@ from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
-from brainhops.io.base._base import register_format
+from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
@@ -98,10 +98,11 @@ def _as_moving_geometry(value: tx.Any) -> tx.Optional[Geometry]:
 # ----------------------------------------------------------------------
 
 
+@format_registry
 class RegisterDatFormat(
     FreesurferTransformationFormat, AffineTransformationFormat
 ):
-    """Marker of affine transformations stored in a `register.dat` file."""
+    """Family of affine transformations stored in a `register.dat` file."""
 
     HINTS = ("regdat",)
 
@@ -109,9 +110,9 @@ class RegisterDatFormat(
 # Text adapters supply byte decoding and encoding before the generic bases.
 @register_format
 class RegisterDatTransformation(
-    RegisterDatFormat,
     TextFileReader,
     TextFileWriter,
+    RegisterDatFormat,
     _xforms.Affine,
     TransformationFormat,
 ):

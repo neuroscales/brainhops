@@ -349,7 +349,7 @@ def _nrrd_to_transformations(header: NrrdRaw) -> tx.List[Transformation]:
 
 
 class NrrdImage(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """An image stored in a NRRD file, attached or detached.
 

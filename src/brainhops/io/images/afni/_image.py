@@ -193,11 +193,11 @@ def _afni_axes(header: AfniRaw) -> tx.List[Axis]:
 
 @register_format
 class AfniImage(
-    ImageFormat,
-    SingleScaleImage,
-    AfniFormat,
     BinaryFileReader,
     BinaryFileWriter,
+    ImageFormat,
+    AfniFormat,
+    SingleScaleImage,
 ):
     """An image stored as an AFNI dataset (`.HEAD` and `.BRIK` files).
 

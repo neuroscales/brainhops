@@ -1,11 +1,13 @@
 """The family of the MRtrix transformation formats, which defines their
 hints."""
 
+from brainhops.io.base._base import format_registry
 from brainhops.io.transformations.base import TransformationFormat
 
 
+@format_registry
 class MrtrixTransformationFormat(TransformationFormat):
-    """Marker of transformations stored in an MRtrix format."""
+    """Family of transformations stored in an MRtrix format."""
 
     # The hint of the MRtrix image is declared again so that the text
     # formats, which are not MRtrix images, answer to it too, and so that

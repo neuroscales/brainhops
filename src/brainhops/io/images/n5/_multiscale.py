@@ -25,7 +25,7 @@ from ._metadata import N5Metadata
 from ._raw import N5Raw, no_options, score
 
 
-class N5MultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
+class N5MultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
     """An N5 pyramid, read as a multiscale image.
 
     An N5 pyramid is a group whose datasets `s0`, `s1`, ... hold the same

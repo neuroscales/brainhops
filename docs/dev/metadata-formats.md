@@ -27,7 +27,8 @@ The package `brainhops.datamodel.metadata` exports what a user needs:
 `Metadata`, the vocabulary groups and their base `Vocabulary`, `Scope`,
 the value classes `GeneratedBy`, `Channel` and `EncodingDirection`, the
 report `ConversionReport`, and the loss policy. The package
-`brainhops.io.metadata` exports `MetadataFormat` and the BIDS sidecar.
+`brainhops.io.metadata` exports `MetadataFormat`, the bases
+`MetadataReader` and `MetadataWriter`, and the BIDS sidecar.
 A format author imports the rest from the private modules that define
 it.
 
@@ -44,9 +45,10 @@ it.
 
 ```python
 @register_format
-class MyMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
+class MyMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".my",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("my",)
+    RAW: tx.ClassVar[type] = MyRaw
     SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = (
         "description",
         "echo_time",
@@ -68,6 +70,17 @@ class MyMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             fields=fields,
         )
 ```
+
+The record class `MyRaw` already scores and reads a file, so the
+metadata names it in `RAW` and lists
+[`MetadataReader`][brainhops.io.metadata.MetadataReader] among its bases.
+Every `sniff_*` and `from_*` method of the metadata then passes its
+input to the method of the same name of `MyRaw`, and the metadata opens
+files in the mode of `MyRaw`. A format whose metadata writes its record
+as it is lists
+[`MetadataWriter`][brainhops.io.metadata.MetadataWriter] in the same
+way. The example keeps `BinaryFileWriter` instead, because its writers
+consolidate the metadata first, as described below.
 
 `SUPPORTED_FIELDS` lists the fields of the vocabulary that the record
 of the format can store, and `"extra"` when the format has a free-form

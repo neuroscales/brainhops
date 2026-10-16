@@ -48,7 +48,7 @@ micrometers.
 
 
 @register_format
-class ImarisImage(ImageFormat, SingleScaleImage, Hdf5Reader):
+class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
     """One resolution level of an Imaris file, read as a single image.
 
     An Imaris file holds the same image at several resolutions. This class

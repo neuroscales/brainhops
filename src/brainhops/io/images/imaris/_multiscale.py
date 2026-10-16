@@ -24,7 +24,7 @@ from ._raw import ImarisRaw, no_options
 
 
 @register_format
-class ImarisMultiScaleImage(ImageFormat, MultiScaleImage, Hdf5Reader):
+class ImarisMultiScaleImage(Hdf5Reader, ImageFormat, MultiScaleImage):
     """Every resolution level of an Imaris file, read as a pyramid.
 
     Each level is an [`ImarisImage`][], finest first, whose voxels are read

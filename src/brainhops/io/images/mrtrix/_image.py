@@ -108,7 +108,7 @@ def _mrtrix_axes(ndim: int) -> tx.List[Axis]:
 
 @register_format
 class MrtrixImage(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """An image stored in an MRtrix file (`.mif`, `.mif.gz` or `.mih`).
 

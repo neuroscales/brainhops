@@ -57,10 +57,10 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 
 @register_format
 class NiftyRegAffine(
-    NiftyRegAffineFormat,
     TxtArrayReader,
     TextFileReader,
     TextFileWriter,
+    NiftyRegAffineFormat,
     RASToRAS,
     TransformationFormat,
 ):

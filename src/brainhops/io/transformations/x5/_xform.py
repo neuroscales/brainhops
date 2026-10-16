@@ -75,8 +75,8 @@ def _check_selection(
 
 @register_format
 class X5Transform(
-    TransformationFormat,
     Hdf5ReaderWriter,
+    TransformationFormat,
     _xforms.Sequence,
 ):
     """A transformation stored in a BIDS X5 (`.x5`) file.

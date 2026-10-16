@@ -16,7 +16,7 @@ from ._raw import ZarrRaw
 
 
 @register_format
-class ZarrMetadata(MetadataFormat, ZarrReader):
+class ZarrMetadata(ZarrReader, MetadataFormat):
     """Metadata of a Zarr array, which is the document of the array.
 
     The metadata of a Zarr array is the document that its store keeps,

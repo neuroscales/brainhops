@@ -37,7 +37,7 @@ _NibabelImage = tx.Union[nb.Nifti1Image, nb.Nifti2Image]
 
 
 class NiftiBasedTransformation(
-    TransformationFormat, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, TransformationFormat
 ):
     """A transformation stored in a NIfTI file.
 

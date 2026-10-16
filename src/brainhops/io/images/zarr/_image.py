@@ -54,7 +54,7 @@ from ._views import _image_to_disk, _image_to_model
 
 
 @register_format
-class ZarrImage(ImageFormat, SingleScaleImage, ZarrReaderWriter):
+class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
     """An image stored as a plain Zarr array.
 
     A plain Zarr array is a store, a directory or a remote prefix of

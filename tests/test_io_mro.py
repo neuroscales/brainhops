@@ -11,7 +11,7 @@ import inspect
 import pytest
 
 from brainhops.io.base._base import (
-    Format,
+    FileFormat,
     format_registry,
 )
 from brainhops.io.base.parsers import (
@@ -72,24 +72,24 @@ def test_concrete_formats_are_not_dispatchers(cls: type) -> None:
     assert not cls._is_dispatcher()
 
 
-def test_dispatcher_overrides_are_pass_throughs_for_concrete_formats() -> None:
-    """For non-dispatchers, Format overrides defer to super()."""
+def test_dispatcher_methods_only_dispatch() -> None:
+    """The reading methods of FileFormat refuse a class without registry."""
     overridden = [
         name
-        for name, value in vars(Format).items()
+        for name, value in vars(FileFormat).items()
         if (name.startswith(("from_", "sniff")) or name == "load")
         and isinstance(value, classmethod)
     ]
     assert overridden, "no reading methods found to check"
     for name in overridden:
-        source = inspect.getsource(getattr(Format, name).__func__)
-        assert "_is_dispatcher()" in source, name
-        assert "super()." + name in source, name
+        source = inspect.getsource(getattr(FileFormat, name).__func__)
+        assert f'cls._check_dispatcher("{name}")' in source, name
+        assert "super()." not in source, name
 
 
-def test_resolution_does_not_depend_on_base_order() -> None:
+def test_a_reader_listed_after_the_format_base_is_not_reached() -> None:
     @format_registry
-    class Root(Format):
+    class Root(FileFormat):
         pass
 
     class Special(BinaryFileReader):
@@ -104,9 +104,19 @@ def test_resolution_does_not_depend_on_base_order() -> None:
         pass
 
     assert _owner(SpecialFirst, "from_file") is Special
-    assert _owner(RootFirst, "from_file") is Format
     assert SpecialFirst.from_file("x") == "special-reader"
-    assert RootFirst.from_file("x") == "special-reader"
+    assert _owner(RootFirst, "from_file") is FileFormat
+    with pytest.raises(TypeError, match="no registry"):
+        RootFirst.from_file("x")
+
+
+def test_a_format_that_lists_its_reader_after_its_format_is_refused() -> None:
+    from brainhops.io.metadata import MetadataFormat
+
+    with pytest.raises(TypeError, match="after its format base"):
+
+        class Late(MetadataFormat, BinaryFileReader):
+            pass
 
 
 def test_the_generic_ladder_redispatches_through_cls() -> None:

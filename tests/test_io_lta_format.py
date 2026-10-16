@@ -278,15 +278,15 @@ def test_content_given_as_a_str_is_a_path(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_lta_is_a_registered_writable_format() -> None:
-    from brainhops.io import Format
+    from brainhops.io import FileFormat
 
-    assert LtaTransformation in Format._REGISTRY
+    assert LtaTransformation in FileFormat._REGISTRY
     assert LtaTransformation in TransformationFormat._REGISTRY
     assert issubclass(LtaTransformation, FileWriter)
     assert LtaTransformation.EXTENSIONS == (".lta",)
     # The views read the same files, so registering them would be ambiguous.
     for view, _ in VIEWS:
-        assert view not in Format._REGISTRY
+        assert view not in FileFormat._REGISTRY
 
 
 @pytest.mark.parametrize(

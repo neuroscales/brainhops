@@ -1,6 +1,6 @@
 __all__ = [
     "format_registry",
-    "Format",
+    "FileFormat",
     "register_format",
 ]
 
@@ -13,10 +13,12 @@ from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
     FileReader,
     FileWriter,
-    _FileReadAdapters,
-    _FileSniffAdapters,
+    _FileNamesMixin,
     _passthrough_from_fileobj,
-    _TextReadAdapters,
+    _ReaderMixin,
+    _SnifferMixin,
+    _TextReaderMixin,
+    _WriterMixin,
 )
 from brainhops.io.base.specs import SourceSpec
 
@@ -37,7 +39,7 @@ def format_registry(
     among the formats registered under it. Its `sniff*` methods return the
     best-scoring registered format, and its `load` and `from_*` methods choose
     that format and delegate to it. The decorator is applied to the root
-    [`Format`][] and to the base class of each kind of object, such
+    [`FileFormat`][] and to the base class of each kind of object, such
     as `ImageFormat` and `TransformationFormat`. A dispatcher is never
     added to the registries of its ancestors; only classes decorated with
     [`register_format`][] are.
@@ -96,7 +98,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
         whereas a dispatcher is in no registry at all, so each format is tried
         once per load. If a dispatcher were registered, its formats would be
         tried twice, once directly and once through the dispatcher, and
-        `Format.load` would recurse into itself.
+        `FileFormat.load` would recurse into itself.
 
     !!! note "Order does not matter"
         A registry is an unordered set, because registration follows import
@@ -136,18 +138,21 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
 
 
 @format_registry
-class Format(_FileReadAdapters, _FileSniffAdapters):
+class FileFormat(_FileNamesMixin):
     """Dispatch between the formats registered under a dispatcher.
 
     On a class decorated with [`format_registry`][], the `sniff*` methods
     identify the registered format that matches the input, and `load` and the
-    `from_*` methods choose a format and delegate to it. On a class without a
-    registry, which is a concrete format, every method behaves as the
-    corresponding input adapter or concrete reader method.
+    `from_*` methods choose a format and delegate to it.
 
-    Dispatchers and readers have independent APIs. They share only input
-    adapter mixins; this class does not inherit `FileReader`, whose
-    sniffing contract returns confidence scores.
+    A concrete format lists its reader and its writer before this class,
+    as in `class NiftiImage(BinaryFileReader, BinaryFileWriter,
+    ImageFormat, SingleScaleImage)`, so that its `sniff*`, `load` and
+    `from_*` methods are those of its reader. The methods of this class
+    therefore only ever run on a dispatcher, and they raise `TypeError`
+    on any other class. This class does not inherit
+    [`FileReader`][brainhops.io.base.parsers.FileReader], whose `sniff*`
+    methods return a confidence rather than a class.
 
     This class owns the root registry used by generic loading and saving.
     A standalone family, such as metadata, uses
@@ -168,14 +173,40 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         return is_format_registry(cls)
 
     @classmethod
+    def _check_dispatcher(cls, name: str) -> None:
+        """Refuse a dispatch method called on a class that is no dispatcher.
+
+        A concrete format that lists its reader before its format base
+        never reaches the methods of this class. One that reaches them
+        lists no reader, or lists it after its format base.
+
+        Parameters
+        ----------
+        name : str
+            The name of the method that was called.
+
+        Raises
+        ------
+        TypeError
+            If `cls` owns no format registry.
+        """
+        if not cls._is_dispatcher():
+            raise TypeError(
+                f"{cls.__name__}.{name}() needs a reader or a format "
+                f"registry: {cls.__name__} has no registry, and lists no "
+                f"reader before its format base."
+            )
+
+    @classmethod
     def _reader_formats(cls) -> tx.Set[type]:
         """Select readable candidates without requiring reader inheritance.
 
         A public format can implement a read route directly or inherit it
-        from its native parser. Writers with only default input adapters are
-        export-only and must not be selected by sniffing or loading.
+        from its native parser. Writers whose only read routes are the
+        defaults of the reader mixins are export-only and must not be
+        selected by sniffing or loading.
         """
-        adapters = (Format, _FileReadAdapters, _TextReadAdapters)
+        adapters = (FileFormat, _ReaderMixin, _TextReaderMixin)
         routes = (
             "load",
             "from_spec",
@@ -209,13 +240,11 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
-        """Identify the format of a file or its content.
+        """Identify the registered format of a file or its content.
 
-        A dispatcher returns the registered format that would read the input,
-        and a concrete format scores the input.
+        The result is the registered format that would read the input.
         """
-        if not cls._is_dispatcher():
-            return super().sniff(file, error=error, **kwargs)
+        cls._check_dispatcher("sniff")
         return sniff(
             Source(file),
             cls._reader_formats(),
@@ -233,8 +262,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         **kwargs,
     ) -> tx.Optional[type]:
         """Same as [`sniff`][], for a path or an open file."""
-        if not cls._is_dispatcher():
-            return super().sniff_file(file, error=error, **kwargs)
+        cls._check_dispatcher("sniff_file")
         return sniff(
             Source(file),
             cls._reader_formats(),
@@ -252,8 +280,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         **kwargs,
     ) -> tx.Optional[type]:
         """Identify the registered format that matches a path."""
-        if not cls._is_dispatcher():
-            return super().sniff_filename(filename, error=error, **kwargs)
+        cls._check_dispatcher("sniff_filename")
         return sniff(
             Source(filename),
             cls._reader_formats(),
@@ -271,8 +298,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         **kwargs,
     ) -> tx.Optional[type]:
         """Same as [`sniff`][], for an open file object."""
-        if not cls._is_dispatcher():
-            return super().sniff_fileobj(file, error=error, **kwargs)
+        cls._check_dispatcher("sniff_fileobj")
         return sniff(
             Source(file),
             cls._reader_formats(),
@@ -290,8 +316,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         **kwargs,
     ) -> tx.Optional[type]:
         """Same as [`sniff`][], for text or binary content."""
-        if not cls._is_dispatcher():
-            return super().sniff_content(content, error=error, **kwargs)
+        cls._check_dispatcher("sniff_content")
         return sniff(
             Source.content(content),
             cls._reader_formats(),
@@ -309,8 +334,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         **kwargs,
     ) -> tx.Optional[type]:
         """Same as [`sniff`][], for binary content."""
-        if not cls._is_dispatcher():
-            return super().sniff_bytes(content, error=error, **kwargs)
+        cls._check_dispatcher("sniff_bytes")
         return sniff(
             Source.content(content),
             cls._reader_formats(),
@@ -328,8 +352,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         **kwargs,
     ) -> tx.Optional[type]:
         """Same as [`sniff`][], for text."""
-        if not cls._is_dispatcher():
-            return super().sniff_text(text, error=error, **kwargs)
+        cls._check_dispatcher("sniff_text")
         return sniff(
             Source.content(text),
             cls._reader_formats(),
@@ -347,8 +370,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         **kwargs,
     ) -> tx.Optional[type]:
         """Same as [`sniff`][], for lines of text."""
-        if not cls._is_dispatcher():
-            return super().sniff_lines(lines, error=error, **kwargs)
+        cls._check_dispatcher("sniff_lines")
         return sniff(
             Source.content(lines),
             cls._reader_formats(),
@@ -366,8 +388,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         **kwargs,
     ) -> tx.Optional[type]:
         """Same as [`sniff`][], for a single line."""
-        if not cls._is_dispatcher():
-            return super().sniff_line(line, error=error, **kwargs)
+        cls._check_dispatcher("sniff_line")
         return sniff(
             Source.content(line),
             cls._reader_formats(),
@@ -383,14 +404,12 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
         """Read an object from a file or its content.
 
-        A dispatcher reads the input with the best-matching registered format,
-        and a concrete format reads it as an instance of its own class. A
+        The input is read with the best-matching registered format. A
         [`SourceSpec`][] is read with [`from_spec`][].
         """
         if isinstance(other, SourceSpec):
             return cls.from_spec(other, **kwargs)
-        if not cls._is_dispatcher():
-            return super().load(other, **kwargs)
+        cls._check_dispatcher("load")
         return parse(
             Source(other), cls._reader_formats(), "load", "sniff", **kwargs
         )
@@ -401,8 +420,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
 
         The specification's path is read with its hints and options.
         """
-        if not cls._is_dispatcher():
-            return super().from_spec(spec, **kwargs)
+        cls._check_dispatcher("from_spec")
         return parse(
             Source(spec.path),
             cls._reader_formats(),
@@ -417,10 +435,9 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
         """Read an object from a path or an open file.
 
-        A dispatcher reads the file through the best-matching format.
+        The file is read with the best-matching registered format.
         """
-        if not cls._is_dispatcher():
-            return super().from_file(file, **kwargs)
+        cls._check_dispatcher("from_file")
         return parse(
             Source(file),
             cls._reader_formats(),
@@ -430,11 +447,22 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
         )
 
     @classmethod
+    def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
+        """Same as [`from_file`][], for a path."""
+        cls._check_dispatcher("from_filename")
+        return parse(
+            Source(filename),
+            cls._reader_formats(),
+            "from_filename",
+            "sniff_filename",
+            **kwargs,
+        )
+
+    @classmethod
     @_passthrough_from_fileobj
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
         """Same as [`from_file`][], for an open file object."""
-        if not cls._is_dispatcher():
-            return super().from_fileobj(file, **kwargs)
+        cls._check_dispatcher("from_fileobj")
         return parse(
             Source(file),
             cls._reader_formats(),
@@ -446,8 +474,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
     @classmethod
     def from_content(cls, content: path.ContentLike, **kwargs) -> tx.Self:
         """Same as [`from_file`][], for text or binary content."""
-        if not cls._is_dispatcher():
-            return super().from_content(content, **kwargs)
+        cls._check_dispatcher("from_content")
         return parse(
             Source.content(content),
             cls._reader_formats(),
@@ -459,8 +486,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
         """Same as [`from_file`][], for binary content."""
-        if not cls._is_dispatcher():
-            return super().from_bytes(content, **kwargs)
+        cls._check_dispatcher("from_bytes")
         return parse(
             Source.content(content),
             cls._reader_formats(),
@@ -472,8 +498,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
     @classmethod
     def from_text(cls, text: str, **kwargs) -> tx.Self:
         """Same as [`from_file`][], for text."""
-        if not cls._is_dispatcher():
-            return super().from_text(text, **kwargs)
+        cls._check_dispatcher("from_text")
         return parse(
             Source.content(text),
             cls._reader_formats(),
@@ -485,8 +510,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
         """Same as [`from_file`][], for lines of text."""
-        if not cls._is_dispatcher():
-            return super().from_lines(lines, **kwargs)
+        cls._check_dispatcher("from_lines")
         return parse(
             Source.content(lines),
             cls._reader_formats(),
@@ -498,8 +522,7 @@ class Format(_FileReadAdapters, _FileSniffAdapters):
     @classmethod
     def from_line(cls, line: str, **kwargs) -> tx.Self:
         """Same as [`from_file`][], for a single line."""
-        if not cls._is_dispatcher():
-            return super().from_line(line, **kwargs)
+        cls._check_dispatcher("from_line")
         return parse(
             Source.content(line),
             cls._reader_formats(),
@@ -523,7 +546,7 @@ class _FileBasedModelMixin:
     `MetadataFormat`, must precede `DataModelBase` in each concrete class's
     MRO. The format dispatcher
     supplies file handling; the concrete class supplies its data model.
-    Keeping this mixin separate from the input adapters lets native parsers
+    Keeping this mixin separate from the reader mixins lets native parsers
     retain their specialized methods without hiding file-aware construction.
 
     !!! note "Every string is a file"
@@ -544,7 +567,7 @@ class _FileBasedModelMixin:
 
     def __init_subclass__(cls, **kwargs: tx.Any) -> None:
         super().__init_subclass__(**kwargs)
-        _check_format_first(cls)
+        _check_base_order(cls)
 
     @classmethod
     def _data_model(cls) -> type:
@@ -555,7 +578,7 @@ class _FileBasedModelMixin:
         """
         for base in cls.__mro__:
             if issubclass(base, DataModelBase) and not issubclass(
-                base, (Format, FileReader, FileWriter)
+                base, (FileFormat, FileReader, FileWriter)
             ):
                 return base
         return cls
@@ -672,25 +695,39 @@ class _FileBasedModelMixin:
         return super().from_instance(other, *args, **kwargs)
 
 
-def _check_format_first(cls: type) -> None:
-    """Refuse a format that lists a class of its data model before its format.
+def _check_base_order(cls: type) -> None:
+    """Refuse a format whose bases are not listed in the expected order.
 
-    A root of the formats, such as `TransformationFormat`, lists `Format`
-    among its own bases and is not checked.
+    A concrete format lists its reader and its writer first, then its
+    format base, then its data model, as in
+    `class NiftiImage(BinaryFileReader, BinaryFileWriter, ImageFormat,
+    SingleScaleImage)`. The reader and the writer are listed before the
+    format base, because the reading methods of `FileFormat` only
+    dispatch, and the format base must come before
+    the data model, so that the format decides whether to convert another
+    object before the data model copies its fields. A root of the
+    formats, such as `TransformationFormat`, lists `FileFormat` among its
+    own bases and is not checked.
+
+    Parameters
+    ----------
+    cls : type
+        The class to check.
 
     Raises
     ------
     TypeError
         If a class of the data model comes before the first format class
-        in the method resolution order of `cls`.
+        in the method resolution order of `cls`, or if `cls` lists a
+        reader or a writer after a format base.
     """
     # `bagof.magic` builds a stand-in class of this name only to compute an
     # MRO, then builds the class itself, which is checked.
-    if Format in cls.__bases__ or cls.__name__ == "__magic_discard__":
+    if FileFormat in cls.__bases__ or cls.__name__ == "__magic_discard__":
         return
     before = []
     for base in cls.__mro__[1:]:
-        if issubclass(base, Format):
+        if issubclass(base, FileFormat):
             break
         if issubclass(base, DataModelBase) and not issubclass(
             base, (FileReader, FileWriter)
@@ -702,6 +739,19 @@ def _check_format_first(cls: type) -> None:
             f"before its format base. List the format base first, so that "
             f"the format decides whether to convert another object before "
             f"the data model copies its fields."
+        )
+    io_bases = (_ReaderMixin, _SnifferMixin, _WriterMixin)
+    late = []
+    after_format = False
+    for base in cls.__bases__:
+        if issubclass(base, FileFormat):
+            after_format = True
+        elif after_format and issubclass(base, io_bases):
+            late.append(base.__name__)
+    if late:
+        raise TypeError(
+            f"{cls.__name__} lists its reader or writer ({', '.join(late)}) "
+            f"after its format base. List the reader and the writer first."
         )
 
 
@@ -733,7 +783,7 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
         if is_format_registry(klass):
             continue
         names = [field.public_name for field in fields(klass)]
-        if issubclass(klass, (Format, FileReader, FileWriter)):
+        if issubclass(klass, (FileFormat, FileReader, FileWriter)):
             for name in names:
                 owners.setdefault(name, []).append(klass)
         else:
@@ -770,7 +820,7 @@ def _takes_over(cls: type, name: str) -> bool:
     for klass in cls.__mro__:
         if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
             continue
-        if issubclass(klass, (Format, FileReader, FileWriter)):
+        if issubclass(klass, (FileFormat, FileReader, FileWriter)):
             continue
         return any(field.name == name for field in fields(klass))
     return False

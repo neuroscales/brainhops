@@ -59,7 +59,7 @@ _HINTS = ("jpeg2000", "jp2", "j2k", "j2c")
 
 @register_format
 class Jpeg2000Image(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """One resolution level of a JPEG 2000 image.
 

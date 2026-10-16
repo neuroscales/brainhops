@@ -47,7 +47,7 @@ from ._spatial import placement
 from ._views import _image_to_disk, _image_to_model
 
 
-class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
+class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
     """One N5 dataset, or one level of an N5 pyramid.
 
     An N5 container is a directory tree in which a dataset is a directory

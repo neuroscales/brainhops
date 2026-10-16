@@ -77,7 +77,7 @@ from ._views import _image_to_disk, _image_to_model
 
 @register_format
 class NiftiImage(
-    ImageFormat, SingleScaleImage, BinaryFileReader, BinaryFileWriter
+    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
 ):
     """An image stored in a NIfTI file.
 

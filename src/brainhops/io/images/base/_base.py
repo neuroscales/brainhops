@@ -5,7 +5,7 @@ import typing_extensions as tx
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image, _changes_storage
 from brainhops.io.base._base import (
-    Format,
+    FileFormat,
     _FileBasedModelMixin,
     format_registry,
 )
@@ -15,7 +15,7 @@ from brainhops.io.base.specs import register_parser
 @register_parser(Image)
 @format_registry
 class ImageFormat(
-    _FileBasedModelMixin, DataModelBase, Format, eq=False, kw_only=True
+    _FileBasedModelMixin, DataModelBase, FileFormat, eq=False, kw_only=True
 ):
     """Format dispatcher and common base for stored images.
 

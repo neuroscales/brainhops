@@ -19,7 +19,7 @@ from ._raw import AfniRaw
 
 
 @register_format
-class AfniMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
+class AfniMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
     """Metadata of an AFNI dataset, which is its `.HEAD` file.
 
     The metadata of an AFNI dataset is the whole header, held as an
