@@ -87,20 +87,18 @@ def test_clipped_dask_reslice_stays_lazy() -> None:
         shape=(12, 5)
     )
     executed = []
-    with (
-        backend("dask"),
-        Callback(posttask=lambda *args: executed.append(True)),
-    ):
-        lazy = sep.pull_separable(
-            da.from_array(values, chunks=(2, 3)),
-            seq,
-            degree=1,
-            bound="nearest",
-            coeff=False,
-            clip=0.5,
-        )
-        assert isinstance(lazy, da.Array)
-        assert not executed
+    with backend("dask"):
+        with Callback(posttask=lambda *args: executed.append(True)):
+            lazy = sep.pull_separable(
+                da.from_array(values, chunks=(2, 3)),
+                seq,
+                degree=1,
+                bound="nearest",
+                coeff=False,
+                clip=0.5,
+            )
+            assert isinstance(lazy, da.Array)
+            assert not executed
     with backend("numpy"):
         expected = pull(
             values, seq.compute().field, 1, "nearest", False, clip=0.5
