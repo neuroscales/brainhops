@@ -38,7 +38,7 @@ def load_proxy(raw: ArrayProxy, **kwargs: tx.Any) -> ArrayProtocol:
     """
     target = resolve_backend(raw)
     if target in ("dask", "dask+cupy"):
-        return to_backend(raw.to_dask(**kwargs), target)
+        return raw.to_dask(cupy=target == "dask+cupy", **kwargs)
     data = to_backend(raw, target)
     if isinstance(data, np.ndarray):
         data.flags.writeable = False

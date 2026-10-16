@@ -245,3 +245,45 @@ def test_views_read_through_the_original_proxy() -> None:
     proxy = _Recording(_array())
     np.asarray(proxy[1:][::2].T)
     assert proxy.reads == [(slice(1, 4, 2), slice(0, 6, 1), slice(0, 7, 1))]
+
+
+def test_to_numpy_reads_the_view() -> None:
+    # to_numpy reads the values of a view.
+    proxy = _Recording(_array())
+    values = proxy[1:3].to_numpy()
+    assert isinstance(values, np.ndarray)
+    np.testing.assert_array_equal(values, _array()[1:3])
+
+
+def test_to_backend_follows_the_setting() -> None:
+    # Under the default setting, a small proxy is read with NumPy and a
+    # large one becomes a Dask array; an explicit setting is obeyed.
+    da = pytest.importorskip("dask.array")
+    from brainhops.backends import backend
+
+    proxy = _Recording(_array(), chunks=(2, 3, 7))
+    assert isinstance(proxy.to_backend(), np.ndarray)
+    with backend(threshold=8):
+        lazy = proxy.to_backend()
+    assert isinstance(lazy, da.Array)
+    assert lazy.chunksize == (2, 3, 7)
+    assert isinstance(proxy.to_backend("dask"), da.Array)
+    assert isinstance(proxy.to_backend("numpy"), np.ndarray)
+
+
+def test_gpu_conversions_need_cupy() -> None:
+    # Without CuPy, the conversions to the GPU say what is missing.
+    pytest.importorskip("dask.array")
+    try:
+        import cupy  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        pytest.skip("CuPy is installed")
+    proxy = _Recording(_array())
+    with pytest.raises(ImportError):
+        proxy.to_cupy()
+    with pytest.raises(ImportError):
+        proxy.to_dask(cupy=True)
+    with pytest.raises(ImportError):
+        proxy.to_backend("dask+cupy")
