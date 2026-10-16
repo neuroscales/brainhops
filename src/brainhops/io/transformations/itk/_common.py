@@ -31,6 +31,8 @@ _TRANSFORM_TYPE_RE = re.compile(
 class ItkTransformClass(StrEnum):
     """Names of the ITK transform classes.
 
+    `ComposeScaleSkewVersor3DTransform` composes rotation, scale and skew.
+
     The transform class names the kind of transform that an ITK file block
     stores. Each value is the class name itself, as it appears in the file:
 
@@ -45,6 +47,7 @@ class ItkTransformClass(StrEnum):
     | `Euler2DTransform`           | `"Euler2DTransform"`           |
     | `Euler3DTransform`           | `"Euler3DTransform"`           |
     | `VersorTransform`            | `"VersorTransform"`            |
+    | `QuaternionRigidTransform`  | `"QuaternionRigidTransform"`  |
     | `VersorRigid3DTransform`     | `"VersorRigid3DTransform"`     |
     | `ScaleVersor3DTransform`     | `"ScaleVersor3DTransform"`     |
     | `ScaleSkewVersor3DTransform` | `"ScaleSkewVersor3DTransform"` |
@@ -69,9 +72,12 @@ class ItkTransformClass(StrEnum):
     Euler3DTransform = "Euler3DTransform"
     VersorTransform = "VersorTransform"
 
+    QuaternionRigidTransform = "QuaternionRigidTransform"
     VersorRigid3DTransform = "VersorRigid3DTransform"
     ScaleVersor3DTransform = "ScaleVersor3DTransform"
     ScaleSkewVersor3DTransform = "ScaleSkewVersor3DTransform"
+
+    ComposeScaleSkewVersor3DTransform = "ComposeScaleSkewVersor3DTransform"
 
     AffineTransform = "AffineTransform"
     MatrixOffsetTransformBase = "MatrixOffsetTransformBase"
@@ -83,6 +89,22 @@ class ItkTransformClass(StrEnum):
 
 
 _ITKT = ItkTransformClass
+
+_7floats = tx.Tuple[float, float, float, float, float, float, float]
+_12floats = tx.Tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+]
 
 
 class ItkPrecision(StrEnum):
@@ -555,6 +577,53 @@ class ItkVersorStruct(ItkAffineBase, on={"type": _ITKT.VersorTransform}):
         return _xforms.Rotation(_versor_to_matrix(self.parameters[:3]))
 
 
+class ItkQuaternionRigidStruct(
+    ItkAffineBase, on={"type": _ITKT.QuaternionRigidTransform}
+):
+    """ITK quaternion rigid transform, storing all four quaternion values."""
+
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
+    parameters: _7floats
+    """The quaternion `(x, y, z, w)`, then the translation."""
+    fixed_parameters: tx.Tuple[float, float, float]
+    """The center of rotation."""
+
+    @smartproperty(cache=True)
+    def linear(self) -> _xforms.Linear:
+        """ITK's quaternion matrix, without normalising the stored values."""
+        x, y, z, w = self.parameters[:4]
+        # ITK uses the conjugate VNL quaternion's rotation_matrix_transpose.
+        # VNL does not normalise: a nonunit quaternion also scales by |q|^2.
+        return _xforms.Linear(
+            np.array(
+                [
+                    [
+                        w * w + x * x - y * y - z * z,
+                        2 * (x * y - w * z),
+                        2 * (x * z + w * y),
+                    ],
+                    [
+                        2 * (x * y + w * z),
+                        w * w - x * x + y * y - z * z,
+                        2 * (y * z - w * x),
+                    ],
+                    [
+                        2 * (x * z - w * y),
+                        2 * (y * z + w * x),
+                        w * w - x * x - y * y + z * z,
+                    ],
+                ],
+                dtype=np.float64,
+            )
+        )
+
+    @smartproperty(cache=True)
+    def translation(self) -> _xforms.Translation:
+        """The translation after rotation about the stored center."""
+        return _xforms.Translation(self.parameters[4:7])
+
+
 class ItkVersorRigid3DStruct(
     ItkAffineBase, on={"type": _ITKT.VersorRigid3DTransform}
 ):
@@ -737,6 +806,37 @@ class ItkScaleSkewVersor3DStruct(
     @smartproperty(cache=True)
     def translation(self) -> _xforms.Translation:
         """The translation vector."""
+        return _xforms.Translation(self.parameters[3:6])
+
+
+class ItkComposeScaleSkewVersor3DStruct(
+    ItkAffineBase, on={"type": _ITKT.ComposeScaleSkewVersor3DTransform}
+):
+    """ITK rotation composed with scale and upper-triangular shear.
+
+    Unlike ScaleSkewVersor3DTransform, this stores three shears and
+    multiplies `R @ diag(scale) @ shear` instead of adding matrix entries.
+    """
+
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
+    parameters: _12floats
+    """The versor, translation, scales and `(kxy, kxz, kyz)` shears."""
+    fixed_parameters: tx.Tuple[float, float, float]
+    """The center of rotation."""
+
+    @smartproperty(cache=True)
+    def linear(self) -> _xforms.Linear:
+        """The composed rotation, scale and shear matrix."""
+        rotation = _versor_to_matrix(self.parameters[:3])
+        scales = np.diag(self.parameters[6:9])
+        xy, xz, yz = self.parameters[9:12]
+        shear = np.array([[1, xy, xz], [0, 1, yz], [0, 0, 1]], dtype=float)
+        return _xforms.Linear(rotation @ scales @ shear)
+
+    @smartproperty(cache=True)
+    def translation(self) -> _xforms.Translation:
+        """The translation after the centered linear map."""
         return _xforms.Translation(self.parameters[3:6])
 
 
