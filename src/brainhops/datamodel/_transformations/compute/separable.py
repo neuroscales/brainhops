@@ -23,7 +23,14 @@ separable, because the monolithic pull is then used unchanged.
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.bsplines import pull, pull_axes, spline_matrix
+from brainhops._core.bsplines import (
+    _clip_mask,
+    _normalize_clip,
+    pull,
+    pull_axes,
+    spline_matrix,
+)
+from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops.backends import copy_array, get_array_backend, may_share_memory
 from brainhops.datamodel import kinds
 from brainhops.datamodel._sugar import get_axes
@@ -34,6 +41,10 @@ from ..concrete import Affine, CartesianField, Permutation
 from ..meta import SubspaceTransformation
 from ..sequence import Sequence, _interpolates
 from .utils import axis_list
+
+_AxisLabels = tx.List[tx.Tuple[tx.Literal["data", "grid"], int]]
+_StepResult = tx.Tuple[ArrayProtocol, _AxisLabels, tx.Optional[ArrayProtocol]]
+_StepRunner = tx.Callable[[ArrayProtocol, _AxisLabels], _StepResult]
 
 # ======================================================================
 #
@@ -50,6 +61,7 @@ def pull_separable(
     bound: tx.Union[str, float],
     coeff: bool,
     copy: bool = False,
+    clip: Clip = None,
 ) -> tx.Any:
     """Reslice data through a transformation, exploiting separable axes.
 
@@ -82,12 +94,17 @@ def pull_separable(
         is made when the result is already fresh, nor on the immutable dask
         backend.
 
+    clip : float, pair, sequence of pairs, or None, default=None
+        Zero samples outside the closed voxel margin, as in [`pull`][].
+        Each independent group builds its own mask, without a full field.
+
     Returns
     -------
     array-like
         Resliced data, with the shape of the output grid.
     """
-    opt = dict(degree=degree, bound=bound, coeff=coeff)
+    clip = _normalize_clip(clip, data.ndim)
+    opt = dict(degree=degree, bound=bound, coeff=coeff, clip=clip)
     steps = _plan(tuple(data.shape), seq, **opt)
     if steps is None:
         # The monolithic pull writes into an array that it allocates.
@@ -103,12 +120,18 @@ def pull_separable(
     # Only the gather steps and the transpose can return a view of `data`,
     # so `fresh` records whether the result is known to be a new array.
     fresh = not floating or any(step["kind"] != "gather" for step in steps)
-    labels: tx.List[tx.Any] = [("data", i) for i in range(data.ndim)]
+    labels: _AxisLabels = [("data", i) for i in range(data.ndim)]
+    masks = []
     for step in steps:
-        arr, labels = step["run"](arr, labels)
+        arr, labels, mask = step["run"](arr, labels)
+        if mask is not None:
+            masks.append((mask, step["G"]))
 
     permutation = [labels.index(("grid", g)) for g in range(data.ndim)]
     arr = ab.transpose(arr, permutation)
+    if masks:
+        arr = _apply_clip_masks(arr, masks)
+        fresh = True
     # The monolithic pull reproduces scipy's map_coordinates, so an integer
     # or boolean output is converted back in the same way as in scipy.
     if arr.dtype != out_dtype:
@@ -237,12 +260,14 @@ def _classify(
     coeff: bool,
     grid_system: tx.Optional[tx.Any],
     data_system: tx.Optional[tx.Any],
+    clip: Clip = None,
 ) -> dict:
     # Build one executable step for a group. The step is a gather when no
     # value is interpolated, a weight matrix for a one-dimensional affine
     # group, and a batched pull for a coupled or interpolating group.
     grid_axes = group["G"]
     data_axes = group["D"]
+    clip = [clip[d] for d in data_axes] if clip is not None else None
     inner = group["inner"]
     k = len(data_axes)
 
@@ -285,7 +310,14 @@ def _classify(
     }
     if kind == "gather":
         step["run"] = _make_gather(
-            data_axes[0], grid_axes[0], scale, shift, bound, data_shape, shape
+            data_axes[0],
+            grid_axes[0],
+            scale,
+            shift,
+            bound,
+            data_shape,
+            shape,
+            clip,
         )
     elif kind == "matrix" and n_in * n_out <= _MAX_WEIGHT_MATRIX_ELEMENTS:
         step["run"] = _make_matrix(
@@ -298,12 +330,21 @@ def _classify(
             coeff,
             data_shape,
             shape,
+            clip,
         )
     else:
         # A coupled group, or a weight matrix that is too large, gives a
         # batched pull.
         step["run"] = _make_pull(
-            inner, data_axes, grid_axes, shape, degree, bound, coeff
+            inner,
+            data_axes,
+            grid_axes,
+            shape,
+            degree,
+            bound,
+            coeff,
+            data_shape,
+            clip,
         )
     return step
 
@@ -396,12 +437,14 @@ def _plan(
     degree: int,
     bound: tx.Union[str, float],
     coeff: bool,
+    clip: Clip = None,
 ) -> tx.Optional[tx.List[dict]]:
     # Return the ordered steps that reslice data of shape `data_shape`
     # through `seq`, or None when `seq` does not factor into at least two
     # groups, in which case the monolithic pull is used. A transformation
     # that cannot be computed is also left to the monolithic pull, which
     # reports the malformed input.
+    clip = _normalize_clip(clip, len(data_shape))
     try:
         nf = seq.compute(mode=kinds.Affine, factor=True)
     except Exception:
@@ -423,6 +466,7 @@ def _plan(
             coeff,
             grid.output,
             seq.output,
+            clip,
         )
         for group in groups
     ]
@@ -466,12 +510,13 @@ def _make_gather(
     bound: tx.Union[str, float],
     data_shape: tx.Tuple[int, ...],
     shape: tx.Tuple[int, ...],
-) -> tx.Callable:
+    clip: Clip,
+) -> _StepRunner:
     n_in = data_shape[d]
     n_out = shape[g]
     bound0 = bound if isinstance(bound, str) else 0.0
 
-    def run(arr: tx.Any, labels: tx.List[tx.Any]) -> tx.Tuple[tx.Any, list]:
+    def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         ab = get_array_backend(arr)
         axis = labels.index(("data", d))
         coords = np.arange(n_out) * scale + shift
@@ -499,7 +544,8 @@ def _make_gather(
                 result = ab.where(mask, result, cval)
         labels = list(labels)
         labels[axis] = ("grid", g)
-        return result, labels
+        mask = _clip_mask(coords[..., None], (n_in,), clip)
+        return result, labels, mask
 
     return run
 
@@ -514,11 +560,12 @@ def _make_matrix(
     coeff: bool,
     data_shape: tx.Tuple[int, ...],
     shape: tx.Tuple[int, ...],
-) -> tx.Callable:
+    clip: Clip,
+) -> _StepRunner:
     n_in = data_shape[d]
     n_out = shape[g]
 
-    def run(arr: tx.Any, labels: tx.List[tx.Any]) -> tx.Tuple[tx.Any, list]:
+    def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         ab = get_array_backend(arr)
         axis = labels.index(("data", d))
         coords = ab.arange(n_out) * scale + shift
@@ -535,7 +582,8 @@ def _make_matrix(
             out = out + ab.asarray(correction).reshape(tuple(corr_shape))
         labels = list(labels)
         labels[axis] = ("grid", g)
-        return out, labels
+        mask = _clip_mask(coords[..., None], (n_in,), clip)
+        return out, labels, mask
 
     return run
 
@@ -548,21 +596,24 @@ def _make_pull(
     degree: int,
     bound: tx.Union[str, float],
     coeff: bool,
-) -> tx.Callable:
+    data_shape: tx.Tuple[int, ...],
+    clip: Clip,
+) -> _StepRunner:
     chain: tx.List[Transformation] = [
         CartesianField(shape=tuple(shape[g] for g in grid_axes))
     ]
     if inner is not None:
         chain.append(inner)
 
-    def run(arr: tx.Any, labels: tx.List[tx.Any]) -> tx.Tuple[tx.Any, list]:
+    def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         coords = Sequence(transformations=chain).compute().field
         positions = [labels.index(("data", d)) for d in data_axes]
         moved = pull_axes(arr, coords, positions, degree, bound, coeff)
         used = set(positions)
         remaining = [labels[i] for i in range(len(labels)) if i not in used]
         labels = remaining + [("grid", g) for g in grid_axes]
-        return moved, labels
+        mask = _clip_mask(coords, [data_shape[d] for d in data_axes], clip)
+        return moved, labels, mask
 
     return run
 
@@ -582,3 +633,23 @@ def _fresh(arr: tx.Any, data: tx.Any, copy: bool, fresh: bool) -> tx.Any:
     if not copy or fresh or may_share_memory(arr, data) is False:
         return arr
     return copy_array(arr)
+
+
+def _apply_clip_masks(
+    arr: ArrayProtocol, masks: tx.List[tx.Tuple[ArrayProtocol, tx.List[int]]]
+) -> ArrayProtocol:
+    """Zero the union of group cutoffs after every interpolation step.
+
+    Delaying the masks prevents a later nonzero constant boundary from
+    bringing clipped samples back. Masks stay lazy and only span the axes
+    of their independent group.
+    """
+    ab = get_array_backend(arr)
+    for mask, axes in masks:
+        order = sorted(range(len(axes)), key=lambda index: axes[index])
+        mask = ab.transpose(ab.asarray(mask), order)
+        shape = [1] * arr.ndim
+        for index, axis in enumerate(sorted(axes)):
+            shape[axis] = mask.shape[index]
+        arr = ab.where(mask.reshape(tuple(shape)), arr, ab.zeros_like(arr))
+    return arr

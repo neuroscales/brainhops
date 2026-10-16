@@ -5,7 +5,7 @@ file."""
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
@@ -14,6 +14,8 @@ from brainhops._core.properties import (
     smartproperty,
 )
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserExistsError
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
@@ -22,15 +24,18 @@ from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _header,
+    _keep_given_fields,
     _NiftiObject,
     _record_image,
+    _split_options,
     _written_nifti,
 )
-from brainhops.io.transformations.base import AffineTransformationFormat
-from brainhops.io.transformations.base._conversions import (
-    convert_instance,
-    converts_to,
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
 )
+from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 # this format
@@ -49,11 +54,11 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
     """Shared reading, scoring and writing of the affines of a header.
 
     An affine read from a file keeps its matrix in the header of its
-    metadata and has no `raw` array, because the array of the file is only
+    metadata and has no `rawdata` array, because the array of the file is only
     a placeholder. A matrix that is assigned is pending: the data model
     stores it, and the affine reads it first, until [`consolidate`][]
     encodes it into a new header. An affine built with a homogeneous
-    matrix in `raw` reads that matrix before the header.
+    matrix in `rawdata` reads that matrix before the header.
     """
 
     # --- reading ------------------------------------------------------
@@ -125,7 +130,12 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         raise NotImplementedError
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix into a new header.
 
@@ -142,8 +152,14 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
 
         Afterwards the matrix is decoded from the new header, with the
         precision of the file, which stores it in single precision, and
-        the affine has no `raw` array. An affine that has a header and no
+        the affine has no `rawdata` array. An affine that has a header and no
         pending matrix, consolidated without options, is left as it is.
+
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`. What the write loses or approximates is
+        acted on once, by `on_loss`.
 
         Parameters
         ----------
@@ -152,34 +168,59 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description`, and
+            header fields, which take precedence over the derived values
+            and `like`. A header field that holds a field of the metadata,
+            such as `descrip`, is refused.
 
         Returns
         -------
         Self
             The consolidated copy, or this affine with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         if (
             self._data is None
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
-        image = _affine_encoded(self, like, overrides)
+        base = None if metadata is None else metadata.raw
+        image = _affine_encoded(self, like, overrides, base, fields)
         record = NiftiRaw(header=image.header)
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
-                raw=None,
+                rawdata=None,
                 metadata=metadata,
                 data=None,
             )
-        self.raw = None
+        self.rawdata = None
         self.metadata = metadata
         self.data = None
         return self
@@ -241,7 +282,7 @@ def _xform_codes(header: tx.Optional[nb.Nifti1Header]) -> tx.Tuple[int, int]:
     return 2, 2
 
 
-class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
+class NiftiRASToVoxel(_NiftiAffine, RASToVoxel):
     """
     Affine from RAS to voxel space, stored in the header of a NIfTI file.
 
@@ -260,16 +301,20 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
 
         A matrix that is assigned is returned as it is, and stays pending
         until [`consolidate`][] or a write encodes it. Otherwise, the
-        matrix is decoded from a homogeneous matrix in `raw`, or else it is
+        matrix is decoded from a homogeneous matrix in `rawdata`, or else it is
         the inverse of the voxel-to-RAS affine of the header, which is
         read-only, or `None` without metadata.
         """
-        if self.raw is not None:
-            return _affine_to_model(self.raw)
+        if self.rawdata is not None:
+            return _affine_to_model(self.rawdata)
         header = _header(self)
         if header is None:
             return None
         return _read_only(np.linalg.inv(header.get_best_affine())[:-1])
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds its header, or `None`.
@@ -278,57 +323,6 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     assigning other metadata drops the matrix decoded from the previous
     header.
     """
-
-    # --- conversions --------------------------------------------------
-    # `TransformationFormat.from_any` converts another transformation, as
-    # `t.to(cls)` converts it. The data model comes before that class in
-    # the method resolution order, and its `from_instance` would copy the
-    # map of an affine first, so `from_instance` converts here, with the
-    # same helpers.
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an instance, or convert a transformation to this format.
-
-        A transformation that is not of this format is converted exactly
-        as `other.to(cls)` converts it. An instance of this format is
-        copied with its metadata and its stored matrix, which is `None`
-        unless a matrix was assigned, so the header is not decoded. Any
-        other instance is copied as
-        [`Format.from_instance`][brainhops.io.base.Format.from_instance]
-        copies it.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments. A transformation that is converted
-            takes keyword options only.
-        **kwargs : Any
-            Options of the conversion, or field values of the copy.
-
-        Returns
-        -------
-        Self
-            The new object.
-
-        Raises
-        ------
-        TypeError
-            If positional arguments accompany a transformation that is
-            converted.
-        ConversionError
-            If the format cannot hold the transformation.
-        """
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        if isinstance(other, cls):
-            # The data model copies the decoded view of another instance,
-            # so the stored value is passed instead: `None` keeps a proxy
-            # lazy, and an assigned array stays pending in the copy.
-            kwargs.setdefault("data", other._data)
-        return super().from_instance(other, *args, **kwargs)
 
     def inverse(self, compute: bool = False, **kwargs) -> VoxelToRAS:
         """Return the inverse transformation, from voxel to RAS space.
@@ -350,7 +344,7 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
         VoxelToRAS
             The inverse transformation.
         """
-        if self._data is None and self.raw is None:
+        if self._data is None and self.rawdata is None:
             return NiftiVoxelToRAS(metadata=self.metadata)
         return super().inverse(compute=compute, **kwargs).to(VoxelToRAS)
 
@@ -360,13 +354,13 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
 
 
 @register_format
-class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
+class NiftiVoxelToRAS(_NiftiAffine, VoxelToRAS):
     """Affine from voxel to RAS space, stored in the header of a NIfTI file.
 
     The matrix of an affine read from a file is the best affine of the
     header, which is the sform when its code is set and the qform
-    otherwise. Setting the matrix stores it in `raw`, which then takes
-    precedence over the header.
+    otherwise. Setting the matrix stores it in `rawdata`, which then
+    takes precedence over the header.
     """
 
     HINTS = ("nifti",)
@@ -378,16 +372,20 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
         A matrix that is assigned is returned as it is, and stays pending
         until [`consolidate`][] or a write encodes it. Otherwise, the
-        matrix is decoded from a homogeneous matrix in `raw`, or else it is
+        matrix is decoded from a homogeneous matrix in `rawdata`, or else it is
         the voxel-to-RAS affine of the header, which is read-only, or
         `None` without metadata.
         """
-        if self.raw is not None:
-            return _affine_to_model(self.raw)
+        if self.rawdata is not None:
+            return _affine_to_model(self.rawdata)
         header = _header(self)
         if header is None:
             return None
         return _read_only(header.get_best_affine()[:-1])
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds its header, or `None`.
@@ -396,57 +394,6 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     assigning other metadata drops the matrix decoded from the previous
     header.
     """
-
-    # --- conversions --------------------------------------------------
-    # `TransformationFormat.from_any` converts another transformation, as
-    # `t.to(cls)` converts it. The data model comes before that class in
-    # the method resolution order, and its `from_instance` would copy the
-    # map of an affine first, so `from_instance` converts here, with the
-    # same helpers.
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an instance, or convert a transformation to this format.
-
-        A transformation that is not of this format is converted exactly
-        as `other.to(cls)` converts it. An instance of this format is
-        copied with its metadata and its stored matrix, which is `None`
-        unless a matrix was assigned, so the header is not decoded. Any
-        other instance is copied as
-        [`Format.from_instance`][brainhops.io.base.Format.from_instance]
-        copies it.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments. A transformation that is converted
-            takes keyword options only.
-        **kwargs : Any
-            Options of the conversion, or field values of the copy.
-
-        Returns
-        -------
-        Self
-            The new object.
-
-        Raises
-        ------
-        TypeError
-            If positional arguments accompany a transformation that is
-            converted.
-        ConversionError
-            If the format cannot hold the transformation.
-        """
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        if isinstance(other, cls):
-            # The data model copies the decoded view of another instance,
-            # so the stored value is passed instead: `None` keeps a proxy
-            # lazy, and an assigned array stays pending in the copy.
-            kwargs.setdefault("data", other._data)
-        return super().from_instance(other, *args, **kwargs)
 
     def inverse(self, compute: bool = False, **kwargs) -> RASToVoxel:
         """Return the inverse transformation, from RAS to voxel space.
@@ -468,7 +415,7 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
         RASToVoxel
             The inverse transformation.
         """
-        if self._data is None and self.raw is None:
+        if self._data is None and self.rawdata is None:
             return NiftiRASToVoxel(metadata=self.metadata)
         return super().inverse(compute=compute, **kwargs).to(RASToVoxel)
 
@@ -477,18 +424,24 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
 
 def _affine_encoded(
-    xform: _NiftiAffine, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+    xform: _NiftiAffine,
+    like: tx.Any,
+    overrides: tx.Mapping[str, tx.Any],
+    base: tx.Optional[NiftiRaw],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
     """Encode an affine as the header of a single-voxel placeholder volume.
 
-    The header is built over a copy of the record, as
-    [`_NiftiAffine.consolidate`][] describes.
+    The header is built over a copy of `base`, the record of the
+    consolidated metadata, as [`_NiftiAffine.consolidate`][] describes.
     """
     matrix = xform._voxel_to_ras_matrix()
     scode, qcode = _xform_codes(_header(xform))
     data = np.zeros((1, 1, 1), dtype="float32")
-    image = _record_image(data, xform._record(), matrix, overrides)
+    record = None if base is None else base.copy()
+    image = _record_image(data, record, matrix, overrides)
     _apply_like(image, like)
+    _keep_given_fields(image, fields)
     image.header.set_sform(matrix, code=scode)
     image.header.set_qform(matrix, code=qcode)
     _apply_overrides(image, overrides)

@@ -5,16 +5,20 @@ from io import BytesIO
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops.datamodel.metadata._derive import Indexed, Resampled
+from brainhops.datamodel.metadata._report import OnLoss
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileReader, BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat
+from brainhops.io.metadata._base import consolidated
 
 # this format
 from ._raw import NiftiRaw
+from ._vocabulary import clear_spatial_slots, decode, encode
 
 
 @register_format
@@ -30,14 +34,138 @@ class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     A file is read through the record: [`from_fileobj`][] reads a
     [`NiftiRaw`][] and wraps it, and writing the metadata writes the header
-    of the record without voxels.
+    of the consolidated record without voxels.
+
+    The fields of the vocabulary that the header stores are decoded when
+    the metadata is built, and are listed in `SUPPORTED_FIELDS`. The slot
+    of each field is given in the table of
+    `brainhops.io.common.nifti._vocabulary`. The world space (`space`)
+    and an intent that changes how the axes are read belong to the
+    geometry, so a change of them is reported as approximated. NIfTI
+    has no free-form store, so `extra` is not supported.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
+    RAW: tx.ClassVar[type] = NiftiRaw
+    SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = (
+        "description",
+        "sources",
+        "intent",
+        "space",
+        "display_range",
+        "phase_encoding_direction",
+        "slice_encoding_direction",
+        "slice_timing",
+        "repetition_time",
+        "dtype",
+        "scale_slope",
+        "scale_intercept",
+    )
+    """The fields of the vocabulary that a NIfTI header stores."""
 
     raw: NoRepr[tx.Optional[NiftiRaw]] = None
     """The header of the file, or `None` for metadata without a record."""
+
+    @classmethod
+    def from_raw(
+        cls, raw: tx.Optional[NiftiRaw], **kwargs: tx.Any
+    ) -> "NiftiMetadata":
+        """Build the metadata of a record, decoding its vocabulary.
+
+        Parameters
+        ----------
+        raw : NiftiRaw, optional
+            The record, held as it is given.
+        **kwargs : Any
+            Other fields, which take precedence over the decoded values.
+
+        Returns
+        -------
+        NiftiMetadata
+            The metadata.
+        """
+        return cls(raw=raw, **{**decode(raw), **kwargs})
+
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> "NiftiMetadata":
+        """Encode the fields that differ from the header into a copy of it.
+
+        The contract is that of
+        [`MetadataFormat.consolidate`][brainhops.io.metadata.MetadataFormat.consolidate]:
+        the changes are written into a copy of the record, or into an
+        empty NIfTI-1 header, and the result is decoded from it afresh.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this metadata rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the fields that the header cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields to override before the encoding.
+
+        Returns
+        -------
+        NiftiMetadata
+            The consolidated copy, or this metadata with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If a field is reported under the `"raise"` policy.
+        """
+        return consolidated(
+            self,
+            encode,
+            NiftiRaw,
+            inplace=inplace,
+            on_loss=on_loss,
+            fields=fields,
+        )
+
+    def derive(
+        self,
+        operation: tx.Union[Indexed, Resampled, None] = None,
+        *,
+        history: tx.Union[str, tx.Sequence[str], None] = None,
+    ) -> "NiftiMetadata":
+        """Return the metadata of an image computed from this one.
+
+        The fields follow
+        [`Metadata.derive`][brainhops.datamodel.metadata.Metadata.derive].
+        When the operation moves the spatial axes, the record is also
+        replaced by a copy without `dim_info` and the slice slots, which
+        describe the old voxel axes. The encoding directions that the
+        derivation maps differ from that copy, so the next consolidation
+        writes them.
+
+        Parameters
+        ----------
+        operation : Indexed or Resampled, optional
+            What the image operation did to the axes of the image.
+        history : str or sequence of str, optional
+            The steps of the derivation, appended to `history`.
+
+        Returns
+        -------
+        NiftiMetadata
+            New metadata.
+        """
+        derived = super().derive(operation, history=history)
+        if operation is None or not operation.moves_space:
+            return derived
+        if self.raw is None:
+            return derived
+        return replace(derived, raw=clear_spatial_slots(self.raw))
 
     @classmethod
     def sniff_fileobj(
@@ -62,27 +190,51 @@ class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         """Return the confidence that bytes start with a NIfTI header."""
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NiftiMetadata":
-        """Read the metadata from the header at the start of a stream.
+    def to_bytes(
+        self, *, on_loss: tx.Optional[OnLoss] = None, **fields: tx.Any
+    ) -> bytes:
+        """Return the header of the consolidated record as NIfTI stores it.
 
-        The header is read with [`NiftiRaw.from_fileobj`][], which receives
-        the keyword arguments and accepts `check` alone.
+        The metadata is consolidated first, with the overrides given, so a
+        field that was changed is written. The metadata itself is not
+        changed. Metadata without a record is written as an empty NIfTI-1
+        header.
+
+        Parameters
+        ----------
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the fields that the header cannot hold.
+        **fields : Any
+            Fields to override, as in [`consolidate`][].
+
+        Returns
+        -------
+        bytes
+            The header and its extensions.
         """
-        return cls.from_raw(NiftiRaw.from_fileobj(file, **kwargs))
+        raw = self.consolidate(on_loss=on_loss, **fields).raw
+        return (NiftiRaw() if raw is None else raw).to_bytes()
 
-    def to_bytes(self, **kwargs) -> bytes:
-        """Return the header of the record as a NIfTI file stores it.
-
-        Metadata without a record is written as an empty NIfTI-1 header.
-        """
-        raw = NiftiRaw() if self.raw is None else self.raw
-        return raw.to_bytes(**kwargs)
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+    def to_filename(
+        self,
+        filename: path.FilenameLike,
+        *,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> None:
         """Write the header to a path, compressed if its name ends with `.gz`.
 
-        The header is written with [`NiftiRaw.to_filename`][].
+        The metadata is consolidated first, as in [`to_bytes`][], and the
+        header is written with [`NiftiRaw.to_filename`][].
+
+        Parameters
+        ----------
+        filename : str or PathLike
+            The path.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the fields that the header cannot hold.
+        **fields : Any
+            Fields to override, as in [`consolidate`][].
         """
-        raw = NiftiRaw() if self.raw is None else self.raw
-        raw.to_filename(filename, **kwargs)
+        raw = self.consolidate(on_loss=on_loss, **fields).raw
+        (NiftiRaw() if raw is None else raw).to_filename(filename)

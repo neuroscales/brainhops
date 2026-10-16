@@ -3,7 +3,7 @@
 === ":octicons-terminal-24:"
 
     ```shell
-    brainhops reslice SOURCE --reference SOURCE [--transform SOURCE ...] --output IMAGE [--degree DEGREE] [--bound BOUND]
+    brainhops reslice SOURCE --reference SOURCE [--transform SOURCE ...] --output IMAGE [--degree DEGREE] [--bound BOUND] [--clip MARGIN]
     ```
 
 The `reslice` command resamples an image onto the grid of a reference image,
@@ -34,6 +34,7 @@ resampling runs in the opposite direction.
 | `-o`, `--output`    | `path`   | Path to write the resampled image to.                                                                                             | *required* |
 | `--degree`          | `int`    | Spline degree (`0` = nearest, `1` = linear, `3` = cubic).                                                                         | `1`        |
 | `--bound`           | `str`    | Boundary condition used outside the field of view.                                                                                | `reflect`  |
+| `--clip`            | `literal` | Scalar margin, asymmetric pair, or list of pairs; zero samples outside the resulting closed voxel box. | `None` |
 
 ## Source specifications
 
@@ -85,3 +86,38 @@ exponential and the logarithm are therefore not operators: whether a file
 holds a velocity is a property of how it is read. The Python interface
 describes the same encoding in
 [Operators](../start/python.md#operators).
+
+### Clipping and extrapolation
+
+`--clip` sets a voxel margin beyond which output samples are zero. It is
+independent of `--bound`, which extends the interpolation stencil near an edge.
+By default, no cutoff is applied and the existing extrapolation is preserved.
+
+For example, `--bound nearest --clip 0.5` extends edge values up to the outer
+edges of the border voxels, then returns zero beyond them. `--clip 0` cuts at
+border voxel centres; `--clip -0.5` cuts at their inner edges. Both endpoints
+are included: the accepted interval on an axis of length `n` is
+`[-clip, n - 1 + clip]`. Coordinates are never clamped by this option.
+
+In Python, the same option is available as
+`image.reslice(reference, bound="nearest", clip=0.5)` and on the spline
+`pull`/`pull_axes` functions. Clipped samples are zero even with a nonzero
+numeric boundary value. Dask clipping remains lazy; separable reslicing builds
+masks per axis group instead of materialising a full coordinates field.
+
+
+For asymmetric clipping, pass a quoted pair such as `--clip '(0, 0.5)'`.
+A list such as `--clip '[(0, 0.5), (0.5, 0), (-0.5, -0.5)]'` sets
+margins for three input axes. Python accepts these tuples/lists directly.
+A pair `(lower, upper)` accepts `-lower <= x <= n - 1 + upper`;
+per-dimension pairs follow **input** axes even if the output permutes them.
+For `pull_axes`, they follow the order of its sampled `axes` argument.
+Spline degree remains a scalar shared by the sampled axes.
+
+The cutoff box is closed. Some native packages use half-open (ITK/ANTs) or
+open (MRtrix) boxes, so their exact endpoint samples can still differ from
+`clip=0.5`. Away from those endpoints, nearest-edge extrapolation plus
+half-voxel clipping reproduces their linear image boundary rule. Elastix's
+linear B-spline image interpolation instead uses `bound="mirror"` within
+the half-voxel box. Clipping is independent of a nonlinear transform field's
+own boundary convention.

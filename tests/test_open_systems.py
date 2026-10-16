@@ -193,13 +193,15 @@ def test_a_missing_full_space_system_is_derived() -> None:
 
 def test_a_declared_unknown_system_is_kept(unknown_axes: tx.Sequence) -> None:
     # Only a missing system is derived.
+    system = CS(axes=unknown_axes)
     sub = SubspaceTransformation(
         transformation=Scaling(scale=np.array([2.0]), input=CS(axes=[X])),
         input_axes=np.array([1]),
         output_axes=np.array([1]),
-        input=CS(axes=unknown_axes),
+        input=system,
     )
-    assert sub.input == CS() and sub._input.axes == [...]
+    assert sub.input is system and sub._input is system
+    assert sub.input.compatible_with(CS())
 
 
 # ----------------------------------------------------------------------

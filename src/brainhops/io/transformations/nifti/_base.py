@@ -6,11 +6,10 @@ from io import BytesIO
 # dependencies
 import nibabel as nb
 import typing_extensions as tx
-from bagof.magic import NoRepr, replace
+from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -44,12 +43,13 @@ class NiftiBasedTransformation(
 
     A NIfTI transformation holds the header of its file as
     [`NiftiMetadata`][], and the array of the file as it is stored in
-    `raw`. When the transformation is read from a file, `raw` is a nibabel
-    proxy, which reads the array only when it is needed. Each concrete
-    format decodes its `data`, and the transformation of the data model,
-    from `raw` and from the header, and caches what it decodes.
+    `rawdata`. When the transformation is read from a file, `rawdata` is
+    a nibabel proxy, which reads the array only when it is needed. Each
+    concrete format decodes its `data`, and the transformation of the
+    data model, from `rawdata` and from the header, and caches what it
+    decodes.
 
-    `raw` and the header describe the file as it was read, or as the
+    `rawdata` and the header describe the file as it was read, or as the
     transformation was last consolidated. Data and transformations that
     are assigned are pending until [`consolidate`][] encodes them into a
     copy, or until the transformation is written. A write encodes them in
@@ -61,29 +61,25 @@ class NiftiBasedTransformation(
     model was changed encodes the model over the header. This class is
     abstract and is not registered as a format. Its subclasses implement
     [`consolidate`][], on which the writers rely.
+
+    The metadata is the `metadata` field of the transformation of the
+    data model. This class does not derive from that transformation, so
+    it cannot take the field over: each concrete subclass does, with
+    `_metadata: ... = Inherit("metadata", default=None)`, so that the
+    field holds [`NiftiMetadata`][] and converts other metadata into it.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The array of the file as it is stored, or `None` without one.
 
-    After a read, `raw` is a nibabel proxy, which applies the scaling of
-    the header when it is read. A transformation that keeps its data in
-    the header, such as an affine, has no array. `raw` describes the file
-    as it was read, or as the transformation was last consolidated, so
-    assigning `data` leaves it as it is.
-    """
-
-    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = None
-
-    metadata = smartproperty("metadata")
-    """The metadata of the file, which holds its header, or `None`.
-
-    A transformation built from data has no metadata. A concrete format
-    that caches what it decodes from the header drops those values when
-    other metadata is assigned.
+    After a read, `rawdata` is a nibabel proxy, which applies the
+    scaling of the header when it is read. A transformation that keeps
+    its data in the header, such as an affine, has no array. `rawdata`
+    describes the file as it was read, or as the transformation was last
+    consolidated, so assigning `data` leaves it as it is.
     """
 
     # --- reading ------------------------------------------------------
@@ -189,7 +185,7 @@ class NiftiBasedTransformation(
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         raw, proxy = read_nifti(filename, **kwargs)
-        return cls(raw=proxy, metadata=NiftiMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
@@ -212,15 +208,15 @@ class NiftiBasedTransformation(
             The transformation, whose array is read lazily.
         """
         raw, proxy = read_nifti(file, **kwargs)
-        return cls(raw=proxy, metadata=NiftiMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
 
     @classmethod
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         """Build a transformation from a nibabel image or header.
 
-        The array of an image becomes `raw` as it is, and a copy of its
-        header becomes the record of the metadata. A header alone gives a
-        transformation without an array.
+        The array of an image becomes `rawdata` as it is, and a copy of
+        its header becomes the record of the metadata. A header alone
+        gives a transformation without an array.
 
         Parameters
         ----------
@@ -242,7 +238,7 @@ class NiftiBasedTransformation(
         """
         raw, header = _nibabel_parts(nifti)
         metadata = NiftiMetadata.from_raw(NiftiRaw(header=header.copy()))
-        return cls(raw=raw, metadata=metadata, **kwargs)
+        return cls(rawdata=raw, metadata=metadata, **kwargs)
 
     # --- writing ------------------------------------------------------
 
@@ -257,10 +253,10 @@ class NiftiBasedTransformation(
         return self.metadata.raw.copy()
 
     def consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
-        """Encode the pending state into `raw` and the header.
+        """Encode the pending state into `rawdata` and the header.
 
         Each concrete format implements this method, on which the writers
-        rely. Consolidating makes `raw` and the header describe the
+        rely. Consolidating makes `rawdata` and the header describe the
         transformation, as a file written from it would, and nothing is
         pending afterwards. A transformation that has a header and nothing
         pending, consolidated without options, is left as it is.
@@ -293,7 +289,7 @@ class NiftiBasedTransformation(
 
         The transformation is consolidated with the options, as by
         [`consolidate`][], into a copy, and the nibabel image holds the
-        `raw` array and the header of that copy. The transformation itself
+        `rawdata` array and the header of that copy. The transformation itself
         is not changed.
 
         Parameters
@@ -332,7 +328,7 @@ class NiftiBasedTransformation(
         **kwargs : Any
             The writer options of [`consolidate`][].
         """
-        if not reads_file(self.raw, filename):
+        if not reads_file(self.rawdata, filename):
             write_nifti(self.to_nibabel(**kwargs), filename)
             return
         self.consolidate(inplace=True, **kwargs)
@@ -341,8 +337,8 @@ class NiftiBasedTransformation(
         # the values, so the transformation reads the new file, holds the
         # record of its header, and drops the views decoded before.
         record, proxy = read_nifti(filename)
-        self.raw = proxy
-        self.metadata = replace(self.metadata, raw=record)
+        self.rawdata = proxy
+        self.metadata = type(self.metadata).from_raw(record)
         self.data = None
 
     def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
@@ -405,12 +401,12 @@ def _nifti_written(xform: NiftiBasedTransformation) -> _NibabelImage:
     WriterError
         If the transformation has no array to write.
     """
-    if xform.raw is None:
+    if xform.rawdata is None:
         raise WriterError(
             f"This {type(xform).__name__} has no array, so there is "
             f"nothing to write."
         )
-    return _written_nifti(xform.raw, xform.metadata.raw)
+    return _written_nifti(xform.rawdata, xform.metadata.raw)
 
 
 def _consolidated_metadata(
@@ -418,10 +414,11 @@ def _consolidated_metadata(
 ) -> NiftiMetadata:
     """Return the metadata that holds the record of a consolidation.
 
-    The metadata of the transformation is copied to hold the new record,
-    so the metadata held before is never changed. A transformation
-    without metadata gets new metadata.
+    The new metadata, of the class of the metadata of the transformation,
+    is decoded from the new record, so its vocabulary describes that
+    record, and the metadata held before is never changed. A
+    transformation without metadata gets new NIfTI metadata.
     """
     if xform.metadata is None:
         return NiftiMetadata.from_raw(record)
-    return replace(xform.metadata, raw=record)
+    return type(xform.metadata).from_raw(record)

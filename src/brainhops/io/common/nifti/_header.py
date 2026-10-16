@@ -15,6 +15,8 @@ from nibabel.arrayproxy import ArrayProxy
 from brainhops._core import path
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
@@ -29,6 +31,7 @@ from ._constants import (
     _NIFTI_SPECIFIC_AXES,
 )
 from ._raw import NiftiRaw, read_nifti
+from ._vocabulary import encode
 
 _NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
 
@@ -445,6 +448,101 @@ def _apply_like(image: _NiftiObject, like: tx.Any) -> _NiftiObject:
                 target[field] = header[field]
             except (KeyError, ValueError):
                 pass
+    return image
+
+
+# The header fields that hold a field of the vocabulary, which a writer
+# refuses as an override, with the field to give instead.
+_VOCABULARY_SLOTS = {
+    "descrip": "description",
+    "aux_file": "sources",
+    "cal_min": "display_range",
+    "cal_max": "display_range",
+    "scl_slope": "scale_slope",
+    "scl_inter": "scale_intercept",
+    "slice_code": "slice_timing",
+    "slice_start": "slice_timing",
+    "slice_end": "slice_timing",
+    "slice_duration": "slice_timing",
+    "dim_info": "phase_encoding_direction or slice_encoding_direction",
+}
+
+
+def _split_options(
+    options: tx.Mapping[str, tx.Any],
+) -> tx.Tuple[tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
+    """Split the options of a NIfTI writer into fields and header overrides.
+
+    An option named after a field of the metadata, such as `dtype`,
+    `intent` or `description`, is that field, and is given to the
+    consolidation of the metadata. Any other option names a field of the
+    header, which is set last, except the header fields that hold a field
+    of the metadata, which are refused, so that a value is never written
+    twice under two names.
+
+    Raises
+    ------
+    TypeError
+        If an option names a header field that holds a field of the
+        metadata.
+    """
+    refused = sorted(set(options) & set(_VOCABULARY_SLOTS))
+    if refused:
+        hints = ", ".join(
+            f"{name}= (give {_VOCABULARY_SLOTS[name]}= instead)"
+            for name in refused
+        )
+        raise TypeError(
+            f"These header fields hold metadata, and cannot be overridden "
+            f"by name: {hints}."
+        )
+    fields = {name: v for name, v in options.items() if name in FIELDS}
+    overrides = {name: v for name, v in options.items() if name not in FIELDS}
+    return fields, overrides
+
+
+def _storage_override(
+    fields: tx.Mapping[str, tx.Any],
+    metadata: tx.Any,
+    data: tx.Any,
+) -> tx.Optional[tx.Any]:
+    """Return the data type that a write must store, if it is not the data's.
+
+    The data type is the `dtype` override when one is given, and the
+    `dtype` of the metadata otherwise. It is returned only when it differs
+    from the type of the data, which nibabel stores by default, so that
+    an untouched proxy is still written byte for byte.
+    """
+    if "dtype" in fields:
+        dtype = fields["dtype"]
+    else:
+        dtype = None if metadata is None else metadata.dtype
+    if dtype is None:
+        return None
+    if np.dtype(dtype) == np.dtype(getattr(data, "dtype", np.float64)):
+        return None
+    return dtype
+
+
+def _keep_given_fields(
+    image: _NiftiObject, fields: tx.Mapping[str, tx.Any]
+) -> _NiftiObject:
+    """Write again the fields given by keyword that a template copies over.
+
+    A writer encodes the metadata into the record that is the base of the
+    header, then copies the description and the intent of the template
+    `like` over it. A field given by keyword takes precedence over the
+    template, as a header override does, so the description and the
+    intent given by keyword are written again. The image is returned for
+    chaining.
+    """
+    given = {
+        name: fields[name]
+        for name in ("description", "intent")
+        if name in fields
+    }
+    if given:
+        encode(NiftiRaw(header=image.header), given, ConversionReport())
     return image
 
 

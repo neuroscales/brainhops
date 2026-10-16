@@ -42,7 +42,7 @@ def systems_disagree(
         get_axes(source),
         get_axes(target),
     )
-    if source_axes.is_open or target_axes.is_open:
+    if source_axes.is_variadic or target_axes.is_variadic:
         return not source_axes.compatible_with(target_axes)
     return source != target
 
@@ -145,8 +145,8 @@ def axis_counts(
         Scaling,
         Translation,
     )
+    from ..derived import DerivedTransformation
     from ..inverse import Inverse
-    from ..operators import Operation
     from ..sequence import Sequence
     from .checkers import _matrix_dims
 
@@ -159,7 +159,7 @@ def axis_counts(
         # are checked before the concrete families.
         if t.forward is not None:
             no, ni = axis_counts(t.forward)
-    elif isinstance(t, Operation):
+    elif isinstance(t, DerivedTransformation):
         # A lazy operator maps a space to itself, so its counts are those of
         # its forward transformation.
         if t.forward is not None:

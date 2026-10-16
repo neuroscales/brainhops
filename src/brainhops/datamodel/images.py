@@ -6,7 +6,7 @@ from bagof.hints.numpy import DTypeLike
 from bagof.magic import NoRepr, NotKwOnly
 
 from brainhops._core.affines import axis_scales
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core.typing import ArrayProtocol, Clip
 
 from ._transformations.multiscale import (
     _as_affine_ignoring_fields,
@@ -15,6 +15,8 @@ from ._transformations.multiscale import (
 )
 from .base import DataModelBase, IdentityComparison
 from .geometry import Geometry
+from .metadata import Metadata
+from .metadata._derive import Indexed, Resampled
 from .transformations import (
     CartesianField,
     Identity,
@@ -26,12 +28,108 @@ class Image(IdentityComparison, DataModelBase, eq=False, kw_only=True):
     """The base class of all images.
 
     !!! note
-        Images compare and hash by identity: `a == b` means `a is b`, even for
-        images with the same data and transformations, and `==` never raises.
-        Images can therefore be used in sets and as dictionary keys. To compare
-        the contents of two images, compare their data explicitly, for example
-        with `numpy.array_equal(a, b)`, and compare their geometries.
+        Images compare and hash by identity: `a == b` means `a is b`,
+        even for images with the same data and transformations, and
+        `==` never raises. Images can therefore be used in sets and as
+        dictionary keys. To compare the contents of two images, compare
+        their data explicitly, for example with `numpy.array_equal(a, b)`,
+        and compare their geometries.
     """
+
+    metadata: NoRepr[tx.Optional[Metadata]] = None
+    """What describes the image beyond its data and geometry, or `None`.
+
+    The metadata holds the common vocabulary of
+    [`Metadata`][brainhops.datamodel.metadata.Metadata], such as a
+    repetition time, a description or a slice timing. An image built
+    from data has none unless it is given some. A file format takes the
+    field over to hold the metadata of its own class, which also holds
+    the header of the file, and converts the metadata it is given into
+    that class. The field is keyword-only and is left out of the
+    representation of the image.
+    """
+
+    # --- conversions --------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy an image, or convert a single-scale image or a pyramid.
+
+        A single-scale image copied into a pyramid, or a pyramid copied
+        into a single-scale image, changes how the image is stored, so it
+        is converted as `other.to(cls)` converts it. Any other image is
+        copied as
+        [`DataModelBase.from_instance`][brainhops.datamodel.base.DataModelBase.from_instance]
+        copies it.
+
+        Parameters
+        ----------
+        other : DataModelBase
+            The image to copy or convert.
+        *args : Any
+            Constructor arguments of a copy. A conversion takes keyword
+            arguments only.
+        **kwargs : Any
+            Fields of the result, which take precedence over those of
+            `other`.
+
+        Returns
+        -------
+        Self
+            The new image.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a conversion.
+        """
+        if _changes_storage(other, cls):
+            if args:
+                raise TypeError(
+                    f"{cls.__name__}.from_instance() converts a "
+                    f"{type(other).__name__} with keyword arguments only."
+                )
+            return other.to(cls, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
+
+    def to(
+        self, cls: tx.Optional[type] = None, *, copy: bool = False, **kwargs
+    ) -> tx.Any:
+        """Convert the image to another class of image.
+
+        A single-scale image becomes a pyramid of one level. The level
+        keeps its own transformations and the pyramid adds none, so the
+        image keeps its geometry. A pyramid becomes the single-scale image
+        of its highest-resolution level, in the world space of the
+        pyramid, and its other levels are left out. Any other conversion
+        is as in
+        [`DataModelBase.to`][brainhops.datamodel.base.DataModelBase.to].
+
+        Parameters
+        ----------
+        cls : type, optional
+            The class to convert to. By default, the class of the image.
+        copy : bool, default=False
+            Whether to return a new image even when nothing changes.
+        **kwargs : Any
+            Fields of the result.
+
+        Returns
+        -------
+        Image
+            The converted image, an instance of `cls`.
+        """
+        target = type(self) if cls is None else cls
+        if isinstance(self, SingleScaleImage) and issubclass(
+            target, MultiScaleImage
+        ):
+            pyramid = MultiScaleImage(images=[self], metadata=self.metadata)
+            return target.from_instance(pyramid, **kwargs)
+        if isinstance(self, MultiScaleImage) and issubclass(
+            target, SingleScaleImage
+        ):
+            return target.from_instance(self.to_singlescale(0), **kwargs)
+        return super().to(cls, copy=copy, **kwargs)
 
     # --- array API ----------------------------------------------------
 
@@ -59,57 +157,56 @@ class Image(IdentityComparison, DataModelBase, eq=False, kw_only=True):
         """The Cartesian field that defines the sampling grid."""
         return self.geometry.grid
 
-
-class SingleScaleImage(Image):
-    """The base class of single-resolution images.
-
-    `data` and `transformations` are the parameters most often given
-    to the constructor, and they can be passed by position in this order.
-    The other parameters are keyword-only, except those that a file
-    reader from `brainhops.io.common` adds, such as the opened Zarr `node`
-    of a plain Zarr array, which follow `transformations`.
-    """
-
-    data: tx.Annotated[
-        NoRepr[tx.Optional[ArrayProtocol]],
-        tx.Doc(
-            """
-            The image data. Must be an array-like object that supports
-            the array protocol (e.g. numpy, cupy or dask array).
-
-            It defaults to `None` so that subclasses can derive it
-            lazily -- a format reader typically holds a handle to the
-            file and materializes the array on first access, and cannot
-            supply it at construction time. This mirrors
-            `Affine.matrix`, which is optional for the same reason.
-
-            The data is left out of the representation of the image,
-            because reading it may load a whole file.
-            """
-        ),
-        NotKwOnly(),
-    ] = None
-
-    transformations: tx.Annotated[
-        tx.List[Transformation],
-        tx.Doc(
-            "A list of transformations from voxel space (i.e., in terms"
-            "of data's axes) to different world spaces. The last "
-            "transformation in the list is the preferred one."
-        ),
-        NotKwOnly(),
-    ] = ()
-
     @property
     def transformation(self) -> Transformation:
-        """The preferred transformation, which is always the last in the list.
+        """
+        The preferred transformation, which is always the last in the
+        `transformations` list.
 
-        The getter returns an [`Identity`][] when the list is empty. Assigning
-        a transformation makes it the preferred one: a new transformation is
-        appended, and one already in the list (compared by identity) is moved
-        to the end. An integer or a string selects an existing transformation
-        by position or by the name of its output space, and an unknown name
-        raises a KeyError.
+        When the list is empty, this property return an [`Identity`][].
+
+        Assigning a transformation makes it the preferred one:
+
+        * if the assigned value is an integer or a string, the corresponding
+          transformation (by index of by output system name) is selected
+          and moved to the end of the list;
+        * if the assigned value is a transformation that is already in
+          the list, it is moved to the end of the list;
+        * if it is a new transformation, it is appended to the list.
+
+        An unknown index or system name raises a `KeyError`.
+
+        !!! example
+            ```pycon
+            >>> voxel = CoordinateSystem(["i", "j", "k"], name="voxel")
+            >>> phys = CoordinateSystem(["x", "y", "z"], name="phys")
+            >>> world = CoordinateSystem(["x", "y", "z"], name="world")
+            >>> aligned = CoordinateSystem(["x", "y", "z"], name="aligned")
+            >>>
+            >>> vox2scanner = Affine(input=voxel, output=phys)
+            >>> vox2world = Affine(input=voxel, output=world)
+            >>> vox2aligned = Affine(input=voxel, output=aligned)
+            >>>
+            >>> img = SingleScaleImage(data, [vox2scanner, vox2world])
+            >>> img.transformation.output
+            CoordinateSystem(name='world', axes=['x', 'y', 'z'])
+            >>>
+            >>> img.transformation = 0
+            >>> img.transformation.output
+            CoordinateSystem(name='phys', axes=['x', 'y', 'z'])
+            >>>
+            >>> img.transformation = "world"
+            >>> img.transformation.output
+            CoordinateSystem(name='world', axes=['x', 'y', 'z'])
+            >>>
+            >>> img.transformation = vox2aligned
+            >>> img.transformation.output
+            CoordinateSystem(name='aligned', axes=['x', 'y', 'z'])
+            >>>
+            >>> [t.output.name for t in img.transformations]
+            ['phys', 'world', 'aligned']
+            ```
+
         """
         if self.transformations:
             return self.transformations[-1]
@@ -139,13 +236,49 @@ class SingleScaleImage(Image):
         transformations.append(value)
         self.transformations = transformations
 
+
+class SingleScaleImage(Image):
+    """The base class of single-resolution images.
+
+    `data` and `transformations` are the parameters most often given
+    to the constructor, and they can be passed by position in this order.
+    The other parameters are keyword-only, except those that a file
+    reader from `brainhops.io.common` adds, such as the opened Zarr
+    `node` of a plain Zarr array, which follow `transformations`.
+    """
+
+    data: tx.Annotated[
+        tx.Optional[ArrayProtocol],
+        NotKwOnly(),
+        NoRepr(),  # leave out from repr to avoid loading a whole file
+    ] = None
+    """
+    The image data.
+
+    Must be an array-like object that supports the array protocol (e.g.
+    numpy, cupy or dask array).
+
+    It defaults to `None` so that subclasses can derive it lazily -- a
+    format reader typically holds a handle to the file and materializes
+    the array on first access, and cannot supply it at construction time.
+    This mirrors `Affine.matrix`, which is optional for the same reason.
+    """
+
+    transformations: NotKwOnly[tx.List[Transformation]] = ()
+    """
+    A list of transformations from voxel space (i.e., in terms of data's
+    axes) to different world spaces.
+
+    The last transformation in the list is the preferred one.
+    """
+
     @property
     def geometry(self) -> Geometry:
         """The geometry of the image.
 
-        The geometry pairs the Cartesian field matching the data shape with the
-        preferred voxel-to-world transformation. Any image can be resliced onto
-        this geometry.
+        The geometry pairs the Cartesian field matching the data shape
+        with the preferred voxel-to-world transformation. Any image can
+        be resliced onto this geometry.
         """
         return Geometry(
             (
@@ -166,22 +299,24 @@ class SingleScaleImage(Image):
             tx.Union[tx.Self, Geometry, Transformation]
         ] = None,
         degree: int = 1,
-        bound: str = "reflect",
+        bound: tx.Union[str, float] = "reflect",
         coeff: bool = False,
         copy: bool = False,
+        *,
+        clip: Clip = None,
     ) -> "SingleScaleImage":
         """Resample the data onto another geometry.
 
         Parameters
         ----------
         geometry : Image or Geometry or Transformation, optional
-            The target voxel-to-world geometry. An image or a geometry also
-            determines the output shape, whereas a bare transformation keeps
-            the current shape. By default, the image is resampled onto its own
-            geometry.
+            The target voxel-to-world geometry. An image or a geometry
+            also determines the output shape, whereas a bare
+            transformation keeps the current shape.
+            By default, the image is resampled onto its ow geometry.
         degree : int, default=1
-            Spline degree, from 0 (nearest neighbour) up to 5. A degree of 1
-            gives linear interpolation.
+            Spline degree, from 0 (nearest neighbour) up to 5.
+            A degree of 1 gives linear interpolation.
         bound : str or float, default="reflect"
             Boundary condition. A float is used as a constant value beyond
             the edge.
@@ -193,21 +328,40 @@ class SingleScaleImage(Image):
                 - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
                 - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
         coeff : bool, default=False
-            Whether the data already holds spline coefficients. If false, the
-            data is prefiltered before interpolation.
+            Whether the data already holds spline coefficients.
+            If false, the data is prefiltered before interpolation.
         copy : bool, default=False
-            If true, the output never shares memory with the input. If false,
-            a reslicing that only rearranges existing voxels, such as a flip,
-            a permutation or a slice with a unit step, may return a view, as
-            `torch.Tensor.to` does. Dask arrays are immutable and are never
-            copied.
+            If true, the output never shares memory with the input.
+            If false, a reslicing that only rearranges existing voxels,
+            such as a flip, a permutation or a slice with a unit step,
+            may return a view, as `torch.Tensor.to` does.
+            Dask arrays are immutable and are never copied.
+
+        clip : float, pair, sequence of pairs, or None, default=None
+            A scalar sets symmetric margins. A `(lower, upper)` pair sets
+            asymmetric margins on every input axis; a sequence of pairs
+            follows the input data axes, independently of output permutations.
+            Samples outside the closed interval
+            ``[-lower, size - 1 + upper]`` on any axis are zero. None preserves
+            extrapolation with `bound`. Use 0.5 for the outer voxel edges,
+            0 for border voxel centres, or -0.5 for inner voxel edges.
+            Inside this interval, `bound` still extends interpolation
+            stencils; clipping never clamps the coordinates.
 
         Returns
         -------
         SingleScaleImage
-            The resliced image.
+            The resliced image. Its metadata is derived from the metadata
+            of this image with a [`Resampled`][] record (see
+            [`Metadata.derive`][brainhops.datamodel.metadata.Metadata.derive]):
+            the fields tied to the spatial sampling are cleared, an
+            encoding direction given in voxel axes is mapped through the
+            map of the voxels, and `"reslice"` is appended to `history`.
+            The metadata keeps its class and its record.
         """
-        opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
+        opt = dict(
+            degree=degree, bound=bound, coeff=coeff, copy=copy, clip=clip
+        )
 
         if geometry is None:
             geometry = self.geometry
@@ -227,21 +381,31 @@ class SingleScaleImage(Image):
         # imported here to avoid an import cycle.
         from ._transformations.compute.separable import pull_separable
 
-        transformation = (
-            preferred.inverse() @ geometry.transformation @ geometry.grid
-        )
+        new2old = preferred.inverse() @ geometry.transformation
+        transformation = new2old @ geometry.grid
         new_data = pull_separable(self.data, transformation, **opt)
+        metadata = self.metadata
+        if metadata is not None:
+            # The grid is left out of the map of the voxels: it is the
+            # identity on voxel coordinates, but a field, which has no
+            # affine form.
+            metadata = metadata.derive(
+                Resampled(new2old, geometry), history="reslice"
+            )
         return SingleScaleImage(
-            data=new_data, transformations=[geometry.transformation]
+            data=new_data,
+            transformations=[geometry.transformation],
+            metadata=metadata,
         )
 
     def __call__(self, transform: Transformation) -> "SingleScaleImage":
         """Apply a transformation lazily, without reslicing.
 
-        The output space of `transform` should match the output space of the
-        preferred transformation. The new preferred transformation,
+        The output space of `transform` should match the output space of
+        the preferred transformation. The new preferred transformation,
         `transform.inverse() @ self.transformation`, is appended to the
-        existing ones.
+        existing ones. No voxel moves, so the new image shares the
+        metadata of this image.
         """
         transform = transform.inverse() @ self.transformation
         if self.transformations:
@@ -250,7 +414,9 @@ class SingleScaleImage(Image):
         else:
             transformations = [transform]
         return SingleScaleImage(
-            data=self.data, transformations=transformations
+            data=self.data,
+            transformations=transformations,
+            metadata=self.metadata,
         )
 
     def __getitem__(
@@ -258,7 +424,26 @@ class SingleScaleImage(Image):
     ) -> "SingleScaleImage":
         """Index the data, keeping every transformation consistent with it.
 
-        The index may contain integers, slices and `None`.
+        The metadata is derived from the metadata of this image with an
+        [`Indexed`][] record (see
+        [`Metadata.derive`][brainhops.datamodel.metadata.Metadata.derive]).
+        An index along a time or a channel axis keeps the entries of the
+        fields that run along that axis at the positions that it keeps,
+        and an index of a spatial axis, or of an axis of unknown type,
+        clears the fields tied to the spatial sampling and maps an
+        encoding direction given in voxel axes. `"getitem"` is appended
+        to `history`, and the metadata keeps its class and its record.
+
+        Parameters
+        ----------
+        index : int, slice, None or tuple
+            The index, as for the data array. A tuple may contain
+            integers, slices, `None` and `...`.
+
+        Returns
+        -------
+        SingleScaleImage
+            The indexed image.
         """
         if not isinstance(index, tuple):
             index = (index,)
@@ -268,7 +453,14 @@ class SingleScaleImage(Image):
             Geometry((grid, xform))[index].transformation
             for xform in self.transformations
         ]
-        return SingleScaleImage(data=data, transformations=transformations)
+        metadata = self.metadata
+        if metadata is not None:
+            metadata = metadata.derive(
+                Indexed(index, self.shape, grid.input), history="getitem"
+            )
+        return SingleScaleImage(
+            data=data, transformations=transformations, metadata=metadata
+        )
 
 
 class MultiScaleImage(Image):
@@ -277,28 +469,23 @@ class MultiScaleImage(Image):
     `images` and `transformations` are the parameters most often given
     to the constructor, and they can be passed by position in this order.
     The other parameters are keyword-only, except those that a file
-    reader from `brainhops.io.common` adds, such as the opened Zarr `node`
-    of an OME-Zarr pyramid, which follow `transformations`.
+    reader from `brainhops.io.common` adds, such as the opened Zarr
+    `node` of an OME-Zarr pyramid, which follow `transformations`.
     """
 
-    images: tx.Annotated[
-        tx.List[SingleScaleImage],
-        tx.Doc(
-            "Each image in the multi-resolution pyramid, ordered from "
-            "highest to lowest resolution."
-        ),
-        NotKwOnly(),
-    ] = ()
+    images: NotKwOnly[tx.List[SingleScaleImage]] = ()
+    """
+    Each image in the multi-resolution pyramid, ordered from highest to
+    lowest resolution.
+    """
 
-    transformations: tx.Annotated[
-        tx.List[Transformation],
-        tx.Doc(
-            "A list of transformations from each level's preferred space "
-            "to different world spaces. The last transformation in the list "
-            "is the preferred one."
-        ),
-        NotKwOnly(),
-    ] = ()
+    transformations: NotKwOnly[tx.List[Transformation]] = ()
+    """
+    A list of transformations from each level's preferred space to
+    different world spaces.
+
+    The last transformation in the list is the preferred one.
+    """
 
     @property
     def data(self) -> ArrayProtocol:
@@ -321,45 +508,6 @@ class MultiScaleImage(Image):
             yield self.to_singlescale(i)
 
     @property
-    def transformation(self) -> Transformation:
-        """The preferred transformation, which is always the last in the list.
-
-        The getter returns an [`Identity`][] when the list is empty. Assigning
-        a transformation makes it the preferred one: a new transformation is
-        appended, and one already in the list (compared by identity) is moved
-        to the end. An integer or a string selects an existing transformation
-        by position or by the name of its output space, and an unknown name
-        raises a KeyError.
-        """
-        if self.transformations:
-            return self.transformations[-1]
-        return Identity()
-
-    @transformation.setter
-    def transformation(
-        self, value: tx.Union[Transformation, int, str]
-    ) -> None:
-        transformations = list(self.transformations)
-        if isinstance(value, int):
-            value = transformations.pop(value)
-        elif isinstance(value, str):
-            for i, x in enumerate(transformations):
-                if getattr(x.output, "name", None) == value:
-                    value = transformations.pop(i)
-                    break
-            else:
-                raise KeyError(
-                    f"no transformation with output space named {value!r}"
-                )
-        else:
-            for i, x in enumerate(transformations):
-                if x is value:
-                    del transformations[i]
-                    break
-        transformations.append(value)
-        self.transformations = transformations
-
-    @property
     def geometry(self) -> Geometry:
         """The geometry of the highest-resolution level.
 
@@ -380,9 +528,11 @@ class MultiScaleImage(Image):
             tx.Union[Image, Geometry, Transformation]
         ] = None,
         degree: int = 1,
-        bound: str = "reflect",
+        bound: tx.Union[str, float] = "reflect",
         coeff: bool = False,
         copy: bool = False,
+        *,
+        clip: Clip = None,
     ) -> "SingleScaleImage":
         """Reslice the level whose voxel size best matches the target grid.
 
@@ -416,12 +566,25 @@ class MultiScaleImage(Image):
             `torch.Tensor.to` does. Dask arrays are immutable and are never
             copied.
 
+        clip : float, pair, sequence of pairs, or None, default=None
+            A scalar sets symmetric margins. A `(lower, upper)` pair sets
+            asymmetric margins on every input axis; a sequence of pairs
+            follows the input data axes, independently of output permutations.
+            Samples outside the closed interval
+            ``[-lower, size - 1 + upper]`` on any axis are zero. None preserves
+            extrapolation with `bound`. Use 0.5 for the outer voxel edges,
+            0 for border voxel centres, or -0.5 for inner voxel edges.
+            Inside this interval, `bound` still extends interpolation
+            stencils; clipping never clamps the coordinates.
+
         Returns
         -------
         SingleScaleImage
             The resliced image.
         """
-        opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
+        opt = dict(
+            degree=degree, bound=bound, coeff=coeff, copy=copy, clip=clip
+        )
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
             _as_affine_ignoring_fields(_reslice_voxel2world(self, geometry)),
@@ -431,7 +594,8 @@ class MultiScaleImage(Image):
     def __call__(self, transform: Transformation) -> "MultiScaleImage":
         """Apply a transformation to the pyramid lazily, without reslicing.
 
-        The transformation is handled as in [`SingleScaleImage.__call__`][].
+        The transformation is handled as in [`SingleScaleImage.__call__`][],
+        and the new pyramid shares the metadata of this one.
         """
         transform = transform.inverse() @ self.transformation
         if self.transformations:
@@ -440,7 +604,9 @@ class MultiScaleImage(Image):
         else:
             transformations = [transform]
         return MultiScaleImage(
-            images=self.images, transformations=transformations
+            images=self.images,
+            transformations=transformations,
+            metadata=self.metadata,
         )
 
 
@@ -474,3 +640,18 @@ def _level_voxel_sizes(
         )
         sizes.append(None if affine is None else axis_scales(affine.matrix))
     return sizes
+
+
+def _changes_storage(other: tx.Any, cls: type) -> bool:
+    """Return whether copying `other` into `cls` changes how it is stored.
+
+    A single-scale image holds its data, and a pyramid holds its levels,
+    so one is converted into the other rather than copied by name.
+    """
+    return (
+        isinstance(other, SingleScaleImage)
+        and issubclass(cls, MultiScaleImage)
+    ) or (
+        isinstance(other, MultiScaleImage)
+        and issubclass(cls, SingleScaleImage)
+    )

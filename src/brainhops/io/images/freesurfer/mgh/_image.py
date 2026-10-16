@@ -17,8 +17,11 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
@@ -34,12 +37,17 @@ from brainhops.io.common._geometry import (
     Arrangement,
     arrange_voxel_to_ras,
     declared_axes,
+    held_transformations,
     same_transformations,
 )
-from brainhops.io.common.freesurfer import FreesurferFormat
+from brainhops.io.common.freesurfer import (
+    FreesurferFormat,
+    FreesurferTkrSystem,
+)
 from brainhops.io.common.freesurfer._geometry import fs_geometry_from_vox2ras
 from brainhops.io.common.mgh import MghMetadata, MghRaw
 from brainhops.io.common.mgh._constants import _MGH_AXES, _MRI_PARAMS
+from brainhops.io.common.mgh._metadata import _encode as _encode_vocabulary
 from brainhops.io.common.mgh._raw import (
     _compressed_name,
     encode_mgh,
@@ -47,6 +55,11 @@ from brainhops.io.common.mgh._raw import (
 )
 from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -86,19 +99,25 @@ class MghImage(
 
     An MGH image holds everything that its file stores beside the voxels
     as [`MghMetadata`][], whose record is an [`MghRaw`][], and the voxels
-    as stored in `raw`. When the image is read from a file, `raw` is a
-    nibabel proxy, which reads the voxels only when they are needed, and
-    `data` is decoded from it on first access. The voxels are in Fortran
-    order, and the data are indexed `(x, y, z)` or `(x, y, z, frames)`,
-    where the frames form a time axis.
+    as stored in `rawdata`. When the image is read from a file,
+    `rawdata` is a nibabel proxy, which reads the voxels only when they
+    are needed, and `data` is decoded from it on first access. The
+    voxels are in Fortran order, and the data are indexed `(x, y, z)` or
+    `(x, y, z, frames)`, where the frames form a time axis.
 
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. They are, in order, a
     [`Scaling`][] to `"physical"` by the voxel size in millimeters and the
     TR in milliseconds, an [`Affine`][] to `"tkr"` (`MghRaw.vox2tkr`), and
-    the preferred [`Affine`][] to `"scanner"` (`MghRaw.vox2ras`).
+    the preferred [`Affine`][] to `"scanner"` (`MghRaw.vox2ras`). The tkr
+    RAS space of a 3-D image is a
+    [`FreesurferTkrSystem`][brainhops.io.common.freesurfer.FreesurferTkrSystem]
+    and not `RASmm`, so that a format that stores scanner RAS refuses to
+    write it as scanner RAS. The tkr space of a 4-D image is a system of
+    four axes named `"tkr"`, as its scanner space is a system of four
+    axes named `"scanner"`.
 
-    `raw` and the record describe the file as it was read, or as the image
+    `rawdata` and the record describe the file as it was read, or as the image
     was last consolidated. Data that are assigned are pending until
     [`consolidate`][] encodes them into a copy, or until the image is
     written, which writes such a copy and leaves the image as it was. The
@@ -123,77 +142,80 @@ class MghImage(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mgh", "mgz")
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the file stores them, or `None` without data.
 
-    After a read, `raw` is a nibabel proxy. `raw` describes the file as it
-    was read, or as the image was last consolidated, so assigning `data`
-    leaves it as it is.
+    After a read, `rawdata` is a nibabel proxy. `rawdata` describes the
+    file as it was read, or as the image was last consolidated, so
+    assigning `data` leaves it as it is.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
-    array stored here is pending: it is encoded into `raw` only by
+    array stored here is pending: it is encoded into `rawdata` only by
     [`consolidate`][] or by a write.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
-    property of the same name reads it. `None`, the default, means that
-    the transformations have been neither read nor assigned, so the
-    record is kept as it is. The property stores here the list that it
-    decodes, and an assigned list, even an empty one, is stored as it is.
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the record and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[MghMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MghMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
-    An image built from data has no metadata. Assigning other metadata
-    drops the transformations that the image holds, read or assigned, so
-    that they are decoded from the new record.
+    An image built from data has no metadata. Assigning
+    other metadata drops the transformations decoded from the previous
+    record, so that they are decoded from the new one, and keeps the
+    transformations that were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[MghMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, assigned or decoded from `raw`.
+        """The image data, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
         pending until [`consolidate`][] or a write encodes it. Otherwise
-        the data is decoded from `raw` on first access and cached. Data
-        decoded from a file is read-only, because changing it in place
-        would not change `raw`, which is what the image writes. To change
-        the voxels, assign `data`. Assigning `None` decodes `raw` again.
+        the data is decoded from `rawdata` on first access and cached.
+        Data decoded from a file is read-only, because changing it in
+        place would not change `rawdata`, which is what the image
+        writes. To change the voxels, assign `data`. Assigning `None`
+        decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. An image without
-        metadata has no transformations.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place, such as an appended
+        transformation, is kept.
+        Assigning other metadata drops the decoded list, so that it is
+        decoded from the new record, and keeps an assigned list. A change
+        made in place to a decoded list is therefore lost when other
+        metadata is assigned. An image without metadata has no
+        transformations.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -201,23 +223,22 @@ class MghImage(
         image has no geometry, and the image is then written as an image
         built from data alone. Assigning `None` decodes the record again.
         """
-        self._transformations = _record_transformations(self.metadata)
-        return self._transformations
+        return _record_transformations(self.metadata)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without reading the voxels.
 
-        The shape is that of the assigned data, or else of `raw`: the data
-        is `raw` as the file stores it, so the two have the same shape,
-        and a proxy knows its shape from the header. An image without data
-        raises as [`SingleScaleImage`][] does.
+        The shape is that of the assigned data, or else of `rawdata`: the data
+        is `rawdata` as the file stores it, so the two have the same
+        shape, and a proxy knows its shape from the header. An image
+        without data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in self.raw.shape)
+        return tuple(int(d) for d in self.rawdata.shape)
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
@@ -319,7 +340,7 @@ class MghImage(
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         raw, proxy = read_mgh(filename, **kwargs)
-        return cls(raw=proxy, metadata=MghMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=MghMetadata.from_raw(raw))
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MghImage":
@@ -349,7 +370,7 @@ class MghImage(
             If another option is given.
         """
         raw, proxy = read_mgh(file, **kwargs)
-        return cls(raw=proxy, metadata=MghMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=MghMetadata.from_raw(raw))
 
     @classmethod
     def from_nibabel(
@@ -357,7 +378,7 @@ class MghImage(
     ) -> "MghImage":
         """Build an image from a nibabel MGH image or header.
 
-        The voxels of an image become `raw` as they are, and a copy of its
+        The voxels of an image become `rawdata` as they are, and a copy of its
         header becomes the record of the metadata, without tags. A header
         alone gives an image without data.
 
@@ -387,14 +408,19 @@ class MghImage(
                 f"Expected an MGH image or header, got {type(mgh)}"
             )
         metadata = MghMetadata.from_raw(MghRaw(header=header).copy())
-        return cls(raw=raw, metadata=metadata, **kwargs)
+        return cls(rawdata=raw, metadata=metadata, **kwargs)
 
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> "MghImage":
-        """Encode the pending data and geometry into `raw` and the record.
+        """Encode the pending data and geometry into `rawdata` and the record.
 
         The record is encoded in a fixed order. The base is a copy of the
         record of the metadata, or a new record for an image without
@@ -407,8 +433,8 @@ class MghImage(
         next, then a TR stated by the transformations, and the `overrides`
         are applied last. The tags and the other fields of the base are
         kept. The new record is held by new metadata, the record held
-        before is never changed, and the data becomes `raw`, in the axis
-        order of the file. Nothing is pending afterwards, so the
+        before is never changed, and the data becomes `rawdata`, in the
+        axis order of the file. Nothing is pending afterwards, so the
         transformations are decoded from the new record, with the
         precision of the file.
 
@@ -418,21 +444,40 @@ class MghImage(
         assigned, are compared with those that the record decodes to,
         exactly, and an image with a record, no pending data, and the
         transformations of its record or none read, consolidated without
-        options, is left as it is: the copy shares `raw` and the metadata.
+        options, is left as it is: the copy shares `rawdata` and the metadata.
+
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new record. The MRI parameters given by keyword,
+        such as `flip_angle=` in degrees, take precedence over `like`. The
+        image owns its geometry, so a repetition time that disagrees with
+        the TR stated by the transformations is reported as approximated.
+        The voxels are stored with the type given as `dtype=`, or else
+        with the nearest type to `metadata.dtype` that MGH stores, or else
+        with the nearest type to that of the data. What the write loses
+        or approximates is acted on once, by `on_loss`.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
         like : path, nibabel MGH image or header, or MGH object, optional
-            Template whose MRI parameters override those of this image. A
-            TR stated by the transformations overrides both.
-        **overrides : Any
-            Header fields set last. `dtype` sets the stored voxel type,
-            which by default is the type of the data if MGH can store it
-            (uint8, int16, int32, float32), or else the nearest one. The
-            fields `dims` and `type` are refused, because the dimensions
-            follow the data and the voxel type is set by `dtype`.
+            Template whose MRI parameters override those of the metadata.
+            The fields given by keyword, and a TR stated by the
+            transformations, override them.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect (see
+            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        **options : Any
+            Fields of the metadata to override, such as `dtype`,
+            `repetition_time` or `flip_angle`, and other header fields,
+            which are set last. `dtype` must be a type that MGH stores
+            (uint8, int16, int32, float32). The header fields `dims` and
+            `type` are refused, because the dimensions follow the data
+            and the voxel type is `dtype`, and so are `tr`, `te` and `ti`,
+            which hold `repetition_time`, `echo_time` and
+            `inversion_time`.
 
         Returns
         -------
@@ -441,6 +486,11 @@ class MghImage(
 
         Raises
         ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If there is no data, the data have more than four dimensions,
             the voxel type cannot be stored, or `dims` or `type` is
@@ -450,39 +500,48 @@ class MghImage(
             non-spatial axis, or shifts or scales frames in a way that MGH
             cannot store.
         """
+        fields, overrides = _split_options(options)
+        report = ConversionReport(source="MghImage", target="MghImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MghMetadata, fields, report
+        )
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
-        kept = self._transformations is None or same_transformations(
-            self._transformations, _record_transformations(self.metadata)
+        held = held_transformations(self)
+        kept = held is None or same_transformations(
+            held, _record_transformations(self.metadata)
         )
         if (
             self._data is None
             and kept
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
             return self
-        record, raw = _encoded(self, like, overrides)
+        record, raw = _encoded(self, like, overrides, metadata, fields)
         if self.metadata is not None and record is self.metadata.raw:
             metadata = self.metadata
-        elif self.metadata is None:
-            metadata = MghMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = type(metadata or MghMetadata()).from_raw(record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -514,7 +573,8 @@ class MghImage(
             Template whose MRI parameters override those of this image. A
             TR stated by the transformation overrides both.
         **overrides : Any
-            Header fields set last, as for [`consolidate`][].
+            `on_loss`, and the fields of the metadata and of the header,
+            as for [`consolidate`][].
 
         Returns
         -------
@@ -538,7 +598,7 @@ class MghImage(
         """Return the MGH encoding: header, voxels, footer and tags.
 
         The image is consolidated into a copy with the keyword arguments,
-        as by [`consolidate`][], and the record and `raw` of the copy are
+        as by [`consolidate`][], and the record and `rawdata` of the copy are
         written. A proxy that reaches the writer unchanged is written as
         the file stores it, so that an untouched image gives the bytes of
         its file. The image itself is not changed.
@@ -548,7 +608,7 @@ class MghImage(
         compress : bool, default=False
             Whether to gzip the result into MGZ.
         **kwargs : Any
-            The template `like` and the header overrides of
+            The template `like`, `on_loss` and the options of
             [`consolidate`][].
 
         Returns
@@ -584,7 +644,7 @@ class MghImage(
             options of [`consolidate`][].
         """
         compress = kwargs.pop("compress", _compressed_name(filename))
-        if not _reads_file(self.raw, filename):
+        if not _reads_file(self.rawdata, filename):
             write_file(filename, self.to_bytes(compress=compress, **kwargs))
             return
         self.consolidate(inplace=True, **kwargs)
@@ -593,7 +653,7 @@ class MghImage(
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file describes how that
         # file stored the voxels.
-        self.raw = read_mgh(filename)[1]
+        self.rawdata = read_mgh(filename)[1]
         self.data = None
 
 
@@ -617,7 +677,7 @@ def _record_transformations(
 def _mgh_system(record: MghRaw) -> CoordinateSystem:
     """Return the voxel coordinate system of a record."""
     axes = _MGH_AXES[: len(record.shape)]
-    return CoordinateSystem(name="voxel", axes=axes, order="F")
+    return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
 
 def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
@@ -652,17 +712,23 @@ def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
         input=voxel_space, output=phys_space, scale=zooms[: len(axes)]
     )
 
-    def _affine(matrix: np.ndarray, name: str) -> Affine:
+    def _affine(matrix: np.ndarray, output: CoordinateSystem) -> Affine:
         return Affine(
             input=voxel_space,
-            output=replace(ras_space, name=name),
+            output=output,
             matrix=np.asarray(matrix, dtype=np.float64)[:3],
         )
 
+    # The shared tkregister system has three axes, so a 4-D image keeps a
+    # system of four axes that is only named after it.
+    if len(ras_axes) == 3:
+        tkr_space = FreesurferTkrSystem(name=_TKR, axes=ras_axes)
+    else:
+        tkr_space = replace(ras_space, name=_TKR)
     return [
         vox2phys,
-        _affine(record.vox2tkr, _TKR),
-        _affine(record.vox2ras, _SCANNER),
+        _affine(record.vox2tkr, tkr_space),
+        _affine(record.vox2ras, replace(ras_space, name=_SCANNER)),
     ]
 
 
@@ -674,14 +740,81 @@ def _mgh_to_transformations(record: MghRaw) -> tx.List[Transformation]:
 _LAYOUT_FIELDS = frozenset({"dims", "type"})
 """Header fields that describe the stored voxels, which the data sets."""
 
+_VOCABULARY_SLOTS = {
+    "tr": "repetition_time",
+    "te": "echo_time",
+    "ti": "inversion_time",
+}
+"""Header fields that hold a field of the metadata, with that field."""
+
+_FOOTER_FIELDS = (
+    "repetition_time",
+    "echo_time",
+    "inversion_time",
+    "flip_angle",
+)
+"""The fields of the metadata that the MRI parameters of the footer hold."""
+
+
+def _split_options(
+    options: tx.Mapping[str, tx.Any],
+) -> tx.Tuple[tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
+    """Split the options of the MGH writer into fields and header overrides.
+
+    An option named after a field of the metadata, such as `dtype` or
+    `flip_angle`, is that field. Any other option names a field of the
+    header, except the header fields that hold a field of the metadata,
+    which are refused.
+
+    Raises
+    ------
+    TypeError
+        If an option is `tr`, `te` or `ti`.
+    """
+    refused = sorted(set(options) & set(_VOCABULARY_SLOTS))
+    if refused:
+        hints = ", ".join(
+            f"{name}= (give {_VOCABULARY_SLOTS[name]}= instead)"
+            for name in refused
+        )
+        raise TypeError(
+            f"These header fields hold metadata, and cannot be overridden "
+            f"by name: {hints}."
+        )
+    fields = {name: v for name, v in options.items() if name in FIELDS}
+    overrides = {name: v for name, v in options.items() if name not in FIELDS}
+    return fields, overrides
+
+
+def _stored_dtype(
+    fields: tx.Mapping[str, tx.Any], metadata: tx.Optional[MghMetadata]
+) -> tx.Optional[np.dtype]:
+    """Return the voxel type that a write is asked to store, if any.
+
+    The `dtype` given by keyword is returned as it is, and refused later
+    if MGH cannot store it. Otherwise the `dtype` of the metadata, which
+    may come from another format, gives the nearest type that MGH stores.
+    `None` leaves the type to the data.
+    """
+    if "dtype" in fields:
+        return fields["dtype"]
+    if metadata is None or metadata.dtype is None:
+        return None
+    return _mgh_dtype(np.empty(0, metadata.dtype))
+
 
 def _encoded(
-    image: MghImage, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+    image: MghImage,
+    like: tx.Any,
+    overrides: tx.Mapping[str, tx.Any],
+    metadata: tx.Optional[MghMetadata],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Tuple[MghRaw, ArrayProtocol]:
     """Return the record and the voxels that consolidating an image stores.
 
-    The record is encoded as [`MghImage.consolidate`][] describes, and the
-    voxels are the assigned data, or else `raw`, arranged in the axis order
+    The record is encoded as [`MghImage.consolidate`][] describes, over a
+    copy of the record of the consolidated `metadata`, and the voxels are
+    the assigned data, or else `rawdata`, arranged in the axis order
     of the file when the transformations declare another order. The held
     record is returned when the encoding changes nothing. Voxels of
     another type than the stored one are converted as the writer converts
@@ -690,7 +823,7 @@ def _encoded(
     if image._data is not None:
         source = _image_to_disk(image._data)
     else:
-        source = image.raw
+        source = image.rawdata
     if source is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
@@ -703,18 +836,18 @@ def _encoded(
             f"dimensions come from the data, and the voxel type is set "
             f"with dtype=."
         )
-    dtype = overrides.pop("dtype", None)
+    dtype = _stored_dtype(fields, image.metadata)
     # The list of the image is read without being stored, so that a write
     # leaves the image as it was.
-    transformations = image._transformations
+    transformations = held_transformations(image)
     if transformations is None:
         transformations = _record_transformations(image.metadata)
     vox2ras, layout, tr = _scanner_geometry(transformations, source)
     data = source if layout is None else layout.apply(image.data)
     shape = _mgh_shape(data)
 
-    # The base is a copy of the record, or a new record.
-    held = None if image.metadata is None else image.metadata.raw
+    # The base is a copy of the record of the metadata, or a new record.
+    held = None if metadata is None else metadata.raw
     record = MghRaw() if held is None else held.copy()
     header = record.header
 
@@ -730,12 +863,18 @@ def _encoded(
     if template is not None:
         for name in _MRI_PARAMS:
             header[name] = template[name]
+        # The parameters given by keyword take precedence over the
+        # template, so they are encoded again.
+        given = {
+            name: fields[name] for name in _FOOTER_FIELDS if name in fields
+        }
+        _encode_vocabulary(record, given, ConversionReport())
     if tr is not None:
         header["tr"] = tr
     for name, value in overrides.items():
         header[name] = value
 
-    # The voxels are converted as the writer converts them, so that `raw`
+    # The voxels are converted as the writer converts them, so that `rawdata`
     # holds what the file holds.
     data = _stored_voxels(data, header.get_data_dtype())
     if record == held:
@@ -804,7 +943,8 @@ def _scanner_transformation(
 
     A transformation named `"scanner"` wins. Otherwise the last
     transformation that does not map to tkr RAS is used, or `None` if
-    there is none.
+    there is none. A transformation maps to tkr RAS when its output is a
+    `FreesurferTkrSystem` or is named `"tkr"`.
     """
     transformations = list(transformations or [])
     chosen = None
@@ -813,8 +953,9 @@ def _scanner_transformation(
             chosen = xform
     if chosen is None:
         for xform in reversed(transformations):
-            name = getattr(getattr(xform, "output", None), "name", None)
-            if name != _TKR:
+            output = getattr(xform, "output", None)
+            tkr = isinstance(output, FreesurferTkrSystem)
+            if not tkr and getattr(output, "name", None) != _TKR:
                 chosen = xform
                 break
     return chosen
@@ -955,11 +1096,11 @@ def _mgh_written(image: MghImage) -> tx.Tuple[MghRaw, ArrayProtocol]:
     WriterError
         If the image has no data.
     """
-    if image.raw is None:
+    if image.rawdata is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
         )
-    return image.metadata.raw, image.raw
+    return image.metadata.raw, image.rawdata
 
 
 def _reads_file(raw: tx.Any, file: tx.Any) -> bool:

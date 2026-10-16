@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, Magic
+from bagof.magic import Factory, replace
 from nibabel.arrayproxy import ArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
 from nibabel.volumeutils import array_to_file
@@ -17,6 +17,7 @@ from nibabel.volumeutils import array_to_file
 from brainhops._core import path
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import ArrayProtocol
+from brainhops.io.base._raw import Raw
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -44,16 +45,11 @@ from ._constants import (
 )
 from ._utils import _read_prefix, _seekable, _valid_prefix
 
-_Geometry = tx.Tuple[
-    tx.Tuple[float, float, float],
-    tx.Tuple[float, float, float],
-    tx.Tuple[float, float, float],
-    tx.Tuple[float, float, float],
-    tx.Tuple[float, float, float],
-]
+_3Floats = tx.Tuple[float, float, float]
+_Geometry = tx.Tuple[_3Floats, _3Floats, _3Floats, _3Floats, _3Floats]
 
 
-class MghRaw(Magic, BinaryFileReader, BinaryFileWriter):
+class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
     """Header, footer and tags of an MGH file, as the file stores them.
 
     An MGH file stores a fixed header before its voxels and, after the
@@ -99,7 +95,7 @@ class MghRaw(Magic, BinaryFileReader, BinaryFileWriter):
             The copy.
         """
         header = _keep_stored_geometry(self.header.copy(), self.header)
-        return MghRaw(header=header, tags=self.tags)
+        return replace(self, header=header, tags=self.tags)
 
     # --- decoded fields -----------------------------------------------
 

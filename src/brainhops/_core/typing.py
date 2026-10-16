@@ -9,6 +9,7 @@
 
 __all__ = [
     "Const",
+    "Clip",
     "HiddenConst",
     "ArrayProtocol",
     "ArrayLike",
@@ -63,3 +64,13 @@ npvector = ndarray[tx.Tuple[int], dtype[T]]
 
 npmatrix = ndarray[tx.Tuple[int, int], dtype[T]]
 """Two-dimensional array."""
+
+
+Clip = tx.Optional[
+    tx.Union[
+        float,
+        tx.Tuple[float, float],
+        tx.Sequence[tx.Tuple[float, float]],
+    ]
+]
+"""Voxel margin: symmetric scalar, shared pair, per-axis pairs, or None."""

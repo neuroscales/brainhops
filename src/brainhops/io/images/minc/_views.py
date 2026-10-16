@@ -10,12 +10,9 @@ invert each other, so that `_image_to_model(_image_to_disk(data))` gives
 `data` back.
 """
 
-# dependencies
-import numpy as np
-
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.io.base._utils_proxies import load_proxy
 from brainhops.io.common.minc._data import _MincProxy
 
 
@@ -27,12 +24,10 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     NumPy array that it gives is made read-only, because it is a view
     that the writer does not read back, so an edit in place would be
     lost. Any other array is reversed as it is, so that the data of an
-    image whose data were set is a view of `raw`.
+    image whose data were set is a view of `rawdata`.
     """
     if isinstance(raw, _MincProxy):
-        raw = get_array_backend().asarray(raw)
-        if isinstance(raw, np.ndarray):
-            raw.flags.writeable = False
+        raw = load_proxy(raw)
     return raw.T
 
 

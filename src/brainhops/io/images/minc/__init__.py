@@ -28,11 +28,11 @@ image.metadata.raw.vox2world       # the (4, 4) matrix of the world affine
 ```
 
 An image holds the header of its file as [`MincMetadata`][], whose
-record is a [`MincRaw`][], and its voxels in `raw`, a lazy array that
-reads them only when `data` is first needed. The voxels are in Fortran
-order, which reverses the file dimensions, and the axes are named after
-the dimensions (`xspace` gives `x`, `time` gives `t`). The world is the
-RAS world of MINC. The layout is described in
+record is a [`MincRaw`][], and its voxels in `rawdata`, a lazy array
+that reads them only when `data` is first needed. The voxels are in
+Fortran order, which reverses the file dimensions, and the axes are
+named after the dimensions (`xspace` gives `x`, `time` gives `t`). The
+world is the RAS world of MINC. The layout is described in
 [`brainhops.io.common.minc`][brainhops.io.common.minc]. Since nibabel
 cannot write MINC, an image is saved to another format, such as NIfTI.
 Attributes other than the

@@ -19,7 +19,7 @@ import re
 
 import typing_extensions as tx
 from bagof.core.magic import get_from_registry
-from bagof.magic import ConvertTo, Factory, Magic, replace
+from bagof.magic import ConvertTo, Factory, Magic, NotKwOnly, replace
 
 from brainhops._core.path import Path
 
@@ -33,7 +33,7 @@ class Parser(Magic, frozen=True):
     which case the parser registered for that target is used.
     """
 
-    value: tx.Any
+    value: NotKwOnly[tx.Any]
 
 
 class SourceSpec(Magic, frozen=True):
@@ -121,7 +121,7 @@ class ImageSpec(SourceSpec, frozen=True):
 class OperationSpec(Magic, frozen=True):
     """A named operation applied to a loaded source."""
 
-    name: str
+    name: NotKwOnly[str]
 
     @classmethod
     def from_arg(cls, text: str) -> tx.Self:

@@ -1,23 +1,24 @@
 """The OME-Zarr format of multiscale transformation fields.
 
-A field stored in a Zarr store is read into a [`MultiscaleField`][], in which
-each resolution level is a sequence that samples the field on the grid of that
-level. The format is registered, so that
-[`load`][brainhops.io.transformations.load] discovers it. Arrays and metadata
-are kept exactly as read, so that writing an unchanged field re-emits its OME
-metadata unchanged.
+A field stored in a Zarr store is read into a [`MultiscaleField`][], in
+which each resolution level is a sequence that samples the field on the
+grid of that level. The format is registered, so that
+[`load`][brainhops.io.transformations.load] discovers it. Arrays and
+metadata are kept exactly as read, so that writing an unchanged field
+re-emits its OME metadata unchanged.
 """
 
 import abczarr
+import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import Forget
+from bagof.magic import Forget, KwOnly
 
 from brainhops._core.affines import inv as _affine_inv
 from brainhops.backends import get_array_backend
 from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
-from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.axes import AxisList
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
@@ -25,8 +26,10 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Identity,
     MultiscaleField,
+    Scaling,
     Sequence,
     Transformation,
+    Translation,
     is_identity,
 )
 from brainhops.io.base._base import register_format
@@ -35,91 +38,82 @@ from brainhops.io.base.parsers import (
     ParserTypeError,
     WriterError,
 )
-from brainhops.io.common.zarr import StoreLike, ZarrReaderWriter
-from brainhops.io.common.zarr._parsers import _as_node
+from brainhops.io.common.zarr import StoreLike
+from brainhops.io.common.zarr._parsers import (
+    _as_node,
+    _ZarrNodeReaderWriter,
+)
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.zarr import _map, _node
 
+from . import _map, _node
+from ._errors import OmeFieldError
 
-class OmeFieldError(ValueError):
-    """An OME-Zarr field that cannot be read.
-
-    The error is raised, in particular, for a displacement field placed by a
-    transformation that is not affine, since displacements in world units
-    cannot be rescaled to voxels without a linear part. A field whose axes
-    cannot be read as one vector field raises an
-    [`AxisError`][brainhops.errors.AxisError] instead.
-    """
+# typing
+if tx.TYPE_CHECKING:
+    # This is imported for mkdocstrings to resolve cross-references
+    from brainhops.io.common.zarr import ZarrReader  # noqa: F401
+    from brainhops.io.transformations import load  # noqa: F401
 
 
 @register_format
-class OmeZarrField(ZarrReaderWriter, TransformationFormat, MultiscaleField):
+class OmeZarrField(
+    _ZarrNodeReaderWriter, TransformationFormat, MultiscaleField
+):
     """A coordinate or displacement field stored as OME-Zarr.
 
-    The Zarr store is the file format. It is read with `from_store` and written
-    with `to_store`, or `from_node` and `to_node` for an opened node (see
-    [`ZarrReader`][brainhops.io.common.zarr.ZarrReader]), and
-    [`load`][brainhops.io.transformations.load] discovers it.
+    The Zarr store is the file format. It is read with [`from_store`][]
+    and written with [`to_store`][], or [`from_node`][] and [`to_node`][]
+    for an opened node (see [`ZarrReader`][]), and [`load`][] discovers
+    it.
 
-    The field is a [`MultiscaleField`][], so it composes like any multiscale
-    field: reslicing onto a coarser grid picks the matching level, and the
-    finest level is used unless a level is selected. The reader holds the array
-    of every level, the voxel-to-world transformation of the finest level, the
-    axes and the raw OME metadata, all as read, so that an untouched field
-    re-emits its metadata unchanged through [`OmeZarrField.to_ome`][].
+    The field is a [`MultiscaleField`][], so it composes like any
+    multiscale field: reslicing onto a coarser grid picks the matching
+    level, and the finest level is used unless a level is selected. The
+    reader holds the array of every level, the voxel-to-world
+    transformation of the finest level, the axes and the raw OME metadata,
+    all as read, so that an untouched field re-emits its metadata
+    unchanged through [`to_ome`][].
     """
 
-    HINTS = ("ome", "ome-zarr")
+    HINTS = "ome", "ome-zarr"
+    EXTENSIONS = ".zarr", ".ome.zarr"
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
+    raw_levels: tx.Optional[tx.List[ArrayProtocol]] = None
+    """
+    The array of each resolution level, ordered from finest to coarsest,
+    exactly as stored in the file. The values are in world units.
+    """
 
-    raw_levels: tx.Annotated[
-        tx.Optional[tx.List[ArrayProtocol]],
-        tx.Doc(
-            """
-            The array of each resolution level, ordered from finest to
-            coarsest, exactly as stored in the file. The values are in
-            world units.
-            """
-        ),
-    ] = None
+    voxel2world: tx.Optional[Transformation] = None
+    """
+    The voxel-to-world transformation of the finest level. It is the
+    coordinate transformation of the finest dataset in the OME metadata.
+    """
 
-    voxel2world: tx.Annotated[
-        tx.Optional[Transformation],
-        tx.Doc(
-            """
-            The voxel-to-world transformation of the finest level. It is
-            the coordinate transformation of the finest dataset in the OME
-            metadata.
-            """
-        ),
-    ] = None
+    level_transforms: tx.Optional[tx.List[Transformation]] = None
+    """
+    The transformation that maps each level's grid to the finest level's
+    grid, ordered from finest to coarsest. The first entry is the identity.
+    """
 
-    level_transforms: tx.Annotated[
-        tx.Optional[tx.List[Transformation]],
-        tx.Doc(
-            """
-            The transformation that maps each level's grid to the finest
-            level's grid, ordered from finest to coarsest. The first entry
-            is the identity.
-            """
-        ),
-    ] = None
+    axes: tx.Optional[AxisList] = None
+    """The axes declared by the OME metadata."""
 
-    axes: tx.Annotated[
-        tx.Optional[tx.List[Axis]],
-        tx.Doc("The axes declared by the OME metadata."),
-    ] = None
+    ome: tx.Optional[tx.Any] = None
+    """
+    The OME metadata exactly as read. The reader never rewrites this
+    object, so it can be re-emitted unchanged.
+    """
 
-    ome: tx.Annotated[
-        tx.Optional[tx.Any],
-        tx.Doc(
-            """
-            The OME metadata exactly as read. The reader never rewrites
-            this object, so it can be re-emitted unchanged.
-            """
-        ),
-    ] = None
+    # The degree is an option of the reading, so it is keyword-only and does
+    # not move the positional fields of the reader.
+    degree: KwOnly[tx.Optional[int]] = None
+    """The spline degree with which the vectors of every level are read.
+
+    A transformation that names the field may ask for an interpolation,
+    such as `nearest`, which is degree 0. `None` keeps the default, which
+    is linear.
+    """
 
     # scales is built on demand from the arrays and the placement, not stored.
     # Forgetting the field inherited from MultiscaleField keeps it out of
@@ -210,10 +204,18 @@ class OmeZarrField(ZarrReaderWriter, TransformationFormat, MultiscaleField):
             if axis.type in ("displacement", "coordinate")
         )
         spatial_ndim = ndim - vector_count
-        perm = list(range(spatial_ndim))
-        placements = [
-            _dataset_placement(ds, perm, spatial_ndim) for ds in datasets
-        ]
+        # The placement of a level is mapped over every stored axis, and its
+        # part on the spatial axes is kept. OME-NGFF 0.6 stores the vector
+        # axis before the spatial axes, so they are found by their type.
+        if axes:
+            spatial = [
+                index
+                for index, axis in enumerate(axes)
+                if axis.type not in ("displacement", "coordinate")
+            ]
+        else:
+            spatial = list(range(spatial_ndim))
+        placements = [_dataset_placement(ds, spatial, ndim) for ds in datasets]
         voxel2world = placements[0]
         world2voxel = voxel2world.inverse()
         level_transforms = [
@@ -326,13 +328,14 @@ class OmeZarrField(ZarrReaderWriter, TransformationFormat, MultiscaleField):
         ndim = int(raw.shape[-1])
         voxel2world = self._level_voxel2world(index, ndim)
         world2voxel = voxel2world.inverse()
+        options = {} if self.degree is None else {"degree": self.degree}
         if self._kind == "displacement":
             field = DisplacementField(
-                field=_to_voxel_displacement(raw, voxel2world)
+                field=_to_voxel_displacement(raw, voxel2world), **options
             )
             elements = [world2voxel, field, voxel2world]
         else:
-            elements = [world2voxel, CoordinatesField(field=raw)]
+            elements = [world2voxel, CoordinatesField(field=raw, **options)]
         return Sequence(
             transformations=elements,
             input=self.input,
@@ -384,16 +387,59 @@ def _to_voxel_displacement(
 
 
 def _dataset_placement(
-    dataset: tx.Any, perm: tx.Sequence[int], ndim: int
+    dataset: tx.Any, spatial: tx.Sequence[int], ndim: int
 ) -> Transformation:
     # A level's placement is the dataset's first coordinate transformation, or
-    # the identity.
+    # the identity. It is mapped over all `ndim` stored axes, and then
+    # restricted to the `spatial` ones, which keep their stored order.
     transforms = list(
         getattr(dataset, "coordinateTransformations", None) or []
     )
     if not transforms:
         return Identity()
-    return _map.from_ome(transforms[0], perm, ndim)
+    stored = list(range(ndim))
+    if list(spatial) == stored:
+        return _map.from_ome(transforms[0], stored, stored)
+    try:
+        placement = _map.from_ome(transforms[0], stored, stored)
+    except _map.OmeMappingError:
+        # Fields written before OME-NGFF 0.6 give their placement over the
+        # spatial axes alone, which is read as it is.
+        spatial_only = list(range(len(spatial)))
+        return _map.from_ome(transforms[0], spatial_only, spatial_only)
+    return _spatial_part(placement, list(spatial), ndim)
+
+
+def _spatial_part(
+    placement: Transformation, spatial: tx.List[int], ndim: int
+) -> Transformation:
+    # Restrict a placement to the spatial axes. A scale, a translation and a
+    # sequence of them keep their type, and any other affine is restricted
+    # through its matrix.
+    if is_identity(placement):
+        return Identity()
+    if isinstance(placement, Scaling):
+        return Scaling(scale=[placement.scale[i] for i in spatial])
+    if isinstance(placement, Translation):
+        return Translation(
+            translation=[placement.translation[i] for i in spatial]
+        )
+    if isinstance(placement, Sequence):
+        return Sequence(
+            [
+                _spatial_part(part, spatial, ndim)
+                for part in placement.transformations
+            ]
+        )
+    affine = _as_affine(placement)
+    if affine is None:
+        raise OmeFieldError(
+            "This OME field is placed by a transformation that is not "
+            "affine, so its spatial part cannot be told apart from its "
+            "vector axis."
+        )
+    matrix = np.asarray(affine.matrix, dtype=float)
+    return Affine(matrix=matrix[np.ix_(spatial, spatial + [ndim])])
 
 
 def _affine_or_identity(xform: Transformation, ndim: int) -> Transformation:

@@ -6,7 +6,7 @@ import numbers
 import sys
 
 import typing_extensions as tx
-from bagof.magic import Factory, NoRepr
+from bagof.magic import Factory, NoRepr, NotKwOnly
 
 from brainhops.backends import get_array_backend
 
@@ -35,7 +35,7 @@ else:
 
 # An element of the index of an array: an integer, a slice, `None` (which
 # inserts an axis) or an ellipsis.
-_IndexElement = tx.Union[int, slice, None, EllipsisType]
+_IndexElement = tx.Union[tx.SupportsIndex, slice, None, EllipsisType]
 
 
 def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
@@ -49,26 +49,20 @@ class _GeometryFields(DataModelBase):
     # also the name of the constructor argument.
     _transformations: tx.Annotated[
         tx.Tuple[CartesianField, Transformation],
-        tx.Doc("A cartesian field and a voxel-to-world transformation."),
         Factory(_geometry_factory),
         NoRepr(),
+        NotKwOnly(),
     ]
+    """A cartesian field and a voxel-to-world transformation."""
 
-    shape: tx.Annotated[
-        tx.Optional[tx.Tuple[int, ...]],
-        tx.Doc("The shape of the image data."),
-        NoRepr(),
-    ] = None
+    shape: NoRepr[tx.Optional[tx.Tuple[int, ...]]] = None
+    """The shape of the image data."""
 
-    grid: tx.Annotated[
-        tx.Optional[CartesianField],
-        tx.Doc("The Cartesian field that defines the grid of the image."),
-    ] = None
+    grid: tx.Optional[CartesianField] = None
+    """The Cartesian field that defines the grid of the image."""
 
-    transformation: tx.Annotated[
-        tx.Optional[Transformation],
-        tx.Doc("The voxel-to-world transformation."),
-    ] = None
+    transformation: tx.Optional[Transformation] = None
+    """The voxel-to-world transformation."""
 
 
 class Geometry(_GeometryFields, ImmutableSequence):
@@ -259,7 +253,7 @@ def _index2transform(
     input_axes: tx.Optional[AxisSequence] = get_axes(system)
     if input_axes == [...]:
         input_axes = None
-    elif input_axes.is_open:
+    elif input_axes.is_variadic:
         input_axes = input_axes.expand(nb_input_dims)
     output_axes = None
     if input_axes:

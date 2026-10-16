@@ -29,12 +29,12 @@ io.save(image, "dwi.nii.gz")           # or any other image format
 ```
 
 An image holds the header of its file as [`NrrdMetadata`][], whose
-record is an [`NrrdRaw`][], and its samples in `raw`, a lazy array that
-reads them only when `data` is first needed. The first NRRD axis varies
-fastest, so the data are in Fortran order. The lazy array presents the
-axes of the file with spatial axes (`x`, `y`, `z`) first, then time
-(`t`), channels (`c`) and other axes (`dim<i>`), each group in file
-order. An axis is spatial if it
+record is an [`NrrdRaw`][], and its samples in `rawdata`, a lazy array
+that reads them only when `data` is first needed. The first NRRD axis
+varies fastest, so the data are in Fortran order. The lazy array
+presents the axes of the file with spatial axes (`x`, `y`, `z`) first,
+then time (`t`), channels (`c`) and other axes (`dim<i>`), each group in
+file order. An axis is spatial if it
 has a `space direction`. In a header without directions, an axis is
 spatial if its kind is `domain` or `space`, or, when there are no `kinds`
 at all, if it is one of the first three. Vector, colour, complex,

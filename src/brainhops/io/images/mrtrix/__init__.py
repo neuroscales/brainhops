@@ -25,9 +25,9 @@ io.save(image, "dwi.nii.gz")              # or any other image format
 
 The data are indexed `[x, y, z, ...]` in Fortran order, whatever `layout`
 the file uses, because negative and permuted layouts are undone by a view.
-After a read, `raw` is a lazy array of the voxels, which reads them only
-when `data` is first accessed and applies the intensity `scaling` to
-them. Local data that is not compressed is memory-mapped.
+After a read, `rawdata` is a lazy array of the voxels, which reads them
+only when `data` is first accessed and applies the intensity `scaling`
+to them. Local data that is not compressed is memory-mapped.
 
 An image carries a [`Scaling`][brainhops.datamodel.transformations.Scaling]
 from voxels to `"physical"` by the voxel sizes `vox`, and the preferred

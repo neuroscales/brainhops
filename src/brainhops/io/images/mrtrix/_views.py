@@ -12,12 +12,9 @@ other, so that `_image_to_model(_image_to_disk(data))` gives `data`
 back.
 """
 
-# dependencies
-import numpy as np
-
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.io.base._utils_proxies import load_proxy
 from brainhops.io.common.mrtrix._data import _MrtrixProxy
 
 
@@ -26,17 +23,14 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
     A lazy array is read with the array backend. The NumPy array that it
     gives is made read-only, because it is a view that the writer does
-    not read back: the writer writes `raw`, so an edit in place would be
-    lost. Any other array is returned as it is, so that a Dask array
-    stays lazy and an array that was set as data stays the array of
-    `raw`.
+    not read back: the writer writes `rawdata`, so an edit in place
+    would be lost. Any other array is returned as it is, so that a Dask
+    array stays lazy and an array that was set as data stays the array
+    of `rawdata`.
     """
     if not isinstance(raw, _MrtrixProxy):
         return raw
-    data = get_array_backend().asarray(raw)
-    if isinstance(data, np.ndarray):
-        data.flags.writeable = False
-    return data
+    return load_proxy(raw)
 
 
 def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:

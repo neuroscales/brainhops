@@ -573,12 +573,14 @@ def _inner_is_identity(inner: tx.Optional[Transformation]) -> bool:
     # An inner transformation that does not interpolate is checked by value,
     # so a restriction that turns out to be the identity, such as
     # Scaling([1]), is dropped. A field is checked without computing its
-    # values, so it is never dropped because of them.
-    from ..sequence import _interpolates
+    # values, so it is never dropped because of them. A chain, which the
+    # structural mode leaves uncomposed, is checked without composing it,
+    # since checking its identity by value would compose it.
+    from ..sequence import Sequence, _interpolates
 
     if inner is None:
         return True
-    if _interpolates(inner):
+    if _interpolates(inner) or isinstance(inner, Sequence):
         return inner.is_identity(compute=False)
     return inner.is_identity(compute=True)
 

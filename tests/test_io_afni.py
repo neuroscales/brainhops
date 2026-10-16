@@ -22,7 +22,7 @@ import brainhops.io as io
 from brainhops.backends import backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling
 from brainhops.io.base import Format
 from brainhops.io.base.parsers import (
@@ -446,8 +446,8 @@ def test_brick_scaling_factors(tmp_path) -> None:  # noqa: ANN001
     head = _header(nvals=3, types=(1,), BRICK_FLOAT_FACS=(0.5, 0.0, 2.0))
     path = _dataset(tmp_path, head, _brik([a, a, a], ["<h"] * 3))
     image = AfniImage.load(path)
-    assert image.raw.get_unscaled().dtype == np.int16
-    assert image.raw.dtype == np.float32
+    assert image.rawdata.get_unscaled().dtype == np.int16
+    assert image.rawdata.dtype == np.float32
     assert image.data.dtype == np.float32
     # A factor of zero means that the sub-brick is not scaled.
     assert np.allclose(image.data[..., 0], 0.5 * a)
@@ -661,10 +661,10 @@ def test_a_written_dataset_is_read_by_nibabel(tmp_path) -> None:  # noqa: ANN001
     image = AfniImage.load(_source(tmp_path, orient=(1, 2, 4)))
     # The source has no IJK_TO_DICOM_REAL, which nibabel needs and an
     # untouched copy would not add, so the image is written as a new
-    # dataset.
-    io.save(
-        SingleScaleImage.from_instance(image), tmp_path / "nib+orig.BRIK.gz"
-    )
+    # dataset. A plain image keeps the metadata of its source, record
+    # included, so that record is dropped.
+    plain = replace(SingleScaleImage.from_instance(image), metadata=None)
+    io.save(plain, tmp_path / "nib+orig.BRIK.gz")
     ref = nb.load(str(tmp_path / "nib+orig.HEAD"))
     assert np.allclose(np.squeeze(ref.get_fdata()), DATA)
     assert np.allclose(
@@ -727,7 +727,7 @@ def test_the_view_written(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_the_view_of_a_template_world(tmp_path) -> None:  # noqa: ANN001
-    voxel = CoordinateSystem(
+    voxel = ArrayCoordinateSystem(
         name="voxel", axes=[Axis(n, "space") for n in "xyz"], order="F"
     )
     world = io.load(_source(tmp_path)).transformation.output
@@ -745,7 +745,7 @@ def test_the_stored_type(tmp_path) -> None:  # noqa: ANN001
     image = AfniImage.load(_source(tmp_path))
     image.save(tmp_path / "s+orig.HEAD", datatype="short")
     back = AfniImage.load(tmp_path / "s+orig.HEAD")
-    assert back.raw.dtype == np.int16
+    assert back.rawdata.dtype == np.int16
     assert np.array_equal(np.asarray(back.data), np.round(DATA))
     big = SingleScaleImage(data=DATA * 1e6, transformations=[])
     with pytest.raises(WriterError):
@@ -819,7 +819,7 @@ def test_an_oblique_dataset_round_trips(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_time_series_from_another_format(tmp_path) -> None:  # noqa: ANN001
-    voxel = CoordinateSystem(
+    voxel = ArrayCoordinateSystem(
         name="voxel",
         axes=[Axis(n, "space") for n in "xyz"] + [Axis("t", "time")],
         order="F",
@@ -1033,7 +1033,8 @@ def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_decoded_data_is_read_only(tmp_path) -> None:  # noqa: ANN001
-    # An edit in place would not reach `raw`, which is what is written.
+    # An edit in place would not reach `rawdata`, which is what is
+    # written.
     head = _header(nvals=2, types=(1, 3))
     a = (np.arange(24).reshape(SHAPE) % 7).astype(np.int16)
     path = _dataset(tmp_path, head, _brik([a, DATA], ["<h", "<f"]))
@@ -1107,7 +1108,7 @@ def test_nothing_but_the_data_reads_the_voxels(
     expected = SHAPE + ((nvals,) if nvals > 1 else ())
     assert image.shape == expected
     assert image.ndim == len(expected)
-    assert image.raw.dtype == np.float32
+    assert image.rawdata.dtype == np.float32
     repr(image)
     assert image.transformations
     assert image.system is not None

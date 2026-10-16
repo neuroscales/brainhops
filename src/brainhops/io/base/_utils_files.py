@@ -3,7 +3,9 @@
 The formats that store a header and data in separate files find one from
 the other with these helpers. A writer replaces a local file at once with
 [`write_file`][] or [`replace_file`][], so that a lazy array that reads
-the old file is never left reading a file that is half written.
+the old file is never left reading a file that is half written. A
+writer replaces a local directory, such as the store of a pyramid, with
+[`replace_directory`][] for the same reason.
 """
 # TODO: the rest of the code uses Path objects; use them here as well and
 # move generic utilities to brainhops._core.path.
@@ -13,6 +15,7 @@ __all__ = [
     "is_local",
     "local_path",
     "open_path",
+    "replace_directory",
     "replace_file",
     "same_file",
     "sibling",
@@ -20,6 +23,7 @@ __all__ = [
 ]
 
 import os
+import shutil
 import uuid
 
 import typing_extensions as tx
@@ -122,6 +126,77 @@ def replace_file(filename: tx.Any, write: tx.Callable[[str], None]) -> None:
         if os.path.exists(temporary):
             os.remove(temporary)
         raise
+
+
+def replace_directory(
+    dirname: tx.Any, write: tx.Callable[[str], None]
+) -> None:
+    """Write a local directory next to its target, then move it into place.
+
+    A format whose container is a directory, such as the store of a
+    pyramid, writes it with this function, so that a lazy array that
+    reads the files of the old directory never reads a directory that is
+    half written, and so that a failed write leaves the old directory as
+    it was. The function `write` receives the name of a new, empty
+    directory beside the target, whose name ends like the name of the
+    target, as for [`replace_file`][], and fills it. Once it is filled,
+    the target, if it exists, is moved aside, the new directory is moved
+    to the name of the target, following a symbolic link to the
+    directory that it names, and the old directory is removed.
+
+    A writer may therefore read the files of the old directory while it
+    fills the new one, for example to copy the files of the levels that
+    did not change. A lazy array that opens its file by name then reads
+    the file of the same name in the new directory. The directory cannot
+    be swapped in a single step, so a reader that opens the target
+    between the two moves finds no directory, but never a half-written
+    one. If the second move fails, the old directory is moved back.
+
+    Only a local path is accepted. A remote store cannot be renamed, so
+    a writer of a remote store writes in place, and such a save is not
+    atomic.
+
+    Parameters
+    ----------
+    dirname : str or PathLike
+        The local path of the directory to write.
+    write : callable
+        The function that fills the new directory, given its name.
+
+    Raises
+    ------
+    ValueError
+        If `dirname` is not a local path.
+    OSError
+        If the directory cannot be written or moved.
+    """
+    if not is_local(dirname):
+        raise ValueError(f"Only a local directory can be replaced: {dirname}")
+    target = os.path.realpath(os.fspath(dirname))
+    parent, name = os.path.split(target)
+    token = uuid.uuid4().hex
+    temporary = os.path.join(parent, f".{token}.{name}")
+    old = os.path.join(parent, f".{token}.old.{name}")
+    os.mkdir(temporary)
+    try:
+        write(temporary)
+    except BaseException:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    if not os.path.lexists(target):
+        os.replace(temporary, target)
+        return
+    os.replace(target, old)
+    try:
+        os.replace(temporary, target)
+    except BaseException:
+        os.replace(old, target)
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    if os.path.isdir(old) and not os.path.islink(old):
+        shutil.rmtree(old)
+    else:
+        os.remove(old)
 
 
 def write_file(filename: tx.Any, content: bytes) -> None:

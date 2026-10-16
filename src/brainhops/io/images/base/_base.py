@@ -3,7 +3,7 @@ __all__ = ["ImageFormat"]
 import typing_extensions as tx
 
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.images import Image
+from brainhops.datamodel.images import Image, _changes_storage
 from brainhops.io.base._base import (
     Format,
     _FileBasedModelMixin,
@@ -35,3 +35,42 @@ class ImageFormat(
     A NIfTI file, for instance, is both an image and a set of affines, and
     it is read as an image when nothing else separates the two.
     """
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy an image into this format, or convert it first.
+
+        A single-scale image copied into a pyramid, or a pyramid copied
+        into a single-scale image, is converted as `other.to(cls)`
+        converts it, before the fields of the format are filled. Any
+        other image is copied as the bases of this class copy it.
+
+        Parameters
+        ----------
+        other : DataModelBase
+            The image to copy or convert.
+        *args : Any
+            Constructor arguments of a copy. A conversion takes keyword
+            arguments only.
+        **kwargs : Any
+            Fields of the result, which take precedence over those of
+            `other`.
+
+        Returns
+        -------
+        Self
+            The new image.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a conversion.
+        """
+        if _changes_storage(other, cls):
+            if args:
+                raise TypeError(
+                    f"{cls.__name__}.from_instance() converts a "
+                    f"{type(other).__name__} with keyword arguments only."
+                )
+            return other.to(cls, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
