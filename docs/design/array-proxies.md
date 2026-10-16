@@ -10,13 +10,12 @@ files without nibabel.
 
 When brainhops reads an image or a transformation field, it parses the
 header at once but does not read the voxels. It keeps instead a small
-object, called a proxy, that knows where the voxels lie and how they
-are stored. The proxy behaves like a read-only array: it has a `shape`
-and a `dtype`, NumPy converts it with `np.asarray`, and indexing it
-returns the selected values. The proxy is stored as the `rawdata` of
-the format object (see [Format records](format-records.md)). The `data`
-property turns it into a NumPy array or a Dask array, depending on the
-array backend.
+object, called a proxy, that knows where the voxels lie and how they are
+stored. The proxy behaves like a read-only array: it has a `shape` and a
+`dtype`, and NumPy converts it with `np.asarray`. The proxy is stored as
+the `rawdata` of the format object (see [Format
+records](format-records.md)). The `data` property turns it into a NumPy
+array or a Dask array, depending on the array backend.
 
 A proxy keeps no file open between reads. It opens the file each time
 its values are needed, so that it can be pickled, sent to Dask workers
@@ -135,48 +134,65 @@ class ArrayProxyProtocol(tx.Protocol):
     @property
     def ndim(self) -> int: ...
 
-    def __getitem__(self, index: tx.Any) -> np.ndarray: ...
+    def __getitem__(self, index: tx.Any) -> "ArrayProxyProtocol": ...
 
     def __array__(
         self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
     ) -> np.ndarray: ...
 ```
 
-Indexing a proxy reads the values and returns a NumPy array, as
-indexing the nibabel proxy does. Dask and every other consumer of
-array-like objects expect this.
+A proxy is always lazy. Indexing it, as in `proxy[index]`, returns
+another proxy that reads only the selected values, and only
+`np.asarray(proxy)` reads the file. Indexing a NumPy array or a nibabel
+`ArrayProxy` returns a NumPy array instead, which also satisfies the
+protocol, so a consumer must call `np.asarray` on the result of an index
+whenever it needs the values. Dask accepts lazy indexing: the function
+that reads a chunk calls `np.asarray` on whatever indexing returns, and
+each chunk then reads only its own part of the file.
+
+A proxy indexes lazily with integers, slices of any step, the ellipsis,
+`None`, and an array of integers along a single axis. Several integer
+arrays, and boolean masks, select points rather than a box, and a
+proxy cannot describe that selection without reading. Indexing with
+them raises an `IndexError` that tells the caller to write
+`np.asarray(proxy)[index]`, so that the read is explicit.
 
 ### Second layer: a base class
 
 `ArrayProxy` is an abstract class that implements everything the
-proxies repeat today. A subclass defines `shape`, `dtype` and one
-method, `_read(index)`, which receives an index that is already
-normalized: a tuple with one integer or one slice with a positive step
-for each axis. The base class provides the rest.
+proxies repeat today. A subclass of the base class defines `shape`,
+`dtype` and one method, `_read(index)`, which reads the values of an
+index that is already normalized: a tuple with one integer or one slice
+with a positive step for each axis of the stored array. The base class
+provides the rest.
 
 - `__getitem__` normalizes the index with the functions of
-  `npfileobj.indexing`, answers an empty selection without reading,
-  and reads the bounding box of any other index with `_read`. It then
-  applies negative steps, new axes and array indices in memory, so
-  that a subclass never sees them.
-- `__array__` reads `self[...]` and honors `dtype` and `copy`.
+  `npfileobj.indexing`, composes it with the index that the proxy
+  already holds, and returns a new proxy. Nothing is read, so the
+  shortcut for an empty selection is no longer needed. A subclass may
+  override the composition when it has a cheaper one, as the third
+  layer does.
+- `transpose(perm)` and `T` return a new proxy in another axis order,
+  in the same way. The composition of an index and a permutation uses
+  `compose_index` and `split_operation` of `npfileobj.indexing`.
+- `__array__` calls `_read` with the bounding box of the composed
+  index, then applies negative steps, new axes, integer arrays and the
+  permutation in memory, so that a subclass never sees them. It
+  honors `dtype`, and it raises a `ValueError` when `copy=False` asks
+  for a view that the proxy cannot give, as NumPy 2 requires.
 - `chunks` is the block shape that the storage prefers, such as the
   chunks of a Zarr array or one slice of a stack. It is `None` when
   the storage has no preference.
-- `to_dask()` calls `da.from_array` with these chunks and with a
-  `meta` argument, so that Dask does not have to read an empty
-  selection to learn the type.
-- `lazy[index]` and `transpose(perm)` return a new proxy that reads
-  only the selected values in the new axis order. The default
-  implementation composes the index and the permutation with
-  `compose_index` and `split_operation` of `npfileobj.indexing`.
-  The third layer replaces the composition by arithmetic on the
-  layout.
+- `to_dask()` calls `da.from_array` with these chunks, with
+  `fancy=False`, and with a `meta` argument, so that Dask does not
+  index the proxy to learn the type.
 - `reads(file)` tells whether the proxy reads a given file, and
   replaces the four functions that do so today. It returns `False`
   unless the subclass knows its file.
 - `stored` returns a description of the bytes that a writer may copy
-  as they are, or `None` when there are none (see below).
+  as they are, or `None` when there are none (see below). A proxy that
+  was indexed or transposed no longer covers the stored array, so its
+  `stored` is `None` and a writer encodes its values.
 
 The format views then share one function, which returns the proxy as a
 read-only NumPy array or as `to_dask()` depending on the backend.
@@ -201,16 +217,16 @@ into memory, and the rest of the layer reads from those bytes as from
 any other stream.
 
 A `Layout` describes where each value lies in the decoded stream: an
-offset in bytes, a shape, a dtype with its byte order, and one stride
-in bytes for each axis. Strides may be negative. A layout covers C
-order, Fortran order, the axis permutation and flips of an MRtrix
-`layout` and the axis order of NRRD, without copying anything. Indexing
-or transposing a layout returns another layout, computed by arithmetic
-alone, which is what makes `lazy[index]` free. A layout also turns a
-selection into the list of byte ranges to read. Ranges that are close
-are merged, so that one large read replaces many small ones. This
-replaces `nibabel.fileslice`, and the writing functions of
-`readwrite.py` are rewritten on it.
+offset in bytes, a shape, a dtype with its byte order, and one stride in
+bytes for each axis. Strides may be negative. A layout covers C order,
+Fortran order, the axis permutation and flips of an MRtrix `layout` and
+the axis order of NRRD, without copying anything. Indexing or
+transposing a layout returns another layout, computed by arithmetic
+alone, so `StridedProxy` composes an index by changing its layout. A
+layout also turns a selection into the list of byte ranges to read.
+Ranges that are close are merged, so that one large read replaces many
+small ones. This replaces `nibabel.fileslice`, and the writing functions
+of `readwrite.py` are rewritten on it.
 
 `StridedProxy` is the `ArrayProxy` that pairs a source with a layout.
 Its `_read` memory-maps a local file that is not compressed and returns
@@ -222,11 +238,13 @@ the data, which a writer copies when the target stores the same layout.
 
 Two generic proxies complete the layer. `ScaledProxy` applies a slope
 and an intercept that broadcast against the shape, which covers the
-single factor of NIfTI and MRtrix, the factor of each AFNI sub-brick
-and the slice-wise scaling of MINC. Because it scales only what it
-reads, a chunk costs only its own values. `ConcatenatedProxy` joins
+single factor of NIfTI and MRtrix, the factor of each AFNI sub-brick and
+the slice-wise scaling of MINC. Because it scales only what it reads, a
+chunk costs only its own values. Indexing a `ScaledProxy` indexes its
+slope and intercept with the same index. `ConcatenatedProxy` joins
 proxies along one axis. It covers NRRD data split into several files,
-AFNI sub-bricks of different types, and image stacks.
+AFNI sub-bricks of different types, and image stacks. Indexing a
+`ConcatenatedProxy` indexes only the proxies that the selection reaches.
 
 ### Fourth layer: chunked stores keep their libraries
 
