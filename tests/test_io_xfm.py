@@ -333,15 +333,19 @@ def test_the_decoded_matrix_is_read_only() -> None:
         affine.matrix[0, 0] = 2.0
 
 
-def test_an_affine_between_other_systems_is_refused(tmp_path: Path) -> None:
+def test_an_affine_between_other_systems_is_bridged(tmp_path: Path) -> None:
+    # An MNI transform built between LPS systems is refused when it is
+    # written, but an affine between LPS systems is carried into RAS, by
+    # flipping the first two axes on both sides, when it is saved.
     affine = XfmAffine(TALAIRACH, input=LPSmm(), output=LPSmm())
     with pytest.raises(UnrepresentableTransformationError, match="RAS"):
         affine.to_text()
-    with pytest.raises(WriterError):
-        io.save(
-            xforms.Affine(TALAIRACH, input=LPSmm(), output=LPSmm()),
-            tmp_path / "x.xfm",
-        )
+    path = tmp_path / "x.xfm"
+    io.save(xforms.Affine(TALAIRACH, input=LPSmm(), output=LPSmm()), path)
+    flip = np.diag([-1.0, -1.0, 1.0, 1.0])
+    homogeneous = np.concatenate([TALAIRACH, [[0.0, 0.0, 0.0, 1.0]]])
+    expected = (flip @ homogeneous @ flip)[:-1]
+    np.testing.assert_allclose(io.load(path).matrix, expected)
 
 
 def test_an_affine_is_saved_as_a_file_of_one_linear_transform(

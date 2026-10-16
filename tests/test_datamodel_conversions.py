@@ -264,3 +264,24 @@ def test_a_format_that_lists_its_data_model_first_is_refused() -> None:
         pass
 
     assert issubclass(Early, X.Affine)
+
+
+def test_a_format_without_an_exact_converter_adapts_world_systems() -> None:
+    from brainhops.io.transformations.freesurfer.lta._xforms import (
+        LtaTransformationRASToRAS,
+        LtaTransformationVoxToVox,
+    )
+    from brainhops.io.transformations.minc._affine import XfmAffine
+
+    matrix = np.concatenate([np.eye(3), [[1.0], [2.0], [3.0]]], 1)
+    lps = X.Affine(matrix, input=S.LPSmm(), output=S.LPSmm())
+    # LPS is RAS with the first two axes flipped, so the translation flips
+    # with them.
+    for cls in (XfmAffine, LtaTransformationRASToRAS):
+        converted = lps.to(cls)
+        assert isinstance(converted.input, S.RASmm)
+        np.testing.assert_allclose(converted.matrix[:, 3], [-1.0, -2.0, 3.0])
+    # A voxel system is not bridged to a world system without the geometry
+    # of its volume.
+    with pytest.raises(ConversionError):
+        XfmAffine.from_instance(LtaTransformationVoxToVox(matrix=matrix))
