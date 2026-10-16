@@ -29,6 +29,9 @@ which drops the axis, or the ordered positions that the axis keeps."""
 _ReadIndex = tx.Tuple[tx.Union[int, slice], ...]
 """The index that [`ArrayProxy._read`][] receives."""
 
+_CURRENT_SETTING = object()
+"""The default of `ArrayProxy.to_backend`, which means the current setting."""
+
 
 @tx.runtime_checkable
 class ArrayProxyProtocol(tx.Protocol):
@@ -467,16 +470,78 @@ class ArrayProxy(abc.ABC):
                 values = values[(slice(None),) * i + (axes[i],)]
         return values
 
-    def to_dask(self, **kwargs: tx.Any) -> tx.Any:
+    def to_numpy(self) -> np.ndarray:
+        """Read the values of the proxy into a NumPy array.
+
+        Returns
+        -------
+        np.ndarray
+            The values.
+        """
+        return np.asarray(self)
+
+    def to_cupy(self) -> tx.Any:
+        """Read the values of the proxy into a CuPy array on the GPU.
+
+        Returns
+        -------
+        cupy.ndarray
+            The values.
+
+        Raises
+        ------
+        ImportError
+            If CuPy is not installed.
+        """
+        from brainhops.backends import to_backend
+
+        return to_backend(self, "cupy")
+
+    def to_backend(self, backend: tx.Any = _CURRENT_SETTING) -> tx.Any:
+        """Convert the proxy as a backend setting says.
+
+        The settings are described in [`brainhops.backends`][]. Under
+        `None`, and under `"auto"`, a proxy of at most the threshold of
+        `"auto"` is read with NumPy and a larger one becomes a Dask array.
+        A Dask array has the blocks that
+        [`to_dask`][brainhops._core.proxy.ArrayProxy.to_dask] gives, and
+        reading it reads only the blocks that it needs.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+
+        Returns
+        -------
+        array
+            A NumPy, CuPy or Dask array.
+
+        Raises
+        ------
+        ImportError
+            If a package that the setting needs is not installed.
+        """
+        from brainhops.backends import to_backend
+
+        if backend is _CURRENT_SETTING:
+            return to_backend(self)
+        return to_backend(self, backend)
+
+    def to_dask(self, *, cupy: bool = False, **kwargs: tx.Any) -> tx.Any:
         """Return a Dask array that reads the proxy block by block.
 
         The blocks are the `chunks` of the proxy when the storage
         prefers some, and the default blocks of Dask otherwise. Dask
         receives the type of the values through its `meta` argument, so
-        it does not read the proxy to learn it.
+        it does not read the proxy to learn it. With `cupy=True`, each
+        block is moved to the GPU once it is read, which gives the
+        setting `"dask+cupy"`.
 
         Parameters
         ----------
+        cupy : bool, default=False
+            Whether the blocks are CuPy arrays.
         **kwargs : dict
             Options passed to `dask.array.from_array`, which take
             precedence over the ones that this method sets.
@@ -489,7 +554,7 @@ class ArrayProxy(abc.ABC):
         Raises
         ------
         ImportError
-            If Dask is not installed.
+            If Dask is not installed, or CuPy when `cupy` is true.
         """
         try:
             import dask.array as da
@@ -504,7 +569,17 @@ class ArrayProxy(abc.ABC):
             "meta": np.empty((0,) * self.ndim, self.dtype),
         }
         options.update(kwargs)
-        return da.from_array(self, **options)
+        lazy = da.from_array(self, **options)
+        if not cupy:
+            return lazy
+        try:
+            import cupy as cp
+        except ImportError:
+            raise ImportError(
+                "CuPy is needed to place the blocks of a proxy on a GPU."
+            ) from None
+        meta = cp.empty((0,) * lazy.ndim, lazy.dtype)
+        return lazy.map_blocks(cp.asarray, meta=meta)
 
 
 def _expand(index: tx.Any, ndim: int) -> tx.List[tx.Any]:
