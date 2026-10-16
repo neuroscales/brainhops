@@ -75,7 +75,7 @@ def test_native_spline_order_and_geometry(
 
         from brainhops.io.transformations.itk.mat import MatRaw
 
-        block = replace(loaded[0], spline_order=(order + 1) % 4)
+        block = replace(loaded[0], degree=(order + 1) % 4)
         path = tmp_path / "changed.mat"
         MatRaw(blocks=(block,)).save(path)
         back = io.transformations.load(path, hint="itk")

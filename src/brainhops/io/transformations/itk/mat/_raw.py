@@ -526,8 +526,7 @@ def _same_blocks(
             or one.precision != two.precision
             or one.ndim_input != two.ndim_input
             or one.ndim_output != two.ndim_output
-            or getattr(one, "spline_order", None)
-            != getattr(two, "spline_order", None)
+            or getattr(one, "degree", None) != getattr(two, "degree", None)
         ):
             return False
         for name in ("parameters", "fixed_parameters"):

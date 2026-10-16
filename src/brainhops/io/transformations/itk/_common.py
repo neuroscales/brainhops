@@ -18,6 +18,15 @@ from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 from ._systems import _make_grid_system, _make_system
 
+# An ITK transform type name is `{Class}_{Precision}_{InputDim}_{OutputDim}`.
+# A B-spline whose degree is not 3 appends its degree, as in
+# `BSplineTransform_double_3_3_1`.
+_TRANSFORM_TYPE_RE = re.compile(
+    r"^(?P<type>\w+)_(?P<precision>float|double)_"
+    r"(?P<input_dim>\d+)_(?P<output_dim>\d+)"
+    r"(?:_(?P<degree>[0-3]))?$"
+)
+
 
 class ItkTransformClass(StrEnum):
     """Names of the ITK transform classes.
@@ -795,13 +804,13 @@ class ItkBSplineStruct(
     stored as one planar image per axis.
     """
 
-    spline_order: int = 3
-    """The order encoded by ITK's optional type-name suffix (default cubic)."""
+    degree: int = 3
+    """The spline degree of the coefficients.
 
-    @property
-    def degree(self) -> int:
-        """The order of the stored B-spline coefficients."""
-        return self.spline_order
+    ITK writes a degree other than 3 as a suffix of the transform type
+    name, such as `BSplineTransform_double_3_3_1`, and older files that
+    have no suffix hold cubic splines.
+    """
 
     store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
@@ -958,15 +967,8 @@ def _euler_to_matrix(
     return Rz @ Ry @ Rx if compute_zyx else Rz @ Rx @ Ry
 
 
-_TRANSFORM_TYPE_RE = re.compile(
-    r"^(?P<type>\w+)_(?P<precision>float|double)_"
-    r"(?P<input_dim>\d+)_(?P<output_dim>\d+)"
-    r"(?:_(?P<spline_order>[0-3]))?$"
-)
-
-
 def _type_fields(match: re.Match) -> tx.Dict[str, tx.Any]:
-    """Decode an ITK type name, retaining a B-spline's template order."""
+    """Return the block fields encoded by an ITK transform type name."""
     kind = ItkTransformClass(match.group("type"))
     fields = dict(
         type=kind,
@@ -974,11 +976,11 @@ def _type_fields(match: re.Match) -> tx.Dict[str, tx.Any]:
         ndim_input=int(match.group("input_dim")),
         ndim_output=int(match.group("output_dim")),
     )
-    order = match.group("spline_order")
-    if order is not None:
+    degree = match.group("degree")
+    if degree is not None:
         if kind != ItkTransformClass.BSplineTransform:
             raise ParserContentError(
-                "Only B-spline types have an order suffix."
+                "Only B-spline types have a degree suffix."
             )
-        fields["spline_order"] = int(order)
+        fields["degree"] = int(degree)
     return fields
