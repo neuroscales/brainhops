@@ -3,7 +3,15 @@ from bagof.magic import NoRepr
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
+from brainhops.backends import _CURRENT
 from brainhops.datamodel import kinds
+from brainhops.datamodel._backends import (
+    BackendConversions,
+    apply_changes,
+    convert_array,
+    convert_member,
+    stores_field,
+)
 from brainhops.datamodel.base import DataModelBase, IdentityComparison
 from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.systems import CoordinateSystem
@@ -24,7 +32,12 @@ if tx.TYPE_CHECKING:
 @kinds.Transformation.register
 @nocycles.register_transformation
 class Transformation(
-    IdentityComparison, DataModelBase, reverse=True, eq=False, kw_only=True
+    BackendConversions,
+    IdentityComparison,
+    DataModelBase,
+    reverse=True,
+    eq=False,
+    kw_only=True,
 ):
     """A map of coordinates from an input system to an output system.
 
@@ -63,6 +76,14 @@ class Transformation(
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Names of the attributes that parameterize the transformation."""
 
+    holds_voxels: tx.ClassVar[bool] = False
+    """Whether `data` is an array of voxels rather than a small parameter.
+
+    The `as_*` methods convert the voxels of a field, and they keep the
+    small parameters of a transformation, such as the matrix of an affine
+    transformation, as NumPy arrays.
+    """
+
     encoding_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Names of the attributes that define the encoding."""
 
@@ -81,6 +102,91 @@ class Transformation(
     applies only to a class with at most one data field. A class with several
     independent data fields has no group unless it declares one.
     """
+
+    # --- conversion to another backend -------------------------------
+
+    def to_backend(self, backend: tx.Any = _CURRENT) -> tx.Any:
+        """Return `data` as a bare array of the backend of a setting.
+
+        The setting is described in [`brainhops.backends`][]. Small
+        parameters, such as the matrix of an affine transformation, are
+        converted too, since the caller asks for them. A transformation
+        without data, such as the identity, gives `None`.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+
+        Returns
+        -------
+        array or None
+            The data.
+
+        Raises
+        ------
+        TypeError
+            If the transformation holds other transformations rather than
+            data, as a sequence does.
+        """
+        if not hasattr(self, "data"):
+            raise TypeError(
+                f"A {type(self).__name__} holds transformations rather than "
+                "data. Convert it with as_backend, or convert its "
+                "transformations."
+            )
+        return convert_array(self.data, backend)
+
+    def as_backend(
+        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+    ) -> tx.Self:
+        """Return the transformation with its voxels converted.
+
+        The voxels of a field are converted as the setting says. The
+        transformations that this one holds, such as the members of a
+        sequence or the forward of an inverse, are converted in the same
+        way. Small parameters stay NumPy arrays, so a transformation that
+        holds no voxels, such as an affine transformation, is returned as
+        it is.
+
+        A file format whose members are derived from a field that it
+        stores, such as a displacement field read from a NIfTI file, holds
+        that field in `data`, with at least three axes, while small
+        parameters have at most two. Only that field is converted, and the
+        members are derived again from it.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+        inplace : bool, default=False
+            Whether this transformation holds the converted members and is
+            returned, instead of a new transformation.
+
+        Returns
+        -------
+        Transformation
+            A transformation of the same class.
+        """
+        if "data" not in self.data_fields and stores_field(type(self), "data"):
+            stored = getattr(self, "data", None)
+            if getattr(stored, "ndim", 0) >= 3:
+                converted = convert_array(stored, backend)
+                if converted is stored:
+                    return self
+                return apply_changes(self, {"data": converted}, inplace)
+        changes = {}
+        for name in self.data_fields:
+            value = getattr(self, name)
+            if name == "data" and self.holds_voxels:
+                new = convert_array(value, backend)
+            else:
+                new = convert_member(value, backend)
+            if new is not value:
+                changes[name] = new
+        if not changes:
+            return self
+        return apply_changes(self, changes, inplace)
 
     def __post_init__(self, arguments: tx.Any) -> None:
         mutex = self.mutually_exclusive_fields

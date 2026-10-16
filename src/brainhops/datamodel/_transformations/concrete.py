@@ -277,6 +277,7 @@ class TransformationField(ConcreteTransformation):
     map_field: tx.ClassVar[str] = "field"
 
     data_fields: _FieldNames = ("data",)
+    holds_voxels: tx.ClassVar[bool] = True
     encoding_fields: _FieldNames = "degree", "bound", "store"
     derived_fields: _FieldNames = "field", "values", "coefficients", "_inverse"
 

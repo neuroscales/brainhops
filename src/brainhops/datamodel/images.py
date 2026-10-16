@@ -7,7 +7,14 @@ from bagof.magic import NoRepr, NotKwOnly
 
 from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol, Clip
+from brainhops.backends import _CURRENT
 
+from ._backends import (
+    BackendConversions,
+    apply_changes,
+    convert_array,
+    convert_member,
+)
 from ._transformations.multiscale import (
     _as_affine_ignoring_fields,
     _at_resolution,
@@ -24,7 +31,13 @@ from .transformations import (
 )
 
 
-class Image(IdentityComparison, DataModelBase, eq=False, kw_only=True):
+class Image(
+    BackendConversions,
+    IdentityComparison,
+    DataModelBase,
+    eq=False,
+    kw_only=True,
+):
     """The base class of all images.
 
     !!! note
@@ -189,6 +202,60 @@ class SingleScaleImage(Image):
 
     The last transformation in the list is the preferred one.
     """
+
+    # --- conversion to another backend -------------------------------
+
+    def to_backend(self, backend: tx.Any = _CURRENT) -> tx.Any:
+        """Return `data` as a bare array of the backend of a setting.
+
+        The setting is described in [`brainhops.backends`][]. The image
+        does not change.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+
+        Returns
+        -------
+        array or None
+            The data.
+        """
+        return convert_array(self.data, backend)
+
+    def as_backend(
+        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+    ) -> tx.Self:
+        """Return the image with its data converted as a setting says.
+
+        The data are converted, and so are the voxels of the
+        transformations of the image. Small parameters, such as affine
+        matrices, stay NumPy arrays. An image read from a file holds the
+        converted array as assigned data, which a writer encodes again.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+        inplace : bool, default=False
+            Whether this image holds the converted data and is returned,
+            instead of a new image.
+
+        Returns
+        -------
+        SingleScaleImage
+            An image of the same class.
+        """
+        changes = {}
+        data = self.data
+        converted = convert_array(data, backend)
+        if converted is not data:
+            changes["data"] = converted
+        transformations = self.transformations
+        converted = convert_member(transformations, backend)
+        if converted is not transformations:
+            changes["transformations"] = converted
+        return apply_changes(self, changes, inplace)
 
     @property
     def geometry(self) -> Geometry:
@@ -409,6 +476,49 @@ class MultiScaleImage(Image):
     def data(self) -> ArrayProtocol:
         """The data of the highest-resolution level."""
         return self.images[0].data
+
+    # --- conversion to another backend -------------------------------
+
+    def to_backend(self, backend: tx.Any = _CURRENT) -> tx.Any:
+        """Return the data of the highest-resolution level as a bare array.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+
+        Returns
+        -------
+        array or None
+            The data of the highest-resolution level.
+        """
+        return self.images[0].to_backend(backend)
+
+    def as_backend(
+        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+    ) -> tx.Self:
+        """Return the pyramid with the data of every level converted.
+
+        Parameters
+        ----------
+        backend : str or module, optional
+            The setting. By default, the current setting is used.
+        inplace : bool, default=False
+            Whether this pyramid holds the converted levels and is
+            returned, instead of a new pyramid.
+
+        Returns
+        -------
+        MultiScaleImage
+            A pyramid of the same class.
+        """
+        changes = {}
+        for name in ("images", "transformations"):
+            value = getattr(self, name)
+            converted = convert_member(value, backend)
+            if converted is not value:
+                changes[name] = converted
+        return apply_changes(self, changes, inplace)
 
     def to_singlescale(self, index: int = 0) -> SingleScaleImage:
         """Return a level as a single-scale image in world space."""
