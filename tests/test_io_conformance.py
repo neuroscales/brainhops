@@ -4608,6 +4608,7 @@ RAWDATA: tx.FrozenSet[str] = frozenset(
         "brainhops.io.transformations.niftyreg.NiftyRegDisplacementField",
         "brainhops.io.transformations.niftyreg.NiftyRegVelocityField",
         "brainhops.io.transformations.niftyreg.NiftyRegVelocityGrid",
+        "brainhops.io.transformations.spm.DartelFlowField",
         "brainhops.io.transformations.spm.SpmCoordinatesField",
     )
 ) | frozenset(SHARED)
