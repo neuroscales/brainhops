@@ -9,9 +9,11 @@ import os
 import numpy as np
 import typing_extensions as tx
 
-# internals
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
+
+# internals
+from brainhops._ext.npfileobj.proxy import ArrayProxy
 from brainhops.io.base._utils_files import open_path, same_file
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 
@@ -20,7 +22,7 @@ from ._raw import PillowRaw
 from ._utils import read_pillow
 
 
-class _PillowProxy:
+class _PillowProxy(ArrayProxy):
     """A lazy array of the pixels of a frame of a raster file.
 
     The proxy holds where the file lies, which is a path or the stream
@@ -31,7 +33,9 @@ class _PillowProxy:
     read. Pillow reads a stream from its start, whatever its position, so
     the file is the whole stream. The values are `(rows, columns)`, or
     `(rows, columns, samples)`, as Pillow decodes them, and their shape and
-    type are known from the record without decoding anything.
+    type are known from the record without decoding anything. Indexing
+    the proxy returns another lazy array (see [`ArrayProxy`][]), but
+    Pillow decodes the whole frame for any read.
 
     The proxy also gives the bytes of the file, with [`read_stored`][], so
     that an image that was read and not changed is written back as the
@@ -49,14 +53,9 @@ class _PillowProxy:
         """Whether the colours of a palette image are looked up."""
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the decoded frame, read from the record."""
-        return self.record.layout(self.palette)[0]
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions of the decoded frame."""
-        return len(self.shape)
+        return tuple(self.record.layout(self.palette)[0])
 
     @property
     def dtype(self) -> np.dtype:
@@ -65,6 +64,9 @@ class _PillowProxy:
 
     def read_stored(self) -> bytes:
         """Return the bytes of the file.
+
+        The bytes are those of the whole file, whatever part of it a view
+        of the proxy selects.
 
         Returns
         -------
@@ -75,33 +77,20 @@ class _PillowProxy:
             f.seek(0)
             return f.read()
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         with _opened(self.source) as f:
             frame = read_pillow(
                 f, frame=self.record.frame, palette=self.palette
             )
         values = frame.array
-        if values.shape != self.shape or values.dtype != self.dtype:
+        shape = self.base_shape
+        if values.shape != shape or values.dtype != self.dtype:
             raise ParserContentError(
                 f"Pillow decoded frame {self.record.frame} as an array of "
                 f"shape {values.shape} and type {values.dtype}, but its "
-                f"header describes shape {self.shape} and type "
-                f"{self.dtype}."
+                f"header describes shape {shape} and type {self.dtype}."
             )
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without decoding the file.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        return np.asarray(self)[index]
-
-    def __repr__(self) -> str:
-        return f"_PillowProxy(shape={self.shape}, dtype={self.dtype})"
+        return values[index]
 
 
 def read_pillow_image(

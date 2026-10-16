@@ -247,7 +247,11 @@ def write_stack(
             "This stack has no slice, so there is nothing to write."
         )
     names = target.names(record)
-    copied = isinstance(raw, _StackProxy) and raw.record is record
+    copied = (
+        isinstance(raw, _StackProxy)
+        and not raw.is_view
+        and raw.record is record
+    )
     sources = raw.filenames() if copied else [None] * len(names)
 
     def fill(folder: str) -> None:
@@ -259,7 +263,8 @@ def write_stack(
             if source is not None and _same_format(member.name, name):
                 shutil.copyfile(source, filename)
                 continue
-            content = _encoded(record, member, raw[position], name)
+            values = np.asarray(raw[position])
+            content = _encoded(record, member, values, name)
             with open(filename, "xb") as file:
                 file.write(content)
 

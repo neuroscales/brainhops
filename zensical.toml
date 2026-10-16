@@ -108,6 +108,7 @@ nav = [
         {"numeric" = "api/_core/numeric.md"},
         {"enum" = "api/_core/enum.md"},
         {"invfield" = "api/_ext/invfield/index.md"},
+        {"proxy" = "api/_ext/npfileobj/proxy.md"},
     ]}
   ]},
   {"Developer guide" = [

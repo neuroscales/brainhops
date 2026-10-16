@@ -496,6 +496,7 @@ class Jpeg2000Image(
         copied = (
             self._data is None
             and isinstance(self.rawdata, _Jpeg2000Proxy)
+            and not self.rawdata.is_view
             and self.rawdata.level == 0
             and num_resolutions is None
             and not options

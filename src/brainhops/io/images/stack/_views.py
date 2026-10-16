@@ -19,9 +19,8 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops._core.dependencies import da
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.io.base._utils_proxies import load_proxy
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format
@@ -41,19 +40,11 @@ def _image_to_model(raw: ArrayProtocol, axis: str = "z") -> ArrayProtocol:
     are a view of `rawdata`.
     """
     if isinstance(raw, _StackProxy):
-        backend = get_array_backend()
-        if da is not None and backend is da:
-            # `name=False` gives a random name instead of a hash of the
-            # proxy, which Dask computes only to recognize two arrays of
-            # the same source (docstring of `dask.array.from_array`, dask
-            # 2023.5.0), and which says nothing about the files.
-            raw = da.from_array(
-                raw, chunks=raw.chunks, name=False, asarray=True
-            )
-        else:
-            raw = backend.asarray(raw)
-            if isinstance(raw, np.ndarray):
-                raw.flags.writeable = False
+        # `name=False` gives Dask a random name instead of a hash of the
+        # proxy, which Dask computes only to recognize two arrays of the
+        # same source (docstring of `dask.array.from_array`, dask
+        # 2023.5.0), and which says nothing about the files.
+        raw = load_proxy(raw, name=False)
     return raw.transpose(_permutation(raw.ndim, axis))
 
 

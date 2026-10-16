@@ -304,9 +304,12 @@ def test_regions_are_read_lazily(svs: Path, calls: tx.List[tx.Any]) -> None:
     assert calls == []
     region = data[10:20, 30:35]
     assert region.shape == (10, 5, 3)
+    # Indexing reads nothing, and converting the region reads it alone.
+    assert calls == []
+    values = np.asarray(region)
     # Level coordinates (10, 30) are level-0 coordinates (20, 60).
     assert calls == [((20, 60), 1, (10, 5))]
-    np.testing.assert_array_equal(region, _reference(svs, 1)[10:20, 30:35])
+    np.testing.assert_array_equal(values, _reference(svs, 1)[10:20, 30:35])
 
 
 @pytest.mark.parametrize(
@@ -366,7 +369,7 @@ def test_background_composite(
         return Image.fromarray(rgba, "RGBA")
 
     monkeypatch.setattr(openslide.OpenSlide, "read_region", read_region)
-    out = data[:3, :2]
+    out = np.asarray(data[:3, :2])
     assert out.shape == (3, 2, 3)
     assert tuple(out[0, 0]) == (200, 200, 200)
     assert tuple(out[1, 0]) == (16, 32, 48)

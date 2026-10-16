@@ -3,20 +3,20 @@
 # stdlib
 import math
 import os
-from numbers import Integral
 
 # dependencies
 import numpy as np
 import typing_extensions as tx
 
 # internals
+from brainhops._ext.npfileobj.proxy import ArrayProxy
 from brainhops.io.base.parsers import ParserContentError
 
 # this format
 from ._raw import StackMember, StackRaw
 
 
-class _StackProxy:
+class _StackProxy(ArrayProxy):
     """A lazy array of the pixels of an image stack.
 
     The proxy holds the path of the folder and the record of the stack.
@@ -26,7 +26,9 @@ class _StackProxy:
     format, tifffile or Pillow, only when one of its pixels is selected,
     and no file is kept open. A selection along the first axis therefore
     reads only the files that it selects, which lets Dask read one file
-    per chunk (see `chunks`). A slice whose number no file carries is
+    per chunk (see `chunks`). Indexing the proxy returns another lazy
+    array (see [`ArrayProxy`][]), which reads the files when it is
+    converted. A slice whose number no file carries is
     filled with `fill`, and reading it reads no file.
 
     Bringing the axes of a file into the order `(rows, columns[,
@@ -50,14 +52,9 @@ class _StackProxy:
         }
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the stacked pixels, read from the record."""
-        return self.record.shape
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions of the stacked pixels."""
-        return len(self.shape)
+        return tuple(self.record.shape)
 
     @property
     def dtype(self) -> np.dtype:
@@ -65,9 +62,9 @@ class _StackProxy:
         return self.record.dtype
 
     @property
-    def chunks(self) -> tx.Tuple[int, ...]:
+    def base_chunks(self) -> tx.Tuple[int, ...]:
         """The shape of the block that one file fills: one plane."""
-        return (1,) + self.shape[1:]
+        return (1,) + self.base_shape[1:]
 
     def filenames(self) -> tx.List[str]:
         """Return the paths of the files that the proxy reads.
@@ -104,7 +101,7 @@ class _StackProxy:
         """
         index = self._members.get(position)
         if index is None:
-            return np.full(self.shape[1:], self.fill, self.dtype)
+            return np.full(self.base_shape[1:], self.fill, self.dtype)
         member = self.record.members[index]
         filename = os.path.join(self.folder, *member.name.split("/"))
         if not os.path.isfile(filename):
@@ -138,38 +135,19 @@ class _StackProxy:
             The pixels, of shape `(len(positions), rows, columns[,
             channels])`.
         """
-        out = np.empty((len(positions),) + self.shape[1:], self.dtype)
+        out = np.empty((len(positions),) + self.base_shape[1:], self.dtype)
         for k, position in enumerate(positions):
             out[k] = self.read_member(position)
         return out
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = self.read_members(range(self.shape[0]))
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without reading the files.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        index = index if isinstance(index, tuple) else (index,)
-        first = index[0] if index else slice(None)
-        rest = index[1:]
-        if isinstance(first, Integral) and not isinstance(first, bool):
-            position = range(self.shape[0])[first]
-            return self.read_member(position)[rest]
-        if isinstance(first, slice):
-            positions = range(self.shape[0])[first]
-            return self.read_members(positions)[(slice(None),) + rest]
-        # Any other selection, such as an ellipsis or an array of indices,
-        # reads every file.
-        return np.asarray(self)[index]
-
-    def __repr__(self) -> str:
-        return f"_StackProxy(shape={self.shape}, dtype={self.dtype})"
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        # Only the files of the slices that the first index selects are
+        # read.
+        first, rest = index[0], index[1:]
+        if isinstance(first, int):
+            return self.read_member(first)[rest]
+        positions = range(self.base_shape[0])[first]
+        return self.read_members(positions)[(slice(None),) + rest]
 
 
 def fill_value(fill: tx.Any, dtype: np.dtype) -> tx.Any:
