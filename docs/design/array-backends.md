@@ -1,9 +1,11 @@
 # Array backends of images and transformations
 
-This memo is a proposal, and nothing in it is implemented yet. It is
-tracked in #486. It decides which array package holds the values of an
-image or a transformation, how a user moves an object from one package
-to another, and how a computation chooses the package of its result.
+This memo decides which array package holds the values of an image or
+a transformation, how a user moves an object from one package to
+another, and how a computation chooses the package of its result. It is
+agreed and tracked in #486. Its first step, the backend settings, is
+implemented in `brainhops.backends` (#490), and the other steps are not
+implemented yet.
 
 ## What a backend is for
 
@@ -197,7 +199,9 @@ NumPy array.
 
 1. Parse the backend settings in `brainhops.backends`, including the
    threshold of `"auto"`, `"dask+cupy"` and `"auto+cupy"`, and make
-   `None` the default.
+   `None` the default. This step is implemented. The threshold is
+   64 MiB by default, and both `set_auto_threshold` and
+   `backend(..., threshold=...)` change it.
 2. Add `to_numpy`, `to_cupy` and `to_backend` to `ArrayProxy`, and let
    its `to_dask` place its chunks on a GPU.
 3. Add the `to_*` and `as_*` methods to the classes of images and
@@ -210,10 +214,6 @@ NumPy array.
 
 ## Open questions
 
-- The threshold of `"auto"` needs a default and a way to change it. It
-  could be a global setting, an argument of the context manager such as
-  `backend("auto", threshold=...)`, or both. A default of 64 MiB is a
-  starting point.
 - On a multi-scale image, `to_*` could return the finest level, as
   `data` does, while `as_*` converts every level.
 - Readers could take a `backend=` argument, but

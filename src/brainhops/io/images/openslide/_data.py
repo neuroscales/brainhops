@@ -302,24 +302,24 @@ class _SlideArray(ArrayProxy):
         """Return the data of the level, without reading any pixel.
 
         The data is a dask array whose chunks group whole tiles when `lazy`
-        is true, or when `lazy` is `None` and dask is the array backend.
-        Otherwise, and whenever dask is not installed, the data is this
-        array, which reads the region that it selects when it is converted.
+        is true, or when `lazy` is `None` and the backend setting reads a
+        level of this size lazily (see
+        [`is_lazy`][brainhops.backends.is_lazy]). Otherwise, and whenever
+        dask is not installed, the data is this array, which reads the
+        region that it selects when it is converted.
 
         Returns
         -------
         _SlideArray or dask.array.Array
             The data of the level.
         """
+        from brainhops.backends import da, is_lazy
+
         lazy = self.lazy
-        try:
-            import dask.array as da
-        except ImportError:
+        if da is None:
             return self
         if lazy is None:
-            from brainhops.backends import get_array_backend
-
-            lazy = get_array_backend() is da
+            lazy = is_lazy(self.nbytes)
         if not lazy:
             return self
         return self.to_dask(lock=False)

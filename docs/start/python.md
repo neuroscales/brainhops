@@ -51,33 +51,31 @@ wrp = io.transformations.load("warp.nii.gz", hint="spm")
 ```
 
 !!! tip "Lazy loading"
-    By default, multidimensional arrays other than affine matrices are not
-    loaded into memory. They are mapped lazily to a `dask.array.Array`
-    instead. Another array backend can be selected when a file is loaded,
-    within a context manager, or as the default for the whole session.
-
-    === "`load` argument"
-
-        ```python
-        src = io.images.load("source.nii.gz", backend="cupy")
-        ```
+    Reading a file does not read its voxels. An image keeps a lazy array
+    of its file, and reading `data` converts that array with the backend
+    setting the first time it is read. Under the default setting, a
+    small array is read into a NumPy array, and an array larger than 64
+    MiB is mapped lazily to a `dask.array.Array`. Another backend can be
+    selected within a context manager, or as the setting of the whole
+    session.
 
     === "context manager"
 
         ```python
         from brainhops.backends import backend
 
+        src = io.images.load("source.nii.gz")
         with backend("cupy"):
-            src = io.images.load("source.nii.gz")
+            data = src.data  # a CuPy array
         ```
 
-    === "default backend"
+    === "session setting"
 
         ```python
         from brainhops.backends import set_backend
 
         set_backend("cupy")
-        src = io.images.load("source.nii.gz")
+        data = io.images.load("source.nii.gz").data  # a CuPy array
         ```
 
 ## Save data to files

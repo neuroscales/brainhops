@@ -14,7 +14,7 @@ from nibabel.arrayproxy import ArrayProxy
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.backends import to_backend
 from brainhops.io.base._utils_files import is_local, replace_file
 
 # ----------------------------------------------------------------------
@@ -188,9 +188,11 @@ def _save_nifti(
 def _read(raw: ArrayProtocol) -> ArrayProtocol:
     """Return an array from a stored array, which may be a nibabel proxy.
 
-    A nibabel proxy, which reads the voxels lazily, is read with the array
-    backend, which loads it with NumPy and keeps it lazy with Dask. The
-    NumPy array that it gives is made read-only, because it is a view that
+    A nibabel proxy, which reads the voxels lazily, is converted with the
+    backend setting (see [`to_backend`][brainhops.backends.to_backend]).
+    Under the default setting, a small proxy is read with NumPy and a large
+    one becomes a Dask array. The NumPy array that it gives is made
+    read-only, because it is a view that
     the writer does not read back: the writer writes `rawdata`, so an edit in
     place would be lost. Any other array is returned as it is, so that a
     Dask array stays lazy and an array that was set as data stays the
@@ -198,7 +200,7 @@ def _read(raw: ArrayProtocol) -> ArrayProtocol:
     """
     if not isinstance(raw, ArrayProxy):
         return raw
-    data = get_array_backend().asarray(raw)
+    data = to_backend(raw)
     if isinstance(data, np.ndarray):
         data.flags.writeable = False
     return data
