@@ -530,7 +530,35 @@ class _FileBasedModelMixin:
         No file-based class takes a string as the first constructor argument,
         so a string always names a file or a store. A file that cannot be read
         fails in `load`, rather than being passed to the constructor as data.
+
+    !!! warning "The format base comes before the data model"
+        A file format lists its format base, such as `TransformationFormat`
+        or a class derived from it, before the class of its data model, such
+        as `Affine` or `ImmutableSequence`. Bases that only read or write,
+        such as `BinaryFileReader`, may come first. The format then decides
+        whether to convert or to copy another object before the data model
+        copies any field. A conversion that received the fields that the data
+        model had already copied would build the wrong map. A class that
+        breaks the rule raises `TypeError` when it is defined.
     """
+
+    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _check_format_first(cls)
+
+    @classmethod
+    def _data_model(cls) -> type:
+        """Return the data model of the format, such as `SingleScaleImage`.
+
+        This is the first class in the MRO that is a data model but not a
+        parser, a writer or a format.
+        """
+        for base in cls.__mro__:
+            if issubclass(base, DataModelBase) and not issubclass(
+                base, (Format, FileReader, FileWriter)
+            ):
+                return base
+        return cls
 
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
@@ -585,12 +613,12 @@ class _FileBasedModelMixin:
         Within the format, the stored values are copied, so a copy of an
         image whose data was not assigned holds the same `rawdata` as
         `other`, which stays lazy if it is a proxy, and decodes the same
-        record. From another class, the data and the transformations that
-        `other` reports are copied, decoded if need be, because its
-        `rawdata` and its record mean nothing to this format. A format that
-        takes `metadata` over receives the metadata of `other`, which its
-        field converts into the metadata of the format, without the record
-        of `other`.
+        record. From another class, the data, the levels of a pyramid and
+        the transformations that `other` reports are copied, decoded if
+        need be, because its `rawdata` and its record mean nothing to this
+        format. A format that takes `metadata` over receives the metadata
+        of `other`, which its field converts into the metadata of the
+        format, without the record of `other`.
 
         Parameters
         ----------
@@ -614,15 +642,18 @@ class _FileBasedModelMixin:
             else:
                 default = field.default
             kwargs.setdefault(field.public_name, default)
-        # The fields `_data` and `_transformations` of another class, if it
-        # has them, are its own stored values, so the decoded views are
-        # read instead. A transformation model stores its data as `_data`
-        # itself, and its own `from_instance` converts the data of another
-        # class, so only a format that takes `data` over reads it here.
-        if not isinstance(other, cls) and _takes_over(cls, "data"):
-            data = getattr(other, "data", None)
-            if data is not None:
-                kwargs.setdefault("data", data)
+        # The fields `_data`, `_images` and `_transformations` of another
+        # class, if it has them, are its own stored values, so the decoded
+        # views are read instead. A transformation model stores its data as
+        # `_data` itself, and its own `from_instance` converts the data of
+        # another class, so only a format that takes `data` over reads it
+        # here. A pyramid that takes `images` over reads its levels from
+        # the file, so the levels of another pyramid are read here.
+        for name in ("data", "images"):
+            if not isinstance(other, cls) and _takes_over(cls, name):
+                value = getattr(other, name, None)
+                if value is not None:
+                    kwargs.setdefault(name, value)
         # The metadata of a data model, generic or of another format, is
         # given to the field that this format takes it over with, which
         # converts it into the metadata of this format.
@@ -639,6 +670,39 @@ class _FileBasedModelMixin:
             if transformations is not None:
                 kwargs.setdefault("transformations", transformations)
         return super().from_instance(other, *args, **kwargs)
+
+
+def _check_format_first(cls: type) -> None:
+    """Refuse a format that lists a class of its data model before its format.
+
+    A root of the formats, such as `TransformationFormat`, lists `Format`
+    among its own bases and is not checked.
+
+    Raises
+    ------
+    TypeError
+        If a class of the data model comes before the first format class
+        in the method resolution order of `cls`.
+    """
+    # `bagof.magic` builds a stand-in class of this name only to compute an
+    # MRO, then builds the class itself, which is checked.
+    if Format in cls.__bases__ or cls.__name__ == "__magic_discard__":
+        return
+    before = []
+    for base in cls.__mro__[1:]:
+        if issubclass(base, Format):
+            break
+        if issubclass(base, DataModelBase) and not issubclass(
+            base, (FileReader, FileWriter)
+        ):
+            before.append(base.__name__)
+    if before:
+        raise TypeError(
+            f"{cls.__name__} lists its data model ({', '.join(before)}) "
+            f"before its format base. List the format base first, so that "
+            f"the format decides whether to convert another object before "
+            f"the data model copies its fields."
+        )
 
 
 def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:

@@ -36,6 +36,7 @@ class C3dAffineMetadata(MetadataFormat, TextFileReader, TextFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("c3d", "greedy", "itksnap")
+    RAW: tx.ClassVar[type] = C3dAffineRaw
 
     raw: NoRepr[tx.Optional[C3dAffineRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -95,48 +96,6 @@ class C3dAffineMetadata(MetadataFormat, TextFileReader, TextFileWriter):
             `Confidence.NO`.
         """
         return C3dAffineRaw.sniff_text(text, error=error, **kwargs)
-
-    @classmethod
-    def from_text(cls, text: str, **kwargs) -> "C3dAffineMetadata":
-        """Read the metadata from the text of a Convert3D matrix file.
-
-        The text is parsed by [`C3dAffineRaw.from_text`][].
-
-        Parameters
-        ----------
-        text : str
-            The content of the file.
-        **kwargs : Any
-            Options of [`C3dAffineRaw.from_text`][], which takes none.
-
-        Returns
-        -------
-        C3dAffineMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(C3dAffineRaw.from_text(text, **kwargs))
-
-    @classmethod
-    def from_lines(
-        cls, lines: tx.Iterable[str], **kwargs
-    ) -> "C3dAffineMetadata":
-        """Read the metadata from the lines of a Convert3D matrix file.
-
-        The lines are parsed by [`C3dAffineRaw.from_lines`][].
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        **kwargs : Any
-            Options of [`C3dAffineRaw.from_lines`][], which takes none.
-
-        Returns
-        -------
-        C3dAffineMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(C3dAffineRaw.from_lines(lines, **kwargs))
 
     def to_text(self, **kwargs) -> str:
         """Return the content of the file that the record holds.

@@ -21,6 +21,7 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     ParserTypeError,
     WriterError,
+    disabled,
 )
 
 # A path, or an object that already represents an opened store.
@@ -181,17 +182,15 @@ class ZarrReader(BinaryFileReader):
 
         raise ParserTypeError(f"Cannot parse file of type {type(file)}")
 
-    @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
-        raise ParserTypeError(
-            "A Zarr store is read from a store path, not from a file object."
-        )
+    from_fileobj = disabled(
+        ParserTypeError,
+        "A Zarr store is read from a store path, not from a file object.",
+    )
 
-    @classmethod
-    def from_bytes(cls, content: tx.Any, **kwargs) -> tx.Self:
-        raise ParserTypeError(
-            "A Zarr store is read from a store path, not from bytes."
-        )
+    from_bytes = disabled(
+        ParserTypeError,
+        "A Zarr store is read from a store path, not from bytes.",
+    )
 
     @classmethod
     def _score_store(cls, node: ZarrNode) -> float:
@@ -277,15 +276,14 @@ class ZarrReaderWriter(ZarrReader, BinaryFileWriter):
         # not.
         return self.to_store(filename, **kwargs)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        raise WriterError(
-            "A Zarr store is written to a store path, not to a file object."
-        )
+    to_fileobj = disabled(
+        WriterError,
+        "A Zarr store is written to a store path, not to a file object.",
+    )
 
-    def to_bytes(self, **kwargs) -> bytes:
-        raise WriterError(
-            "A Zarr store is written to a store path, not to bytes."
-        )
+    to_bytes = disabled(
+        WriterError, "A Zarr store is written to a store path, not to bytes."
+    )
 
 
 class _ZarrNodeReaderWriter(DataModelBase, ZarrReaderWriter):

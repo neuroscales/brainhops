@@ -35,6 +35,7 @@ class MatMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("itk", "ants", "mat")
+    RAW: tx.ClassVar[type] = MatRaw
 
     raw: NoRepr[tx.Optional[MatRaw]] = None
     """The blocks of the file, or `None` for metadata without a record."""
@@ -119,26 +120,6 @@ class MatMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             Always `Confidence.NO`.
         """
         return MatRaw.sniff_lines(lines, error=error, **kwargs)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> "MatMetadata":
-        """Read the metadata of an ITK `.mat` file from a binary stream.
-
-        The stream is read by [`MatRaw.from_fileobj`][].
-
-        Parameters
-        ----------
-        file : file object
-            The stream, open in binary mode.
-        **kwargs : Any
-            Options of [`MatRaw.from_fileobj`][].
-
-        Returns
-        -------
-        MatMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(MatRaw.from_fileobj(file, **kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the ITK `.mat` file that the record holds.

@@ -112,8 +112,8 @@ def _matrix_to_disk(data: ArrayProtocol) -> tx.Tuple[float, ...]:
 class TrakEM2PatchAffine(
     BinaryFileReader,
     BinaryFileWriter,
-    _xforms.Affine,
     TransformationFormat,
+    _xforms.Affine,
 ):
     """The affine that places one patch of a TrakEM2 project in its layer.
 
@@ -403,43 +403,6 @@ class TrakEM2PatchAffine(
         if isinstance(other, TrakEM2Raw) and not args:
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy a transformation, sharing the record of a TrakEM2 affine.
-
-        Within the format, the record of the metadata carries the matrix,
-        so the matrix is not decoded and passed on, and the copy holds the
-        same metadata and the same patch as `other`. A transformation of
-        the format that holds a pending matrix is copied with that matrix,
-        as any affine is. Any other transformation is converted as
-        `other.to(cls)` converts it.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`. A transformation that is converted takes keyword
-            options only.
-        **kwargs : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`, or options of the conversion.
-
-        Returns
-        -------
-        Self
-            The copy.
-
-        Raises
-        ------
-        ConversionError
-            If the format cannot hold a transformation that is converted.
-        """
-        if isinstance(other, cls) and other._data is None:
-            kwargs.setdefault("data", None)
-        return super().from_instance(other, *args, **kwargs)
 
     # --- to -----------------------------------------------------------
 

@@ -122,8 +122,8 @@ def _decode(registration: BdvRaw.Registration, index: int) -> _xforms.Affine:
 class BdvViewRegistration(
     BinaryFileReader,
     BinaryFileWriter,
-    _xforms.ImmutableSequence,
     TransformationFormat,
+    _xforms.ImmutableSequence,
 ):
     """The registration of one view of a BigDataViewer dataset.
 

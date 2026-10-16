@@ -32,6 +32,7 @@ class MincMetadata(MetadataFormat, BinaryFileReader):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc", ".mnc.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc",)
+    RAW: tx.ClassVar[type] = MincRaw
 
     raw: NoRepr[tx.Optional[MincRaw]] = None
     """The record of the image, or `None` for metadata without a record."""
@@ -88,24 +89,3 @@ class MincMetadata(MetadataFormat, BinaryFileReader):
             The confidence, between 0 and 1.
         """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MincMetadata":
-        """Read the metadata from a MINC stream, gzipped or not.
-
-        The record is read with [`MincRaw.from_fileobj`][], which
-        receives the keyword arguments and refuses them.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream, which may be gzipped.
-        **kwargs : Any
-            Options of the reader, which [`MincRaw.from_fileobj`][] refuses.
-
-        Returns
-        -------
-        MincMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(MincRaw.from_fileobj(file, **kwargs))

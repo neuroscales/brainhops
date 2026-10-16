@@ -62,6 +62,88 @@ class Image(
     representation of the image.
     """
 
+    # --- conversions --------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """Copy an image, or convert a single-scale image or a pyramid.
+
+        A single-scale image copied into a pyramid, or a pyramid copied
+        into a single-scale image, changes how the image is stored, so it
+        is converted as `other.to(cls)` converts it. Any other image is
+        copied as
+        [`DataModelBase.from_instance`][brainhops.datamodel.base.DataModelBase.from_instance]
+        copies it.
+
+        Parameters
+        ----------
+        other : DataModelBase
+            The image to copy or convert.
+        *args : Any
+            Constructor arguments of a copy. A conversion takes keyword
+            arguments only.
+        **kwargs : Any
+            Fields of the result, which take precedence over those of
+            `other`.
+
+        Returns
+        -------
+        Self
+            The new image.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments accompany a conversion.
+        """
+        if _changes_storage(other, cls):
+            if args:
+                raise TypeError(
+                    f"{cls.__name__}.from_instance() converts a "
+                    f"{type(other).__name__} with keyword arguments only."
+                )
+            return other.to(cls, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
+
+    def to(
+        self, cls: tx.Optional[type] = None, *, copy: bool = False, **kwargs
+    ) -> tx.Any:
+        """Convert the image to another class of image.
+
+        A single-scale image becomes a pyramid of one level. The level
+        keeps its own transformations and the pyramid adds none, so the
+        image keeps its geometry. A pyramid becomes the single-scale image
+        of its highest-resolution level, in the world space of the
+        pyramid, and its other levels are left out. Any other conversion
+        is as in
+        [`DataModelBase.to`][brainhops.datamodel.base.DataModelBase.to].
+
+        Parameters
+        ----------
+        cls : type, optional
+            The class to convert to. By default, the class of the image.
+        copy : bool, default=False
+            Whether to return a new image even when nothing changes.
+        **kwargs : Any
+            Fields of the result.
+
+        Returns
+        -------
+        Image
+            The converted image, an instance of `cls`.
+        """
+        target = type(self) if cls is None else cls
+        if isinstance(self, SingleScaleImage) and issubclass(
+            target, MultiScaleImage
+        ):
+            pyramid = MultiScaleImage(images=[self], metadata=self.metadata)
+            return target.from_instance(pyramid, **kwargs)
+        if isinstance(self, MultiScaleImage) and issubclass(
+            target, SingleScaleImage
+        ):
+            return target.from_instance(self.to_singlescale(0), **kwargs)
+        return super().to(cls, copy=copy, **kwargs)
+
     # --- array API ----------------------------------------------------
 
     def __array__(self, dtype: tx.Optional[DTypeLike] = None) -> np.ndarray:
@@ -668,3 +750,18 @@ def _level_voxel_sizes(
         )
         sizes.append(None if affine is None else axis_scales(affine.matrix))
     return sizes
+
+
+def _changes_storage(other: tx.Any, cls: type) -> bool:
+    """Return whether copying `other` into `cls` changes how it is stored.
+
+    A single-scale image holds its data, and a pyramid holds its levels,
+    so one is converted into the other rather than copied by name.
+    """
+    return (
+        isinstance(other, SingleScaleImage)
+        and issubclass(cls, MultiScaleImage)
+    ) or (
+        isinstance(other, MultiScaleImage)
+        and issubclass(cls, SingleScaleImage)
+    )

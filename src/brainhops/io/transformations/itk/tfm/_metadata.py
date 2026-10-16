@@ -35,6 +35,7 @@ class TfmMetadata(MetadataFormat, TextFileReader):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".tfm",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("itk", "ants", "tfm")
+    RAW: tx.ClassVar[type] = TfmRaw
 
     raw: NoRepr[tx.Optional[TfmRaw]] = None
     """The blocks of the file, or `None` for metadata without a record."""
@@ -66,23 +67,3 @@ class TfmMetadata(MetadataFormat, TextFileReader):
             The confidence, between 0 and 1.
         """
         return TfmRaw.sniff_line(line, error=error, **kwargs)
-
-    @classmethod
-    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> "TfmMetadata":
-        """Read the metadata from the lines of a `.tfm` file.
-
-        The lines are parsed by [`TfmRaw.from_lines`][].
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        **kwargs : Any
-            Options of [`TfmRaw.from_lines`][].
-
-        Returns
-        -------
-        TfmMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(TfmRaw.from_lines(lines, **kwargs))

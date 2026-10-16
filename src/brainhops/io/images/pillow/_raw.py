@@ -241,24 +241,6 @@ class PillowRaw(Raw, BinaryFileReader):
         with preserve_position(file):
             return _read_record(cls, file, frame)
 
-    @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> "PillowRaw":
-        """Read the header of a raster file from its bytes.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the file.
-        **kwargs : Any
-            The options of [`from_fileobj`][].
-
-        Returns
-        -------
-        PillowRaw
-            The record.
-        """
-        return cls.from_fileobj(BytesIO(bytes(content)), **kwargs)
-
 
 # ----------------------------------------------------------------------
 #   READING

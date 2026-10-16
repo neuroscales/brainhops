@@ -54,7 +54,13 @@ class RestrictionError(TypeError):
 
 
 class ConversionError(TypeError):
-    """A transformation cannot be converted into another type."""
+    """An object cannot be converted into another class.
+
+    A transformation raises it when no converter turns it into the
+    requested class. Any other object of the data model raises it when
+    it is copied into a class that is not related to its own, because
+    fields with the same name may then mean different things.
+    """
 
 
 class LossyConversionError(ConversionError):

@@ -31,6 +31,7 @@ class PrecomputedMetadata(MetadataFormat, BinaryFileReader):
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("precomputed", "neuroglancer")
+    RAW: tx.ClassVar[type] = PrecomputedRaw
 
     raw: NoRepr[tx.Optional[PrecomputedRaw]] = None
     """The record of the volume, or `None` for metadata without a record."""
@@ -153,30 +154,3 @@ class PrecomputedMetadata(MetadataFormat, BinaryFileReader):
         _no_options(kwargs)
         _, record = read_precomputed(filename)
         return cls.from_raw(record)
-
-    @classmethod
-    def from_fileobj(
-        cls, file: tx.BinaryIO, **kwargs
-    ) -> "PrecomputedMetadata":
-        """Read the metadata of a volume from a stream of its `info` file.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream of the `info` file, open in binary mode.
-        **kwargs : Any
-            Refused, since the metadata has no option.
-
-        Returns
-        -------
-        PrecomputedMetadata
-            The metadata, which holds the record of the `info` file.
-
-        Raises
-        ------
-        TypeError
-            If an option is given.
-        ParserContentError
-            If the stream is not the `info` file of a volume.
-        """
-        return cls.from_raw(PrecomputedRaw.from_fileobj(file, **kwargs))

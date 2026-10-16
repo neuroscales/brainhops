@@ -36,6 +36,7 @@ class FlirtMetadata(MetadataFormat, TextFileReader):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("fsl", "flirt")
+    RAW: tx.ClassVar[type] = FlirtRaw
 
     raw: NoRepr[tx.Optional[FlirtRaw]] = None
     """The matrix of the file, or `None` for metadata without a record."""
@@ -67,23 +68,3 @@ class FlirtMetadata(MetadataFormat, TextFileReader):
             The confidence, between 0 and 1.
         """
         return FlirtRaw.sniff_lines(lines, error=error, **kwargs)
-
-    @classmethod
-    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> "FlirtMetadata":
-        """Read the metadata from the lines of a FLIRT file.
-
-        The lines are parsed by [`FlirtRaw.from_lines`][].
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        **kwargs : Any
-            Options of [`FlirtRaw.from_lines`][].
-
-        Returns
-        -------
-        FlirtMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(FlirtRaw.from_lines(lines, **kwargs))

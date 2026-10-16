@@ -80,8 +80,8 @@ def _record(xform: "ElastixTransform") -> tx.Optional[ElastixRaw]:
 class ElastixTransform(
     TextFileReader,
     TextFileWriter,
-    _xforms.Sequence,
     TransformationFormat,
+    _xforms.Sequence,
 ):
     """Transformation stored in an elastix transform parameter file.
 

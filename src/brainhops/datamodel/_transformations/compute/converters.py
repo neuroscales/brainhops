@@ -49,6 +49,7 @@ SCALING = tx.TypeVar("SCALING", bound=Scaling)
 PERMUTATION = tx.TypeVar("PERMUTATION", bound=Permutation)
 TRANSLATION = tx.TypeVar("TRANSLATION", bound=Translation)
 IDENTITY = tx.TypeVar("IDENTITY", bound=Identity)
+SEQUENCE = tx.TypeVar("SEQUENCE", bound=Sequence)
 SVF = tx.TypeVar("SVF", bound=StationaryVelocityField)
 AFFINE_EXP = tx.TypeVar("AFFINE_EXP", bound=AffineExponential)
 LINEAR_EXP = tx.TypeVar("LINEAR_EXP", bound=LinearExponential)
@@ -81,13 +82,32 @@ def _(
     t: Transformation, cls: tx.Type[TRANSFORMATION], **kwargs
 ) -> TRANSFORMATION:
     # Every request can reach this catch-all converter, so a target class
-    # from an unrelated family is discarded instead of being built. For
-    # example, an Affine rebuilt from a field would receive the field array
-    # as its matrix. The result then keeps the type of `t`, which is how
-    # `convert` signals that the conversion is impossible.
+    # from an unrelated family is not built. For example, an Affine rebuilt
+    # from a field would receive the field array as its matrix. `t` is then
+    # returned as it is, which is how `convert` learns that the conversion
+    # is impossible. The fields in `kwargs` belong to the target class, so
+    # they are not applied to `t`.
     if not (issubclass(cls, type(t)) or issubclass(type(t), cls)):
-        cls = None
+        return t
     return smart_replace(t, cls, **kwargs)
+
+
+@converter
+def _(t: Transformation, cls: tx.Type[SEQUENCE], **kwargs) -> SEQUENCE:
+    if cls._data_model() is not cls:
+        # A file format that stores a chain decides with its own converters
+        # what it holds. Without one, it is rebuilt from a chain of a related
+        # class, as the catch-all converter rebuilds it, and anything else is
+        # returned unchanged, which tells `convert` that the format does not
+        # hold it.
+        if issubclass(cls, type(t)) or issubclass(type(t), cls):
+            return smart_replace(t, cls, **kwargs)
+        return t
+    # Another chain holds the same fields, and is rebuilt as the requested
+    # chain. Any other transformation becomes a chain of one element.
+    if isinstance(t, Sequence):
+        return smart_replace(t, cls, **kwargs)
+    return cls([t], **kwargs)
 
 
 def _convert_withdata(
@@ -631,6 +651,17 @@ def _(t: Affine, cls: tx.Type[Linear], **kwargs) -> Linear:
     return u
 
 
+@converter
+def _(t: Affine, cls: tx.Type[TRANSLATION], **kwargs) -> TRANSLATION:
+    if t.matrix is None:
+        return convert(convert(t, Identity), cls, **kwargs)
+    kwargs.setdefault("translation", t.matrix[:, -1])
+    u = _convert_withdata(t, cls, **kwargs)
+    if not t.is_translation(compute=True):
+        raise LossyConversionError(result=u)
+    return u
+
+
 # ----------------------------------------------------------------------
 #   MULTI-HOPS
 # ----------------------------------------------------------------------
@@ -649,9 +680,19 @@ def _make_converter_chain(*types: type) -> None:
 
     @converter(first, last)
     def _(t: Transformation, cls: type, **kwargs) -> Transformation:
+        # A hop that loses information does not stop the walk. Its result is
+        # converted through the remaining hops, so that the loss is reported
+        # with a result of the requested class rather than of an
+        # intermediate type.
+        lossy = False
         for hop in hops:
-            t = convert(t, hop)
+            try:
+                t = convert(t, hop)
+            except LossyConversionError as e:
+                lossy, t = True, e.result
         t = convert(t, cls, **kwargs)  # overrides apply to the last hop
+        if lossy:
+            raise LossyConversionError(result=t)
         return t
 
 
@@ -669,3 +710,18 @@ _make_converter_chain(AFFINE, LINEAR, PERMUTATION)
 _make_converter_chain(LINEAR, IDENTITY, TRANSLATION)
 _make_converter_chain(SCALING, IDENTITY, TRANSLATION)
 _make_converter_chain(PERMUTATION, IDENTITY, TRANSLATION)
+_make_converter_chain(TRANSLATION, IDENTITY, LINEAR)
+_make_converter_chain(TRANSLATION, IDENTITY, ROTATION)
+_make_converter_chain(TRANSLATION, IDENTITY, SCALING)
+_make_converter_chain(TRANSLATION, IDENTITY, PERMUTATION)
+_make_converter_chain(SCALING, LINEAR, PERMUTATION)
+_make_converter_chain(PERMUTATION, LINEAR, SCALING)
+# A linear tangent matches both the converter of its own family and the
+# converter from Linear to Rotation, so the request is ambiguous unless the
+# tangent is first turned into its map.
+_make_converter_chain(LINEAR_EXP, LINEAR, ROTATION)
+_make_converter_chain(Sequence, AFFINE, TRANSLATION)
+_make_converter_chain(Sequence, AFFINE, LINEAR)
+_make_converter_chain(Sequence, AFFINE, ROTATION)
+_make_converter_chain(Sequence, AFFINE, SCALING)
+_make_converter_chain(Sequence, AFFINE, PERMUTATION)

@@ -540,32 +540,6 @@ class BdvRaw(Raw, BinaryFileReader, BinaryFileWriter):
             content = file.read()
         return _parse(bytes(content))
 
-    @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> "BdvRaw":
-        """Read the record from the bytes of an XML file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the file.
-        **kwargs : Any
-            Options of the reader, which are refused.
-
-        Returns
-        -------
-        BdvRaw
-            The record.
-
-        Raises
-        ------
-        TypeError
-            If an option is given.
-        ParserContentError
-            If the content is not a BigDataViewer XML file.
-        """
-        _no_options(kwargs)
-        return _parse(bytes(content))
-
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the XML file.
 

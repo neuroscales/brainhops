@@ -25,6 +25,7 @@ wrappers rely on, and it registers names for the field and wrapper
 kinds.
 """
 
+from contextvars import ContextVar
 from functools import lru_cache, wraps
 
 import typing_extensions as tx
@@ -32,6 +33,7 @@ import typing_extensions as tx
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import kinds
+from brainhops.errors import AdaptationError
 
 from ..base import Transformation
 from ..concrete import (
@@ -53,6 +55,7 @@ from ..meta import (
     Projection,
     SubspaceTransformation,
 )
+from ..sequence import Sequence
 from .check import checker, is_kind, register_kind_alias
 
 
@@ -171,6 +174,48 @@ def _(query: CoordinatesField, kind: IdentityType, compute: bool) -> bool:
 @identity_from("shape")
 def _(query: CartesianField, kind: IdentityType, compute: bool) -> bool:
     return bool(compute)
+
+
+# The chains being computed to decide a membership. Computing a chain asks
+# questions of kind membership, and if it asked one of the same chain, the
+# chain is not computed a second time.
+_COMPUTING: ContextVar[frozenset] = ContextVar(
+    "_COMPUTING", default=frozenset()
+)
+
+
+@checker
+def _(query: Sequence, kind: IdentityType, compute: bool) -> bool:
+    # This checker answers for every kind, since it is registered for the
+    # smallest set. A chain whose elements are identities, once its
+    # boundaries are bridged, is the identity: the elements are asked at the
+    # analytic level first, then by value with `compute=True`, and nothing
+    # is composed. The bridges are needed because two neighbours that do not
+    # share a coordinate system are joined by a flip or a permutation, which
+    # is not an identity. Otherwise, with `compute=True`, the chain is
+    # composed and the result is asked about the kind, unless the chain does
+    # not reduce to a single transformation.
+    try:
+        bridged = query.bridge()
+    except AdaptationError:
+        return False
+    elements = list(bridged)
+    if all(is_kind(t, kinds.Identity, False) for t in elements):
+        return True
+    if not compute:
+        return False
+    if all(is_kind(t, kinds.Identity, True) for t in elements):
+        return True
+    if id(query) in _COMPUTING.get():
+        return False
+    token = _COMPUTING.set(_COMPUTING.get() | {id(query)})
+    try:
+        result = query.compute()
+    finally:
+        _COMPUTING.reset(token)
+    if isinstance(result, Sequence):
+        return False
+    return is_kind(result, kind, True)
 
 
 # --- Translation ------------------------------------------------------

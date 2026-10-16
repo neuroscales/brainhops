@@ -36,10 +36,6 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base import AffineTransformationFormat
-from brainhops.io.transformations.base._conversions import (
-    convert_instance,
-    converts_to,
-)
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 # this format
@@ -286,7 +282,7 @@ def _xform_codes(header: tx.Optional[nb.Nifti1Header]) -> tx.Tuple[int, int]:
     return 2, 2
 
 
-class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
+class NiftiRASToVoxel(_NiftiAffine, RASToVoxel):
     """
     Affine from RAS to voxel space, stored in the header of a NIfTI file.
 
@@ -328,57 +324,6 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     header.
     """
 
-    # --- conversions --------------------------------------------------
-    # `TransformationFormat.from_any` converts another transformation, as
-    # `t.to(cls)` converts it. The data model comes before that class in
-    # the method resolution order, and its `from_instance` would copy the
-    # map of an affine first, so `from_instance` converts here, with the
-    # same helpers.
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an instance, or convert a transformation to this format.
-
-        A transformation that is not of this format is converted exactly
-        as `other.to(cls)` converts it. An instance of this format is
-        copied with its metadata and its stored matrix, which is `None`
-        unless a matrix was assigned, so the header is not decoded. Any
-        other instance is copied as
-        [`Format.from_instance`][brainhops.io.base.Format.from_instance]
-        copies it.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments. A transformation that is converted
-            takes keyword options only.
-        **kwargs : Any
-            Options of the conversion, or field values of the copy.
-
-        Returns
-        -------
-        Self
-            The new object.
-
-        Raises
-        ------
-        TypeError
-            If positional arguments accompany a transformation that is
-            converted.
-        ConversionError
-            If the format cannot hold the transformation.
-        """
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        if isinstance(other, cls):
-            # The data model copies the decoded view of another instance,
-            # so the stored value is passed instead: `None` keeps a proxy
-            # lazy, and an assigned array stays pending in the copy.
-            kwargs.setdefault("data", other._data)
-        return super().from_instance(other, *args, **kwargs)
-
     def inverse(self, compute: bool = False, **kwargs) -> VoxelToRAS:
         """Return the inverse transformation, from voxel to RAS space.
 
@@ -409,7 +354,7 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
 
 
 @register_format
-class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
+class NiftiVoxelToRAS(_NiftiAffine, VoxelToRAS):
     """Affine from voxel to RAS space, stored in the header of a NIfTI file.
 
     The matrix of an affine read from a file is the best affine of the
@@ -449,57 +394,6 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     assigning other metadata drops the matrix decoded from the previous
     header.
     """
-
-    # --- conversions --------------------------------------------------
-    # `TransformationFormat.from_any` converts another transformation, as
-    # `t.to(cls)` converts it. The data model comes before that class in
-    # the method resolution order, and its `from_instance` would copy the
-    # map of an affine first, so `from_instance` converts here, with the
-    # same helpers.
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an instance, or convert a transformation to this format.
-
-        A transformation that is not of this format is converted exactly
-        as `other.to(cls)` converts it. An instance of this format is
-        copied with its metadata and its stored matrix, which is `None`
-        unless a matrix was assigned, so the header is not decoded. Any
-        other instance is copied as
-        [`Format.from_instance`][brainhops.io.base.Format.from_instance]
-        copies it.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments. A transformation that is converted
-            takes keyword options only.
-        **kwargs : Any
-            Options of the conversion, or field values of the copy.
-
-        Returns
-        -------
-        Self
-            The new object.
-
-        Raises
-        ------
-        TypeError
-            If positional arguments accompany a transformation that is
-            converted.
-        ConversionError
-            If the format cannot hold the transformation.
-        """
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        if isinstance(other, cls):
-            # The data model copies the decoded view of another instance,
-            # so the stored value is passed instead: `None` keeps a proxy
-            # lazy, and an assigned array stays pending in the copy.
-            kwargs.setdefault("data", other._data)
-        return super().from_instance(other, *args, **kwargs)
 
     def inverse(self, compute: bool = False, **kwargs) -> RASToVoxel:
         """Return the inverse transformation, from RAS to voxel space.

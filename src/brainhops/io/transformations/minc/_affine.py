@@ -499,43 +499,6 @@ class XfmAffine(
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an affine, sharing the record of an affine of this format.
-
-        Within the format, the record of the metadata carries the matrix,
-        so the matrix is not decoded and passed on, and the copy holds the
-        same metadata as `other`. An affine of the format that holds a
-        pending matrix, such as one built from data alone, is copied with
-        that matrix. Any other transformation is converted as
-        `other.to(cls)` converts it.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`. A transformation that is converted takes keyword
-            options only.
-        **kwargs : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`, or options of the conversion.
-
-        Returns
-        -------
-        Self
-            The copy.
-
-        Raises
-        ------
-        ConversionError
-            If the format cannot hold a transformation that is converted.
-        """
-        if isinstance(other, cls) and other._data is None:
-            kwargs.setdefault("data", None)
-        return super().from_instance(other, *args, **kwargs)
-
     # --- to -----------------------------------------------------------
 
     def consolidate(

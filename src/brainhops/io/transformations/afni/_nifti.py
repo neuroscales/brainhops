@@ -87,7 +87,7 @@ _NIFTI_NUMS = re.compile(r"NIfTI_nums\s*=\s*[\"']([^\"']*)[\"']")
 
 @register_format
 class AfniNiftiWarp(
-    _xforms.ImmutableSequence, AfniWarp, NiftiBasedTransformation
+    AfniWarp, NiftiBasedTransformation, _xforms.ImmutableSequence
 ):
     """
     An AFNI nonlinear warp stored as a NIfTI file, such as the

@@ -229,41 +229,6 @@ class OmeZarrImage(
         _ = image._layout
         return image
 
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an instance of this class or of another multiscale image.
-
-        The pyramid stores its levels in the private field `_images`, where
-        `None` means that they are read from `node`. Within this class, the
-        stored value is copied, so a copy of a pyramid whose levels were
-        not assigned reads them from the same node. From another class,
-        the levels that `other` reports are copied, read if need be,
-        because the private field of `other` means nothing to this class.
-        The placements in `_transformations` are copied in the same way by
-        the `from_instance` of [`ImageFormat`][].
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy.
-        *args : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`.
-        **kwargs : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`.
-
-        Returns
-        -------
-        Self
-            The copy.
-        """
-        if not isinstance(other, cls):
-            images = getattr(other, "images", None)
-            if images is not None:
-                kwargs.setdefault("images", images)
-        return super().from_instance(other, *args, **kwargs)
-
     # ---- workers  ----------------------------------------------------
 
     @smartproperty(cache=True, fset=False)

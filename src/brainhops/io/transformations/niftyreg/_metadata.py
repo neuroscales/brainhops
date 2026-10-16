@@ -34,6 +34,7 @@ class NiftyRegAffineMetadata(MetadataFormat, TxtArrayReader, TextFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("niftyreg", "aladin")
+    RAW: tx.ClassVar[type] = NiftyRegAffineRaw
     SNIFF_CONFIDENCE: tx.ClassVar[float] = Confidence.WEAK
     NAMED_CONFIDENCE: tx.ClassVar[float] = Confidence.WEAK
     # The affine file is tiny, so a large file is not read whole only to be
@@ -53,50 +54,6 @@ class NiftyRegAffineMetadata(MetadataFormat, TxtArrayReader, TextFileWriter):
     def _array_confidence(cls, array: np.ndarray, **kwargs) -> float:
         """Score `Confidence.WEAK` for a homogeneous (4, 4) matrix."""
         return cls.SNIFF_CONFIDENCE if is_homogeneous(array) else 0.0
-
-    # --- from ---------------------------------------------------------
-
-    @classmethod
-    def from_text(cls, text: str, **kwargs) -> "NiftyRegAffineMetadata":
-        """Read the metadata from the text of a NiftyReg affine file.
-
-        The text is parsed by [`NiftyRegAffineRaw.from_text`][].
-
-        Parameters
-        ----------
-        text : str
-            The content of the file.
-        **kwargs : Any
-            Options of [`NiftyRegAffineRaw.from_text`][], which takes none.
-
-        Returns
-        -------
-        NiftyRegAffineMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(NiftyRegAffineRaw.from_text(text, **kwargs))
-
-    @classmethod
-    def from_lines(
-        cls, lines: tx.Iterable[str], **kwargs
-    ) -> "NiftyRegAffineMetadata":
-        """Read the metadata from the lines of a NiftyReg affine file.
-
-        The lines are parsed by [`NiftyRegAffineRaw.from_lines`][].
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        **kwargs : Any
-            Options of [`NiftyRegAffineRaw.from_lines`][], which takes none.
-
-        Returns
-        -------
-        NiftyRegAffineMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(NiftyRegAffineRaw.from_lines(lines, **kwargs))
 
     # --- to -----------------------------------------------------------
 

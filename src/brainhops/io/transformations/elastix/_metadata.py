@@ -42,6 +42,7 @@ class ElastixMetadata(MetadataFormat, TextFileReader, TextFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt", ".toml")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("elastix", "transformix")
+    RAW: tx.ClassVar[type] = ElastixRaw
 
     raw: NoRepr[tx.Optional[ElastixRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -58,26 +59,6 @@ class ElastixMetadata(MetadataFormat, TextFileReader, TextFileWriter):
         **kwargs,
     ) -> float:
         return ElastixRaw.sniff_text(text, error=error, **kwargs)
-
-    @classmethod
-    def from_filename(
-        cls, filename: path.FilenameLike, **kwargs
-    ) -> "ElastixMetadata":
-        return cls.from_raw(ElastixRaw.from_filename(filename, **kwargs))
-
-    @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> "ElastixMetadata":
-        return cls.from_raw(ElastixRaw.from_fileobj(file, **kwargs))
-
-    @classmethod
-    def from_text(cls, text: str, **kwargs) -> "ElastixMetadata":
-        return cls.from_raw(ElastixRaw.from_text(text, **kwargs))
-
-    @classmethod
-    def from_lines(
-        cls, lines: tx.Iterable[str], **kwargs
-    ) -> "ElastixMetadata":
-        return cls.from_raw(ElastixRaw.from_lines(lines, **kwargs))
 
     # --- to -----------------------------------------------------------
 

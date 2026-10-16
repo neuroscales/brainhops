@@ -16,6 +16,7 @@ from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
     ParserContentError,
+    disabled,
 )
 from brainhops.io.common.bdv import BdvMetadata
 from brainhops.io.common.bdv._hdf5 import level_count, read_dataset
@@ -226,26 +227,9 @@ class BdvMultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
             timepoint=timepoint,
         )
 
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "BdvMultiScaleImage":
-        """Refuse to read a pyramid from a stream.
-
-        The reason is given in [`BdvImage.from_fileobj`][].
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream.
-        **kwargs : Any
-            Options of the reader.
-
-        Raises
-        ------
-        ParserContentError
-            Always.
-        """
-        raise ParserContentError(
-            "A BigDataViewer dataset is an XML file and the HDF5 file that "
-            "it names, so a pyramid is read from the path of the XML file, "
-            "not from a stream or from bytes."
-        )
+    from_fileobj = disabled(
+        ParserContentError,
+        "A BigDataViewer dataset is an XML file and the HDF5 file that "
+        "it names, so a pyramid is read from the path of the XML file, "
+        "not from a stream or from bytes.",
+    )

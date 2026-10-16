@@ -301,41 +301,6 @@ class AfniAffine(
         """
         return cls.from_text("".join(line + "\n" for line in lines), **kwargs)
 
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> "AfniAffine":
-        """Copy an instance, or convert a transformation to this format.
-
-        Within the format, the record of the metadata carries the matrix,
-        so the copy holds the same metadata as `other` and its pending
-        matrix, which is `None` unless a matrix was assigned, and the
-        matrix is not decoded. The data model would copy the decoded
-        matrix, so the rule is kept here. Any other transformation is
-        converted as `other.to(cls)` converts it.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments. A transformation that is converted
-            takes keyword options only.
-        **kwargs : Any
-            Options of the conversion, or field values of the copy.
-
-        Returns
-        -------
-        AfniAffine
-            The new object.
-
-        Raises
-        ------
-        ConversionError
-            If the format cannot hold a transformation that is converted.
-        """
-        if isinstance(other, cls):
-            kwargs.setdefault("data", other._data)
-        return super().from_instance(other, *args, **kwargs)
-
     # --- writing ------------------------------------------------------
 
     def consolidate(
