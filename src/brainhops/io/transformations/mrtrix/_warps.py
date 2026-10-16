@@ -462,7 +462,7 @@ class MrtrixWarp(
 
 @register_format
 class MrtrixCoordinatesField(
-    _xforms.ImmutableSequence, MrtrixWarp, MrtrixTransformationFormat
+    MrtrixWarp, MrtrixTransformationFormat, _xforms.ImmutableSequence
 ):
     """
     Field of scanner RAS coordinates (an MRtrix *deformation*), stored
@@ -736,7 +736,7 @@ class MrtrixCoordinatesField(
 
 @register_format
 class MrtrixDisplacementField(
-    _xforms.ImmutableSequence, MrtrixWarp, MrtrixTransformationFormat
+    MrtrixWarp, MrtrixTransformationFormat, _xforms.ImmutableSequence
 ):
     """
     Field of scanner RAS displacements (an MRtrix *displacement*),
@@ -1005,7 +1005,7 @@ class MrtrixDisplacementField(
 
 @register_format
 class MrtrixWarpFull(
-    _xforms.ImmutableSequence, MrtrixWarp, MrtrixTransformationFormat
+    MrtrixWarp, MrtrixTransformationFormat, _xforms.ImmutableSequence
 ):
     """
     The four midway-space warps and two linear transforms of a

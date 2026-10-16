@@ -50,7 +50,7 @@ from brainhops.io.transformations.nifti._views import (
 
 
 @register_format
-class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
+class SpmCoordinatesField(NiftiBasedTransformation, _xforms.ImmutableSequence):
     """
     Field of RAS coordinates written by SPM.
 

@@ -53,10 +53,6 @@ from brainhops.io.metadata._base import (
     overruled_fields,
     requested_fields,
 )
-from brainhops.io.transformations.base._conversions import (
-    convert_instance,
-    converts_to,
-)
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
     ras_displacement_chain,
@@ -76,7 +72,7 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 
 
 @register_format
-class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
+class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
     """Field of RAS coordinates stored in a NIfTI file."""
 
     HINTS = ("coordinates",)
@@ -121,58 +117,6 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         if shape and len(shape) >= 4 and shape[-1] == 3:
             return Confidence.MAYBE
         return Confidence.NO
-
-    # --- conversions --------------------------------------------------
-    # `TransformationFormat.from_any` converts another transformation, as
-    # `t.to(cls)` converts it. The data model comes before that class in
-    # the method resolution order, and its `from_instance` would copy the
-    # values of a field first, so `from_instance` converts here, with the
-    # same helpers.
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an instance, or convert a transformation to this format.
-
-        A transformation that is not of this format is converted exactly
-        as `other.to(cls)` converts it. An instance of this format is
-        copied with its `rawdata` array, its metadata and its stored
-        data, which is `None` unless data was assigned, so the data is
-        not read and a proxy stays lazy in the copy. Any other instance
-        is copied as
-        [`Format.from_instance`][brainhops.io.base.Format.from_instance]
-        copies it.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments. A transformation that is converted
-            takes keyword options only.
-        **kwargs : Any
-            Options of the conversion, or field values of the copy.
-
-        Returns
-        -------
-        Self
-            The new object.
-
-        Raises
-        ------
-        TypeError
-            If positional arguments accompany a transformation that is
-            converted.
-        ConversionError
-            If the format cannot hold the transformation.
-        """
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        if isinstance(other, cls):
-            # The data model copies the decoded view of another instance,
-            # so the stored value is passed instead: `None` keeps a proxy
-            # lazy, and an assigned array stays pending in the copy.
-            kwargs.setdefault("data", other._data)
-        return super().from_instance(other, *args, **kwargs)
 
     @smartproperty(cache=True, invalidates=_FORGET_VIEWS)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -298,7 +242,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
 @register_format
 class NiftiRASDisplacementField(
-    _xforms.ImmutableSequence, NiftiBasedTransformation
+    NiftiBasedTransformation, _xforms.ImmutableSequence
 ):
     """
     Field of RAS displacements stored in a NIfTI file.

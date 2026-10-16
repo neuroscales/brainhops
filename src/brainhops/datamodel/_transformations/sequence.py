@@ -10,7 +10,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
 
 from . import nocycles
-from .base import Transformation
+from .base import Transformation, _copied
 from .compute.check import is_kind
 from .compute.compose import compose
 from .compute.factor import PatternCache, factor_sequence
@@ -182,7 +182,11 @@ class Sequence(SequenceMixin, Transformation):
         return _chain_sqrt(self, compute, kwargs)
 
     def to(
-        self, cls: tx.Optional[tx.Type[Transformation]] = None, **kwargs
+        self,
+        cls: tx.Optional[tx.Type[Transformation]] = None,
+        *,
+        copy: bool = False,
+        **kwargs,
     ) -> Transformation:
         """Convert the chain to another type or encoding.
 
@@ -200,11 +204,11 @@ class Sequence(SequenceMixin, Transformation):
 
         Any other chain raises a [`ConversionError`][] before anything is
         computed. Without `log=`, the conversion follows
-        [`Transformation.to`][Transformation.to].
+        [`Transformation.to`][Transformation.to], and so does `copy=`.
         """
         if "log" in kwargs:
-            return _chain_to(self, cls, kwargs)
-        return super().to(cls, **kwargs)
+            return _copied(self, _chain_to(self, cls, kwargs), copy)
+        return super().to(cls, copy=copy, **kwargs)
 
     def compute(
         self,

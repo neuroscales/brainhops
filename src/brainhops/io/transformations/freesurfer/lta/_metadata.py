@@ -33,6 +33,7 @@ class LtaMetadata(MetadataFormat, TextFileReader, TextFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".lta",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("lta",)
+    RAW: tx.ClassVar[type] = LtaRaw
 
     raw: NoRepr[tx.Optional[LtaRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -64,26 +65,6 @@ class LtaMetadata(MetadataFormat, TextFileReader, TextFileWriter):
             The confidence, between 0 and 1.
         """
         return LtaRaw.sniff_line(line, error=error, **kwargs)
-
-    @classmethod
-    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> "LtaMetadata":
-        """Read the metadata from the lines of an LTA file.
-
-        The lines are parsed by [`LtaRaw.from_lines`][].
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        **kwargs : Any
-            Options of [`LtaRaw.from_lines`][].
-
-        Returns
-        -------
-        LtaMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(LtaRaw.from_lines(lines, **kwargs))
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the LTA file that the record holds.

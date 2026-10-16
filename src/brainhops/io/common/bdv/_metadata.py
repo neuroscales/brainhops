@@ -39,6 +39,7 @@ class BdvMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xml",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("bdv", "bigdataviewer")
+    RAW: tx.ClassVar[type] = BdvRaw
 
     raw: NoRepr[tx.Optional[BdvRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -96,27 +97,6 @@ class BdvMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             The confidence, between 0 and 1.
         """
         return BdvRaw.sniff_bytes(content, error=error)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "BdvMetadata":
-        """Read the metadata from a binary stream of an XML file.
-
-        The record is read by [`BdvRaw.from_fileobj`][].
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream.
-        **kwargs : Any
-            Options of the reader, which [`BdvRaw.from_fileobj`][]
-            refuses.
-
-        Returns
-        -------
-        BdvMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(BdvRaw.from_fileobj(file, **kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the XML file that the record holds.

@@ -19,6 +19,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     SnifferTypeError,
+    disabled,
 )
 from brainhops.io.common._geometry import (
     held_transformations,
@@ -441,32 +442,12 @@ class N5Image(ImageFormat, SingleScaleImage, BinaryFileReader):
         location, record = read_node(stream_location(file))
         return _read_dataset(cls, location, N5Metadata.from_raw(record), level)
 
-    @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> "N5Image":
-        """Refuse to read bytes, which cannot hold a dataset of many files.
-
-        Parameters
-        ----------
-        content : bytes
-            The bytes, which are not read.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        N5Image
-            Never, since an error is always raised.
-
-        Raises
-        ------
-        ParserContentError
-            Always.
-        """
-        raise ParserContentError(
-            "An N5 dataset is a directory of files, which bytes alone cannot "
-            "hold. Read it from the path of its directory or of its "
-            "attributes.json file instead."
-        )
+    from_bytes = disabled(
+        ParserContentError,
+        "An N5 dataset is a directory of files, which bytes alone cannot "
+        "hold. Read it from the path of its directory or of its "
+        "attributes.json file instead.",
+    )
 
 
 # Without TensorStore, the samples cannot be read, so the format is not

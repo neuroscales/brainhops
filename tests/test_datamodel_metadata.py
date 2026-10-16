@@ -289,7 +289,10 @@ def test_the_direction_fields_take_bids_strings() -> None:
 
 def test_to_copies_generic_metadata() -> None:
     meta = Metadata(description="d", extra={"Key": 1})
-    same = meta.to()
+    # Nothing changes, so the metadata itself is returned unless a copy is
+    # asked for.
+    assert meta.to() is meta
+    same = meta.to(copy=True)
     assert type(same) is Metadata and same == meta and same is not meta
     # The free-form keys are copied, not shared.
     assert same.extra == meta.extra and same.extra is not meta.extra

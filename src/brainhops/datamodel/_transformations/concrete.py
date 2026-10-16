@@ -200,20 +200,26 @@ class ConcreteTransformation(Transformation):
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """
-        Create an instance from an instance of a similar class.
+        Copy an instance of this class, or convert another transformation.
 
+        A transformation that is not an instance of this class, or of the
+        data model of a file format, is converted by its converters, as in
+        [`Transformation.from_instance`][]. Any other instance is copied.
         When both classes belong to the same family, the map is copied
         through the [`map_field`][] view rather than as the stored array.
         A tangent (`log=True`) copied into the plain class of its family
-        is therefore exponentiated, and an affine transformation copied
-        into a tangent class is stored as its logarithm. The metadata
-        that both classes share, such as the flags of a field, is copied
-        too, except `log`, because the two classes may store the map in
-        different forms. Everything else is as in
-        [`DataModelBase.from_instance`][].
+        is therefore exponentiated. The metadata that both classes share,
+        such as the flags of a field, is copied too, except `log`,
+        because the two classes may store the map in different forms.
+        Everything else is as in [`DataModelBase.from_instance`][].
         """
+        if cls._converts(other):
+            return super().from_instance(other, *args, **kwargs)
         view = cls.map_field
-        if view is not None and _same_family(cls, other):
+        # A lazy wrapper, such as an inverse, derives its map from its
+        # forward, so only its own fields are copied.
+        wrapper = getattr(cls, "_operator", None) is not None
+        if view is not None and not wrapper and _same_family(cls, other):
             shared = set(cls.encoding_fields) & set(other.encoding_fields)
             for name in shared - {"log"}:
                 kwargs.setdefault(name, getattr(other, name))
@@ -1274,6 +1280,9 @@ def _copy_map(
         # already gives.
         kwargs["data"] = getattr(other, view)
     if "log" in cls.encoding_fields:
+        # The flag is given even when it is the default of `cls`, because the
+        # copy would otherwise carry over the flag of `other`, and a
+        # polymorphic class would then select the form of `other` again.
         kwargs.setdefault("log", out_tangent)
 
 

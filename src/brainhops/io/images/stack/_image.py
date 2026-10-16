@@ -23,6 +23,7 @@ from brainhops.io.base.parsers import (
     BinaryFileWriter,
     ParserTypeError,
     WriterError,
+    disabled,
 )
 from brainhops.io.common._geometry import (
     held_transformations,
@@ -399,37 +400,9 @@ class StackImage(
         self.metadata = StackMetadata.from_raw(fresh)
         self.data = None
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Refuse a stream, which cannot hold the files of a stack.
+    to_fileobj = disabled(WriterError, NOT_A_STREAM)
 
-        Parameters
-        ----------
-        file : IO
-            The stream.
-        **kwargs : Any
-            Options of the writer, which are ignored.
-
-        Raises
-        ------
-        WriterError
-            Always, since a stack is written to the path of a folder.
-        """
-        raise WriterError(NOT_A_STREAM)
-
-    def to_bytes(self, **kwargs) -> bytes:
-        """Refuse to encode a stack as bytes, which cannot hold its files.
-
-        Parameters
-        ----------
-        **kwargs : Any
-            Options of the writer, which are ignored.
-
-        Raises
-        ------
-        WriterError
-            Always, since a stack is written to the path of a folder.
-        """
-        raise WriterError(NOT_A_STREAM)
+    to_bytes = disabled(WriterError, NOT_A_STREAM)
 
     # --- reading ------------------------------------------------------
 
@@ -605,23 +578,7 @@ class StackImage(
             metadata=StackMetadata.from_raw(record),
         )
 
-    @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> "StackImage":
-        """Refuse a stream, which cannot hold the files of a stack.
-
-        Parameters
-        ----------
-        file : IO
-            The stream.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Raises
-        ------
-        ParserTypeError
-            Always, since a stack is read from the path of its folder.
-        """
-        raise ParserTypeError(NOT_A_STREAM)
+    from_fileobj = disabled(ParserTypeError, NOT_A_STREAM)
 
 
 # ----------------------------------------------------------------------

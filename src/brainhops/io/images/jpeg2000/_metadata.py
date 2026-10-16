@@ -46,6 +46,7 @@ class Jpeg2000Metadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
         ".jpc",
     )
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("jpeg2000", "jp2", "j2k", "j2c")
+    RAW: tx.ClassVar[type] = Jpeg2000Raw
 
     raw: NoRepr[tx.Optional[Jpeg2000Raw]] = None
     """The record of the file, or `None` for metadata without a record."""
@@ -103,27 +104,6 @@ class Jpeg2000Metadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             The confidence, between 0 and 1.
         """
         return cls.sniff_fileobj(BytesIO(bytes(data)), error=error, **kwargs)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "Jpeg2000Metadata":
-        """Read the metadata from a JPEG 2000 stream.
-
-        The record is read with [`Jpeg2000Raw.from_fileobj`][], which
-        receives the keyword arguments and refuses them.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream, open in binary mode.
-        **kwargs : Any
-            Options of [`Jpeg2000Raw.from_fileobj`][], which refuses them.
-
-        Returns
-        -------
-        Jpeg2000Metadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(Jpeg2000Raw.from_fileobj(file, **kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header of the file, up to its first tile.

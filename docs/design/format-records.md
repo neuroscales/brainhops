@@ -112,7 +112,14 @@ the few that a class implements, so that a class that implements
 Each class implements only its lowest entry points, and implements them
 by calling the layer just below it. The format object calls
 `<X>Metadata`, which calls `<X>Raw`. The format object adds its own code
-to build the data object from the source and the record. NIfTI also
+to build the data object from the source and the record. `<X>Metadata`
+writes no reader of its own when `<X>Raw` reads files: it names the
+record class in its constant `RAW`, and `MetadataFormat` then reads every
+input through the method of the same name of `<X>Raw` (implemented). A
+format that cannot read or write some kind of input or output, such as
+bytes for a dataset of several files, assigns `disabled(error, message)`
+to the method instead of writing a method that only raises
+(implemented). NIfTI also
 overrides `from_file` and `from_fileobj`, because nibabel needs a file
 name or a file object to build its lazy proxy. These overrides must
 respect the guards in `io/base/parsers.py` that stop `from_bytes` and
@@ -127,7 +134,7 @@ For NIfTI, the first pass gives the classes the following bases.
 | Class                      | Bases                                                     | Lowest entry points                               |
 |----------------------------|-----------------------------------------------------------|---------------------------------------------------|
 | `NiftiRaw`                 | `Magic`, `BinaryFileReader`, `BinaryFileWriter`           | `sniff_fileobj`, `from_fileobj` and `to_fileobj`, which read and write the header only |
-| `NiftiMetadata`            | `MetadataFormat`, `BinaryFileReader`, `BinaryFileWriter`  | the same three methods, which call `NiftiRaw`     |
+| `NiftiMetadata`            | `MetadataFormat`, `BinaryFileReader`, `BinaryFileWriter`  | `sniff_fileobj`, `to_bytes` and `to_filename`, which call `NiftiRaw`, and `RAW = NiftiRaw`, through which every input is read |
 | `NiftiImage`               | `ImageFormat`, `SingleScaleImage`, `BinaryFileReader`, `BinaryFileWriter` | `sniff_fileobj`, `from_file`, `from_fileobj`, `to_file` and `to_bytes` |
 | `NiftiBasedTransformation` | `TransformationFormat`, `BinaryFileReader`, `BinaryFileWriter` | the same as `NiftiImage`, written once for all NIfTI transformations |
 

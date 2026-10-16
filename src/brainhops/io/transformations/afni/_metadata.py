@@ -33,6 +33,7 @@ class AfniAffineMetadata(MetadataFormat, TextFileReader, TextFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".aff12.1D", ".1D")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("afni", "aff12")
+    RAW: tx.ClassVar[type] = AfniAffineRaw
 
     raw: NoRepr[tx.Optional[AfniAffineRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -92,48 +93,6 @@ class AfniAffineMetadata(MetadataFormat, TextFileReader, TextFileWriter):
             The confidence, between 0 and 1.
         """
         return AfniAffineRaw.sniff_lines(lines, error=error)
-
-    @classmethod
-    def from_text(cls, text: str, **kwargs) -> "AfniAffineMetadata":
-        """Read the metadata from the text of a matrix file.
-
-        The text is parsed by [`AfniAffineRaw.from_text`][].
-
-        Parameters
-        ----------
-        text : str
-            The content of the file.
-        **kwargs : Any
-            Options of the reader, which [`AfniAffineRaw.from_text`][]
-            refuses.
-
-        Returns
-        -------
-        AfniAffineMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(AfniAffineRaw.from_text(text, **kwargs))
-
-    @classmethod
-    def from_lines(
-        cls, lines: tx.Iterable[str], **kwargs
-    ) -> "AfniAffineMetadata":
-        """Read the metadata from the lines of a matrix file.
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file, without their line breaks.
-        **kwargs : Any
-            Options of the reader, which [`AfniAffineRaw.from_lines`][]
-            refuses.
-
-        Returns
-        -------
-        AfniAffineMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(AfniAffineRaw.from_lines(lines, **kwargs))
 
     def to_text(self, **kwargs) -> str:
         """Return the content of the file that the record holds.

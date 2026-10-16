@@ -454,28 +454,7 @@ class M3zRaw(
         ParserContentError
             If the content is not a morph.
         """
-        return cls.from_bytes(file.read())
-
-    @classmethod
-    def from_bytes(cls, content: bytes) -> "M3zRaw":
-        """Read a record from the bytes of a `.m3z` or `.m3d` file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the file.
-
-        Returns
-        -------
-        M3zRaw
-            The record.
-
-        Raises
-        ------
-        ParserContentError
-            If the bytes are not a morph.
-        """
-        return read_m3z(content)
+        return read_m3z(file.read())
 
     # --- to -----------------------------------------------------------
 

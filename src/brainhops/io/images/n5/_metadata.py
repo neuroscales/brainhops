@@ -32,6 +32,7 @@ class N5Metadata(MetadataFormat, BinaryFileReader):
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("n5",)
+    RAW: tx.ClassVar[type] = N5Raw
 
     raw: NoRepr[tx.Optional[N5Raw]] = None
     """The record of the node, or `None` for metadata without a record."""
@@ -156,31 +157,3 @@ class N5Metadata(MetadataFormat, BinaryFileReader):
         no_options(kwargs)
         _, record = read_node(filename)
         return cls.from_raw(record)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "N5Metadata":
-        """Read the metadata of an N5 node from a stream of its attributes.
-
-        The record has no levels, since the datasets of a pyramid are
-        other files.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream of the `attributes.json` file, open in binary mode.
-        **kwargs : Any
-            Refused, since the metadata has no option.
-
-        Returns
-        -------
-        N5Metadata
-            The metadata, which holds the record of the attributes.
-
-        Raises
-        ------
-        TypeError
-            If an option is given.
-        ParserContentError
-            If the stream does not hold valid attributes.
-        """
-        return cls.from_raw(N5Raw.from_fileobj(file, **kwargs))

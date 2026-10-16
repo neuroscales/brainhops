@@ -33,6 +33,7 @@ class RegisterDatMetadata(MetadataFormat, TextFileReader, TextFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".dat", ".reg")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("regdat",)
+    RAW: tx.ClassVar[type] = RegisterDatRaw
 
     raw: NoRepr[tx.Optional[RegisterDatRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -64,28 +65,6 @@ class RegisterDatMetadata(MetadataFormat, TextFileReader, TextFileWriter):
             The confidence, between 0 and 1.
         """
         return RegisterDatRaw.sniff_lines(lines, error=error, **kwargs)
-
-    @classmethod
-    def from_lines(
-        cls, lines: tx.Iterable[str], **kwargs
-    ) -> "RegisterDatMetadata":
-        """Read the metadata from the lines of a `register.dat` file.
-
-        The lines are parsed by [`RegisterDatRaw.from_lines`][].
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file.
-        **kwargs : Any
-            Options of [`RegisterDatRaw.from_lines`][].
-
-        Returns
-        -------
-        RegisterDatMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(RegisterDatRaw.from_lines(lines, **kwargs))
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the `register.dat` file that the record holds.

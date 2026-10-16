@@ -63,6 +63,7 @@ class MghMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mgh", "mgz")
+    RAW: tx.ClassVar[type] = MghRaw
     SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = (
         "repetition_time",
         "echo_time",
@@ -192,27 +193,6 @@ class MghMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             The confidence, between 0 and 1.
         """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MghMetadata":
-        """Read the metadata from an MGH stream.
-
-        The record is read with [`MghRaw.from_fileobj`][], which receives
-        the keyword arguments.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream, which may be compressed with gzip.
-        **kwargs : Any
-            Options of [`MghRaw.from_fileobj`][].
-
-        Returns
-        -------
-        MghMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(MghRaw.from_fileobj(file, **kwargs))
 
     def to_bytes(
         self, *, on_loss: tx.Optional[OnLoss] = None, **fields: tx.Any
