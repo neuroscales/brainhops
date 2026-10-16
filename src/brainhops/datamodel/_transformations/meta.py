@@ -21,6 +21,7 @@ from .modes import ModeLike
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 
+
 class MetaTransformation(Transformation):
     """Base class of the transformations defined in terms of others.
 
