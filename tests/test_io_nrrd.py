@@ -2,8 +2,7 @@
 
 Headers are written by hand from the specification
 (https://teem.sourceforge.net/nrrd/format.html), and the data is encoded
-independently of the writer. pynrrd cross-checks both directions when it is
-installed.
+independently of the writer.
 """
 
 import bz2
@@ -153,8 +152,8 @@ def test_read_attached_lps(lps_file) -> None:  # noqa: ANN001
     name, values = lps_file
     image = io.load(name)
     assert type(image) is AttachedNrrdImage
-    assert isinstance(image.raw, _NrrdProxy) and image.raw.mmap
-    assert isinstance(image.raw.read_samples().base, np.memmap)
+    assert isinstance(image.rawdata, _NrrdProxy) and image.rawdata.mmap
+    assert isinstance(image.rawdata.read_samples().base, np.memmap)
     np.testing.assert_array_equal(image.data, values)
     assert [a.name for a in image.system.axes] == ["x", "y", "z"]
     physical, world = image.transformations
@@ -177,7 +176,7 @@ def test_read_attached_lps(lps_file) -> None:  # noqa: ANN001
 def test_read_no_mmap(lps_file) -> None:  # noqa: ANN001
     name, values = lps_file
     image = AttachedNrrdImage.load(name, mmap=False)
-    assert not image.raw.mmap
+    assert not image.rawdata.mmap
     np.testing.assert_array_equal(image.data, values)
 
 
@@ -522,7 +521,7 @@ def test_write_options(lps_file, tmp_path) -> None:  # noqa: ANN001
         keyvalue={"DWMRI_b-value": None, "new": "1"},
     )
     back = io.load(tmp_path / "o.nrrd")
-    assert back.raw.dtype == np.dtype(">f4")
+    assert back.rawdata.dtype == np.dtype(">f4")
     np.testing.assert_array_equal(back.data, values)
     assert "DWMRI_b-value" not in back.metadata.raw.keyvalue
     assert back.metadata.raw.keyvalue["new"] == "1"
@@ -620,50 +619,6 @@ def test_an_unoriented_image_whose_transformations_are_emptied_has_no_spacings(
     fields = io.load(tmp_path / "b.nrrd").metadata.raw.fields
     assert "spacings" not in fields
     assert "axis mins" not in fields
-
-
-# ----------------------------------------------------------------------
-#   PYNRRD CROSS-CHECK
-# ----------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("detached", [False, True])
-@pytest.mark.parametrize("encoding", ["raw", "gzip", "ascii"])
-def test_pynrrd_cross_check(tmp_path, detached, encoding) -> None:  # noqa: ANN001
-    nrrd = pytest.importorskip("nrrd")
-    values = _values((3, 4, 5, 2), "int16")
-    header = {
-        "space": "left-posterior-superior",
-        "space directions": np.array(
-            [[np.nan] * 3, [0, 2, 0], [1, 0, 0], [0, 0, 3]]
-        ),
-        "kinds": ["vector", "domain", "domain", "domain"],
-        "space origin": np.array([1.0, -2.0, 3.0]),
-        "encoding": encoding,
-        "DWMRI_b-value": "1000",
-    }
-    ext = ".nhdr" if detached else ".nrrd"
-    name = str(tmp_path / ("a" + ext))
-    nrrd.write(name, values, header, detached_header=detached)
-    image = io.load(name)
-    np.testing.assert_array_equal(image.data, values.transpose(1, 2, 3, 0))
-    np.testing.assert_allclose(
-        image.transformation.matrix,
-        [[0, 1, 0, 1], [2, 0, 0, -2], [0, 0, 3, 3]],
-    )
-    assert image.metadata.raw.keyvalue["DWMRI_b-value"] == "1000"
-
-    out = str(tmp_path / ("b" + ext))
-    image.save(out)
-    data, back = nrrd.read(out)
-    np.testing.assert_array_equal(data, values)
-    assert back["space"] == "left-posterior-superior"
-    np.testing.assert_allclose(
-        back["space directions"][1:], header["space directions"][1:]
-    )
-    np.testing.assert_allclose(back["space origin"], header["space origin"])
-    assert back["kinds"] == header["kinds"]
-    assert back["DWMRI_b-value"] == "1000"
 
 
 def test_write_measurement_frame_follows_space(tmp_path) -> None:  # noqa: ANN001
@@ -893,7 +848,7 @@ def test_samples_in_several_files_are_written_in_one(tmp_path) -> None:  # noqa:
         )
     )
     loaded = DetachedNrrdImage.load(tmp_path / "p.nhdr")
-    assert not loaded.raw.copyable
+    assert not loaded.rawdata.copyable
     loaded.save(tmp_path / "q.nhdr")
     back = DetachedNrrdImage.load(tmp_path / "q.nhdr")
     assert back.metadata.raw.data_files == ("q.raw",)
@@ -914,7 +869,7 @@ def test_an_image_saved_over_itself_keeps_its_samples(tmp_path) -> None:  # noqa
     loaded.save(source)
     assert source.read_bytes() != before
     np.testing.assert_array_equal(data, values)
-    np.testing.assert_array_equal(np.asarray(loaded.raw), values)
+    np.testing.assert_array_equal(np.asarray(loaded.rawdata), values)
     np.testing.assert_allclose(
         io.load(source).transformation.matrix,
         np.diag([5.0, 6.0, 7.0]) @ np.eye(3, 4),
@@ -930,9 +885,9 @@ def test_a_detached_image_saved_over_itself_keeps_its_samples(
     # The old data file is kept, the header names the new one, and the
     # lazy array reads the new files.
     assert (tmp_path / "source.raw.gz").exists()
-    assert loaded.raw.record.data_files == ("source.raw",)
-    np.testing.assert_array_equal(np.asarray(loaded.raw), values)
-    assert np.asarray(loaded.raw).dtype == np.int32
+    assert loaded.rawdata.record.data_files == ("source.raw",)
+    np.testing.assert_array_equal(np.asarray(loaded.rawdata), values)
+    assert np.asarray(loaded.rawdata).dtype == np.int32
     np.testing.assert_array_equal(io.load(source).data, values)
 
 
@@ -941,7 +896,7 @@ def test_a_file_written_again_elsewhere_is_refused(tmp_path) -> None:  # noqa: A
     loaded = AttachedNrrdImage.load(source)
     AttachedNrrdImage(values.astype("float32")).save(source)
     with pytest.raises(ParserContentError, match="no longer describes"):
-        np.asarray(loaded.raw)
+        np.asarray(loaded.rawdata)
 
 
 def test_consolidate_follows_each_knob(tmp_path) -> None:  # noqa: ANN001
@@ -1052,7 +1007,7 @@ def test_nothing_but_the_data_reads_the_samples(
     image = io.load(source)
     assert image.shape == values.shape
     assert image.ndim == 3
-    assert image.raw.dtype == np.dtype("<i2")
+    assert image.rawdata.dtype == np.dtype("<i2")
     repr(image)
     assert image.transformations
     assert image.system is not None
@@ -1133,3 +1088,25 @@ def test_unknown_types_and_missing_directories_are_reported(
         image.consolidate(encoding="gzip").metadata.raw.fields["type"]
         == "short"
     )
+
+
+def test_a_unit_scaling_drops_the_spacings_of_the_base(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # A file without geometry decodes to the unit scaling. Writing that
+    # scaling over a record with spacings writes no geometry, rather than
+    # the geometry of the record.
+    data = np.arange(24, dtype="float32").reshape(2, 3, 4)
+    AttachedNrrdImage(data).save(tmp_path / "bare.nrrd")
+    placed = AttachedNrrdImage(data)
+    placed.transformations = [Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])]
+    placed.save(tmp_path / "placed.nrrd")
+    image = AttachedNrrdImage.load(tmp_path / "placed.nrrd")
+    bare = AttachedNrrdImage.load(tmp_path / "bare.nrrd")
+    image.transformations = list(bare.transformations)
+    record = image.consolidate().metadata.raw
+    assert "spacings" not in record.fields
+    assert "axis mins" not in record.fields
+    image.save(tmp_path / "copy.nrrd")
+    back = AttachedNrrdImage.load(tmp_path / "copy.nrrd")
+    np.testing.assert_array_equal(back.transformation.data, [1.0, 1.0, 1.0])

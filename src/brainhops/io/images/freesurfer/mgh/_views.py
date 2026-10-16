@@ -16,7 +16,7 @@ from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.backends import to_backend
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
@@ -24,13 +24,13 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
     A proxy is read with the array backend. The NumPy array that it gives
     is made read-only, because it is a view that the writer does not read
-    back: the writer writes `raw`, so an edit in place would be lost. Any
+    back: the writer writes `rawdata`, so an edit in place would be lost. Any
     other array is returned as it is, so that a Dask array stays lazy and
-    an array that was set as data stays the array of `raw`.
+    an array that was set as data stays the array of `rawdata`.
     """
     if not isinstance(raw, ArrayProxy):
         return raw
-    data = get_array_backend().asarray(raw)
+    data = to_backend(raw)
     if isinstance(data, np.ndarray):
         data.flags.writeable = False
     return data

@@ -2,24 +2,35 @@ import typing_extensions as tx
 
 from brainhops.errors import AxisError
 
-from .systems import AxisList, CoordinateSystem
+from .axes import AxisList, AxisSequence
+
+if tx.TYPE_CHECKING:
+    from .systems import CoordinateSystem
 
 
-def get_axes(system: tx.Optional[CoordinateSystem]) -> AxisList:
-    """Return the axes of a coordinate system.
+def get_axes(
+    system: tx.Union["CoordinateSystem", AxisSequence, None],
+) -> AxisSequence:
+    """Return an axis sequence, treating missing axes as unknown.
 
     Parameters
     ----------
-    system : CoordinateSystem or None
-        A coordinate system, or `None`.
+    system : CoordinateSystem | AxisSequence | None
+        A coordinate system, its axes, or `None`.
 
     Returns
     -------
-    AxisList
-        The axes of the system, or `[...]` (unknown axes) when `system`
-        is `None` or has no `axes` attribute.
+    AxisSequence
+        The stored axes.
+        Missing systems and `axes=None` give a fresh `AxisList([...])`,
+        without changing the stored value. An empty sequence stays empty.
     """
-    return getattr(system, "axes", AxisList([...]))
+    if isinstance(system, AxisSequence):
+        return system
+    axes = getattr(system, "axes", None)
+    if axes is None:
+        return AxisList([...])
+    return axes
 
 
 def vector_axis(

@@ -8,10 +8,11 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, Magic, NoRepr
+from bagof.magic import Factory, NoRepr
 
 # internals
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -45,9 +46,7 @@ from ._constants import (
 # ----------------------------------------------------------------------
 
 
-class NrrdRaw(
-    Magic, BinaryFileReader, BinaryFileWriter, frozen=True, eq=False
-):
+class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
     """The header of a NRRD image, as the file stores it.
 
     A NRRD image is a text header followed by the samples, either in the

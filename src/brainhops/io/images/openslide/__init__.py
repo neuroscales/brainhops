@@ -12,7 +12,7 @@ from brainhops.io.images import load
 slide = load("CMU-1.svs")            # AperioMultiScaleImage
 slide.images[2].data.shape           # (x, y, c), read region by region
 slide.images[2].data[:256, :256]     # reads that region only
-slide.properties["openslide.mpp-x"]  # every OpenSlide property
+slide.metadata.raw.properties["openslide.mpp-x"]  # every property
 level = load("CMU-1.svs", level=2)   # AperioImage: one level
 load("slide.tif", hint="openslide")  # a generic tiled TIFF, by OpenSlide
 ```
@@ -47,7 +47,12 @@ and a multiscale class, which share the extensions and hints of the vendor:
 
 Every hint is also accepted as `openslide.<hint>`, and `hint="openslide"`
 selects all of these formats. A vendor class reads only the slides that
-OpenSlide attributes to its vendor.
+OpenSlide attributes to its vendor. The vendors share the two bases
+[`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage] and
+[`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage],
+which read a slide of any vendor, and each vendor class only declares its
+extensions and hints and sniffs its own vendor. The levels of a pyramid of a
+vendor are objects of the single-scale class of that vendor.
 
 OpenSlide opens files only by name. A local file is therefore sniffed (its
 format is detected from its content) and read in place. A remote file, a
@@ -94,11 +99,31 @@ do not change the geometry.
 
 ## Metadata
 
-Images have the attributes `vendor`, `properties` (every OpenSlide property),
-`n_levels`, `level_downsamples`, `background_color`, `bounds`, `level`
-(single-scale images only) and `associated_images`. The last attribute lists
-the names of the label, macro, thumbnail and other images of the slide, which
-`associated_image(name)` reads.
+A slide and each of its levels hold the same
+[`OpenSlideMetadata`][brainhops.io.images.openslide.OpenSlideMetadata],
+whose record is an
+[`OpenSlideRaw`][brainhops.io.images.openslide.OpenSlideRaw]. The record holds
+what OpenSlide reports when it opens the slide: every property
+(`properties`), the shape and the downsampling factor of each level
+(`levels`, one
+[`OpenSlideLevelRaw`][brainhops.io.images.openslide.OpenSlideLevelRaw]
+each), and the names of the label, macro, thumbnail and other images of the
+slide (`associated_images`), which `associated_image(name)` reads. The record
+also gives the `vendor`, the `level_downsamples`, the `background_color` and
+the `bounds` of the slide, read from its properties. A single-scale image
+keeps the index of its level in `level`. `OpenSlideMetadata.load(path)` reads
+the record alone and keeps no open file.
+
+## Consolidating and writing
+
+OpenSlide cannot write slides, so these classes have no writer. An image or a
+pyramid is saved to another format, for example with
+`TiffImage.from_any(level).save(path)`, or with `io.save` under a name whose
+format can hold it. Data assigned to an image, or to a level of a pyramid, is
+pending until `consolidate()` moves it into `rawdata`. The metadata and
+the transformations are kept, since no record can be encoded, and a
+pyramid refuses to consolidate a level that is not a level of its slide,
+such as an image of another class, with `WriterError`.
 
 ## Without OpenSlide
 
@@ -111,7 +136,10 @@ TIFF reader, if tifffile is installed.
 __all__ = [
     "OpenSlideFormat",
     "OpenSlideImage",
+    "OpenSlideLevelRaw",
+    "OpenSlideMetadata",
     "OpenSlideMultiScaleImage",
+    "OpenSlideRaw",
     "AperioImage",
     "AperioMultiScaleImage",
     "HamamatsuImage",
@@ -161,3 +189,5 @@ from ._formats import (
     ZeissImage,
     ZeissMultiScaleImage,
 )
+from ._metadata import OpenSlideMetadata
+from ._raw import OpenSlideLevelRaw, OpenSlideRaw

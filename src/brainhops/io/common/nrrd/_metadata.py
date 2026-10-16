@@ -35,6 +35,7 @@ class NrrdMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nrrd", ".nhdr")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nrrd",)
+    RAW: tx.ClassVar[type] = NrrdRaw
 
     raw: NoRepr[tx.Optional[NrrdRaw]] = None
     """The record of the image, or `None` for metadata without a record."""
@@ -92,27 +93,6 @@ class NrrdMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             The confidence, between 0 and 1.
         """
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NrrdMetadata":
-        """Read the metadata from a NRRD stream.
-
-        The record is read with [`NrrdRaw.from_fileobj`][], which receives
-        the keyword arguments and refuses them.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream.
-        **kwargs : Any
-            Options of the reader, which [`NrrdRaw.from_fileobj`][] refuses.
-
-        Returns
-        -------
-        NrrdMetadata
-            The metadata, which holds the record of the header.
-        """
-        return cls.from_raw(NrrdRaw.from_fileobj(file, **kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header of the record as the file stores it.

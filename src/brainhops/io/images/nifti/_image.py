@@ -14,8 +14,10 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     Identity,
@@ -33,7 +35,10 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     WriterError,
 )
-from brainhops.io.common._geometry import same_transformations
+from brainhops.io.common._geometry import (
+    held_transformations,
+    same_transformations,
+)
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
@@ -42,10 +47,13 @@ from brainhops.io.common.nifti._constants import (
 )
 from brainhops.io.common.nifti._geometry import _image_with_geometry
 from brainhops.io.common.nifti._header import (
+    _keep_given_fields,
     _nifti_intent,
     _nifti_shape,
     _nifti_to_axes,
     _NiftiObject,
+    _split_options,
+    _storage_override,
     _stored_parts,
     _written_nifti,
 )
@@ -57,6 +65,11 @@ from brainhops.io.common.nifti._raw import (
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -69,21 +82,21 @@ class NiftiImage(
     """An image stored in a NIfTI file.
 
     A NIfTI image holds the header of its file as [`NiftiMetadata`][] and
-    the voxels as stored in `raw`. When the image is read from a file,
-    `raw` is a nibabel proxy, which reads the voxels only when they are
-    needed, and `data` is decoded from it on first access. The
+    the voxels as stored in `rawdata`. When the image is read from a
+    file, `rawdata` is a nibabel proxy, which reads the voxels only when
+    they are needed, and `data` is decoded from it on first access. The
     transformations are decoded from the header in the same way.
 
-    `raw` and the header describe the file as it was read, or as the image
+    `rawdata` and the header describe the file as it was read, or as the image
     was last consolidated. Data assigned to the image are pending: they
-    are kept beside `raw` and the header, and `data` returns them, until
-    [`consolidate`][] encodes them into a copy of the image, or until the
-    image is written. The transformations, read or assigned, are kept in
-    the same way and compared at [`consolidate`][] with those that the
-    header decodes to, so that they are encoded only when they differ. A
-    write encodes the image in the same way, into a copy, and leaves the
-    image as it was, except when the image is written over the file that
-    its proxy reads.
+    are kept beside `rawdata` and the header, and `data` returns them,
+    until [`consolidate`][] encodes them into a copy of the image, or
+    until the image is written. The transformations, read or assigned,
+    are kept in the same way and compared at [`consolidate`][] with
+    those that the header decodes to, so that they are encoded only when
+    they differ. A write encodes the image in the same way, into a copy,
+    and leaves the image as it was, except when the image is written
+    over the file that its proxy reads.
 
     When the image is consolidated, the header of its file is the base of
     the new header. The fields that describe the layout of the voxels and
@@ -97,80 +110,83 @@ class NiftiImage(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the file stores them, or `None` without data.
 
-    After a read, `raw` is a nibabel proxy, which applies the scaling of
-    the header when it is read. `raw` describes the file as it was read,
-    or as the image was last consolidated, so assigning `data` leaves it
-    as it is until [`consolidate`][] encodes the data into a copy.
+    After a read, `rawdata` is a nibabel proxy, which applies the
+    scaling of the header when it is read. `rawdata` describes the file
+    as it was read, or as the image was last consolidated, so assigning
+    `data` leaves it as it is until [`consolidate`][] encodes the data
+    into a copy.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
-    array stored here is pending: it is encoded into `raw` only by
+    array stored here is pending: it is encoded into `rawdata` only by
     [`consolidate`][] or by a write.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
-    property of the same name reads it. `None`, the default, means that
-    the transformations have been neither read nor assigned, so the
-    header is kept as it is. The property stores here the list that it
-    decodes, and an assigned list, even an empty one, is stored as it is.
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the header and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = None
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
 
     An image built from data has no metadata. The header describes the
     file as it was read, or as the image was last consolidated. Assigning
-    other metadata drops the transformations that the image holds, read
-    or assigned, so that they are decoded from the new header.
+    other metadata drops the transformations decoded from the previous
+    header, so that they are decoded from the new one, and keeps the
+    transformations that were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, assigned or decoded from `raw`.
+        """The image data, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
         pending until [`consolidate`][] or a write encodes it. Otherwise
-        the data is decoded from `raw` on first access and cached. Data
-        decoded from a file is read-only, because changing it in place
-        would not change `raw`, which is what the image writes. To change
-        the voxels, assign `data`. Assigning `None` decodes `raw` again.
+        the data is decoded from `rawdata` on first access and cached.
+        Data decoded from a file is read-only, because changing it in
+        place would not change `rawdata`, which is what the image
+        writes. To change the voxels, assign `data`. Assigning `None`
+        decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the header.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. A header modified in
-        place is not noticed, so a modified copy should be assigned as new
-        metadata instead.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place, such as an appended
+        transformation, is kept.
+        Assigning other metadata drops the decoded list, so that it is
+        decoded from the new header, and keeps an assigned list. A change
+        made in place to a decoded list is therefore lost when other
+        metadata is assigned. A header modified in place is not noticed,
+        so a modified copy should be assigned as new metadata instead.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -180,23 +196,22 @@ class NiftiImage(
         and the image is then written as an image built from data alone.
         Assigning `None` decodes the header again.
         """
-        self._transformations = _header_transformations(self.metadata)
-        return self._transformations
+        return _header_transformations(self.metadata)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without reading the voxels.
 
-        The shape is that of the assigned data, or else of `raw`: an image
-        decodes its data from `raw` without changing its shape, and a proxy
+        The shape is that of the assigned data, or else of `rawdata`: an image
+        decodes its data from `rawdata` without changing its shape, and a proxy
         knows its shape from the header. An image without data raises as
         [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in self.raw.shape)
+        return tuple(int(d) for d in self.rawdata.shape)
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
@@ -214,7 +229,7 @@ class NiftiImage(
             if axis.name is not None
         ]
         # In F order, the first axis changes fastest.
-        return CoordinateSystem(axes=axes, name="voxel", order="F")
+        return ArrayCoordinateSystem(axes=axes, name="voxel", order="F")
 
     # --- reading ------------------------------------------------------
 
@@ -352,7 +367,7 @@ class NiftiImage(
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         raw, proxy = read_nifti(filename, **kwargs)
-        return cls(raw=proxy, metadata=NiftiMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NiftiImage":
@@ -383,13 +398,13 @@ class NiftiImage(
         """
         _nibabel_options(kwargs)
         raw, proxy = read_nifti(file, **kwargs)
-        return cls(raw=proxy, metadata=NiftiMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
 
     @classmethod
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> "NiftiImage":
         """Build an image from a nibabel image or header.
 
-        The voxels of an image become `raw` as they are, and a copy of its
+        The voxels of an image become `rawdata` as they are, and a copy of its
         header becomes the record of the metadata. A header alone gives an
         image without data.
 
@@ -420,31 +435,37 @@ class NiftiImage(
                 f"Expected a NIfTI image or header, got {type(nifti)}"
             )
         metadata = NiftiMetadata.from_raw(NiftiRaw(header=header.copy()))
-        return cls(raw=raw, metadata=metadata, **kwargs)
+        return cls(rawdata=raw, metadata=metadata, **kwargs)
 
     # --- writing ------------------------------------------------------
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> "NiftiImage":
-        """Encode the pending data and geometry into `raw` and the header.
+        """Encode the pending data and geometry into `rawdata` and the header.
 
-        Consolidating makes `raw` and the header describe the image, as a
+        Consolidating makes `rawdata` and the header describe the image, as a
         file written from it would. A copy of the header of the metadata
         is the base of the new header, and the fields that describe the
         layout of the voxels and the geometry are encoded again over it.
-        The data becomes `raw`, laid out as NIfTI stores it. An override
-        that changes the stored data type or the scaling converts the data
-        as a write would, and `raw` is then a proxy of the converted
-        voxels in memory, so that the copy holds what its file holds. The
-        preferred transformation becomes the sform, and the qform is a
-        rigid transformation among the others or the rigid part of the
-        sform. Large arrays are encoded as NIfTI-2, and so is an image
-        whose header is NIfTI-2. The new header is held by new metadata,
-        and the header held before is never changed. Nothing is pending
-        afterwards, so the transformations are decoded from the new
-        header, with the precision of the file: the sform is stored in
-        single precision and the qform as a quaternion.
+        The data becomes `rawdata`, laid out as NIfTI stores it. An
+        override that changes the stored data type or the scaling
+        converts the data as a write would, and `rawdata` is then a
+        proxy of the converted voxels in memory, so that the copy holds
+        what its file holds. The preferred transformation becomes the
+        sform, and the qform is a rigid transformation among the others
+        or the rigid part of the sform. Large arrays are encoded as
+        NIfTI-2, and so is an image whose header is NIfTI-2. The new
+        header is held by new metadata, and the header held before is
+        never changed. Nothing is pending afterwards, so the
+        transformations are decoded from the new header, with the
+        precision of the file: the sform is stored in single precision
+        and the qform as a quaternion.
 
         The transformations that the image holds, read or assigned, are
         compared with those that the header decodes to, exactly. When
@@ -452,8 +473,19 @@ class NiftiImage(
         is kept as it is stored, as long as the data have the shape that
         the header records. An image that has a header, no pending data,
         and the transformations of its header, consolidated without
-        options, is left as it is: the copy shares `raw` and the metadata.
+        options, is left as it is: the copy shares `rawdata` and the metadata.
         Consolidating a consolidated image changes nothing.
+
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, so any field of
+        the metadata can be overridden here, and its record is the base of
+        the new header. The image owns its geometry, so a field that the
+        geometry encodes over, such as the repetition time, which is the
+        time step of the image, is reported as approximated when it
+        disagrees. The data are stored with the type given as `dtype=`,
+        or else with `metadata.dtype`, or else with the type of the data,
+        and nibabel scales them into an integer type. What the write
+        loses or approximates is acted on once, by `on_loss`.
 
         Parameters
         ----------
@@ -462,10 +494,15 @@ class NiftiImage(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose description and intent are copied. The geometry
             always comes from this image.
-        **overrides : Any
-            Values of `dtype`, `intent` and `descrip`, or of any other
-            header field, which take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect (see
+            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        **options : Any
+            Fields of the metadata to override, such as `dtype`, `intent`
+            or `description`, and fields of the header, which are set
+            last. A header field that holds a field of the metadata, such
+            as `descrip` or `scl_slope`, is refused.
 
         Returns
         -------
@@ -474,43 +511,58 @@ class NiftiImage(
 
         Raises
         ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
         WriterError
             If the image has no data to encode.
         UnrepresentableTransformationError
             If the preferred transformation is not affine, as for a
             displacement field.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        fields, overrides = _split_options(options)
+        report = ConversionReport(source="NiftiImage", target="NiftiImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         # The geometry of the header is kept when the transformations
         # were never read, or are the same as those that it decodes to.
-        kept = self._transformations is None or same_transformations(
-            self._transformations, _header_transformations(self.metadata)
+        held = held_transformations(self)
+        kept = held is None or same_transformations(
+            held, _header_transformations(self.metadata)
         )
         if (
             self._data is None
             and kept
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
             return self
-        raw, record = _nifti_encoded(self, kept, like, overrides)
-        if self.metadata is None:
-            metadata = NiftiMetadata.from_raw(record)
-        else:
-            metadata = replace(self.metadata, raw=record)
+        raw, record = _nifti_encoded(
+            self, kept, like, overrides, metadata, fields
+        )
+        metadata = type(metadata or NiftiMetadata()).from_raw(record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -523,7 +575,7 @@ class NiftiImage(
 
         The image is consolidated with the options, as by
         [`consolidate`][], into a copy, and the nibabel image holds the
-        `raw` and the header of that copy. The image itself is not
+        `rawdata` and the header of that copy. The image itself is not
         changed.
 
         Parameters
@@ -532,7 +584,8 @@ class NiftiImage(
             Template whose description and intent are copied, as in
             [`consolidate`][].
         **overrides : Any
-            Header overrides, as in [`consolidate`][].
+            `on_loss`, and the fields of the metadata and of the header,
+            as in [`consolidate`][].
 
         Returns
         -------
@@ -564,7 +617,7 @@ class NiftiImage(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            The template `like` and the header overrides of
+            The template `like`, `on_loss` and the options of
             [`consolidate`][].
 
         Raises
@@ -572,7 +625,7 @@ class NiftiImage(
         WriterError
             If the image cannot be encoded, as in [`consolidate`][].
         """
-        if not reads_file(self.raw, filename):
+        if not reads_file(self.rawdata, filename):
             write_nifti(self.to_nibabel(**kwargs), filename)
             return
         self.consolidate(inplace=True, **kwargs)
@@ -582,8 +635,8 @@ class NiftiImage(
         # file stored the voxels, and its record is the header of the new
         # file.
         record, proxy = read_nifti(filename)
-        self.raw = proxy
-        self.metadata = replace(self.metadata, raw=record)
+        self.rawdata = proxy
+        self.metadata = type(self.metadata).from_raw(record)
         self.data = None
         self.transformations = None
 
@@ -598,7 +651,7 @@ class NiftiImage(
         file : file object
             The stream to write to, open in binary mode.
         **kwargs : Any
-            The template `like` and the header overrides of
+            The template `like`, `on_loss` and the options of
             [`consolidate`][].
 
         Raises
@@ -617,7 +670,7 @@ class NiftiImage(
         Parameters
         ----------
         **kwargs : Any
-            The template `like` and the header overrides of
+            The template `like`, `on_loss` and the options of
             [`consolidate`][].
 
         Returns
@@ -702,7 +755,9 @@ def _nifti_to_transformations(
     zooms = [1.0 if j in untimed else z for j, z in enumerate(zooms)]
 
     # The axes count samples, in Fortran order as nibabel reads them.
-    voxel_space = CoordinateSystem(name="voxel", axes=named_axes, order="F")
+    voxel_space = ArrayCoordinateSystem(
+        name="voxel", axes=named_axes, order="F"
+    )
 
     # Axes that are neither space nor time, such as channels, have no unit
     # rather than inheriting the index unit.
@@ -851,19 +906,23 @@ def _nifti_encoded(
     kept: bool,
     like: tx.Any,
     overrides: tx.Mapping[str, tx.Any],
+    metadata: tx.Optional[NiftiMetadata],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Tuple[ArrayProtocol, NiftiRaw]:
-    """Encode the pending state of an image into `raw` and a new record.
+    """Encode the pending state of an image into `rawdata` and a new record.
 
-    The data is the assigned array, or `raw` when no array is pending. A
-    copy of the held record is the base of the new header. The geometry
-    is encoded from the transformations that the image holds, or from
-    those that the record decodes to when the image holds none, so that
-    the image is not changed. With `kept`, the transformations are those
-    of the record, and the geometry fields of the record are copied over
-    the new header when the data have the shape that it records, so that
-    they are kept as they are stored. When an override changes the data
-    type or the scaling, `raw` is a proxy of the voxels as the file
-    stores them, as `_stored_parts` returns it.
+    The data is the assigned array, or `rawdata` when no array is
+    pending. A copy of the record of the consolidated `metadata` is the
+    base of the new header, and the data type to store is the `dtype` of
+    `fields`, or else that of the metadata of the image. The geometry is
+    encoded from the transformations that the image holds, or from those
+    that the record decodes to when the image holds none, so that the
+    image is not changed. With `kept`, the transformations are those of
+    the record, and the geometry fields of the record are copied over the
+    new header when the data have the shape that it records, so that they
+    are kept as they are stored. When an override changes the data type
+    or the scaling, `rawdata` is a proxy of the voxels as the file stores
+    them, as `_stored_parts` returns it.
 
     Raises
     ------
@@ -873,16 +932,19 @@ def _nifti_encoded(
     if image._data is not None:
         source = _image_to_disk(image._data)
     else:
-        source = image.raw
+        source = image.rawdata
     if source is None:
         raise WriterError(
             "This image has no data, so there is nothing to encode."
         )
-    if image.metadata is None or image.metadata.raw is None:
+    if metadata is None or metadata.raw is None:
         header = None
     else:
-        header = image.metadata.raw.copy().header
-    transformations = image._transformations
+        header = metadata.raw.copy().header
+    dtype = _storage_override(fields, image.metadata, source)
+    if dtype is not None:
+        overrides = {**overrides, "dtype": dtype}
+    transformations = held_transformations(image)
     if transformations is None:
         transformations = _header_transformations(image.metadata)
     preferred = transformations[-1] if transformations else Identity()
@@ -894,8 +956,10 @@ def _nifti_encoded(
         like=like,
         overrides=overrides,
     )
-    if kept and header is not None:
-        _keep_geometry(nifti.header, image.metadata.raw.header, overrides)
+    _keep_given_fields(nifti, fields)
+    stored = None if image.metadata is None else image.metadata.raw
+    if kept and header is not None and stored is not None:
+        _keep_geometry(nifti.header, stored.header, overrides)
     return _stored_parts(nifti)
 
 
@@ -909,11 +973,11 @@ def _nifti_written(
     WriterError
         If the image has no data.
     """
-    if image.raw is None:
+    if image.rawdata is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
         )
-    return _written_nifti(image.raw, image.metadata.raw)
+    return _written_nifti(image.rawdata, image.metadata.raw)
 
 
 _NIBABEL_OPTIONS = ("mmap", "keep_file_open")

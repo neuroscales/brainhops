@@ -6,10 +6,10 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic, replace
 
 # internals
 from brainhops._core.streams import open_compressed, preserve_position
+from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -37,7 +37,7 @@ _UNSUPPORTED = (
 _SIGNED = {"signed__": True, "unsigned": False}
 
 
-class MincRaw(Magic, BinaryFileReader, frozen=True):
+class MincRaw(Raw, BinaryFileReader):
     """The header of a MINC image, as brainhops reads it.
 
     A MINC file is a NetCDF classic file (MINC1) or an HDF5 file (MINC2)
@@ -100,19 +100,6 @@ class MincRaw(Magic, BinaryFileReader, frozen=True):
         matrix[:3, :3] = cosines * [d.spacing for d in spatial]
         matrix[:3, 3] = cosines @ [d.origin for d in spatial]
         return matrix
-
-    def copy(self) -> "MincRaw":
-        """Return a copy of the record.
-
-        The record is frozen and its fields are tuples, so the copy shares
-        them.
-
-        Returns
-        -------
-        MincRaw
-            The copy.
-        """
-        return replace(self)
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MincRaw":

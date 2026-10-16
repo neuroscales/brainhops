@@ -10,7 +10,7 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import KwOnly, NoRepr, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core.properties import (
@@ -20,12 +20,15 @@ from brainhops._core.properties import (
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     WriterError,
 )
+from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_NIFTYREG,
@@ -35,17 +38,20 @@ from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _header,
+    _keep_given_fields,
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
     _NiftiObject,
     _record_image,
     _set_coordinates_intent,
+    _split_options,
     _stored_parts,
 )
-from brainhops.io.transformations.base._conversions import (
-    convert_instance,
-    converts_to,
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
 )
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -66,10 +72,21 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 
 
 @register_format
-class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
+class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
     """Field of RAS coordinates stored in a NIfTI file."""
 
     HINTS = ("coordinates",)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
+
+    metadata = smartproperty("metadata")
+    """The metadata of the file, which holds its header, or `None`.
+
+    A field built from data has no metadata. Its coordinates are its
+    data, so assigning other metadata keeps them.
+    """
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -101,57 +118,6 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
             return Confidence.MAYBE
         return Confidence.NO
 
-    # --- conversions --------------------------------------------------
-    # `TransformationFormat.from_any` converts another transformation, as
-    # `t.to(cls)` converts it. The data model comes before that class in
-    # the method resolution order, and its `from_instance` would copy the
-    # values of a field first, so `from_instance` converts here, with the
-    # same helpers.
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an instance, or convert a transformation to this format.
-
-        A transformation that is not of this format is converted exactly
-        as `other.to(cls)` converts it. An instance of this format is
-        copied with its `raw` array, its metadata and its stored data,
-        which is `None` unless data was assigned, so the data is not read
-        and a proxy stays lazy in the copy. Any other instance is copied
-        as [`Format.from_instance`][brainhops.io.base.Format.from_instance]
-        copies it.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments. A transformation that is converted
-            takes keyword options only.
-        **kwargs : Any
-            Options of the conversion, or field values of the copy.
-
-        Returns
-        -------
-        Self
-            The new object.
-
-        Raises
-        ------
-        TypeError
-            If positional arguments accompany a transformation that is
-            converted.
-        ConversionError
-            If the format cannot hold the transformation.
-        """
-        if converts_to(cls, other):
-            return convert_instance(cls, other, *args, **kwargs)
-        if isinstance(other, cls):
-            # The data model copies the decoded view of another instance,
-            # so the stored value is passed instead: `None` keeps a proxy
-            # lazy, and an assigned array stays pending in the copy.
-            kwargs.setdefault("data", other._data)
-        return super().from_instance(other, *args, **kwargs)
-
     @smartproperty(cache=True, invalidates=_FORGET_VIEWS)
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
@@ -159,19 +125,24 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
         An array that is assigned is returned as it is, and stays pending
         until [`consolidate`][] or a write encodes it. Otherwise, the data
-        is decoded from `raw`. NIfTI stores a vector field with shape
-        (X, Y, Z, 1, 3), and the data is decoded without the singleton
-        axis, since the array would otherwise be sampled as a 4-D grid of
-        vectors.
+        is decoded from `rawdata`. NIfTI stores a vector field with
+        shape (X, Y, Z, 1, 3), and the data is decoded without the
+        singleton axis, since the array would otherwise be sampled as a
+        4-D grid of vectors.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _field_to_model(self.raw)
+        return _field_to_model(self.rawdata)
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
-        """Encode the pending field into `raw` and a new header.
+        """Encode the pending field into `rawdata` and a new header.
 
         The header carries the `VECTOR` intent (1007) with the SPM intent
         name `"Mapping"`, which marks a coordinates field, rather than
@@ -189,6 +160,13 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         A field that has a header and nothing pending, consolidated
         without options, is left as it is.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`, and a `dtype` that is given, or changed
+        in the metadata, is the type of the stored array. What the write
+        loses or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -196,9 +174,14 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description` or
+            `dtype`, and header fields, which take precedence over the
+            derived values and `like`. A header field that holds a field
+            of the metadata, such as `descrip`, is refused.
 
         Returns
         -------
@@ -207,31 +190,50 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
         Raises
         ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the field has no coordinates.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         if (
             self._data is None
             and StoreEnum(self.store) is StoreEnum.values
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
+        if "dtype" in requested:
+            overrides["dtype"] = requested["dtype"]
+        base = None if metadata is None else metadata.raw
         raw, record = _stored_parts(
-            _coordinates_encoded(self, like, overrides)
+            _coordinates_encoded(self, like, overrides, base, fields)
         )
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 store=StoreEnum.values,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.store = StoreEnum.values
@@ -240,7 +242,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
 @register_format
 class NiftiRASDisplacementField(
-    _xforms.ImmutableSequence, NiftiBasedTransformation
+    NiftiBasedTransformation, _xforms.ImmutableSequence
 ):
     """
     Field of RAS displacements stored in a NIfTI file.
@@ -292,35 +294,24 @@ StationaryVelocityField], integrated with `steps` squaring steps
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """Boundary condition outside the field of view."""
 
-    log: tx.Annotated[
-        bool,
-        tx.Doc(
-            """
-            Whether the file holds the stationary velocity whose flow is
-            the map, rather than its displacement.
-            """
-        ),
-        KwOnly(),
-    ] = False
+    log: bool = False
+    """
+    Whether the file holds the stationary velocity whose flow is
+    the map, rather than its displacement.
+    """
 
-    steps: tx.Annotated[
-        tx.Optional[int],
-        tx.Doc(
-            """
-            The number of squaring steps that integrate a velocity (`log`
-            only). If `None`, the default of
-            [`StationaryVelocityField`][brainhops.datamodel.\
-transformations.StationaryVelocityField].
-            """
-        ),
-        KwOnly(),
-    ] = None
+    steps: tx.Optional[int] = None
+    """
+    The number of squaring steps that integrate a velocity (`log` only).
+    If `None`, the default of [`StationaryVelocityField`][].
+    """
 
-    _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    """The vectors given to the field, or `None` to decode them from `raw`.
+    _data: NoRepr[tx.Optional[ArrayProtocol]] = None
+    """
+    The vectors given to the field, or `None` to decode them from `rawdata`.
 
     Vectors stored here are pending until [`consolidate`][] or a write
-    encodes them into `raw`.
+    encodes them into `rawdata`.
     """
 
     @smartproperty(cache=True, invalidates="transformations")
@@ -330,14 +321,19 @@ transformations.StationaryVelocityField].
 
         Vectors that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `raw`: NIfTI stores the field with shape
-        (X, Y, Z, 1, 3), and the singleton axis is dropped. The vectors are
-        the RAS displacements of the file, or its velocity with `log`.
-        Assigning the data drops the chain decoded from the previous data.
+        they are decoded from `rawdata`: NIfTI stores the field with
+        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. The
+        vectors are the RAS displacements of the file, or its velocity
+        with `log`. Assigning the data drops the chain decoded from the
+        previous data.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _field_to_model(self.raw)
+        return _field_to_model(self.rawdata)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its header, or `None`.
@@ -516,10 +512,12 @@ transformations.StationaryVelocityField].
         inplace: bool = False,
         like: tx.Any = None,
         log: tx.Optional[bool] = None,
-        **overrides,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
         """
-        Encode the pending vectors or chain into `raw` and a new header.
+        Encode the pending vectors or chain into `rawdata` and a new
+        header.
 
         The displacements are encoded in RAS millimetres under the
         `DISPVECT` intent (1006), with shape (X, Y, Z, 1, 3). With `log`,
@@ -536,6 +534,13 @@ transformations.StationaryVelocityField].
         header and nothing pending, consolidated without options, is left
         as it is.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`, and a `dtype` that is given, or changed
+        in the metadata, is the type of the stored array. What the write
+        loses or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -546,15 +551,35 @@ transformations.StationaryVelocityField].
         log : bool, optional
             Whether to encode the velocity rather than the displacements.
             It defaults to the `log` option of the field.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description` or
+            `dtype`, and header fields, which take precedence over the
+            derived values and `like`. A header field that holds a field
+            of the metadata, such as `descrip`, is refused.
 
         Returns
         -------
         Self
             The consolidated copy, or this field with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         log = self.log if log is None else log
         if (
             self._data is None
@@ -562,24 +587,31 @@ transformations.StationaryVelocityField].
             and log == self.log
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
+        if "dtype" in requested:
+            overrides["dtype"] = requested["dtype"]
+        base = None if metadata is None else metadata.raw
         raw, record = _stored_parts(
-            _displacement_encoded(self, like, log, overrides)
+            _displacement_encoded(self, like, log, overrides, base, fields)
         )
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
                 transformations=None,
                 log=log,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -597,8 +629,8 @@ transformations.StationaryVelocityField].
 
         The field is consolidated with the options, as by
         [`consolidate`][], into a copy, and the nibabel image holds the
-        `raw` array and the header of that copy. The field itself is not
-        changed.
+        `rawdata` array and the header of that copy. The field itself is
+        not changed.
 
         Parameters
         ----------
@@ -642,8 +674,12 @@ def _coordinates_encoded(
     field: NiftiRASCoordinatesField,
     like: tx.Any,
     overrides: tx.Mapping[str, tx.Any],
+    base: tx.Optional[NiftiRaw],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """Encode a field of RAS coordinates over a copy of its record.
+    """Encode a field of RAS coordinates over a copy of a record.
+
+    The record, `base`, is that of the consolidated metadata.
 
     Raises
     ------
@@ -657,14 +693,16 @@ def _coordinates_encoded(
     elif field._data is not None:
         raw = _field_to_disk(field._data)
     else:
-        raw = field.raw
+        raw = field.rawdata
     if raw is None:
         raise WriterError(
             "This field has no coordinates, so there is nothing to write."
         )
-    image = _record_image(raw, field._record(), overrides=overrides)
+    record = None if base is None else base.copy()
+    image = _record_image(raw, record, overrides=overrides)
     _set_coordinates_intent(image.header)
     _apply_like(image, like)
+    _keep_given_fields(image, fields)
     _apply_overrides(image, overrides)
     return image
 
@@ -674,8 +712,12 @@ def _displacement_encoded(
     like: tx.Any,
     log: bool,
     overrides: tx.Mapping[str, tx.Any],
+    base: tx.Optional[NiftiRaw],
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """Encode a field of RAS displacements over a copy of its record.
+    """Encode a field of RAS displacements over a copy of a record.
+
+    The record, `base`, is that of the consolidated metadata.
 
     The stored vectors, assigned or read, are kept when the chain was not
     assigned and the encoding does not change. The chain is encoded
@@ -685,13 +727,14 @@ def _displacement_encoded(
     if field._data is not None:
         stored = _field_to_disk(field._data)
     else:
-        stored = field.raw
+        stored = field.rawdata
     if (
         stored is not None
         and field._transformations is None
         and log == field.log
     ):
-        image = _record_image(stored, field._record(), overrides=overrides)
+        record = None if base is None else base.copy()
+        image = _record_image(stored, record, overrides=overrides)
         if _nifti_intent(image.header) != _NIFTI_INTENT_DISPVECT:
             image.header.set_intent(_NIFTI_INTENT_DISPVECT)
     else:
@@ -699,8 +742,10 @@ def _displacement_encoded(
             field.transformations, what, ndim=_NDIM, log=log
         )
         vectors = _field_to_disk(vectors)
-        image = _record_image(vectors, field._record(), vox2ras, overrides)
+        record = None if base is None else base.copy()
+        image = _record_image(vectors, record, vox2ras, overrides)
         image.header.set_intent(_NIFTI_INTENT_DISPVECT)
     _apply_like(image, like)
+    _keep_given_fields(image, fields)
     _apply_overrides(image, overrides)
     return image

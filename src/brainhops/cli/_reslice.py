@@ -19,9 +19,11 @@ the reference to the moving image, so they must be inverted with the
 from __future__ import annotations
 
 import argparse
+import ast
 
 import typing_extensions as tx
 
+from brainhops._core.typing import Clip
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import ImageSpec, OperationSpec, TransformationSpec
@@ -135,8 +137,26 @@ def add_parser(
         help="Boundary condition used outside the field of view. Default "
         "'reflect'.",
     )
+    parser.add_argument(
+        "--clip",
+        type=_parse_clip,
+        default=None,
+        help="Zero samples outside the closed voxel margin (0=border "
+        "centres, 0.5=outer edges, -0.5=inner edges), or a quoted "
+        "(lower, upper) pair / list of pairs. Default: extrapolate.",
+    )
     parser.set_defaults(func=run)
     return parser
+
+
+def _parse_clip(value: str) -> Clip:
+    """Parse a literal scalar or margin pairs, without executing code."""
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, SyntaxError) as error:
+        raise argparse.ArgumentTypeError(
+            "Expected a clip scalar, pair, or list of pairs"
+        ) from error
 
 
 def _split_transform_spec(spec: str) -> TransformationSpec:
@@ -175,6 +195,8 @@ def reslice_image(
     transform_paths: tx.Iterable[str],
     degree: int = 1,
     bound: str = "reflect",
+    *,
+    clip: Clip = None,
 ) -> Image:
     """Resample an image onto a reference grid after a chain of transforms.
 
@@ -185,7 +207,8 @@ def reslice_image(
     `sqrt` and `square` are recognised but not implemented yet (issue #47).
     `degree` is the spline degree (0 for nearest neighbour, 1 for linear and
     3 for cubic), and `bound` is the boundary condition outside the field of
-    view.
+    view. `clip` optionally zeros samples outside the closed voxel margin
+    described by `Image.reslice`; None preserves extrapolation.
     """
     input_spec = (
         input_path
@@ -202,7 +225,7 @@ def reslice_image(
         else _split_image_spec(reference_path)
     )
     reference = load_image(reference_spec)
-    return image.reslice(reference, degree=degree, bound=bound)
+    return image.reslice(reference, degree=degree, bound=bound, clip=clip)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -213,6 +236,7 @@ def run(args: argparse.Namespace) -> int:
         args.transforms,
         degree=args.degree,
         bound=args.bound,
+        clip=args.clip,
     )
     save_image(resliced, args.output)
     print(f"Wrote {args.output}")

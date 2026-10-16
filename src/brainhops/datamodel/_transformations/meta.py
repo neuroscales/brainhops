@@ -18,7 +18,7 @@ from .compute.utils import axis_list, require_endomorphism
 from .modes import ModeLike
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
-
+_FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 
 class MetaTransformation(Transformation):
     """Base class of the transformations defined in terms of others.
@@ -58,11 +58,31 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     `SubspaceTransformation[T]` embeds a `T`. Whether a subspace
     transformation is of a given kind, such as a rotation, is decided by
     examining the wrapped transformation and the axes it acts on.
+
+    Parameters
+    ----------
+    transformation : Transformation, optional
+        Transformation to apply.
+    input_axes : array_like of int, optional
+        Axes of the input coordinate system to transform.
+    output_axes : array_like of int, optional
+        Axes of the output coordinate system to transform.
+
+    Other Parameters
+    ----------------
+    input : CoordinateSystem, optional
+        Input coordinate system of the full space.
+        If not given, it is derived from the input system of the wrapped
+        transformation.
+    output : CoordinateSystem, optional
+        Output coordinate system of the full space.
+        If not given, it is derived from the output system of the wrapped
+        transformation.
     """
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = (
+    data_fields: _FieldNames = (
         "transformation",
         "input_axes",
         "output_axes",
@@ -133,16 +153,33 @@ class Projection(MetaTransformation):
     space to one of lower dimension. An embedding adds the axes listed in
     `created`. Each is the inverse of the other, and the inverse is obtained
     by swapping the two lists.
+
+    Parameters
+    ----------
+    dropped : array_like of int, optional
+        Axes of the input coordinate system to remove.
+    created : array_like of int, optional
+        Axes of the output coordinate system to add.
+
+    Other Parameters
+    ----------------
+    input : CoordinateSystem, optional
+        Input coordinate system of the full space.
+    output : CoordinateSystem, optional
+        Output coordinate system of the full space.
     """
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "dropped", "created"
+    data_fields: _FieldNames = "dropped", "created"
 
     # --- attributes ---------------------------------------------------
 
     dropped: NotKwOnly[npvector[Integral]] = ()
+    """Axes of the input coordinate system to remove."""
+
     created: NotKwOnly[npvector[Integral]] = ()
+    """Axes of the output coordinate system to add."""
 
     # --- methods ------------------------------------------------------
 
@@ -165,11 +202,29 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
     The class is registered as a bijection. Its more specific kind, such as
     affine, is decided from the forward transformation, or from the inverse of
     the backward transformation when no forward one is given.
+
+    Parameters
+    ----------
+    forward : Transformation, optional
+        Forward transformation.
+    backward : Transformation, optional
+        Backward transformation.
+
+    Other Parameters
+    ----------------
+    input : CoordinateSystem, optional
+        Input coordinate system of the full space.
+        If not given, it is derived from the input system of the wrapped
+        transformation(s).
+    output : CoordinateSystem, optional
+        Output coordinate system of the full space.
+        If not given, it is derived from the input system of the wrapped
+        transformation(s).
     """
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward", "backward"
+    data_fields: _FieldNames = "forward", "backward"
 
     # --- attributes ---------------------------------------------------
 
@@ -277,7 +332,7 @@ def _subsystem(
         return full
     if index is None or system is None:
         return system
-    if list(system.axes) == [...]:
+    if list(get_axes(system)) == [...]:
         return system
     embedded = system.embed([int(i) for i in index])
     name = f"subspace({system.name})" if system.name else None

@@ -10,6 +10,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
@@ -20,7 +21,7 @@ from ._raw import MincRaw
 from ._utils import _read_minc, _read_voxels
 
 
-class _MincProxy:
+class _MincProxy(ArrayProxy):
     """A lazy array of the voxels of a MINC image.
 
     The proxy holds where the file lies, which is a path or the bytes of
@@ -30,6 +31,8 @@ class _MincProxy:
     open. A local file that is not compressed is opened by name, and any
     other file is decompressed into memory first. The values are
     presented in the order of the file, slowest dimension first.
+    Indexing the proxy returns another lazy array (see
+    [`ArrayProxy`][]), but any read decodes the whole file for now.
     """
 
     def __init__(self, source: tx.Any, record: MincRaw) -> None:
@@ -39,14 +42,9 @@ class _MincProxy:
         """The record of the image, which gives its shape and type."""
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the voxels in file order, read from the record."""
-        return self.record.shape
-
-    @property
-    def ndim(self) -> int:
-        """The number of dimensions of the voxels."""
-        return len(self.shape)
+        return tuple(self.record.shape)
 
     @property
     def dtype(self) -> np.dtype:
@@ -54,7 +52,10 @@ class _MincProxy:
         return self.record.scaled_dtype
 
     def read_voxels(self) -> np.ndarray:
-        """Return the scaled voxels in file order.
+        """Return all the scaled voxels in file order.
+
+        The voxels are those of the whole file, whatever part of it a view
+        of the proxy selects.
 
         Raises
         ------
@@ -65,29 +66,15 @@ class _MincProxy:
         values = _read_minc(
             _opened(self.source), self.record.version, _read_voxels
         )
-        if tuple(values.shape) != self.shape:
+        if tuple(values.shape) != self.base_shape:
             raise ParserContentError(
                 f"The MINC voxels have shape {values.shape}, but the header "
-                f"that the image was read with says {self.shape}."
+                f"that the image was read with says {self.base_shape}."
             )
         return values
 
-    def __array__(
-        self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
-    ) -> np.ndarray:
-        values = self.read_voxels()
-        return values if dtype is None else values.astype(dtype)
-
-    def __getitem__(self, index: tx.Any) -> np.ndarray:
-        # An empty selection, such as the one that Dask reads to learn the
-        # type of an array, is answered without reading the file.
-        selected = np.broadcast_to(np.empty((), self.dtype), self.shape)[index]
-        if selected.size == 0:
-            return np.empty(selected.shape, self.dtype)
-        return np.asarray(self)[index]
-
-    def __repr__(self) -> str:
-        return f"_MincProxy(shape={self.shape}, dtype={self.dtype})"
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        return self.read_voxels()[index]
 
 
 def _opened(source: tx.Any) -> tx.Union[str, bytes]:

@@ -52,7 +52,14 @@ from .compute.simplify import simplify as _simplify
 from .compute.utils import require_endomorphism
 from .modes import ModeLike
 
+if tx.TYPE_CHECKING:
+    # Imported here so that mkdocstrings resolved cross references.
+    from ..base import DataModelBase  # noqa: F401
+    from .derived import DerivedTransformation  # noqa: F401
+    from .meta import MetaTransformation  # noqa: F401
+
 _TypeReference = tx.ClassVar[tx.Optional[tx.Type[Transformation]]]
+_FieldName = tx.ClassVar[str]
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 
 # --- helpers ----------------------------------------------------------
@@ -100,34 +107,43 @@ def _alias(name: str, source: str, fset: bool = True) -> property:
 
 
 class ConcreteTransformation(Transformation):
-    """Base class of the transformations that hold their own parameters.
+    """
+    Base class of the transformations that hold their own parameters.
 
     A concrete transformation, such as an affine matrix or a displacement
-    field, stores the numbers that define its map, whereas a sequence is built
-    from other transformations. Computing a concrete transformation converts it
-    to the cheapest type that still represents it. Its inverse and its square
-    root are lazy wrappers, which compute their parameters only when these
-    parameters are read.
+    field, stores the numbers that define its map. This is in contrast
+    with [`MetaTransformation`][]s or [`DerivedTransformation`][]s,
+    which hold a reference to another transformation.
+
+    Computing a concrete transformation means converting it to the
+    cheapest type that still represents it exactly. For example, a
+    [`Scaling`][] for a [`Linear`][] transformation whose matrix is
+    diagonal.
+
+    Its inverse and its square root are lazy wrappers, which compute
+    their parameters eagerly when they are queried.
     """
 
     _reverseof: _TypeReference = None
-    """Concrete type of the resolved inverse, if it differs from this type.
+    """
+    Concrete type of the resolved inverse, if it differs from this type.
 
-    A type whose name states a direction, such as `VoxelToLPS`, has the other
-    type of its pair, `LPSToVoxel`, as the type of its inverse. Only the type
-    defined second sets this attribute, and `__init_subclass__` then sets it on
-    the first type so that the pair points both ways.
+    A type whose name states a direction, such as `VoxelToLPS`, has the
+    other type of its pair, `LPSToVoxel`, as the type of its inverse.
+    Only the type defined second sets this attribute, and `__init_subclass__`
+    then sets it on the first type so that the pair points both ways.
     """
 
     map_field: tx.ClassVar[tx.Optional[str]] = None
-    """Name of the view that gives the map itself, such as `matrix`.
+    """
+    Name of the view that gives the map itself, such as `matrix`.
 
     A family is a class that declares this attribute, together with its
     subclasses, such as `Affine` and its tangent class `AffineExponential`.
-    The view gives the map whatever the form in which `data` stores it, and
-    `from_instance` copies the map from one class of the family to another
-    through the view. The attribute is `None` for the identity and for a grid,
-    whose map is generated from its shape.
+    The view gives the map whatever the form in which `data` stores it,
+    and `from_instance` copies the map from one class of the family to
+    another through the view. The attribute is `None` for the identity
+    and for a grid, whose map is generated from its shape.
     """
 
     def __init_subclass__(cls, **kwargs) -> None:
@@ -147,7 +163,8 @@ class ConcreteTransformation(Transformation):
         simplify: SimplifyLike = "analytic",
         factor: bool = False,
     ) -> tx.Self:
-        """Convert the transformation to the cheapest type that represents it.
+        """
+        Convert the transformation to the cheapest type that represents it.
 
         Parameters
         ----------
@@ -183,20 +200,28 @@ class ConcreteTransformation(Transformation):
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Create an instance from an instance of a similar class.
-
-        When both classes belong to the same family, the map is copied through
-        the [`map_field`][] view rather than as the stored array. A tangent
-        (`log=True`) copied into the plain class of its family is therefore
-        exponentiated, and an affine transformation copied into a tangent class
-        is stored as its logarithm. The metadata that both classes share, such
-        as the flags of a field, is copied too, except `log`, because the two
-        classes may store the map in different forms. Everything else is as in
-        [`DataModelBase.from_instance`][brainhops.datamodel.base.DataModelBase.from_instance].
         """
+        Copy an instance of this class, or convert another transformation.
+
+        A transformation that is not an instance of this class, or of the
+        data model of a file format, is converted by its converters, as in
+        [`Transformation.from_instance`][]. Any other instance is copied.
+        When both classes belong to the same family, the map is copied
+        through the [`map_field`][] view rather than as the stored array.
+        A tangent (`log=True`) copied into the plain class of its family
+        is therefore exponentiated. The metadata that both classes share,
+        such as the flags of a field, is copied too, except `log`,
+        because the two classes may store the map in different forms.
+        Everything else is as in [`DataModelBase.from_instance`][].
+        """
+        if cls._converts(other):
+            return super().from_instance(other, *args, **kwargs)
         view = cls.map_field
-        if view is not None and _same_family(cls, other):
-            shared = set(cls.metadata_fields) & set(other.metadata_fields)
+        # A lazy wrapper, such as an inverse, derives its map from its
+        # forward, so only its own fields are copied.
+        wrapper = getattr(cls, "_operator", None) is not None
+        if view is not None and not wrapper and _same_family(cls, other):
+            shared = set(cls.encoding_fields) & set(other.encoding_fields)
             for name in shared - {"log"}:
                 kwargs.setdefault(name, getattr(other, name))
             _copy_map(other, cls, view, kwargs)
@@ -219,7 +244,7 @@ class ConcreteTransformation(Transformation):
         else:
             # The `Inverse` operator selects the lazy wrapper class of this
             # family.
-            obj = nocycles.OPERATORS["inverse"](self)
+            obj = nocycles.DERIVED["inverse"](self)
         if compute:
             obj = obj.compute(**kwargs)
         return obj
@@ -232,7 +257,7 @@ class ConcreteTransformation(Transformation):
         if is_identity(self):
             obj = self
         else:
-            obj = nocycles.OPERATORS["sqrt"](self)
+            obj = nocycles.DERIVED["sqrt"](self)
         return obj.compute(**kwargs) if compute else obj
 
 
@@ -256,10 +281,9 @@ class TransformationField(ConcreteTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "field"
-
-    data_fields: _FieldNames = ("data",)
-    metadata_fields: _FieldNames = "degree", "bound", "store"
+    map_field: _FieldName = "field"
+    data_fields: _FieldNames = "data",
+    encoding_fields: _FieldNames = "degree", "bound", "store"
     derived_fields: _FieldNames = "field", "values", "coefficients", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -318,58 +342,6 @@ class TransformationField(ConcreteTransformation):
         `"coefficients"`.
         """
         return StoreEnum.values
-
-    # --- overloads ----------------------------------------------------
-
-    if tx.TYPE_CHECKING:
-
-        @tx.overload
-        def __init__(
-            self,
-            data: ArrayLike,
-            *,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            field: ArrayLike,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            values: ArrayLike,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            coefficients: ArrayLike,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "coefficients",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
 
     def _set_derived_fields(self, arguments: tx.Any) -> None:
         # `coefficients=` declares that the array holds coefficients, so it
@@ -439,13 +411,53 @@ class DisplacementField(TransformationField, polymorphic=True):
     [`StationaryVelocityField`][brainhops.datamodel.transformations.StationaryVelocityField],
     whose `field` view integrates the velocity, so a plain displacement field
     always holds displacements.
+
+    !!! note "Mutually exclusive arguments"
+        Only one of `data=`, `field=`, `values=` or `coefficients=` may
+        be given. The others are derived from it according to the
+        `store`, `degree` and `log` flags.
+
+    Parameters
+    ----------
+    data : ArrayLike, optional
+        Field of shape `(*shape, ndim)`, which holds the displacements
+        or the stationary velocity. It is encoded according to `store`
+        and `degree`.
+
+    Other Parameters
+    ----------------
+    field : ArrayLike, optional
+        The displacements field, always encoded as values.
+        It is decoded into `data` according to `store`, `degree` and `log`.
+    values : ArrayLike, optional
+        The displacements or velocity field, always encoded as values.
+        It is encoded into `data` according to `store` and `degree`.
+    coefficients : ArrayLike, optional
+        The displacements or velocity field, always encoded as spline
+        coefficients. It is encoded into `data` according to `store` and
+        `degree`.
+    store : StoreEnum | str | None, optional
+        Whether `data` holds the values or the spline coefficients.
+        Default is `"coefficients"` if `coefficients=` is given,
+        otherwise `"values"`.
+    degree : InterpolatedOrder | str | int, default="linear"
+        The degree of the spline interpolation.
+    bound : BoundaryCondition | str | float, default="nearest"
+        The boundary condition for the spline interpolation.
+    log : bool, default=False
+        Whether `data` holds a stationary velocity rather than a
+        displacement.
+    input, output : CoordinateSystem, optional
+        Coordinate system of the input space.
+        The input and output systems of a displacement field are the same,
+        and correspond to its voxel grid.
+
     """
 
     # --- class attributes ---------------------------------------------
 
-    _base_metadata_fields: _FieldNames = TransformationField.metadata_fields
-    metadata_fields: _FieldNames = (
-        *_base_metadata_fields,
+    encoding_fields: _FieldNames = (
+        *TransformationField.encoding_fields,
         "log",
     )
 
@@ -460,62 +472,6 @@ class DisplacementField(TransformationField, polymorphic=True):
     """
 
     log = _invalidating_property("log", fset=False)
-
-    # --- overloads ----------------------------------------------------
-
-    if tx.TYPE_CHECKING:
-
-        @tx.overload
-        def __init__(
-            self,
-            data: ArrayLike,
-            *,
-            log: bool = False,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            field: ArrayLike,
-            log: bool = False,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            values: ArrayLike,
-            log: bool = False,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            coefficients: ArrayLike,
-            log: bool = False,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "coefficients",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
 
     def __post_init__(self, arguments: tx.Any) -> None:
         _refuse_log(self, arguments.get("log"), "StationaryVelocityField")
@@ -550,7 +506,45 @@ class DisplacementField(TransformationField, polymorphic=True):
 
 
 class CoordinatesField(TransformationField):
-    """Coordinates field on a regular grid, whose input space is the grid."""
+    """Coordinates field on a regular grid, whose input space is the grid.
+
+    !!! note "Mutually exclusive arguments"
+        Only one of `data=`, `field=`, `values=` or `coefficients=` may
+        be given. The others are derived from it according to the
+        `store` and `degree` flags.
+
+    Parameters
+    ----------
+    data : ArrayLike, optional
+        Field of shape `(*shape, ndim)`, which holds the coordinates.
+        It is encoded according to `store` and `degree`.
+
+    Other Parameters
+    ----------------
+    field : ArrayLike, optional
+        The coordinates field, always encoded as values.
+        It is decoded into `data` according to `store`, `degree`.
+    values : ArrayLike, optional
+        The coordinates field, always encoded as values.
+        It is encoded into `data` according to `store` and `degree`.
+    coefficients : ArrayLike, optional
+        The coordinates field, always encoded as spline coefficients.
+        It is encoded into `data` according to `store` and `degree`.
+    store : StoreEnum | str | None, optional
+        Whether `data` holds the values or the spline coefficients.
+        Default is `"coefficients"` if `coefficients=` is given,
+        otherwise `"values"`.
+    degree : InterpolatedOrder | str | int, default="linear"
+        The degree of the spline interpolation.
+    bound : BoundaryCondition | str | float, default="nearest"
+        The boundary condition for the spline interpolation.
+    input : CoordinateSystem, optional
+        Coordinate system of the input space.
+        It corresponds to its voxel grid.
+    output : CoordinateSystem, optional
+        Coordinate system of the output space.
+        This is the space in which stored coordinates are expressed.
+    """
 
     # --- derived ------------------------------------------------------
 
@@ -577,6 +571,22 @@ class CartesianField(CoordinatesField):
     A grid stores only its `shape`. The coordinates of its points (`field`) and
     their encoding (`data`) are generated on demand and cached until the shape
     or a flag is assigned.
+
+    Parameters
+    ----------
+    shape : Sequence[int]
+        Shape of the grid.
+
+    Other Parameters
+    ----------------
+    degree : InterpolatedOrder | str | int, default="linear"
+        The degree of the spline interpolation.
+    bound : BoundaryCondition | str | float, default="nearest"
+        The boundary condition for the spline interpolation.
+    input, output : CoordinateSystem, optional
+        Coordinate system of the input and output spaces.
+        A grid is the identity over its own coordinates, so the input
+        and system is also the output system.
     """
 
     # --- class attributes ---------------------------------------------
@@ -606,22 +616,6 @@ class CartesianField(CoordinatesField):
     # --- attribute views ----------------------------------------------
 
     shape = _invalidating_property("shape")
-
-    # --- overloads ----------------------------------------------------
-
-    if tx.TYPE_CHECKING:
-
-        @tx.overload
-        def __init__(
-            self,
-            shape: tx.Sequence[int],
-            *,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
 
     # --- derived attributes -------------------------------------------
 
@@ -683,14 +677,38 @@ class Affine(ConcreteTransformation, polymorphic=True):
     translation. `Affine(..., log=True)` builds an
     [`AffineExponential`][brainhops.datamodel.transformations.AffineExponential],
     whose `data` is the tangent of the map about the identity.
+
+    !!! note "Mutually exclusive arguments"
+        Only one of `data=`, `matrix=` or `homogeneous_matrix=` may be
+        given. The others are derived from it.
+
+    Parameters
+    ----------
+    data : ArrayLike, optional
+        Matrix of shape `(No, Ni+1)`, whose last column is the translation.
+        It maps `Ni` input axes to `No` output axes.
+        `None` stands for the identity.
+        If `log=True`, it holds the tangent of the map rather than its matrix.
+
+    Other Parameters
+    ----------------
+    matrix : ArrayLike, optional
+        The (compact) matrix representation of the affine map, with
+        shape `(No, Ni+1)`. Alias for `data` when `log=False`.
+    homogeneous_matrix : ArrayLike, optional
+        The homogeneous matrix representation of the affine map, with
+        shape `(No+1, Ni+1)`.
+    log : bool, default=False
+        Whether `data` holds the tangent of the map rather than its matrix.
+    input, output : CoordinateSystem, optional
+        Coordinate systems of the input and output spaces.
     """
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "matrix"
-
-    data_fields: _FieldNames = ("data",)
-    metadata_fields: _FieldNames = ("log",)
+    map_field: _FieldName = "matrix"
+    data_fields: _FieldNames = "data",
+    encoding_fields: _FieldNames = "log",
     derived_fields: _FieldNames = (
         "matrix",
         "homogeneous_matrix",
@@ -721,40 +739,6 @@ class Affine(ConcreteTransformation, polymorphic=True):
 
     _homogeneous_matrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Homogeneous matrix of shape `(No+1, Ni+1)`, accepted for `data`."""
-
-    # --- overloads ----------------------------------------------------
-
-    if tx.TYPE_CHECKING:
-
-        @tx.overload
-        def __init__(
-            self,
-            data: ArrayLike,
-            *,
-            log: bool = False,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            matrix: ArrayLike,
-            log: bool = False,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            homogeneous_matrix: ArrayLike,
-            log: bool = False,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
 
     def __post_init__(self, arguments: tx.Any) -> None:
         _refuse_log(self, arguments.get("log"), "AffineExponential")
@@ -796,14 +780,34 @@ class Linear(ConcreteTransformation, polymorphic=True):
     `data` is a matrix of shape `(No, Ni)`. `Linear(..., log=True)` builds a
     [`LinearExponential`][brainhops.datamodel.transformations.LinearExponential],
     whose `data` is the tangent of the map about the identity.
+
+    !!! note "Mutually exclusive arguments"
+        Only one of `data=` or `matrix=` may be given.
+        The other is derived from it.
+
+    Parameters
+    ----------
+    data : ArrayLike, optional
+        Matrix of shape `(No, Ni)`. It maps `Ni` input axes to `No`
+        output axes. `None` stands for the identity.
+        If `log=True`, it holds the tangent of the map rather than its matrix.
+
+    Other Parameters
+    ----------------
+    matrix : ArrayLike, optional
+        The matrix representation of the linear map, with
+        shape `(No, Ni+1)`. Alias for `data` when `log=False`.
+    log : bool, default=False
+        Whether `data` holds the tangent of the map rather than its matrix.
+    input, output : CoordinateSystem, optional
+        Coordinate systems of the input and output spaces.
     """
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "matrix"
-
-    data_fields: _FieldNames = ("data",)
-    metadata_fields: _FieldNames = ("log",)
+    map_field: _FieldName = "matrix"
+    data_fields: _FieldNames = "data",
+    encoding_fields: _FieldNames = "log",
     derived_fields: _FieldNames = "matrix", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -822,30 +826,6 @@ class Linear(ConcreteTransformation, polymorphic=True):
 
     _matrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Matrix, accepted in place of `data`."""
-
-    # --- overloads ----------------------------------------------------
-
-    if tx.TYPE_CHECKING:
-
-        @tx.overload
-        def __init__(
-            self,
-            data: ArrayLike,
-            *,
-            log: bool = False,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            matrix: ArrayLike,
-            log: bool = False,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
 
     def __post_init__(self, arguments: tx.Any) -> None:
         classname = type(self).__name__
@@ -883,6 +863,26 @@ class Rotation(Linear):
     `data` is a matrix of shape `(N, N)`. `Rotation(..., log=True)` builds a
     [`RotationExponential`][brainhops.datamodel.transformations.RotationExponential],
     whose `data` is the tangent of the map about the identity.
+
+    !!! note "Mutually exclusive arguments"
+        Only one of `data=` or `matrix=` may be given.
+        The other is derived from it.
+
+    Parameters
+    ----------
+    data : ArrayLike, optional
+        Matrix of shape `(N, N)`. `None` stands for the identity.
+        If `log=True`, it holds the tangent of the map rather than its matrix.
+
+    Other Parameters
+    ----------------
+    matrix : ArrayLike, optional
+        The matrix representation of the rotation, with
+        shape `(N, N)`. Alias for `data` when `log=False`.
+    log : bool, default=False
+        Whether `data` holds the tangent of the map rather than its matrix.
+    input, output : CoordinateSystem, optional
+        Coordinate systems of the input and output spaces.
     """
 
     # TODO: implement rotations in other representations (quaternions, Euler
@@ -907,13 +907,32 @@ class Rotation(Linear):
 
 @kinds.Permutation
 class Permutation(ConcreteTransformation):
-    """Permutation of the axes."""
+    """Permutation of the axes.
+
+    !!! note "Mutually exclusive arguments"
+        Only one of `data=` or `permutation=` may be given.
+        The other is derived from it.
+
+    Parameters
+    ----------
+    data : ArrayLike, optional
+        Matrix of shape `(N, N)`. `None` stands for the identity.
+        If `log=True`, it holds the tangent of the map rather than its matrix.
+
+    Other Parameters
+    ----------------
+    permutation : ArrayLike, optional
+        Vector of shape `(N,)` giving the input axis of each output axis.
+        Element `i` is the input axis that feeds output axis `i`.
+        `None` stands for the identity.
+    input, output : CoordinateSystem, optional
+        Coordinate systems of the input and output spaces.
+    """
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "permutation"
-
-    data_fields: _FieldNames = ("data",)
+    map_field: _FieldNames = "permutation"
+    data_fields: _FieldNames = "data",
     derived_fields: _FieldNames = "permutation", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -944,28 +963,6 @@ class Permutation(ConcreteTransformation):
             inverse_permutation[p] = i
         return backend.asarray(inverse_permutation, dtype=perm.dtype)
 
-    # --- overloads ----------------------------------------------------
-
-    if tx.TYPE_CHECKING:
-
-        @tx.overload
-        def __init__(
-            self,
-            data: ArrayLike,
-            *,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            permutation: ArrayLike,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
     # --- methods ------------------------------------------------------
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
@@ -989,14 +986,32 @@ class Scaling(ConcreteTransformation, polymorphic=True):
     `data` holds one scale factor per axis. `Scaling(..., log=True)` builds a
     [`ScalingExponential`][brainhops.datamodel.transformations.ScalingExponential],
     whose `data` holds the logarithms of the factors.
+
+    !!! note "Mutually exclusive arguments"
+        Only one of `data=` or `scale=` may be given.
+        The other is derived from it.
+
+    Parameters
+    ----------
+    data : ArrayLike, optional
+        Vector of length `N`. `None` stands for the identity.
+        If `log=True`, it holds the log-scale rather than the scale.
+
+    Other Parameters
+    ----------------
+    scale : ArrayLike, optional
+        The vector or scaling factors. Alias for `data` when `log=False`.
+    log : bool, default=False
+        Whether `data` holds the tangent of the map rather than its matrix.
+    input, output : CoordinateSystem, optional
+        Coordinate systems of the input and output spaces.
     """
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "scale"
-
-    data_fields: _FieldNames = ("data",)
-    metadata_fields: _FieldNames = ("log",)
+    map_field: _FieldNames = "scale"
+    data_fields: _FieldNames = "data",
+    encoding_fields: _FieldNames = "log",
     derived_fields: _FieldNames = "scale", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1017,30 +1032,6 @@ class Scaling(ConcreteTransformation, polymorphic=True):
 
     _scale: InitVar[tx.Optional[npvector[Real]]] = None
     """Scale factors, accepted in place of `data`."""
-
-    # --- overloads ----------------------------------------------------
-
-    if tx.TYPE_CHECKING:
-
-        @tx.overload
-        def __init__(
-            self,
-            data: ArrayLike,
-            *,
-            log: bool = False,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            scale: ArrayLike,
-            log: bool = False,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
 
     def __post_init__(self, arguments: tx.Any) -> None:
         _refuse_log(self, arguments.get("log"), "ScalingExponential")
@@ -1069,13 +1060,29 @@ class Scaling(ConcreteTransformation, polymorphic=True):
 
 @kinds.Translation
 class Translation(ConcreteTransformation):
-    """Translation by a vector."""
+    """Translation by a vector.
+
+    !!! note "Mutually exclusive arguments"
+        Only one of `data=` or `translation=` may be given.
+        The other is derived from it.
+
+    Parameters
+    ----------
+    data : ArrayLike, optional
+        Vector of length `N`. `None` stands for the identity.
+
+    Other Parameters
+    ----------------
+    translation : ArrayLike, optional
+        The translation vector. Alias for `data`.
+    input, output : CoordinateSystem, optional
+        Coordinate systems of the input and output spaces.
+    """
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "translation"
-
-    data_fields: _FieldNames = ("data",)
+    map_field: _FieldNames = "translation"
+    data_fields: _FieldNames = "data",
     derived_fields: _FieldNames = "translation", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1106,28 +1113,6 @@ class Translation(ConcreteTransformation):
             return None
         return -self.translation
 
-    # --- overloads ----------------------------------------------------
-
-    if tx.TYPE_CHECKING:
-
-        @tx.overload
-        def __init__(
-            self,
-            data: ArrayLike,
-            *,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            translation: ArrayLike,
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
 
 @kinds.Identity
 class Identity(ConcreteTransformation):
@@ -1136,6 +1121,11 @@ class Identity(ConcreteTransformation):
     When the input and output systems differ, the identity maps the input axes
     to the output axes in order. The identity has no parameter, so its `data`
     is always `None` and is not a constructor argument.
+
+    Other Parameters
+    ----------------
+    input, output : CoordinateSystem, optional
+        Coordinate systems of the input and output spaces.
     """
 
     # --- views --------------------------------------------------------
@@ -1231,7 +1221,10 @@ def _copy_map(
         # The output class holds the map, which the view of a tangent
         # already gives.
         kwargs["data"] = getattr(other, view)
-    if "log" in cls.metadata_fields:
+    if "log" in cls.encoding_fields:
+        # The flag is given even when it is the default of `cls`, because the
+        # copy would otherwise carry over the flag of `other`, and a
+        # polymorphic class would then select the form of `other` again.
         kwargs.setdefault("log", out_tangent)
 
 

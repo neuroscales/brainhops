@@ -15,8 +15,10 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import (
     SpaceUnit,
@@ -37,6 +39,10 @@ from brainhops.io.common.minc._utils import (
     minc_version,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -63,8 +69,8 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     versions. It hands the file to [`Minc1Image`][] or [`Minc2Image`][],
     which are the classes registered as formats. A MINC image holds the
     header of its file as [`MincMetadata`][], whose record is a
-    [`MincRaw`][], and the voxels in `raw`, a lazy array that reads them
-    with nibabel, scaled to real values, only when `data` is first
+    [`MincRaw`][], and the voxels in `rawdata`, a lazy array that reads
+    them with nibabel, scaled to real values, only when `data` is first
     needed. The lazy array presents the voxels in the order of the file,
     and the data reverse it into Fortran order, so a file with
     dimensions `zspace, yspace, xspace` gives data indexed `(x, y, z)`.
@@ -82,9 +88,9 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     saved to another format, such as NIfTI, and [`save`][brainhops.io.save]
     refuses to write it as MINC. The record is `metadata.raw`, and it
     describes the file as it was read. Assigned data is pending until
-    [`consolidate`][] moves it into `raw`, and the transformations that
-    the image holds, read or assigned, are kept, since no record can be
-    encoded.
+    [`consolidate`][] moves it into `rawdata`, and the transformations
+    that the image holds, read or assigned, are kept, since no record
+    can be encoded.
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc",)
@@ -96,77 +102,79 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
     VARIANTS: tx.ClassVar[tx.Tuple[type, ...]] = ()
     """The classes to which a versionless class hands files."""
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels in the order of the file, or `None` without data.
 
-    After a read, `raw` is a lazy array, which reads the voxels and
-    scales them when it is read. Assigning `data` leaves `raw` as it is,
-    and [`consolidate`][] stores the assigned array here, with its axes
-    reversed.
+    After a read, `rawdata` is a lazy array, which reads the voxels and
+    scales them when it is read. Assigning `data` leaves `rawdata` as it
+    is, and [`consolidate`][] stores the assigned array here, with its
+    axes reversed.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
     array stored here is pending until [`consolidate`][] moves it into
-    `raw`.
+    `rawdata`.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
-    property of the same name reads it. `None`, the default, means that
-    the transformations have been neither read nor assigned, so the
-    record is kept as it is. The property stores here the list that it
-    decodes, and an assigned list, even an empty one, is stored as it is.
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the record and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[MincMetadata]] = None
+    _metadata: NoRepr[tx.Optional[MincMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
-    An image built from data has no metadata. Assigning other metadata
-    drops the transformations that the image holds, read or assigned, so
-    that they are decoded from the new record.
+    An image built from data has no metadata. Assigning
+    other metadata drops the transformations decoded from the previous
+    record, so that they are decoded from the new one, and keeps the
+    transformations that were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[MincMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The voxels in Fortran order, assigned or decoded from `raw`.
+        """The voxels in Fortran order, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
-        pending until [`consolidate`][] moves it into `raw`. Otherwise the
-        data is decoded from `raw` on first access and cached. Data
+        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+        data is decoded from `rawdata` on first access and cached. Data
         decoded from a file is read-only. To change the voxels, assign
-        `data`. Assigning `None` decodes `raw` again.
+        `data`. Assigning `None` decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. An image without
-        metadata has no transformations.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place, such as an appended
+        transformation, is kept.
+        Assigning other metadata drops the decoded list, so that it is
+        decoded from the new record, and keeps an assigned list. A change
+        made in place to a decoded list is therefore lost when other
+        metadata is assigned. An image without metadata has no
+        transformations.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -174,23 +182,22 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         image has no geometry, and the image is then written as an image
         built from data alone. Assigning `None` decodes the record again.
         """
-        self._transformations = _record_transformations(self.metadata)
-        return self._transformations
+        return _record_transformations(self.metadata)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without reading the voxels.
 
         The shape is that of the assigned data, or else the reverse of the
-        shape of `raw`: the data reverse the axes of `raw`, and the lazy
-        array knows its shape from the record. An image without data
-        raises as [`SingleScaleImage`][] does.
+        shape of `rawdata`: the data reverse the axes of `rawdata`, and
+        the lazy array knows its shape from the record. An image without
+        data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in reversed(self.raw.shape))
+        return tuple(int(d) for d in reversed(self.rawdata.shape))
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
@@ -204,33 +211,69 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             return None
         return _minc_system(self.metadata.raw)
 
-    def consolidate(self, *, inplace: bool = False) -> "MincImage":
-        """Move the pending data into `raw`.
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> "MincImage":
+        """Move the pending data into `rawdata`.
 
         MINC files cannot be written, so no record can be encoded, and
         consolidating a MINC image is limited to its data: an assigned
-        array becomes `raw`, with its axes reversed, and is no longer
-        pending. The metadata is kept, and so are the transformations that
-        the image holds, read or assigned. An image without pending data is
-        left as it is: the copy shares `raw` and the metadata.
+        array becomes `rawdata`, with its axes reversed, and is no
+        longer pending. The metadata is kept, and so are the
+        transformations that the image holds, read or assigned. An image
+        without pending data is left as it is: the copy shares `rawdata`
+        and the metadata.
+
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a MINC
+        file holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`, and the copy holds the
+        consolidated metadata.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
         MincImage
             The consolidated copy, or this image with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         """
-        if self._data is None:
+        report = ConversionReport(source="MincImage", target="MincImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, MincMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        if not requested:
+            metadata = self.metadata
+        if self._data is None and not requested:
             return self if inplace else replace(self)
-        raw = _image_to_disk(self._data)
+        raw = (
+            self.rawdata if self._data is None else _image_to_disk(self._data)
+        )
         if not inplace:
-            return replace(self, data=None, raw=raw)
-        self.raw = raw
+            return replace(self, data=None, rawdata=raw, metadata=metadata)
+        self.rawdata = raw
         self.data = None
+        self.metadata = metadata
         return self
 
     # --- reading ------------------------------------------------------
@@ -393,7 +436,7 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         _no_options(kwargs)
         raw, proxy = read_minc(filename)
         klass = cls._variant(raw.version)
-        return klass(raw=proxy, metadata=MincMetadata.from_raw(raw))
+        return klass(rawdata=proxy, metadata=MincMetadata.from_raw(raw))
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MincImage":
@@ -428,7 +471,7 @@ class MincImage(ImageFormat, SingleScaleImage, BinaryFileReader):
         _no_options(kwargs)
         raw, proxy = read_minc(file)
         klass = cls._variant(raw.version)
-        return klass(raw=proxy, metadata=MincMetadata.from_raw(raw))
+        return klass(rawdata=proxy, metadata=MincMetadata.from_raw(raw))
 
 
 @register_format
@@ -496,7 +539,7 @@ def _unit(dimension: MincDimension, axis_type: tx.Optional[str]) -> tx.Any:
 def _minc_system(record: MincRaw) -> CoordinateSystem:
     """Return the voxel system of a record, in Fortran order."""
     axes = [_axis(d.name) for d in reversed(record.dimensions)]
-    return CoordinateSystem(name="voxel", axes=axes, order="F")
+    return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
 
 def _record_transformations(

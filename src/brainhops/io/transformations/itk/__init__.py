@@ -11,6 +11,12 @@ The blocks of a `CompositeTransform` are read in the order in which they apply
 to points. This order is the reverse of their order in the file, because ITK
 applies the last block of a composite first.
 
+The text, HDF5 and MATLAB files are short, apart from the parameters of
+the warps that HDF5 files hold, so each of these formats holds every block
+of its file as a record, which its metadata holds, and decodes its chain
+from that record when the chain is first used. The NIfTI warps hold their
+header as a record, as every NIfTI format does.
+
 ## ANTs
 
 ANTs writes its transforms with the ITK writers, so every reader accepts

@@ -11,7 +11,7 @@ __all__ = [
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr, fields, replace
+from bagof.magic import Inherit, NoRepr, fields, replace
 
 # internals
 from brainhops._core import path
@@ -20,18 +20,31 @@ from brainhops._core.properties import (
     InvalidatorInAttribute,
     smartproperty,
 )
-from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
     UnrepresentableTransformationError,
 )
+from brainhops.io.common.freesurfer import FreesurferTkrSystem
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    requested_fields,
+)
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
+)
+from brainhops.io.transformations.base._records import (
+    matrix_to_disk,
+    matrix_to_model,
+    read_only,
+    record_of,
 )
 
 # this format
@@ -41,10 +54,16 @@ from ._matrix_utils import (
     _get_phys2phys,
     _get_ras2ras,
     _get_vox2vox,
+    _volume_info,
 )
 from ._metadata import LtaMetadata
 from ._raw import LtaRaw
-from ._systems import LtaCoordinateSystem, LtaPhysicalSystem, LtaVoxelSystem
+from ._systems import (
+    LtaCoordinateSystem,
+    LtaPhysicalSystem,
+    LtaVoxelSystem,
+    _name,
+)
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -53,12 +72,6 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 # ----------------------------------------------------------------------
 #   READING THE RECORD
 # ----------------------------------------------------------------------
-
-
-def _record(xform: "LtaTransformation") -> tx.Optional[LtaRaw]:
-    """Return the record of the metadata of a transformation, or `None`."""
-    metadata = xform.metadata
-    return None if metadata is None else metadata.raw
 
 
 def _system(
@@ -79,8 +92,10 @@ def _typed_system(
     """Return the system of a volume as the type of a record defines it.
 
     The system is `RASmm` for the RAS type and `RSAmm` for the RSA type.
-    For the voxel and physical types, it is built from the geometry of the
-    volume, `info`. Without a record, the system is unknown and `None` is
+    For the `REGISTER_DAT` type, it is the tkregister space of the volume,
+    named after the volume, whose geometry stays in the record. For the
+    voxel and physical types, it is built from the geometry of the volume,
+    `info`. Without a record, the system is unknown and `None` is
     returned.
     """
     if record is None:
@@ -89,24 +104,13 @@ def _typed_system(
         return _systems.RASmm()
     if record.type == LtaType.LINEAR_RSA_TO_RSA:
         return _systems.RSAmm()
+    if record.type == LtaType.REGISTER_DAT:
+        return FreesurferTkrSystem(**({} if info is None else _name(info)))
     if record.type == LtaType.LINEAR_VOX_TO_VOX:
         return _system(LtaVoxelSystem, info)
     if record.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
         return _system(LtaPhysicalSystem, info)
     raise AssertionError(f"unsupported LTA type: {enum_name(record.type)}")
-
-
-def _read_only(matrix: np.ndarray) -> np.ndarray:
-    """Return a matrix decoded from a record, made read-only.
-
-    The matrix is cached, but the writer reads the record and not the
-    cached matrix, so an edit in place would be lost. To change the
-    matrix, a new matrix is assigned as data instead, which stays pending
-    until the transformation is consolidated.
-    """
-    matrix = np.array(matrix, dtype=np.float64)
-    matrix.flags.writeable = False
-    return matrix
 
 
 # ----------------------------------------------------------------------
@@ -119,32 +123,24 @@ def _read_only(matrix: np.ndarray) -> np.ndarray:
 # transformation is consolidated, which encodes a new record. A
 # transformation is never given a record that it did not read or encode,
 # because the type and the geometries of such a record would be made up,
-# and the writer would trust them.
+# and the writer would trust them. The helpers that read the record and
+# decode and encode its matrix are shared with the other formats whose
+# matrix lives in their record (`io/transformations/base/_records.py`).
 
 
-def _matrix_to_model(matrix: tx.Any) -> np.ndarray:
-    """Return the data of a transformation from the matrix of a record.
+def _record_to_model(record: LtaRaw) -> np.ndarray:
+    """Return the data of a transformation from a record, in its systems.
 
-    The record stores the homogeneous matrix, whose last row is dropped.
+    A record of the `REGISTER_DAT` type stores the matrix from the
+    tkregister space of `dst` to that of `src`, as FreeSurfer defines it
+    (`LTAchangeType` in `utils/transform.cpp`, commit 4f8728e), so the
+    data is its inverse, which maps `src` to `dst` as the other types do.
+    Any other record stores the matrix from `src` to `dst`.
     """
-    return np.asarray(matrix, dtype=np.float64)[:-1]
-
-
-def _matrix_to_disk(data: tx.Optional[ArrayProtocol]) -> tx.Tuple:
-    """Return the matrix that a record stores for the data of a model.
-
-    The record stores the homogeneous matrix as a tuple of rows of floats.
-    Data of `None`, which the data model reads as the identity, is stored
-    as the identity.
-    """
-    if data is None:
-        homogeneous = np.eye(4)
-    else:
-        data = np.asarray(data, dtype=np.float64)
-        last = np.zeros((1, data.shape[-1]))
-        last[0, -1] = 1.0
-        homogeneous = np.concatenate([data, last])
-    return tuple(tuple(float(v) for v in row) for row in homogeneous)
+    matrix = np.asarray(record.affine.matrix, dtype=np.float64)
+    if record.type == LtaType.REGISTER_DAT and matrix.shape == (4, 4):
+        matrix = np.linalg.inv(matrix)
+    return matrix_to_model(matrix)
 
 
 # ----------------------------------------------------------------------
@@ -196,19 +192,39 @@ class LtaTransformation(
         affine, is consolidated, and written with the LTA type that
         matches its systems:
 
-        | `input` and `output`  | LTA type                    |
-        | --------------------- | --------------------------- |
-        | both `RASmm`          | `LINEAR_RAS_TO_RAS`         |
-        | both `RSAmm`          | `LINEAR_RSA_TO_RSA`         |
-        | both `LtaVoxelSystem` | `LINEAR_VOX_TO_VOX`         |
-        | both `LtaPhysicalSystem` | `LINEAR_PHYSVOX_TO_PHYSVOX` |
+        | `input` and `output`       | LTA type                    |
+        | -------------------------- | --------------------------- |
+        | both `RASmm`               | `LINEAR_RAS_TO_RAS`         |
+        | both `RSAmm`               | `LINEAR_RSA_TO_RSA`         |
+        | both `LtaVoxelSystem`      | `LINEAR_VOX_TO_VOX`         |
+        | both `LtaPhysicalSystem`   | `LINEAR_PHYSVOX_TO_PHYSVOX` |
+        | both `FreesurferTkrSystem` | `REGISTER_DAT`              |
 
         Writing any other pair raises [`UnrepresentableTransformationError`][].
+        In particular, a tkregister space, a
+        [`FreesurferTkrSystem`][brainhops.io.common.freesurfer.FreesurferTkrSystem],
+        is never written as scanner RAS.
+
+    !!! note "The `REGISTER_DAT` type"
+        An LTA file of type 14, `REGISTER_DAT`, holds the matrix of a
+        `register.dat` file, which maps the tkregister RAS space of the
+        destination volume to that of the source volume, as FreeSurfer
+        defines it (`LTAchangeType` and `ltaReadRegisterDat` in
+        `utils/transform.cpp`, commit 4f8728e). The transformation reads
+        the inverse of that matrix, so that it maps the source to the
+        destination as every other type does, and its systems are the
+        tkregister spaces of the two volumes. The views read the file in
+        their own systems, as FreeSurfer converts it, which needs both
+        volume geometries. A matrix that is assigned between two
+        tkregister spaces is written with this type, and its inverse is
+        stored.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".lta",)
 
-    _metadata: NoRepr[tx.Optional[LtaMetadata]] = None
+    _metadata: NoRepr[tx.Optional[LtaMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
     metadata = smartproperty("metadata", invalidates=("data", _FORGET_VIEWS))
     """The metadata of the file, which holds the file as a record.
@@ -230,7 +246,7 @@ class LtaTransformation(
         it is `None` when the file records no source geometry. Without a
         record, it is `None`.
         """
-        record = _record(self)
+        record = record_of(self)
         return _typed_system(record, None if record is None else record.src)
 
     @smartproperty
@@ -240,7 +256,7 @@ class LtaTransformation(
         Unless the system was set explicitly, it follows from the LTA type
         and from the destination geometry, in the same way as `input`.
         """
-        record = _record(self)
+        record = record_of(self)
         return _typed_system(record, None if record is None else record.dst)
 
     @smartproperty(cache=True, invalidates=_FORGET_VIEWS)
@@ -252,10 +268,10 @@ class LtaTransformation(
         LTA type. Otherwise the matrix is the matrix of the record, without
         its last row, and is read-only, or `None` without a record.
         """
-        record = _record(self)
+        record = record_of(self)
         if record is None:
             return None
-        return _read_only(_matrix_to_model(record.affine.matrix))
+        return read_only(_record_to_model(record))
 
     # --- sniff --------------------------------------------------------
 
@@ -358,66 +374,45 @@ class LtaTransformation(
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy a transformation, sharing the record of an LTA transformation.
-
-        Within the format, the record of the metadata carries the matrix,
-        so the matrix is not decoded and passed on, and the copy holds the
-        same metadata as `other`. The data model would copy the decoded
-        matrix, so the rule is kept here. A transformation of the format
-        that holds a pending matrix, such as one built from data alone, is
-        copied with that matrix, as any affine is. Any other
-        transformation, including another view of the format, is converted
-        as `other.to(cls)` converts it: a view then reads the same record
-        in its own coordinate systems.
-
-        Parameters
-        ----------
-        other : object
-            The instance to copy or convert.
-        *args : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`. A transformation that is converted takes keyword
-            options only.
-        **kwargs : Any
-            Constructor arguments, which take precedence over the fields
-            of `other`, or options of the conversion.
-
-        Returns
-        -------
-        Self
-            The copy.
-
-        Raises
-        ------
-        ConversionError
-            If the format cannot hold a transformation that is converted.
-        """
-        if isinstance(other, cls) and other._data is None:
-            kwargs.setdefault("data", None)
-        return super().from_instance(other, *args, **kwargs)
-
     # --- to -----------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False) -> tx.Self:
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
+    ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
 
         A transformation that holds a record, and whose matrix, `input`
         and `output` were not set, is left as it is, since its record also
         holds its matrix. Otherwise, a new record is built. Its type
         follows from the systems, as described in [`LtaTransformation`][],
-        and its matrix is `matrix`. Its volume geometries come from the
-        systems for the voxel and physical types, and from the current
-        record for the RAS and RSA types. Its other fields are copied from
+        and its matrix is `matrix`, or its inverse for the `REGISTER_DAT`
+        type. Its volume geometries come from the systems for the voxel
+        and physical types, and from the current record for the RAS and
+        RSA types. For the `REGISTER_DAT` type, they come from the
+        geometry of each tkregister system when it has one, and from the
+        current record otherwise. Its other fields are copied from
         the current record. A transformation without a record is encoded in
         the same way. The new record is held by new metadata, and the
         matrix and the systems are then decoded from it.
+
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of an LTA file
+        holds no field of the vocabulary yet, so a field that is set is
+        reported as lost, once, by `on_loss`.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -427,23 +422,40 @@ class LtaTransformation(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         UnrepresentableTransformationError
             If the LTA format cannot encode the systems or the matrix.
         """
-        record = _record(self)
+        report = ConversionReport(
+            source="LtaTransformation", target="LtaTransformation"
+        )
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, LtaMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        record = record_of(self)
         overridden = (
             self._data is not None
             or self._input is not None
             or self._output is not None
         )
         if record is not None and not overridden:
-            return self if inplace else replace(self)
+            if not requested:
+                return self if inplace else replace(self)
+            if not inplace:
+                return replace(self, metadata=metadata)
+            self.metadata = metadata
+            return self
         record = _build_raw(self)
         _check_shape(record)
-        if self.metadata is None:
+        if metadata is None:
             metadata = LtaMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self, metadata=metadata, data=None, input=None, output=None
@@ -466,14 +478,16 @@ class LtaTransformation(
         file : path or file object
             The path or the open text file.
         **kwargs : Any
-            Options of the writer of the record.
+            `on_loss` and the fields of the metadata, as for
+            [`consolidate`][], and options of the writer of the record.
 
         Raises
         ------
         UnrepresentableTransformationError
             If the LTA format cannot encode the systems or the matrix.
         """
-        return _lta_written(self).to_file(file, **kwargs)
+        record, options = _lta_written(self, kwargs)
+        return record.to_file(file, **options)
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the LTA file that encodes the transformation.
@@ -484,7 +498,8 @@ class LtaTransformation(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record.
+            `on_loss` and the fields of the metadata, as for
+            [`consolidate`][], and options of the writer of the record.
 
         Yields
         ------
@@ -496,7 +511,8 @@ class LtaTransformation(
         UnrepresentableTransformationError
             If the LTA format cannot encode the systems or the matrix.
         """
-        return _lta_written(self).to_lines(**kwargs)
+        record, options = _lta_written(self, kwargs)
+        return record.to_lines(**options)
 
     def to_text(self, **kwargs) -> str:
         """Return the LTA file content that encodes the transformation.
@@ -507,7 +523,8 @@ class LtaTransformation(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record.
+            `on_loss` and the fields of the metadata, as for
+            [`consolidate`][], and options of the writer of the record.
 
         Returns
         -------
@@ -519,7 +536,8 @@ class LtaTransformation(
         UnrepresentableTransformationError
             If the LTA format cannot encode the systems or the matrix.
         """
-        return _lta_written(self).to_text(**kwargs)
+        record, options = _lta_written(self, kwargs)
+        return record.to_text(**options)
 
 
 class LtaTransformationVoxToVox(LtaTransformation):
@@ -532,14 +550,14 @@ class LtaTransformationVoxToVox(LtaTransformation):
     @smartproperty
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The voxel system of the source volume, unless set explicitly."""
-        record = _record(self)
+        record = record_of(self)
         info = LtaRaw.SrcVolumeInfo() if record is None else record.src
         return _system(LtaVoxelSystem, info)
 
     @smartproperty
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The voxel system of the destination volume, unless set."""
-        record = _record(self)
+        record = record_of(self)
         info = LtaRaw.DstVolumeInfo() if record is None else record.dst
         return _system(LtaVoxelSystem, info)
 
@@ -552,10 +570,10 @@ class LtaTransformationVoxToVox(LtaTransformation):
         voxel-to-voxel type. Otherwise the matrix is derived from the
         record and is read-only, or `None` without a record.
         """
-        record = _record(self)
+        record = record_of(self)
         if record is None:
             return None
-        return _read_only(_get_vox2vox(record)[:-1])
+        return read_only(_get_vox2vox(record)[:-1])
 
 
 class LtaTransformationPhysToPhys(LtaTransformation):
@@ -568,14 +586,14 @@ class LtaTransformationPhysToPhys(LtaTransformation):
     @smartproperty
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The physical system of the source volume, unless set explicitly."""
-        record = _record(self)
+        record = record_of(self)
         info = LtaRaw.SrcVolumeInfo() if record is None else record.src
         return _system(LtaPhysicalSystem, info)
 
     @smartproperty
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The physical system of the destination volume, unless set."""
-        record = _record(self)
+        record = record_of(self)
         info = LtaRaw.DstVolumeInfo() if record is None else record.dst
         return _system(LtaPhysicalSystem, info)
 
@@ -588,10 +606,10 @@ class LtaTransformationPhysToPhys(LtaTransformation):
         physical-to-physical type. Otherwise the matrix is derived from the
         record and is read-only, or `None` without a record.
         """
-        record = _record(self)
+        record = record_of(self)
         if record is None:
             return None
-        return _read_only(_get_phys2phys(record)[:-1])
+        return read_only(_get_phys2phys(record)[:-1])
 
 
 class LtaTransformationRASToRAS(LtaTransformation):
@@ -616,10 +634,10 @@ class LtaTransformationRASToRAS(LtaTransformation):
         RAS-to-RAS type. Otherwise the matrix is derived from the record
         and is read-only, or `None` without a record.
         """
-        record = _record(self)
+        record = record_of(self)
         if record is None:
             return None
-        return _read_only(_get_ras2ras(record)[:-1])
+        return read_only(_get_ras2ras(record)[:-1])
 
 
 # ----------------------------------------------------------------------
@@ -668,7 +686,7 @@ def _build_raw(xform: LtaTransformation) -> LtaRaw:
     See [`LtaTransformation.consolidate`][].
     """
     src_system, dst_system = xform.input, xform.output
-    old = _record(xform)
+    old = record_of(xform)
     if old is None:
         old = LtaRaw()
     Src, Dst = LtaRaw.SrcVolumeInfo, LtaRaw.DstVolumeInfo
@@ -686,6 +704,12 @@ def _build_raw(xform: LtaTransformation) -> LtaRaw:
             else LtaType.LINEAR_RSA_TO_RSA
         )
         src, dst = _as_block(old.src, Src), _as_block(old.dst, Dst)
+    elif both(FreesurferTkrSystem):
+        # FreeSurfer stores the matrix of a register.dat file, from the
+        # tkregister space of `dst` to that of `src`.
+        lta_type = LtaType.REGISTER_DAT
+        src = _tkr_block(src_system, old.src, Src)
+        dst = _tkr_block(dst_system, old.dst, Dst)
     elif both(LtaVoxelSystem) or both(LtaPhysicalSystem):
         lta_type = (
             LtaType.LINEAR_VOX_TO_VOX
@@ -704,33 +728,72 @@ def _build_raw(xform: LtaTransformation) -> LtaRaw:
         raise UnrepresentableTransformationError(
             f"An LTA file cannot encode an affine from {name(src_system)} "
             f"to {name(dst_system)}: it encodes RASmm to RASmm, RSAmm to "
-            f"RSAmm, LtaVoxelSystem to LtaVoxelSystem, and "
-            f"LtaPhysicalSystem to LtaPhysicalSystem. Set the input and "
-            f"output of the affine to say which it is."
+            f"RSAmm, LtaVoxelSystem to LtaVoxelSystem, LtaPhysicalSystem "
+            f"to LtaPhysicalSystem, and FreesurferTkrSystem to "
+            f"FreesurferTkrSystem. Set the input and output of the affine "
+            f"to say which it is."
         )
 
+    matrix = matrix_to_disk(xform.matrix)
+    if lta_type == LtaType.REGISTER_DAT and np.shape(matrix) == (4, 4):
+        try:
+            inverse = np.linalg.inv(np.asarray(matrix, dtype=np.float64))
+        except np.linalg.LinAlgError:
+            raise UnrepresentableTransformationError(
+                "An LTA file of type REGISTER_DAT stores the inverse of an "
+                "affine between tkregister spaces, and this affine is not "
+                "invertible."
+            ) from None
+        matrix = tuple(tuple(float(v) for v in row) for row in inverse)
     return LtaRaw(
         type=lta_type,
         nxforms=old.nxforms,
         mean=old.mean,
         sigma=old.sigma,
-        affine=LtaRaw.Affine(matrix=_matrix_to_disk(xform.matrix)),
+        affine=LtaRaw.Affine(matrix=matrix),
         label=old.label,
         src=src,
         dst=dst,
     )
 
 
-def _lta_written(xform: LtaTransformation) -> LtaRaw:
+def _tkr_block(
+    system: FreesurferTkrSystem,
+    old: tx.Optional[LtaRaw.VolumeInfo],
+    cls: tx.Type[LtaRaw.VolumeInfo],
+) -> LtaRaw.VolumeInfo:
+    """Return the geometry block of the volume of a tkregister system.
+
+    The block is encoded from the geometry of the system when it has one,
+    and is otherwise that of the current record, or an invalid block.
+    """
+    if system.geometry is not None:
+        return _volume_info(system.geometry, cls)
+    return _as_block(old, cls)
+
+
+def _lta_written(
+    xform: LtaTransformation, kwargs: tx.Mapping[str, tx.Any]
+) -> tx.Tuple[LtaRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from a transformation holds.
 
-    The record is that of the consolidated copy of the transformation.
+    The record is that of the copy of the transformation consolidated
+    with `on_loss` and the fields of the metadata among `kwargs`, and the
+    other options, for the writer of the record, are returned with it.
 
     Raises
     ------
     UnrepresentableTransformationError
         If the LTA format cannot encode the systems or the matrix.
     """
-    record = _record(xform.consolidate())
+    fields = {
+        name: value
+        for name, value in kwargs.items()
+        if name in FIELDS or name == "on_loss"
+    }
+    options = {
+        name: value for name, value in kwargs.items() if name not in fields
+    }
+    record = record_of(xform.consolidate(**fields))
     _check_shape(record)
-    return record
+    return record, options

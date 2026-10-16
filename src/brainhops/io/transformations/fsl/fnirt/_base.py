@@ -1,6 +1,6 @@
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Alias, KwOnly, NoRepr, replace
+from bagof.magic import Alias, Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
@@ -8,24 +8,34 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _header,
+    _keep_given_fields,
     _nifti_intent,
     _NiftiObject,
     _record_image,
+    _split_options,
     _stored_parts,
 )
 from brainhops.io.images.nifti._views import (
     _image_to_disk,
     _image_to_model,
+)
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    overruled_fields,
+    requested_fields,
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
@@ -38,7 +48,8 @@ from .._formats import FslTransformationFormat
 from .._keywords import pop_aliased
 from .._repr import stored_repr
 
-# Intent codes from `nifti1.h`.
+# Intent codes of FSL, which its own copy of `nifti1.h` defines, as
+# listed in `fsl/data/constants.py` of fslpy 3.29.1.
 FSL_FNIRT_DISPLACEMENT_FIELD = 2006
 FSL_CUBIC_SPLINE_COEFFICIENTS = 2007
 FSL_DCT_COEFFICIENTS = 2008
@@ -64,6 +75,7 @@ _COEFFICIENT_INTENTS = frozenset(
 # Deformation fields are linear B-splines on the reference grid; coefficient
 # fields are quadratic or cubic on a coarse knot grid.
 _SPLINE_DEGREE = {
+    0: 1,  # Native convertwarp/invwarp dense fields omit the FSL intent.
     FSL_FNIRT_DISPLACEMENT_FIELD: 1,
     FSL_QUADRATIC_SPLINE_COEFFICIENTS: 2,
     FSL_CUBIC_SPLINE_COEFFICIENTS: 3,
@@ -73,6 +85,23 @@ _SPLINE_DEGREE = {
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
+# Developer notes on the coefficient files (see also items 220 to 223 of
+# docs/design/format-records.md):
+# - The header conventions are those of `src/warpfns/fnirt_file_writer.cpp`,
+#   `src/warpfns/fnirt_file_reader.cpp` and `src/basisfield/fsl_splines.h`
+#   of FSL 5.0.9, as mirrored at https://github.com/neurodebian/fsl (commit
+#   513f6a0), and they agree with `fsl/transform/fnirt.py` and
+#   `fsl/transform/nonlinear.py` of fslpy 3.29.1
+#   (https://github.com/pauldmccarthy/fslpy, commit 0eaff98).
+# - A coefficient field is a `DisplacementField` that stores coefficients
+#   because FSL evaluates the same centred B-splines.
+# - FSL places the knots in the radiological order of the reference, so for
+#   a reference whose voxel-to-world matrix has a positive determinant this
+#   reader follows FSL, while fslpy places them from the stored voxels.
+# - A reference of another resolution is placed by its scaled-mm positions,
+#   as fslpy does, while FSL's reader evaluates the field on the grid stored
+#   in the file (item 223).
+# - FSL cannot write a DCT coefficient field (intent 2008) either.
 @register_format
 class FnirtWarpField(
     FslTransformationFormat,
@@ -81,13 +110,18 @@ class FnirtWarpField(
 ):
     """Non-linear transformation stored in an FSL FNIRT NIfTI file.
 
-    A deformation field stores, for every reference voxel, the matching moving
-    location in scaled millimetres. A coefficient field stores B-spline
-    coefficients on a coarse knot grid over the reference. Both are B-spline
-    fields on a regular grid, so one reader handles them.
+    FNIRT saves the warp that it computes in two kinds of files, and the
+    intent code of the file tells them apart. A deformation field, which
+    FNIRT writes with `--fout`, stores for every reference voxel the
+    matching moving location in scaled millimetres, or the displacement to
+    it. A coefficient field, which FNIRT writes with `--cout`, stores the
+    coefficients of a B-spline on a coarse grid of knots over the
+    reference. Both are B-spline fields on a regular grid, so one reader
+    handles them.
 
     | Intent | Kind | Degree | Grid |
     | ------ | ---- | ------ | ---- |
+    | 0 | deformation (explicit `fnirt` hint) | 1 | reference voxels |
     | 2006 | deformation | 1 | reference voxels |
     | 2007 | cubic coefficients | 3 | knot grid |
     | 2009 | quadratic coefficients | 2 | knot grid |
@@ -95,15 +129,28 @@ class FnirtWarpField(
     The transformation is an
     [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]
     of three transformations from reference RAS to moving RAS: an affine to
-    warp-grid voxels, the field, and an affine to moving RAS. The field stays
-    on its own grid and the spline is evaluated only when the sequence is
-    computed.
+    warp-grid coordinates, the field, and an affine to moving RAS. The field
+    stays on its own grid and the spline is evaluated only when the sequence
+    is computed. A coefficient field becomes a
+    [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField]
+    that stores coefficients, and the two affines place its knots where FSL
+    places them.
+
+    A coefficient file uses its header in a way of its own. The pixdims
+    hold the knot spacing in voxels of the reference, the intent parameters
+    hold the voxel sizes of the reference, the offsets of the qform hold the
+    shape of the reference, and the sform holds the initial affine from
+    the source to the reference in scaled millimetres. The values are
+    relative displacements in scaled millimetres, which FSL adds to the
+    reference position moved by the inverse of the initial affine.
+    Coefficients beyond the grid count as zero.
 
     A deformation field carries the reference geometry itself, so only the
     moving image is required. A coefficient field carries neither image's
     geometry, so both the reference and the moving image are required. A
-    discrete-cosine-transform coefficient field (intent 2008) is
-    recognized but not supported.
+    reference of another resolution than the one used at registration is
+    placed by its scaled-mm positions. A discrete-cosine-transform
+    coefficient field (intent 2008) is recognized but not supported.
 
     !!! note "Images remain external"
         A FNIRT file does not hold everything its map depends on: the moving
@@ -111,12 +158,26 @@ class FnirtWarpField(
         separately, and so is whether a deformation field holds absolute or
         relative positions, which is otherwise guessed from the values. Save
         writes this FNIRT file, but those inputs are not embedded; retain them
-        to read the same map back. A coefficient field also needs a knot grid,
-        a spline anchoring and an initial affine that a general field does not
-        have.
+        to read the same map back. A coefficient file keeps its knot spacing,
+        the voxel sizes and the shape of its reference and its initial affine
+        in its header, so a field read from such a file is written back as
+        a coefficient file. A field built from an array alone is written as
+        a deformation field.
     """
 
     HINTS = ("fnirt",)
+
+    _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
+        "metadata", default=None
+    )
+
+    metadata = smartproperty("metadata")
+    """The metadata of the file, which holds its header, or `None`.
+
+    A field built from data has no metadata. The field is decoded from
+    `raw` and from the header, and assigning other metadata keeps what
+    was decoded.
+    """
 
     moving: tx.Annotated[
         tx.Optional[_ImageLike], Alias(("moving", "mov", "src"))
@@ -136,10 +197,10 @@ class FnirtWarpField(
     """
 
     _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
-    """The array given to the field, or `None` to decode it from `raw`.
+    """The array given to the field, or `None` to decode it from `rawdata`.
 
     An array stored here is pending until [`consolidate`][] or a write
-    encodes it into `raw`.
+    encodes it into `rawdata`.
     """
 
     @smartproperty(cache=True)
@@ -149,12 +210,12 @@ class FnirtWarpField(
         A deformation field has shape (X, Y, Z, 3), and a coefficient field
         holds the coefficients on its knot grid. An array that is assigned
         is returned as it is, and stays pending until [`consolidate`][] or
-        a write encodes it. Otherwise the array is decoded from `raw`. The
+        a write encodes it. Otherwise the array is decoded from `rawdata`. The
         chain is built again from a new array.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -196,16 +257,19 @@ class FnirtWarpField(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            The `moving` and `reference` images, under any of their
-            aliases, and the options of the nibabel readers.
+            The `moving` and `reference` images under any of their aliases,
+            `deformation_type`, and the options of the nibabel readers.
 
         Returns
         -------
         FnirtWarpField
             The field, whose array is read lazily.
         """
+        deformation_type = kwargs.pop("deformation_type", None)
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_filename(filename, **kwargs)
+        if deformation_type is not None:
+            obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
     @classmethod
@@ -217,22 +281,30 @@ class FnirtWarpField(
         fileobj : BinaryIO
             The stream, which must stay open while the data may be read.
         **kwargs : Any
-            The `moving` and `reference` images, under any of their
-            aliases, and the options of the nibabel readers.
+            The `moving` and `reference` images under any of their aliases,
+            `deformation_type`, and the options of the nibabel readers.
 
         Returns
         -------
         FnirtWarpField
             The field, whose array is read lazily.
         """
+        deformation_type = kwargs.pop("deformation_type", None)
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_fileobj(fileobj, **kwargs)
+        if deformation_type is not None:
+            obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
     def consolidate(
-        self, *, inplace: bool = False, like: tx.Any = None, **overrides
+        self,
+        *,
+        inplace: bool = False,
+        like: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **options: tx.Any,
     ) -> tx.Self:
-        """Encode the pending array into `raw` and a new header.
+        """Encode the pending array into `rawdata` and a new header.
 
         FNIRT writes the field and the parameters of its spline in the
         header, which no other transformation can be converted to, so the
@@ -245,6 +317,13 @@ class FnirtWarpField(
         that has a header and nothing pending, consolidated without
         options, is left as it is.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the options that name its fields, and its record is
+        the base of the new header. The fields given by keyword take
+        precedence over `like`, and a `dtype` that is given, or changed
+        in the metadata, is the type of the stored array. What the write
+        loses or approximates is acted on once, by `on_loss`.
+
         Parameters
         ----------
         inplace : bool, default=False
@@ -252,9 +331,14 @@ class FnirtWarpField(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the header cannot hold. By
+            default, the policy in effect.
+        **options : Any
+            Fields of the metadata to override, such as `description` or
+            `dtype`, and header fields, which take precedence over the
+            derived values and `like`. A header field that holds a field
+            of the metadata, such as `descrip`, is refused.
 
         Returns
         -------
@@ -263,30 +347,51 @@ class FnirtWarpField(
 
         Raises
         ------
+        TypeError
+            If an option names a header field that holds a field of the
+            metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If the field has no array.
         UnrepresentableTransformationError
             If a chain was assigned to the field.
         """
+        fields, overrides = _split_options(options)
+        name = type(self).__name__
+        report = ConversionReport(source=name, target=name)
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NiftiMetadata, fields, report
+        )
         if (
             self._data is None
             and self._transformations is None
             and like is None
             and not overrides
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
-        raw, record = _stored_parts(_fnirt_encoded(self, like, overrides))
+        if "dtype" in requested:
+            overrides["dtype"] = requested["dtype"]
+        base = None if metadata is None else metadata.raw
+        raw, record = _stored_parts(
+            _fnirt_encoded(self, like, overrides, base, fields)
+        )
         metadata = _consolidated_metadata(self, record)
+        overruled_fields(requested, metadata, report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
         if not inplace:
             return replace(
                 self,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
                 data=None,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         return self
@@ -338,14 +443,22 @@ class FnirtWarpField(
         return degree
 
     def _bound(self) -> tx.Union[str, float]:
-        # Coefficients are zero outside the grid; a dense field is never
-        # sampled outside, so nearest is harmless.
+        # FSL adds up only the splines whose coefficients exist, so the
+        # coefficients beyond the grid count as zero (`Peek` and
+        # `RangeOfSplines` in FSL, see `_ref_to_field`). A dense field is
+        # never sampled outside, so nearest is harmless.
         return "constant" if self._is_coeff() else "nearest"
 
     def _stored_knot_spacing(self) -> np.ndarray:
-        """Knot spacing as stored in the pixdims."""
-        zooms = _header(self).get_zooms()[:3]
-        return np.abs(np.asarray(zooms, dtype=np.float64))
+        """Knot spacing in reference voxels, as stored in the pixdims.
+
+        The pixdims are rounded to whole numbers of voxels, as FSL reads
+        them.
+        """
+        # `FnirtFileReader::read_coef_file` in
+        # `src/warpfns/fnirt_file_reader.cpp` of FSL 5.0.9.
+        zooms = np.abs(np.asarray(_header(self).get_zooms()[:3], float))
+        return np.floor(zooms + 0.5)
 
     def _reference_pixdim(self) -> np.ndarray:
         """Reference voxel sizes, stored in the intent parameters."""
@@ -359,31 +472,71 @@ class FnirtWarpField(
             dtype=np.float64,
         )
 
-    def _knot_spacing(self, ref: _ImageGeometry) -> np.ndarray:
-        """Per-axis knot spacing in reference voxels.
+    def _has_spline_parameters(self) -> bool:
+        """Whether the header gives usable knot and voxel sizes.
 
-        The spacing is one for a deformation field. A coefficient field stores
-        it in voxels of the reference used at registration, so it is rescaled
-        to the current reference resolution.
+        A coefficient field cannot be placed without a positive knot
+        spacing and positive voxel sizes of the reference. A dense field
+        does not need them.
         """
         if not self._is_coeff():
-            return np.ones(3, dtype=np.float64)
-        ratio = self._reference_pixdim() / ref.pixdim
-        return self._stored_knot_spacing() * ratio
+            return True
+        sizes = np.concatenate(
+            [self._stored_knot_spacing(), self._reference_pixdim()]
+        )
+        return bool(np.all(np.isfinite(sizes) & (sizes > 0)))
 
     def _ref_to_field(self, ref: _ImageGeometry) -> np.ndarray:
-        """Affine from reference voxels to warp-grid voxels."""
-        spacing = self._knot_spacing(ref)
-        matrix = np.eye(4, dtype=np.float64)
-        matrix[:3, :3] = np.diag(1.0 / spacing)
-        return matrix
+        """Affine from reference voxels to the coordinates of the warp grid.
+
+        The warp grid of a dense field is the voxel grid of the reference,
+        so the affine is the identity. The grid of a coefficient field is
+        placed from the scaled-mm positions of the reference, divided by
+        the knot spacing in millimetres and shifted by the offset of the
+        knots of FSL.
+        """
+        # FSL places coefficient `c` of an axis at the voxel
+        # `(c - degree // 2) * ksp` of the reference that it registered to,
+        # or at voxel `c` when the knot spacing `ksp` is one
+        # (`Spline1D::OffsetIntoField` in `src/basisfield/fsl_splines.h`).
+        # These voxels are those of the image as FSL holds it in memory,
+        # which FSL flips to the radiological order on read when the
+        # voxel-to-world matrix has a positive determinant (`read_volumeROI`
+        # in `src/newimage/generalio.cc`, and `read_volume` in
+        # `src/fnirt/fnirt.cpp`), while it writes the coefficients without
+        # any flip (`common_coef_construction` in
+        # `src/warpfns/fnirt_file_writer.cpp`). A voxel in memory is
+        # therefore the FSL scaled-mm position divided by the voxel size of
+        # the reference. These files are those of FSL 5.0.9 in the
+        # NeuroDebian mirror, https://github.com/neurodebian/fsl at commit
+        # 513f6a0.
+        #
+        # A reference of another resolution than the one used at
+        # registration is placed by its scaled-mm positions too, which
+        # fslpy also assumes (`_readFnirtCoefficientField` in
+        # `fsl/transform/fnirt.py` of fslpy 3.29.1). fslpy places the grid
+        # from the stored voxels instead, which differs from FSL when the
+        # reference has a positive determinant (item 220 of the memo).
+        if not self._is_coeff():
+            return np.eye(4, dtype=np.float64)
+        knot_mm = self._reference_pixdim() * self._stored_knot_spacing()
+        grid = np.diag(np.concatenate([1.0 / knot_mm, [1.0]])) @ ref.vox2fsl
+        grid[:3, 3] += _anchor_offsets(
+            self._degree(), self._stored_knot_spacing()
+        )
+        return grid
 
     def _ref_to_source(self) -> np.ndarray:
         """The initial affine, from reference to source scaled millimetres.
 
         A deformation field already includes it, so it is the identity. A
-        coefficient field stores its inverse in the sform.
+        coefficient field stores its inverse in the sform, and
+        `(inv(sform) - I) @ x` is added to the displacement at the
+        reference position `x` in scaled millimetres.
         """
+        # `add_affine_part` in `src/warpfns/fnirt_file_reader.cpp` of FSL
+        # 5.0.9, and `coefficientFieldToDeformationField` in
+        # `fsl/transform/nonlinear.py` of fslpy 3.29.1.
         if not self._is_coeff():
             return np.eye(4, dtype=np.float64)
         sform = np.asarray(_header(self).get_sform(), dtype=np.float64)
@@ -445,6 +598,8 @@ class FnirtWarpField(
             return False
         if self._is_coeff() and self.reference is None:
             return False
+        if not self._has_spline_parameters():
+            return False
         # A coefficient field ignores `deformation_type`, so an invalid
         # value only matters for a deformation field.
         if not self._is_coeff() and self.deformation_type not in (
@@ -465,13 +620,19 @@ class FnirtWarpField(
             )
         ref = self._reference_geometry()
         mov = _ImageGeometry(self.moving)
+        if not self._has_spline_parameters():
+            raise ValueError(
+                "A FNIRT coefficient field stores its knot spacing in the "
+                "pixdims and the voxel sizes of its reference in "
+                "intent_p1 to intent_p3, and this header has a value that "
+                "is not positive."
+            )
         return _warp_chain(
             field=self._field_array(ref),
             degree=self._degree(),
             store=StoreEnum.from_coefficients(self._is_coeff()),
             bound=self._bound(),
             ref_to_field=self._ref_to_field(ref),
-            knot_spacing=self._knot_spacing(ref),
             ref=ref,
             mov=mov,
             ref_to_source=self._ref_to_source(),
@@ -510,7 +671,7 @@ class FnirtWarpField(
             id(self.moving),
             id(self.reference),
             id(self.metadata),
-            id(self.raw),
+            id(self.rawdata),
             id(self._data),
             self.deformation_type,
         )
@@ -550,9 +711,15 @@ class FnirtWarpField(
 
 
 def _fnirt_encoded(
-    field: FnirtWarpField, like: tx.Any, overrides: tx.Mapping[str, tx.Any]
+    field: FnirtWarpField,
+    like: tx.Any,
+    overrides: tx.Mapping[str, tx.Any],
+    base: tx.Any,
+    fields: tx.Mapping[str, tx.Any],
 ) -> tx.Any:
-    """Encode the array of a FNIRT field over a copy of its record.
+    """Encode the array of a FNIRT field over a copy of a record.
+
+    The record, `base`, is that of the consolidated metadata.
 
     Raises
     ------
@@ -570,13 +737,15 @@ def _fnirt_encoded(
     if field._data is not None:
         stored = _image_to_disk(field._data)
     else:
-        stored = field.raw
+        stored = field.rawdata
     if stored is None:
         raise WriterError("A FNIRT file needs its field data to be written.")
-    image = _record_image(stored, field._record(), overrides=overrides)
+    record = None if base is None else base.copy()
+    image = _record_image(stored, record, overrides=overrides)
     if _header(field) is None:
         image.header.set_intent(FSL_FNIRT_DISPLACEMENT_FIELD)
     _apply_like(image, like)
+    _keep_given_fields(image, fields)
     _apply_overrides(image, overrides)
     return image
 
@@ -592,27 +761,28 @@ def _warp_chain(
     store: tx.Any,
     bound: tx.Union[str, float],
     ref_to_field: np.ndarray,
-    knot_spacing: np.ndarray,
     ref: _ImageGeometry,
     mov: _ImageGeometry,
     ref_to_source: np.ndarray,
 ) -> tx.Tuple[_xforms.Transformation, ...]:
     """Build the lazy reference-RAS to moving-RAS chain of a warp field.
 
-    Two affines place the field grid in world coordinates. They also absorb two
-    differences between FSL and the data model: FSL anchors coarse knots
-    `degree // 2` grid units away from the resampler, and its displacements are
-    in scaled millimetres rather than grid units.
+    `ref_to_field` maps the voxels of the reference to the coordinates of
+    the warp grid, at which the spline of the data model is evaluated, so
+    it holds both the knot spacing and the offset of the knots of FSL. The
+    field holds displacements in scaled millimetres, and FSL adds them to
+    the reference position after the initial affine `ref_to_source` has
+    moved that position (see `FnirtWarpField._ref_to_source`). The
+    displacements are therefore expressed in units of the warp grid in the
+    frame of the source, so that the affine at the end of the chain maps
+    both the position and the displacement.
     """
     degree = int(degree)
-    offsets = _anchor_offsets(degree, knot_spacing)
 
-    field_to_ref = np.linalg.inv(ref_to_field)
     # Warp-grid coordinates to reference scaled millimetres.
-    grid_to_fsl_lin = ref.vox2fsl[:3, :3] @ field_to_ref[:3, :3]
-    grid_to_fsl_off = (
-        ref.vox2fsl[:3, :3] @ field_to_ref[:3, 3] + ref.vox2fsl[:3, 3]
-    )
+    grid_to_fsl = ref.vox2fsl @ np.linalg.inv(ref_to_field)
+    grid_to_fsl_lin = grid_to_fsl[:3, :3]
+    grid_to_fsl_off = grid_to_fsl[:3, 3]
     src_lin = ref_to_source[:3, :3]
     src_off = ref_to_source[:3, 3]
 
@@ -624,19 +794,14 @@ def _warp_chain(
     prescaled = backend.asarray(field) @ backend.asarray(prescale.T)
 
     ras_to_grid = ref_to_field @ ref.ras2vox
-    ras_to_grid[:3, 3] += offsets
 
-    # The anchor offset added on the input side is removed here.
     fsl_to_ras = mov.fsl2ras
-    grid_to_ras_lin = fsl_to_ras[:3, :3] @ src_lin @ grid_to_fsl_lin
-    grid_to_ras_off = (
+    grid_to_ras = np.eye(4, dtype=np.float64)
+    grid_to_ras[:3, :3] = fsl_to_ras[:3, :3] @ combined
+    grid_to_ras[:3, 3] = (
         fsl_to_ras[:3, :3] @ (src_lin @ grid_to_fsl_off + src_off)
         + fsl_to_ras[:3, 3]
-        - grid_to_ras_lin @ offsets
     )
-    grid_to_ras = np.eye(4, dtype=np.float64)
-    grid_to_ras[:3, :3] = grid_to_ras_lin
-    grid_to_ras[:3, 3] = grid_to_ras_off
 
     return (
         RASToWarpField(matrix=ras_to_grid[:-1]),
@@ -653,11 +818,16 @@ def _warp_chain(
 
 
 def _anchor_offsets(degree: int, knot_spacing: np.ndarray) -> np.ndarray:
-    """Per-axis shift between the FSL and resampler spline anchors.
+    """Return the shift of the knots of FSL on each axis, in knots.
 
-    The shift is `degree // 2` grid units, or zero where the knot spacing is
-    one.
+    FSL centres coefficient `c` at `(c - degree // 2) * ksp`, and at `c`
+    when the knot spacing `ksp` is one, while the data model centres it at
+    `c`. The shift is therefore `degree // 2` grid units, or zero where the
+    stored knot spacing is one. A dense field has a knot spacing of one, so
+    it has no shift.
     """
+    # `Spline1D::OffsetIntoField` in `src/basisfield/fsl_splines.h` of FSL
+    # 5.0.9.
     spacing = np.asarray(knot_spacing, dtype=np.float64)
     step = float(int(degree) // 2)
     return np.where(spacing == 1.0, 0.0, step).astype(np.float64)

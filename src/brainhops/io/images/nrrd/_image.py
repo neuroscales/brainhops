@@ -16,8 +16,11 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     Scaling,
@@ -36,6 +39,7 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common._geometry import (
     RAS_FROM_ORIENTATION,
+    held_transformations,
     reduce_to_affine,
     same_transformations,
 )
@@ -65,6 +69,10 @@ from brainhops.io.common.nrrd._raw import (
     _sniffed_raw,
 )
 from brainhops.io.images.base import ImageFormat
+from brainhops.io.metadata._base import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model
@@ -269,7 +277,7 @@ def _nrrd_to_transformations(header: NrrdRaw) -> tx.List[Transformation]:
     cell-centred axis, the default, spans `size` samples edge to edge.
     """
     perm, axes = _layout(header)
-    voxel = CoordinateSystem(name="voxel", axes=axes, order="F")
+    voxel = ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
     roles = [_role(a) for a in axes]
     nspace = roles.count("space")
     dirs = header.space_directions
@@ -348,18 +356,18 @@ class NrrdImage(
     This class is the unregistered base of [`AttachedNrrdImage`][] and
     [`DetachedNrrdImage`][], which answer to its hint `"nrrd"`. A NRRD
     image holds the header of its file as [`NrrdMetadata`][], whose
-    record is an [`NrrdRaw`][], and the samples in `raw`. When the image
-    is read from a file, `raw` is a lazy array that reads the samples
-    only when they are needed, and `data` is decoded from it on first
-    access. The data are indexed `[x, y, z, t, c, ...]` in Fortran order,
-    whatever the order of the axes in the file.
+    record is an [`NrrdRaw`][], and the samples in `rawdata`. When the
+    image is read from a file, `rawdata` is a lazy array that reads the
+    samples only when they are needed, and `data` is decoded from it on
+    first access. The data are indexed `[x, y, z, t, c, ...]` in Fortran
+    order, whatever the order of the axes in the file.
 
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. They are a [`Scaling`][]
     to `"physical"` and, with a world space, the preferred [`Affine`][]
     to the world, named after `space`.
 
-    `raw` and the record describe the file as it was read, or as the image
+    `rawdata` and the record describe the file as it was read, or as the image
     was last consolidated. Data that are assigned are pending until
     [`consolidate`][] encodes them into a copy, or until the image is
     written, which writes such a copy and leaves the image as it was. The
@@ -379,78 +387,81 @@ class NrrdImage(
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nrrd",)
 
-    raw: NoRepr[tx.Optional[ArrayProtocol]] = None
+    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The samples as the file stores them, or `None` without data.
 
-    After a read, `raw` is a lazy array, which presents the samples in
-    the axis order of the image. `raw` describes the file as it was read,
-    or as the image was last consolidated, so assigning `data` leaves it
-    as it is.
+    After a read, `rawdata` is a lazy array, which presents the samples
+    in the axis order of the image. `rawdata` describes the file as it
+    was read, or as the image was last consolidated, so assigning `data`
+    leaves it as it is.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
-    """The data given to the image, or `None` to decode it from `raw`.
+    """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
     store it under this private name. The constructor still takes `data`
     in the same place, and the property of the same name reads it. An
-    array stored here is pending: it is encoded into `raw` only by
+    array stored here is pending: it is encoded into `rawdata` only by
     [`consolidate`][] or by a write.
     """
 
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
-    """The transformations of the image, or `None` when never read or set.
+    """The transformations assigned to the image, or `None`.
 
     The image takes over the `transformations` field of
     [`SingleScaleImage`][] to store it under this private name. The
     constructor still takes `transformations` in the same place, and the
-    property of the same name reads it. `None`, the default, means that
-    the transformations have been neither read nor assigned, so the
-    record is kept as it is. The property stores here the list that it
-    decodes, and an assigned list, even an empty one, is stored as it is.
+    property of the same name reads it. Only an assigned list, even an
+    empty one, is stored here. `None`, the default, means that no list
+    was assigned, so the property decodes the list of the record and
+    caches it apart, and assigning other metadata drops that cache.
     """
 
-    _metadata: NoRepr[tx.Optional[NrrdMetadata]] = None
+    _metadata: NoRepr[tx.Optional[NrrdMetadata]] = Inherit(
+        "metadata", default=None
+    )
 
-    metadata = smartproperty("metadata")
+    metadata = smartproperty("metadata", invalidates="transformations")
     """The metadata of the file, which holds its record, or `None`.
 
-    An image built from data has no metadata. Assigning other metadata
-    drops the transformations that the image holds, read or assigned, so
-    that they are decoded from the new record.
+    An image built from data has no metadata. Assigning
+    other metadata drops the transformations decoded from the previous
+    record, so that they are decoded from the new one, and keeps the
+    transformations that were assigned.
     """
-
-    @metadata.setter
-    def metadata(self, value: tx.Optional[NrrdMetadata]) -> None:
-        self._metadata = value
-        self._transformations = None
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """The image data, assigned or decoded from `raw`.
+        """The image data, assigned or decoded from `rawdata`.
 
         An array assigned to the image is returned as it is, and stays
         pending until [`consolidate`][] or a write encodes it. Otherwise
-        the data is decoded from `raw` on first access and cached. Data
-        decoded from a file is read-only, because changing it in place
-        would not change `raw`, which is what the image writes. To change
-        the samples, assign `data`. Assigning `None` decodes `raw` again.
+        the data is decoded from `rawdata` on first access and cached.
+        Data decoded from a file is read-only, because changing it in
+        place would not change `rawdata`, which is what the image
+        writes. To change the samples, assign `data`. Assigning `None`
+        decodes `rawdata` again.
         """
-        if self.raw is None:
+        if self.rawdata is None:
             return None
-        return _image_to_model(self.raw)
+        return _image_to_model(self.rawdata)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
-        The list is decoded on first access and stored in the image, so
-        `img.transformation is img.transformation`, and a change made to
-        the list in place, such as an appended transformation, is kept.
-        Assigning other metadata drops the list. An image without
-        metadata has no transformations.
+        The list is decoded on first access and cached, apart from an
+        assigned list, so `img.transformation is img.transformation`,
+        and a change made to the list in place, such as an appended
+        transformation, is kept.
+        Assigning other metadata drops the decoded list, so that it is
+        decoded from the new record, and keeps an assigned list. A change
+        made in place to a decoded list is therefore lost when other
+        metadata is assigned. An image without metadata has no
+        transformations.
 
         Assigning a list replaces the stored one. In both cases, the list
         is compared at [`consolidate`][], and by a write, with the list
@@ -458,23 +469,22 @@ class NrrdImage(
         image has no geometry, and the image is then written as an image
         built from data alone. Assigning `None` decodes the record again.
         """
-        self._transformations = _record_transformations(self.metadata)
-        return self._transformations
+        return _record_transformations(self.metadata)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data, read without reading the samples.
 
-        The shape is that of the assigned data, or else of `raw`: the data
-        is `raw` as the lazy array presents it, so the two have the same
-        shape, and the lazy array knows its shape from the record. An image
-        without data raises as [`SingleScaleImage`][] does.
+        The shape is that of the assigned data, or else of `rawdata`: the data
+        is `rawdata` as the lazy array presents it, so the two have the
+        same shape, and the lazy array knows its shape from the record.
+        An image without data raises as [`SingleScaleImage`][] does.
         """
         if self._data is not None:
             return tuple(int(d) for d in self._data.shape)
-        if self.raw is None:
+        if self.rawdata is None:
             return self.data.shape
-        return tuple(int(d) for d in self.raw.shape)
+        return tuple(int(d) for d in self.rawdata.shape)
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
@@ -488,7 +498,7 @@ class NrrdImage(
         if self.metadata is None or self.metadata.raw is None:
             return None
         _, axes = _layout(self.metadata.raw)
-        return CoordinateSystem(name="voxel", axes=axes, order="F")
+        return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
     # --- reading ------------------------------------------------------
 
@@ -571,6 +581,11 @@ class NrrdImage(
         The record is read from the header, and the lazy array reads the
         samples when they are needed.
 
+        The metadata is consolidated first (step 2 of the precedence on
+        write), with the fields given by keyword. The record of a NRRD
+        image holds no field of the vocabulary yet, so a field that is set
+        is reported as lost, once, by `on_loss`.
+
         Parameters
         ----------
         filename : path
@@ -594,7 +609,7 @@ class NrrdImage(
         """
         _no_options(kwargs)
         raw, proxy = read_nrrd(filename, mmap=mmap)
-        return cls(raw=proxy, metadata=NrrdMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=NrrdMetadata.from_raw(raw))
 
     @classmethod
     def from_fileobj(
@@ -628,7 +643,7 @@ class NrrdImage(
         """
         _no_options(kwargs)
         raw, proxy = read_nrrd(file, mmap=False)
-        return cls(raw=proxy, metadata=NrrdMetadata.from_raw(raw))
+        return cls(rawdata=proxy, metadata=NrrdMetadata.from_raw(raw))
 
     # --- writing ------------------------------------------------------
 
@@ -641,17 +656,19 @@ class NrrdImage(
         datatype: tx.Optional[tx.Any] = None,
         space: tx.Optional[str] = None,
         keyvalue: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
+        on_loss: tx.Optional[OnLoss] = None,
+        **fields: tx.Any,
     ) -> "NrrdImage":
-        """Encode the pending data and geometry into `raw` and the record.
+        """Encode the pending data and geometry into `rawdata` and the record.
 
-        Consolidating makes `raw` and the record describe the image, as a
+        Consolidating makes `rawdata` and the record describe the image, as a
         file written from it would. The record is encoded in a fixed order.
         The base is the record of the metadata, or a new header for an
         image without metadata.
 
         1. The fields that describe how the samples are stored (`type`,
            `dimension`, `sizes`, `endian`, `encoding` and the skips)
-           follow `raw`. A lazy array that the options do not change, and
+           follow `rawdata`. A lazy array that the options do not change, and
            whose samples lie in one file, is copied as the file stores
            it, so these fields are those of its own record. Any other
            array is stored with the options, or else with the encoding
@@ -683,14 +700,14 @@ class NrrdImage(
         base, the metadata is kept as it is, so that an image that was
         read and not changed writes the header that it read. Otherwise,
         the new record is held by new metadata, and the record held before
-        is never changed. The samples to write become `raw`, which keeps a
+        is never changed. The samples to write become `rawdata`, which keeps a
         lazy array, and nothing is pending afterwards, so the
         transformations are decoded from the new record, with the
         precision of the file. The transformations that the image holds,
         read or assigned, are compared with those that the record decodes
         to, exactly, and an image with a record, no pending data, and the
         transformations of its record or none read, consolidated without
-        options, is left as it is: the copy shares `raw` and the metadata.
+        options, is left as it is: the copy shares `rawdata` and the metadata.
 
         Parameters
         ----------
@@ -704,10 +721,17 @@ class NrrdImage(
             NRRD or NumPy type of the stored samples, to which the data
             are converted.
         space : str, optional
-            The anatomical space of the geometry, such as `"LPS"`.
+            The anatomical space of the geometry, such as `"LPS"`. This
+            option is the space of the NRRD header, and not the field
+            `space` of the metadata, which cannot be given by keyword here.
         keyvalue : mapping, optional
             Key/value pairs merged into those of the base. A value of
             `None` removes a key.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the metadata that the record cannot hold. By
+            default, the policy in effect.
+        **fields : Any
+            Fields of the metadata to override.
 
         Returns
         -------
@@ -716,6 +740,10 @@ class NrrdImage(
 
         Raises
         ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If metadata is lost under the `"raise"` policy.
         WriterError
             If there is no data, the data are zero-dimensional, the type,
             the encoding, the byte order or the space is unknown, or the
@@ -730,15 +758,23 @@ class NrrdImage(
             space=space,
             keyvalue=keyvalue,
         )
+        report = ConversionReport(source="NrrdImage", target="NrrdImage")
+        requested = requested_fields(self.metadata, fields)
+        metadata = metadata_to_write(
+            self.metadata, NrrdMetadata, fields, report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=2)
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
-        kept = self._transformations is None or same_transformations(
-            self._transformations, _record_transformations(self.metadata)
+        held = held_transformations(self)
+        kept = held is None or same_transformations(
+            held, _record_transformations(self.metadata)
         )
         if (
             self._data is None
             and kept
             and all(value is None for value in options.values())
+            and not requested
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
@@ -747,21 +783,25 @@ class NrrdImage(
             self.transformations = None
             return self
         record, raw = _encoded(self, options, None)
-        if self.metadata is not None and record is self.metadata.raw:
+        if (
+            self.metadata is not None
+            and record is self.metadata.raw
+            and not requested
+        ):
             metadata = self.metadata
-        elif self.metadata is None:
+        elif metadata is None:
             metadata = NrrdMetadata.from_raw(record)
         else:
-            metadata = replace(self.metadata, raw=record)
+            metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
                 self,
                 data=None,
                 transformations=None,
-                raw=raw,
+                rawdata=raw,
                 metadata=metadata,
             )
-        self.raw = raw
+        self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
@@ -771,7 +811,7 @@ class NrrdImage(
         """Return the bytes of a NRRD file with attached samples.
 
         The image is consolidated into a copy with the keyword arguments,
-        as by [`consolidate`][], and the header and `raw` of the copy are
+        as by [`consolidate`][], and the header and `rawdata` of the copy are
         written. A lazy array that reaches the writer unchanged is written
         as the file stores it. The image itself is not changed.
 
@@ -859,9 +899,9 @@ class NrrdImage(
             written = [filename]
         else:
             written = [filename, _sibling(filename, data_file)]
-        reading = _reads_from(self.raw, written)
+        reading = _reads_from(self.rawdata, written)
         if reading:
-            mmap = self.raw.mmap
+            mmap = self.rawdata.mmap
             image = self.consolidate(inplace=True, **options)
         else:
             image = self.consolidate(**options)
@@ -877,7 +917,7 @@ class NrrdImage(
             # The image holds what the files hold, and its lazy array reads
             # the new files, since the lazy array of the old files describes
             # how they stored the samples.
-            self.raw = read_nrrd(filename, mmap=mmap)[1]
+            self.rawdata = read_nrrd(filename, mmap=mmap)[1]
             self.data = None
 
 
@@ -893,15 +933,27 @@ _OPTIONS = ("encoding", "endian", "datatype", "space", "keyvalue")
 def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Return the writer options, refusing unknown ones.
 
+    The options of the writer, `on_loss` and the fields of the metadata,
+    which go to the consolidation of the metadata, are known. `space` is
+    the option of the writer.
+
     Raises
     ------
     TypeError
         If an unknown option is given.
     """
-    unknown = [name for name in kwargs if name not in _OPTIONS]
+    unknown = [
+        name
+        for name in kwargs
+        if name not in _OPTIONS and name not in FIELDS and name != "on_loss"
+    ]
     if unknown:
         raise TypeError(f"Unknown NRRD writer option(s): {', '.join(unknown)}")
-    return {name: kwargs.get(name) for name in _OPTIONS}
+    options = {name: kwargs.get(name) for name in _OPTIONS}
+    options.update(
+        {name: v for name, v in kwargs.items() if name not in _OPTIONS}
+    )
+    return options
 
 
 def _target_encoding(
@@ -933,7 +985,7 @@ def _encoded(
 
     The record is encoded as [`NrrdImage.consolidate`][] describes, and the
     held record is returned when the encoding changes nothing. The samples
-    are the assigned data, or else `raw`, in the order of the image,
+    are the assigned data, or else `rawdata`, in the order of the image,
     converted to the stored type as the writer converts them, with
     `_stored_samples`. The `data_files` are those of the header: an empty
     tuple for attached samples, one name for a detached header, or `None`
@@ -946,16 +998,16 @@ def _encoded(
         written.
     """
     # The helpers read the transformations of a copy that holds the list
-    # of the record when the image holds none, so that a write leaves the
-    # image as it was.
-    if image._transformations is None:
-        image = replace(
-            image, transformations=_record_transformations(image.metadata)
-        )
+    # of the image, or the list of the record when the image holds none,
+    # so that a write leaves the image as it was.
+    held = held_transformations(image)
+    if held is None:
+        held = _record_transformations(image.metadata)
+    image = replace(image, transformations=held)
     if image._data is not None:
         raw = _image_to_disk(image._data)
     else:
-        raw = image.raw
+        raw = image.rawdata
     if raw is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
@@ -1095,7 +1147,7 @@ def _copies_samples(
     encoding, the type and the byte order that its record stores, or are
     not given.
     """
-    if not isinstance(raw, _NrrdProxy) or not raw.copyable:
+    if not isinstance(raw, _NrrdProxy) or raw.is_view or not raw.copyable:
         return False
     record = raw.record
     if list(image_order(record)) != list(order):
@@ -1189,10 +1241,12 @@ def _geometry_fields(
 
     The fields of one value per axis are taken from the base when the
     shape is that of the base, and the spatial axes are then described by
-    their geometry alone. An image without transformations has no
-    geometry, so the spacings, positions and units of its spatial axes
-    are dropped as well. The base also gives the space and the
-    measurement frame of the result, whatever its shape.
+    their geometry alone. An image without transformations, or whose
+    preferred transformation is the unit scaling that a file without
+    geometry decodes to, has no geometry to write, so the spacings,
+    positions and units of its spatial axes are dropped as well. The base
+    also gives the space and the measurement frame of the result,
+    whatever its shape.
 
     Raises
     ------
@@ -1214,7 +1268,8 @@ def _geometry_fields(
             if len(values) == ndim:
                 per_axis[name] = values
     spatial = [order[j] for j, r in enumerate(roles) if r == "space"]
-    if not image.transformations:
+    geometry = _geometry(image, roles, space, held)
+    if geometry is None:
         # The image is written as an image built from data alone, which
         # has none of these fields, rather than with the geometry of the
         # base.
@@ -1226,7 +1281,6 @@ def _geometry_fields(
                 per_axis[name][i] = empty
             if all(value == empty for value in per_axis[name]):
                 del per_axis[name]
-    geometry = _geometry(image, roles, space, held)
     if geometry is not None:
         kind, values = geometry
         if kind == "space":
@@ -1308,14 +1362,11 @@ def _payload(image: NrrdImage, record: NrrdRaw) -> bytes:
     """
     order = image_order(record)
     storage = {"datatype": record.dtype, "endian": record.endian}
-    if _copies_samples(image.raw, order, record.encoding, storage):
-        return image.raw.read_stored()
+    if _copies_samples(image.rawdata, order, record.encoding, storage):
+        return image.rawdata.read_stored()
     # A lazy array is read here rather than through `data`, so that no
     # cached view of the old file outlives a write over that file.
-    if isinstance(image.raw, _NrrdProxy):
-        values = image.raw.read_samples()
-    else:
-        values = np.asarray(image.raw)
+    values = np.asarray(image.rawdata)
     return encode_data(record, values.transpose(np.argsort(order)))
 
 
@@ -1353,7 +1404,7 @@ def _nrrd_written(image: NrrdImage, data_files: tx.Tuple[str, ...]) -> NrrdRaw:
     WriterError
         If the image has no data.
     """
-    if image.raw is None:
+    if image.rawdata is None:
         raise WriterError(
             "This image has no data, so there is nothing to write."
         )

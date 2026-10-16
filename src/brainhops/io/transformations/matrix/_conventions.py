@@ -223,8 +223,20 @@ def image_to_world(
 #   CONVERSION
 # ----------------------------------------------------------------------
 
+CONVENTIONS = (
+    "input",
+    "output",
+    "source",
+    "target",
+    "index_base",
+    "direction",
+    "vector",
+    "ndim",
+)
+"""The options that state the conventions of a stored matrix."""
 
-def to_affine(
+
+def resolve(
     raw: np.ndarray,
     *,
     input: _SpaceLike = None,
@@ -235,35 +247,28 @@ def to_affine(
     direction: str = "forward",
     vector: str = "column",
     ndim: tx.Optional[int] = None,
-) -> tx.Tuple[
-    np.ndarray,
-    _systems.CoordinateSystem,
-    _systems.CoordinateSystem,
-    tx.Tuple[int, int],
-]:
+) -> tx.Dict[str, tx.Any]:
     """
-    Apply the conventions stated by the caller to a raw matrix.
+    Check the conventions stated by the caller for a stored matrix.
 
     The conventions are described in
     [`MatrixAffine`][brainhops.io.transformations.matrix.MatrixAffine].
+    They are returned in the form that a record keeps: the number of
+    spatial dimensions, the normalized names, the index base of each
+    endpoint, the voxel-to-world matrices of the images, and the
+    coordinate systems of the affine that the record describes.
 
-    Returns
-    -------
-    matrix : np.ndarray
-        The `(N, N + 1)` column-vector matrix from input to output, with
-        0-based voxel indices.
-    input : CoordinateSystem
-        The space that the matrix maps from.
-    output : CoordinateSystem
-        The space that the matrix maps to.
-    index_base : tuple of int
-        The index base applied to the input and to the output.
+    Raises
+    ------
+    ValueError
+        If the matrix is not the matrix of an affine, or if the
+        conventions contradict each other.
     """
-    homog = homogeneous(column_matrix(raw, vector), ndim)
-    n = homog.shape[0] - 1
-
-    if check_direction(direction) == "inverse":
-        homog = np.linalg.inv(homog)
+    vector = check_vector(vector)
+    direction = check_direction(direction)
+    column = column_matrix(raw, vector)
+    n = spatial_ndim(column.shape, ndim)
+    homogeneous(column, n)
 
     # Passing an image implies that its endpoint is a voxel space.
     if input is None and source is not None:
@@ -273,7 +278,7 @@ def to_affine(
     in_system = make_system(input, n)
     out_system = make_system(output, n)
 
-    # --- 1-based voxel indices -> 0-based ---------------------------
+    # --- 1-based voxel indices -------------------------------------
     in_base, out_base = check_index_base(index_base)
     scalar = not isinstance(index_base, (tuple, list))
     in_index, out_index = map(is_index_system, (in_system, out_system))
@@ -293,16 +298,12 @@ def to_affine(
             raise ValueError(
                 f"index_base is 1 for the {end}, which is not a voxel space."
             )
-    # A 1-based index is x1 = x0 + 1, so a 1-based matrix M1 becomes
-    # S(-1) @ M1 @ S(+1) in 0-based indices, where S(t) shifts by t.
-    if in_base:
-        homog = homog @ _shift(n, 1.0)
-    if out_base:
-        homog = _shift(n, -1.0) @ homog
 
-    # --- voxel endpoints -> image world spaces -----------------------
+    # --- voxel endpoints placed in the world spaces of images --------
+    placed = {}
     for image, end in ((source, "input"), (target, "output")):
         if image is None:
+            placed[end] = None
             continue
         system = in_system if end == "input" else out_system
         if not is_index_system(system):
@@ -317,11 +318,102 @@ def to_affine(
                 f"The {end} image is {vox2world.shape[0] - 1}-D, but the "
                 f"matrix is {n}-D."
             )
+        placed[end] = _rows(vox2world)
         if end == "input":
-            homog = homog @ np.linalg.inv(vox2world)
             in_system = world
         else:
-            homog = vox2world @ homog
             out_system = world
 
-    return homog[:-1], in_system, out_system, (in_base, out_base)
+    return {
+        "ndim": n,
+        "vector": vector,
+        "direction": direction,
+        "index_base": (in_base, out_base),
+        "source_to_world": placed["input"],
+        "target_to_world": placed["output"],
+        "input": in_system,
+        "output": out_system,
+    }
+
+
+def decode(record: tx.Any) -> np.ndarray:
+    """
+    Return the homogeneous matrix of the affine that a record describes.
+
+    The conventions of the record are applied in order: transposition,
+    completion to homogeneous form, inversion, the shift of 1-based voxel
+    indices to the 0-based indices of the data model, and the placement
+    of voxel endpoints in the world spaces of images. In the 0-based
+    indices of the data model, an integer index is the centre of a voxel
+    (see #201).
+    """
+    n = record.ndim
+    homog = homogeneous(column_matrix(record.matrix, record.vector), n)
+    if record.direction == "inverse":
+        homog = np.linalg.inv(homog)
+    in_base, out_base = record.index_base
+    # A 1-based index is x1 = x0 + 1, so a 1-based matrix M1 becomes
+    # S(-1) @ M1 @ S(+1) in 0-based indices, where S(t) shifts by t.
+    if in_base:
+        homog = homog @ _shift(n, 1.0)
+    if out_base:
+        homog = _shift(n, -1.0) @ homog
+    if record.source_to_world is not None:
+        homog = homog @ np.linalg.inv(np.asarray(record.source_to_world))
+    if record.target_to_world is not None:
+        homog = np.asarray(record.target_to_world) @ homog
+    return homog
+
+
+def encode(homog: tx.Any, record: tx.Any) -> tx.Tuple:
+    """
+    Return the matrix that a record stores for an affine.
+
+    This is the inverse of [`decode`][]: the affine is expressed in the
+    conventions of the record and stored in the layout of the matrix that
+    the record holds, such as a (3, 4) matrix of row vectors.
+
+    Raises
+    ------
+    ValueError
+        If the affine does not have the dimensions of the record, or if
+        the record stores a linear map and the affine has a translation.
+    """
+    n = record.ndim
+    homog = np.asarray(homog, dtype=np.float64)
+    if homog.shape != (n + 1, n + 1):
+        raise ValueError(
+            f"The matrix is stored as a {n}-D affine, of homogeneous shape "
+            f"{(n + 1, n + 1)}, but the affine has shape {homog.shape}."
+        )
+    if record.target_to_world is not None:
+        homog = np.linalg.inv(np.asarray(record.target_to_world)) @ homog
+    if record.source_to_world is not None:
+        homog = homog @ np.asarray(record.source_to_world)
+    in_base, out_base = record.index_base
+    if out_base:
+        homog = _shift(n, 1.0) @ homog
+    if in_base:
+        homog = homog @ _shift(n, -1.0)
+    if record.direction == "inverse":
+        homog = np.linalg.inv(homog)
+    rows, cols = column_matrix(record.matrix, record.vector).shape
+    if (rows, cols) == (n, n):
+        if np.any(homog[:n, n] != 0):
+            raise ValueError(
+                f"The matrix is stored as a ({n}, {n}) linear map, which "
+                f"cannot hold the translation of the affine."
+            )
+        stored = homog[:n, :n]
+    elif (rows, cols) == (n, n + 1):
+        stored = homog[:n]
+    else:
+        stored = homog
+    if record.vector == "row":
+        stored = stored.T
+    return _rows(stored)
+
+
+def _rows(matrix: np.ndarray) -> tx.Tuple[tx.Tuple[float, ...], ...]:
+    """Return a matrix as a tuple of rows of floats."""
+    return tuple(tuple(float(v) for v in row) for row in np.asarray(matrix))

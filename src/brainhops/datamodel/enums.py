@@ -8,6 +8,7 @@ __all__ = [
     "BoundaryCondition",
     "InterpolationOrder",
     "StoreEnum",
+    "AxisType",
     "OrientationType",
     "AnatomicalOrientationValue",
     "SimplifyPolicy",

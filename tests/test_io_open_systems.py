@@ -22,6 +22,7 @@ from brainhops.datamodel.axes import (  # noqa: E402
 )
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.systems import (  # noqa: E402
+    ArrayCoordinateSystem,
     CoordinateSystem,
     FArrayCoordinateSystem,
     LPSCoordinateSystem,
@@ -183,7 +184,7 @@ def test_the_pyramid_axes_are_an_axis_list() -> None:
 
     for given in ([SpaceAxis(name="x"), ...], (SpaceAxis(name="x"), ...)):
         axes = _pyramid(given).axes
-        assert type(axes) is AxisList and axes.is_open
+        assert type(axes) is AxisList and axes.is_variadic
         assert axes["x"] == SpaceAxis(name="x")
     # None is not [...]: the axes stay unset and are read from the store.
     assert _pyramid(None).axes is None
@@ -249,4 +250,4 @@ def test_a_zarr_voxel_space_read_otherwise_has_no_order(
     ]
     system = _zarr_voxel_space(tmp_path, axes)
     assert system.order is None
-    assert type(system) is CS
+    assert type(system) is ArrayCoordinateSystem
