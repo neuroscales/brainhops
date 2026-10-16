@@ -257,16 +257,18 @@ class FnirtWarpField(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            The `moving` and `reference` images, under any of their
-            aliases, and the options of the nibabel readers.
+            The `moving` and `reference` images under any of their aliases,
+            `deformation_type`, and the options of the nibabel readers.
 
         Returns
         -------
         FnirtWarpField
             The field, whose array is read lazily.
         """
+        deformation_type = kwargs.pop("deformation_type", None)
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_filename(filename, **kwargs)
+        obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
     @classmethod
@@ -278,16 +280,18 @@ class FnirtWarpField(
         fileobj : BinaryIO
             The stream, which must stay open while the data may be read.
         **kwargs : Any
-            The `moving` and `reference` images, under any of their
-            aliases, and the options of the nibabel readers.
+            The `moving` and `reference` images under any of their aliases,
+            `deformation_type`, and the options of the nibabel readers.
 
         Returns
         -------
         FnirtWarpField
             The field, whose array is read lazily.
         """
+        deformation_type = kwargs.pop("deformation_type", None)
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_fileobj(fileobj, **kwargs)
+        obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
     def consolidate(

@@ -814,9 +814,30 @@ def test_native_dense_fields_without_intent(
         reference=reference,
         deformation_type=deformation_type,
     )
+    assert transform.deformation_type == deformation_type
     assert transform.degree == 1 and transform.store == "values"
     moving_scaled = _fsl_vox2scaled(MOV_AFFINE, MOV_SHAPE, [1.5, 1.5, 3.0])
     expected = _apply(MOV_AFFINE @ np.linalg.inv(moving_scaled), absolute)
     np.testing.assert_allclose(
         _world_field(transform, reference), expected, atol=1e-3
     )
+
+
+def test_fnirt_stream_preserves_deformation_type(tmp_path: Path) -> None:
+    _, absolute, _ = _fnirt_setup()
+    image = nb.Nifti1Image(absolute.astype(np.float32), REF_AFFINE)
+    path = tmp_path / "warp.nii"
+    nb.save(image, path)
+    moving = _image(MOV_SHAPE, MOV_AFFINE)
+    with path.open("rb") as stream:
+        transform = FnirtWarpField.from_fileobj(
+            stream, moving=moving, deformation_type="absolute"
+        )
+        assert transform.deformation_type == "absolute"
+        expected = _warp(absolute)
+        expected.deformation_type = "absolute"
+        reference = _image(REF_SHAPE, REF_AFFINE)
+        np.testing.assert_allclose(
+            _world_field(transform, reference),
+            _world_field(expected, reference),
+        )
