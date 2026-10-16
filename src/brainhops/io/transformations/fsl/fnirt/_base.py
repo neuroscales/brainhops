@@ -268,7 +268,8 @@ class FnirtWarpField(
         deformation_type = kwargs.pop("deformation_type", None)
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_filename(filename, **kwargs)
-        obj.deformation_type = deformation_type
+        if deformation_type is not None:
+            obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
     @classmethod
@@ -291,7 +292,8 @@ class FnirtWarpField(
         deformation_type = kwargs.pop("deformation_type", None)
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_fileobj(fileobj, **kwargs)
-        obj.deformation_type = deformation_type
+        if deformation_type is not None:
+            obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
     def consolidate(
