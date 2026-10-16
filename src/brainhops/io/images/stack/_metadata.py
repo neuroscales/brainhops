@@ -7,7 +7,11 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import BinaryFileReader, ParserTypeError
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    ParserTypeError,
+    disabled,
+)
 from brainhops.io.metadata import MetadataFormat
 
 # this format
@@ -191,20 +195,4 @@ class StackMetadata(MetadataFormat, BinaryFileReader):
         )
         return cls.from_raw(record)
 
-    @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs) -> "StackMetadata":
-        """Refuse a stream, which cannot hold the files of a stack.
-
-        Parameters
-        ----------
-        file : IO
-            The stream.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Raises
-        ------
-        ParserTypeError
-            Always, since a stack is read from the path of its folder.
-        """
-        raise ParserTypeError(NOT_A_STREAM)
+    from_fileobj = disabled(ParserTypeError, NOT_A_STREAM)

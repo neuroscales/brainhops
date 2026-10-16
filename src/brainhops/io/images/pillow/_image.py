@@ -516,27 +516,6 @@ class PillowImage(
         record, proxy = read_pillow_image(file, frame, palette)
         return _read_image(cls, record, proxy, dpi, pixel_size, unit)
 
-    @classmethod
-    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
-        """Read an image from bytes.
-
-        The lazy array keeps the bytes and decodes the frame from them when
-        it is needed.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the file.
-        **kwargs : Any
-            The options of [`from_fileobj`][].
-
-        Returns
-        -------
-        PillowImage
-            The image, whose frame is decoded lazily.
-        """
-        return cls.from_fileobj(BytesIO(bytes(content)), **kwargs)
-
     # --- writing ------------------------------------------------------
 
     def consolidate(

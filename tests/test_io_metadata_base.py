@@ -10,6 +10,7 @@ reports a lower bound of the loss from `SUPPORTED_FIELDS`; the BIDS
 sidecar; and the storage helpers.
 """
 
+import io as _io
 import json
 import pickle
 import warnings
@@ -27,6 +28,11 @@ from brainhops.datamodel.metadata import (
     MetadataLossError,
     MetadataLossWarning,
     metadata_loss_policy,
+)
+from brainhops.io.base.parsers import (
+    BinaryFileReader,
+    TextFileReader,
+    _overrides_from_fileobj,
 )
 from brainhops.io.metadata import (
     BidsSidecar,
@@ -153,6 +159,36 @@ class SecondContainerMetadata(_SharedRecordMetadata):
     """Another format whose record is that of the same base."""
 
 
+class TextDictRaw(DictRaw, TextFileReader):
+    """A record that reads itself from `key=value` lines."""
+
+    @classmethod
+    def from_lines(cls, lines, **kwargs) -> "TextDictRaw":  # noqa: ANN001
+        if kwargs:
+            raise TypeError(f"Unknown option(s): {', '.join(kwargs)}")
+        return cls(line.split("=", 1) for line in lines if line.strip())
+
+
+class TextDictMetadata(DictMetadata, TextFileReader):
+    """A format whose metadata is read through its record class."""
+
+    RAW: tx.ClassVar[type] = TextDictRaw
+
+
+class StreamDictRaw(DictRaw, BinaryFileReader):
+    """A record that reads a description from the start of a stream."""
+
+    @classmethod
+    def from_fileobj(cls, file, **kwargs) -> "StreamDictRaw":  # noqa: ANN001
+        return cls(desc=file.read(4).decode())
+
+
+class StreamDictMetadata(DictMetadata, BinaryFileReader):
+    """A binary format whose record class reads streams."""
+
+    RAW: tx.ClassVar[type] = StreamDictRaw
+
+
 def _read() -> DictMetadata:
     return DictMetadata.from_raw(
         DictRaw(desc="short", cal=(0.0, 1.0), Key="v")
@@ -178,6 +214,38 @@ def test_from_raw_decodes_every_supported_field() -> None:
     # Given values take precedence over the decoded ones.
     given = DictMetadata.from_raw(DictRaw(desc="a"), description="b")
     assert given.description == "b"
+
+
+def test_a_format_with_a_record_class_reads_every_input_through_it(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = tmp_path / "meta.txt"
+    path.write_text("desc=short\nKey=v\n")
+    inputs = (
+        TextDictMetadata.from_filename(path),
+        TextDictMetadata.from_fileobj(_io.StringIO("desc=short\nKey=v")),
+        TextDictMetadata.from_bytes(b"desc=short\nKey=v"),
+        TextDictMetadata.from_text("desc=short\nKey=v"),
+        TextDictMetadata.from_lines(["desc=short", "Key=v"]),
+        TextDictMetadata.load(path),
+    )
+    for meta in inputs:
+        assert isinstance(meta, TextDictMetadata)
+        assert isinstance(meta.raw, TextDictRaw)
+        assert meta.description == "short"
+        assert meta.extra == {"Key": "v"}
+    # The options go to the record class, which refuses them.
+    with pytest.raises(TypeError, match="bogus"):
+        TextDictMetadata.from_text("desc=short", bogus=True)
+
+
+def test_a_record_class_that_reads_streams_reads_bytes_too() -> None:
+    # A format with no record class reads no stream itself.
+    assert not _overrides_from_fileobj(DictMetadata)
+    assert _overrides_from_fileobj(StreamDictMetadata)
+    meta = StreamDictMetadata.from_bytes(b"shortest")
+    assert isinstance(meta.raw, StreamDictRaw)
+    assert meta.description == "shor"
 
 
 def test_metadata_of_a_format_compares_by_identity() -> None:

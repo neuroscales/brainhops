@@ -14,6 +14,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     SnifferTypeError,
+    disabled,
 )
 from brainhops.io.images.base import ImageFormat
 
@@ -259,31 +260,11 @@ class N5MultiScaleImage(ImageFormat, MultiScaleImage, BinaryFileReader):
         location, record = read_node(stream_location(file))
         return _read_pyramid(cls, location, record)
 
-    @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> "N5MultiScaleImage":
-        """Refuse to read bytes, which cannot hold a pyramid of many files.
-
-        Parameters
-        ----------
-        content : bytes
-            The bytes, which are not read.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        N5MultiScaleImage
-            Never, since an error is always raised.
-
-        Raises
-        ------
-        ParserContentError
-            Always.
-        """
-        raise ParserContentError(
-            "An N5 pyramid is a directory of files, which bytes alone cannot "
-            "hold. Read it from the path of its group instead."
-        )
+    from_bytes = disabled(
+        ParserContentError,
+        "An N5 pyramid is a directory of files, which bytes alone cannot "
+        "hold. Read it from the path of its group instead.",
+    )
 
 
 # Without TensorStore, the samples cannot be read, so the format is not

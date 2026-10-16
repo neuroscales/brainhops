@@ -35,6 +35,7 @@ class PillowMetadata(MetadataFormat, BinaryFileReader):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = EXTENSIONS
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("pillow",)
+    RAW: tx.ClassVar[type] = PillowRaw
 
     raw: NoRepr[tx.Optional[PillowRaw]] = None
     """The record of the image, or `None` for metadata without a record."""
@@ -93,31 +94,3 @@ class PillowMetadata(MetadataFormat, BinaryFileReader):
             The confidence, between 0 and 1.
         """
         return cls.sniff_fileobj(BytesIO(bytes(data)), error=error, **kwargs)
-
-    @classmethod
-    def from_fileobj(
-        cls, file: tx.BinaryIO, frame: int = 0, **kwargs
-    ) -> "PillowMetadata":
-        """Read the metadata of a frame of a raster file from a stream.
-
-        The record is read with [`PillowRaw.from_fileobj`][], which
-        receives the options and refuses those it does not know.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream, open in binary mode.
-        frame : int, default=0
-            The frame to describe. A negative index counts from the end.
-        **kwargs : Any
-            Options of the reader, which [`PillowRaw.from_fileobj`][]
-            refuses.
-
-        Returns
-        -------
-        PillowMetadata
-            The metadata, which holds the record of the header.
-        """
-        return cls.from_raw(
-            PillowRaw.from_fileobj(file, frame=frame, **kwargs)
-        )

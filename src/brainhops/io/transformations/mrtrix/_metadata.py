@@ -33,6 +33,7 @@ class MrtrixLinearMetadata(MetadataFormat, TextFileReader, TextFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mrtrix",)
+    RAW: tx.ClassVar[type] = MrtrixLinearRaw
 
     raw: NoRepr[tx.Optional[MrtrixLinearRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -92,48 +93,6 @@ class MrtrixLinearMetadata(MetadataFormat, TextFileReader, TextFileWriter):
             The confidence, between 0 and 1.
         """
         return MrtrixLinearRaw.sniff_lines(lines, error=error)
-
-    @classmethod
-    def from_text(cls, text: str, **kwargs) -> "MrtrixLinearMetadata":
-        """Read the metadata from the text of a linear transform file.
-
-        The text is parsed by [`MrtrixLinearRaw.from_text`][].
-
-        Parameters
-        ----------
-        text : str
-            The content of the file.
-        **kwargs : Any
-            Options of the reader, which [`MrtrixLinearRaw.from_text`][]
-            refuses.
-
-        Returns
-        -------
-        MrtrixLinearMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(MrtrixLinearRaw.from_text(text, **kwargs))
-
-    @classmethod
-    def from_lines(
-        cls, lines: tx.Iterable[str], **kwargs
-    ) -> "MrtrixLinearMetadata":
-        """Read the metadata from the lines of a linear transform file.
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file, without their line breaks.
-        **kwargs : Any
-            Options of the reader, which [`MrtrixLinearRaw.from_lines`][]
-            refuses.
-
-        Returns
-        -------
-        MrtrixLinearMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(MrtrixLinearRaw.from_lines(lines, **kwargs))
 
     def to_text(self, **kwargs) -> str:
         """Return the content of the file that the record holds.

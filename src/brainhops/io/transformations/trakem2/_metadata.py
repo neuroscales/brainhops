@@ -38,6 +38,7 @@ class TrakEM2Metadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xml",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("trakem2",)
+    RAW: tx.ClassVar[type] = TrakEM2Raw
 
     raw: NoRepr[tx.Optional[TrakEM2Raw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -95,27 +96,6 @@ class TrakEM2Metadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
             The confidence, between 0 and 1.
         """
         return TrakEM2Raw.sniff_bytes(content, error=error)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "TrakEM2Metadata":
-        """Read the metadata from a binary stream of an XML file.
-
-        The record is read by [`TrakEM2Raw.from_fileobj`][].
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream.
-        **kwargs : Any
-            Options of the reader, which [`TrakEM2Raw.from_fileobj`][]
-            refuses.
-
-        Returns
-        -------
-        TrakEM2Metadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(TrakEM2Raw.from_fileobj(file, **kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the XML file that the record holds.

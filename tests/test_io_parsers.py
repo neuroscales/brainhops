@@ -14,11 +14,17 @@ from brainhops.io.base._base import (
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
+    ParserContentError,
     ParserExistsError,
     ParserNotImplementedError,
+    ParserTypeError,
     SnifferContentError,
     TextFileReader,
     TextFileWriter,
+    WriterError,
+    _delegated_from_fileobj,
+    _overrides_from_fileobj,
+    disabled,
     preserve_position,
 )
 
@@ -326,3 +332,76 @@ def test_text_parsers_still_decode_bytes_to_text() -> None:
     assert Greeting.from_fileobj(_io.BytesIO(b"HELLO there")) == (
         "HELLO there"
     )
+
+
+def test_a_delegated_fileobj_counts_when_its_delegate_reads_streams() -> None:
+    class Delegating(Neither):
+        DELEGATE: tx.ClassVar[tx.Optional[type]] = None
+
+        @classmethod
+        @_delegated_from_fileobj(lambda cls: cls.DELEGATE)
+        def from_fileobj(cls, file, **kwargs) -> tx.Any:  # noqa: ANN001
+            if cls.DELEGATE is None:
+                return super().from_fileobj(file, **kwargs)
+            return cls.DELEGATE.from_fileobj(file, **kwargs)
+
+    class ToHeader(Delegating):
+        DELEGATE = HeaderOnly
+
+    class ToBytes(Delegating):
+        DELEGATE = BytesOnly
+
+    # Without a delegate, the method is a passthrough.
+    assert not _overrides_from_fileobj(Delegating)
+    with pytest.raises(ParserNotImplementedError):
+        Delegating.from_bytes(b"data")
+    # The delegate decides whether the stream is read.
+    assert _overrides_from_fileobj(ToHeader)
+    assert ToHeader.from_bytes(b"WXYZ!").magic == b"WXYZ"
+    assert not _overrides_from_fileobj(ToBytes)
+
+
+# ----------------------------------------------------------------------
+#   DISABLED METHODS
+# ----------------------------------------------------------------------
+
+
+class NoBytes(HeaderOnly):
+    """A format that reads streams but refuses bytes."""
+
+    from_bytes = disabled(ParserContentError, "Read a stream instead.")
+
+
+class NoStream(BinaryFileReader):
+    """A format that refuses streams, and therefore bytes as well."""
+
+    from_fileobj = disabled(ParserTypeError, "Read a path instead.")
+
+
+class NoBytesGreeting(WritableGreeting):
+    """A writable format that refuses to be written to bytes."""
+
+    to_bytes = disabled(WriterError, "Write to a path instead.")
+
+
+def test_a_disabled_reader_raises_its_error_with_its_message() -> None:
+    with pytest.raises(ParserContentError, match="Read a stream instead."):
+        NoBytes.from_bytes(b"MAGIC")
+    # The other entry points still read.
+    assert NoBytes.from_fileobj(_io.BytesIO(b"MAGIC")).magic == b"MAGI"
+    assert NoBytes.from_bytes.__name__ == "from_bytes"
+    assert NoBytes.from_bytes.__doc__ == "Read a stream instead."
+
+
+def test_a_disabled_fileobj_disables_the_bytes_that_fall_back_to_it() -> None:
+    with pytest.raises(ParserTypeError, match="Read a path instead."):
+        NoStream.from_fileobj(_io.BytesIO(b"data"))
+    with pytest.raises(ParserTypeError, match="Read a path instead."):
+        NoStream.from_bytes(b"data")
+
+
+def test_a_disabled_writer_raises_on_an_instance() -> None:
+    greeting = NoBytesGreeting("world")
+    with pytest.raises(WriterError, match="Write to a path instead."):
+        greeting.to_bytes()
+    assert list(greeting.to_lines()) == ["HELLO world"]

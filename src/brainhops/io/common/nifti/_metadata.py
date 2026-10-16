@@ -47,6 +47,7 @@ class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
+    RAW: tx.ClassVar[type] = NiftiRaw
     SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = (
         "description",
         "sources",
@@ -188,15 +189,6 @@ class NiftiMetadata(MetadataFormat, BinaryFileReader, BinaryFileWriter):
     ) -> float:
         """Return the confidence that bytes start with a NIfTI header."""
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NiftiMetadata":
-        """Read the metadata from the header at the start of a stream.
-
-        The header is read with [`NiftiRaw.from_fileobj`][], which receives
-        the keyword arguments and accepts `check` alone.
-        """
-        return cls.from_raw(NiftiRaw.from_fileobj(file, **kwargs))
 
     def to_bytes(
         self, *, on_loss: tx.Optional[OnLoss] = None, **fields: tx.Any

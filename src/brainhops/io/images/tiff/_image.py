@@ -152,21 +152,6 @@ class _TiffReader:
             content = file.read()
         return cls.from_source(backend.TiffSource(content=content), **kwargs)
 
-    @classmethod
-    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
-        """Read from bytes.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the file.
-        **kwargs : Any
-            The options of `from_source`.
-        """
-        return cls.from_source(
-            backend.TiffSource(content=bytes(content)), **kwargs
-        )
-
 
 # ----------------------------------------------------------------------
 #   SINGLE-SCALE IMAGE

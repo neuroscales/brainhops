@@ -15,6 +15,7 @@ __all__ = [
     "BinaryFileWriter",
     "TextFileReader",
     "TextFileWriter",
+    "disabled",
 ]
 
 from collections.abc import Iterable
@@ -70,6 +71,57 @@ class Confidence:
 
     CERTAIN: float = 1.0
     """The input is definitely of this type."""
+
+
+# ----------------------------------------------------------------------
+#   DISABLED METHODS
+# ----------------------------------------------------------------------
+
+
+class disabled:  # noqa: N801
+    """A reader or writer method that a format cannot provide.
+
+    Some formats cannot be read from every kind of input or written to
+    every kind of output. An AFNI dataset, for example, is two files,
+    which bytes alone cannot hold. Such a format assigns this object to
+    the method in its class body, as in `from_bytes = disabled(
+    ParserContentError, "...")`, instead of writing a method that only
+    raises. Calling the method, on the class or on an instance, with any
+    arguments, raises the error with the message.
+
+    A `from_fileobj` that is disabled counts as an implementation for the
+    input adapters, so `from_bytes` falls back to it and raises the same
+    error, unless `from_bytes` is implemented or disabled as well.
+
+    Parameters
+    ----------
+    error : type[Exception]
+        The class of the error that the method raises.
+    message : str
+        The message of the error, which says what the format can read or
+        write instead.
+    """
+
+    def __init__(self, error: tx.Type[Exception], message: str) -> None:
+        self.error = error
+        self.message = message
+        self.name = "method"
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = name
+
+    def __get__(
+        self, obj: tx.Any, owner: tx.Optional[type] = None
+    ) -> tx.Callable[..., tx.NoReturn]:
+        def refuse(*args: tx.Any, **kwargs: tx.Any) -> tx.NoReturn:
+            raise self.error(self.message)
+
+        refuse.__name__ = refuse.__qualname__ = self.name
+        refuse.__doc__ = self.message
+        return refuse
+
+    def __repr__(self) -> str:
+        return f"disabled({self.error.__name__}, {self.message!r})"
 
 
 # ----------------------------------------------------------------------
@@ -346,6 +398,37 @@ def _passthrough_from_fileobj(func: tx.Callable) -> tx.Callable:
     return func
 
 
+def _delegated_from_fileobj(
+    delegate: tx.Callable[[type], tx.Optional[type]],
+) -> tx.Callable[[tx.Callable], tx.Callable]:
+    """Mark a `from_fileobj` that hands the stream to another class.
+
+    A metadata format that reads its header through its record class is
+    an example: its `from_fileobj` reads the stream with the
+    `from_fileobj` of the record class. Whether such a method reads the
+    stream itself therefore depends on the class that it delegates to.
+    `delegate(cls)` returns that class, or `None` when `cls` delegates to
+    no class, in which case the method is a passthrough.
+
+    Parameters
+    ----------
+    delegate : Callable[[type], type or None]
+        The function that returns the class to which `cls` hands the
+        stream.
+
+    Returns
+    -------
+    Callable[[Callable], Callable]
+        The decorator that marks the method.
+    """
+
+    def mark(func: tx.Callable) -> tx.Callable:
+        func._delegated_from_fileobj = delegate
+        return func
+
+    return mark
+
+
 # The parser classes whose from_bytes is currently falling back to
 # from_fileobj. If from_bytes is entered again for one of these classes, then
 # from_fileobj has passed the content back to from_bytes, and the fallback
@@ -359,13 +442,21 @@ def _overrides_from_fileobj(cls: type) -> bool:
     """Return whether a class in the MRO of `cls` defines `from_fileobj`.
 
     Implementations marked with `_passthrough_from_fileobj` do not count, so a
-    mixin that only forwards the call is not an override.
+    mixin that only forwards the call is not an override. An implementation
+    marked with `_delegated_from_fileobj` counts when the class that it
+    hands the stream to defines `from_fileobj`.
     """
     for klass in cls.__mro__:
         func = klass.__dict__.get("from_fileobj")
         if func is None:
             continue
         func = getattr(func, "__func__", func)
+        delegate = getattr(func, "_delegated_from_fileobj", None)
+        if delegate is not None:
+            target = delegate(cls)
+            if target is not None:
+                return _overrides_from_fileobj(target)
+            continue
         if not getattr(func, "_passthrough_from_fileobj", False):
             return True
     return False

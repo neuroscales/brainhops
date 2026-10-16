@@ -206,8 +206,12 @@ class MatRaw(Raw, BinaryFileReader, BinaryFileWriter):
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "MatRaw":
         """Read the record of an ITK `.mat` file from a binary stream.
 
-        The whole stream is read, since the file is read in one pass, and
-        its position is restored.
+        ITK writes each block as two column vectors, which are its
+        parameters followed by its fixed parameters. As ITK does, the
+        variables are read in pairs, the second variable of each pair is
+        taken as the fixed parameters whatever its name, and anything
+        other than a column vector is refused. The whole stream is read,
+        since the file is read in one pass, and its position is restored.
 
         Parameters
         ----------
@@ -229,45 +233,13 @@ class MatRaw(Raw, BinaryFileReader, BinaryFileWriter):
         ParserContentError
             If the content is not an ITK `.mat` file.
         """
-        with preserve_position(file):
-            return cls.from_bytes(file.read(), **kwargs)
-
-    @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> "MatRaw":
-        """Read the record of an ITK `.mat` file from its bytes.
-
-        ITK writes each block as two column vectors, which are its
-        parameters followed by its fixed parameters. As ITK does, the
-        variables are read in pairs, the second variable of each pair is
-        taken as the fixed parameters whatever its name, and anything
-        other than a column vector is refused.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the file.
-        **kwargs : Any
-            Options of the reader. There are none, so any option is
-            refused.
-
-        Returns
-        -------
-        MatRaw
-            The record, which keeps the bytes of the file.
-
-        Raises
-        ------
-        TypeError
-            If an option is given.
-        ParserContentError
-            If the content is not an ITK `.mat` file.
-        """
         if kwargs:
             raise TypeError(
-                f"{cls.__name__}.from_bytes() takes no options, but was "
-                f"given {', '.join(sorted(kwargs))}."
+                f"{cls.__name__} takes no options, but was given "
+                f"{', '.join(sorted(kwargs))}."
             )
-        content = bytes(content)
+        with preserve_position(file):
+            content = bytes(file.read())
         blocks, byteorder = _decode(content)
         return cls(blocks=blocks, byteorder=byteorder, content=content)
 

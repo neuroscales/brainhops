@@ -29,6 +29,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     UnrepresentableTransformationError,
     WriterError,
+    disabled,
 )
 from brainhops.io.common._geometry import ras_conversion
 from brainhops.io.common.afni import AfniMetadata, AfniRaw
@@ -327,31 +328,11 @@ class AfniBrikWarp(
         image = AfniImage.from_fileobj(file, mmap=mmap, **kwargs)
         return cls(rawdata=image.rawdata, metadata=image.metadata)
 
-    @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> "AfniBrikWarp":
-        """Refuse to read bytes, which cannot hold a dataset of two files.
-
-        Parameters
-        ----------
-        content : bytes
-            The bytes, which are not read.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        AfniBrikWarp
-            Never, since an error is always raised.
-
-        Raises
-        ------
-        ParserContentError
-            Always.
-        """
-        raise ParserContentError(
-            "An AFNI dataset is two files (.HEAD and .BRIK), which bytes "
-            "alone cannot hold. Read it from its path instead."
-        )
+    from_bytes = disabled(
+        ParserContentError,
+        "An AFNI dataset is two files (.HEAD and .BRIK), which bytes "
+        "alone cannot hold. Read it from its path instead.",
+    )
 
     # --- endpoints ----------------------------------------------------
     # The endpoints are declared rather than read off the chain, which would
@@ -637,48 +618,17 @@ class AfniBrikWarp(
             return self.to_filename(file, **kwargs)
         return self.to_fileobj(file, **kwargs)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Refuse a stream, which cannot hold a dataset of two files.
+    to_fileobj = disabled(
+        WriterError,
+        "An AFNI dataset is two files (.HEAD and .BRIK), which a "
+        "single stream cannot hold. Write it to a path instead.",
+    )
 
-        Parameters
-        ----------
-        file : IO
-            The stream, which is not written.
-        **kwargs : Any
-            Options of the writer, which are ignored.
-
-        Raises
-        ------
-        WriterError
-            Always.
-        """
-        raise WriterError(
-            "An AFNI dataset is two files (.HEAD and .BRIK), which a "
-            "single stream cannot hold. Write it to a path instead."
-        )
-
-    def to_bytes(self, **kwargs) -> bytes:
-        """Refuse to write bytes, which cannot hold a dataset of two files.
-
-        Parameters
-        ----------
-        **kwargs : Any
-            Options of the writer, which are ignored.
-
-        Returns
-        -------
-        bytes
-            Never, since an error is always raised.
-
-        Raises
-        ------
-        WriterError
-            Always.
-        """
-        raise WriterError(
-            "An AFNI dataset is two files (.HEAD and .BRIK), which bytes "
-            "alone cannot hold. Write it to a path instead."
-        )
+    to_bytes = disabled(
+        WriterError,
+        "An AFNI dataset is two files (.HEAD and .BRIK), which bytes "
+        "alone cannot hold. Write it to a path instead.",
+    )
 
 
 # ----------------------------------------------------------------------

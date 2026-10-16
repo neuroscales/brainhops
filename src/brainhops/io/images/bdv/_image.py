@@ -24,6 +24,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     SnifferContentError,
+    disabled,
 )
 from brainhops.io.common._geometry import (
     held_transformations,
@@ -459,32 +460,12 @@ class BdvImage(ImageFormat, SingleScaleImage, BinaryFileReader):
             level=level,
         )
 
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "BdvImage":
-        """Refuse to read an image from a stream.
-
-        A dataset is an XML file and an HDF5 file that the XML file names,
-        usually by a path relative to its own directory, so one stream
-        cannot hold it, and an image is read from the path of its XML
-        file.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream.
-        **kwargs : Any
-            Options of the reader.
-
-        Raises
-        ------
-        ParserContentError
-            Always.
-        """
-        raise ParserContentError(
-            "A BigDataViewer dataset is an XML file and the HDF5 file that "
-            "it names, so an image is read from the path of the XML file, "
-            "not from a stream or from bytes."
-        )
+    from_fileobj = disabled(
+        ParserContentError,
+        "A BigDataViewer dataset is an XML file and the HDF5 file that "
+        "it names, so an image is read from the path of the XML file, "
+        "not from a stream or from bytes.",
+    )
 
 
 # ----------------------------------------------------------------------

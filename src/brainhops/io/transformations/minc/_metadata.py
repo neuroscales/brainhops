@@ -37,6 +37,7 @@ class XfmMetadata(MetadataFormat, TextFileReader, TextFileWriter):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xfm",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc", "xfm")
+    RAW: tx.ClassVar[type] = XfmRaw
 
     raw: NoRepr[tx.Optional[XfmRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -154,91 +155,6 @@ class XfmMetadata(MetadataFormat, TextFileReader, TextFileWriter):
             The confidence, between 0 and 1.
         """
         return XfmRaw.sniff_filename(filename, error=error, **kwargs)
-
-    # --- from ---------------------------------------------------------
-
-    @classmethod
-    def from_text(cls, text: str, **kwargs) -> "XfmMetadata":
-        """Read the metadata from the text of an MNI transform file.
-
-        The text is parsed by [`XfmRaw.from_text`][].
-
-        Parameters
-        ----------
-        text : str
-            The text of the file.
-        **kwargs : Any
-            Options of [`XfmRaw.from_text`][], which refuses them.
-
-        Returns
-        -------
-        XfmMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(XfmRaw.from_text(text, **kwargs))
-
-    @classmethod
-    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> "XfmMetadata":
-        """Read the metadata from the lines of an MNI transform file.
-
-        The lines are parsed by [`XfmRaw.from_lines`][].
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines of the file, without line endings.
-        **kwargs : Any
-            Options of [`XfmRaw.from_lines`][], which refuses them.
-
-        Returns
-        -------
-        XfmMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(XfmRaw.from_lines(lines, **kwargs))
-
-    @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> "XfmMetadata":
-        """Read the metadata from the bytes of an MNI transform file.
-
-        The bytes are parsed by [`XfmRaw.from_bytes`][].
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the file.
-        **kwargs : Any
-            Options of [`XfmRaw.from_bytes`][].
-
-        Returns
-        -------
-        XfmMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(XfmRaw.from_bytes(content, **kwargs))
-
-    @classmethod
-    def from_filename(
-        cls, filename: path.FilenameLike, **kwargs
-    ) -> "XfmMetadata":
-        """Read the metadata of an MNI transform file.
-
-        The file is read by [`XfmRaw.from_filename`][], and no displacement
-        volume is read.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Options of [`XfmRaw.from_bytes`][].
-
-        Returns
-        -------
-        XfmMetadata
-            The metadata, which holds the record of the file.
-        """
-        return cls.from_raw(XfmRaw.from_filename(filename, **kwargs))
 
     # --- to -----------------------------------------------------------
 

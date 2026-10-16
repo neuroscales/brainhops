@@ -42,6 +42,7 @@ class NeuroglancerTransformMetadata(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".ngtransform.json",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("neuroglancer.affine",)
+    RAW: tx.ClassVar[type] = NeuroglancerTransformRaw
 
     raw: NoRepr[tx.Optional[NeuroglancerTransformRaw]] = None
     """The content of the file, or `None` for metadata without a record."""
@@ -72,42 +73,6 @@ class NeuroglancerTransformMetadata(
             The confidence, between 0 and 1.
         """
         return NeuroglancerTransformRaw.sniff_text(text, error=error)
-
-    @classmethod
-    def from_text(cls, text: str) -> "NeuroglancerTransformMetadata":
-        """Read the metadata from the JSON text of a transform.
-
-        The text is parsed by [`NeuroglancerTransformRaw.from_text`][].
-
-        Parameters
-        ----------
-        text : str
-            The JSON text of the transform.
-
-        Returns
-        -------
-        NeuroglancerTransformMetadata
-            The metadata, which holds the record of the transform.
-        """
-        return cls.from_raw(NeuroglancerTransformRaw.from_text(text))
-
-    @classmethod
-    def from_lines(
-        cls, lines: tx.Iterable[str]
-    ) -> "NeuroglancerTransformMetadata":
-        """Read the metadata from the lines of the JSON text of a transform.
-
-        Parameters
-        ----------
-        lines : iterable of str
-            The lines, without line endings.
-
-        Returns
-        -------
-        NeuroglancerTransformMetadata
-            The metadata, which holds the record of the transform.
-        """
-        return cls.from_raw(NeuroglancerTransformRaw.from_lines(lines))
 
     def to_text(self) -> str:
         """Return the JSON text of the record.
