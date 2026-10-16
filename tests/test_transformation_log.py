@@ -828,3 +828,47 @@ def test_a_chain_that_does_not_reduce_is_refused_before_computing() -> None:
             for log in (True, False):
                 with pytest.raises(ConversionError, match="not composed"):
                     chain.to(log=log)
+
+
+@pytest.mark.parametrize(
+    "source_cls,target_cls,tangent",
+    [
+        (RotationExponential, LinearExponential, SKEW),
+        (Rotation, Linear, np.eye(3)),
+    ],
+)
+def test_same_encoding_class_conversion_does_not_evaluate_map(
+    source_cls: type,
+    target_cls: type,
+    tangent: np.ndarray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = source_cls(data=tangent)
+
+    def forbid_evaluation(*args, **kwargs) -> None:
+        pytest.fail("Class-only conversion must preserve the stored tangent")
+
+    monkeypatch.setattr(_tangents, "expm", forbid_evaluation)
+    monkeypatch.setattr(_tangents, "logm", forbid_evaluation)
+    monkeypatch.setattr(source_cls, "matrix", property(forbid_evaluation))
+    result = source.to(target_cls)
+    assert isinstance(result, target_cls)
+    assert result.data is source.data
+    assert result.log == source.log
+
+
+def test_velocity_class_conversion_does_not_integrate_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class VelocitySubclass(StationaryVelocityField):
+        pass
+
+    source = VelocitySubclass(data=np.zeros((3, 4, 2)))
+
+    def forbid_evaluation(*args, **kwargs) -> None:
+        pytest.fail("Class-only conversion must preserve the stored velocity")
+
+    monkeypatch.setattr(VelocitySubclass, "field", property(forbid_evaluation))
+    result = source.to(StationaryVelocityField)
+    assert result.data is source.data
+    assert result.log

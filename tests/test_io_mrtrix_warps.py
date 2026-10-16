@@ -540,14 +540,6 @@ def test_nifti_displacements_are_written_as_mrtrix_warps(tmp_path) -> None:  # n
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "A NIfTI affine whose matrix lives in its header converts to a "
-        "plain Affine without its matrix, so the grid of an SPM field is "
-        "lost when its chain is split for another format."
-    ),
-)
 def test_spm_coordinates_are_written_as_mrtrix_warps(tmp_path) -> None:  # noqa: ANN001
     # VECTOR with the intent name of SPM: coordinates
     path = _nifti_field(tmp_path / "y_c.nii.gz", 1007, "Mapping")
