@@ -59,6 +59,7 @@ if tx.TYPE_CHECKING:
     from .meta import MetaTransformation  # noqa: F401
 
 _TypeReference = tx.ClassVar[tx.Optional[tx.Type[Transformation]]]
+_FieldName = tx.ClassVar[str]
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 
 # --- helpers ----------------------------------------------------------
@@ -280,9 +281,8 @@ class TransformationField(ConcreteTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "field"
-
-    data_fields: _FieldNames = ("data",)
+    map_field: _FieldName = "field"
+    data_fields: _FieldNames = "data",
     encoding_fields: _FieldNames = "degree", "bound", "store"
     derived_fields: _FieldNames = "field", "values", "coefficients", "_inverse"
 
@@ -342,58 +342,6 @@ class TransformationField(ConcreteTransformation):
         `"coefficients"`.
         """
         return StoreEnum.values
-
-    # --- overloads ----------------------------------------------------
-
-    if tx.TYPE_CHECKING:
-
-        @tx.overload
-        def __init__(
-            self,
-            data: ArrayLike,
-            *,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            field: ArrayLike,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            values: ArrayLike,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "values",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
-
-        @tx.overload
-        def __init__(
-            self,
-            *,
-            coefficients: ArrayLike,
-            degree: tx.Union[InterpolationOrder, int, str] = "linear",
-            bound: tx.Union[BoundaryCondition, float, str] = "nearest",
-            store: tx.Union[StoreEnum, str] = "coefficients",
-            input: tx.Optional[CoordinateSystem] = None,
-            output: tx.Optional[CoordinateSystem] = None,
-        ) -> None: ...
 
     def _set_derived_fields(self, arguments: tx.Any) -> None:
         # `coefficients=` declares that the array holds coefficients, so it
@@ -533,9 +481,8 @@ class DisplacementField(TransformationField, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
-    _base_encoding_fields: _FieldNames = TransformationField.encoding_fields
     encoding_fields: _FieldNames = (
-        *_base_encoding_fields,
+        *TransformationField.encoding_fields,
         "log",
     )
 
@@ -806,10 +753,9 @@ class Affine(ConcreteTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "matrix"
-
-    data_fields: _FieldNames = ("data",)
-    encoding_fields: _FieldNames = ("log",)
+    map_field: _FieldName = "matrix"
+    data_fields: _FieldNames = "data",
+    encoding_fields: _FieldNames = "log",
     derived_fields: _FieldNames = (
         "matrix",
         "homogeneous_matrix",
@@ -906,10 +852,9 @@ class Linear(ConcreteTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "matrix"
-
-    data_fields: _FieldNames = ("data",)
-    encoding_fields: _FieldNames = ("log",)
+    map_field: _FieldName = "matrix"
+    data_fields: _FieldNames = "data",
+    encoding_fields: _FieldNames = "log",
     derived_fields: _FieldNames = "matrix", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1033,9 +978,8 @@ class Permutation(ConcreteTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "permutation"
-
-    data_fields: _FieldNames = ("data",)
+    map_field: _FieldNames = "permutation"
+    data_fields: _FieldNames = "data",
     derived_fields: _FieldNames = "permutation", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1112,10 +1056,9 @@ class Scaling(ConcreteTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "scale"
-
-    data_fields: _FieldNames = ("data",)
-    encoding_fields: _FieldNames = ("log",)
+    map_field: _FieldNames = "scale"
+    data_fields: _FieldNames = "data",
+    encoding_fields: _FieldNames = "log",
     derived_fields: _FieldNames = "scale", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1185,9 +1128,8 @@ class Translation(ConcreteTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    map_field: tx.ClassVar[str] = "translation"
-
-    data_fields: _FieldNames = ("data",)
+    map_field: _FieldNames = "translation"
+    data_fields: _FieldNames = "data",
     derived_fields: _FieldNames = "translation", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
