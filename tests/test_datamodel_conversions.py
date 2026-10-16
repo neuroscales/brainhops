@@ -76,13 +76,10 @@ def test_related_classes_are_copied_by_name_with_their_checks() -> None:
 
 
 def test_unrelated_classes_are_refused() -> None:
-    image = SingleScaleImage(np.zeros((2, 2, 2)))
-    pyramid = MultiScaleImage.from_instance(image)
-    # Taking a level out of a pyramid of several would lose the others.
-    with pytest.raises(ConversionError):
-        SingleScaleImage.from_instance(pyramid)
     with pytest.raises(ConversionError):
         Metadata.from_instance(A.LeftToRightAxis())
+    with pytest.raises(ConversionError):
+        A.Axis.from_instance(Metadata())
 
 
 def test_a_single_scale_image_is_a_pyramid_of_one_level() -> None:
@@ -98,6 +95,25 @@ def test_a_single_scale_image_is_a_pyramid_of_one_level() -> None:
         # The level keeps its transformations, so the geometry is the same.
         assert list(pyramid.transformations) == []
         assert pyramid.metadata is image.metadata
+
+
+def test_a_pyramid_is_the_single_scale_image_of_its_first_level() -> None:
+    levels = [
+        SingleScaleImage(np.zeros((4, 4, 4))),
+        SingleScaleImage(np.zeros((2, 2, 2))),
+    ]
+    pyramid = MultiScaleImage(levels, [X.Translation([1.0, 2.0, 3.0])])
+    for image in (
+        SingleScaleImage.from_instance(pyramid),
+        pyramid.to(SingleScaleImage),
+    ):
+        assert type(image) is SingleScaleImage
+        assert image.shape == (4, 4, 4)
+        # The level is placed in the world space of the pyramid.
+        np.testing.assert_allclose(
+            np.asarray(image.geometry.transformation.to(X.Affine).matrix),
+            np.asarray(pyramid.geometry.transformation.to(X.Affine).matrix),
+        )
 
 
 def test_from_instance_takes_only_data_models() -> None:

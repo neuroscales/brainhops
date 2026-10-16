@@ -1280,6 +1280,9 @@ def _copy_map(
         # already gives.
         kwargs["data"] = getattr(other, view)
     if "log" in cls.encoding_fields:
+        # The flag is given even when it is the default of `cls`, because the
+        # copy would otherwise carry over the flag of `other`, and a
+        # polymorphic class would then select the form of `other` again.
         kwargs.setdefault("log", out_tangent)
 
 

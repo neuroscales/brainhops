@@ -102,7 +102,7 @@ reason. A missing converter therefore fails the test.
 |---|---|---|
 | axes, systems, orientations | by fixed fields | copy by name with checks (C3) |
 | metadata | by the fields a format stores | copy by name with a loss report |
-| images | by the file record, or single scale against pyramid | copy by name between formats; a single-scale image becomes a pyramid of one level |
+| images | by the file record, or single scale against pyramid | copy by name between formats; `to()` between a single-scale image and a pyramid |
 | transformations | by representation and by promises on values | converters (C4) |
 
 A requested tangent class implies `log=True`, so `x.to(AffineExponential)`
@@ -114,20 +114,25 @@ chain of one element. A file format that stores a chain decides with its
 own converters what it holds, so a single affine is not written as a
 chain file of one element, which would make `save()` ambiguous between
 chain formats and single-affine formats that share an extension.
-`Sequence.is_identity(compute=True)` computes the chain and asks the
-result, so a chain that reduces to the identity converts exactly to
-`Identity`.
+Whether a chain belongs to a kind is decided in three steps, for every
+kind. The chain is bridged first, because two neighbours that do not
+share a coordinate system are joined by a flip or a permutation, which
+is not an identity. If every element of the bridged chain is an
+identity, asked at the analytic level and then by value with
+`compute=True`, the chain is the identity and nothing is composed.
+Otherwise, with `compute=True`, the chain is composed and the result is
+asked about the kind. A chain that reduces to the identity therefore
+converts exactly to `Identity`.
 
-A data model whose classes store their content differently converts a
-related object before its fields are copied, in the class method
-`_as_model()` of `DataModelBase`, which returns the object unchanged by
-default. `MultiScaleImage` uses it to turn a single-scale image into a
+Images follow the pattern of transformations: the conversions that
+change how an image is stored are made by `Image.to()`, and
+`from_instance()` hands them to it, both in `Image` and in
+`ImageFormat`, which comes before the data model in the method
+resolution order of every image format. A single-scale image becomes a
 pyramid of one level. The level keeps its own transformations and the
-pyramid adds none, so the image keeps its geometry. Both
-`DataModelBase.from_instance()` and the `from_instance()` of file
-formats call it first, so a pyramid format such as OME-Zarr takes a
-single-scale image as well. A pyramid is not converted to a single-scale
-image, because taking one level would lose the others.
+pyramid adds none, so the image keeps its geometry. A pyramid becomes
+the single-scale image of its highest-resolution level, placed in the
+world space of the pyramid, and its other levels are left out.
 
 ## 4. Refusals that are deliberate
 
@@ -138,12 +143,13 @@ not computed, and `to(log=True)` is the way to read a field that holds
 a velocity. A matrix with no real logarithm, such as a permutation that
 swaps two axes, raises `DomainError` when a tangent class is requested.
 
-A file format whose data model comes before `TransformationFormat` in
-its method resolution order, such as the NIfTI formats and
-`TrakEM2PatchAffine`, converts in its own `from_instance()`. Otherwise
-its data model would copy the map of the source into the arguments of
-the conversion, and that copy would replace the map that an exact
-converter builds. A test checks that no format passes such arguments.
+A file format lists its format base before its data model, so that
+`TransformationFormat.from_instance()` converts a foreign transformation
+before `ConcreteTransformation.from_instance()` copies any field.
+Otherwise the data model would copy the map of the source into the
+arguments of the conversion, and that copy would replace the map that
+an exact converter builds. A test checks that no format passes such
+arguments to its converter.
 
 ## 5. Open questions
 
@@ -151,4 +157,4 @@ converter builds. A test checks that no format passes such arguments.
    its levels computed, through an option such as `nlevels`, so that
    `image.to(MultiScaleImage, nlevels=5)` builds five levels. This is
    not implemented. It needs a method that computes the levels, which
-   `_as_model()` would then call.
+   `Image.to()` would then call.

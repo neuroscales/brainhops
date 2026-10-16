@@ -67,17 +67,6 @@ class DataModelBase(SharedOptions):
         return cls
 
     @classmethod
-    def _as_model(cls, other: "DataModelBase") -> "DataModelBase":
-        """Return `other` converted to this data model, if it must be.
-
-        A data model whose classes differ by how they store their content
-        converts a related object here, before its fields are copied.
-        `MultiScaleImage` turns a single-scale image into a pyramid of one
-        level, for example. By default, `other` is returned as it is.
-        """
-        return other
-
-    @classmethod
     def from_dict(cls, other: tx.Mapping, *args, **kwargs) -> tx.Self:
         """Build an instance from a mapping.
 
@@ -161,7 +150,6 @@ class DataModelBase(SharedOptions):
                 f"{cls.__name__}.from_any() to read a file, a mapping or "
                 f"another value."
             )
-        other = cls._data_model()._as_model(other)
         if not _related(cls, other):
             raise errors.ConversionError(
                 f"A {type(other).__name__} cannot be copied into a "

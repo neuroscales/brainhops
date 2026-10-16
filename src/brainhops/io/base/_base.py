@@ -604,9 +604,7 @@ class _FileBasedModelMixin:
         need be, because its `rawdata` and its record mean nothing to this
         format. A format that takes `metadata` over receives the metadata
         of `other`, which its field converts into the metadata of the
-        format, without the record of `other`. An object that its data
-        model converts before copying, such as a single-scale image copied
-        into a pyramid, is converted first.
+        format, without the record of `other`.
 
         Parameters
         ----------
@@ -624,7 +622,6 @@ class _FileBasedModelMixin:
         Self
             The copy.
         """
-        other = cls._data_model()._as_model(other)
         for field in _foreign_format_fields(cls, other):
             if field.factory is True:
                 default = field.default()
