@@ -18,7 +18,7 @@ from .compute.utils import axis_list, require_endomorphism
 from .modes import ModeLike
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
-
+_FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 
 class MetaTransformation(Transformation):
     """Base class of the transformations defined in terms of others.
@@ -82,7 +82,7 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = (
+    data_fields: _FieldNames = (
         "transformation",
         "input_axes",
         "output_axes",
@@ -171,7 +171,7 @@ class Projection(MetaTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "dropped", "created"
+    data_fields: _FieldNames = "dropped", "created"
 
     # --- attributes ---------------------------------------------------
 
@@ -224,7 +224,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward", "backward"
+    data_fields: _FieldNames = "forward", "backward"
 
     # --- attributes ---------------------------------------------------
 
