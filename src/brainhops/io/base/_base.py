@@ -18,6 +18,7 @@ from brainhops.io.base.parsers import (
     _ReaderMixin,
     _SnifferMixin,
     _TextReaderMixin,
+    _WriterMixin,
 )
 from brainhops.io.base.specs import SourceSpec
 
@@ -700,9 +701,9 @@ def _check_base_order(cls: type) -> None:
     A concrete format lists its reader and its writer first, then its
     format base, then its data model, as in
     `class NiftiImage(BinaryFileReader, BinaryFileWriter, ImageFormat,
-    SingleScaleImage)`. The reader must come before [`FileFormat`][] in
-    the method resolution order, because the reading methods of
-    `FileFormat` only dispatch, and the format base must come before
+    SingleScaleImage)`. The reader and the writer are listed before the
+    format base, because the reading methods of `FileFormat` only
+    dispatch, and the format base must come before
     the data model, so that the format decides whether to convert another
     object before the data model copies its fields. A root of the
     formats, such as `TransformationFormat`, lists `FileFormat` among its
@@ -717,8 +718,8 @@ def _check_base_order(cls: type) -> None:
     ------
     TypeError
         If a class of the data model comes before the first format class
-        in the method resolution order of `cls`, or if `cls` has a reader
-        but one of its reading methods resolves to `FileFormat`.
+        in the method resolution order of `cls`, or if `cls` lists a
+        reader or a writer after a format base.
     """
     # `bagof.magic` builds a stand-in class of this name only to compute an
     # MRO, then builds the class itself, which is checked.
@@ -739,26 +740,19 @@ def _check_base_order(cls: type) -> None:
             f"the format decides whether to convert another object before "
             f"the data model copies its fields."
         )
-    if not issubclass(cls, (_ReaderMixin, _SnifferMixin)):
-        return
-    late = sorted(
-        name
-        for name, value in vars(FileFormat).items()
-        if isinstance(value, classmethod)
-        and (name == "load" or name.startswith(("from_", "sniff")))
-        and _owner(cls, name) is FileFormat
-    )
+    io_bases = (_ReaderMixin, _SnifferMixin, _WriterMixin)
+    late = []
+    after_format = False
+    for base in cls.__bases__:
+        if issubclass(base, FileFormat):
+            after_format = True
+        elif after_format and issubclass(base, io_bases):
+            late.append(base.__name__)
     if late:
         raise TypeError(
-            f"{cls.__name__} lists its reader after its format base, so "
-            f"{', '.join(late)} would only dispatch. List the reader and "
-            f"the writer first."
+            f"{cls.__name__} lists its reader or writer ({', '.join(late)}) "
+            f"after its format base. List the reader and the writer first."
         )
-
-
-def _owner(cls: type, name: str) -> type:
-    """Return the first class in the MRO of `cls` that defines `name`."""
-    return next(klass for klass in cls.__mro__ if name in klass.__dict__)
 
 
 def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:

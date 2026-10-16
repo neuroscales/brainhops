@@ -92,8 +92,8 @@ class MghImage(
     BinaryFileReader,
     BinaryFileWriter,
     ImageFormat,
-    SingleScaleImage,
     FreesurferFormat,
+    SingleScaleImage,
 ):
     """An image stored in a FreeSurfer MGH or MGZ file.
 

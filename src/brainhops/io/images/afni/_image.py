@@ -196,8 +196,8 @@ class AfniImage(
     BinaryFileReader,
     BinaryFileWriter,
     ImageFormat,
-    SingleScaleImage,
     AfniFormat,
+    SingleScaleImage,
 ):
     """An image stored as an AFNI dataset (`.HEAD` and `.BRIK` files).
 

@@ -36,9 +36,11 @@ retain field-free construction support
 from `DataModelBase` for cooperative `from_any` and `from_instance` calls.
 A family owns a registry through `@format_registry`; a concrete format joins
 its ancestors' registries through `@register_format`. The families of
-transformation formats, such as `AffineTransformationFormat` or
-`AfniTransformationFormat`, own a registry too, so that their `load`
-chooses among the formats of the family.
+formats own a registry too, so that their `load` chooses among the
+formats of the family. A family can hold several kinds of objects, such
+as `AfniFormat` and `FreesurferFormat`, which hold images and
+transformations, or a single kind, such as `AffineTransformationFormat`
+or `AfniTransformationFormat`.
 
 ```python
 @register_format

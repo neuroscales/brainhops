@@ -134,7 +134,7 @@ TIFF reader, if tifffile is installed.
 """
 
 __all__ = [
-    "OpenSlideFormat",
+    "OpenSlideReader",
     "OpenSlideImage",
     "OpenSlideLevelRaw",
     "OpenSlideMetadata",
@@ -164,7 +164,7 @@ __all__ = [
     "GenericTiffMultiScaleImage",
 ]
 
-from ._base import OpenSlideFormat, OpenSlideImage, OpenSlideMultiScaleImage
+from ._base import OpenSlideImage, OpenSlideMultiScaleImage, OpenSlideReader
 from ._formats import (
     AperioImage,
     AperioMultiScaleImage,

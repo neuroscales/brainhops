@@ -75,7 +75,7 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.images.openslide": Package(
         names=frozenset(
             {
-                "OpenSlideFormat",
+                "OpenSlideReader",
                 "OpenSlideImage",
                 "OpenSlideLevelRaw",
                 "OpenSlideMetadata",
