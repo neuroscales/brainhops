@@ -7,15 +7,14 @@ from urllib.parse import urlsplit
 
 # dependencies
 import nibabel as nb
-import numpy as np
 import typing_extensions as tx
 from nibabel.arrayproxy import ArrayProxy
 
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import to_backend
 from brainhops.io.base._utils_files import is_local, replace_file
+from brainhops.io.base._utils_proxies import NibabelProxy
 
 # ----------------------------------------------------------------------
 #   READING AND WRITING THROUGH A PATH
@@ -186,21 +185,14 @@ def _save_nifti(
 
 
 def _read(raw: ArrayProtocol) -> ArrayProtocol:
-    """Return an array from a stored array, which may be a nibabel proxy.
+    """Return a lazy array of the voxels from a stored array.
 
-    A nibabel proxy, which reads the voxels lazily, is converted with the
-    backend setting (see [`to_backend`][brainhops.backends.to_backend]).
-    Under the default setting, a small proxy is read with NumPy and a large
-    one becomes a Dask array. The NumPy array that it gives is made
-    read-only, because it is a view that
-    the writer does not read back: the writer writes `rawdata`, so an edit in
-    place would be lost. Any other array is returned as it is, so that a
-    Dask array stays lazy and an array that was set as data stays the
-    array of `rawdata`.
+    A nibabel proxy, which reads the voxels of a file, is wrapped in a
+    lazy array of brainhops (see
+    [`NibabelProxy`][brainhops.io.base._utils_proxies.NibabelProxy]), so
+    that the views of the formats index and transpose it without reading
+    anything. Any other array is returned as it is.
     """
     if not isinstance(raw, ArrayProxy):
         return raw
-    data = to_backend(raw)
-    if isinstance(data, np.ndarray):
-        data.flags.writeable = False
-    return data
+    return NibabelProxy(raw)

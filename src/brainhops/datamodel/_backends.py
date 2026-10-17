@@ -13,11 +13,13 @@ need more than the default conversion overrides `to_backend` or
 """
 
 # dependencies
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
 # internals
 from brainhops import backends
+from brainhops._core.properties import cached_value, smartproperty
 from brainhops.backends import _CURRENT, Setting
 
 _Default = tx.Union[Setting, tx.Any]
@@ -35,6 +37,18 @@ class _BackendsMixin:
     and the transformations that hold other transformations override
     `as_backend`.
     """
+
+    @property
+    def dataobj(self) -> tx.Any:
+        """The array of the object, without reading it.
+
+        By default, it is the data that the object holds. An object read
+        from a file returns instead a lazy array of the file, in the
+        layout of `data`, which reads nothing until it is converted, so
+        that a part of a large file can be read alone. The shape and the
+        type of the values are read from it without reading the file.
+        """
+        return _stored_data(self)
 
     def to_backend(self, backend: _Default = _CURRENT) -> tx.Any:
         """Return the data as a bare array of the backend of a setting.
@@ -54,7 +68,7 @@ class _BackendsMixin:
         array or None
             The data.
         """
-        data = self.data
+        data = _stored_data(self)
         if data is None:
             return None
         return backends.to_backend(data, backend)
@@ -191,7 +205,7 @@ def _as_backend_data(obj: _T, backend: _Default, inplace: bool) -> _T:
     object
         The object, or a copy of it.
     """
-    data = obj.data
+    data = _stored_data(obj)
     if data is None:
         return obj
     converted = backends.to_backend(data, backend)
@@ -224,3 +238,116 @@ def _with_fields(obj: _T, inplace: bool, **changes: tx.Any) -> _T:
             setattr(obj, name, value)
         return obj
     return replace(obj, **changes)
+
+
+def _stored_data(obj: tx.Any) -> tx.Any:
+    """Return the `data` of an object as it is stored, without converting it.
+
+    The `data` of an image or a field follows the backend setting in
+    effect when it is read (see [`dataproperty`][]). The conversion
+    methods read it under the setting `None`, which returns the stored or
+    cached array itself, so that they convert it once, from what the
+    object holds.
+    """
+    with backends.backend(None):
+        return obj.data
+
+
+def _follow_setting(value: tx.Any) -> tx.Any:
+    """Convert an array with the backend setting in effect, if any.
+
+    Under the default setting, `None`, the array is returned as it is.
+    Under any other setting, it is converted as
+    [`to_backend`][brainhops.backends.to_backend] says, and a new array is
+    returned at each call.
+    """
+    if backends.get_backend() is None:
+        return value
+    return backends.to_backend(value)
+
+
+def _load(dataobj: tx.Any) -> tx.Any:
+    """Read the values of a lazy array as the setting in effect says.
+
+    Under the default setting, a lazy array of a file is read with NumPy
+    when it is small and kept lazy as a Dask array when it is large, and
+    an explicit setting chooses the backend (see
+    [`to_backend`][brainhops.backends.to_backend]). A NumPy array that is
+    read from a file is made read-only, because the writers encode what
+    the object holds, not this array, so a change made to it in place
+    would be lost. A loaded array is returned as it is.
+    """
+    if backends._is_loaded(dataobj):
+        return dataobj
+    return _read_only(backends.to_backend(dataobj), dataobj)
+
+
+def _read_only(data: tx.Any, dataobj: tx.Any) -> tx.Any:
+    # A NumPy array read from a lazy array of a file is made read-only,
+    # as `_load` explains. A loaded array is the array itself, or a view
+    # of it, so its flag is left as it is.
+    if isinstance(data, np.ndarray) and not backends._is_loaded(dataobj):
+        data.flags.writeable = False
+    return data
+
+
+def _read_data(self: tx.Any) -> tx.Any:
+    # Called only when no array is assigned, so `dataobj` is the lazy
+    # array of the file, or None. The first read converts it with the
+    # setting in effect and caches the result, and later reads return the
+    # cached array, which the conversion of the property then converts
+    # with the setting in effect at that read.
+    cached = cached_value(self, "data")
+    if cached is not None:
+        return cached
+    dataobj = self.dataobj
+    if dataobj is None:
+        return None
+    data = _load(dataobj)
+    object.__setattr__(self, "_cache_data", data)
+    return data
+
+
+def dataproperty(**kwargs: tx.Any) -> property:
+    """Declare the `data` of an image or a field, which follows the setting.
+
+    `data` is the array of values of an object, read from its `dataobj`.
+    An array that was assigned is returned converted with the backend
+    setting in effect: as it is under the default setting, and as a new
+    array of the requested backend under any other setting, such as
+    `with backend("dask"):`.
+
+    When no array was assigned, `dataobj` is the lazy array of a file.
+    The first read converts it with the setting in effect and caches the
+    result: under the default setting, a small file is read with NumPy
+    and a large one is kept lazy as a Dask array, and under
+    `with backend("dask"):` the file is kept lazy whatever its size.
+    Later reads return the cached array, converted with the setting in
+    effect at that read. The cached array does not change, so an object
+    that should hold another backend for good is converted with an
+    `as_*` method, or its backend is chosen before its first read.
+
+    Parameters
+    ----------
+    **kwargs : Any
+        Other options of [`smartproperty`][], such as `invalidates`.
+
+    Returns
+    -------
+    property
+        The property `data`, stored in `_data`.
+    """
+    invalidates = kwargs.pop("invalidates", ())
+    if not isinstance(invalidates, tuple):
+        invalidates = (invalidates,)
+
+    # The property is named after its getter, so the getter is `data`.
+    def data(self: tx.Any) -> tx.Any:
+        return _read_data(self)
+
+    return smartproperty(
+        data,
+        invalidates=("data", *invalidates),
+        convert=_follow_setting,
+        **kwargs,
+    )

@@ -6,6 +6,7 @@ from bagof.magic import Magic
 
 from brainhops._core.properties import (
     InvalidatorInAttribute,
+    alias,
     cached_value,
     drop_cache,
     lazyproperty,
@@ -411,3 +412,61 @@ def test_smartsetter_on_a_magic_class_with_a_private_field() -> None:
     model.data = 5
     assert model.data == 5 and Model.assigned == before + 1
     assert Model().data is None
+
+
+def test_convert_applies_at_each_read_without_changing_the_cache() -> None:
+    # convert transforms the value at each read, while the cached or
+    # stored value stays as it was, and None is not converted.
+    class Box:
+        computed = 0
+
+        @smartproperty(cache=True, convert=lambda value: value.upper())
+        def value(self) -> str:
+            type(self).computed += 1
+            return "computed"
+
+    box = Box()
+    assert box.value == "COMPUTED"
+    assert box.value == "COMPUTED"
+    assert Box.computed == 1
+    assert cached_value(box, "value") == "computed"
+    box.value = "stored"
+    assert box.value == "STORED"
+    assert box._value == "stored"
+
+    class Empty:
+        value = smartproperty("value", convert=lambda value: value.upper())
+
+    assert Empty().value is None
+
+
+def test_alias_reads_and_writes_its_source() -> None:
+    # An alias reads its source and assigns it, unless it is read-only.
+    class Box:
+        value = 1
+        other = alias("value")
+        fixed = alias("value", readonly=True)
+
+    box = Box()
+    assert box.other == 1
+    box.other = 2
+    assert box.value == 2
+    assert box.fixed == 2
+    with pytest.raises(AttributeError):
+        box.fixed = 3
+
+
+def test_a_dotted_alias_is_read_only() -> None:
+    # An alias of an attribute of another object reads it and never
+    # writes into it.
+    class Inner:
+        value = 1
+
+    class Outer:
+        inner = Inner()
+        value = alias("inner.value")
+
+    outer = Outer()
+    assert outer.value == 1
+    with pytest.raises(AttributeError):
+        outer.value = 2

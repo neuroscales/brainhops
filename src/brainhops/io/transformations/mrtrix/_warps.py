@@ -27,6 +27,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import dataproperty
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -511,15 +512,31 @@ class MrtrixCoordinatesField(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        """The RAS coordinates as an (X, Y, Z, 3) array.
+    data = dataproperty(invalidates="transformations")
+    """The RAS coordinates as an (X, Y, Z, 3) array.
 
-        Coordinates that are assigned are returned as they are, and stay
-        pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `rawdata`, and are read-only. Assigning the data
-        drops the chain decoded from the previous data.
+    Coordinates that are assigned are returned as they are, and stay
+    pending until [`consolidate`][] or a write encodes them. Otherwise
+    they are decoded from `rawdata`, and are read-only. Assigning the data
+    drops the chain decoded from the previous data.
+
+    The first read converts the lazy array of the file with the
+    backend setting in effect and caches the result. Each later read
+    returns the cached array converted to the setting in effect then,
+    such as `with backend("dask"):`, and the cached array does not
+    change.
+    """
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the field in the layout of `data`, without reading it.
+
+        An array assigned as `data` is returned as it is. Otherwise, the
+        lazy array of the file is returned through the same view that
+        `data` reads, and nothing is read until it is converted.
         """
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _warp_to_model(self.rawdata)
@@ -788,15 +805,31 @@ class MrtrixDisplacementField(
     write encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        """The RAS displacements as an (X, Y, Z, 3) array.
+    data = dataproperty(invalidates="transformations")
+    """The RAS displacements as an (X, Y, Z, 3) array.
 
-        Displacements that are assigned are returned as they are, and stay
-        pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `rawdata`, and are read-only. Assigning the data
-        drops the chain decoded from the previous data.
+    Displacements that are assigned are returned as they are, and stay
+    pending until [`consolidate`][] or a write encodes them. Otherwise
+    they are decoded from `rawdata`, and are read-only. Assigning the data
+    drops the chain decoded from the previous data.
+
+    The first read converts the lazy array of the file with the
+    backend setting in effect and caches the result. Each later read
+    returns the cached array converted to the setting in effect then,
+    such as `with backend("dask"):`, and the cached array does not
+    change.
+    """
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the field in the layout of `data`, without reading it.
+
+        An array assigned as `data` is returned as it is. Otherwise, the
+        lazy array of the file is returned through the same view that
+        `data` reads, and nothing is read until it is converted.
         """
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _warp_to_model(self.rawdata)
@@ -1084,15 +1117,31 @@ class MrtrixWarpFull(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        """The four warps as an (X, Y, Z, 3, 4) array of RAS positions.
+    data = dataproperty(invalidates="transformations")
+    """The four warps as an (X, Y, Z, 3, 4) array of RAS positions.
 
-        Warps that are assigned are returned as they are, and stay pending
-        until [`consolidate`][] or a write encodes them. Otherwise they are
-        decoded from `rawdata`, and are read-only. Assigning the data drops the
-        chain decoded from the previous data.
+    Warps that are assigned are returned as they are, and stay pending
+    until [`consolidate`][] or a write encodes them. Otherwise they are
+    decoded from `rawdata`, and are read-only. Assigning the data drops the
+    chain decoded from the previous data.
+
+    The first read converts the lazy array of the file with the
+    backend setting in effect and caches the result. Each later read
+    returns the cached array converted to the setting in effect then,
+    such as `with backend("dask"):`, and the cached array does not
+    change.
+    """
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the field in the layout of `data`, without reading it.
+
+        An array assigned as `data` is returned as it is. Otherwise, the
+        lazy array of the file is returned through the same view that
+        `data` reads, and nothing is read until it is converted.
         """
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _warp_to_model(self.rawdata)

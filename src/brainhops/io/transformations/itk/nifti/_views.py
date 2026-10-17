@@ -24,7 +24,9 @@ def _itk_field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
     The singleton axes between the spatial axes and the components are
     dropped from a five-dimensional array whose last axis has two or three
-    components. Any other array is returned as it is.
+    components. They are dropped by indexing them at zero, so that the
+    lazy array of a file stays lazy and reads nothing. Any other array is
+    returned as it is.
     """
     data = _read(raw)
     shape = tuple(int(d) for d in data.shape)
@@ -33,7 +35,8 @@ def _itk_field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     ndim = shape[4]
     if any(size != 1 for size in shape[ndim:4]):
         return data
-    return get_array_backend(data).reshape(data, (*shape[:ndim], ndim))
+    index = (slice(None),) * ndim + (0,) * (4 - ndim) + (slice(None),)
+    return data[index]
 
 
 def _itk_field_to_disk(data: ArrayProtocol) -> ArrayProtocol:

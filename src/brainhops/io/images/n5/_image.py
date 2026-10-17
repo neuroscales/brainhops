@@ -9,6 +9,7 @@ from brainhops._core import path
 from brainhops._core.dependencies import HAS_TENSORSTORE
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel._backends import dataproperty
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -92,7 +93,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
     assigned array here.
     """
 
-    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    _data: tx.Optional[ArrayProtocol] = Inherit("_data", default=None)
     """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
@@ -135,16 +136,32 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
     It is `None` for a dataset that was read on its own.
     """
 
-    @smartproperty(cache=True)
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        """The samples, assigned or decoded from `rawdata`.
+    data = dataproperty()
+    """The samples, assigned or decoded from `rawdata`.
 
-        An array assigned to the image is returned as it is, and stays
-        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
-        data is decoded from `rawdata` on first access and cached. Data
-        decoded from a dataset is read-only. To change the samples, assign
-        `data`. Assigning `None` decodes `rawdata` again.
+    An array assigned to the image is returned as it is, and stays
+    pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+    data is decoded from `rawdata` on first access and cached. Data
+    decoded from a dataset is read-only. To change the samples, assign
+    `data`. Assigning `None` decodes `rawdata` again.
+
+    The first read converts the lazy array of the file with the
+    backend setting in effect and caches the result. Each later read
+    returns the cached array converted to the setting in effect then,
+    such as `with backend("dask"):`, and the cached array does not
+    change.
+    """
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the image in the layout of `data`, without reading it.
+
+        An array assigned as `data` is returned as it is. Otherwise, the
+        lazy array of the file is returned through the same view that
+        `data` reads, and nothing is read until it is converted.
         """
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _image_to_model(self.rawdata)

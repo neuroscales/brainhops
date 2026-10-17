@@ -26,6 +26,7 @@ from brainhops._core.linalg import require_positive, sqrtm
 from brainhops._core.magic import field_default
 from brainhops._core.properties import (
     InvalidatorInAttribute,
+    alias,
     lazyproperty,
     smartproperty,
 )
@@ -37,7 +38,11 @@ from brainhops._core.typing import (
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.backends import _CURRENT, backend, get_array_backend
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import _as_backend_data
+from brainhops.datamodel._backends import (
+    _as_backend_data,
+    _stored_data,
+    dataproperty,
+)
 from brainhops.datamodel.enums import (
     BoundaryCondition,
     InterpolationOrder,
@@ -71,35 +76,6 @@ def _invalidating_property(*args, **kwargs) -> property:
     """Build a [`smartproperty`][] whose assignment clears the cached views."""
     kwargs.setdefault("invalidates", _FORGET_VIEWS)
     return smartproperty(*args, **kwargs)
-
-
-def _alias(name: str, source: str, fset: bool = True) -> property:
-    """Build a property that reads, and possibly writes, another attribute.
-
-    `source` may be a dotted path, such as `"forward.degree"`. Such an alias is
-    read-only whatever `fset` says, because a wrapper reports what it wraps and
-    never writes into it.
-    """
-    path = source.split(".")
-
-    def fget(self: tx.Any) -> tx.Any:
-        value = self
-        for attr in path:
-            value = getattr(value, attr)
-        return value
-
-    fget.__name__ = name
-
-    if fset and len(path) == 1:
-
-        def fset(self: tx.Any, value: tx.Any) -> None:
-            setattr(self, source, value)
-
-        fset.__name__ = name
-    else:
-        fset = None
-
-    return property(fget, fset, doc=f"Alias for `{source}`.")
 
 
 # --- API --------------------------------------------------------------
@@ -327,7 +303,17 @@ class TransformationField(ConcreteTransformation):
 
     # --- [meta]data views ---------------------------------------------
 
-    data = _invalidating_property("data")
+    data = dataproperty(invalidates=_FORGET_VIEWS)
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The stored field, without reading it.
+
+        It is the array that the field holds, which a field built from
+        an array or assigned `data` keeps as it was given.
+        """
+        return self._data
+
     degree = _invalidating_property("degree")
     bound = _invalidating_property("bound")
 
@@ -361,7 +347,9 @@ class TransformationField(ConcreteTransformation):
         It is `data` itself when `store` is `"values"`; otherwise it is decoded
         from the coefficients once and cached.
         """
-        return _data2values(self.data, self.store, self.degree, self.bound)
+        return _data2values(
+            _stored_data(self), self.store, self.degree, self.bound
+        )
 
     @values.setter
     def values(self, value: tx.Optional[ArrayProtocol]) -> None:
@@ -371,7 +359,7 @@ class TransformationField(ConcreteTransformation):
         # so the input can be cached only afterwards.
         self._cache_values = value
 
-    field = _alias("field", "values")
+    field = alias("values")
 
     @lazyproperty
     def coefficients(self) -> tx.Optional[ArrayProtocol]:
@@ -380,7 +368,9 @@ class TransformationField(ConcreteTransformation):
         It is `data` itself when `store` is `"coefficients"`; otherwise it is
         fitted to a spline of degree `degree` once and cached.
         """
-        return _data2coeffs(self.data, self.store, self.degree, self.bound)
+        return _data2coeffs(
+            _stored_data(self), self.store, self.degree, self.bound
+        )
 
     @coefficients.setter
     def coefficients(self, coeffs: tx.Optional[ArrayProtocol]) -> None:
@@ -656,12 +646,15 @@ class CartesianField(CoordinatesField):
         grid = [ab.arange(s, dtype=float) for s in self.shape]
         return ab.stack(ab.meshgrid(*grid, indexing="ij"), -1)
 
-    values = _alias("values", "field", fset=False)
+    values = alias("field", readonly=True)
 
     @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """Coordinates of the grid points, encoded according to the flags."""
         return _values2data(self.field, self.store, self.degree, self.bound)
+
+    dataobj = alias("data", readonly=True)
+    """Coordinates of the grid points, which a grid computes."""
 
     # --- methods ------------------------------------------------------
 
@@ -794,7 +787,7 @@ class Affine(ConcreteTransformation, polymorphic=True):
 
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
-    matrix = _alias("matrix", "data")
+    matrix = alias("data")
 
     @lazyproperty
     def homogeneous_matrix(self) -> tx.Optional[ArrayProtocol]:
@@ -886,7 +879,7 @@ class Linear(ConcreteTransformation, polymorphic=True):
 
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
-    matrix = _alias("matrix", "data")
+    matrix = alias("data")
 
     @lazyproperty
     def _sqrt(self) -> tx.Optional[ArrayProtocol]:
@@ -996,7 +989,7 @@ class Permutation(ConcreteTransformation):
     # --- views --------------------------------------------------------
 
     data = _invalidating_property("data")
-    permutation = _alias("permutation", "data")
+    permutation = alias("data")
 
     @lazyproperty
     def _inverse(self) -> tx.Optional[npvector[Integral]]:
@@ -1087,7 +1080,7 @@ class Scaling(ConcreteTransformation, polymorphic=True):
 
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
-    scale = _alias("scale", "data")
+    scale = alias("data")
 
     @lazyproperty
     def _sqrt(self) -> tx.Optional[ArrayProtocol]:
@@ -1145,7 +1138,7 @@ class Translation(ConcreteTransformation):
     # --- views --------------------------------------------------------
 
     data = _invalidating_property("data")
-    translation = _alias("translation", "data")
+    translation = alias("data")
 
     @lazyproperty
     def _sqrt(self) -> tx.Optional[ArrayProtocol]:

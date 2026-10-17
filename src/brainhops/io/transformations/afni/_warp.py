@@ -17,6 +17,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import _stored_data, dataproperty
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata._report import OnLoss
 from brainhops.datamodel.metadata._vocabulary import FIELDS
@@ -146,16 +147,32 @@ class AfniBrikWarp(
     record.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        """The sub-bricks as an (X, Y, Z, n) array, in DICOM millimetres.
+    data = dataproperty(invalidates="transformations")
+    """The sub-bricks as an (X, Y, Z, n) array, in DICOM millimetres.
 
-        Sub-bricks that are assigned are returned as they are, and stay
-        pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `rawdata`, scaled, and are read-only. The first
-        three are the `x`, `y` and `z` displacements. Assigning the data
-        drops the chain decoded from the previous data.
+    Sub-bricks that are assigned are returned as they are, and stay
+    pending until [`consolidate`][] or a write encodes them. Otherwise
+    they are decoded from `rawdata`, scaled, and are read-only. The first
+    three are the `x`, `y` and `z` displacements. Assigning the data
+    drops the chain decoded from the previous data.
+
+    The first read converts the lazy array of the file with the
+    backend setting in effect and caches the result. Each later read
+    returns the cached array converted to the setting in effect then,
+    such as `with backend("dask"):`, and the cached array does not
+    change.
+    """
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the field in the layout of `data`, without reading it.
+
+        An array assigned as `data` is returned as it is. Otherwise, the
+        lazy array of the file is returned through the same view that
+        `data` reads, and nothing is read until it is converted.
         """
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _warp_to_model(self.rawdata)
@@ -367,7 +384,7 @@ class AfniBrikWarp(
         """
         record = _record(self)
         vox2dicom = np.eye(4) if record is None else record.cardinal_matrix
-        return _dicom_chain(_dicom_vectors(self.data), vox2dicom)
+        return _dicom_chain(_dicom_vectors(_stored_data(self)), vox2dicom)
 
     @property
     def ras2voxel(self) -> _xforms.Transformation:

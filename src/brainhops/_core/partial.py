@@ -4,7 +4,7 @@ from functools import update_wrapper
 from typing_extensions import Any, Callable, Dict, get_type_hints
 
 from .compat import partial
-from .properties import lazyproperty
+from .properties import alias, lazyproperty
 
 
 class AnnotatedPartial:
@@ -16,17 +16,11 @@ class AnnotatedPartial:
             assigned=("__module__", "__name__", "__qualname__", "__doc__"),
         )
 
-    @property
-    def func(self) -> Callable:
-        return self.partial.func
+    func = alias("partial.func")
 
-    @property
-    def args(self) -> tuple:
-        return self.partial.args
+    args = alias("partial.args")
 
-    @property
-    def keywords(self) -> dict:
-        return self.partial.keywords
+    keywords = alias("partial.keywords")
 
     @lazyproperty
     def __annotations__(self) -> Dict[str, Any]:

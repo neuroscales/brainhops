@@ -17,6 +17,7 @@ import typing_extensions as tx
 from PIL import Image, ImageFile
 
 from brainhops._core import path
+from brainhops._core.properties import alias
 
 # internals
 from brainhops._core.proxy import ArrayProxy
@@ -112,10 +113,8 @@ class _Jpeg2000Proxy(ArrayProxy):
         """The shape of the samples, read from the record."""
         return tuple(self.record.stored_shape(self.level))
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The type of the samples, read from the record."""
-        return self.record.dtype
+    dtype = alias("record.dtype")
+    """The type of the samples, read from the record."""
 
     def read_samples(self) -> np.ndarray:
         """Decode all the samples of the level.

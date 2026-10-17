@@ -125,8 +125,10 @@ def test_as_backend_follows_the_setting() -> None:
     image = SingleScaleImage(VOLUME)
     assert image.as_backend().data is VOLUME
     with backend("dask"):
-        assert isinstance(image.as_backend().data, da.Array)
-        assert image.as_backend(None).data is VOLUME
+        converted = image.as_backend()
+        kept = image.as_backend(None)
+    assert isinstance(converted.data, da.Array)
+    assert kept.data is VOLUME
 
 
 def test_objects_read_from_files(tmp_path) -> None:  # noqa: ANN001
@@ -158,3 +160,42 @@ def test_objects_read_from_files(tmp_path) -> None:  # noqa: ANN001
             os.fspath(tmp_path / "out.nii.gz"), hint="displacements"
         )
     np.testing.assert_allclose(np.asarray(back.data), np.asarray(field.data))
+
+
+def test_data_follows_the_setting_at_each_read(tmp_path) -> None:  # noqa: ANN001
+    # data converts what the object holds with the setting in effect, and
+    # the object keeps holding the same array.
+    image = SingleScaleImage(VOLUME)
+    with backend("dask"):
+        assert isinstance(image.data, da.Array)
+    assert image.data is VOLUME
+    field = DisplacementField(FIELD)
+    with backend("dask"):
+        assert isinstance(field.data, da.Array)
+    assert field.data is FIELD
+
+    # An image read from a file caches its data on first access, and a
+    # later setting still applies to each read.
+    nb.save(nb.Nifti1Image(VOLUME, np.eye(4)), tmp_path / "image.nii.gz")
+    image = io.images.load(tmp_path / "image.nii.gz")
+    cached = image.data
+    assert isinstance(cached, np.ndarray)
+    with backend("dask"):
+        lazy = image.data
+    assert isinstance(lazy, da.Array)
+    np.testing.assert_array_equal(lazy.compute(), cached)
+    assert image.data is cached
+
+
+def test_conversions_read_what_the_object_holds() -> None:
+    # Under a setting, as_* and to_* convert the stored array once, so
+    # that as_dask stores a Dask array and to_numpy gives the stored
+    # values.
+    image = SingleScaleImage(VOLUME)
+    with backend("dask"):
+        lazy = image.as_dask()
+        values = image.to_numpy()
+        assert np.asarray(image) is VOLUME
+        assert image.shape == VOLUME.shape
+    assert isinstance(lazy.data, da.Array)
+    assert values is VOLUME

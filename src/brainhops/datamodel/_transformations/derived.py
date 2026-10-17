@@ -30,7 +30,7 @@ import typing_extensions as tx
 from bagof.magic import Forget, NotKwOnly, fields
 
 from brainhops._core.compat import PLACEHOLDER, partial
-from brainhops._core.properties import smartproperty
+from brainhops._core.properties import alias, smartproperty
 from brainhops.backends import _CURRENT
 from brainhops.datamodel._backends import _with_fields
 
@@ -45,7 +45,6 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
-    _alias,
 )
 from .modes import ModeLike, mode_admits, normalize_modes
 from .nocycles import register_derived
@@ -377,7 +376,7 @@ class ConcreteSqrtMixin:
     the family, such as `matrix=`, are not accepted.
     """
 
-    data = _alias("data", "forward._sqrt", fset=False)
+    data = alias("forward._sqrt", readonly=True)
 
 
 class SqrtTranslation(

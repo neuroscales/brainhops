@@ -8,7 +8,7 @@ from brainhops._core.affines import expm as affine_expm
 from brainhops._core.affines import logm as affine_logm
 from brainhops._core.affines import to_compact, to_homogeneous
 from brainhops._core.linalg import expm, logm, require_positive
-from brainhops._core.properties import lazyproperty
+from brainhops._core.properties import alias, lazyproperty
 from brainhops._core.typing import ArrayProtocol, npmatrix, npvector
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import kinds
@@ -24,7 +24,6 @@ from .concrete import (
     Rotation,
     Scaling,
     StoreEnum,
-    _alias,
     _data2values,
     _invalidating_property,
     require_endomorphism,
@@ -233,7 +232,7 @@ class AffineExponential(TangentMixin, Affine, on={"_log": True}):
 
     # --- views --------------------------------------------------------
 
-    logmatrix = _alias("logmatrix", "data")
+    logmatrix = alias("data")
 
     @lazyproperty
     def matrix(self) -> tx.Optional[ArrayProtocol]:
@@ -323,7 +322,7 @@ class LinearExponential(
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
 
-    logmatrix = _alias("logmatrix", "data")
+    logmatrix = alias("data")
 
 
 class RotationExponential(MatrixTangentMixin, Rotation, on={"_log": True}):
@@ -344,7 +343,7 @@ class RotationExponential(MatrixTangentMixin, Rotation, on={"_log": True}):
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
 
-    logmatrix = _alias("logmatrix", "data")
+    logmatrix = alias("data")
 
 
 @kinds.PositiveDiagonal
@@ -368,7 +367,7 @@ class ScalingExponential(TangentMixin, Scaling, on={"_log": True}):
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
 
-    logscale = _alias("logscale", "data")
+    logscale = alias("data")
 
     @lazyproperty
     def scale(self) -> tx.Optional[ArrayProtocol]:
