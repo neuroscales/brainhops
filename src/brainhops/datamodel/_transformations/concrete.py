@@ -39,8 +39,8 @@ from brainhops.backends import _CURRENT, backend, get_array_backend
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import (
     _as_backend_data,
-    _follow_setting,
     _stored_data,
+    dataproperty,
 )
 from brainhops.datamodel.enums import (
     BoundaryCondition,
@@ -331,7 +331,7 @@ class TransformationField(ConcreteTransformation):
 
     # --- [meta]data views ---------------------------------------------
 
-    data = _invalidating_property("data", convert=_follow_setting)
+    data = dataproperty("data", invalidates=_FORGET_VIEWS)
     degree = _invalidating_property("degree")
     bound = _invalidating_property("bound")
 

@@ -6,17 +6,16 @@ from bagof.hints.numpy import DTypeLike
 from bagof.magic import NoRepr, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
-from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops.backends import _CURRENT
 
 from ._backends import (
     _as_backend_data,
     _BackendsMixin,
-    _follow_setting,
     _stored_data,
     _with_fields,
     as_backend_all,
+    dataproperty,
 )
 from ._transformations.multiscale import (
     _as_affine_ignoring_fields,
@@ -282,7 +281,7 @@ class SingleScaleImage(Image):
         NoRepr(),  # leave out from repr to avoid loading a whole file
     ] = None
     """
-    The image data, as it is stored. The constructor takes it as `data`.
+    The image data.
 
     Must be an array-like object that supports the array protocol (e.g.
     numpy, cupy or dask array).
@@ -293,7 +292,7 @@ class SingleScaleImage(Image):
     This mirrors `Affine.matrix`, which is optional for the same reason.
     """
 
-    data = smartproperty("data", convert=_follow_setting)
+    data = dataproperty("data")
     """The image data, in the backend of the setting in effect.
 
     Under the default setting, the stored array is returned as it is.
