@@ -13,6 +13,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._utils_files import local_path as _local_path
@@ -287,10 +288,8 @@ class _NrrdProxy(ArrayProxy):
         sizes = self.record.sizes
         return tuple(sizes[i] for i in image_order(self.record))
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The type of the samples, with the byte order of the file."""
-        return self.record.dtype
+    dtype = alias("record.dtype")
+    """The type of the samples, with the byte order of the file."""
 
     @property
     def copyable(self) -> bool:

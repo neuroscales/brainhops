@@ -6,10 +6,12 @@ on first access and caches it. Assigning either property, through any
 setter, deletes its own cached value, and the cached values that it
 names in `invalidates`. Code outside this module deletes a cached value
 with [`drop_cache`][], and reads one without computing it with
-[`cached_value`][].
+[`cached_value`][]. An [`alias`][] reads, and may write, another
+attribute under a second name.
 """
 
 __all__ = [
+    "alias",
     "cached_value",
     "drop_cache",
     "lazyproperty",
@@ -90,6 +92,53 @@ class InvalidatorInMethod(Invalidator):
 _InvalidatesLike = tx.Union[
     str, Invalidator, tx.Iterable[tx.Union[str, Invalidator]], None
 ]
+
+
+# --- alias ------------------------------------------------------------
+
+
+def alias(source: str, *, readonly: bool = False) -> property:
+    """Return a property that reads another attribute under a second name.
+
+    An alias gives an attribute a second name, such as `matrix` for the
+    `data` of an affine transformation, or makes an attribute read what
+    another object holds, such as the `degree` of an inverse field that
+    is the `degree` of its forward field. Reading the alias reads the
+    source, and assigning it assigns the source, unless the alias is
+    read-only.
+
+    The source may be a dotted path, such as `"forward.degree"`. Such an
+    alias is always read-only, because an object that reports a value of
+    another object does not write into it.
+
+    Parameters
+    ----------
+    source : str
+        The name of the attribute that the alias reads, or a dotted path
+        to it.
+    readonly : bool, default=False
+        Whether assigning the alias is refused.
+
+    Returns
+    -------
+    property
+        The alias.
+    """
+    path = source.split(".")
+
+    def fget(self: tx.Any) -> tx.Any:
+        value = self
+        for attr in path:
+            value = getattr(value, attr)
+        return value
+
+    fset = None
+    if not readonly and len(path) == 1:
+
+        def fset(self: tx.Any, value: tx.Any) -> None:
+            setattr(self, source, value)
+
+    return property(fget, fset, doc=f"Alias for `{source}`.")
 
 
 # --- lazyproperty -----------------------------------------------------

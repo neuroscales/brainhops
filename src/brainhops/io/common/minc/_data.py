@@ -10,6 +10,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops.io.base._utils_files import local_path as _local_path
@@ -46,10 +47,8 @@ class _MincProxy(ArrayProxy):
         """The shape of the voxels in file order, read from the record."""
         return tuple(self.record.shape)
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The type of the voxels once they are scaled."""
-        return self.record.scaled_dtype
+    dtype = alias("record.scaled_dtype")
+    """The type of the voxels once they are scaled."""
 
     def read_voxels(self) -> np.ndarray:
         """Return all the scaled voxels in file order.

@@ -6,6 +6,7 @@ from bagof.magic import Magic
 
 from brainhops._core.properties import (
     InvalidatorInAttribute,
+    alias,
     cached_value,
     drop_cache,
     lazyproperty,
@@ -437,3 +438,35 @@ def test_convert_applies_at_each_read_without_changing_the_cache() -> None:
         value = smartproperty("value", convert=lambda value: value.upper())
 
     assert Empty().value is None
+
+
+def test_alias_reads_and_writes_its_source() -> None:
+    # An alias reads its source and assigns it, unless it is read-only.
+    class Box:
+        value = 1
+        other = alias("value")
+        fixed = alias("value", readonly=True)
+
+    box = Box()
+    assert box.other == 1
+    box.other = 2
+    assert box.value == 2
+    assert box.fixed == 2
+    with pytest.raises(AttributeError):
+        box.fixed = 3
+
+
+def test_a_dotted_alias_is_read_only() -> None:
+    # An alias of an attribute of another object reads it and never
+    # writes into it.
+    class Inner:
+        value = 1
+
+    class Outer:
+        inner = Inner()
+        value = alias("inner.value")
+
+    outer = Outer()
+    assert outer.value == 1
+    with pytest.raises(AttributeError):
+        outer.value = 2

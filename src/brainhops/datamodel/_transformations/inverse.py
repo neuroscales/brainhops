@@ -2,6 +2,7 @@ import typing_extensions as tx
 from bagof.magic import Forget, NotKwOnly
 
 from brainhops._core.compat import PLACEHOLDER, partial
+from brainhops._core.properties import alias
 from brainhops._core.typing import ArrayProtocol
 
 from .base import Transformation
@@ -14,7 +15,6 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
-    _alias,
     _data2coeffs,
     _data2values,
 )
@@ -113,7 +113,7 @@ class ConcreteInverseMixin:
     inverse.
     """
 
-    data = _alias("data", "forward._inverse", fset=False)
+    data = alias("forward._inverse", readonly=True)
 
 
 class FieldInverseMixin(ConcreteInverseMixin):
@@ -171,7 +171,7 @@ class InverseScaling(
     _scale: Forget
     _log: Forget
 
-    log = _alias("log", "forward.log", fset=False)
+    log = alias("forward.log", readonly=True)
 
 
 class InversePermutation(
@@ -210,7 +210,7 @@ class InverseRotation(
     _matrix: Forget
     _log: Forget
 
-    log = _alias("log", "forward.log", fset=False)
+    log = alias("forward.log", readonly=True)
 
 
 class InverseLinear(
@@ -229,7 +229,7 @@ class InverseLinear(
     _matrix: Forget
     _log: Forget
 
-    log = _alias("log", "forward.log", fset=False)
+    log = alias("forward.log", readonly=True)
 
 
 class InverseAffine(
@@ -252,7 +252,7 @@ class InverseAffine(
     _matrix: Forget
     _log: Forget
 
-    log = _alias("log", "forward.log", fset=False)
+    log = alias("forward.log", readonly=True)
 
 
 class InverseDisplacementField(
@@ -305,10 +305,10 @@ class InverseDisplacementField(
     _store: Forget
     _log: Forget
 
-    degree = _alias("degree", "forward.degree", fset=False)
-    bound = _alias("bound", "forward.bound", fset=False)
-    store = _alias("store", "forward.store", fset=False)
-    log = _alias("log", "forward.log", fset=False)
+    degree = alias("forward.degree", readonly=True)
+    bound = alias("forward.bound", readonly=True)
+    store = alias("forward.store", readonly=True)
+    log = alias("forward.log", readonly=True)
 
 
 class InverseCoordinatesField(
@@ -351,9 +351,9 @@ class InverseCoordinatesField(
     _bound: Forget
     _store: Forget
 
-    degree = _alias("degree", "forward.degree", fset=False)
-    bound = _alias("bound", "forward.bound", fset=False)
-    store = _alias("store", "forward.store", fset=False)
+    degree = alias("forward.degree", readonly=True)
+    bound = alias("forward.bound", readonly=True)
+    store = alias("forward.store", readonly=True)
 
 
 # ----------------------------------------------------------------------
@@ -386,7 +386,7 @@ class InverseAffineExponential(
     _homogeneous_logmatrix: Forget
     _log: Forget
 
-    log = _alias("log", "forward.log", fset=False)
+    log = alias("forward.log", readonly=True)
 
 
 class InverseLinearExponential(
@@ -406,7 +406,7 @@ class InverseLinearExponential(
     _logmatrix: Forget
     _log: Forget
 
-    log = _alias("log", "forward.log", fset=False)
+    log = alias("forward.log", readonly=True)
 
 
 class InverseRotationExponential(
@@ -429,7 +429,7 @@ class InverseRotationExponential(
     _logmatrix: Forget
     _log: Forget
 
-    log = _alias("log", "forward.log", fset=False)
+    log = alias("forward.log", readonly=True)
 
 
 class InverseScalingExponential(
@@ -449,7 +449,7 @@ class InverseScalingExponential(
     _logscale: Forget
     _log: Forget
 
-    log = _alias("log", "forward.log", fset=False)
+    log = alias("forward.log", readonly=True)
 
 
 class InverseStationaryVelocityField(
@@ -482,8 +482,8 @@ class InverseStationaryVelocityField(
     _log: Forget
     _steps: Forget
 
-    degree = _alias("degree", "forward.degree", fset=False)
-    bound = _alias("bound", "forward.bound", fset=False)
-    store = _alias("store", "forward.store", fset=False)
-    log = _alias("log", "forward.log", fset=False)
-    steps = _alias("steps", "forward.steps", fset=False)
+    degree = alias("forward.degree", readonly=True)
+    bound = alias("forward.bound", readonly=True)
+    store = alias("forward.store", readonly=True)
+    log = alias("forward.log", readonly=True)
+    steps = alias("forward.steps", readonly=True)

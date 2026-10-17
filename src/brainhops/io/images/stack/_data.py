@@ -8,6 +8,8 @@ import os
 import numpy as np
 import typing_extensions as tx
 
+from brainhops._core.properties import alias
+
 # internals
 from brainhops._core.proxy import ArrayProxy
 from brainhops.io.base.parsers import ParserContentError
@@ -56,10 +58,8 @@ class _StackProxy(ArrayProxy):
         """The shape of the stacked pixels, read from the record."""
         return tuple(self.record.shape)
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The type of the pixels."""
-        return self.record.dtype
+    dtype = alias("record.dtype")
+    """The type of the pixels."""
 
     @property
     def base_chunks(self) -> tx.Tuple[int, ...]:

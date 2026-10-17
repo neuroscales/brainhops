@@ -6,6 +6,7 @@ from bagof.hints.numpy import DTypeLike
 from bagof.magic import NoRepr, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
+from brainhops._core.properties import alias
 from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops.backends import _CURRENT
 
@@ -175,15 +176,11 @@ class Image(
         """The number of dimensions of the data."""
         return len(self.shape)
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The data type of the data."""
-        return self.dataobj.dtype
+    dtype = alias("dataobj.dtype")
+    """The data type of the data."""
 
-    @property
-    def grid(self) -> CartesianField:
-        """The Cartesian field that defines the sampling grid."""
-        return self.geometry.grid
+    grid = alias("geometry.grid")
+    """The Cartesian field that defines the sampling grid."""
 
     @property
     def transformation(self) -> Transformation:

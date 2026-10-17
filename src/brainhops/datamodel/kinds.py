@@ -580,10 +580,8 @@ class TransformationFamily(
         if self.odim is MISSING:
             object.__setattr__(self, "odim", self.ndim)
 
-    @property
-    def name(self) -> str:
-        """The preferred name of the transformation family."""
-        return self.kind.__name__
+    name = alias("kind.__name__")
+    """The preferred name of the transformation family."""
 
     @property
     def names(self) -> tx.Tuple[str, ...]:
