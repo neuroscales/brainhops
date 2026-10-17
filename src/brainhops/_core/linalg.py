@@ -2,7 +2,7 @@ import numpy as np
 import scipy.linalg
 import typing_extensions as tx
 
-from brainhops.backends import cp, get_array_backend
+from brainhops.backends import get_array_backend, to_backend
 from brainhops.errors import DomainError
 
 if tx.TYPE_CHECKING:
@@ -186,10 +186,9 @@ def require_principal(linear: np.ndarray, what: str = "This") -> None:
 def to_host(array: ArrayProtocol, **kwargs) -> np.ndarray:
     # The matrix functions run on the host, on NumPy arrays, whatever the
     # backend of the input.
-    backend = get_array_backend(array)
-    if cp and backend is cp:
-        array = array.get()
-    return np.asarray(array, **kwargs)
+    # A Dask array is computed, and its chunks are copied from the GPU when
+    # they are CuPy arrays.
+    return np.asarray(to_backend(array, "numpy"), **kwargs)
 
 
 def to(result: np.ndarray, like: ArrayProtocol, **kwargs) -> ArrayProtocol:

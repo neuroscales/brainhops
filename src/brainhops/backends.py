@@ -456,6 +456,49 @@ def to_backend(
     return _to_dask(x, gpu=target == "dask+cupy")
 
 
+def match_backends(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
+    """Move arrays to the backend in which a computation combines them.
+
+    A computation that combines several arrays, such as the voxels of an
+    image, a grid of coordinates and the matrix of an affine
+    transformation, computes with the package that [`best_backend`][]
+    chooses: Dask if one of the arrays is a Dask array, CuPy if one of
+    them is a CuPy array, and NumPy otherwise. This function moves the
+    other arrays to that package, so that the operations of the
+    computation do not mix packages, and it does not change the setting
+    or the choice of the package.
+
+    When one of the arrays is on a GPU, the others are copied to it:
+    a NumPy array becomes a CuPy array, and a Dask array of NumPy chunks
+    becomes a Dask array of CuPy chunks. A NumPy array that meets a Dask
+    array in memory is returned as it is, because Dask accepts NumPy
+    operands. An argument that is not an array, such as `None` or a
+    number, is returned as it is.
+
+    Parameters
+    ----------
+    *arrays : Any
+        The arrays that the computation combines.
+
+    Returns
+    -------
+    tuple
+        The arrays, in the same order.
+    """
+    loaded = [x for x in arrays if _is_loaded(x)]
+    gpu = any(_on_gpu(x) for x in loaded)
+    if not gpu:
+        return arrays
+    moved = []
+    for x in arrays:
+        if da is not None and isinstance(x, da.Array):
+            x = x if _on_gpu(x) else _to_dask(x, gpu=True)
+        elif isinstance(x, np.ndarray):
+            x = cp.asarray(x)
+        moved.append(x)
+    return tuple(moved)
+
+
 # ----------------------------------------------------------------------
 #   PACKAGES
 # ----------------------------------------------------------------------

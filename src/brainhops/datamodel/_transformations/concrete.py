@@ -36,10 +36,18 @@ from brainhops._core.typing import (
     npvector,
 )
 from brainhops._ext.invfield import inverse as inverse_disp
-from brainhops.backends import _CURRENT, backend, get_array_backend
+from brainhops.backends import (
+    _CURRENT,
+    backend,
+    get_array_backend,
+    match_backends,
+    resolve_backend,
+    to_backend,
+)
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import (
     _as_backend_data,
+    _follow_setting,
     _stored_data,
     dataproperty,
 )
@@ -338,12 +346,14 @@ class TransformationField(ConcreteTransformation):
 
     # --- derived views ------------------------------------------------
 
-    @lazyproperty
+    @smartproperty(fset=False, cache=True, convert=_follow_setting)
     def values(self) -> tx.Optional[ArrayProtocol]:
         """Field as values, of shape `(*shape, ndim)`.
 
         It is `data` itself when `store` is `"values"`; otherwise it is decoded
-        from the coefficients once and cached.
+        from the coefficients once and cached. Like `data`, it is returned
+        converted with the backend setting in effect, so that `data`,
+        `values` and `coefficients` are always arrays of the same package.
         """
         return _data2values(
             _stored_data(self), self.store, self.degree, self.bound
@@ -359,12 +369,13 @@ class TransformationField(ConcreteTransformation):
 
     field = alias("values")
 
-    @lazyproperty
+    @smartproperty(fset=False, cache=True, convert=_follow_setting)
     def coefficients(self) -> tx.Optional[ArrayProtocol]:
         """Field as spline coefficients, of shape `(*shape, ndim)`.
 
         It is `data` itself when `store` is `"coefficients"`; otherwise it is
-        fitted to a spline of degree `degree` once and cached.
+        fitted to a spline of degree `degree` once and cached. Like `data`,
+        it is returned converted with the backend setting in effect.
         """
         return _data2coeffs(
             _stored_data(self), self.store, self.degree, self.bound
@@ -501,7 +512,11 @@ class DisplacementField(TransformationField, polymorphic=True):
         """
         if self.data is None:
             return None
-        ifield = inverse_disp(self.field)
+        # The inverse is cached, so it is computed from the stored values
+        # rather than from values converted for a temporary setting.
+        with backend(None):
+            field = self.field
+        ifield = _inverse_disp(field)
         return _values2data(ifield, self.store, self.degree, self.bound)
 
     # --- methods ------------------------------------------------------
@@ -1350,13 +1365,37 @@ def _inv_coords(coords: ArrayProtocol) -> ArrayProtocol:
     # normalized field is close to voxel space (minimize ||aff @ field -
     # idgrid||_F).
 
-    # Build the identity grid on the backend of the field, not on the selected
-    # one.
-    ab = get_array_backend(coords)
-    with backend(ab):
-        idgrid = CartesianField(shape=coords.shape[:-1]).field
+    idgrid = _grid_like(coords)
+    return _inverse_disp(coords - idgrid) + idgrid
 
-    return inverse_disp(coords - idgrid) + idgrid
+
+def _inverse_disp(disp: ArrayProtocol) -> ArrayProtocol:
+    """Invert a field of displacements, in the package of the field.
+
+    The inversion is only implemented with NumPy
+    ([`brainhops._ext.invfield`][]), and it needs the whole field at
+    once. A field on a GPU is therefore copied to memory, and a Dask
+    field is computed. The inverse is then converted back to the package
+    of the field, so that the computations that use it do not mix
+    packages.
+    """
+    target = resolve_backend(disp, None)
+    inverse = inverse_disp(to_backend(disp, "numpy"))
+    return to_backend(inverse, target)
+
+
+def _grid_like(field: ArrayProtocol) -> ArrayProtocol:
+    """Return the identity grid of a field, in the package of the field.
+
+    The grid holds the coordinates of the voxels of the field, as
+    [`CartesianField.field`][brainhops.datamodel.transformations.CartesianField.field]
+    does. That property creates its grid with the backend setting, while
+    a computation that combines the grid with a field needs it in the
+    package of the field, and on the GPU when the field is on a GPU.
+    """
+    with backend(get_array_backend(field)):
+        grid = CartesianField(shape=field.shape[:-1]).field
+    return match_backends(grid, field)[0]
 
 
 def _refuse_log(

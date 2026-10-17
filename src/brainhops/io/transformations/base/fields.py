@@ -321,7 +321,7 @@ def voxel_grid_coordinates(
         `vox2world @ [i, j, k, 1]`.
     """
     if backend is None:
-        backend = get_array_backend()
+        backend = np
     vox2world = np.asarray(vox2world)
     ndim = len(shape)
     grid = backend.stack(

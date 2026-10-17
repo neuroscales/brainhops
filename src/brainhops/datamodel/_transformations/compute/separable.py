@@ -34,7 +34,12 @@ from brainhops._core.bsplines import (
     spline_matrix,
 )
 from brainhops._core.typing import ArrayProtocol, Clip
-from brainhops.backends import copy_array, get_array_backend, may_share_memory
+from brainhops.backends import (
+    copy_array,
+    get_array_backend,
+    match_backends,
+    may_share_memory,
+)
 from brainhops.datamodel import kinds
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import CompositionError, ConversionError
@@ -547,6 +552,7 @@ def _make_gather(
                 mask_shape = [1] * result.ndim
                 mask_shape[axis] = n_out
                 mask = ab.asarray(inbounds).reshape(tuple(mask_shape))
+                mask = match_backends(mask, result)[0]
                 result = ab.where(mask, result, cval)
         labels = list(labels)
         labels[axis] = ("grid", g)
@@ -576,16 +582,19 @@ def _make_matrix(
         axis = labels.index(("data", d))
         coords = ab.arange(n_out) * scale + shift
         weights = spline_matrix(n_in, coords, degree, bound, coeff)
+        # Dask creates NumPy chunks, even when the chunks of the data are
+        # CuPy arrays.
+        weights = match_backends(weights, arr)[0]
         out = ab.moveaxis(
             ab.tensordot(arr, weights, axes=([axis], [1])), -1, axis
         )
         if not isinstance(bound, str):
             # A constant boundary is not linear, so the fill value is added
             # separately through the partition of unity of the weights.
-            correction = float(bound) * (1.0 - np.asarray(weights).sum(1))
+            correction = float(bound) * (1.0 - weights.sum(1))
             corr_shape = [1] * out.ndim
             corr_shape[axis] = n_out
-            out = out + ab.asarray(correction).reshape(tuple(corr_shape))
+            out = out + correction.reshape(tuple(corr_shape))
         labels = list(labels)
         labels[axis] = ("grid", g)
         mask = _clip_mask(coords[..., None], (n_in,), clip)
@@ -653,7 +662,7 @@ def _apply_clip_masks(
     ab = get_array_backend(arr)
     for mask, axes in masks:
         order = sorted(range(len(axes)), key=lambda index: axes[index])
-        mask = ab.transpose(ab.asarray(mask), order)
+        mask = ab.transpose(match_backends(ab.asarray(mask), arr)[0], order)
         shape = [1] * arr.ndim
         for index, axis in enumerate(sorted(axes)):
             shape[axis] = mask.shape[index]
