@@ -19,7 +19,7 @@ from bagof.magic import replace
 
 # internals
 from brainhops import backends
-from brainhops._core.properties import cached_value, smartproperty
+from brainhops._core.properties import smartproperty
 from brainhops.backends import _CURRENT, Setting
 
 _Default = tx.Union[Setting, tx.Any]
@@ -291,23 +291,6 @@ def _read_only(data: tx.Any, dataobj: tx.Any) -> tx.Any:
     return data
 
 
-def _read_data(self: tx.Any) -> tx.Any:
-    # Called only when no array is assigned, so `dataobj` is the lazy
-    # array of the file, or None. The first read converts it with the
-    # setting in effect and caches the result, and later reads return the
-    # cached array, which the conversion of the property then converts
-    # with the setting in effect at that read.
-    cached = cached_value(self, "data")
-    if cached is not None:
-        return cached
-    dataobj = self.dataobj
-    if dataobj is None:
-        return None
-    data = _load(dataobj)
-    object.__setattr__(self, "_cache_data", data)
-    return data
-
-
 def dataproperty(**kwargs: tx.Any) -> property:
     """Declare the `data` of an image or a field, which follows the setting.
 
@@ -337,17 +320,14 @@ def dataproperty(**kwargs: tx.Any) -> property:
     property
         The property `data`, stored in `_data`.
     """
-    invalidates = kwargs.pop("invalidates", ())
-    if not isinstance(invalidates, tuple):
-        invalidates = (invalidates,)
 
-    # The property is named after its getter, so the getter is `data`.
+    # The getter runs only when no array is assigned, so `dataobj` is the
+    # lazy array of the file, or None. The property is named after its
+    # getter, so the getter is `data`.
     def data(self: tx.Any) -> tx.Any:
-        return _read_data(self)
+        dataobj = self.dataobj
+        if dataobj is None:
+            return None
+        return _load(dataobj)
 
-    return smartproperty(
-        data,
-        invalidates=("data", *invalidates),
-        convert=_follow_setting,
-        **kwargs,
-    )
+    return smartproperty(data, cache=True, convert=_follow_setting, **kwargs)
