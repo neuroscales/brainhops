@@ -17,7 +17,7 @@ from bagof.magic import replace
 
 from brainhops._core import affines as _affines
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.backends import get_array_backend, to_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
@@ -208,6 +208,16 @@ class X5CoordinatesField(_xforms.ImmutableSequence):
 # other objects may share. A new chain is assigned instead.
 
 
+def _read_parameter(stored: tx.Any) -> np.ndarray:
+    """Return a small parameter of a node, such as a matrix, with NumPy.
+
+    Parameters are NumPy arrays whatever the backend setting, so they
+    are read with NumPy rather than with `_read`, which follows the
+    setting.
+    """
+    return np.asarray(to_backend(_read(stored), "numpy"), dtype=np.float64)
+
+
 def _read(stored: tx.Any) -> ArrayProtocol:
     """Return an array of a node, read from the file if it is a proxy.
 
@@ -262,7 +272,7 @@ def node_to_transformation(node: X5Node) -> _xforms.Transformation:
 
 
 def _decode_linear(node: X5Node) -> _xforms.Affine:
-    matrix = np.asarray(_read(node.transform), dtype=np.float64)
+    matrix = _read_parameter(node.transform)
     if int(node.array_length) != 1 or matrix.ndim != 2:
         raise ParserNotImplementedError(
             f"This X5 node stacks {node.array_length} affines (one per "
@@ -311,7 +321,7 @@ def _decode_nonlinear(node: X5Node) -> _xforms.Transformation:
             f"Only cartesian X5 domains are supported, not "
             f"{domain.coordinates!r}."
         )
-    vox2ras = np.asarray(_read(domain.mapping), dtype=np.float64)
+    vox2ras = _read_parameter(domain.mapping)
     if vox2ras.shape != (_NDIM + 1, _NDIM + 1):
         raise ParserNotImplementedError(
             f"Only 3-D X5 domains, mapped by a 4x4 affine, are supported, "
@@ -360,7 +370,7 @@ def _decode_bspline(node: X5Node) -> X5BSplineField:
             "An X5 B-spline must store the voxel-to-RAS affine of its "
             "grid of knots as AdditionalParameters."
         )
-    knots = np.asarray(_read(node.additional_parameters), dtype=np.float64)
+    knots = _read_parameter(node.additional_parameters)
     if knots.shape != (_NDIM + 1, _NDIM + 1):
         raise ParserNotImplementedError(
             f"Only 3-D X5 B-splines, whose knots are placed by a 4x4 "

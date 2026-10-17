@@ -15,7 +15,7 @@ from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget, KwOnly
 
 from brainhops._core.affines import inv as _affine_inv
-from brainhops.backends import get_array_backend
+from brainhops.backends import get_array_backend, to_backend
 from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import AxisList
@@ -264,15 +264,16 @@ class OmeZarrField(
             normalized = ome
         multiscales = getattr(normalized, "multiscales", None) or []
         datasets = list(multiscales[0].datasets) if multiscales else []
-        backend = get_array_backend()
         for index, array in enumerate(raw_levels):
             dataset_path = (
                 str(datasets[index].path)
                 if index < len(datasets)
                 else str(index)
             )
+            # Zarr writes arrays from memory, so an array on a GPU is copied
+            # to memory first, whatever the backend setting.
             node.create_array(
-                dataset_path, data=backend.asarray(array), **kwargs
+                dataset_path, data=to_backend(array, "numpy"), **kwargs
             )
         node.ome = ome
         return node

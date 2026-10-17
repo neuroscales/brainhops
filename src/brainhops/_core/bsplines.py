@@ -15,6 +15,7 @@ from brainhops.backends import (
     copy_array,
     get_array_backend,
     get_ndimage_backend,
+    match_backends,
 )
 
 
@@ -199,6 +200,7 @@ def pull(
     """
     nx = best_backend(input, coords)
     nd = get_ndimage_backend(nx)
+    input, coords = match_backends(input, coords)
     if dtype is not None:
         dtype = np.dtype(dtype)
         input = input.astype(_sampling_dtype(input.dtype, dtype), copy=False)
@@ -400,6 +402,7 @@ def pull_field(
         The interpolated field, with shape `(*batch, *spatial_out, ndim)`.
     """
     nx = best_backend(field, coords)
+    field, coords = match_backends(field, coords)
     field = nx.moveaxis(field, -1, 0)
     field = pull(field, coords, degree, bound, coeff)
     field = nx.moveaxis(field, 0, -1)
@@ -449,7 +452,9 @@ def coeff2value(
     grid = nx.meshgrid(
         *(nx.arange(s) for s in input.shape[-ndim:]), indexing="ij"
     )
-    grid = nx.stack(grid, axis=0)
+    # Dask creates NumPy chunks, even when the chunks of the input are
+    # CuPy arrays.
+    grid = match_backends(nx.stack(grid, axis=0), input)[0]
     mode, cval = _scipy_boundary(bound)
     degree = int(degree)
     opts = {"order": degree, "mode": mode, "cval": cval, "prefilter": False}
@@ -662,7 +667,7 @@ def _along(
     nx: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
 ) -> ArrayProtocol:
     """Apply a matrix to an array along one axis."""
-    matrix = nx.asarray(matrix, dtype=np.float64)
+    matrix = match_backends(nx.asarray(matrix, dtype=np.float64), x)[0]
     return nx.moveaxis(nx.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
 
 
@@ -685,9 +690,8 @@ def _edge_terms(
     anything larger than `w`.
     """
     u, v = pair
-    weights = nx.tensordot(
-        nx.asarray(v, dtype=np.float64), slab, axes=([1], [axis])
-    )
+    v = match_backends(nx.asarray(v, dtype=np.float64), slab)[0]
+    weights = nx.tensordot(v, slab, axes=([1], [axis]))
     shape = [1] * slab.ndim
     shape[axis] = -1
     terms = []
@@ -697,7 +701,8 @@ def _edge_terms(
             column[length - u.shape[0] :] = u[:, j]
         else:
             column[: u.shape[0]] = u[:, j]
-        terms.append((column.reshape(shape), nx.expand_dims(weights[j], axis)))
+        column = match_backends(column.reshape(shape), weights)[0]
+        terms.append((column, nx.expand_dims(weights[j], axis)))
     return terms
 
 
@@ -839,10 +844,10 @@ def _interpolating_coefficients(
             )
             if not lazy:
                 low = _edge_terms(
-                    np, low[0], low[1], axis, low[0][0].shape[0], False
+                    nx, low[0], low[1], axis, low[0][0].shape[0], False
                 )
                 high = _edge_terms(
-                    np, high[0], high[1], axis, high[0][0].shape[0], True
+                    nx, high[0], high[1], axis, high[0][0].shape[0], True
                 )
             inplace = not lazy and coeff is not values
             filtered = nd.spline_filter1d(
@@ -878,10 +883,11 @@ def _interpolating_coefficients(
                 shape = [1] * coeff.ndim
                 shape[d] = -1
                 product = product * all_ones[d].reshape(shape)
+            product = match_backends(product, coeff)[0]
             coeff = coeff + cval * (1 - product)
         else:
             for region, correction in _constant_correction(all_ones, cval):
-                coeff[region] += correction
+                coeff[region] += match_backends(correction, coeff)[0]
     return coeff
 
 

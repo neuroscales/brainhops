@@ -12,14 +12,13 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 from brainhops._core.bsplines import pull_field
-from brainhops.backends import get_array_backend
+from brainhops.backends import get_array_backend, match_backends
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import CompositionError
 
 from ..base import Transformation
 from ..concrete import (
     Affine,
-    CartesianField,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -28,6 +27,7 @@ from ..concrete import (
     Rotation,
     Scaling,
     Translation,
+    _grid_like,
 )
 from ..meta import SubspaceTransformation, _close_subspace
 from ..sequence import Sequence, _interpolates
@@ -142,7 +142,8 @@ def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
 @composer
 def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    field = Ti.field + To.translation
+    field, translation = match_backends(Ti.field, To.translation)
+    field = field + translation
     return CoordinatesField(
         field=field,
         input=Ti.input,
@@ -156,7 +157,8 @@ def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
 @composer
 def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    data = Ti.data * To.scale
+    data, scale = match_backends(Ti.data, To.scale)
+    data = data * scale
     return CoordinatesField(
         data=data,
         input=Ti.input,
@@ -184,7 +186,8 @@ def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
 @composer
 def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    field = Ti.field @ To.matrix.T
+    field, matrix = match_backends(Ti.field, To.matrix)
+    field = field @ matrix.T
     return CoordinatesField(
         field=field,
         input=Ti.input,
@@ -198,7 +201,8 @@ def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
 @composer
 def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    field = Ti.field @ To.matrix[:, :-1].T + To.matrix[:, -1]
+    field, matrix = match_backends(Ti.field, To.matrix)
+    field = field @ matrix[:, :-1].T + matrix[:, -1]
     return CoordinatesField(
         field=field,
         input=Ti.input,
@@ -217,7 +221,8 @@ def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
 @composer
 def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    field = Ti.field + To.translation
+    field, translation = match_backends(Ti.field, To.translation)
+    field = field + translation
     return DisplacementField(
         field=field,
         input=Ti.input,
@@ -231,8 +236,9 @@ def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    grid = CartesianField(shape=Ti.field.shape[:-1]).field
-    field = To.scale * Ti.field + (To.scale - 1) * grid
+    grid = _grid_like(Ti.field)
+    field, scale = match_backends(Ti.field, To.scale)
+    field = scale * field + (scale - 1) * grid
     return DisplacementField(
         field=field,
         input=Ti.input,
@@ -246,7 +252,7 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    grid = CartesianField(shape=Ti.field.shape[:-1]).field
+    grid = _grid_like(Ti.field)
     field = (grid + Ti.field)[..., To.permutation] - grid
     return DisplacementField(
         field=field,
@@ -276,8 +282,9 @@ def _check_square(To: tx.Union[Linear, Affine]) -> None:
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
-    grid = CartesianField(shape=Ti.field.shape[:-1]).field
-    field = (grid + Ti.field) @ To.matrix.T - grid
+    grid = _grid_like(Ti.field)
+    field, matrix = match_backends(Ti.field, To.matrix)
+    field = (grid + field) @ matrix.T - grid
     return DisplacementField(
         field=field,
         input=Ti.input,
@@ -292,8 +299,9 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
-    grid = CartesianField(shape=Ti.field.shape[:-1]).field
-    field = (grid + Ti.field) @ To.matrix[:, :-1].T + To.matrix[:, -1] - grid
+    grid = _grid_like(Ti.field)
+    field, matrix = match_backends(Ti.field, To.matrix)
+    field = (grid + field) @ matrix[:, :-1].T + matrix[:, -1] - grid
     return DisplacementField(
         field=field,
         input=Ti.input,
@@ -313,19 +321,18 @@ def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
 def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
     x2 = Ti.to(CoordinatesField)
-    field = (
-        pull_field(
-            # Read the displacement as spline coefficients. The conversion
-            # matters because a StationaryVelocityField stores its velocity,
-            # not its displacement, under `data`.
-            To.to(log=False, store="coefficients").data,
-            coords=x2.field,
-            degree=To.degree,
-            bound=To.bound,
-            coeff=True,
-        )
-        + Ti.field
+    moved = pull_field(
+        # Read the displacement as spline coefficients. The conversion
+        # matters because a StationaryVelocityField stores its velocity,
+        # not its displacement, under `data`.
+        To.to(log=False, store="coefficients").data,
+        coords=x2.field,
+        degree=To.degree,
+        bound=To.bound,
+        coeff=True,
     )
+    moved, field = match_backends(moved, Ti.field)
+    field = moved + field
     return DisplacementField(
         field=field,
         input=Ti.input,
@@ -340,16 +347,15 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
 def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
     x2 = Ti.to(CoordinatesField)
-    field = (
-        pull_field(
-            To.to(log=False, store="coefficients").data,
-            coords=x2.field,
-            degree=To.degree,
-            bound=To.bound,
-            coeff=True,
-        )
-        + x2.field
+    moved = pull_field(
+        To.to(log=False, store="coefficients").data,
+        coords=x2.field,
+        degree=To.degree,
+        bound=To.bound,
+        coeff=True,
     )
+    moved, field = match_backends(moved, x2.field)
+    field = moved + field
     return CoordinatesField(
         field=field,
         input=Ti.input,
@@ -543,7 +549,7 @@ def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
     # the grid again.
     Ti = Ti.compute()
     y = compose(To, Ti.to(CoordinatesField))
-    field = y.field - CartesianField(shape=Ti.field.shape[:-1]).field
+    field = y.field - _grid_like(y.field)
     return DisplacementField(
         field=field,
         input=Ti.input,

@@ -227,6 +227,7 @@ def _map_coordinates_1block(
     dtype = input.dtype
     if mode not in _LOCAL_MODES:
         whole = input.compute() if hasattr(input, "compute") else input
+        whole, coords = backends.match_backends(whole, coords)
         return backends.get_ndimage_backend(whole).map_coordinates(
             whole,
             coords,
@@ -266,6 +267,9 @@ def _map_coordinates_1block(
     window = _gather(input, signals, cval)
     if window is None:
         return nx.full((count,), cval, dtype=dtype)
+    # The window is on a GPU when the input is, and the coordinates may
+    # not be, or the other way round.
+    window, coords = backends.match_backends(window, coords)
     nd = backends.get_ndimage_backend(window)
     if prefilter:
         window = nd.spline_filter(
@@ -336,6 +340,12 @@ def map_coordinates(
         )
     else:
         source = dask.delayed(input)
+    # The blocks of the result are on a GPU when the input or the
+    # coordinates are, and Dask must know it to choose the right package.
+    gpu = backends._on_gpu(input) or backends._on_gpu(coords)
+    meta = backends.get_array_backend("cupy" if gpu else "numpy").empty(
+        (0,) * (coords.ndim - 1), dtype=input.dtype
+    )
     return da.map_blocks(
         _map_coordinates_block,
         coords,
@@ -343,6 +353,7 @@ def map_coordinates(
         dtype=input.dtype,
         chunks=coords.chunks[1:],
         drop_axis=0,
+        meta=meta,
         **opts,
     )
 

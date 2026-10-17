@@ -5,10 +5,9 @@ __all__ = ["Geometry"]
 import numbers
 import sys
 
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import Factory, NoRepr, NotKwOnly
-
-from brainhops.backends import get_array_backend
 
 from ._sugar import get_axes
 from .axes import Axis
@@ -271,8 +270,9 @@ def _index2transform(
     # Start from zeros and set every entry explicitly. An identity seed
     # would leave a spurious 1 in the row of a dropped (integer) axis and
     # in the column of an inserted (None) axis.
-    backend = get_array_backend()
-    affine = backend.zeros((nb_input_dims, nb_output_dims + 1))
+    # The matrix is a small parameter, so it is built with NumPy whatever
+    # the backend setting.
+    affine = np.zeros((nb_input_dims, nb_output_dims + 1))
 
     input_dim_walker = 0
     output_dim_walker = 0
