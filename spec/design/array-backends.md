@@ -249,9 +249,9 @@ NumPy array.
    (#514). This step is implemented. Each format defines `dataobj`
    rather than `data`, its views no longer read anything, NIfTI and MGH
    wrap the nibabel proxy in `NibabelProxy`, and the view of the ITK
-   fields indexes its axes of length 1 rather than reshape them. A TIFF
-   level that tifffile must decode, because it can neither map nor
-   chunk it, is read when `dataobj` is built.
+   fields indexes its axes of length 1 rather than reshape them. The
+   TIFF proxy gives the memory map or the Dask array of tifffile when
+   it is converted, so that a compressed level is decoded once.
 
 ## Open questions
 

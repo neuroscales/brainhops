@@ -118,3 +118,33 @@ def test_an_itk_field_drops_its_singleton_axis_lazily(tmp_path) -> None:  # noqa
     np.testing.assert_array_equal(
         np.asarray(field.dataobj), values[:, :, :, 0, :]
     )
+
+
+def test_a_compressed_tiff_is_decoded_once(
+    tmp_path,  # noqa: ANN001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A compressed TIFF level must be decoded in full, which describing
+    # the image or reading its dataobj does not do, and which the first
+    # read of data does once.
+    tifffile = pytest.importorskip("tifffile")
+    from brainhops.io.images.tiff import _data as tiff_data
+
+    pixels = np.arange(64 * 32, dtype=np.uint8).reshape(64, 32)
+    tifffile.imwrite(tmp_path / "image.tif", pixels, compression="zlib")
+    decodes = []
+    original = tiff_data._TiffProxy._level_array
+
+    def _level_array(self):  # noqa: ANN001, ANN202
+        decodes.append(self.level)
+        return original(self)
+
+    monkeypatch.setattr(tiff_data._TiffProxy, "_level_array", _level_array)
+    image = io.images.load(tmp_path / "image.tif")
+    assert image.shape == (32, 64)
+    assert image.dtype == np.uint8
+    assert image.dataobj.shape == (32, 64)
+    assert decodes == []
+    np.testing.assert_array_equal(image.data, pixels.T)
+    np.testing.assert_array_equal(image.data, pixels.T)
+    assert len(decodes) == 1

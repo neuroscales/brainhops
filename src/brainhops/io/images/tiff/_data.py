@@ -97,6 +97,38 @@ class _TiffProxy(ArrayProxy):
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         return np.asanyarray(self._level_array()[index])
 
+    def to_dask(self, *, cupy: bool = False, **kwargs: tx.Any) -> tx.Any:
+        """Return a Dask array of the pixels, reading nothing.
+
+        For the whole level, the array is the Dask array that tifffile
+        gives, or a Dask array over the memory map or the decoded level,
+        so that tifffile reads the level once rather than once per block.
+        A view of the proxy reads its blocks as [`ArrayProxy`][] does.
+
+        Parameters
+        ----------
+        cupy : bool, default=False
+            Whether the blocks are CuPy arrays.
+        **kwargs : Any
+            Options of `dask.array.from_array`.
+
+        Returns
+        -------
+        dask.array.Array
+            The lazy array.
+        """
+        from brainhops import backends
+
+        if self.is_view or backends.da is None:
+            return super().to_dask(cupy=cupy, **kwargs)
+        level = self._level_array()
+        if not isinstance(level, backends.da.Array):
+            kwargs.setdefault("chunks", self.chunks or "auto")
+            level = backends.da.from_array(level, **kwargs)
+        if cupy:
+            return backends.to_backend(level, "dask+cupy")
+        return level
+
     def read_bytes(self) -> bytes:
         """Return the bytes of the whole file that the proxy reads.
 
